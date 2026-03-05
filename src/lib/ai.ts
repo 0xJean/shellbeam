@@ -1,0 +1,281 @@
+const AI_SETTINGS_KEY = 'shellbeam.aiSettings'
+
+export type AIProviderId = 'openai' | 'anthropic' | 'openrouter' | 'ollama' | 'custom'
+
+export interface AIProvider {
+  id: AIProviderId
+  name: string
+  baseUrl: string
+  models: string[]
+  defaultModel: string
+}
+
+export const AI_PROVIDERS: AIProvider[] = [
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+    defaultModel: 'gpt-4o-mini',
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    models: ['claude-sonnet-4-20250514', 'claude-3-5-haiku-20241022'],
+    defaultModel: 'claude-sonnet-4-20250514',
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    models: [
+      'openai/gpt-4o-mini', 'openai/gpt-4o', 'anthropic/claude-sonnet-4-20250514',
+      'anthropic/claude-3-5-haiku-20241022', 'google/gemini-2.0-flash-001',
+      'meta-llama/llama-3-70b-instruct', 'mistralai/mistral-large-latest',
+    ],
+    defaultModel: 'openai/gpt-4o-mini',
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama (Local)',
+    baseUrl: 'http://localhost:11434',
+    models: [],
+    defaultModel: '',
+  },
+  {
+    id: 'custom',
+    name: 'Custom Endpoint',
+    baseUrl: '',
+    models: [],
+    defaultModel: '',
+  },
+]
+
+export interface AISettings {
+  provider: AIProviderId
+  apiKey: string
+  model: string
+  customBaseUrl: string
+  customModel: string
+}
+
+export const DEFAULT_AI_SETTINGS: AISettings = {
+  provider: 'openai',
+  apiKey: '',
+  model: 'gpt-4o-mini',
+  customBaseUrl: '',
+  customModel: '',
+}
+
+export function loadAISettings(): AISettings {
+  try {
+    const raw = localStorage.getItem(AI_SETTINGS_KEY)
+    if (raw) return { ...DEFAULT_AI_SETTINGS, ...JSON.parse(raw) }
+  } catch { /* ignore */ }
+  return { ...DEFAULT_AI_SETTINGS }
+}
+
+export function saveAISettings(settings: AISettings) {
+  localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(settings))
+}
+
+export function isAIConfigured(settings: AISettings): boolean {
+  if (settings.provider === 'ollama') return !!settings.model
+  if (settings.provider === 'custom') return !!settings.customBaseUrl && !!settings.customModel
+  return !!settings.apiKey
+}
+
+function getResolvedConfig(settings: AISettings) {
+  const providerDef = AI_PROVIDERS.find((p) => p.id === settings.provider)
+  const baseUrl = settings.provider === 'custom'
+    ? settings.customBaseUrl
+    : (settings.provider === 'ollama' ? providerDef?.baseUrl : providerDef?.baseUrl) ?? ''
+  const model = settings.provider === 'custom'
+    ? settings.customModel
+    : settings.model || providerDef?.defaultModel || ''
+  return { baseUrl, model, apiKey: settings.apiKey }
+}
+
+const SYSTEM_PROMPT = `You are a Linux/macOS command-line expert integrated into an SSH terminal client called ShellBeam. Generate shell commands based on the user's natural language description.
+
+Rules:
+- Output ONLY the command(s), no explanation, no markdown code fences
+- If multiple commands are needed, separate them with newlines
+- Use commonly available utilities (coreutils, grep, awk, sed, find, etc.)
+- Prefer one-liners when possible
+- If context from terminal output is provided, consider the OS and shell environment`
+
+export interface AIStreamCallbacks {
+  onToken: (token: string) => void
+  onDone: () => void
+  onError: (error: string) => void
+}
+
+export function createAbortController() {
+  return new AbortController()
+}
+
+export async function streamAICommand(
+  settings: AISettings,
+  userPrompt: string,
+  terminalContext: string,
+  callbacks: AIStreamCallbacks,
+  signal?: AbortSignal,
+) {
+  const { baseUrl, model, apiKey } = getResolvedConfig(settings)
+
+  if (!baseUrl) {
+    callbacks.onError('AI provider not configured. Please set up in Settings.')
+    return
+  }
+
+  const messages = [
+    { role: 'system' as const, content: SYSTEM_PROMPT },
+    ...(terminalContext
+      ? [{ role: 'system' as const, content: `Recent terminal output (last 20 lines):\n${terminalContext}` }]
+      : []),
+    { role: 'user' as const, content: userPrompt },
+  ]
+
+  try {
+    if (settings.provider === 'anthropic') {
+      await streamAnthropic(baseUrl, apiKey, model, messages, callbacks, signal)
+    } else {
+      await streamOpenAICompatible(baseUrl, apiKey, model, messages, callbacks, signal)
+    }
+  } catch (err) {
+    if (signal?.aborted) return
+    callbacks.onError(err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function streamOpenAICompatible(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  messages: { role: string; content: string }[],
+  callbacks: AIStreamCallbacks,
+  signal?: AbortSignal,
+) {
+  const url = baseUrl.endsWith('/v1')
+    ? `${baseUrl}/chat/completions`
+    : baseUrl.includes('/v1/')
+      ? `${baseUrl.replace(/\/$/, '')}/chat/completions`
+      : `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+  if (baseUrl.includes('openrouter.ai')) {
+    headers['HTTP-Referer'] = 'https://shellbeam.app'
+    headers['X-Title'] = 'ShellBeam'
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ model, messages, stream: true, max_tokens: 1024 }),
+    signal,
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`API error ${res.status}: ${text.slice(0, 200)}`)
+  }
+
+  const reader = res.body?.getReader()
+  if (!reader) throw new Error('No response stream')
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || !trimmed.startsWith('data:')) continue
+      const data = trimmed.slice(5).trim()
+      if (data === '[DONE]') {
+        callbacks.onDone()
+        return
+      }
+      try {
+        const json = JSON.parse(data)
+        const token = json.choices?.[0]?.delta?.content
+        if (token) callbacks.onToken(token)
+      } catch { /* skip malformed SSE */ }
+    }
+  }
+  callbacks.onDone()
+}
+
+async function streamAnthropic(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  messages: { role: string; content: string }[],
+  callbacks: AIStreamCallbacks,
+  signal?: AbortSignal,
+) {
+  const systemMsg = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
+  const userMessages = messages.filter((m) => m.role !== 'system')
+
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model,
+      system: systemMsg,
+      messages: userMessages.map((m) => ({ role: m.role, content: m.content })),
+      max_tokens: 1024,
+      stream: true,
+    }),
+    signal,
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Anthropic API error ${res.status}: ${text.slice(0, 200)}`)
+  }
+
+  const reader = res.body?.getReader()
+  if (!reader) throw new Error('No response stream')
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+      const data = trimmed.slice(5).trim()
+      try {
+        const json = JSON.parse(data)
+        if (json.type === 'content_block_delta' && json.delta?.text) {
+          callbacks.onToken(json.delta.text)
+        }
+        if (json.type === 'message_stop') {
+          callbacks.onDone()
+          return
+        }
+      } catch { /* skip */ }
+    }
+  }
+  callbacks.onDone()
+}

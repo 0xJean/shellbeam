@@ -1,0 +1,78 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+*.ipa
+*.xcarchive
+*.apk
+*.aab
+
+# Rust / Cargo (also see src-tauri/.gitignore)
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Tauri dev-mode local storage & WebView data
+# On macOS: ~/Library/Application Support/<identifier>/
+# On Linux: ~/.local/share/<identifier>/
+# On Windows: %APPDATA%/<identifier>/
+# These are system-level dirs, but if any appear in-tree, ignore them:
+*.db
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*.swo
+*~
+
+# Vite
+*.local
+.vite/
+
+# TypeScript
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+
+# Misc
+.cache/
+.temp/
+.tmp/
