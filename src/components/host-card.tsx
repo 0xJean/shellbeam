@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Terminal, Server, Laptop, Trash2, KeyRound, LockKeyhole, User, Clock, Tag, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Terminal, Server, Laptop, Trash2, Pencil, KeyRound, LockKeyhole, User, Clock, Tag, RefreshCw, AlertTriangle } from 'lucide-react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
@@ -45,11 +45,12 @@ interface HostGridCardProps {
   isSelected: boolean
   status?: 'online' | 'offline' | 'checking'
   onConnect: (id: string) => void
+  onEdit: (id: string) => void
   onDelete: (id: string) => void
   onSelect: (id: string) => void
 }
 
-export function HostGridCard({ host, isSelected, status, onConnect, onDelete }: HostGridCardProps) {
+export function HostGridCard({ host, isSelected, status, onConnect, onEdit, onDelete }: HostGridCardProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
@@ -74,6 +75,11 @@ export function HostGridCard({ host, isSelected, status, onConnect, onDelete }: 
             className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground md:h-7 md:w-7"
             onClick={() => onConnect(host.id)} title={t('hostCard.connect')}>
             <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />
+          </span>
+          <span role="button" tabIndex={0}
+            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground md:h-7 md:w-7"
+            onClick={() => onEdit(host.id)} title={t('hostCard.edit')}>
+            <Pencil className="h-4 w-4 md:h-3.5 md:w-3.5" />
           </span>
           <span role="button" tabIndex={0}
             className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive md:h-7 md:w-7"
@@ -157,10 +163,11 @@ interface HostListItemProps {
   status?: 'online' | 'offline' | 'checking'
   onSelect: (id: string) => void
   onConnect: (id: string) => void
+  onEdit: (id: string) => void
   onDelete: (id: string) => void
 }
 
-export function HostListItem({ host, isSelected, status, onSelect, onConnect, onDelete }: HostListItemProps) {
+export function HostListItem({ host, isSelected, status, onSelect, onConnect, onEdit, onDelete }: HostListItemProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
@@ -195,6 +202,11 @@ export function HostListItem({ host, isSelected, status, onSelect, onConnect, on
             <Terminal className="h-4 w-4" />
           </span>
           <span role="button" tabIndex={0}
+            className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground md:h-8 md:w-8"
+            onClick={(e) => { e.stopPropagation(); onEdit(host.id) }} title={t('hostCard.edit')}>
+            <Pencil className="h-4 w-4" />
+          </span>
+          <span role="button" tabIndex={0}
             className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive md:h-8 md:w-8"
             onClick={(e) => { e.stopPropagation(); setConfirmOpen(true) }} title={t('hostCard.delete')}>
             <Trash2 className="h-4 w-4" />
@@ -215,24 +227,28 @@ function DeleteConfirmDialog({ open, onOpenChange, hostName, hostAddress, onConf
   const { t } = useT()
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!h-auto !max-w-sm !rounded-2xl border border-border p-6 shadow-xl">
+      <DialogContent className="!h-auto !max-w-[300px] !rounded-2xl border-0 bg-popover px-6 pb-6 pt-7 shadow-2xl ring-1 ring-border/40">
         <div className="flex flex-col items-center gap-4 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
-            <AlertTriangle className="h-6 w-6 text-destructive" />
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-destructive/10 ring-1 ring-destructive/20">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
           </div>
           <div className="space-y-1.5">
             <h3 className="text-base font-semibold">{t('hostCard.deleteTitle')}</h3>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-[13px] leading-relaxed text-muted-foreground">
               {t('hostCard.deleteDesc', { name: hostName, address: hostAddress })}
             </p>
           </div>
           <div className="flex w-full gap-3 pt-1">
-            <Button variant="outline" className="flex-1" onClick={() => onOpenChange(false)}>
+            <button type="button"
+              className="h-11 flex-1 rounded-xl border border-border bg-secondary/50 text-[13px] font-medium text-secondary-foreground transition-colors active:bg-secondary/80"
+              onClick={() => onOpenChange(false)}>
               {t('hostCard.deleteCancel')}
-            </Button>
-            <Button variant="destructive" className="flex-1" onClick={onConfirm}>
+            </button>
+            <button type="button"
+              className="h-11 flex-1 rounded-xl bg-destructive text-[13px] font-medium text-white transition-colors active:bg-destructive/80"
+              onClick={onConfirm}>
               {t('hostCard.deleteConfirm')}
-            </Button>
+            </button>
           </div>
         </div>
       </DialogContent>

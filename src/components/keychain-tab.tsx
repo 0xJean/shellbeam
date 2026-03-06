@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Plus, Trash2, Key, Wand2, FileUp, ClipboardPaste } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Plus, Trash2, Key, Wand2, FileUp, ClipboardPaste, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -11,6 +11,10 @@ import { useT } from '@/lib/i18n'
 
 function isSshKey(key: string): boolean {
   return key.includes('privateKey') || key.endsWith('.key') || key.startsWith('ssh.')
+}
+
+function isPublicKey(key: string): boolean {
+  return key.includes('publicKey') || key.endsWith('.pub')
 }
 
 type AddKeyMode = 'generate' | 'import' | 'paste'
@@ -39,12 +43,27 @@ export function KeychainTab({
   const [generating, setGenerating] = useState(false)
   const [importing, setImporting] = useState(false)
   const [savingPaste, setSavingPaste] = useState(false)
+  const [search, setSearch] = useState('')
+  const [filterType, setFilterType] = useState<'all' | 'ssh' | 'public' | 'other'>('all')
 
   const addKeyModes: { id: AddKeyMode; label: string; icon: React.ReactNode }[] = [
     { id: 'generate', label: t('keychain.generate'), icon: <Wand2 className="h-4 w-4" /> },
     { id: 'import', label: t('keychain.importFile'), icon: <FileUp className="h-4 w-4" /> },
     { id: 'paste', label: t('keychain.paste'), icon: <ClipboardPaste className="h-4 w-4" /> },
   ]
+
+  const filteredKeys = useMemo(() => {
+    let result = vaultKeys
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      result = result.filter((k) => k.toLowerCase().includes(q))
+    }
+    if (filterType === 'ssh') result = result.filter((k) => isSshKey(k))
+    else if (filterType === 'public') result = result.filter((k) => isPublicKey(k))
+    else if (filterType === 'other') result = result.filter((k) => !isSshKey(k) && !isPublicKey(k))
+    return result
+  }, [vaultKeys, search, filterType])
+
 
   async function handleGenerate() {
     if (!vaultUnlocked) { onError?.('Vault must be unlocked.'); return }
@@ -108,8 +127,15 @@ export function KeychainTab({
     } catch (e) { onError?.(String(e)) }
   }
 
+  const filterTabs = [
+    { id: 'all' as const, label: t('hosts.all') },
+    { id: 'ssh' as const, label: 'SSH' },
+    { id: 'public' as const, label: 'Public' },
+    { id: 'other' as const, label: t('group.Custom') },
+  ]
+
   return (
-    <>
+    <div className="flex w-full flex-col">
       <Dialog open={showAddKey} onOpenChange={setShowAddKey}>
         <DialogContent className="max-w-3xl p-0 overflow-hidden shadow-2xl">
           <div className="px-4 pt-5 pb-4 sm:px-8 sm:pt-7 sm:pb-5">
@@ -175,51 +201,83 @@ export function KeychainTab({
         </DialogContent>
       </Dialog>
 
-      <div className="p-4">
-        <div className="mb-4 flex items-center justify-between">
+      {/* Title section */}
+      <div className="shrink-0 px-6 py-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-foreground">{t('keychain.title')}</h3>
-            <p className="text-xs text-muted-foreground">{t('keychain.count', { n: vaultKeys.length })}</p>
+            <h2 className="text-lg font-semibold">{t('keychain.title')}</h2>
+            <p className="text-sm text-muted-foreground">{t('keychain.count', { n: vaultKeys.length })}</p>
           </div>
-          <Button size="sm" onClick={() => setShowAddKey(true)}>
-            <Plus className="mr-1.5 h-4 w-4" />
-            {t('keychain.addKey')}
-          </Button>
         </div>
+      </div>
 
-        {vaultKeys.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-              <Key className="h-6 w-6 text-muted-foreground" />
+      {/* Toolbar */}
+      <div className="min-h-0 flex-1">
+        <div className="flex min-h-[200px] min-w-0 flex-1 flex-col px-6">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 max-w-xs">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('snippets.search')} className="h-9 pl-9 text-sm" />
             </div>
-            <p className="text-sm text-muted-foreground">{t('keychain.empty')}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{t('keychain.emptyHint')}</p>
-            <Button size="sm" className="mt-4" onClick={() => setShowAddKey(true)}>
-              <Plus className="mr-1.5 h-4 w-4" />
-              {t('keychain.addKey')}
+            <div className="flex flex-wrap gap-1 rounded-lg bg-muted/50 p-0.5">
+              {filterTabs.map((f) => (
+                <button key={f.id} type="button" onClick={() => setFilterType(f.id)} className={cn('rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors sm:px-3', filterType === f.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1" />
+            <Button size="sm" onClick={() => setShowAddKey(true)} className="h-9 gap-1.5 text-xs">
+              <Plus className="h-3.5 w-3.5" /> {t('keychain.addKey')}
             </Button>
           </div>
-        ) : (
-          <div className="space-y-2">
-            {vaultKeys.map((key) => (
-              <div key={key} className="flex items-center justify-between rounded-lg border px-3 py-2.5">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
-                    <Key className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <div className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{key}</span>
-                    {isSshKey(key) && <span className="text-[11px] text-muted-foreground">SSH Key</span>}
-                  </div>
+
+          {/* Key list */}
+          <div className="pb-6">
+            {filteredKeys.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/50">
+                  <Key className="h-8 w-8 text-muted-foreground/40" />
                 </div>
-                <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => void handleDeleteKey(key)} title={t('common.delete')}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <p className="text-sm font-medium text-foreground">
+                  {vaultKeys.length === 0 ? t('keychain.empty') : t('hosts.noMatch')}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {vaultKeys.length === 0 ? t('keychain.emptyHint') : t('hosts.noMatchHint')}
+                </p>
+                {vaultKeys.length === 0 && (
+                  <Button className="mt-5 gap-1.5" onClick={() => setShowAddKey(true)}>
+                    <Plus className="h-4 w-4" /> {t('keychain.addKey')}
+                  </Button>
+                )}
               </div>
-            ))}
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {filteredKeys.map((key) => (
+                  <div key={key} className="group relative overflow-hidden rounded-xl border bg-card p-4 transition-colors hover:border-primary/30 hover:shadow-sm">
+                    <div className="flex items-start gap-3">
+                      <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', isSshKey(key) ? 'bg-emerald-500/10 text-emerald-500' : isPublicKey(key) ? 'bg-blue-500/10 text-blue-500' : 'bg-muted text-muted-foreground')}>
+                        <Key className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{key}</span>
+                        <span className={cn('mt-0.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium', isSshKey(key) ? 'bg-emerald-500/10 text-emerald-500' : isPublicKey(key) ? 'bg-blue-500/10 text-blue-500' : 'bg-muted text-muted-foreground')}>
+                          {isSshKey(key) ? 'SSH Key' : isPublicKey(key) ? 'Public Key' : 'Secret'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex justify-end">
+                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive" onClick={() => void handleDeleteKey(key)} title={t('common.delete')}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
-    </>
+    </div>
   )
 }

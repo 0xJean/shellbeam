@@ -29,7 +29,7 @@ mod desktop {
     use mdns_sd::{ScopedIp, ServiceDaemon, ServiceEvent};
     use std::collections::HashMap;
     use std::time::Duration;
-    use crate::sync::transport::{MDNS_DAEMON, SHELLBEAM_SERVICE_TYPE};
+    use crate::sync::transport::SHELLBEAM_SERVICE_TYPE;
 
     static DISCOVER_DAEMON: Mutex<Option<ServiceDaemon>> = Mutex::new(None);
 
@@ -50,20 +50,10 @@ mod desktop {
     }
 
     pub fn discover_devices() -> Result<Vec<DiscoveredDevice>, String> {
-        let (receiver, temp_daemon) = {
-            let guard = MDNS_DAEMON.lock().map_err(|e| format!("lock: {e}"))?;
-            if let Some(ref daemon) = *guard {
-                let r = daemon.browse(SHELLBEAM_SERVICE_TYPE)
-                    .map_err(|e| format!("mDNS browse failed: {e}"))?;
-                (r, None)
-            } else {
-                drop(guard);
-                let d = ServiceDaemon::new().map_err(|e| format!("mDNS daemon: {e}"))?;
-                let r = d.browse(SHELLBEAM_SERVICE_TYPE)
-                    .map_err(|e| format!("mDNS browse: {e}"))?;
-                (r, Some(d))
-            }
-        };
+        // Always use a fresh daemon to avoid stale cache
+        let daemon = ServiceDaemon::new().map_err(|e| format!("mDNS daemon: {e}"))?;
+        let receiver = daemon.browse(SHELLBEAM_SERVICE_TYPE)
+            .map_err(|e| format!("mDNS browse: {e}"))?;
         let mut devices: HashMap<String, DiscoveredDevice> = HashMap::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(4);
         while std::time::Instant::now() < deadline {
@@ -80,27 +70,26 @@ mod desktop {
                 _ => {}
             }
         }
-        if let Some(d) = temp_daemon { d.shutdown().ok(); }
+        daemon.shutdown().ok();
         Ok(devices.into_values().collect())
     }
 
     pub fn start_discover(app: tauri::AppHandle) -> Result<(), String> {
-        if DISCOVER_RUNNING.load(Ordering::SeqCst) { return Ok(()); }
+        // Always stop previous discovery first
+        if DISCOVER_RUNNING.load(Ordering::SeqCst) {
+            stop_discover();
+            std::thread::sleep(Duration::from_millis(50));
+        }
 
-        let (receiver, _uses_shared) = {
-            let guard = MDNS_DAEMON.lock().map_err(|e| format!("lock: {e}"))?;
-            if let Some(ref daemon) = *guard {
-                log::info!("[discover] reusing registration daemon for browse");
-                (daemon.browse(SHELLBEAM_SERVICE_TYPE).map_err(|e| format!("{e}"))?, true)
-            } else {
-                drop(guard);
-                log::info!("[discover] creating standalone daemon");
-                let d = ServiceDaemon::new().map_err(|e| format!("{e}"))?;
-                let r = d.browse(SHELLBEAM_SERVICE_TYPE).map_err(|e| format!("{e}"))?;
-                if let Ok(mut dg) = DISCOVER_DAEMON.lock() { *dg = Some(d); }
-                (r, false)
-            }
-        };
+        // Always create a fresh standalone daemon for discovery.
+        // Reusing the shared registration daemon is unreliable: mdns_sd caches
+        // resolved records internally, and stop_browse doesn't flush that cache.
+        // A fresh daemon has no cache, so it will always re-query the network.
+        log::info!("[discover] creating fresh daemon for browse");
+        let daemon = ServiceDaemon::new().map_err(|e| format!("mDNS daemon: {e}"))?;
+        let receiver = daemon.browse(SHELLBEAM_SERVICE_TYPE)
+            .map_err(|e| format!("mDNS browse: {e}"))?;
+        if let Ok(mut dg) = DISCOVER_DAEMON.lock() { *dg = Some(daemon); }
 
         DISCOVER_RUNNING.store(true, Ordering::SeqCst);
         std::thread::spawn(move || {
@@ -136,8 +125,12 @@ mod desktop {
 
     pub fn stop_discover() {
         DISCOVER_RUNNING.store(false, Ordering::SeqCst);
+        // Shutdown the standalone discover daemon (fresh each scan)
         if let Ok(mut guard) = DISCOVER_DAEMON.lock() {
-            if let Some(daemon) = guard.take() { daemon.shutdown().ok(); }
+            if let Some(daemon) = guard.take() {
+                let _ = daemon.stop_browse(SHELLBEAM_SERVICE_TYPE);
+                daemon.shutdown().ok();
+            }
         }
     }
 }
@@ -440,14 +433,18 @@ mod ios {
     }
 
     pub fn start_discover(app: tauri::AppHandle) -> Result<(), String> {
-        if DISCOVER_RUNNING.load(Ordering::SeqCst) { return Ok(()); }
+        // Stop any previous browse and wait for thread to exit
+        if DISCOVER_RUNNING.load(Ordering::SeqCst) {
+            stop_discover();
+            // Wait for the old browse thread to notice and exit (checks every 500ms)
+            std::thread::sleep(std::time::Duration::from_millis(600));
+        }
         DISCOVER_RUNNING.store(true, Ordering::SeqCst);
 
         std::thread::spawn(move || {
             log::info!("[iOS discover] starting native Bonjour browse");
             unsafe {
                 let browse_ctx = Box::new(BrowseCtx { app: app.clone() });
-                // Leak intentionally — lives as long as browse is running
                 let ctx_ptr = Box::into_raw(browse_ctx);
 
                 let reg_type = std::ffi::CString::new("_shellbeam._tcp.").unwrap();
@@ -464,16 +461,16 @@ mod ios {
                 if err != 0 {
                     log::warn!("[iOS discover] DNSServiceBrowse failed: {}", err);
                     DISCOVER_RUNNING.store(false, Ordering::SeqCst);
-                    let _ = Box::from_raw(ctx_ptr); // cleanup
+                    let _ = Box::from_raw(ctx_ptr);
                     return;
                 }
 
                 let fd = DNSServiceRefSockFD(browse_ref);
                 log::info!("[iOS discover] browse fd={}", fd);
 
-                // select() loop until stopped
+                // select() loop until stopped — check every 500ms
                 while DISCOVER_RUNNING.load(Ordering::SeqCst) {
-                    let mut tv = libc::timeval { tv_sec: 1, tv_usec: 0 };
+                    let mut tv = libc::timeval { tv_sec: 0, tv_usec: 500_000 };
                     let mut fds: libc::fd_set = std::mem::zeroed();
                     libc::FD_ZERO(&mut fds);
                     libc::FD_SET(fd, &mut fds);
@@ -484,7 +481,7 @@ mod ios {
                 }
 
                 DNSServiceRefDeallocate(browse_ref);
-                let _ = Box::from_raw(ctx_ptr); // cleanup
+                let _ = Box::from_raw(ctx_ptr);
                 log::info!("[iOS discover] browse stopped");
             }
         });
@@ -493,6 +490,7 @@ mod ios {
 
     pub fn stop_discover() {
         DISCOVER_RUNNING.store(false, Ordering::SeqCst);
+        // Note: the browse thread will notice within 500ms and deallocate the ref
     }
 }
 

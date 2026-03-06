@@ -420,6 +420,89 @@ pub fn vault_get_secret(
     })
 }
 
+/// Export all vault secrets as decrypted key-value pairs.
+/// Requires vault to be unlocked. Used by P2P sync to transfer secrets.
+pub fn vault_export_decrypted_secrets(
+    app: &tauri::AppHandle,
+    state: &VaultState,
+    vault_id: Option<&str>,
+) -> Result<HashMap<String, String>, String> {
+    let vid = ensure_vault_id(vault_id);
+    let key = {
+        let guard = state.unlocked_keys.lock().map_err(|_| "Vault state lock poisoned".to_string())?;
+        guard.get(&vid).copied().ok_or_else(|| "Vault is locked — unlock before syncing secrets".to_string())?
+    };
+    let vault = load_vault_file(app, Some(&vid))?
+        .ok_or_else(|| "Vault is not initialized".to_string())?;
+    let mut result = HashMap::new();
+    for (secret_key, record) in &vault.secrets {
+        let plain = decrypt_vault_value(&key, &record.nonce_b64, &record.ciphertext_b64)
+            .map_err(|e| format!("decrypt secret '{}': {}", secret_key, e))?;
+        let value = String::from_utf8(plain)
+            .map_err(|e| format!("decode secret '{}': {}", secret_key, e))?;
+        result.insert(secret_key.clone(), value);
+    }
+    Ok(result)
+}
+
+/// Import decrypted key-value pairs into the vault, encrypting with local key.
+/// If the vault is not initialized, auto-creates one with a random key and keeps
+/// it unlocked so the imported secrets are immediately accessible.
+/// If the vault exists but is locked, returns an error.
+/// Used by P2P sync to receive secrets.
+pub fn vault_import_decrypted_secrets(
+    app: &tauri::AppHandle,
+    state: &VaultState,
+    secrets: &HashMap<String, String>,
+    vault_id: Option<&str>,
+) -> Result<usize, String> {
+    let vid = ensure_vault_id(vault_id);
+
+    let existing_vault = load_vault_file(app, Some(&vid))?;
+    let (key, mut vault) = if let Some(v) = existing_vault {
+        // Vault exists — must be unlocked
+        let k = {
+            let guard = state.unlocked_keys.lock().map_err(|_| "Vault state lock poisoned".to_string())?;
+            guard.get(&vid).copied().ok_or_else(|| "Vault is locked — unlock before syncing secrets".to_string())?
+        };
+        (k, v)
+    } else {
+        // Vault not initialized — auto-create with a random key
+        log::info!("[vault] auto-initializing vault '{}' for sync import ({} secrets)", vid, secrets.len());
+        let salt = rand::random::<[u8; VAULT_SALT_SIZE]>();
+        // Use a random 32-byte key directly (not derived from a password)
+        let key = rand::random::<[u8; VAULT_KEY_SIZE]>();
+        let (verifier_nonce_b64, verifier_ciphertext_b64) =
+            encrypt_vault_value(&key, VAULT_VERIFIER_PLAIN.as_bytes())
+                .map_err(|e| format!("auto-init vault verifier: {e}"))?;
+        let v = VaultFile {
+            initialized_at: now_unix_ms(),
+            salt_b64: BASE64_STANDARD.encode(salt),
+            verifier_nonce_b64,
+            verifier_ciphertext_b64,
+            secrets: HashMap::new(),
+        };
+        // Keep the vault unlocked in memory
+        let mut guard = state.unlocked_keys.lock().map_err(|_| "Vault state lock poisoned".to_string())?;
+        guard.insert(vid.clone(), key);
+        (key, v)
+    };
+
+    let mut count = 0usize;
+    for (secret_key, plaintext) in secrets {
+        let (nonce_b64, ciphertext_b64) = encrypt_vault_value(&key, plaintext.as_bytes())
+            .map_err(|e| format!("encrypt secret '{}': {}", secret_key, e))?;
+        vault.secrets.insert(secret_key.clone(), VaultSecretRecord {
+            nonce_b64,
+            ciphertext_b64,
+            updated_at: now_unix_ms(),
+        });
+        count += 1;
+    }
+    save_vault_file(app, &vault, Some(&vid))?;
+    Ok(count)
+}
+
 #[tauri::command]
 pub fn vault_delete_secret(
     app: tauri::AppHandle,

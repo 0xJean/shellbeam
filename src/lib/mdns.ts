@@ -33,8 +33,11 @@ export async function mdnsStopDiscover(): Promise<void> {
 
 export function onMdnsDeviceFound(callback: (device: DiscoveredDevice) => void): () => void {
   let unlisten: (() => void) | null = null
+  let cancelled = false
   listen<DiscoveredDevice>('mdns-device-found', (event) => {
-    callback(event.payload)
-  }).then((fn) => { unlisten = fn })
-  return () => { unlisten?.() }
+    if (!cancelled) callback(event.payload)
+  }).then((fn) => {
+    if (cancelled) { fn() } else { unlisten = fn }
+  })
+  return () => { cancelled = true; unlisten?.() }
 }

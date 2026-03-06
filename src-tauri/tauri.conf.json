@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "shellbeam",
+  "productName": "ShellBeam",
   "version": "0.1.0",
   "identifier": "app.shellbeam",
   "build": {
@@ -27,7 +27,7 @@
     "active": true,
     "targets": "all",
     "iOS": {
-      "developmentTeam": "H4NCLYWCAJ"
+      "developmentTeam": ""
     },
     "icon": [
       "icons/32x32.png",

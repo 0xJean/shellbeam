@@ -6,12 +6,15 @@ import {
   CheckCircle2,
   ShieldCheck,
   RefreshCw,
-  ArrowDownToLine,
   ArrowUpFromLine,
   Radio,
   Lock,
   ArrowLeft,
   Trash2,
+  Server,
+  Code2,
+  KeyRound,
+  Check,
 } from 'lucide-react'
 import { mdnsStartDiscover, mdnsStopDiscover, onMdnsDeviceFound, type DiscoveredDevice } from '@/lib/mdns'
 import { getSystemHostname, syncSendPairRequest, syncAcceptPair } from '@/lib/sync'
@@ -21,11 +24,18 @@ import type {
   SyncCursorRecord,
   SyncDeviceIdentity,
   SyncTrustedPeer,
+  SyncDataOptions,
 } from '@/lib/sync'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ScanRadar, DeviceCard } from './sync-widgets'
 type SyncView = 'home' | 'scanning' | 'pairing' | 'confirming' | 'incoming' | 'peer-detail'
+
+const SYNC_DATA_ITEMS = [
+  { key: 'includeHosts', label: 'backup.hosts', icon: Server },
+  { key: 'includeSnippets', label: 'backup.snippetsData', icon: Code2 },
+  { key: 'includeVault', label: 'backup.vaultData', icon: KeyRound },
+] as const
 
 interface SyncCenterPanelProps {
   localDevice: SyncDeviceIdentity | null
@@ -38,16 +48,15 @@ interface SyncCenterPanelProps {
   onRefresh: () => Promise<void>
   onInitDevice: (deviceName?: string) => Promise<void>
   onStartServer: (port?: number) => Promise<void>
-  onPullFromPeer: (peerDeviceId: string) => Promise<void>
-  onPushToPeer: (peerDeviceId: string) => Promise<void>
+  onPushToPeer: (peerDeviceId: string, options?: SyncDataOptions) => Promise<void>
   onRemoveTrustedPeer: (peerDeviceId: string) => Promise<void>
 }
 
 export function SyncCenterPanel({
-  localDevice, changes, cursors, trustedPeers,
+  localDevice, changes, cursors: _cursors, trustedPeers,
   loading, serverRunning, serverPort,
   onRefresh, onInitDevice, onStartServer,
-  onPullFromPeer, onPushToPeer, onRemoveTrustedPeer,
+  onPushToPeer, onRemoveTrustedPeer,
 }: SyncCenterPanelProps) {
   const { t } = useT()
   const [view, setView] = useState<SyncView>('home')
@@ -59,7 +68,7 @@ export function SyncCenterPanel({
   const [pairingBusy, setPairingBusy] = useState(false)
   const [pairingError, setPairingError] = useState('')
   const [deviceName, setDeviceName] = useState('')
-  const [diagLog, setDiagLog] = useState<string[]>([])
+
   const [incomingPairRequest, setIncomingPairRequest] = useState<{
     sessionId: string
     peerDeviceId: string
@@ -69,6 +78,11 @@ export function SyncCenterPanel({
   } | null>(null)
   const [generatedPin, setGeneratedPin] = useState('')
   const scanCleanupRef = useRef<(() => void) | null>(null)
+  const [onlinePeerEndpoints, setOnlinePeerEndpoints] = useState<Set<string>>(new Set())
+  const probeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const probeUnlistenRef = useRef<(() => void) | null>(null)
+  const [syncDataOpts, setSyncDataOpts] = useState<SyncDataOptions>({ includeHosts: true, includeSnippets: true, includeVault: false })
+  const anySyncDataSelected = syncDataOpts.includeHosts || syncDataOpts.includeSnippets || syncDataOpts.includeVault
 
   const needsInit = !localDevice
   const [localHostname, setLocalHostname] = useState('')
@@ -82,7 +96,80 @@ export function SyncCenterPanel({
     })
   }, [needsInit])
 
+  // Background probe: auto-discover devices and cross-reference with trusted peers.
+  // Uses its own event listener but shares the backend mDNS daemon.
+  // We track whether a user-initiated scan is active to avoid interference.
+  const scanActiveRef = useRef(false)
+
+  // Helper to fully stop a probe (timer + event listener + backend discover)
+  const stopProbe = useCallback(() => {
+    if (probeTimerRef.current) {
+      clearTimeout(probeTimerRef.current)
+      probeTimerRef.current = null
+    }
+    probeUnlistenRef.current?.()
+    probeUnlistenRef.current = null
+    // Also stop the backend browse unless a user scan is active
+    if (!scanActiveRef.current) {
+      void mdnsStopDiscover()
+    }
+  }, [])
+
+  const probePeersOnline = useCallback(() => {
+    if (!serverRunning || needsInit) return
+    // Don't probe if user is actively scanning — would interfere
+    if (scanActiveRef.current) return
+
+    // Clean up any previous probe first
+    stopProbe()
+
+    const unlistenEvent = onMdnsDeviceFound((device) => {
+      const ep = `${device.host}:${device.port}`
+      setOnlinePeerEndpoints((prev) => {
+        if (prev.has(ep)) return prev
+        const next = new Set(prev)
+        next.add(ep)
+        return next
+      })
+    })
+    probeUnlistenRef.current = unlistenEvent
+
+    void mdnsStartDiscover().catch(() => {})
+    // Stop after 4 seconds — enough to find local devices
+    probeTimerRef.current = setTimeout(() => {
+      probeUnlistenRef.current?.()
+      probeUnlistenRef.current = null
+      probeTimerRef.current = null
+      // Only stop discover if no user scan is active
+      if (!scanActiveRef.current) {
+        void mdnsStopDiscover()
+      }
+    }, 4000)
+  }, [serverRunning, needsInit, stopProbe])
+
+  // Run probe when panel mounts or server starts
+  useEffect(() => {
+    if (serverRunning && !needsInit && (view === 'home' || view === 'peer-detail')) {
+      setOnlinePeerEndpoints(new Set())
+      probePeersOnline()
+    }
+    return () => { stopProbe() }
+  }, [serverRunning, needsInit, view, probePeersOnline, stopProbe])
+
+  function isPeerOnline(peer: SyncTrustedPeer): boolean {
+    if (!peer.peerEndpoint) return false
+    return onlinePeerEndpoints.has(peer.peerEndpoint)
+  }
+
   const startScan = useCallback(() => {
+    // Clean up any previous scan first
+    scanCleanupRef.current?.()
+    scanCleanupRef.current = null
+
+    // Stop any active probe (timer + event listener) so it doesn't interfere
+    stopProbe()
+
+    scanActiveRef.current = true
     setScanning(true)
     setDiscoveredDevices([])
     setSelectedDevice(null)
@@ -107,18 +194,24 @@ export function SyncCenterPanel({
       scanCleanupRef.current = () => {
         unlistenEvent()
         void mdnsStopDiscover()
+        scanActiveRef.current = false
       }
     }, 200)
-  }, [serverRunning, onStartServer, localHostname])
+  }, [serverRunning, onStartServer, localHostname, stopProbe])
 
   function stopScan() {
     scanCleanupRef.current?.()
     scanCleanupRef.current = null
     setScanning(false)
+    scanActiveRef.current = false
   }
 
   useEffect(() => {
-    return () => { scanCleanupRef.current?.(); scanCleanupRef.current = null }
+    return () => {
+      scanCleanupRef.current?.()
+      scanCleanupRef.current = null
+      scanActiveRef.current = false
+    }
   }, [])
 
   async function handleSelectDeviceAndPair(device: DiscoveredDevice) {
@@ -162,11 +255,21 @@ export function SyncCenterPanel({
   // Listen for pair-confirmed event (initiator gets this when receiver accepts)
   useEffect(() => {
     let unlisten: (() => void) | null = null
-    listen<{ peerDeviceId: string; peerDeviceName: string }>('pair-confirmed', () => {
+    listen<{ peerDeviceId: string; peerDeviceName: string }>('pair-confirmed', (event) => {
       setGeneratedPin('')
       setSelectedDevice(null)
-      setView('home')
-      void onRefresh()
+      void onRefresh().then(() => {
+        // Auto-navigate to the newly paired peer's detail view
+        const newPeerId = event.payload.peerDeviceId
+        const newPeerName = event.payload.peerDeviceName
+        if (newPeerId) {
+          setActivePeer({ peerDeviceId: newPeerId, peerDeviceName: newPeerName } as SyncTrustedPeer)
+          setSyncResult('')
+          setView('peer-detail')
+        } else {
+          setView('home')
+        }
+      })
     }).then((fn) => { unlisten = fn })
     return () => { unlisten?.() }
   }, [onRefresh])
@@ -187,8 +290,17 @@ export function SyncCenterPanel({
         peerPort: 9123,
       })
       await onRefresh()
+      // Auto-navigate to the newly paired peer's detail view
+      const newPeerId = incomingPairRequest.peerDeviceId
+      const newPeerName = incomingPairRequest.peerDeviceName
       setIncomingPairRequest(null)
-      setView('home')
+      if (newPeerId) {
+        setActivePeer({ peerDeviceId: newPeerId, peerDeviceName: newPeerName } as SyncTrustedPeer)
+        setSyncResult('')
+        setView('peer-detail')
+      } else {
+        setView('home')
+      }
     } catch (err) {
       setPairingError(String(err))
     } finally {
@@ -284,11 +396,23 @@ export function SyncCenterPanel({
                     className="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-muted/40"
                     onClick={() => { setActivePeer(peer); setSyncResult(''); setView('peer-detail') }}
                   >
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
+                    <div className={cn('flex h-9 w-9 items-center justify-center rounded-lg', isPeerOnline(peer) ? 'bg-emerald-500/10 text-emerald-500' : 'bg-muted text-muted-foreground')}>
                       <Monitor className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">{peer.peerDeviceName ?? t('sync.unknown')}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium">{peer.peerDeviceName ?? t('sync.unknown')}</p>
+                        {isPeerOnline(peer) ? (
+                          <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-500">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            {t('sync.online')}
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            {t('sync.offline')}
+                          </span>
+                        )}
+                      </div>
                       <p className="truncate text-[11px] text-muted-foreground">
                         {peer.peerEndpoint ?? t('sync.noEndpoint')}
                         {' · '}
@@ -317,67 +441,6 @@ export function SyncCenterPanel({
               </details>
             )}
 
-            {/* Sync cursors (collapsed) */}
-            {cursors.length > 0 && (
-              <details className="rounded-xl border">
-                <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-                  {t('sync.syncCursors', { n: cursors.length })}
-                </summary>
-                <div className="space-y-1 border-t px-4 py-2">
-                  {cursors.map((c) => (
-                    <p key={c.peerDeviceId} className="truncate font-mono text-[11px] text-muted-foreground">
-                      {c.peerDeviceId.slice(0, 12)}... · pull:v{c.lastPulledVersion} · push:v{c.lastPushedVersion}
-                    </p>
-                  ))}
-                </div>
-              </details>
-            )}
-
-            {/* Server control (collapsed) */}
-            <details className="rounded-xl border">
-              <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-                {t('sync.serverLabel')} · {serverRunning ? t('sync.running', { port: serverPort }) : t('sync.stopped')}
-              </summary>
-              <div className="flex items-center gap-2 border-t px-4 py-3">
-                <Button
-                  variant="outline" size="sm"
-                  disabled={loading || serverRunning}
-                  onClick={() => void onStartServer(9123)}
-                >
-                  {t('sync.startServer')}
-                </Button>
-                <span className="text-xs text-muted-foreground">{t('sync.port')}</span>
-              </div>
-            </details>
-
-            {/* mDNS Diagnostic */}
-            <details className="rounded-xl border">
-              <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-                mDNS Diagnostic
-              </summary>
-              <div className="border-t px-4 py-3">
-                <Button
-                  variant="outline" size="sm"
-                  onClick={async () => {
-                    setDiagLog(['Running diagnosis...'])
-                    try {
-                      const { invoke } = await import('@tauri-apps/api/core')
-                      const result = await invoke<string[]>('mdns_diagnose')
-                      setDiagLog(result)
-                    } catch (err) {
-                      setDiagLog([`Error: ${err}`])
-                    }
-                  }}
-                >
-                  Run Diagnostic
-                </Button>
-                {diagLog.length > 0 && (
-                  <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-black/80 p-3 font-mono text-[11px] leading-relaxed text-green-400">
-                    {diagLog.join('\n')}
-                  </pre>
-                )}
-              </div>
-            </details>
           </>
         )}
       </div>
@@ -581,6 +644,7 @@ export function SyncCenterPanel({
   // ── Peer detail view (push / pull / remove) ──────────────────────────────
   if (view === 'peer-detail' && activePeer) {
     const peer = trustedPeers.find((p) => p.peerDeviceId === activePeer.peerDeviceId) ?? activePeer
+    const peerOnline = isPeerOnline(peer)
     return (
       <div className="mx-auto max-w-md space-y-6 p-6 pt-8">
         {/* Back button */}
@@ -595,11 +659,23 @@ export function SyncCenterPanel({
 
         {/* Peer info card */}
         <div className="flex items-center gap-3 rounded-xl border bg-muted/30 p-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
+          <div className={cn('flex h-12 w-12 items-center justify-center rounded-lg', peerOnline ? 'bg-emerald-500/10 text-emerald-500' : 'bg-muted text-muted-foreground')}>
             <Monitor className="h-6 w-6" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="font-medium">{peer.peerDeviceName ?? t('sync.unknown')}</p>
+            <div className="flex items-center gap-2">
+              <p className="font-medium">{peer.peerDeviceName ?? t('sync.unknown')}</p>
+              {peerOnline ? (
+                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-500">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  {t('sync.online')}
+                </span>
+              ) : (
+                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+                  {t('sync.offline')}
+                </span>
+              )}
+            </div>
             <p className="truncate text-xs text-muted-foreground">
               {peer.peerEndpoint ?? t('sync.noEndpoint')}
             </p>
@@ -609,46 +685,73 @@ export function SyncCenterPanel({
           </div>
         </div>
 
-        {/* Pull / Push buttons */}
-        <div className="space-y-3">
-          <Button
-            className="w-full gap-2"
-            variant="outline"
-            size="lg"
-            disabled={loading || !peer.peerEndpoint}
-            onClick={async () => {
-              setSyncResult('')
-              try {
-                await onPullFromPeer(peer.peerDeviceId)
-                setSyncResult(t('sync.pullSuccess'))
-              } catch (err) {
-                setSyncResult(String(err))
-              }
-            }}
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
-            {t('sync.pullFromPeer')}
-          </Button>
+        {!peerOnline && (
+          <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 px-4 py-3">
+            <Radio className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t('sync.peerOfflineHint')}
+            </p>
+          </div>
+        )}
 
-          <Button
-            className="w-full gap-2"
-            variant="outline"
-            size="lg"
-            disabled={loading || !peer.peerEndpoint}
-            onClick={async () => {
-              setSyncResult('')
-              try {
-                await onPushToPeer(peer.peerDeviceId)
-                setSyncResult(t('sync.pushSuccess'))
-              } catch (err) {
-                setSyncResult(String(err))
-              }
-            }}
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUpFromLine className="h-4 w-4" />}
-            {t('sync.pushToPeer')}
-          </Button>
+        {/* Data type selection */}
+        <div className="space-y-2">
+          <span className="text-sm font-medium">{t('sync.dataToSync')}</span>
+          <div className="grid grid-cols-3 gap-2">
+            {SYNC_DATA_ITEMS.map((item) => {
+              const Icon = item.icon
+              const checked = syncDataOpts[item.key as keyof typeof syncDataOpts]
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setSyncDataOpts(prev => ({ ...prev, [item.key]: !prev[item.key as keyof typeof prev] }))}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg border p-2.5 text-left transition-all',
+                    checked
+                      ? 'border-primary/40 bg-primary/5'
+                      : 'border-transparent bg-muted/30 text-muted-foreground hover:bg-muted/50',
+                    loading && 'opacity-50 pointer-events-none',
+                  )}
+                >
+                  <Icon className={cn('h-4 w-4 shrink-0', checked ? 'text-primary' : 'text-muted-foreground')} />
+                  <span className="flex-1 text-xs font-medium">{t(item.label)}</span>
+                  <div className={cn(
+                    'h-3.5 w-3.5 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors',
+                    checked ? 'border-primary bg-primary' : 'border-muted-foreground/30',
+                  )}>
+                    {checked && <Check className="h-2 w-2 text-white" />}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+          {syncDataOpts.includeVault && (
+            <p className="text-[11px] text-amber-500">
+              {t('sync.vaultSyncHint')}
+            </p>
+          )}
         </div>
+
+        {/* Sync (push) button */}
+        <Button
+          className="w-full gap-2"
+          size="lg"
+          disabled={loading || !peer.peerEndpoint || !anySyncDataSelected}
+          onClick={async () => {
+            setSyncResult('')
+            try {
+              await onPushToPeer(peer.peerDeviceId, syncDataOpts)
+              setSyncResult(t('sync.syncSuccess'))
+            } catch (err) {
+              setSyncResult(String(err))
+            }
+          }}
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUpFromLine className="h-4 w-4" />}
+          {t('sync.syncToPeer')}
+        </Button>
 
         {/* Sync result feedback */}
         {syncResult && (
@@ -657,6 +760,9 @@ export function SyncCenterPanel({
 
         {!peer.peerEndpoint && (
           <p className="text-center text-xs text-muted-foreground">{t('sync.noEndpointHint')}</p>
+        )}
+        {peer.peerEndpoint && !peerOnline && (
+          <p className="text-center text-xs text-muted-foreground">{t('sync.peerOfflineHint')}</p>
         )}
 
         {/* Remove peer */}

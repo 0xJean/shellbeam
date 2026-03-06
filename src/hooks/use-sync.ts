@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import {
   syncGetBootstrap,
   syncInitLocalDevice,
@@ -21,9 +22,10 @@ import {
   type SyncDeviceIdentity,
   type SyncPairingSession,
   type SyncTrustedPeer,
+  type SyncDataOptions,
 } from '@/lib/sync'
 
-export function useSync(setOutput: (msg: string) => void) {
+export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () => void) {
   const [bootstrap, setBootstrap] = useState<SyncBootstrapResponse | null>(null)
   const [localDevice, setLocalDevice] = useState<SyncDeviceIdentity | null>(null)
   const [changes, setChanges] = useState<SyncChangeRecord[]>([])
@@ -35,6 +37,8 @@ export function useSync(setOutput: (msg: string) => void) {
   const [serverPort, setServerPort] = useState(0)
 
   const pendingRefreshRef = useRef<Promise<void> | null>(null)
+  const onSyncCompleteRef = useRef(onSyncComplete)
+  onSyncCompleteRef.current = onSyncComplete
 
   const fetchAll = useCallback(async () => {
     const [bs, ch, cu, tp, ps, [sr, sp]] = await Promise.all([
@@ -60,6 +64,15 @@ export function useSync(setOutput: (msg: string) => void) {
     const p = fetchAll().finally(() => { pendingRefreshRef.current = null })
     pendingRefreshRef.current = p
   }
+
+  // Listen for push_full_backup received from a peer — refresh local data
+  useEffect(() => {
+    const unlisten = listen('sync-data-changed', () => {
+      onSyncCompleteRef.current?.()
+      backgroundRefresh()
+    })
+    return () => { void unlisten.then((fn) => fn()) }
+  }, [])
 
   async function refresh() {
     setLoading(true)
@@ -157,15 +170,16 @@ export function useSync(setOutput: (msg: string) => void) {
     }
   }
 
-  async function handlePullFromPeer(peerDeviceId: string) {
+  async function handlePullFromPeer(peerDeviceId: string, options?: SyncDataOptions) {
     setLoading(true)
     try {
-      const result = await syncPullFromPeer(peerDeviceId)
+      const result = await syncPullFromPeer(peerDeviceId, options)
       const parts: string[] = []
       if (result.hostsRestored) parts.push(`${result.hostsRestored} hosts`)
       if (result.snippetsRestored) parts.push(`${result.snippetsRestored} snippets`)
       if (result.vaultRestored) parts.push('vault/keychain')
       setOutput(`Sync pull complete: ${parts.join(', ') || 'no data'}`)
+      onSyncComplete?.()
     } catch (error) {
       setOutput(String(error))
     } finally {
@@ -174,10 +188,10 @@ export function useSync(setOutput: (msg: string) => void) {
     backgroundRefresh()
   }
 
-  async function handlePushToPeer(peerDeviceId: string) {
+  async function handlePushToPeer(peerDeviceId: string, options?: SyncDataOptions) {
     setLoading(true)
     try {
-      const result = await syncPushToPeer(peerDeviceId)
+      const result = await syncPushToPeer(peerDeviceId, options)
       const parts: string[] = []
       if (result.hostsPushed) parts.push(`${result.hostsPushed} hosts`)
       if (result.snippetsPushed) parts.push(`${result.snippetsPushed} snippets`)

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Sparkles } from 'lucide-react'
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Sparkles, ChevronUp, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface MobileTerminalToolbarProps {
@@ -40,6 +40,17 @@ const CTRL_SHORTCUTS = [
   { label: 'E', hint: 'Line end', code: '\x05' },
   { label: 'R', hint: 'History', code: '\x12' },
   { label: 'W', hint: 'Del word', code: '\x17' },
+  { label: 'U', hint: 'Del line', code: '\x15' },
+  { label: 'K', hint: 'Kill', code: '\x0b' },
+  { label: 'P', hint: 'Prev cmd', code: '\x10' },
+  { label: 'N', hint: 'Next cmd', code: '\x0e' },
+]
+
+const SYMBOL_KEYS = [
+  '|', '/', '\\', '~', '-', '_', '.', '*',
+  '$', '#', '@', '!', '&', ';', ':', '=',
+  '+', '%', '^', '`', '"', "'", ',', '?',
+  '<', '>', '(', ')', '[', ']', '{', '}',
 ]
 
 function applyModifier(seq: string, mod: Set<Modifier>): string {
@@ -56,7 +67,7 @@ function applyModifier(seq: string, mod: Set<Modifier>): string {
 export function MobileTerminalToolbar({ onSend, onToggleAI, showAI }: MobileTerminalToolbarProps) {
   const [activeModifiers, setActiveModifiers] = useState<Set<Modifier>>(new Set())
   const [lockedModifiers, setLockedModifiers] = useState<Set<Modifier>>(new Set())
-  const [extraPanel, setExtraPanel] = useState<'none' | 'fkeys' | 'ctrl'>('none')
+  const [extraPanel, setExtraPanel] = useState<'none' | 'fkeys' | 'ctrl' | 'symbols'>('none')
   const lastModTap = useRef<Record<string, number>>({})
 
   const toggleModifier = useCallback((mod: Modifier) => {
@@ -81,15 +92,14 @@ export function MobileTerminalToolbar({ onSend, onToggleAI, showAI }: MobileTerm
     }
   }, [])
 
-  const allActiveModifiers = new Set([...activeModifiers, ...lockedModifiers])
-
   const send = useCallback(
     (seq: string) => {
-      const data = applyModifier(seq, allActiveModifiers)
+      const combined = new Set([...activeModifiers, ...lockedModifiers])
+      const data = applyModifier(seq, combined)
       onSend(data)
       if (activeModifiers.size > 0) setActiveModifiers(new Set())
     },
-    [onSend, allActiveModifiers, activeModifiers],
+    [onSend, activeModifiers, lockedModifiers],
   )
 
   const isModActive = (mod: Modifier) => activeModifiers.has(mod) || lockedModifiers.has(mod)
@@ -127,10 +137,23 @@ export function MobileTerminalToolbar({ onSend, onToggleAI, showAI }: MobileTerm
     </button>
   )
 
+  const panelToggle = (panel: 'fkeys' | 'ctrl' | 'symbols', label: React.ReactNode) => (
+    <button type="button"
+      onClick={() => setExtraPanel((v) => v === panel ? 'none' : panel)}
+      className={cn(
+        'flex h-7 items-center justify-center rounded px-1.5 text-[10px] font-bold transition-colors',
+        extraPanel === panel ? 'bg-primary/20 text-primary' : 'bg-muted/80 text-muted-foreground active:bg-muted',
+      )}
+    >
+      {label}
+    </button>
+  )
+
   const sep = <div className="mx-px h-4 w-px shrink-0 bg-border/40" />
 
   return (
     <div className="flex flex-col border-t border-border/50 bg-background/95 backdrop-blur-sm md:hidden">
+      {/* Expandable panels */}
       {extraPanel === 'fkeys' && (
         <div className="flex gap-1.5 overflow-x-auto px-2 py-1.5 scrollbar-none">
           {SPECIAL_KEYS.map((k) => (
@@ -158,12 +181,65 @@ export function MobileTerminalToolbar({ onSend, onToggleAI, showAI }: MobileTerm
         </div>
       )}
 
-      <div className="flex items-center gap-0.5 px-1.5 py-1">
+      {extraPanel === 'symbols' && (
+        <div className="grid grid-cols-8 gap-1 px-2 py-1.5">
+          {SYMBOL_KEYS.map((ch) => (
+            <button key={ch} type="button"
+              onTouchStart={(e) => { e.preventDefault(); send(ch) }}
+              onMouseDown={(e) => { e.preventDefault(); send(ch) }}
+              className="flex h-8 items-center justify-center rounded bg-muted/60 text-[12px] font-medium text-foreground transition-colors active:bg-primary/20"
+            >{ch}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Row 1: Common shell symbols (scrollable) */}
+      <div className="relative">
+        <div className="flex items-center gap-0.5 overflow-x-auto px-1.5 pt-1 scrollbar-none" style={{ WebkitOverflowScrolling: 'touch' }}>
+          {keyBtn('|', '|')}
+          {keyBtn('/', '/')}
+          {keyBtn('\\', '\\')}
+          {keyBtn('~', '~')}
+          {keyBtn('-', '-')}
+          {keyBtn('$', '$')}
+          {keyBtn('#', '#')}
+          {keyBtn('@', '@')}
+          {keyBtn('&', '&')}
+          {keyBtn(';', ';')}
+          {keyBtn('=', '=')}
+          {keyBtn('.', '.')}
+          {keyBtn('*', '*')}
+          {keyBtn('"', '"')}
+          {keyBtn("'", "'")}
+          {keyBtn('`', '`')}
+          {keyBtn('!', '!')}
+          {keyBtn('(', '(')}
+          {keyBtn(')', ')')}
+          {keyBtn('[', '[')}
+          {keyBtn(']', ']')}
+          {keyBtn('{', '{')}
+          {keyBtn('}', '}')}
+          {keyBtn('<', '<')}
+          {keyBtn('>', '>')}
+          {keyBtn('%', '%')}
+          {keyBtn('+', '+')}
+          {keyBtn('_', '_')}
+          {keyBtn('?', '?')}
+          {keyBtn(',', ',')}
+          {keyBtn(':', ':')}
+          {keyBtn('^', '^')}
+          <div className="w-1 shrink-0" />
+        </div>
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-background/95 to-transparent" />
+      </div>
+
+      {/* Row 2: Modifier keys, arrows, ESC, TAB + panel toggles */}
+      <div className="flex items-center gap-0.5 px-1.5 pb-1 pt-0.5">
         <div className="relative min-w-0 flex-1">
           <div className="flex items-center gap-0.5 overflow-x-auto scrollbar-none" style={{ WebkitOverflowScrolling: 'touch' }}>
             {keyBtn('ESC', '\x1b')}
             {keyBtn('TAB', '\t')}
-            {modBtn('ctrl', 'CTRL')}
+            {modBtn('ctrl', 'CTL')}
             {modBtn('alt', 'ALT')}
             {sep}
             {keyBtn(<ArrowLeft className="h-3 w-3" />, '\x1b[D')}
@@ -171,12 +247,9 @@ export function MobileTerminalToolbar({ onSend, onToggleAI, showAI }: MobileTerm
             {keyBtn(<ArrowDown className="h-3 w-3" />, '\x1b[B')}
             {keyBtn(<ArrowRight className="h-3 w-3" />, '\x1b[C')}
             {sep}
-            {keyBtn('|', '|')}
-            {keyBtn('/', '/')}
-            {keyBtn('\\', '\\')}
-            {keyBtn('~', '~')}
-            {keyBtn('-', '-')}
-            {keyBtn('_', '_')}
+            {keyBtn('HOME', '\x1b[H')}
+            {keyBtn('END', '\x1b[F')}
+            {keyBtn('DEL', '\x1b[3~')}
             <div className="w-1 shrink-0" />
           </div>
           <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-background/95 to-transparent" />
@@ -197,20 +270,11 @@ export function MobileTerminalToolbar({ onSend, onToggleAI, showAI }: MobileTerm
               <Sparkles className={cn('h-3 w-3', showAI && 'animate-pulse')} />
             </button>
           )}
-          <button type="button"
-            onClick={() => setExtraPanel((v) => v === 'ctrl' ? 'none' : 'ctrl')}
-            className={cn(
-              'flex h-7 items-center justify-center rounded px-1 text-[10px] font-bold transition-colors',
-              extraPanel === 'ctrl' ? 'bg-primary/20 text-primary' : 'bg-muted/80 text-muted-foreground active:bg-muted',
-            )}
-          >^·</button>
-          <button type="button"
-            onClick={() => setExtraPanel((v) => v === 'fkeys' ? 'none' : 'fkeys')}
-            className={cn(
-              'flex h-7 items-center justify-center rounded px-1 text-[10px] font-medium transition-colors',
-              extraPanel === 'fkeys' ? 'bg-primary/20 text-primary' : 'bg-muted/80 text-muted-foreground active:bg-muted',
-            )}
-          >Fn</button>
+          {panelToggle('ctrl', '^·')}
+          {panelToggle('symbols', extraPanel === 'symbols'
+            ? <ChevronDown className="h-3 w-3" />
+            : <ChevronUp className="h-3 w-3" />)}
+          {panelToggle('fkeys', 'Fn')}
         </div>
       </div>
     </div>

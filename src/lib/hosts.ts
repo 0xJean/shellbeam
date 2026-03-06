@@ -70,6 +70,13 @@ export function validateHostDraft(draft: HostProfileDraft): HostValidationResult
     errors.push('Port must be an integer between 1 and 65535')
   }
 
+  if (normalized.authType === 'password' && !normalized.passwordKeyRef) {
+    errors.push('Password or vault key reference is required')
+  }
+  if (normalized.authType === 'privateKey' && !normalized.privateKeyRef) {
+    errors.push('Private key or vault key reference is required')
+  }
+
   return {
     isValid: errors.length === 0,
     errors,

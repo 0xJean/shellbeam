@@ -26,10 +26,11 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>ShellBeam needs local network access to discover and sync with other devices.</string>
+	<string>ShellBeam needs local network access to connect to the development server and to discover and sync with other devices.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_shellbeam._tcp</string>
+		<string>_http._tcp</string>
 	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>

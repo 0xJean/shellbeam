@@ -8,6 +8,8 @@
   :root {
     --background: 240 20% 98%;
     --foreground: 222.2 47.4% 11.2%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 47.4% 11.2%;
     --card: 0 0% 100%;
     --card-foreground: 222.2 47.4% 11.2%;
     --secondary: 210 40% 96%;
@@ -26,6 +28,8 @@
   .dark {
     --background: 224 31% 5%;
     --foreground: 210 40% 98%;
+    --popover: 222 28% 10%;
+    --popover-foreground: 210 40% 98%;
     --card: 222 28% 10%;
     --card-foreground: 210 40% 98%;
     --secondary: 217 33% 17%;
@@ -48,7 +52,7 @@
   html,
   body,
   #root {
-    height: 100dvh;
+    height: var(--app-height, 100dvh);
     overflow: hidden;
   }
 

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useT } from '@/lib/i18n'
 import { useApp } from '@/contexts/app-context'
 import { useVault } from '@/contexts/vault-context'
@@ -10,7 +10,7 @@ import { PcSessionTabBar } from '@/components/pc-tab-bar'
 import { PcNavSidebar, MobileBottomNav } from '@/components/pc-nav-sidebar'
 import { SessionTerminalView } from '@/components/session-terminal-view'
 import { HostsDashboard } from '@/components/hosts-dashboard'
-import { VaultsDashboardPanel, type VaultTab } from '@/components/vaults-dashboard-panel'
+import { KeychainTab } from '@/components/keychain-tab'
 import { SnippetPanel } from '@/components/snippet-panel'
 import { PortForwardPanel } from '@/components/port-forward-panel'
 import { KnownHostsPanel } from '@/components/known-hosts-panel'
@@ -21,6 +21,7 @@ import { SettingsPanel } from '@/components/settings-panel'
 import { ActivityLogPanel } from '@/components/activity-log-panel'
 import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
 import { TerminalRightSidebar } from '@/components/terminal-right-sidebar'
+import { MobileSessionHeader } from '@/components/mobile-session-header'
 import { cn } from '@/lib/utils'
 
 export function PcLayout() {
@@ -30,12 +31,36 @@ export function PcLayout() {
   const hostsCtx = useHosts()
   const sessions = useSessions()
   const snippets = useSnippets(vault.activeVaultId, app.setOutput)
-  const sync = useSync(app.setOutput)
+  const sync = useSync(app.setOutput, () => {
+    void hostsCtx.refreshHosts()
+    void snippets.refresh()
+    void vault.refreshVault()
+  })
 
-  const [, setVaultActiveTab] = useState<VaultTab>('hosts')
+  const [, setVaultActiveTab] = useState<string>('hosts')
+  const [mobileActiveSessionId, setMobileActiveSessionId] = useState<string | null>(null)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(() => {
     try { return localStorage.getItem('shellbeam.rightSidebar') === 'true' } catch { return false }
   })
+
+  // Auto-switch to terminal tab on mobile when a new session is created
+  const prevTabCountRef = useRef(sessions.pcSessionTabs.length)
+  useEffect(() => {
+    const newCount = sessions.pcSessionTabs.length
+    if (newCount > prevTabCountRef.current) {
+      // A new session was added — switch mobile to terminal tab and select it
+      const newest = sessions.pcSessionTabs[sessions.pcSessionTabs.length - 1]
+      if (newest) {
+        setMobileActiveSessionId(newest.sessionId)
+        app.setPcSidebarNav('terminal')
+      }
+    }
+    // If the active mobile session was closed, pick another
+    if (mobileActiveSessionId && !sessions.pcSessionTabs.find((t) => t.sessionId === mobileActiveSessionId)) {
+      setMobileActiveSessionId(sessions.pcSessionTabs[0]?.sessionId ?? null)
+    }
+    prevTabCountRef.current = newCount
+  }, [sessions.pcSessionTabs, mobileActiveSessionId, app])
 
   const toggleRightSidebar = useCallback(() => {
     setRightSidebarOpen((v) => {
@@ -50,6 +75,19 @@ export function PcLayout() {
     app.setPcSidebarNav('hosts')
     setVaultActiveTab('hosts')
     hostsCtx.setPcOpenAddHost(true)
+  }
+
+  const handleMobileNewConnection = () => {
+    app.setPcSidebarNav('hosts')
+    hostsCtx.setPcOpenAddHost(true)
+  }
+
+  const handleMobileCloseSession = (sessionId: string) => {
+    sessions.handleCloseSessionTab(sessionId)
+    if (mobileActiveSessionId === sessionId) {
+      const remaining = sessions.pcSessionTabs.filter((t) => t.sessionId !== sessionId)
+      setMobileActiveSessionId(remaining[0]?.sessionId ?? null)
+    }
   }
 
   const isSplit = !!sessions.rightPaneSessionId
@@ -87,9 +125,9 @@ export function PcLayout() {
         />
       </div>
       <div className="relative min-h-0 flex-1">
-        {/* Terminal layer - all sessions stay mounted, only active is visible */}
+        {/* PC Terminal layer - all sessions stay mounted, only active is visible (hidden on mobile) */}
         {sessions.pcSessionTabs.length > 0 && (
-          <div className={cn('absolute inset-0 flex', sessions.pcActiveSessionId ? 'z-10' : 'pointer-events-none invisible')}>
+          <div className={cn('absolute inset-0 hidden md:flex', sessions.pcActiveSessionId ? 'z-10' : 'pointer-events-none invisible')}>
             <div className="relative min-w-0 flex-1">
               {sessions.pcSessionTabs.map((tab) => {
                 const isActive = tab.sessionId === sessions.pcActiveSessionId
@@ -152,11 +190,49 @@ export function PcLayout() {
             )}
           </div>
         )}
-        {/* Dashboard layer */}
-        {!sessions.pcActiveSessionId && (
-          <div className="flex h-full">
+
+        {/* Mobile Terminal layer - shown when nav is 'terminal' on small screens */}
+        <div className={cn('absolute inset-0 flex flex-col md:hidden', app.pcSidebarNav === 'terminal' ? 'z-10' : 'pointer-events-none invisible')}>
+          <MobileSessionHeader
+            sessionTabs={sessions.pcSessionTabs}
+            activeSessionId={mobileActiveSessionId}
+            onSelectSession={setMobileActiveSessionId}
+            onCloseSession={handleMobileCloseSession}
+            onNewConnection={handleMobileNewConnection}
+            onOpenLocalTerminal={() => sessions.handleOpenLocalTerminal()}
+          />
+          {sessions.pcSessionTabs.length > 0 && (
+            <div className="relative min-h-0 flex-1">
+              {sessions.pcSessionTabs.map((tab) => {
+                const isActive = tab.sessionId === mobileActiveSessionId
+                return (
+                  <div
+                    key={tab.sessionId}
+                    className={cn('absolute inset-0', !isActive && 'pointer-events-none invisible')}
+                  >
+                    <SessionTerminalView
+                      sessionId={tab.sessionId}
+                      session={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId) ?? null}
+                      hostName={tab.hostName}
+                      hostAddress={tab.hostAddress}
+                      chunkEmitterRef={sessions.pcChunkEmitterRef}
+                      onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
+                      terminalPrefs={app.terminalPrefs}
+                      isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
+                      onReconnect={() => sessions.manualReconnect(tab.sessionId)}
+                      visible={isActive && app.pcSidebarNav === 'terminal'}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Dashboard layer — PC: when no active session; Mobile: when nav is not 'terminal' */}
+          <div className={cn('flex h-full', sessions.pcActiveSessionId && 'hidden md:flex', app.pcSidebarNav === 'terminal' && 'hidden md:flex')}>
             <PcNavSidebar activeNav={app.pcSidebarNav} onNavChange={app.setPcSidebarNav} />
-            <div className="mobile-safe-pb relative min-h-0 min-w-0 flex-1 overflow-auto">
+            <div className="mobile-safe-pb relative min-h-0 min-w-0 flex-1 overflow-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
               {app.pcSidebarNav === 'hosts' && (
                 <HostsDashboard
                   hosts={hostsCtx.hosts}
@@ -166,6 +242,7 @@ export function PcLayout() {
                   onSelectHost={hostsCtx.setSelectedHostId}
                   onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
                   onCreateHost={hostsCtx.handleCreateHost}
+                  onUpdateHost={hostsCtx.handleUpdateHost}
                   onDeleteHost={hostsCtx.handleDeleteHost}
                   openAddForm={hostsCtx.pcOpenAddHost}
                   onAddFormClose={() => hostsCtx.setPcOpenAddHost(false)}
@@ -180,88 +257,67 @@ export function PcLayout() {
                 />
               )}
               {app.pcSidebarNav === 'keychain' && (
-                <VaultsDashboardPanel
-                  activeVaultId={vault.activeVaultId}
-                  vaults={vault.vaults}
-                  vaultStatusState={vault.vaultStatusState}
+                <KeychainTab
                   vaultKeys={vault.vaultKeys}
+                  vaultUnlocked={vault.vaultStatusState?.unlocked ?? false}
                   vaultBusy={vault.vaultBusy}
-                  autoLockMinutes={vault.vaultAutoLockMinutes}
-                  lastActivityAt={vault.vaultLastActivityAt}
-                  securityEvents={vault.securityEvents}
-                  onSwitchVault={vault.setActiveVaultId}
-                  onInitialize={vault.handleInitialize}
-                  onUnlock={vault.handleUnlock}
-                  onLock={vault.handleLock}
-                  onAutoLockMinutesChange={vault.handleAutoLockMinutesChange}
+                  activeVaultId={vault.activeVaultId}
                   onRefresh={vault.refreshVault}
-                  onRefreshVaults={vault.refreshVaults}
-                  onSaveSecret={vault.handleSaveSecret}
-                  onLoadSecret={vault.handleLoadSecret}
                   onDeleteSecret={vault.handleDeleteSecret}
-                  onClearSecurityEvents={vault.handleClearSecurityEvents}
                   onOutput={app.setOutput}
                   onError={app.setOutput}
-                  activeTab="keychain"
-                  onTabChange={() => {}}
                 />
               )}
               {app.pcSidebarNav === 'snippets' && (
-                <div className="absolute inset-0 p-4">
-                  <SnippetPanel
-                    snippets={snippets.snippets}
-                    selectedSnippetId={snippets.selectedSnippetId}
-                    saving={snippets.saving}
-                    running={snippets.running}
-                    onSelectSnippet={snippets.setSelectedSnippetId}
-                    onCreateSnippet={snippets.handleCreate}
-                    onUpdateSnippet={snippets.handleUpdate}
-                    onDeleteSnippet={snippets.handleDelete}
-                    onApplySnippetCommand={(cmd) => {
-                      const sid = sessions.pcActiveSessionId
-                      if (sid) {
-                        sessions.sendRaw(sid, cmd + '\n')
-                        app.setOutput(t('terminal.snippetPasted'))
-                      } else {
-                        app.setCommand(cmd)
-                        app.setOutput(t('terminal.snippetCopied'))
-                      }
-                    }}
-                    onRunSnippet={async (id) => {
-                      const snippet = snippets.snippets.find((s) => s.id === id)
-                      if (!snippet) return
-                      const sid = sessions.pcActiveSessionId
-                      if (sid) {
-                        sessions.sendRaw(sid, snippet.command + '\n')
-                        app.setOutput(t('terminal.runningSnippet', { name: snippet.name }))
-                      }
-                    }}
-                  />
-                </div>
+                <SnippetPanel
+                  snippets={snippets.snippets}
+                  selectedSnippetId={snippets.selectedSnippetId}
+                  saving={snippets.saving}
+                  running={snippets.running}
+                  onSelectSnippet={snippets.setSelectedSnippetId}
+                  onCreateSnippet={snippets.handleCreate}
+                  onUpdateSnippet={snippets.handleUpdate}
+                  onDeleteSnippet={snippets.handleDelete}
+                  onApplySnippetCommand={(cmd) => {
+                    const sid = sessions.pcActiveSessionId
+                    if (sid) {
+                      sessions.sendRaw(sid, cmd + '\n')
+                      app.setOutput(t('terminal.snippetPasted'))
+                    } else {
+                      app.setCommand(cmd)
+                      app.setOutput(t('terminal.snippetCopied'))
+                    }
+                  }}
+                  onRunSnippet={async (id) => {
+                    const snippet = snippets.snippets.find((s) => s.id === id)
+                    if (!snippet) return
+                    const sid = sessions.pcActiveSessionId
+                    if (sid) {
+                      sessions.sendRaw(sid, snippet.command + '\n')
+                      app.setOutput(t('terminal.runningSnippet', { name: snippet.name }))
+                    }
+                  }}
+                />
               )}
               {app.pcSidebarNav === 'port-forwarding' && (
-                <div className="p-6">
-                  <PortForwardPanel
-                    hosts={hostsCtx.hosts}
-                    vaultId={vault.activeVaultId}
-                    onOutput={app.setOutput}
-                    onError={app.setOutput}
-                    resolvePrivateKey={async (hostId) => {
-                      const host = hostsCtx.hosts.find((h) => h.id === hostId)
-                      if (!host || host.authType !== 'privateKey') return undefined
-                      try {
-                        return await vault.resolveAuthSecret({
-                          authType: 'privateKey', explicitSecret: '', hostForRef: host, inputMode: 'vault',
-                        })
-                      } catch { return undefined }
-                    }}
-                  />
-                </div>
+                <PortForwardPanel
+                  hosts={hostsCtx.hosts}
+                  vaultId={vault.activeVaultId}
+                  onOutput={app.setOutput}
+                  onError={app.setOutput}
+                  resolvePrivateKey={async (hostId) => {
+                    const host = hostsCtx.hosts.find((h) => h.id === hostId)
+                    if (!host || host.authType !== 'privateKey') return undefined
+                    try {
+                      return await vault.resolveAuthSecret({
+                        authType: 'privateKey', explicitSecret: '', hostForRef: host, inputMode: 'vault',
+                      })
+                    } catch { return undefined }
+                  }}
+                />
               )}
               {app.pcSidebarNav === 'known-hosts' && (
-                <div className="p-6">
-                  <KnownHostsPanel onOutput={app.setOutput} onError={app.setOutput} />
-                </div>
+                <KnownHostsPanel onOutput={app.setOutput} onError={app.setOutput} />
               )}
               {app.pcSidebarNav === 'sftp' && (
                 <div className="absolute inset-0">
@@ -290,7 +346,6 @@ export function PcLayout() {
                     onRefresh={sync.refresh}
                     onInitDevice={sync.handleInitDevice}
                     onStartServer={sync.handleStartServer}
-                    onPullFromPeer={sync.handlePullFromPeer}
                     onPushToPeer={sync.handlePushToPeer}
                     onRemoveTrustedPeer={sync.handleRemoveTrustedPeer}
                   />
@@ -338,12 +393,14 @@ export function PcLayout() {
               )}
             </div>
           </div>
-        )}
       </div>
       <MobileBottomNav
         activeNav={app.pcSidebarNav}
+        sessionCount={sessions.pcSessionTabs.length}
         onNavChange={(nav) => {
-          sessions.setPcActiveSessionId(null)
+          if (nav !== 'terminal') {
+            sessions.setPcActiveSessionId(null)
+          }
           app.setPcSidebarNav(nav)
         }}
       />

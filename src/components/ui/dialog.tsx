@@ -60,7 +60,7 @@ export function DialogContent({ children, className }: DialogContentProps) {
     <div
       role="document"
       className={cn(
-        'relative z-10 w-full overflow-y-auto pointer-events-auto bg-card',
+        'relative z-10 w-full overflow-y-auto pointer-events-auto bg-card text-card-foreground',
         'h-full md:h-auto md:max-h-[90vh] md:max-w-2xl md:rounded-2xl',
         'max-md:max-h-dvh',
         className

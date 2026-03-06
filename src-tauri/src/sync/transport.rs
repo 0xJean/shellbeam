@@ -6,6 +6,7 @@ use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
 use base64::Engine;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use serde::{Deserialize, Serialize};
+use tauri::{Emitter, Manager};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -191,22 +192,137 @@ fn handle_request(
         }
         "get_full_backup" => {
             // Peer requests our full backup payload (for "pull" sync).
-            // Returns: BackupPayload JSON (hosts, snippets, vault)
-            let payload = crate::data::backup::backup_create_in_memory(app, None, true, true, true, false, false)
+            // Params may include { includeHosts, includeSnippets, includeVault }
+            let inc_hosts = req.params.as_ref().and_then(|p| p.get("includeHosts")).and_then(|v| v.as_bool()).unwrap_or(true);
+            let inc_snippets = req.params.as_ref().and_then(|p| p.get("includeSnippets")).and_then(|v| v.as_bool()).unwrap_or(true);
+            let inc_vault = req.params.as_ref().and_then(|p| p.get("includeVault")).and_then(|v| v.as_bool()).unwrap_or(false);
+
+            let payload = crate::data::backup::backup_create_in_memory(app, None, inc_hosts, inc_snippets, false, false, false)
                 .map_err(|e| format!("create backup: {e}"))?;
-            log::info!("[sync] get_full_backup: serving backup to peer");
-            Ok(serde_json::to_value(payload).map_err(|e| e.to_string())?)
+            let mut result = serde_json::to_value(&payload).map_err(|e| e.to_string())?;
+
+            // If vault secrets requested, export them decrypted
+            if inc_vault {
+                let vault_state: tauri::State<'_, crate::vault::VaultState> = app.state();
+                match crate::vault::vault_export_decrypted_secrets(app, &vault_state, None) {
+                    Ok(secrets) if !secrets.is_empty() => {
+                        result["decryptedSecrets"] = serde_json::to_value(&secrets).map_err(|e| e.to_string())?;
+                        log::info!("[sync] get_full_backup: serving {} secrets + backup to peer", secrets.len());
+                    }
+                    Ok(_) => {
+                        log::info!("[sync] get_full_backup: vault requested but no secrets");
+                    }
+                    Err(e) => {
+                        log::warn!("[sync] get_full_backup: vault export failed ({}), skipping secrets", e);
+                    }
+                }
+            } else {
+                log::info!("[sync] get_full_backup: serving backup to peer (no vault)");
+            }
+            Ok(result)
         }
         "push_full_backup" => {
             // Peer pushes their full backup payload to us (for "push" sync).
-            // Params: BackupPayload JSON
+            // Params: BackupPayload JSON + optional decryptedSecrets
             let params = req.params.ok_or("params required")?;
+            // Extract decrypted secrets before parsing as backup (backup ignores unknown fields)
+            let decrypted_secrets: Option<std::collections::HashMap<String, String>> =
+                params.get("decryptedSecrets").and_then(|v| serde_json::from_value(v.clone()).ok());
             let backup: crate::data::backup::BackupPayload = serde_json::from_value(params)
                 .map_err(|e| format!("parse backup payload: {e}"))?;
-            let result = crate::data::backup::backup_restore_in_memory(app, &backup, None, true, true, true, false, false)
+            let result = crate::data::backup::backup_restore_in_memory(app, &backup, None, true, true, false, false, false)
                 .map_err(|e| format!("restore backup: {e}"))?;
+
+            // Import vault secrets if present and our vault is unlocked
+            let mut vault_restored = false;
+            if let Some(secrets) = &decrypted_secrets {
+                if !secrets.is_empty() {
+                    let vault_state: tauri::State<'_, crate::vault::VaultState> = app.state();
+                    match crate::vault::vault_import_decrypted_secrets(app, &vault_state, secrets, None) {
+                        Ok(count) => {
+                            log::info!("[sync] push_full_backup: imported {} vault secrets", count);
+                            vault_restored = true;
+                        }
+                        Err(e) => {
+                            log::warn!("[sync] push_full_backup: vault import failed ({}), skipping", e);
+                        }
+                    }
+                }
+            }
+
             log::info!("[sync] push_full_backup: restored {} hosts, {} snippets, vault={}",
-                result.hosts_restored, result.snippets_restored, result.vault_restored);
+                result.hosts_restored, result.snippets_restored, vault_restored);
+            // Notify frontend to refresh data after receiving a push
+            let _ = app.emit("sync-data-changed", ());
+            Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
+        }
+        "notify_pull" => {
+            // Reverse-push: peer A tells us "I have data for you, pull from me".
+            // Params: { endpoint, device_id, includeHosts, includeSnippets, includeVault }
+            let params = req.params.ok_or("params required")?;
+            let pull_endpoint = params.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let peer_device_id = params.get("device_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let inc_hosts = params.get("includeHosts").and_then(|v| v.as_bool()).unwrap_or(true);
+            let inc_snippets = params.get("includeSnippets").and_then(|v| v.as_bool()).unwrap_or(true);
+            let inc_vault = params.get("includeVault").and_then(|v| v.as_bool()).unwrap_or(false);
+            if pull_endpoint.is_empty() {
+                return Err("endpoint is required".to_string());
+            }
+            log::info!("[sync] notify_pull: peer {} asks us to pull from {} (hosts={}, snippets={}, vault={})",
+                peer_device_id, pull_endpoint, inc_hosts, inc_snippets, inc_vault);
+
+            // Look up encryption key from trusted peers
+            let state = super::load_sync_state_for_transport(app)?;
+            let enc_key = state.trusted_peers.iter()
+                .find(|p| p.peer_device_id == peer_device_id)
+                .and_then(|p| parse_sync_secret(&p.sync_secret));
+
+            // Pull from peer's endpoint with options
+            let data = sync_request_peer_encrypted(
+                &pull_endpoint,
+                "get_full_backup",
+                serde_json::json!({
+                    "includeHosts": inc_hosts,
+                    "includeSnippets": inc_snippets,
+                    "includeVault": inc_vault,
+                }),
+                enc_key.as_ref(),
+            ).map_err(|e| format!("reverse-pull from {pull_endpoint}: {e}"))?;
+
+            // Extract decrypted secrets from raw JSON before parsing as BackupPayload.
+            // We cannot use #[serde(flatten)] because serde silently drops sibling fields.
+            let decrypted_secrets: Option<std::collections::HashMap<String, String>> =
+                data.get("decryptedSecrets").and_then(|v| serde_json::from_value(v.clone()).ok());
+            let backup: crate::data::backup::BackupPayload = serde_json::from_value(data)
+                .map_err(|e| format!("parse reverse-pull response: {e}"))?;
+            let result = crate::data::backup::backup_restore_in_memory(
+                app, &backup, None, inc_hosts, inc_snippets, false, false, false,
+            ).map_err(|e| format!("restore reverse-pull backup: {e}"))?;
+
+            // Import vault secrets if present
+            let mut vault_restored = false;
+            if inc_vault {
+                if let Some(secrets) = &decrypted_secrets {
+                    if !secrets.is_empty() {
+                        let vault_state: tauri::State<'_, crate::vault::VaultState> = app.state();
+                        match crate::vault::vault_import_decrypted_secrets(app, &vault_state, secrets, None) {
+                            Ok(count) => {
+                                log::info!("[sync] notify_pull: imported {} vault secrets", count);
+                                vault_restored = true;
+                            }
+                            Err(e) => {
+                                log::warn!("[sync] notify_pull: vault import failed ({}), skipping", e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            log::info!("[sync] notify_pull: restored {} hosts, {} snippets, vault={}",
+                result.hosts_restored, result.snippets_restored, vault_restored);
+
+            // Notify frontend to refresh
+            let _ = app.emit("sync-data-changed", ());
             Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
         }
         "pair_request" => {

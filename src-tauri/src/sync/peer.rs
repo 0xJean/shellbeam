@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -6,8 +7,22 @@ use super::{
 };
 use crate::error::{standard_error_from_raw, standard_error_payload};
 use crate::storage::now_unix_ms;
+use crate::vault::VaultState;
 
 use super::transport::parse_sync_secret;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDataOptions {
+    #[serde(default = "default_true")]
+    pub include_hosts: bool,
+    #[serde(default = "default_true")]
+    pub include_snippets: bool,
+    #[serde(default)]
+    pub include_vault: bool,
+}
+
+fn default_true() -> bool { true }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +103,8 @@ pub fn mdns_diagnose() -> Vec<String> {
 #[serde(rename_all = "camelCase")]
 pub struct SyncPullRequest {
     peer_device_id: String,
+    #[serde(default)]
+    options: Option<SyncDataOptions>,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,14 +116,17 @@ pub struct SyncPullResult {
 }
 
 /// Pull = request full backup from peer → restore locally.
+/// Optionally includes vault secrets (decrypted by peer, re-encrypted locally).
 #[tauri::command]
 pub async fn sync_pull_from_peer(
     app: tauri::AppHandle,
+    state: tauri::State<'_, VaultState>,
     payload: SyncPullRequest,
 ) -> Result<SyncPullResult, String> {
-    let state =
+    let opts = payload.options.unwrap_or(SyncDataOptions { include_hosts: true, include_snippets: true, include_vault: false });
+    let sync_state =
         load_sync_state(&app).map_err(|err| standard_error_from_raw("sync", "pull", err))?;
-    let peer = state.trusted_peers.iter().find(|p| p.peer_device_id == payload.peer_device_id).ok_or_else(|| {
+    let peer = sync_state.trusted_peers.iter().find(|p| p.peer_device_id == payload.peer_device_id).ok_or_else(|| {
         standard_error_payload("not_found", "sync", false, "Trusted peer not found", None)
     })?;
     let endpoint = peer.peer_endpoint.as_deref().filter(|s| !s.trim().is_empty()).ok_or_else(|| {
@@ -114,47 +134,79 @@ pub async fn sync_pull_from_peer(
     })?.to_string();
     let enc_key = parse_sync_secret(&peer.sync_secret);
 
-    // Fetch full backup from peer in background thread
+    // Build the request with options so the peer knows what to include
+    let req_opts = opts.clone();
+
+    // Fetch backup from peer in background thread
     let ep = endpoint.clone();
     let data = tauri::async_runtime::spawn_blocking(move || {
         super::transport::sync_request_peer_encrypted(
             &ep,
             "get_full_backup",
-            serde_json::json!({}),
+            serde_json::json!({
+                "includeHosts": req_opts.include_hosts,
+                "includeSnippets": req_opts.include_snippets,
+                "includeVault": req_opts.include_vault,
+            }),
             enc_key.as_ref(),
         )
     }).await.map_err(|e| standard_error_from_raw("sync", "pull", format!("{e}")))?
       .map_err(|e| standard_error_from_raw("sync", "pull request", e))?;
 
+    // Extract decrypted secrets from raw JSON before parsing as BackupPayload.
+    // We cannot use #[serde(flatten)] because serde silently drops sibling fields.
+    let decrypted_secrets: Option<HashMap<String, String>> =
+        data.get("decryptedSecrets").and_then(|v| serde_json::from_value(v.clone()).ok());
     let backup: crate::data::backup::BackupPayload = serde_json::from_value(data)
-        .map_err(|e| standard_error_from_raw("sync", "parse pull backup", e.to_string()))?;
+        .map_err(|e| standard_error_from_raw("sync", "parse pull response", e.to_string()))?;
 
-    // Restore the backup locally
-    let result = crate::data::backup::backup_restore_in_memory(&app, &backup, None, true, true, true, false, false)
-        .map_err(|e| standard_error_from_raw("sync", "restore pull backup", e))?;
+    // Restore hosts/snippets (never vault_raw via backup — we handle secrets separately)
+    let result = crate::data::backup::backup_restore_in_memory(
+        &app, &backup, None,
+        opts.include_hosts, opts.include_snippets, false, false, false,
+    ).map_err(|e| standard_error_from_raw("sync", "restore pull backup", e))?;
+
+    // Import vault secrets if included
+    let mut vault_restored = false;
+    if opts.include_vault {
+        if let Some(secrets) = &decrypted_secrets {
+            if !secrets.is_empty() {
+                let count = crate::vault::vault_import_decrypted_secrets(&app, &state, secrets, None)
+                    .map_err(|e| standard_error_from_raw("sync", "import vault secrets", e))?;
+                log::info!("[sync] pull: imported {} vault secrets", count);
+                vault_restored = true;
+            }
+        }
+    }
 
     log::info!("[sync] pull complete: {} hosts, {} snippets, vault={}",
-        result.hosts_restored, result.snippets_restored, result.vault_restored);
+        result.hosts_restored, result.snippets_restored, vault_restored);
 
     // Update last_seen_at
-    let mut state = load_sync_state(&app).map_err(|err| standard_error_from_raw("sync", "pull", err))?;
-    if let Some(p) = state.trusted_peers.iter_mut().find(|p| p.peer_device_id == payload.peer_device_id) {
+    let mut sync_state = load_sync_state(&app).map_err(|err| standard_error_from_raw("sync", "pull", err))?;
+    if let Some(p) = sync_state.trusted_peers.iter_mut().find(|p| p.peer_device_id == payload.peer_device_id) {
         p.last_seen_at = now_unix_ms();
     }
-    state.last_sync_at = Some(now_unix_ms());
-    save_sync_state(&app, &state).map_err(|err| standard_error_from_raw("sync", "pull", err))?;
+    sync_state.last_sync_at = Some(now_unix_ms());
+    save_sync_state(&app, &sync_state).map_err(|err| standard_error_from_raw("sync", "pull", err))?;
 
     Ok(SyncPullResult {
         hosts_restored: result.hosts_restored,
         snippets_restored: result.snippets_restored,
-        vault_restored: result.vault_restored,
+        vault_restored,
     })
 }
+
+// NOTE: SyncFullBackupResponse was removed. The #[serde(flatten)] pattern silently
+// drops sibling fields (decryptedSecrets). All consumers now extract decryptedSecrets
+// manually from the raw JSON value before parsing as BackupPayload.
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncPushRequest {
     peer_device_id: String,
+    #[serde(default)]
+    options: Option<SyncDataOptions>,
 }
 
 #[derive(Debug, Serialize)]
@@ -165,60 +217,156 @@ pub struct SyncPushResult {
     vault_pushed: bool,
 }
 
-/// Push = create in-memory backup → send to peer via push_full_backup.
+/// Push = notify peer to pull from us (reverse-push).
+/// Strategy: send lightweight "notify_pull" to peer with our endpoint + options.
+/// The peer then connects back to us and pulls our full backup.
+/// Fallback: if notify_pull fails, try direct push_full_backup.
 #[tauri::command]
 pub async fn sync_push_to_peer(
     app: tauri::AppHandle,
+    vault_state: tauri::State<'_, VaultState>,
     payload: SyncPushRequest,
 ) -> Result<SyncPushResult, String> {
-    let state =
+    let opts = payload.options.unwrap_or(SyncDataOptions { include_hosts: true, include_snippets: true, include_vault: false });
+    let sync_state =
         load_sync_state(&app).map_err(|err| standard_error_from_raw("sync", "push", err))?;
-    let peer = state.trusted_peers.iter().find(|p| p.peer_device_id == payload.peer_device_id).ok_or_else(|| {
+    let peer = sync_state.trusted_peers.iter().find(|p| p.peer_device_id == payload.peer_device_id).ok_or_else(|| {
         standard_error_payload("not_found", "sync", false, "Trusted peer not found", None)
     })?;
-    let endpoint = peer.peer_endpoint.as_deref().filter(|s| !s.trim().is_empty()).ok_or_else(|| {
+    let peer_endpoint = peer.peer_endpoint.as_deref().filter(|s| !s.trim().is_empty()).ok_or_else(|| {
         standard_error_payload("validation_error", "sync", false, "Peer endpoint not configured", None)
     })?.to_string();
     let enc_key = parse_sync_secret(&peer.sync_secret);
 
-    // Create in-memory backup
-    let backup = crate::data::backup::backup_create_in_memory(&app, None, true, true, true, false, false)
-        .map_err(|e| standard_error_from_raw("sync", "create push backup", e))?;
+    // Create backup with selected data types (never include vault_raw — we handle secrets separately)
+    let backup = crate::data::backup::backup_create_in_memory(
+        &app, None, opts.include_hosts, opts.include_snippets, false, false, false,
+    ).map_err(|e| standard_error_from_raw("sync", "create push backup", e))?;
     let hosts_count = backup.hosts.as_ref().map(|h: &Vec<_>| h.len()).unwrap_or(0);
     let snippets_count = backup.snippets.as_ref().map(|s: &Vec<_>| s.len()).unwrap_or(0);
-    let has_vault = backup.vault_raw.is_some();
 
-    let backup_json = serde_json::to_value(&backup)
+    // Export vault secrets as decrypted if requested and vault is unlocked
+    let decrypted_secrets: Option<HashMap<String, String>> = if opts.include_vault {
+        match crate::vault::vault_export_decrypted_secrets(&app, &vault_state, None) {
+            Ok(secrets) if !secrets.is_empty() => Some(secrets),
+            Ok(_) => None,
+            Err(e) => {
+                return Err(standard_error_from_raw("sync", "export vault secrets", e));
+            }
+        }
+    } else {
+        None
+    };
+    let has_vault = decrypted_secrets.is_some();
+
+    // Build combined payload for direct push
+    let mut push_payload = serde_json::to_value(&backup)
         .map_err(|e| standard_error_from_raw("sync", "serialize push backup", e.to_string()))?;
+    if let Some(ref secrets) = decrypted_secrets {
+        push_payload["decryptedSecrets"] = serde_json::to_value(secrets)
+            .map_err(|e| standard_error_from_raw("sync", "serialize vault secrets", e.to_string()))?;
+    }
 
-    // Send to peer in background thread
-    let ep = endpoint.clone();
+    // Build our own endpoint so the peer knows where to pull from
+    let (server_running, server_port) = super::transport::sync_server_status();
+    let local_device_id = sync_state.local_device.as_ref().map(|d| d.device_id.clone()).unwrap_or_default();
+
+    if server_running && server_port > 0 {
+        let our_host = get_local_ip_for_peer(&peer_endpoint);
+        let our_endpoint = format!("{}:{}", our_host, server_port);
+        log::info!("[sync] push: trying notify_pull → peer={}, our_endpoint={}", peer_endpoint, our_endpoint);
+
+        let ep = peer_endpoint.clone();
+        let ek = enc_key;
+        let oe = our_endpoint.clone();
+        let did = local_device_id.clone();
+        let oo = opts.clone();
+        let notify_result = tauri::async_runtime::spawn_blocking(move || {
+            super::transport::sync_request_peer_encrypted(
+                &ep,
+                "notify_pull",
+                serde_json::json!({
+                    "endpoint": oe,
+                    "device_id": did,
+                    "includeHosts": oo.include_hosts,
+                    "includeSnippets": oo.include_snippets,
+                    "includeVault": oo.include_vault,
+                }),
+                ek.as_ref(),
+            )
+        }).await;
+
+        match notify_result {
+            Ok(Ok(_resp)) => {
+                log::info!("[sync] push (notify_pull) complete: peer will pull {} hosts, {} snippets, vault={}",
+                    hosts_count, snippets_count, has_vault);
+                update_push_last_seen(&app, &payload.peer_device_id)?;
+                return Ok(SyncPushResult { hosts_pushed: hosts_count, snippets_pushed: snippets_count, vault_pushed: has_vault });
+            }
+            Ok(Err(e)) => {
+                log::warn!("[sync] push: notify_pull failed ({}), falling back to direct push", e);
+            }
+            Err(e) => {
+                log::warn!("[sync] push: notify_pull spawn error ({}), falling back to direct push", e);
+            }
+        }
+    } else {
+        log::warn!("[sync] push: local sync server not running, falling back to direct push");
+    }
+
+    // Fallback: direct push_full_backup (includes decrypted secrets in payload)
+    log::info!("[sync] push: fallback direct push to {}", peer_endpoint);
+    let ep = peer_endpoint.clone();
+    let ek = enc_key;
     let _resp = tauri::async_runtime::spawn_blocking(move || {
         super::transport::sync_request_peer_encrypted(
             &ep,
             "push_full_backup",
-            backup_json,
-            enc_key.as_ref(),
+            push_payload,
+            ek.as_ref(),
         )
-    }).await.map_err(|e| standard_error_from_raw("sync", "push", format!("{e}")))?
-      .map_err(|e| standard_error_from_raw("sync", "push request", e))?;
+    }).await.map_err(|e| {
+        log::error!("[sync] push: spawn error: {e}");
+        standard_error_from_raw("sync", "push", format!("{e}"))
+    })?
+      .map_err(|e| {
+        log::error!("[sync] push: direct push error: {e}");
+        standard_error_from_raw("sync", "push request", e)
+    })?;
 
-    log::info!("[sync] push complete: {} hosts, {} snippets, vault={}",
+    log::info!("[sync] push (direct) complete: {} hosts, {} snippets, vault={}",
         hosts_count, snippets_count, has_vault);
+    update_push_last_seen(&app, &payload.peer_device_id)?;
+    Ok(SyncPushResult { hosts_pushed: hosts_count, snippets_pushed: snippets_count, vault_pushed: has_vault })
+}
 
-    // Update last_seen_at
-    let mut state = load_sync_state(&app).map_err(|err| standard_error_from_raw("sync", "push", err))?;
-    if let Some(p) = state.trusted_peers.iter_mut().find(|p| p.peer_device_id == payload.peer_device_id) {
+fn update_push_last_seen(app: &tauri::AppHandle, peer_device_id: &str) -> Result<(), String> {
+    let mut state = load_sync_state(app).map_err(|err| standard_error_from_raw("sync", "push", err))?;
+    if let Some(p) = state.trusted_peers.iter_mut().find(|p| p.peer_device_id == peer_device_id) {
         p.last_seen_at = now_unix_ms();
     }
     state.last_sync_at = Some(now_unix_ms());
-    save_sync_state(&app, &state).map_err(|err| standard_error_from_raw("sync", "push", err))?;
+    save_sync_state(app, &state).map_err(|err| standard_error_from_raw("sync", "push", err))
+}
 
-    Ok(SyncPushResult {
-        hosts_pushed: hosts_count,
-        snippets_pushed: snippets_count,
-        vault_pushed: has_vault,
-    })
+/// Try to determine our LAN IP by looking at the peer's endpoint host.
+/// Simple heuristic: use the system's default route IP.
+fn get_local_ip_for_peer(_peer_endpoint: &str) -> String {
+    // Try to find a non-loopback IPv4 address by briefly connecting a UDP socket
+    // to a public IP (doesn't actually send data, just determines the route).
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        // Connect to a public address to determine local interface
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                let ip = addr.ip().to_string();
+                if ip != "0.0.0.0" && ip != "127.0.0.1" {
+                    return ip;
+                }
+            }
+        }
+    }
+    // Fallback
+    "127.0.0.1".to_string()
 }
 
 /// Send a pair request to a remote device's sync server.

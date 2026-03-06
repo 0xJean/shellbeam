@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { type HostProfile, createHost, deleteHost, listHosts } from '@/lib/hosts'
+import { type HostProfile, type HostProfileDraft, createHost, updateHost, deleteHost, listHosts } from '@/lib/hosts'
 import { testSshConnection } from '@/lib/sessions'
 import { vaultSetSecret } from '@/lib/vault'
 import type { AuthType } from '@/lib/ssh'
@@ -20,6 +20,7 @@ interface HostsContextValue {
   setPcTopBarSearch: (v: string) => void
   refreshHosts: () => Promise<void>
   handleCreateHost: (payload: Parameters<typeof createHost>[0]) => Promise<void>
+  handleUpdateHost: (host: HostProfile, draft: HostProfileDraft) => Promise<void>
   handleDeleteHost: (hostId: string) => Promise<void>
   handleSaveToVault: (key: string, value: string) => Promise<void>
   handleCheckHostStatus: (host: HostProfile) => Promise<'online' | 'offline'>
@@ -94,6 +95,18 @@ export function HostsProvider({ children }: { children: ReactNode }) {
     await refreshHosts()
   }
 
+  async function handleUpdateHost(host: HostProfile, draft: HostProfileDraft) {
+    const updated: HostProfile = {
+      ...host,
+      ...draft,
+      group: draft.group ?? host.group,
+      tags: draft.tags ?? host.tags,
+      updatedAt: Date.now(),
+    }
+    await updateHost(updated, activeVaultId)
+    await refreshHosts()
+  }
+
   async function handleDeleteHost(hostId: string) {
     await deleteHost(hostId, activeVaultId)
     await refreshHosts()
@@ -143,7 +156,7 @@ export function HostsProvider({ children }: { children: ReactNode }) {
       hosts, selectedHostId, setSelectedHostId, selectedHost, loadingHosts,
       defaultUsername, savingHost, testing, pcOpenAddHost, setPcOpenAddHost,
       pcTopBarSearch, setPcTopBarSearch,
-      refreshHosts, handleCreateHost, handleDeleteHost, handleSaveToVault,
+      refreshHosts, handleCreateHost, handleUpdateHost, handleDeleteHost, handleSaveToVault,
       handleCheckHostStatus, handleDefaultUsernameChange,
       keepAliveIntervalSecs, handleKeepAliveIntervalSecsChange,
     }}>

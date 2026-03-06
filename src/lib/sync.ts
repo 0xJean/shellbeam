@@ -221,16 +221,22 @@ export async function syncServerStatus() {
   }
 }
 
+export interface SyncDataOptions {
+  includeHosts?: boolean
+  includeSnippets?: boolean
+  includeVault?: boolean
+}
+
 export interface SyncPullResult {
   hostsRestored: number
   snippetsRestored: number
   vaultRestored: boolean
 }
 
-export async function syncPullFromPeer(peerDeviceId: string) {
+export async function syncPullFromPeer(peerDeviceId: string, options?: SyncDataOptions) {
   try {
     return await invoke<SyncPullResult>('sync_pull_from_peer', {
-      payload: { peerDeviceId },
+      payload: { peerDeviceId, options },
     })
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))
@@ -243,10 +249,10 @@ export interface SyncPushResult {
   vaultPushed: boolean
 }
 
-export async function syncPushToPeer(peerDeviceId: string) {
+export async function syncPushToPeer(peerDeviceId: string, options?: SyncDataOptions) {
   try {
     return await invoke<SyncPushResult>('sync_push_to_peer', {
-      payload: { peerDeviceId },
+      payload: { peerDeviceId, options },
     })
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))

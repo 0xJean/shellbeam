@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
-import { Network, Plus, Trash2, Play, Square } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Network, Plus, Trash2, Play, Square, RefreshCw, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import type { HostProfile } from '@/lib/hosts'
+import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 import {
   addPortForwardRule,
@@ -40,6 +41,8 @@ export function PortForwardPanel({
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+  const [search, setSearch] = useState('')
+  const [filterType, setFilterType] = useState<'all' | 'local' | 'remote'>('all')
   const [draft, setDraft] = useState<PortForwardDraftState>({
     type: 'local',
     bindHost: '127.0.0.1',
@@ -67,6 +70,16 @@ export function PortForwardPanel({
   useEffect(() => {
     void refresh()
   }, [vaultId])
+
+  const filteredRules = useMemo(() => {
+    let result = rules
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      result = result.filter((r) => r.name.toLowerCase().includes(q) || hostName(r.hostId).toLowerCase().includes(q))
+    }
+    if (filterType !== 'all') result = result.filter((r) => r.type === filterType)
+    return result
+  }, [rules, search, filterType])
 
   async function handleAdd() {
     const isDynamic = draft.type === 'dynamic'
@@ -138,31 +151,18 @@ export function PortForwardPanel({
   const hostName = (id: string) => hosts.find((h) => h.id === id)?.name ?? id
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2">
-          <Network className="h-5 w-5" />
-          {t('portForward.title')}
-        </CardTitle>
-        <CardDescription>{t('portForward.desc')}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
-            {t('portForward.refresh')}
-          </Button>
-          <Button size="sm" onClick={() => setShowAdd(!showAdd)}>
-            <Plus className="mr-1 h-4 w-4" />
-            {t('portForward.addRule')}
-          </Button>
-        </div>
-
-        {showAdd && (
-          <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-            <span className="text-sm font-medium">{t('portForward.newRule')}</span>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <div>
-                <span className="text-xs text-muted-foreground">{t('portForward.host')}</span>
+    <div className="flex w-full flex-col">
+      {/* Add Rule Dialog */}
+      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+        <DialogContent className="max-w-lg">
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold">{t('portForward.newRule')}</h3>
+              <p className="text-sm text-muted-foreground">{t('portForward.desc')}</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">{t('portForward.host')}</label>
                 <Select
                   value={draft.hostId ?? ''}
                   onChange={(v) => setDraft((p) => ({ ...p, hostId: v }))}
@@ -173,16 +173,16 @@ export function PortForwardPanel({
                   ]}
                 />
               </div>
-              <div>
-                <span className="text-xs text-muted-foreground">{t('portForward.name')}</span>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">{t('portForward.name')}</label>
                 <Input
                   value={draft.name ?? ''}
                   onChange={(e) => setDraft((p) => ({ ...p, name: e.target.value }))}
                   placeholder={t('portForward.nameExample')}
                 />
               </div>
-              <div>
-                <span className="text-xs text-muted-foreground">{t('portForward.type')}</span>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">{t('portForward.type')}</label>
                 <Select
                   value={draft.type ?? 'local'}
                   onChange={(v) => setDraft((p) => ({ ...p, type: v as PortForwardDraftState['type'] }))}
@@ -193,16 +193,16 @@ export function PortForwardPanel({
                   ]}
                 />
               </div>
-              <div>
-                <span className="text-xs text-muted-foreground">{t('portForward.bindHost')}</span>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">{t('portForward.bindHost')}</label>
                 <Input
                   value={draft.bindHost ?? '127.0.0.1'}
                   onChange={(e) => setDraft((p) => ({ ...p, bindHost: e.target.value }))}
                   placeholder="127.0.0.1"
                 />
               </div>
-              <div>
-                <span className="text-xs text-muted-foreground">{t('portForward.bindPort')}</span>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">{t('portForward.bindPort')}</label>
                 <Input
                   type="number"
                   value={draft.bindPort ?? 8080}
@@ -211,16 +211,16 @@ export function PortForwardPanel({
               </div>
               {draft.type !== 'dynamic' && (
                 <>
-                  <div>
-                    <span className="text-xs text-muted-foreground">{t('portForward.targetHost')}</span>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">{t('portForward.targetHost')}</label>
                     <Input
                       value={draft.targetHost ?? ''}
                       onChange={(e) => setDraft((p) => ({ ...p, targetHost: e.target.value }))}
                       placeholder="127.0.0.1"
                     />
                   </div>
-                  <div>
-                    <span className="text-xs text-muted-foreground">{t('portForward.targetPort')}</span>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">{t('portForward.targetPort')}</label>
                     <Input
                       type="number"
                       value={draft.targetPort ?? 3000}
@@ -234,53 +234,107 @@ export function PortForwardPanel({
               {t('portForward.add')}
             </Button>
           </div>
-        )}
+        </DialogContent>
+      </Dialog>
 
-        <div className="space-y-2">
-          {rules.length === 0 && !loading && (
-            <p className="text-sm text-muted-foreground">{t('portForward.noRules')}</p>
-          )}
-          {rules.map((rule) => (
-            <div
-              key={rule.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded border p-3"
-            >
-              <div className="min-w-0">
-                <p className="font-medium truncate">{rule.name}</p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {rule.type} · {hostName(rule.hostId)} · {rule.bindHost}:{rule.bindPort} → {rule.targetHost}:{rule.targetPort}
+      {/* Title section */}
+      <div className="shrink-0 px-6 py-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">{t('portForward.title')}</h2>
+            <p className="text-sm text-muted-foreground">{t('portForward.desc')}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Toolbar + Content */}
+      <div className="min-h-0 flex-1">
+        <div className="flex min-h-[200px] min-w-0 flex-1 flex-col px-6">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 max-w-xs">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('hosts.search')} className="h-9 pl-9 text-sm" />
+            </div>
+            <div className="flex flex-wrap gap-1 rounded-lg bg-muted/50 p-0.5">
+              {(['all', 'local', 'remote'] as const).map((f) => (
+                <button key={f} type="button" onClick={() => setFilterType(f)} className={cn('rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors sm:px-3', filterType === f ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                  {f === 'all' ? t('hosts.all') : f === 'local' ? t('portForward.localType') : t('portForward.remoteType')}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1" />
+            <Button size="sm" variant="outline" onClick={() => void refresh()} disabled={loading} className="h-9 gap-1.5 text-xs">
+              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              {t('portForward.refresh')}
+            </Button>
+            <Button size="sm" onClick={() => setShowAdd(true)} className="h-9 gap-1.5 text-xs">
+              <Plus className="h-3.5 w-3.5" /> {t('portForward.addRule')}
+            </Button>
+          </div>
+
+          {/* Rules grid */}
+          <div className="pb-6">
+            {filteredRules.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/50">
+                  <Network className="h-8 w-8 text-muted-foreground/40" />
+                </div>
+                <p className="text-sm font-medium text-foreground">
+                  {rules.length === 0 ? t('portForward.noRules') : t('hosts.noMatch')}
                 </p>
-              </div>
-              <div className="flex items-center gap-1">
-                {runningIds.has(rule.id) ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void handleStop(rule.id)}
-                    className="text-amber-600"
-                  >
-                    <Square className="mr-1 h-3 w-3" />
-                    {t('portForward.stop')}
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void handleStart(rule)}
-                    disabled={!resolvePrivateKey}
-                  >
-                    <Play className="mr-1 h-3 w-3" />
-                    {t('portForward.start')}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {rules.length === 0 ? t('portForward.desc') : t('hosts.noMatchHint')}
+                </p>
+                {rules.length === 0 && (
+                  <Button className="mt-5 gap-1.5" onClick={() => setShowAdd(true)}>
+                    <Plus className="h-4 w-4" /> {t('portForward.addRule')}
                   </Button>
                 )}
-                <Button size="sm" variant="ghost" onClick={() => void handleDelete(rule.id)}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
               </div>
-            </div>
-          ))}
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {filteredRules.map((rule) => (
+                  <div key={rule.id} className="group relative overflow-hidden rounded-xl border bg-card p-4 transition-colors hover:border-primary/30 hover:shadow-sm">
+                    <div className="flex items-start gap-3">
+                      <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', runningIds.has(rule.id) ? 'bg-emerald-500/10 text-emerald-500' : 'bg-muted text-muted-foreground')}>
+                        <Network className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{rule.name}</span>
+                        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                          {rule.type} · {hostName(rule.hostId)}
+                        </span>
+                        <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+                          {rule.bindHost}:{rule.bindPort} → {rule.targetHost}:{rule.targetPort}
+                        </span>
+                      </div>
+                    </div>
+                    {runningIds.has(rule.id) && (
+                      <div className="mt-2">
+                        <span className="inline-block rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-500">Running</span>
+                      </div>
+                    )}
+                    <div className="mt-3 flex items-center justify-end gap-1">
+                      {runningIds.has(rule.id) ? (
+                        <Button size="sm" variant="ghost" className="h-8 gap-1 px-2 text-amber-600 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => void handleStop(rule.id)}>
+                          <Square className="h-3 w-3" /> {t('portForward.stop')}
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="ghost" className="h-8 gap-1 px-2 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" onClick={() => void handleStart(rule)} disabled={!resolvePrivateKey}>
+                          <Play className="h-3 w-3" /> {t('portForward.start')}
+                        </Button>
+                      )}
+                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive" onClick={() => void handleDelete(rule.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
