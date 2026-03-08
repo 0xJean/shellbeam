@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
+import { androidNsdRegister } from '@/lib/mdns'
 import {
   syncGetBootstrap,
   syncInitLocalDevice,
@@ -163,6 +164,8 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
       setServerRunning(true)
       setServerPort(p)
       setOutput(`Sync server started on port ${p}`)
+      // On Android, register NSD service via native bridge
+      androidNsdRegister(p, localDevice?.deviceName || 'ShellBeam')
     } catch (error) {
       setOutput(String(error))
     } finally {

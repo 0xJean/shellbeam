@@ -1,16 +1,16 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Rocket, Code2, Clock, Palette, Search, Copy, Play } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { useT } from '@/lib/i18n'
-import type { TerminalPrefs } from '@/lib/terminal-themes'
-import type { SnippetEntry } from '@/lib/snippets'
-import {
-  getInteractiveHistory,
-  subscribeInteractiveHistory,
-  type InteractiveCommand,
-} from '@/lib/interactive-history'
 import { SnippetCompactList } from '@/components/snippet-panel'
-import { FontSizeControl, TerminalThemeGrid } from '@/components/settings-panel'
+import { FontSizeControl, TerminalThemeGrid } from '@/components/terminal-widgets'
+import { useT } from '@/lib/i18n'
+import {
+    getInteractiveHistory,
+    subscribeInteractiveHistory,
+    type InteractiveCommand,
+} from '@/lib/interactive-history'
+import type { SnippetEntry } from '@/lib/snippets'
+import type { TerminalPrefs } from '@/lib/terminal-themes'
+import { cn } from '@/lib/utils'
+import { Clock, Code2, Copy, Palette, Play, Rocket, Search } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 
 type TabId = 'terminal' | 'snippets' | 'history' | 'appearance'
 
@@ -36,7 +36,7 @@ interface TerminalRightSidebarProps {
 
 export function TerminalRightSidebar({
   visible,
-  onClose: _onClose,
+  onClose,
   hostAddress,
   snippets,
   onApplySnippet,
@@ -51,40 +51,57 @@ export function TerminalRightSidebar({
 
   if (!visible) return null
 
-  return (
-    <div className="flex h-full w-72 shrink-0 flex-col border-l border-border/50 bg-background 2xl:w-80">
-      <div className="flex shrink-0 items-center border-b border-border/50">
-        {TABS.map(({ id, Icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setActiveTab(id)}
-            className={cn(
-              'flex flex-1 items-center justify-center py-2.5 transition-colors',
-              activeTab === id
-                ? 'bg-primary/10 text-primary'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
-            title={t(`rightSidebar.${id}`)}
-          >
-            <Icon className={cn('h-4 w-4', activeTab === id && 'drop-shadow-sm')} />
-          </button>
-        ))}
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto">
-        {activeTab === 'terminal' && (
-          <TerminalTab onSearchToggle={onSearchToggle} searchVisible={searchVisible} />
-        )}
-        {activeTab === 'snippets' && (
-          <SnippetCompactList snippets={snippets} onApply={onApplySnippet} onRun={onRunSnippet} />
-        )}
-        {activeTab === 'history' && <HistoryTab hostAddress={hostAddress} onRunCommand={onRunSnippet} />}
-        {activeTab === 'appearance' && (
-          <AppearanceTab terminalPrefs={terminalPrefs} onChange={onTerminalPrefsChange} />
-        )}
-      </div>
+  const tabBar = (
+    <div className="flex shrink-0 items-center border-b border-border/50">
+      {TABS.map(({ id, Icon }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => setActiveTab(id)}
+          className={cn(
+            'flex flex-1 items-center justify-center py-2.5 transition-colors',
+            activeTab === id
+              ? 'bg-primary/10 text-primary'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+          title={t(`rightSidebar.${id}`)}
+        >
+          <Icon className={cn('h-4 w-4', activeTab === id && 'drop-shadow-sm')} />
+        </button>
+      ))}
     </div>
+  )
+
+  const content = (
+    <div className="min-h-0 flex-1 overflow-auto">
+      {activeTab === 'terminal' && (
+        <TerminalTab onSearchToggle={onSearchToggle} searchVisible={searchVisible} />
+      )}
+      {activeTab === 'snippets' && (
+        <SnippetCompactList snippets={snippets} onApply={onApplySnippet} onRun={onRunSnippet} />
+      )}
+      {activeTab === 'history' && <HistoryTab hostAddress={hostAddress} onRunCommand={onRunSnippet} />}
+      {activeTab === 'appearance' && (
+        <AppearanceTab terminalPrefs={terminalPrefs} onChange={onTerminalPrefsChange} />
+      )}
+    </div>
+  )
+
+  return (
+    <>
+      {/* Mobile: overlay backdrop */}
+      <div className="fixed inset-0 z-40 bg-black/40 md:hidden" onClick={onClose} />
+      {/* Mobile: slide-over drawer */}
+      <div className="fixed inset-y-0 right-0 z-50 flex w-[85vw] max-w-sm flex-col border-l border-border/50 bg-background pt-[env(safe-area-inset-top)] shadow-xl md:hidden">
+        {tabBar}
+        {content}
+      </div>
+      {/* PC: inline sidebar */}
+      <div className="hidden h-full w-72 shrink-0 flex-col border-l border-border/50 bg-background md:flex 2xl:w-80">
+        {tabBar}
+        {content}
+      </div>
+    </>
   )
 }
 

@@ -8,6 +8,7 @@ mod data;
 mod error;
 mod storage;
 mod keys;
+mod biometric_store;
 
 // Re-exports for cross-module crate:: paths
 pub(crate) use data::history;
@@ -55,6 +56,7 @@ pub fn run() {
     };
     builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_biometry::init())
         .manage(InteractiveSessionState::default())
         .manage(VaultState::default())
         .manage(SshSessionPool::default())
@@ -140,6 +142,11 @@ pub fn run() {
             net::port_forward::start_port_forward_tunnel,
             net::port_forward::stop_port_forward_tunnel,
             net::port_forward::port_forward_tunnel_status,
+            storage::clear_app_data,
+            biometric_store::biometric_store_password,
+            biometric_store::biometric_retrieve_password,
+            biometric_store::biometric_has_password,
+            biometric_store::biometric_remove_password,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

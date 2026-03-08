@@ -417,7 +417,10 @@ fn open_local_pty(shell: &str, cols: u32, rows: u32) -> Result<(std::fs::File, s
     unsafe {
         cmd.pre_exec(move || {
             libc::setsid();
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
             libc::ioctl(slave_copy, libc::TIOCSCTTY as libc::c_ulong, 0);
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+            libc::ioctl(slave_copy, libc::TIOCSCTTY as libc::c_int, 0);
             libc::dup2(slave_copy, 0);
             libc::dup2(slave_copy, 1);
             libc::dup2(slave_copy, 2);
@@ -474,7 +477,10 @@ pub fn create_local_terminal(
                 SessionCommand::Input(data) => { let _ = writer.write_all(&data); let _ = writer.flush(); }
                 SessionCommand::Resize(cols, rows) => {
                     let ws = libc::winsize { ws_row: rows as u16, ws_col: cols as u16, ws_xpixel: 0, ws_ypixel: 0 };
+                    #[cfg(any(target_os = "macos", target_os = "ios"))]
                     unsafe { libc::ioctl(fd, libc::TIOCSWINSZ as libc::c_ulong, &ws); }
+                    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+                    unsafe { libc::ioctl(fd, libc::TIOCSWINSZ as libc::c_int, &ws); }
                 }
                 SessionCommand::Close => {
                     unsafe { libc::kill(child_pid, libc::SIGHUP); }

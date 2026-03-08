@@ -96,7 +96,7 @@ pub fn sync_server_status() -> (bool, u16) {
 
 #[tauri::command]
 pub fn mdns_diagnose() -> Vec<String> {
-    super::transport::mdns_diagnose()
+    super::transport_mdns::mdns_diagnose()
 }
 
 #[derive(Debug, Deserialize)]

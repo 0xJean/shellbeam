@@ -1,24 +1,20 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { AuthType } from '@/lib/ssh'
+import { VaultGateDialog } from '@/components/vault-gate-dialog'
 import type { HostProfile } from '@/lib/hosts'
-import { DEFAULT_VAULT_ID, listVaults, type VaultMeta } from '@/lib/vaults'
-import {
-  vaultDeleteSecret,
-  vaultGetSecret,
-  vaultInitialize,
-  vaultListSecretKeys,
-  vaultLock,
-  vaultSetSecret,
-  vaultStatus,
-  vaultUnlock,
-  type VaultStatus,
-} from '@/lib/vault'
+import type { AuthType } from '@/lib/ssh'
 import type { SecurityEvent } from '@/lib/types'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
-import { Lock, Loader2, ShieldAlert } from 'lucide-react'
-import { useT } from '@/lib/i18n'
+import {
+    vaultDeleteSecret,
+    vaultGetSecret,
+    vaultInitialize,
+    vaultListSecretKeys,
+    vaultLock,
+    vaultSetSecret,
+    vaultStatus,
+    vaultUnlock,
+    type VaultStatus,
+} from '@/lib/vault'
+import { DEFAULT_VAULT_ID, listVaults, type VaultMeta } from '@/lib/vaults'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 
 const VAULT_AUTO_LOCK_MINUTES_KEY = 'shellbeam.vaultAutoLockMinutes'
 const SECURITY_EVENTS_KEY = 'shellbeam.securityEvents'
@@ -33,6 +29,8 @@ interface VaultContextValue {
   vaultAutoLockMinutes: number
   vaultLastActivityAt: number
   securityEvents: SecurityEvent[]
+  /** In-memory only — the master password from the current unlocked session */
+  sessionPassword: string
   refreshVault: () => Promise<void>
   refreshVaults: () => Promise<void>
   handleInitialize: (masterPassword: string) => Promise<void>
@@ -62,7 +60,6 @@ export function useVault() {
 }
 
 export function VaultProvider({ children, setOutput }: { children: ReactNode; setOutput: (msg: string) => void }) {
-  const { t } = useT()
   const [activeVaultId, setActiveVaultId] = useState<string>(DEFAULT_VAULT_ID)
   const [vaults, setVaults] = useState<VaultMeta[]>([])
   const [vaultStatusState, setVaultStatusState] = useState<VaultStatus | null>(null)
@@ -73,14 +70,11 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([])
   const vaultAutoLockingRef = useRef(false)
 
-  const [gatePassword, setGatePassword] = useState('')
-  const [gateError, setGateError] = useState('')
-  const [gateBusy, setGateBusy] = useState(false)
+  const [showBiometricOptIn, setShowBiometricOptIn] = useState(false)
+  const biometricOptInPasswordRef = useRef('')
+  const sessionPasswordRef = useRef('')
 
   const gateOpen = !!vaultStatusState && !vaultStatusState.unlocked
-  useEffect(() => {
-    if (gateOpen) { setGatePassword(''); setGateError('') }
-  }, [gateOpen])
 
   function appendSecurityEvent(level: SecurityEvent['level'], message: string) {
     const entry: SecurityEvent = {
@@ -97,24 +91,31 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     appendSecurityEvent('info', reason)
   }
 
-  async function handleGateSubmit(password: string) {
-    setGateBusy(true)
-    setGateError('')
-    try {
-      if (vaultStatusState?.initialized) {
-        await vaultUnlock(password, activeVaultId)
-      } else {
-        await vaultInitialize(password, activeVaultId)
-      }
-      await refreshVault()
-      touchVaultActivity(vaultStatusState?.initialized ? 'Vault unlocked.' : 'Vault initialized and unlocked.')
-      setGatePassword('')
-      setGateError('')
-    } catch (error) {
-      setGateError(String(error instanceof Error ? error.message : error))
-    } finally {
-      setGateBusy(false)
+  const handleGateSubmit = async (password: string) => {
+    const wasInitialized = vaultStatusState?.initialized
+    if (wasInitialized) {
+      await vaultUnlock(password, activeVaultId)
+    } else {
+      await vaultInitialize(password, activeVaultId)
     }
+    await refreshVault()
+    sessionPasswordRef.current = password
+    touchVaultActivity(wasInitialized ? 'Vault unlocked.' : 'Vault initialized and unlocked.')
+    return !wasInitialized
+  }
+
+  const handleGateSubmitWithOptIn = async (password: string) => {
+    const wasFirstInit = await handleGateSubmit(password)
+    if (wasFirstInit) {
+      // Store password temporarily for potential biometric enrollment
+      biometricOptInPasswordRef.current = password
+      setShowBiometricOptIn(true)
+    }
+  }
+
+  const handleBiometricOptInDone = () => {
+    biometricOptInPasswordRef.current = ''
+    setShowBiometricOptIn(false)
   }
 
   async function refreshVault() {
@@ -171,6 +172,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
         try {
           await vaultLock(activeVaultId)
           await refreshVault()
+          sessionPasswordRef.current = ''
           appendSecurityEvent('warn', `Vault auto-locked after ${vaultAutoLockMinutes} minute(s) of inactivity.`)
           setOutput('Vault auto-locked due to inactivity.')
         } catch (error) {
@@ -208,6 +210,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     try {
       await vaultLock(activeVaultId)
       await refreshVault()
+      sessionPasswordRef.current = ''
       appendSecurityEvent('info', 'Vault locked manually.')
       setOutput('Vault locked.')
     } catch (error) { setOutput(String(error)) } finally { setVaultBusy(false) }
@@ -285,6 +288,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     <VaultContext.Provider value={{
       activeVaultId, setActiveVaultId, vaults, vaultStatusState, vaultKeys, vaultBusy,
       vaultAutoLockMinutes, vaultLastActivityAt, securityEvents,
+      sessionPassword: sessionPasswordRef.current,
       refreshVault, refreshVaults,
       handleInitialize, handleUnlock, handleLock,
       handleSaveSecret, handleLoadSecret, handleDeleteSecret,
@@ -293,58 +297,21 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     }}>
       {children}
 
-      <Dialog open={gateOpen} onOpenChange={() => {}}>
-        <DialogContent className="flex h-auto max-h-dvh items-center justify-center border-0 bg-transparent p-4 md:max-w-sm md:p-0">
-          <div className="w-full max-w-sm overflow-hidden rounded-xl border bg-card p-0 shadow-lg">
-            <div className="bg-gradient-to-b from-muted/30 to-transparent px-6 pt-7 pb-4 sm:px-8 sm:pt-8 sm:pb-5">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <Lock className="h-6 w-6" strokeWidth={2} />
-              </div>
-              <h3 className="text-center text-lg font-semibold tracking-tight text-foreground">
-                {vaultStatusState?.initialized ? t('vault.unlock') : t('vault.initialize')}
-              </h3>
-              <p className="mt-1.5 text-center text-sm leading-relaxed text-muted-foreground">
-                {vaultStatusState?.initialized ? t('vault.unlockDesc') : t('vault.initializeDesc')}
-              </p>
-            </div>
-            <form className="space-y-3 px-6 pb-6 pt-2 sm:px-8 sm:pb-8" onSubmit={(e) => {
-              e.preventDefault()
-              if (gateBusy || !gatePassword.trim()) return
-              void handleGateSubmit(gatePassword)
-            }}>
-              <div>
-                <Input
-                  type="password"
-                  value={gatePassword}
-                  onChange={(e) => setGatePassword(e.target.value)}
-                  placeholder={vaultStatusState?.initialized ? t('vault.enterPassword') : t('vault.setPassword')}
-                  className="h-11 rounded-lg border border-input bg-background text-foreground text-base placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-primary/50"
-                  autoFocus
-                  autoComplete={vaultStatusState?.initialized ? 'current-password' : 'new-password'}
-                  disabled={gateBusy}
-                />
-                {gateError && (
-                  <div className="mt-2 flex items-center gap-1.5 text-xs text-red-500">
-                    <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
-                    <span>{gateError}</span>
-                  </div>
-                )}
-              </div>
-              <Button
-                type="submit"
-                className="h-11 w-full rounded-lg font-medium"
-                disabled={gateBusy || !gatePassword.trim()}
-              >
-                {gateBusy ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{vaultStatusState?.initialized ? t('vault.unlocking') : t('vault.initializing')}</>
-                ) : (
-                  vaultStatusState?.initialized ? t('vault.unlockBtn') : t('vault.initializeBtn')
-                )}
-              </Button>
-            </form>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <VaultGateDialog
+        open={gateOpen}
+        vaultStatus={vaultStatusState}
+        onSubmit={handleGateSubmitWithOptIn}
+      />
+
+      <VaultGateDialog
+        open={showBiometricOptIn}
+        vaultStatus={vaultStatusState}
+        onSubmit={async () => {}}
+        biometricOptIn={{
+          password: biometricOptInPasswordRef.current,
+          onDone: handleBiometricOptInDone,
+        }}
+      />
     </VaultContext.Provider>
   )
 }

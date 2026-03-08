@@ -11,7 +11,7 @@ use crate::error::{standard_error_from_raw, standard_error_payload};
 use crate::storage::now_unix_ms;
 
 fn system_hostname() -> String {
-    super::transport::native_device_name_public()
+    super::transport_mdns::native_device_name_public()
 }
 
 #[tauri::command]

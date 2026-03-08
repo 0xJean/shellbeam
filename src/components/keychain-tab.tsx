@@ -1,13 +1,13 @@
-import { useMemo, useState } from 'react'
-import { Plus, Trash2, Key, Wand2, FileUp, ClipboardPaste, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { generateSshKey, importPrivateKeyFromFile } from '@/lib/keys'
-import { vaultSetSecret } from '@/lib/vault'
-import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
+import { generateSshKey, importPrivateKeyFromFile } from '@/lib/keys'
+import { cn } from '@/lib/utils'
+import { vaultSetSecret } from '@/lib/vault'
+import { ClipboardPaste, FileUp, Key, Plus, Search, Trash2, Wand2 } from 'lucide-react'
+import { useMemo, useState } from 'react'
 
 function isSshKey(key: string): boolean {
   return key.includes('privateKey') || key.endsWith('.key') || key.startsWith('ssh.')
@@ -141,7 +141,7 @@ export function KeychainTab({
           <div className="px-4 pt-5 pb-4 sm:px-8 sm:pt-7 sm:pb-5">
             <h3 className="text-lg font-semibold text-foreground">{t('keychain.addKey')}</h3>
             <p className="mt-1 text-sm text-muted-foreground">{t('keychain.addKeyDesc')}</p>
-            <div className="mt-4 flex flex-wrap gap-1 rounded-lg bg-muted p-1">
+            <div className="mt-4 flex gap-1 rounded-lg bg-muted p-1">
               {addKeyModes.map((m) => (
                 <button
                   key={m.id}
@@ -153,7 +153,7 @@ export function KeychainTab({
                   )}
                 >
                   {m.icon}
-                  <span className="hidden sm:inline">{m.label}</span>
+                  <span className="whitespace-nowrap">{m.label}</span>
                 </button>
               ))}
             </div>

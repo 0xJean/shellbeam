@@ -1,6 +1,6 @@
+import { cn } from '@/lib/utils'
 import * as React from 'react'
 import { createPortal } from 'react-dom'
-import { cn } from '@/lib/utils'
 
 interface DialogProps {
   open: boolean
@@ -36,9 +36,9 @@ export function Dialog({ open, onOpenChange, children, className }: DialogProps)
       ref={ref}
       onCancel={handleCancel}
       onClick={handleBackdropClick}
-      style={{ background: 'transparent', border: 'none', padding: 0, maxWidth: 'none', maxHeight: 'none' }}
+      style={{ background: 'transparent', border: 'none', padding: 0, maxWidth: 'none', maxHeight: 'none', width: '100%', height: '100%' }}
       className={cn(
-        'fixed inset-0 z-[9999] m-auto flex items-center justify-center outline-none',
+        'fixed inset-0 z-[9999] m-0 flex items-start justify-center overflow-y-auto outline-none md:items-center',
         '[&::backdrop]:bg-black/50 [&::backdrop]:backdrop-blur-sm',
         className
       )}
@@ -60,9 +60,9 @@ export function DialogContent({ children, className }: DialogContentProps) {
     <div
       role="document"
       className={cn(
-        'relative z-10 w-full overflow-y-auto pointer-events-auto bg-card text-card-foreground',
-        'h-full md:h-auto md:max-h-[90vh] md:max-w-2xl md:rounded-2xl',
-        'max-md:max-h-dvh',
+        'relative z-10 overflow-y-auto pointer-events-auto bg-card text-card-foreground',
+        'md:mx-auto md:h-auto md:max-h-[90vh] md:w-auto md:max-w-2xl md:rounded-2xl',
+        'max-md:w-full max-md:min-h-full',
         className
       )}
       onClick={(e) => e.stopPropagation()}

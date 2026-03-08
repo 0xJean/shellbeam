@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Search, Plus, Server, RefreshCw, LayoutGrid, List, FileDown, ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, ChevronDown, Tag, X } from 'lucide-react'
+import { HostGridCard, HostListItem } from '@/components/host-card'
 import { HostForm } from '@/components/host-form'
-import { SshImportDialog } from './ssh-import-dialog'
-import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
-import { DEFAULT_GROUPS } from '@/lib/hosts'
+import { PullToRefresh } from '@/components/pull-to-refresh'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { HostGridCard, HostListItem } from '@/components/host-card'
-import { PullToRefresh } from '@/components/pull-to-refresh'
-import { cn } from '@/lib/utils'
+import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
+import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { cn } from '@/lib/utils'
+import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { SshImportDialog } from './ssh-import-dialog'
 
 type SortMode = 'az' | 'za' | 'newest' | 'oldest'
 const SORT_KEY = 'shellbeam.hostSortMode'
@@ -160,10 +160,10 @@ export function HostsDashboard({
   }, [hosts])
 
   return (
-    <div className="flex w-full flex-col">
+    <div className="flex w-full flex-col overflow-x-hidden">
       <StatsRow hostsTotal={hosts.length} onlineCount={onlineCount} groupCounts={allGroupCounts} />
 
-      <div className="shrink-0 px-6 py-5">
+      <div className="shrink-0 px-4 py-5 md:px-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold">{t('hosts.title')}</h2>
@@ -258,7 +258,7 @@ export function HostsDashboard({
       </div>
 
       <div className="min-h-0 flex-1">
-        <div className="flex min-h-[200px] min-w-0 flex-1 flex-col px-6">
+        <div className="flex min-h-[200px] min-w-0 flex-1 flex-col px-4 md:px-6">
           <div className="mb-4 flex flex-wrap items-center gap-2">
             {externalSearch === undefined && (
               <div className="relative flex-1 max-w-xs">
@@ -407,7 +407,7 @@ function StatsRow({ hostsTotal, onlineCount, groupCounts }: { hostsTotal: number
   const groupLabel = (g: string) => t(`group.${g}`) !== `group.${g}` ? t(`group.${g}`) : g
   if (hostsTotal === 0) return null
   return (
-    <div className="shrink-0 px-6 pt-6 pb-2">
+    <div className="shrink-0 px-4 pt-6 pb-2 md:px-6">
       <div className="flex items-center gap-4">
         <div className="flex items-baseline gap-2">
           <span className="text-3xl font-bold tracking-tight">{hostsTotal}</span>

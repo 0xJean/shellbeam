@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod peer;
 pub(crate) mod transport;
+pub(crate) mod transport_mdns;
 
 pub use commands::*;
 

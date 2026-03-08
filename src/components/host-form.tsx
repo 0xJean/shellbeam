@@ -1,14 +1,14 @@
-import { useState } from 'react'
-import { Server, User, Lock, Key, Archive, ChevronDown, X } from 'lucide-react'
-import { useT } from '@/lib/i18n'
-import type { HostProfileDraft } from '@/lib/hosts'
-import { validateHostDraft } from '@/lib/hosts'
-import type { AuthType } from '@/lib/ssh'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import type { HostProfileDraft } from '@/lib/hosts'
+import { validateHostDraft } from '@/lib/hosts'
+import { useT } from '@/lib/i18n'
+import type { AuthType } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
+import { Archive, ChevronDown, Key, Lock, Server, User, X } from 'lucide-react'
+import { useState } from 'react'
 
 interface HostFormProps {
   initial?: Partial<HostProfileDraft> | null
@@ -120,7 +120,7 @@ export function HostForm({
   }
 
   return (
-    <Card className="w-full max-w-xl">
+    <Card className="w-full max-w-xl md:max-w-xl max-md:max-w-none max-md:border-0 max-md:rounded-none max-md:shadow-none">
       <CardContent className="space-y-5 p-5">
         {/* Title */}
         <div className="flex items-center justify-between">

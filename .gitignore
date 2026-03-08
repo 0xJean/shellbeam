@@ -28,6 +28,8 @@ src-tauri/gen/schemas/
 .env
 .env.*
 !.env.example
+*.jks
+*.keystore
 
 # Logs
 logs/

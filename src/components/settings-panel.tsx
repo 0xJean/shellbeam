@@ -1,17 +1,29 @@
-import { useState, useEffect } from 'react'
-import { Settings, Sun, Moon, Monitor, Sparkles, Eye, EyeOff } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { TerminalThemeGrid } from '@/components/terminal-widgets'
 import { Button } from '@/components/ui/button'
-import { TERMINAL_THEMES, type TerminalPrefs } from '@/lib/terminal-themes'
-import { cn } from '@/lib/utils'
-import {
-  AI_PROVIDERS,
-  loadAISettings,
-  saveAISettings,
-  type AISettings,
-} from '@/lib/ai'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { useT, LOCALE_OPTIONS } from '@/lib/i18n'
+import { useVault } from '@/contexts/vault-context'
+import {
+    AI_PROVIDERS,
+    loadAISettings,
+    saveAISettings,
+    type AISettings,
+} from '@/lib/ai'
+import {
+    biometryLabel,
+    checkBiometricStatus,
+    isBiometricEnabled,
+    removeMasterPassword,
+    retrieveMasterPassword,
+    storeMasterPassword,
+    type BiometricStatus,
+} from '@/lib/biometric'
+import { LOCALE_OPTIONS, useT } from '@/lib/i18n'
+import type { TerminalPrefs } from '@/lib/terminal-themes'
+import { cn } from '@/lib/utils'
+import { AlertTriangle, Eye, EyeOff, Fingerprint, Monitor, Moon, Settings, Sparkles, Sun } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 interface ReconnectSettings {
   enabled: boolean
@@ -173,6 +185,7 @@ export function SettingsPanel({
           <p className="mt-1 text-xs text-muted-foreground">
             {t('settings.autoLockDesc')}
           </p>
+          <BiometricToggle />
         </section>
 
         <section className="rounded-lg border p-4">
@@ -219,7 +232,94 @@ export function SettingsPanel({
         </section>
 
         <AISettingsSection />
+
+        <ClearDataSection />
       </div>
+    </div>
+  )
+}
+
+function BiometricToggle() {
+  const { t } = useT()
+  const { sessionPassword } = useVault()
+  const [bioStatus, setBioStatus] = useState<BiometricStatus | null>(null)
+  const [enabled, setEnabled] = useState(isBiometricEnabled)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    void checkBiometricStatus().then(setBioStatus)
+  }, [])
+
+  if (!bioStatus || !bioStatus.available) {
+    return null
+  }
+
+  const label = biometryLabel(bioStatus.type)
+
+  const handleToggle = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      if (enabled) {
+        await removeMasterPassword()
+        setEnabled(false)
+      } else {
+        if (!sessionPassword) {
+          setError(t('settings.biometricNeedReauth'))
+          setBusy(false)
+          return
+        }
+        // Store password + verify with biometric prompt
+        await storeMasterPassword(sessionPassword)
+        const verified = await retrieveMasterPassword(t('vault.biometricReason'))
+        if (verified !== sessionPassword) {
+          await removeMasterPassword()
+          setError(t('vault.biometricVerifyFailed'))
+          setBusy(false)
+          return
+        }
+        setEnabled(true)
+      }
+    } catch (e) {
+      await removeMasterPassword().catch(() => {})
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg.includes('-34018') || msg.includes('keychainError')) {
+        setError(t('vault.biometricKeychainError'))
+      } else {
+        setError(`${t('vault.biometricSetupFailed')}\n${msg}`)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 border-t border-border/50 pt-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Fingerprint className="h-4 w-4 text-muted-foreground" />
+          <div>
+            <span className="text-sm text-muted-foreground">{t('settings.biometric')}</span>
+            <p className="text-xs text-muted-foreground/70">
+              {t('settings.biometricDesc', { type: label })}
+            </p>
+          </div>
+        </div>
+        <Button
+          variant={enabled ? 'default' : 'outline'}
+          size="sm"
+          className="gap-1.5 text-xs"
+          onClick={() => void handleToggle()}
+          disabled={busy}
+        >
+          <Fingerprint className="h-3.5 w-3.5" />
+          {enabled ? t('settings.biometricDisable') : t('settings.biometricEnable')}
+        </Button>
+      </div>
+      {error && (
+        <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{error}</p>
+      )}
     </div>
   )
 }
@@ -228,9 +328,7 @@ function AISettingsSection() {
   const [settings, setSettings] = useState<AISettings>(loadAISettings)
   const [showKey, setShowKey] = useState(false)
   const { t } = useT()
-
   useEffect(() => { saveAISettings(settings) }, [settings])
-
   const providerDef = AI_PROVIDERS.find((p) => p.id === settings.provider)
   const isOllama = settings.provider === 'ollama'
   const isCustom = settings.provider === 'custom'
@@ -317,7 +415,6 @@ function AISettingsSection() {
             />
           )}
         </div>
-
         {isCustom && (
           <div>
             <span className="text-sm text-muted-foreground">{t('settings.apiKeyOptional')}</span>
@@ -338,66 +435,64 @@ function AISettingsSection() {
         )}
 
         <p className="text-xs text-muted-foreground">
-          {isOllama
-            ? t('settings.ollamaHelper')
-            : isCustom
-              ? t('settings.customHelper')
-              : t('settings.apiKeyHelper')}
+          {isOllama ? t('settings.ollamaHelper') : isCustom ? t('settings.customHelper') : t('settings.apiKeyHelper')}
         </p>
       </div>
     </section>
   )
 }
 
-export function FontSizeControl({ value, onChange }: {
-  value: number
-  onChange: (size: number) => void
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        type="button"
-        onClick={() => onChange(Math.max(10, value - 1))}
-        className="flex h-7 w-7 items-center justify-center rounded border text-sm hover:bg-muted"
-      >−</button>
-      <span className="w-8 text-center text-sm font-medium">{value}</span>
-      <button
-        type="button"
-        onClick={() => onChange(Math.min(24, value + 1))}
-        className="flex h-7 w-7 items-center justify-center rounded border text-sm hover:bg-muted"
-      >+</button>
-    </div>
-  )
-}
+function ClearDataSection() {
+  const { t } = useT()
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-export function TerminalThemeGrid({ currentThemeId, onSelect, columns }: {
-  currentThemeId: string
-  onSelect: (themeId: string) => void
-  columns?: string
-}) {
+  const handleClear = async () => {
+    setBusy(true)
+    try {
+      const { clearAllAppData } = await import('@/lib/reset')
+      await clearAllAppData()
+      // Reload the app — this works on all platforms (WebView reload)
+      window.location.reload()
+    } catch {
+      setBusy(false)
+      setConfirmOpen(false)
+    }
+  }
+
   return (
-    <div className={columns ?? 'space-y-1.5'}>
-      {TERMINAL_THEMES.map((thm) => (
-        <button
-          key={thm.id}
-          type="button"
-          onClick={() => onSelect(thm.id)}
-          className={cn(
-            'flex w-full items-center gap-3 rounded-lg border p-2 text-left transition-all',
-            currentThemeId === thm.id
-              ? 'border-primary ring-1 ring-primary'
-              : 'border-border/50 hover:border-foreground/30',
-          )}
-        >
-          <div
-            className="flex h-8 w-14 shrink-0 items-center justify-center rounded"
-            style={{ background: thm.theme.background }}
-          >
-            <span style={{ color: thm.theme.foreground, fontSize: 10, fontFamily: 'monospace' }}>Aa</span>
+    <section className="rounded-lg border border-red-500/20 p-4">
+      <h3 className="mb-2 font-semibold text-red-500">{t('settings.dangerZone')}</h3>
+      <p className="text-xs text-muted-foreground">{t('settings.clearDataDesc')}</p>
+      <Button variant="outline" size="sm"
+        className="mt-3 border-red-500/30 text-red-500 hover:bg-red-500/10"
+        onClick={() => setConfirmOpen(true)}>
+        {t('settings.clearData')}
+      </Button>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="md:max-w-sm">
+          <div className="p-6">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10">
+              <AlertTriangle className="h-6 w-6 text-red-500" />
+            </div>
+            <h3 className="text-center text-lg font-semibold">{t('settings.clearDataConfirmTitle')}</h3>
+            <p className="mt-2 text-center text-sm text-muted-foreground">
+              {t('settings.clearDataConfirmDesc')}
+            </p>
+            <div className="mt-6 flex gap-3">
+              <Button variant="outline" className="flex-1" onClick={() => setConfirmOpen(false)}
+                disabled={busy}>
+                {t('common.cancel')}
+              </Button>
+              <Button className="flex-1 bg-red-500 text-white hover:bg-red-600"
+                onClick={() => void handleClear()} disabled={busy}>
+                {busy ? t('settings.clearingData') : t('settings.clearDataConfirm')}
+              </Button>
+            </div>
           </div>
-          <span className="truncate text-xs font-medium">{thm.name}</span>
-        </button>
-      ))}
-    </div>
+        </DialogContent>
+      </Dialog>
+    </section>
   )
 }

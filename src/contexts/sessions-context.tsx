@@ -1,20 +1,20 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import {
-  closeInteractiveSession,
-  createInteractiveSession,
-  createLocalTerminal,
-  listInteractiveSessions,
-  pollInteractiveOutput,
-  sendInteractiveInput,
-  type InteractiveOutputChunk,
-  type InteractiveSessionInfo,
-} from '@/lib/interactive-session'
-import type { SessionTab, ReconnectSettings, PaneId, PaneEvent } from '@/lib/types'
-import { t } from '@/lib/i18n'
-import { appendActivity } from '@/lib/activity-log'
-import { useVault } from './vault-context'
-import { useHosts } from './hosts-context'
 import { parseHostKeyError, type HostKeyInfo } from '@/components/host-key-confirm-dialog'
+import { appendActivity } from '@/lib/activity-log'
+import { t } from '@/lib/i18n'
+import {
+    closeInteractiveSession,
+    createInteractiveSession,
+    createLocalTerminal,
+    listInteractiveSessions,
+    pollInteractiveOutput,
+    sendInteractiveInput,
+    type InteractiveOutputChunk,
+    type InteractiveSessionInfo,
+} from '@/lib/interactive-session'
+import type { PaneEvent, PaneId, ReconnectSettings, SessionTab } from '@/lib/types'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useHosts } from './hosts-context'
+import { useVault } from './vault-context'
 
 const INTERACTIVE_OUTPUT_MAX_CHUNKS = 500
 const ACTIVE_INTERACTIVE_SESSION_KEY = 'shellbeam.activeInteractiveSessionId'

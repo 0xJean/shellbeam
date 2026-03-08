@@ -1,28 +1,37 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useT } from '@/lib/i18n'
-import { useApp } from '@/contexts/app-context'
-import { useVault } from '@/contexts/vault-context'
-import { useHosts } from '@/contexts/hosts-context'
-import { useSessions } from '@/contexts/sessions-context'
-import { useSnippets } from '@/hooks/use-snippets'
-import { useSync } from '@/hooks/use-sync'
-import { PcSessionTabBar } from '@/components/pc-tab-bar'
-import { PcNavSidebar, MobileBottomNav } from '@/components/pc-nav-sidebar'
-import { SessionTerminalView } from '@/components/session-terminal-view'
+import { ActivityLogPanel } from '@/components/activity-log-panel'
+import { BackupRestorePanel } from '@/components/backup-restore-panel'
+import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
 import { HostsDashboard } from '@/components/hosts-dashboard'
 import { KeychainTab } from '@/components/keychain-tab'
-import { SnippetPanel } from '@/components/snippet-panel'
-import { PortForwardPanel } from '@/components/port-forward-panel'
 import { KnownHostsPanel } from '@/components/known-hosts-panel'
-import { SftpDualPane } from '@/components/sftp-dual-pane'
-import { SyncCenterPanel } from '@/components/sync-center-panel'
-import { BackupRestorePanel } from '@/components/backup-restore-panel'
-import { SettingsPanel } from '@/components/settings-panel'
-import { ActivityLogPanel } from '@/components/activity-log-panel'
-import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
-import { TerminalRightSidebar } from '@/components/terminal-right-sidebar'
 import { MobileSessionHeader } from '@/components/mobile-session-header'
+import { MobileBottomNav, PcNavSidebar } from '@/components/pc-nav-sidebar'
+import { PcSessionTabBar } from '@/components/pc-tab-bar'
+import { PortForwardPanel } from '@/components/port-forward-panel'
+import { QuickConnectPanel } from '@/components/quick-connect-panel'
+import { SessionTerminalView } from '@/components/session-terminal-view'
+import { SettingsPanel } from '@/components/settings-panel'
+import { SftpDualPane } from '@/components/sftp-dual-pane'
+import { SnippetPanel } from '@/components/snippet-panel'
+import { SyncCenterPanel } from '@/components/sync-center-panel'
+import { TerminalRightSidebar } from '@/components/terminal-right-sidebar'
+import { useApp } from '@/contexts/app-context'
+import { useHosts } from '@/contexts/hosts-context'
+import { useSessions } from '@/contexts/sessions-context'
+import { useVault } from '@/contexts/vault-context'
+import { useSnippets } from '@/hooks/use-snippets'
+import { useSync } from '@/hooks/use-sync'
+import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+
+/** true when viewport width ≥ 768 px (Tailwind `md` breakpoint) */
+function subscribeMediaQuery(cb: () => void) {
+  const mql = window.matchMedia('(min-width: 768px)')
+  mql.addEventListener('change', cb)
+  return () => mql.removeEventListener('change', cb)
+}
+function getIsMd() { return window.matchMedia('(min-width: 768px)').matches }
 
 export function PcLayout() {
   const { t } = useT()
@@ -39,6 +48,7 @@ export function PcLayout() {
 
   const [, setVaultActiveTab] = useState<string>('hosts')
   const [mobileActiveSessionId, setMobileActiveSessionId] = useState<string | null>(null)
+  const [showQuickConnect, setShowQuickConnect] = useState(false)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(() => {
     try { return localStorage.getItem('shellbeam.rightSidebar') === 'true' } catch { return false }
   })
@@ -53,6 +63,7 @@ export function PcLayout() {
       if (newest) {
         setMobileActiveSessionId(newest.sessionId)
         app.setPcSidebarNav('terminal')
+        setShowQuickConnect(false)
       }
     }
     // If the active mobile session was closed, pick another
@@ -72,14 +83,23 @@ export function PcLayout() {
 
   const handlePcNewConnection = () => {
     sessions.setPcActiveSessionId(null)
+    setShowQuickConnect(true)
+  }
+
+  const handleQuickConnectHost = (hostId: string) => {
+    setShowQuickConnect(false)
+    void sessions.handleConnectHost(hostId)
+  }
+
+  const handleQuickConnectNewHost = () => {
+    setShowQuickConnect(false)
     app.setPcSidebarNav('hosts')
     setVaultActiveTab('hosts')
     hostsCtx.setPcOpenAddHost(true)
   }
 
   const handleMobileNewConnection = () => {
-    app.setPcSidebarNav('hosts')
-    hostsCtx.setPcOpenAddHost(true)
+    setShowQuickConnect(true)
   }
 
   const handleMobileCloseSession = (sessionId: string) => {
@@ -101,7 +121,17 @@ export function PcLayout() {
     }
   }, [sessions.rightPaneSessionId, sessions.pcActiveSessionId, sessions.pcSessionTabs, sessions.setRightPaneSessionId])
 
+  const handleInitialChunksConsumed = useCallback((sessionId: string) => {
+    sessions.setInteractiveChunksBySession((prev) => {
+      const next = { ...prev }
+      delete next[sessionId]
+      return next
+    })
+  }, [sessions.setInteractiveChunksBySession])
+
   useState(() => { void snippets.refresh(); void sync.refresh() })
+
+  const isMd = useSyncExternalStore(subscribeMediaQuery, getIsMd, () => true)
 
   return (
     <div className="flex h-full flex-col">
@@ -116,9 +146,9 @@ export function PcLayout() {
           activeSessionId={sessions.pcActiveSessionId}
           isDashboard={!sessions.pcActiveSessionId}
           isSplit={isSplit}
-          onSelectSession={(sid) => sessions.setPcActiveSessionId(sid)}
+          onSelectSession={(sid) => { sessions.setPcActiveSessionId(sid); setShowQuickConnect(false) }}
           onCloseSession={sessions.handleCloseSessionTab}
-          onGoToDashboard={() => sessions.setPcActiveSessionId(null)}
+          onGoToDashboard={() => { sessions.setPcActiveSessionId(null); setShowQuickConnect(false); app.setPcSidebarNav('hosts') }}
           onOpenLocalTerminal={() => sessions.handleOpenLocalTerminal()}
           onNewConnection={handlePcNewConnection}
           onToggleSplit={handleToggleSplit}
@@ -127,7 +157,7 @@ export function PcLayout() {
       <div className="relative min-h-0 flex-1">
         {/* PC Terminal layer - all sessions stay mounted, only active is visible (hidden on mobile) */}
         {sessions.pcSessionTabs.length > 0 && (
-          <div className={cn('absolute inset-0 hidden md:flex', sessions.pcActiveSessionId ? 'z-10' : 'pointer-events-none invisible')}>
+          <div className={cn('absolute inset-0 flex', sessions.pcActiveSessionId ? 'z-10' : 'pointer-events-none invisible')}>
             <div className="relative min-w-0 flex-1">
               {sessions.pcSessionTabs.map((tab) => {
                 const isActive = tab.sessionId === sessions.pcActiveSessionId
@@ -157,6 +187,8 @@ export function PcLayout() {
                       visible={isVisible && !!sessions.pcActiveSessionId}
                       onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}
                       rightSidebarOpen={isActive ? rightSidebarOpen : undefined}
+                      initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
+                      onInitialChunksConsumed={handleInitialChunksConsumed}
                     />
                   </div>
                 )
@@ -192,7 +224,8 @@ export function PcLayout() {
         )}
 
         {/* Mobile Terminal layer - shown when nav is 'terminal' on small screens */}
-        <div className={cn('absolute inset-0 flex flex-col md:hidden', app.pcSidebarNav === 'terminal' ? 'z-10' : 'pointer-events-none invisible')}>
+        {!isMd && (
+        <div className={cn('absolute inset-0 flex flex-col md:hidden pb-14', app.pcSidebarNav === 'terminal' ? 'z-10' : 'pointer-events-none invisible')}>
           <MobileSessionHeader
             sessionTabs={sessions.pcSessionTabs}
             activeSessionId={mobileActiveSessionId}
@@ -200,9 +233,12 @@ export function PcLayout() {
             onCloseSession={handleMobileCloseSession}
             onNewConnection={handleMobileNewConnection}
             onOpenLocalTerminal={() => sessions.handleOpenLocalTerminal()}
+            hosts={hostsCtx.hosts}
+            onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
           />
           {sessions.pcSessionTabs.length > 0 && (
-            <div className="relative min-h-0 flex-1">
+            <div className="relative min-h-0 flex-1 flex">
+              <div className="relative min-w-0 flex-1">
               {sessions.pcSessionTabs.map((tab) => {
                 const isActive = tab.sessionId === mobileActiveSessionId
                 return (
@@ -221,18 +257,71 @@ export function PcLayout() {
                       isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
                       onReconnect={() => sessions.manualReconnect(tab.sessionId)}
                       visible={isActive && app.pcSidebarNav === 'terminal'}
+                      initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
+                      onInitialChunksConsumed={handleInitialChunksConsumed}
+                      onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}
+                      rightSidebarOpen={isActive ? rightSidebarOpen : undefined}
                     />
                   </div>
                 )
               })}
+              </div>
+              {mobileActiveSessionId && (
+                <TerminalRightSidebar
+                  visible={rightSidebarOpen}
+                  onClose={toggleRightSidebar}
+                  hostAddress={sessions.pcSessionTabs.find((t) => t.sessionId === mobileActiveSessionId)?.hostAddress ?? ''}
+                  snippets={snippets.snippets}
+                  onApplySnippet={(cmd) => {
+                    if (mobileActiveSessionId) {
+                      sessions.sendRaw(mobileActiveSessionId, cmd)
+                      app.setOutput(t('terminal.snippetPasted'))
+                    }
+                  }}
+                  onRunSnippet={(cmd) => {
+                    if (mobileActiveSessionId) {
+                      sessions.sendRaw(mobileActiveSessionId, cmd + '\n')
+                      app.setOutput(t('terminal.snippetPasted'))
+                    }
+                  }}
+                  terminalPrefs={app.terminalPrefs}
+                  onTerminalPrefsChange={app.updateTerminalPrefs}
+                  onSearchToggle={() => {}}
+                  searchVisible={false}
+                />
+              )}
+            </div>
+          )}
+          {/* Mobile QuickConnect overlay */}
+          {showQuickConnect && (
+            <div className="absolute inset-0 z-20 bg-background">
+              <QuickConnectPanel
+                hosts={hostsCtx.hosts}
+                onConnectHost={(hostId) => { setShowQuickConnect(false); void sessions.handleConnectHost(hostId) }}
+                onNewHost={() => { setShowQuickConnect(false); app.setPcSidebarNav('hosts'); hostsCtx.setPcOpenAddHost(true) }}
+                onClose={() => setShowQuickConnect(false)}
+              />
             </div>
           )}
         </div>
+        )}
 
-        {/* Dashboard layer — PC: when no active session; Mobile: when nav is not 'terminal' */}
-          <div className={cn('flex h-full', sessions.pcActiveSessionId && 'hidden md:flex', app.pcSidebarNav === 'terminal' && 'hidden md:flex')}>
-            <PcNavSidebar activeNav={app.pcSidebarNav} onNavChange={app.setPcSidebarNav} />
-            <div className="mobile-safe-pb relative min-h-0 min-w-0 flex-1 overflow-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
+        {/* Dashboard layer */}
+        {!sessions.pcActiveSessionId && (
+          <div className={cn(
+            'flex h-full',
+            app.pcSidebarNav === 'terminal' && 'hidden',
+          )}>
+            <PcNavSidebar activeNav={app.pcSidebarNav} onNavChange={(nav) => { app.setPcSidebarNav(nav); setShowQuickConnect(false) }} />
+            <div className="mobile-safe-pb relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden" style={{ WebkitOverflowScrolling: 'touch' }}>
+              {showQuickConnect ? (
+                <QuickConnectPanel
+                  hosts={hostsCtx.hosts}
+                  onConnectHost={handleQuickConnectHost}
+                  onNewHost={handleQuickConnectNewHost}
+                />
+              ) : (
+              <>
               {app.pcSidebarNav === 'hosts' && (
                 <HostsDashboard
                   hosts={hostsCtx.hosts}
@@ -391,8 +480,11 @@ export function PcLayout() {
                   onKeepAliveIntervalSecsChange={hostsCtx.handleKeepAliveIntervalSecsChange}
                 />
               )}
+              </>
+              )}
             </div>
           </div>
+        )}
       </div>
       <MobileBottomNav
         activeNav={app.pcSidebarNav}

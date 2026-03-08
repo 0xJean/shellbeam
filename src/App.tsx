@@ -1,14 +1,13 @@
-import { AppProvider, useApp } from '@/contexts/app-context'
-import { VaultProvider } from '@/contexts/vault-context'
-import { HostsProvider } from '@/contexts/hosts-context'
-import { SessionsProvider } from '@/contexts/sessions-context'
-import { I18nProvider } from '@/lib/i18n'
-import { PcLayout } from '@/layouts/pc-layout'
 import { CommandPalette } from '@/components/command-palette'
 import { WelcomePage, useWelcomePage } from '@/components/welcome-page'
-import { useHosts } from '@/contexts/hosts-context'
+import { AppProvider, useApp } from '@/contexts/app-context'
+import { HostsProvider, useHosts } from '@/contexts/hosts-context'
+import { SessionsProvider } from '@/contexts/sessions-context'
+import { VaultProvider } from '@/contexts/vault-context'
+import { PcLayout } from '@/layouts/pc-layout'
 import { listCommandHistory } from '@/lib/history'
-import { useState, useEffect } from 'react'
+import { I18nProvider } from '@/lib/i18n'
+import { useEffect, useState } from 'react'
 
 function AppInner() {
   const app = useApp()
@@ -25,7 +24,7 @@ function AppInner() {
   }
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+    <div className="flex h-full w-full flex-col overflow-hidden" style={{ paddingTop: 'env(safe-area-inset-top)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
       <PcLayout />
       <CommandPalette
         open={app.commandPaletteOpen}

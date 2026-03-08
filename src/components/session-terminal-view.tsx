@@ -1,20 +1,20 @@
-import { useEffect, useRef, useCallback, useState, type MutableRefObject } from 'react'
 import { useT } from '@/lib/i18n'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import { WebglAddon } from '@xterm/addon-webgl'
-import { SearchAddon } from '@xterm/addon-search'
-import '@xterm/xterm/css/xterm.css'
-import { Sparkles, RefreshCw, WifiOff, PanelRightOpen, PanelRightClose } from 'lucide-react'
+import { recordInteractiveCommand } from '@/lib/interactive-history'
 import type { InteractiveOutputChunk, InteractiveSessionInfo } from '@/lib/interactive-session'
 import { resizeInteractiveTerminal } from '@/lib/interactive-session'
 import { getThemeById, type TerminalPrefs } from '@/lib/terminal-themes'
-import { recordInteractiveCommand } from '@/lib/interactive-history'
 import { cn } from '@/lib/utils'
-import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
+import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { Terminal } from '@xterm/xterm'
+import '@xterm/xterm/css/xterm.css'
+import { PanelRightClose, PanelRightOpen, RefreshCw, Sparkles, WifiOff } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { AICommandBar } from './ai-command-bar'
-import { TerminalSearchBar } from './terminal-search-bar'
+import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
 import { SuggestBar } from './suggest-bar'
+import { TerminalSearchBar } from './terminal-search-bar'
 
 interface SessionTerminalViewProps {
   sessionId: string
@@ -29,6 +29,8 @@ interface SessionTerminalViewProps {
   visible?: boolean
   onToggleRightSidebar?: () => void
   rightSidebarOpen?: boolean
+  initialChunks?: InteractiveOutputChunk[]
+  onInitialChunksConsumed?: (sessionId: string) => void
 }
 
 export function SessionTerminalView({
@@ -44,6 +46,8 @@ export function SessionTerminalView({
   visible = true,
   onToggleRightSidebar,
   rightSidebarOpen,
+  initialChunks,
+  onInitialChunksConsumed,
 }: SessionTerminalViewProps) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -152,6 +156,16 @@ export function SessionTerminalView({
       term.write(batch, drain)
     }
 
+    // Replay any chunks that were buffered before the emitter was registered
+    if (initialChunks && initialChunks.length > 0) {
+      let batch = ''
+      for (let i = 0; i < initialChunks.length; i++) batch += initialChunks[i].data
+      if (batch) {
+        term.write(batch, drain)
+      }
+      onInitialChunksConsumed?.(sessionId)
+    }
+
     const onData = term.onData((data: string) => {
       onSendRawRef.current(data)
       if (data === '\r' || data === '\n') {
@@ -255,7 +269,7 @@ export function SessionTerminalView({
               type="button"
               onClick={() => setShowAI((v) => !v)}
               className={cn(
-                'hidden items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide transition-all md:flex',
+                'flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold tracking-wide transition-all md:px-3',
                 showAI
                   ? 'bg-primary/25 text-blue-300 shadow-[0_0_12px_rgba(19,91,236,0.3)]'
                   : 'border border-primary/30 bg-primary/10 text-primary shadow-[0_0_6px_rgba(19,91,236,0.15)] hover:bg-primary/20 hover:shadow-[0_0_10px_rgba(19,91,236,0.25)]',
@@ -263,7 +277,7 @@ export function SessionTerminalView({
               title={`${t('terminal.aiGenerator')} (⌘+I)`}
             >
               <Sparkles className={cn('h-3.5 w-3.5', !showAI && 'animate-pulse')} />
-              AI
+              <span className="hidden md:inline">AI</span>
             </button>
           )}
           {onToggleRightSidebar && (
@@ -271,7 +285,7 @@ export function SessionTerminalView({
               type="button"
               onClick={onToggleRightSidebar}
               className={cn(
-                'hidden items-center rounded-md px-1.5 py-1 transition-colors md:flex',
+                'flex items-center rounded-md px-1.5 py-1 transition-colors',
                 rightSidebarOpen
                   ? 'text-primary hover:bg-primary/10'
                   : 'text-muted-foreground hover:text-foreground',
@@ -344,7 +358,7 @@ export function SessionTerminalView({
         </div>
       )}
       {isConnected && (
-        <MobileTerminalToolbar onSend={onSendRaw} onToggleAI={() => setShowAI((v) => !v)} showAI={showAI} />
+        <MobileTerminalToolbar onSend={onSendRaw} />
       )}
     </div>
   )

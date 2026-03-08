@@ -56,6 +56,7 @@
 - AES-256-GCM 加密存储密码和私钥
 - PBKDF2 密钥派生，可配置自动锁定超时
 - 多保险库，独立主密码
+- 生物识别解锁 — Touch ID（macOS）/ Face ID（iOS）/ 指纹识别（Android）/ Windows Hello，支持系统密码回退
 - 密钥永远不会以明文离开设备
 
 ### 代码片段

@@ -1,7 +1,7 @@
-import { X, Plus, RefreshCw, LayoutDashboard, Columns2, SquareTerminal } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 import type { SessionTab } from '@/lib/types'
+import { cn } from '@/lib/utils'
+import { Columns2, LayoutDashboard, Plus, RefreshCw, SquareTerminal, X } from 'lucide-react'
 
 export type { SessionTab }
 

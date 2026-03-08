@@ -9,10 +9,15 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri",
-    "ios:dev": "bash ./scripts/ios-dev.sh",
-    "ios:build": "bash ./scripts/ios-build.sh"
+    "dev:ios": "bash ./scripts/ios-dev.sh",
+    "build:macos": "bash ./scripts/build-macos.sh",
+    "build:ios": "bash ./scripts/ios-build.sh",
+    "build:ios:tf": "bash ./scripts/ios-build-tf.sh",
+    "dev:android": "bash ./scripts/dev-android.sh",
+    "build:android": "bash ./scripts/build-android.sh"
   },
   "dependencies": {
+    "@choochmeque/tauri-plugin-biometry-api": "^0.2.6",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@xterm/addon-fit": "^0.11.0",

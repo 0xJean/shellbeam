@@ -39,3 +39,29 @@ pub fn write_json<T: Serialize + ?Sized>(path: &PathBuf, value: &T) -> Result<()
         .map_err(|err| format!("Serialize data failed: {err}"))?;
     fs::write(path, content).map_err(|err| format!("Write data file failed: {err}"))
 }
+
+/// Remove all files inside the app data directory (but keep the directory itself).
+#[tauri::command]
+pub fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|err| format!("Resolve app data dir failed: {err}"))?;
+    if !app_data_dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&app_data_dir)
+        .map_err(|err| format!("Read app data dir failed: {err}"))?
+    {
+        let entry = entry.map_err(|err| format!("Read dir entry failed: {err}"))?;
+        let path = entry.path();
+        if path.is_dir() {
+            fs::remove_dir_all(&path)
+                .map_err(|err| format!("Remove dir failed: {err}"))?;
+        } else {
+            fs::remove_file(&path)
+                .map_err(|err| format!("Remove file failed: {err}"))?;
+        }
+    }
+    Ok(())
+}

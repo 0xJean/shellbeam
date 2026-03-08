@@ -1,10 +1,10 @@
-import { useState } from 'react'
-import { Terminal, Server, Laptop, Trash2, Pencil, KeyRound, LockKeyhole, User, Clock, Tag, RefreshCw, AlertTriangle } from 'lucide-react'
-import type { HostProfile } from '@/lib/hosts'
-import { useT } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import type { HostProfile } from '@/lib/hosts'
+import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
+import { AlertTriangle, Clock, KeyRound, Laptop, LockKeyhole, Pencil, RefreshCw, Server, Tag, Terminal, Trash2, User } from 'lucide-react'
+import { useState } from 'react'
 
 type TFn = (key: string, params?: Record<string, string | number>) => string
 
@@ -138,15 +138,17 @@ export function HostGridCard({ host, isSelected, status, onConnect, onEdit, onDe
           </div>
         </div>
 
-        <div className="flex items-center gap-2 border-t border-border/50 px-4 py-3">
-          <Button size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => onConnect(host.id)}>
-            <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{t('hostCard.connect')}
-          </Button>
-          {host.updatedAt > 0 && (
-            <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60" title={new Date(host.updatedAt).toLocaleString()}>
-              <Clock className="h-3 w-3" />{formatRelativeTime(host.updatedAt, t)}
-            </span>
-          )}
+        <div className="border-t border-border/50 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Button size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => onConnect(host.id)}>
+              <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{t('hostCard.connect')}
+            </Button>
+            {host.updatedAt > 0 && (
+              <span className="shrink-0 flex items-center gap-1 text-[10px] text-muted-foreground/60" title={new Date(host.updatedAt).toLocaleString()}>
+                <Clock className="h-3 w-3" />{formatRelativeTime(host.updatedAt, t)}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

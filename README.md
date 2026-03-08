@@ -56,6 +56,7 @@
 - AES-256-GCM encrypted storage for passwords and private keys
 - PBKDF2 key derivation with configurable auto-lock timeout
 - Multiple vaults with independent master passwords
+- Biometric unlock — Touch ID (macOS) / Face ID (iOS) / fingerprint (Android) / Windows Hello, with system password fallback
 - Secrets never leave the device unencrypted
 
 ### Snippets
