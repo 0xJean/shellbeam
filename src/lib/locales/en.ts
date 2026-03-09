@@ -472,6 +472,8 @@ const en: Record<string, string> = {
   'sync.removePeer': 'Remove Trusted Peer',
   'sync.dataToSync': 'Data to Sync',
   'sync.vaultSyncHint': 'Vault sync requires both devices to have vault unlocked.',
+  'sync.cannotConnectTitle': 'Cannot Connect Directly',
+  'sync.cannotConnectHint': 'This device may block incoming connections (common on Android). Please initiate pairing from the other device instead — tap "Scan" on that device and select this one.',
 
   // Vaults dashboard
   'vaults.hosts': 'Hosts',

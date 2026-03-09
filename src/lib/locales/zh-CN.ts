@@ -472,6 +472,8 @@ const zhCN: Record<string, string> = {
   'sync.removePeer': '移除可信节点',
   'sync.dataToSync': '同步数据类型',
   'sync.vaultSyncHint': '同步密钥需要两端设备的 Vault 均已解锁。',
+  'sync.cannotConnectTitle': '无法直接连接',
+  'sync.cannotConnectHint': '该设备可能阻止了入站连接（Android 常见）。请在对方设备上发起配对 — 在对方设备上点击"扫描"并选择本机。',
 
   // Vaults dashboard
   'vaults.hosts': '主机',

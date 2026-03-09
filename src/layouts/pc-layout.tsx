@@ -435,6 +435,7 @@ export function PcLayout() {
                     onRefresh={sync.refresh}
                     onInitDevice={sync.handleInitDevice}
                     onStartServer={sync.handleStartServer}
+                    onPullFromPeer={sync.handlePullFromPeer}
                     onPushToPeer={sync.handlePushToPeer}
                     onRemoveTrustedPeer={sync.handleRemoveTrustedPeer}
                   />

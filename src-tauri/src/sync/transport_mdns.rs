@@ -5,6 +5,8 @@
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use std::collections::HashMap;
+#[cfg(target_os = "ios")]
+use std::sync::Mutex;
 use std::net::TcpListener;
 use std::sync::atomic::Ordering;
 use std::thread;
@@ -46,10 +48,37 @@ fn native_device_name() -> String {
             }
         }
     }
-    let name = hostname::get()
-        .map(|h| h.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    name.strip_suffix(".local").unwrap_or(&name).to_string()
+    #[cfg(target_os = "android")]
+    {
+        // hostname::get() returns "localhost" on Android — useless.
+        // Try to get a useful name from Android system properties.
+        // The real device name is obtained via the NSD bridge (JS side),
+        // but we need a reasonable fallback for Rust-side init.
+        if let Ok(model) = std::env::var("ANDROID_MODEL") {
+            if !model.is_empty() && model != "unknown" {
+                return model;
+            }
+        }
+        // Try reading from /system/build.prop
+        if let Ok(content) = std::fs::read_to_string("/system/build.prop") {
+            for line in content.lines() {
+                if let Some(val) = line.strip_prefix("ro.product.model=") {
+                    let val = val.trim();
+                    if !val.is_empty() {
+                        return val.to_string();
+                    }
+                }
+            }
+        }
+        return "ShellBeam-Android".to_string();
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    {
+        let name = hostname::get()
+            .map(|h| h.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        name.strip_suffix(".local").unwrap_or(&name).to_string()
+    }
 }
 
 fn device_type() -> &'static str {
@@ -218,19 +247,43 @@ pub(crate) fn unregister_mdns_service() {
 }
 
 pub fn server_loop(app: tauri::AppHandle, port: u16) {
-    let listener = match TcpListener::bind(format!("0.0.0.0:{port}")) {
+    // On Android, binding to 0.0.0.0 may cause the listener to be associated
+    // with the cellular interface when WiFi has no internet.  Binding to the
+    // specific WiFi IP ensures incoming LAN connections reach our socket.
+    let bind_addr = if cfg!(target_os = "android") {
+        if let Some(wifi_ip) = find_lan_ipv4() {
+            let addr = format!("{wifi_ip}:{port}");
+            log::info!("[android] Sync server will bind to WiFi IP: {addr}");
+            addr
+        } else {
+            log::warn!("[android] No WiFi IP found, falling back to 0.0.0.0:{port}");
+            format!("0.0.0.0:{port}")
+        }
+    } else {
+        format!("0.0.0.0:{port}")
+    };
+
+    let listener = match TcpListener::bind(&bind_addr) {
         Ok(l) => l,
         Err(e) => {
-            log::error!("Sync server bind failed: {e}");
-            SERVER_RUNNING.store(false, Ordering::SeqCst);
-            SERVER_PORT.store(0, Ordering::SeqCst);
-            return;
+            // If binding to a specific IP failed, try 0.0.0.0 as fallback
+            log::warn!("Sync server bind to {bind_addr} failed ({e}), trying 0.0.0.0:{port}");
+            match TcpListener::bind(format!("0.0.0.0:{port}")) {
+                Ok(l) => l,
+                Err(e2) => {
+                    log::error!("Sync server bind failed: {e2}");
+                    SERVER_RUNNING.store(false, Ordering::SeqCst);
+                    SERVER_PORT.store(0, Ordering::SeqCst);
+                    return;
+                }
+            }
         }
     };
+    let actual_addr = listener.local_addr().map(|a| a.to_string()).unwrap_or_default();
     SERVER_RUNNING.store(true, Ordering::SeqCst);
     SERVER_PORT.store(port, Ordering::SeqCst);
     register_mdns_service(port);
-    log::info!("Sync server listening on 0.0.0.0:{port}");
+    log::info!("Sync server listening on {actual_addr}");
     for stream in listener.incoming() {
         if !SERVER_RUNNING.load(Ordering::SeqCst) { break; }
         match stream {
@@ -286,7 +339,11 @@ pub fn mdns_diagnose() -> Vec<String> {
     {
         log.push("[INFO] Android: mDNS handled by NsdHelper (NsdManager API)".to_string());
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    {
+        log.push("[INFO] iOS: mDNS handled by NSNetService (Bonjour)".to_string());
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         match ServiceDaemon::new() {
             Ok(daemon) => {

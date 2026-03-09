@@ -7,7 +7,9 @@
 
 use serde::Serialize;
 #[cfg(not(target_os = "android"))]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+use std::sync::atomic::Ordering;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use std::sync::Mutex;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]

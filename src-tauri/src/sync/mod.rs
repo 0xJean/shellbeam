@@ -1,13 +1,51 @@
 pub mod commands;
 pub mod peer;
+pub mod peer_pairing;
 pub(crate) mod transport;
+pub(crate) mod transport_handler;
 pub(crate) mod transport_mdns;
 
 pub use commands::*;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 use crate::storage::{data_file_path, read_json_or_default, write_json, SYNC_STATE_FILE};
+
+// ── Pending push store (in-memory) ──────────────────────────────────────────
+// When macOS cannot connect to Android (inbound TCP blocked), the push payload
+// is stored here keyed by target peer_device_id.  Android periodically polls
+// macOS via `check_pending_push` / `claim_pending_push` to pick it up.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PendingPush {
+    pub payload: serde_json::Value,
+    pub created_at: i64,
+    pub include_hosts: bool,
+    pub include_snippets: bool,
+    pub include_vault: bool,
+}
+
+pub(crate) static PENDING_PUSHES: Mutex<Option<HashMap<String, PendingPush>>> = Mutex::new(None);
+
+pub(crate) fn pending_push_store(peer_device_id: &str, push: PendingPush) {
+    let mut guard = PENDING_PUSHES.lock().unwrap();
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(peer_device_id.to_string(), push);
+    log::info!("[sync] pending push stored for peer {}", peer_device_id);
+}
+
+pub(crate) fn pending_push_check(peer_device_id: &str) -> bool {
+    let guard = PENDING_PUSHES.lock().unwrap();
+    guard.as_ref().map(|m| m.contains_key(peer_device_id)).unwrap_or(false)
+}
+
+pub(crate) fn pending_push_claim(peer_device_id: &str) -> Option<PendingPush> {
+    let mut guard = PENDING_PUSHES.lock().unwrap();
+    guard.as_mut().and_then(|m| m.remove(peer_device_id))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

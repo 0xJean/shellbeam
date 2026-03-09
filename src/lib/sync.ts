@@ -258,3 +258,20 @@ export async function syncPushToPeer(peerDeviceId: string, options?: SyncDataOpt
     throw new Error(toInvokeErrorMessage(error))
   }
 }
+
+export interface SyncClaimPendingResult {
+  claimed: boolean
+  hostsRestored: number
+  snippetsRestored: number
+  vaultRestored: boolean
+}
+
+export async function syncClaimPendingFromPeer(peerDeviceId: string) {
+  try {
+    return await invoke<SyncClaimPendingResult>('sync_claim_pending_from_peer', {
+      payload: { peerDeviceId },
+    })
+  } catch (error) {
+    throw new Error(toInvokeErrorMessage(error))
+  }
+}

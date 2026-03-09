@@ -63,12 +63,27 @@ function detectPlatform(): 'macos' | 'windows' | 'ios' | 'android' | 'unknown' {
 
 /**
  * Fix biometry type based on platform.
- * Some plugins misreport — e.g. returning FaceID on macOS which only has Touch ID.
+ * The plugin often returns 'auto' (enum 1) or misreports the type.
+ * Map to the correct platform-native biometry type.
  */
 function correctTypeForPlatform(type: BiometryType): BiometryType {
   const platform = detectPlatform()
-  if (platform === 'macos' && type === 'faceId') return 'touchId'
-  if (platform === 'android' && type === 'faceId') return 'fingerprint'
+  if (platform === 'macos') {
+    // macOS only has Touch ID
+    if (type === 'faceId' || type === 'auto') return 'touchId'
+  }
+  if (platform === 'ios') {
+    // iOS: auto → Face ID (most modern iPhones); older devices with Touch ID
+    // would report touchId directly. Plugin returning auto means Face ID.
+    if (type === 'auto') return 'faceId'
+  }
+  if (platform === 'android') {
+    // Android: auto/faceId → fingerprint (most common biometric)
+    if (type === 'auto' || type === 'faceId') return 'fingerprint'
+  }
+  if (platform === 'windows') {
+    if (type === 'auto') return 'auto' // Windows Hello is correct for auto
+  }
   return type
 }
 
@@ -145,10 +160,10 @@ export function biometryLabel(type: BiometryType): string {
   switch (type) {
     case 'touchId': return 'Touch ID'
     case 'faceId': return 'Face ID'
-    case 'fingerprint': return '指纹'
-    case 'iris': return '虹膜'
-    case 'auto': return 'Windows Hello'
-    default: return ''
+    case 'fingerprint': return '指纹识别'
+    case 'iris': return '虹膜识别'
+    case 'auto': return detectPlatform() === 'windows' ? 'Windows Hello' : '生物识别'
+    default: return '生物识别'
   }
 }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { androidNsdRegister } from '@/lib/mdns'
+import { androidNsdRegister, getAndroidDeviceName } from '@/lib/mdns'
 import {
   syncGetBootstrap,
   syncInitLocalDevice,
@@ -17,6 +17,7 @@ import {
   syncServerStatus,
   syncPullFromPeer,
   syncPushToPeer,
+  syncClaimPendingFromPeer,
   type SyncBootstrapResponse,
   type SyncChangeRecord,
   type SyncCursorRecord,
@@ -58,6 +59,18 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
     setPairingSessions(ps)
     setServerRunning(sr)
     setServerPort(sp)
+
+    // Auto-correct bad device names on Android when the NSD bridge is available
+    if (bs.localDevice) {
+      const badNames = ['localhost', 'shellbeam-android']
+      if (badNames.includes(bs.localDevice.deviceName.toLowerCase())) {
+        const androidName = getAndroidDeviceName()
+        if (androidName) {
+          const fixed = await syncInitLocalDevice(androidName)
+          setLocalDevice(fixed)
+        }
+      }
+    }
   }, [])
 
   function backgroundRefresh() {
@@ -69,11 +82,60 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
   // Listen for push_full_backup received from a peer — refresh local data
   useEffect(() => {
     const unlisten = listen('sync-data-changed', () => {
+      console.log('[sync] sync-data-changed event received, refreshing...')
       onSyncCompleteRef.current?.()
       backgroundRefresh()
     })
     return () => { void unlisten.then((fn) => fn()) }
   }, [])
+
+  // Listen for pending push stored event (macOS couldn't reach Android directly)
+  // and also poll trusted peers for pending pushes periodically
+  useEffect(() => {
+    const unlisten = listen('sync-pending-push-stored', (event) => {
+      const data = event.payload as { peerDeviceId?: string }
+      console.log('[sync] pending push stored for peer:', data?.peerDeviceId)
+      setOutput('Sync push queued — data will be delivered when peer connects')
+    })
+    return () => { void unlisten.then((fn) => fn()) }
+  }, [])
+
+  // Periodically check all trusted peers for pending pushes (Android → macOS polling)
+  const trustedPeersRef = useRef(trustedPeers)
+  trustedPeersRef.current = trustedPeers
+
+  useEffect(() => {
+    if (!serverRunning) return
+
+    let cancelled = false
+    const pollPending = async () => {
+      const peers = trustedPeersRef.current
+      if (peers.length === 0) return
+      for (const peer of peers) {
+        if (cancelled) break
+        if (!peer.peerEndpoint) continue
+        try {
+          const result = await syncClaimPendingFromPeer(peer.peerDeviceId)
+          if (result.claimed) {
+            const parts: string[] = []
+            if (result.hostsRestored) parts.push(`${result.hostsRestored} hosts`)
+            if (result.snippetsRestored) parts.push(`${result.snippetsRestored} snippets`)
+            if (result.vaultRestored) parts.push('vault/keychain')
+            setOutput(`Received pending push from ${peer.peerDeviceName ?? peer.peerDeviceId}: ${parts.join(', ')}`)
+            onSyncCompleteRef.current?.()
+            backgroundRefresh()
+          }
+        } catch {
+          // Peer unreachable — that's fine, skip silently
+        }
+      }
+    }
+
+    // Poll once immediately, then every 30 seconds
+    pollPending()
+    const timer = setInterval(pollPending, 30_000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [serverRunning])
 
   async function refresh() {
     setLoading(true)
@@ -87,9 +149,26 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
   async function handleInitDevice(deviceName?: string) {
     setLoading(true)
     try {
-      const device = await syncInitLocalDevice(deviceName?.trim() || undefined)
+      // On Android, use the real device model name if no name provided
+      let name = deviceName?.trim()
+      if (!name) {
+        const androidName = getAndroidDeviceName()
+        if (androidName) name = androidName
+      }
+      const device = await syncInitLocalDevice(name || undefined)
       setLocalDevice(device)
       setOutput(`Sync local device ready: ${device.deviceName}`)
+
+      // If the persisted device name is a known bad fallback (e.g. "localhost",
+      // "ShellBeam-Android") and we now have the real Android device name,
+      // re-init to fix it.
+      const badNames = ['localhost', 'shellbeam-android']
+      const androidName2 = getAndroidDeviceName()
+      if (androidName2 && badNames.includes(device.deviceName.toLowerCase())) {
+        const fixed = await syncInitLocalDevice(androidName2)
+        setLocalDevice(fixed)
+        setOutput(`Sync device name corrected: ${fixed.deviceName}`)
+      }
     } catch (error) {
       setOutput(String(error))
     } finally {
@@ -164,8 +243,22 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
       setServerRunning(true)
       setServerPort(p)
       setOutput(`Sync server started on port ${p}`)
-      // On Android, register NSD service via native bridge
-      androidNsdRegister(p, localDevice?.deviceName || 'ShellBeam')
+      // On Android, register NSD service via native bridge with real device name
+      const androidName = getAndroidDeviceName()
+      let nsdName = androidName || localDevice?.deviceName || 'ShellBeam'
+      // Avoid registering with known-bad fallback names
+      const badNames = ['localhost', 'shellbeam-android']
+      if (badNames.includes(nsdName.toLowerCase())) {
+        nsdName = androidName || 'ShellBeam'
+      }
+      androidNsdRegister(p, nsdName)
+
+      // If the persisted device name is a bad fallback and we now have the real
+      // Android name, fix it so future syncs use the correct name.
+      if (androidName && localDevice && badNames.includes(localDevice.deviceName.toLowerCase())) {
+        const fixed = await syncInitLocalDevice(androidName)
+        setLocalDevice(fixed)
+      }
     } catch (error) {
       setOutput(String(error))
     } finally {
@@ -181,7 +274,11 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
       if (result.hostsRestored) parts.push(`${result.hostsRestored} hosts`)
       if (result.snippetsRestored) parts.push(`${result.snippetsRestored} snippets`)
       if (result.vaultRestored) parts.push('vault/keychain')
-      setOutput(`Sync pull complete: ${parts.join(', ') || 'no data'}`)
+      if (parts.length > 0) {
+        setOutput(`Sync pull complete: ${parts.join(', ')}`)
+      } else {
+        setOutput('Sync pull complete: peer has no data to share')
+      }
       onSyncComplete?.()
     } catch (error) {
       setOutput(String(error))
@@ -199,9 +296,19 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
       if (result.hostsPushed) parts.push(`${result.hostsPushed} hosts`)
       if (result.snippetsPushed) parts.push(`${result.snippetsPushed} snippets`)
       if (result.vaultPushed) parts.push('vault/keychain')
-      setOutput(`Sync push complete: ${parts.join(', ') || 'no data'}`)
+      if (parts.length > 0) {
+        setOutput(`Sync push complete: ${parts.join(', ')}`)
+      } else {
+        setOutput('Sync push complete: no data to push')
+      }
     } catch (error) {
-      setOutput(String(error))
+      const msg = String(error)
+      // If the error mentions pending, it means the push was queued
+      if (msg.includes('pending')) {
+        setOutput('Sync push queued — data will be delivered when peer connects')
+      } else {
+        setOutput(msg)
+      }
     } finally {
       setLoading(false)
     }

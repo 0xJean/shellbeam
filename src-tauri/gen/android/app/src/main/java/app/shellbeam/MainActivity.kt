@@ -2,6 +2,8 @@ package app.shellbeam
 
 import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -14,18 +16,55 @@ class MainActivity : TauriActivity() {
 
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nsdHelper: NsdHelper? = null
-    private var webViewReady = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val nsdBridge = NsdBridge()
+    private var webViewRef: WebView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         acquireMulticastLock()
         setupNsd()
-        // Delay WebView setup to ensure Tauri has created it
-        window.decorView.post { setupWebViewBridge() }
+    }
+
+    /**
+     * Called by WryActivity.setWebView() after Tauri creates the RustWebView.
+     * This is the correct moment to install the JS bridge — the WebView is
+     * fully initialized and will not be recreated.
+     */
+    override fun onWebViewCreate(webView: WebView) {
+        super.onWebViewCreate(webView)
+        Log.i(TAG, "onWebViewCreate: installing NSD bridge on ${webView.javaClass.name}")
+        webViewRef = webView
+        webView.addJavascriptInterface(nsdBridge, "ShellBeamNSD")
+
+        // Notify the frontend once the page is ready.
+        // The bridge is available immediately after addJavascriptInterface,
+        // but the frontend JS may not have loaded yet. Fire a custom event
+        // after a short delay so the frontend can re-check.
+        mainHandler.postDelayed({
+            dispatchBridgeReady(webView)
+        }, 1500)
+        // Fire again a bit later in case the first one was too early
+        mainHandler.postDelayed({
+            dispatchBridgeReady(webView)
+        }, 4000)
+    }
+
+    private fun dispatchBridgeReady(webView: WebView) {
+        webView.post {
+            webView.evaluateJavascript(
+                "(function(){" +
+                    "if(typeof window.ShellBeamNSD!=='undefined'){" +
+                    "  window.dispatchEvent(new CustomEvent('shellbeam-nsd-ready'));" +
+                    "}" +
+                    "})()", null
+            )
+        }
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
         nsdHelper?.destroy()
         nsdHelper = null
         releaseMulticastLock()
@@ -60,26 +99,6 @@ class MainActivity : TauriActivity() {
         }
     }
 
-    /**
-     * Find Tauri's WebView and add our JS interface bridge.
-     * This allows the frontend to call NSD methods directly.
-     */
-    private fun setupWebViewBridge() {
-        val webView = findWebView()
-        if (webView == null) {
-            Log.w(TAG, "WebView not found, retrying in 500ms")
-            window.decorView.postDelayed({ setupWebViewBridge() }, 500)
-            return
-        }
-        webView.addJavascriptInterface(NsdBridge(), "ShellBeamNSD")
-        webViewReady = true
-        Log.i(TAG, "WebView JS bridge installed (ShellBeamNSD)")
-    }
-
-    /**
-     * JS interface exposed to WebView as window.ShellBeamNSD.
-     * Frontend calls these methods to control NSD registration/discovery.
-     */
     inner class NsdBridge {
         @JavascriptInterface
         fun registerService(port: Int, instanceName: String) {
@@ -104,15 +123,20 @@ class MainActivity : TauriActivity() {
             Log.i(TAG, "JS -> stopDiscovery")
             nsdHelper?.stopDiscovery()
         }
+
+        @JavascriptInterface
+        fun getDeviceName(): String {
+            return android.os.Build.MODEL ?: "Android"
+        }
+
+        @JavascriptInterface
+        fun logToNative(message: String) {
+            Log.i(TAG, "JS-LOG: $message")
+        }
     }
 
-    /**
-     * Emit a device-found event to the WebView as a CustomEvent.
-     * The frontend listens for 'shellbeam-nsd-device' and bridges it
-     * into the Tauri event system.
-     */
     private fun emitDeviceFound(name: String, host: String, port: Int, deviceType: String) {
-        val json = buildJsonString(name, host, port, deviceType)
+        val json = """{"name":"${esc(name)}","host":"${esc(host)}","port":$port,"deviceType":"${esc(deviceType)}"}"""
         val js = """
             (function() {
                 try {
@@ -122,14 +146,7 @@ class MainActivity : TauriActivity() {
                 } catch(e) { console.warn('NSD emit error:', e); }
             })();
         """.trimIndent()
-
-        runOnUiThread {
-            findWebView()?.evaluateJavascript(js, null)
-        }
-    }
-
-    private fun buildJsonString(name: String, host: String, port: Int, deviceType: String): String {
-        return """{"name":"${esc(name)}","host":"${esc(host)}","port":$port,"deviceType":"${esc(deviceType)}"}"""
+        runOnUiThread { webViewRef?.evaluateJavascript(js, null) }
     }
 
     private fun esc(s: String): String {
@@ -137,20 +154,5 @@ class MainActivity : TauriActivity() {
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
             .replace("\r", "\\r")
-    }
-
-    private fun findWebView(): WebView? {
-        return findWebViewInView(window.decorView)
-    }
-
-    private fun findWebViewInView(view: android.view.View): WebView? {
-        if (view is WebView) return view
-        if (view is android.view.ViewGroup) {
-            for (i in 0 until view.childCount) {
-                val found = findWebViewInView(view.getChildAt(i))
-                if (found != null) return found
-            }
-        }
-        return null
     }
 }

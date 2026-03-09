@@ -4,7 +4,6 @@
 
 use super::discovery::{DiscoveredDevice, DISCOVER_RUNNING};
 use std::sync::atomic::Ordering;
-use std::sync::Mutex;
 use tauri::Emitter;
 
 // Raw dns_sd.h C API bindings (available on iOS via system framework)
