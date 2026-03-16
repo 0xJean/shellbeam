@@ -111,6 +111,12 @@ export function PcLayout() {
   }
 
   const isSplit = !!sessions.rightPaneSessionId
+  const activeWorkspaceMode = sessions.pcActiveSessionId
+    ? sessions.workspaceBySession[sessions.pcActiveSessionId]?.mode ?? 'terminal'
+    : 'terminal'
+  const mobileWorkspaceMode = mobileActiveSessionId
+    ? sessions.workspaceBySession[mobileActiveSessionId]?.mode ?? 'terminal'
+    : 'terminal'
 
   const handleToggleSplit = useCallback(() => {
     if (sessions.rightPaneSessionId) {
@@ -146,6 +152,11 @@ export function PcLayout() {
           activeSessionId={sessions.pcActiveSessionId}
           isDashboard={!sessions.pcActiveSessionId}
           isSplit={isSplit}
+          activeMode={activeWorkspaceMode}
+          onModeChange={(mode) => {
+            const sid = sessions.pcActiveSessionId
+            if (sid) sessions.setSessionMode(sid, mode)
+          }}
           onSelectSession={(sid) => { sessions.setPcActiveSessionId(sid); setShowQuickConnect(false) }}
           onCloseSession={sessions.handleCloseSessionTab}
           onGoToDashboard={() => { sessions.setPcActiveSessionId(null); setShowQuickConnect(false); app.setPcSidebarNav('hosts') }}
@@ -229,6 +240,10 @@ export function PcLayout() {
           <MobileSessionHeader
             sessionTabs={sessions.pcSessionTabs}
             activeSessionId={mobileActiveSessionId}
+            activeMode={mobileWorkspaceMode}
+            onModeChange={(mode) => {
+              if (mobileActiveSessionId) sessions.setSessionMode(mobileActiveSessionId, mode)
+            }}
             onSelectSession={setMobileActiveSessionId}
             onCloseSession={handleMobileCloseSession}
             onNewConnection={handleMobileNewConnection}

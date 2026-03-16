@@ -1,9 +1,11 @@
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import type { SessionTab } from '@/lib/types'
+import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { cn } from '@/lib/utils'
 import { ChevronDown, Plus, Server, SquareTerminal, X, Zap } from 'lucide-react'
 import { useState } from 'react'
+import { WorkspaceModeToggle } from './workspace/workspace-mode-toggle'
 
 interface MobileSessionHeaderProps {
   sessionTabs: SessionTab[]
@@ -14,6 +16,8 @@ interface MobileSessionHeaderProps {
   onOpenLocalTerminal: () => void
   hosts?: HostProfile[]
   onConnectHost?: (hostId: string) => void
+  activeMode?: SessionWorkspaceMode
+  onModeChange?: (mode: SessionWorkspaceMode) => void
 }
 
 export function MobileSessionHeader({
@@ -25,6 +29,8 @@ export function MobileSessionHeader({
   onOpenLocalTerminal,
   hosts = [],
   onConnectHost,
+  activeMode = 'terminal',
+  onModeChange,
 }: MobileSessionHeaderProps) {
   const { t } = useT()
   const [listOpen, setListOpen] = useState(false)
@@ -153,6 +159,12 @@ export function MobileSessionHeader({
           <Plus className="h-4 w-4" />
         </button>
       </div>
+
+      {activeTab && onModeChange && (
+        <div className="flex shrink-0 justify-center border-b border-border/40 bg-background/95 px-3 py-2">
+          <WorkspaceModeToggle mode={activeMode} onChange={onModeChange} compact />
+        </div>
+      )}
 
       {/* Session list overlay */}
       {listOpen && (
