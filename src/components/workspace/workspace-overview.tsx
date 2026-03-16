@@ -1,4 +1,5 @@
 import type { WorkspaceAppId } from '@/lib/workspace'
+import type { HostProfile } from '@/lib/hosts'
 import { t } from '@/lib/i18n'
 import {
   getWorkspaceRecommendations,
@@ -11,6 +12,9 @@ import { WorkspaceStatusCards } from './workspace-status-cards'
 interface WorkspaceOverviewProps {
   hostName: string
   hostAddress: string
+  hostId?: string | null
+  hosts?: HostProfile[]
+  resolveAuthSecret?: (host: HostProfile) => Promise<string>
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
   activityItems?: WorkspaceActivityItem[]
@@ -20,6 +24,9 @@ interface WorkspaceOverviewProps {
 export function WorkspaceOverview({
   hostName,
   hostAddress,
+  hostId = null,
+  hosts = [],
+  resolveAuthSecret,
   activeApp,
   onSelectApp,
   activityItems = [],
@@ -35,7 +42,12 @@ export function WorkspaceOverview({
         <p className="mt-1 text-sm text-muted-foreground">{hostAddress}</p>
       </div>
 
-      <WorkspaceStatusCards hostAddress={hostAddress} />
+      <WorkspaceStatusCards
+        hostAddress={hostAddress}
+        selectedHostId={hostId}
+        hosts={hosts}
+        resolveAuthSecret={resolveAuthSecret}
+      />
 
       <section className="space-y-3">
         <div className="text-sm font-semibold">{t('workspace.section.applications')}</div>

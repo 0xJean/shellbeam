@@ -263,7 +263,12 @@ export function WorkspaceDesktopShell({
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <WorkspaceStatusCards hostAddress={hostAddress} />
+                <WorkspaceStatusCards
+                  hostAddress={hostAddress}
+                  selectedHostId={hostId}
+                  hosts={hosts}
+                  resolveAuthSecret={resolveAuthSecret}
+                />
                 </div>
                 <div className="rounded-[24px] border border-white/65 bg-white/52 px-4 py-4 shadow-[0_16px_36px_rgba(15,23,42,0.15)] backdrop-blur">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-600">{t('workspace.desktop.quickHint')}</div>
