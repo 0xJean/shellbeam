@@ -1,3 +1,4 @@
+import type { HostProfile } from '@/lib/hosts'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { cn } from '@/lib/utils'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
@@ -19,6 +20,9 @@ const APP_LABELS: Array<{ id: WorkspaceAppId; label: string }> = [
 interface WorkspaceDesktopShellProps {
   hostName: string
   hostAddress: string
+  hostId?: string | null
+  hosts?: HostProfile[]
+  resolveAuthSecret?: (host: HostProfile) => Promise<string>
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
 }
@@ -26,6 +30,9 @@ interface WorkspaceDesktopShellProps {
 export function WorkspaceDesktopShell({
   hostName,
   hostAddress,
+  hostId,
+  hosts = [],
+  resolveAuthSecret,
   activeApp,
   onSelectApp,
 }: WorkspaceDesktopShellProps) {
@@ -33,7 +40,12 @@ export function WorkspaceDesktopShell({
     if (activeApp === 'overview') {
       return <WorkspaceOverview hostName={hostName} hostAddress={hostAddress} activeApp={activeApp} onSelectApp={onSelectApp} />
     }
-    if (activeApp === 'files') return <WorkspaceFilesApp />
+    if (activeApp === 'files') {
+      if (hostId && resolveAuthSecret) {
+        return <WorkspaceFilesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
     if (activeApp === 'processes') return <WorkspaceProcessesApp />
     if (activeApp === 'services') return <WorkspaceServicesApp />
     if (activeApp === 'logs') return <WorkspaceLogsApp />

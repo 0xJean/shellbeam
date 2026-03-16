@@ -51,7 +51,7 @@ describe('workspace shell', () => {
     expect(onSelectApp).toHaveBeenCalledWith('logs')
   })
 
-  it('renders dedicated files and logs app shells when selected', () => {
+  it('renders files fallback and logs app shells when selected', () => {
     const { rerender } = render(
       <WorkspaceShell
         mobile={false}
@@ -62,8 +62,8 @@ describe('workspace shell', () => {
       />,
     )
 
-    expect(screen.getByText('Remote Files')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /open in terminal/i })).toBeInTheDocument()
+    expect(screen.getAllByText('Files').length).toBeGreaterThan(0)
+    expect(screen.getByText(/scaffolded and ready/i)).toBeInTheDocument()
 
     rerender(
       <WorkspaceShell

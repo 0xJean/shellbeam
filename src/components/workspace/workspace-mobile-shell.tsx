@@ -1,3 +1,4 @@
+import type { HostProfile } from '@/lib/hosts'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
 import { WorkspaceFilesApp } from './workspace-files-app'
@@ -9,6 +10,9 @@ import { WorkspaceServicesApp } from './workspace-services-app'
 interface WorkspaceMobileShellProps {
   hostName: string
   hostAddress: string
+  hostId?: string | null
+  hosts?: HostProfile[]
+  resolveAuthSecret?: (host: HostProfile) => Promise<string>
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
 }
@@ -16,6 +20,9 @@ interface WorkspaceMobileShellProps {
 export function WorkspaceMobileShell({
   hostName,
   hostAddress,
+  hostId,
+  hosts = [],
+  resolveAuthSecret,
   activeApp,
   onSelectApp,
 }: WorkspaceMobileShellProps) {
@@ -23,7 +30,12 @@ export function WorkspaceMobileShell({
     if (activeApp === 'overview') {
       return <WorkspaceOverview hostName={hostName} hostAddress={hostAddress} activeApp={activeApp} onSelectApp={onSelectApp} />
     }
-    if (activeApp === 'files') return <WorkspaceFilesApp />
+    if (activeApp === 'files') {
+      if (hostId && resolveAuthSecret) {
+        return <WorkspaceFilesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
     if (activeApp === 'processes') return <WorkspaceProcessesApp />
     if (activeApp === 'services') return <WorkspaceServicesApp />
     if (activeApp === 'logs') return <WorkspaceLogsApp />

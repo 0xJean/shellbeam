@@ -40,6 +40,16 @@ export function PcLayout() {
   const vault = useVault()
   const hostsCtx = useHosts()
   const sessions = useSessions()
+  const resolveWorkspaceAuthSecret = useCallback(async (host: (typeof hostsCtx.hosts)[number]) => {
+    return (
+      await vault.resolveAuthSecret({
+        authType: host.authType,
+        explicitSecret: '',
+        hostForRef: host,
+        inputMode: 'vault',
+      })
+    ) ?? ''
+  }, [vault])
   const snippets = useSnippets(vault.activeVaultId, app.setOutput)
   const sync = useSync(app.setOutput, () => {
     void hostsCtx.refreshHosts()
@@ -191,6 +201,9 @@ export function PcLayout() {
                         mobile={false}
                         hostName={tab.hostName}
                         hostAddress={tab.hostAddress}
+                        hostId={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId)?.hostId ?? null}
+                        hosts={hostsCtx.hosts}
+                        resolveAuthSecret={resolveWorkspaceAuthSecret}
                         activeApp={sessions.workspaceBySession[tab.sessionId]?.activeApp ?? 'overview'}
                         onSelectApp={(workspaceApp) => sessions.setSessionWorkspaceApp(tab.sessionId, workspaceApp)}
                       />
@@ -277,6 +290,9 @@ export function PcLayout() {
                         mobile
                         hostName={tab.hostName}
                         hostAddress={tab.hostAddress}
+                        hostId={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId)?.hostId ?? null}
+                        hosts={hostsCtx.hosts}
+                        resolveAuthSecret={resolveWorkspaceAuthSecret}
                         activeApp={sessions.workspaceBySession[tab.sessionId]?.activeApp ?? 'overview'}
                         onSelectApp={(workspaceApp) => sessions.setSessionWorkspaceApp(tab.sessionId, workspaceApp)}
                       />

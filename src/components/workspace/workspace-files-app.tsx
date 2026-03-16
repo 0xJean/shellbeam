@@ -1,4 +1,29 @@
-export function WorkspaceFilesApp() {
+import { SftpDualPane } from '@/components/sftp-dual-pane'
+import type { HostProfile } from '@/lib/hosts'
+import { WorkspaceEmptyState } from './workspace-empty-state'
+
+interface WorkspaceFilesAppProps {
+  selectedHostId?: string | null
+  hosts: HostProfile[]
+  resolveAuthSecret: (host: HostProfile) => Promise<string>
+}
+
+export function WorkspaceFilesApp({
+  selectedHostId = null,
+  hosts,
+  resolveAuthSecret,
+}: WorkspaceFilesAppProps) {
+  const activeHostId = selectedHostId
+
+  if (!activeHostId) {
+    return (
+      <WorkspaceEmptyState
+        title="Remote Files"
+        description="Connect a remote host to browse files here."
+      />
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div className="rounded-[28px] border border-border/60 bg-card/80 px-6 py-5">
@@ -6,16 +31,12 @@ export function WorkspaceFilesApp() {
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">Remote Files</h2>
         <p className="mt-1 text-sm text-muted-foreground">Browse remote paths visually, then drop back to the terminal when you need precision.</p>
       </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className="rounded-2xl border border-border/60 bg-card/70 p-4 text-sm text-muted-foreground">
-          SFTP-powered file navigation will live here.
-        </div>
-        <button
-          type="button"
-          className="rounded-2xl border border-border/60 bg-card/70 px-4 py-4 text-left text-sm font-medium hover:bg-muted/40"
-        >
-          Open in Terminal
-        </button>
+      <div className="rounded-[28px] border border-border/60 bg-card/70 p-3">
+        <SftpDualPane
+          hosts={hosts}
+          selectedHostId={activeHostId}
+          resolveAuthSecret={resolveAuthSecret}
+        />
       </div>
     </div>
   )
