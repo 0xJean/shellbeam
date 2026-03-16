@@ -29,7 +29,7 @@ export function WorkspaceOverview({
 
   return (
     <div className="space-y-6">
-      <div className="rounded-[28px] border border-border/60 bg-card/80 px-6 py-5">
+      <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
         <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">{t('workspace.mode.workspace')}</div>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{hostName}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{hostAddress}</p>

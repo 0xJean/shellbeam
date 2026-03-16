@@ -148,7 +148,7 @@ export function WorkspaceServicesApp({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-[28px] border border-border/60 bg-card/80 px-6 py-5">
+      <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
         <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">Services</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">Service Control</h2>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -156,7 +156,7 @@ export function WorkspaceServicesApp({
         </p>
       </div>
 
-      <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card/70 px-4 py-3">
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3">
         <div className="text-xs text-muted-foreground">{SERVICES_COMMAND}</div>
         <button
           type="button"
@@ -178,7 +178,7 @@ export function WorkspaceServicesApp({
         </div>
       ) : (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(20rem,0.8fr)]">
-          <div className="overflow-hidden rounded-[28px] border border-border/60 bg-card/80">
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
             <div className="grid grid-cols-[minmax(0,1.4fr)_100px_100px_100px] gap-3 border-b border-border/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
               <div>Service</div>
               <div>Load</div>
@@ -220,7 +220,7 @@ export function WorkspaceServicesApp({
             </div>
           </div>
 
-          <div className="space-y-4 rounded-[28px] border border-border/60 bg-card/80 p-5">
+          <div className="space-y-4 rounded-xl border border-border/60 bg-card p-5">
             <div>
               <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Selected Service</div>
               <div className="mt-2 text-xl font-semibold">{selectedService?.name ?? 'Choose a service'}</div>

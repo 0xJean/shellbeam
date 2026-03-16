@@ -79,7 +79,7 @@ export function WorkspaceLogsApp({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-[28px] border border-border/60 bg-card/80 px-6 py-5">
+      <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
         <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">Logs</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">Log Sources</h2>
         <p className="mt-1 text-sm text-muted-foreground">Inspect journal and file-based logs, then hand off to the terminal for deep filtering.</p>
@@ -100,7 +100,7 @@ export function WorkspaceLogsApp({
           </button>
         ))}
       </div>
-      <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card/70 px-4 py-3">
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3">
         <div className="text-xs text-muted-foreground">{activeSource.command}</div>
         <button
           type="button"
@@ -115,7 +115,7 @@ export function WorkspaceLogsApp({
           {error}
         </div>
       ) : (
-        <pre className="max-h-[26rem] overflow-auto rounded-2xl border border-border/60 bg-card/80 p-4 text-xs leading-6 text-slate-200">
+        <pre className="max-h-[26rem] overflow-auto rounded-xl border border-border/60 bg-card p-4 text-xs leading-6 text-foreground">
           {loading ? 'Loading logs…' : output}
         </pre>
       )}

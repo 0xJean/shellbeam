@@ -59,33 +59,33 @@ export function WorkspaceMobileShell({
   })()
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-auto bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.16),transparent_30%),linear-gradient(180deg,#f8fafc_0%,#e0e7ff_52%,#eef2ff_100%)] p-4 text-slate-950">
-      <div className="rounded-[32px] border border-white/60 bg-white/80 px-5 py-5 shadow-[0_20px_50px_rgba(15,23,42,0.12)] backdrop-blur-xl">
+    <div className="flex h-full min-h-0 flex-col overflow-auto bg-background px-4 py-4 text-foreground">
+      <div className="rounded-2xl border border-border/60 bg-card px-4 py-4">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-medium text-slate-500">{t('workspace.mobile.title')}</div>
-          <div className="rounded-full bg-slate-950 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white">
+          <div className="text-sm font-medium text-muted-foreground">{t('workspace.mobile.title')}</div>
+          <div className="rounded-full bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
             SSH
           </div>
         </div>
         <div className="mt-3 text-3xl font-semibold tracking-tight">{hostName}</div>
-        <div className="mt-1 text-sm text-slate-500">{hostAddress}</div>
+        <div className="mt-1 text-sm text-muted-foreground">{hostAddress}</div>
         <div className="mt-4 grid grid-cols-3 gap-2">
-          <div className="rounded-2xl bg-slate-950/[0.04] px-3 py-3">
-            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">{t('workspace.mobile.surface')}</div>
-            <div className="mt-2 text-sm font-semibold text-slate-900">{t('workspace.mobile.touchReady')}</div>
+          <div className="rounded-xl border border-border/50 bg-muted/30 px-3 py-3">
+            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">{t('workspace.mobile.surface')}</div>
+            <div className="mt-2 text-sm font-semibold">{t('workspace.mobile.touchReady')}</div>
           </div>
-          <div className="rounded-2xl bg-slate-950/[0.04] px-3 py-3">
-            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">{t('workspace.mobile.files')}</div>
-            <div className="mt-2 text-sm font-semibold text-slate-900">{t('workspace.mobile.live')}</div>
+          <div className="rounded-xl border border-border/50 bg-muted/30 px-3 py-3">
+            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">{t('workspace.mobile.files')}</div>
+            <div className="mt-2 text-sm font-semibold">{t('workspace.mobile.live')}</div>
           </div>
-          <div className="rounded-2xl bg-slate-950/[0.04] px-3 py-3">
-            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">{t('workspace.mobile.control')}</div>
-            <div className="mt-2 text-sm font-semibold text-slate-900">{t('workspace.mobile.quickOps')}</div>
+          <div className="rounded-xl border border-border/50 bg-muted/30 px-3 py-3">
+            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">{t('workspace.mobile.control')}</div>
+            <div className="mt-2 text-sm font-semibold">{t('workspace.mobile.quickOps')}</div>
           </div>
         </div>
       </div>
 
-      <div className="mt-4 min-h-0 flex-1 rounded-[30px] border border-white/50 bg-white/50 p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+      <div className="mt-4 min-h-0 flex-1">
         {content}
       </div>
     </div>

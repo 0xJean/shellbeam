@@ -103,7 +103,7 @@ export function WorkspaceProcessesApp({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-[28px] border border-border/60 bg-card/80 px-6 py-5">
+      <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
         <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">Processes</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">Process Monitor</h2>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -124,12 +124,12 @@ export function WorkspaceProcessesApp({
         ))}
       </div>
 
-      <div className="rounded-2xl border border-border/60 bg-card/70 px-4 py-3">
+      <div className="rounded-xl border border-border/60 bg-card px-4 py-3">
         <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Terminal Handoff</div>
         <div className="mt-2 text-xs text-muted-foreground">{handoffCommand}</div>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-2xl border border-border/60 bg-card/70 px-4 py-3 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card px-4 py-3 md:flex-row md:items-center md:justify-between">
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
@@ -150,7 +150,7 @@ export function WorkspaceProcessesApp({
           {error}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-[28px] border border-border/60 bg-card/80">
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
           <div className="grid grid-cols-[96px_minmax(0,1.4fr)_100px_100px_96px] gap-3 border-b border-border/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             <div>PID</div>
             <div>Command</div>
