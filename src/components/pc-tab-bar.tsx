@@ -79,7 +79,7 @@ export function PcSessionTabBar({
           >
             <button
               type="button"
-              className="flex items-center gap-1.5"
+              className="flex min-w-0 items-center gap-1.5"
               onClick={() => onSelectSession(session.sessionId)}
             >
               {session.status === 'connecting' ? (
@@ -92,6 +92,11 @@ export function PcSessionTabBar({
               )}
               <span className="max-w-[100px] truncate sm:max-w-[140px]">{session.hostName || session.hostAddress}</span>
             </button>
+            {isActive && onModeChange && (
+              <div className="ml-1 hidden items-center md:flex">
+                <WorkspaceModeToggle mode={activeMode} onChange={onModeChange} compact />
+              </div>
+            )}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onCloseSession(session.sessionId) }}
@@ -106,11 +111,6 @@ export function PcSessionTabBar({
       })}
 
       <div className="ml-1 flex items-end gap-0.5 border-l border-border/30 pl-1">
-        {onModeChange && !isDashboard && activeSessionId && (
-          <div className="mr-1 hidden items-center md:flex">
-            <WorkspaceModeToggle mode={activeMode} onChange={onModeChange} compact />
-          </div>
-        )}
         {onNewConnection && (
           <button
             type="button"
