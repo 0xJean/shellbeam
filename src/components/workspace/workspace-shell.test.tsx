@@ -78,6 +78,24 @@ describe('workspace shell', () => {
     expect(onSelectApp).toHaveBeenCalledWith('overview')
   })
 
+  it('lets mobile apps return to the home screen', () => {
+    const onSelectApp = vi.fn()
+
+    render(
+      <WorkspaceShell
+        mobile
+        hostName="Production API"
+        hostAddress="10.0.0.15"
+        activeApp="files"
+        onSelectApp={onSelectApp}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /back to home screen/i }))
+
+    expect(onSelectApp).toHaveBeenCalledWith('overview')
+  })
+
   it('renders files fallback and logs app shells when selected', async () => {
     const { rerender } = render(
       <WorkspaceShell
