@@ -51,7 +51,7 @@ describe('workspace status cards', () => {
     expect(screen.getByText('18.4 MB/s')).toBeInTheDocument()
   })
 
-  it('falls back gracefully when no host is selected', () => {
+  it('falls back gracefully when no host is selected', async () => {
     render(
       <WorkspaceStatusCards
         hostAddress="10.0.0.15"
@@ -61,7 +61,31 @@ describe('workspace status cards', () => {
       />,
     )
 
-    expect(screen.getAllByText('Not connected').length).toBeGreaterThan(0)
+    await waitFor(() => {
+      expect(screen.getAllByText('Not connected').length).toBeGreaterThan(0)
+    })
+  })
+
+  it('loads telemetry by matching the current host address when host id is unavailable', async () => {
+    runSshCommand.mockResolvedValue({
+      stdout: 'cpu:31\nmemory:48\ndisk:52\nnetwork:12.1 KB/s',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 11,
+    })
+
+    render(
+      <WorkspaceStatusCards
+        hostAddress="10.0.0.15"
+        selectedHostId={null}
+        hosts={[host]}
+        resolveAuthSecret={async () => 'secret'}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('31%')).toBeInTheDocument()
+    })
   })
 
   it('uses a container-adaptive grid so four cards reflow inside narrow widgets', async () => {

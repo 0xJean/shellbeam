@@ -1,3 +1,6 @@
+import type { HostProfile } from '@/lib/hosts'
+import { runSshCommand } from '@/lib/sessions'
+
 export interface WorkspaceMetrics {
   cpu: string
   memory: string
@@ -44,4 +47,41 @@ export function parseWorkspaceMetrics(output: string): WorkspaceMetrics {
     })
 
   return values
+}
+
+export function resolveWorkspaceMetricsHost(
+  hosts: HostProfile[],
+  options: { selectedHostId?: string | null; hostAddress?: string | null },
+) {
+  const { selectedHostId = null, hostAddress = null } = options
+
+  if (selectedHostId) {
+    return hosts.find((entry) => entry.id === selectedHostId) ?? null
+  }
+
+  if (hostAddress) {
+    return hosts.find((entry) => entry.address === hostAddress) ?? null
+  }
+
+  return null
+}
+
+export async function fetchWorkspaceMetrics(options: {
+  host: HostProfile
+  resolveAuthSecret: (host: HostProfile) => Promise<string>
+}) {
+  const { host, resolveAuthSecret } = options
+  const secret = await resolveAuthSecret(host)
+  const result = await runSshCommand({
+    hostId: host.id,
+    host: host.address,
+    port: host.port || 22,
+    username: host.username || 'root',
+    authType: host.authType,
+    password: host.authType === 'password' ? secret : undefined,
+    privateKey: host.authType === 'privateKey' ? secret : undefined,
+    command: WORKSPACE_METRICS_COMMAND,
+  })
+
+  return parseWorkspaceMetrics([result.stdout, result.stderr].filter(Boolean).join('\n'))
 }

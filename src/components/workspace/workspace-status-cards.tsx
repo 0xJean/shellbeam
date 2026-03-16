@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { t } from '@/lib/i18n'
-import { runSshCommand } from '@/lib/sessions'
 import {
   DEFAULT_WORKSPACE_METRICS,
-  parseWorkspaceMetrics,
-  WORKSPACE_METRICS_COMMAND,
+  fetchWorkspaceMetrics,
+  resolveWorkspaceMetricsHost,
   type WorkspaceMetrics,
 } from '@/lib/workspace-metrics'
 
@@ -40,13 +39,15 @@ export function WorkspaceStatusCards({
   const [updatedAt, setUpdatedAt] = useState<number | null>(null)
 
   const host = useMemo(
-    () => hosts.find((entry) => entry.id === selectedHostId) ?? null,
-    [hosts, selectedHostId],
+    () => resolveWorkspaceMetricsHost(hosts, { selectedHostId, hostAddress }),
+    [hosts, selectedHostId, hostAddress],
   )
 
   useEffect(() => {
     if (!host || !resolveAuthSecret) {
       setMetrics(DEFAULT_WORKSPACE_METRICS)
+      setUpdatedAt(null)
+      setLoading(false)
       return
     }
 
@@ -58,25 +59,18 @@ export function WorkspaceStatusCards({
       setLoading(true)
 
       try {
-        const secret = await currentResolveAuthSecret(currentHost)
-        const result = await runSshCommand({
-          hostId: currentHost.id,
-          host: currentHost.address,
-          port: currentHost.port || 22,
-          username: currentHost.username || 'root',
-          authType: currentHost.authType,
-          password: currentHost.authType === 'password' ? secret : undefined,
-          privateKey: currentHost.authType === 'privateKey' ? secret : undefined,
-          command: WORKSPACE_METRICS_COMMAND,
+        const nextMetrics = await fetchWorkspaceMetrics({
+          host: currentHost,
+          resolveAuthSecret: currentResolveAuthSecret,
         })
-
         if (!cancelled) {
-          setMetrics(parseWorkspaceMetrics([result.stdout, result.stderr].filter(Boolean).join('\n')))
+          setMetrics(nextMetrics)
           setUpdatedAt(Date.now())
         }
       } catch {
         if (!cancelled) {
           setMetrics(DEFAULT_WORKSPACE_METRICS)
+          setUpdatedAt(null)
         }
       } finally {
         if (!cancelled) setLoading(false)

@@ -185,6 +185,7 @@ export function PcLayout() {
                 const isActive = tab.sessionId === sessions.pcActiveSessionId
                 const isRightPane = isSplit && tab.sessionId === sessions.rightPaneSessionId
                 const isVisible = isActive || isRightPane
+                const workspaceMode = (sessions.workspaceBySession[tab.sessionId]?.mode ?? 'terminal') === 'workspace'
                 return (
                   <div
                     key={tab.sessionId}
@@ -196,18 +197,7 @@ export function PcLayout() {
                       !(isSplit && (isActive || isRightPane)) && 'inset-x-0',
                     )}
                   >
-                    {(sessions.workspaceBySession[tab.sessionId]?.mode ?? 'terminal') === 'workspace' ? (
-                      <WorkspaceShell
-                        mobile={false}
-                        hostName={tab.hostName}
-                        hostAddress={tab.hostAddress}
-                        hostId={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId)?.hostId ?? null}
-                        hosts={hostsCtx.hosts}
-                        resolveAuthSecret={resolveWorkspaceAuthSecret}
-                        activeApp={sessions.workspaceBySession[tab.sessionId]?.activeApp ?? 'overview'}
-                        onSelectApp={(workspaceApp) => sessions.setSessionWorkspaceApp(tab.sessionId, workspaceApp)}
-                      />
-                    ) : (
+                    <div className={cn('absolute inset-0', workspaceMode && 'pointer-events-none invisible')}>
                       <SessionTerminalView
                         sessionId={tab.sessionId}
                         session={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId) ?? null}
@@ -218,18 +208,30 @@ export function PcLayout() {
                         terminalPrefs={app.terminalPrefs}
                         isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
                         onReconnect={() => sessions.manualReconnect(tab.sessionId)}
-                        visible={isVisible && !!sessions.pcActiveSessionId}
+                        visible={isVisible && !!sessions.pcActiveSessionId && !workspaceMode}
                         onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}
                         rightSidebarOpen={isActive ? rightSidebarOpen : undefined}
                         initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
                         onInitialChunksConsumed={handleInitialChunksConsumed}
                       />
-                    )}
+                    </div>
+                    <div className={cn('absolute inset-0', !workspaceMode && 'pointer-events-none invisible')}>
+                      <WorkspaceShell
+                        mobile={false}
+                        hostName={tab.hostName}
+                        hostAddress={tab.hostAddress}
+                        hostId={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId)?.hostId ?? null}
+                        hosts={hostsCtx.hosts}
+                        resolveAuthSecret={resolveWorkspaceAuthSecret}
+                        activeApp={sessions.workspaceBySession[tab.sessionId]?.activeApp ?? 'overview'}
+                        onSelectApp={(workspaceApp) => sessions.setSessionWorkspaceApp(tab.sessionId, workspaceApp)}
+                      />
+                    </div>
                   </div>
                 )
               })}
             </div>
-            {sessions.pcActiveSessionId && (
+            {sessions.pcActiveSessionId && activeWorkspaceMode === 'terminal' && (
               <TerminalRightSidebar
                 visible={rightSidebarOpen}
                 onClose={toggleRightSidebar}
@@ -280,23 +282,13 @@ export function PcLayout() {
               <div className="relative min-w-0 flex-1">
               {sessions.pcSessionTabs.map((tab) => {
                 const isActive = tab.sessionId === mobileActiveSessionId
+                const workspaceMode = (sessions.workspaceBySession[tab.sessionId]?.mode ?? 'terminal') === 'workspace'
                 return (
                   <div
                     key={tab.sessionId}
                     className={cn('absolute inset-0', !isActive && 'pointer-events-none invisible')}
                   >
-                    {(sessions.workspaceBySession[tab.sessionId]?.mode ?? 'terminal') === 'workspace' ? (
-                      <WorkspaceShell
-                        mobile
-                        hostName={tab.hostName}
-                        hostAddress={tab.hostAddress}
-                        hostId={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId)?.hostId ?? null}
-                        hosts={hostsCtx.hosts}
-                        resolveAuthSecret={resolveWorkspaceAuthSecret}
-                        activeApp={sessions.workspaceBySession[tab.sessionId]?.activeApp ?? 'overview'}
-                        onSelectApp={(workspaceApp) => sessions.setSessionWorkspaceApp(tab.sessionId, workspaceApp)}
-                      />
-                    ) : (
+                    <div className={cn('absolute inset-0', workspaceMode && 'pointer-events-none invisible')}>
                       <SessionTerminalView
                         sessionId={tab.sessionId}
                         session={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId) ?? null}
@@ -307,18 +299,30 @@ export function PcLayout() {
                         terminalPrefs={app.terminalPrefs}
                         isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
                         onReconnect={() => sessions.manualReconnect(tab.sessionId)}
-                        visible={isActive && app.pcSidebarNav === 'terminal'}
+                        visible={isActive && app.pcSidebarNav === 'terminal' && !workspaceMode}
                         initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
                         onInitialChunksConsumed={handleInitialChunksConsumed}
                         onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}
                         rightSidebarOpen={isActive ? rightSidebarOpen : undefined}
                       />
-                    )}
+                    </div>
+                    <div className={cn('absolute inset-0', !workspaceMode && 'pointer-events-none invisible')}>
+                      <WorkspaceShell
+                        mobile
+                        hostName={tab.hostName}
+                        hostAddress={tab.hostAddress}
+                        hostId={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId)?.hostId ?? null}
+                        hosts={hostsCtx.hosts}
+                        resolveAuthSecret={resolveWorkspaceAuthSecret}
+                        activeApp={sessions.workspaceBySession[tab.sessionId]?.activeApp ?? 'overview'}
+                        onSelectApp={(workspaceApp) => sessions.setSessionWorkspaceApp(tab.sessionId, workspaceApp)}
+                      />
+                    </div>
                   </div>
                 )
               })}
               </div>
-              {mobileActiveSessionId && (
+              {mobileActiveSessionId && mobileWorkspaceMode === 'terminal' && (
                 <TerminalRightSidebar
                   visible={rightSidebarOpen}
                   onClose={toggleRightSidebar}
