@@ -6,6 +6,10 @@ import path from 'node:path'
 export default defineConfig({
   clearScreen: false,
   plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
