@@ -234,6 +234,8 @@ const en: Record<string, string> = {
   'workspace.mobile.live': 'Live Sync',
   'workspace.mobile.control': 'Control',
   'workspace.mobile.quickOps': 'Quick Ops',
+  'workspace.desktop.connected': 'Connected',
+  'workspace.desktop.search': 'Search workspace',
 
   // AI command bar
   'ai.notConfigured': 'AI not configured. Go to Settings → AI to set up.',

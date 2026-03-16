@@ -23,7 +23,7 @@ describe('workspace shell', () => {
       />,
     )
 
-    expect(screen.getByText('Workspace Apps')).toBeInTheDocument()
+    expect(screen.getByText('Start')).toBeInTheDocument()
     expect(screen.getAllByText('Production API').length).toBeGreaterThan(0)
   })
 
@@ -38,7 +38,7 @@ describe('workspace shell', () => {
       />,
     )
 
-    expect(screen.getByText('Server Workspace')).toBeInTheDocument()
+    expect(screen.getByText('Home Screen')).toBeInTheDocument()
     expect(screen.getAllByText('Production API').length).toBeGreaterThan(0)
   })
 

@@ -234,6 +234,8 @@ const zhCN: Record<string, string> = {
   'workspace.mobile.live': '实时同步',
   'workspace.mobile.control': '控制',
   'workspace.mobile.quickOps': '快速操作',
+  'workspace.desktop.connected': '已连接',
+  'workspace.desktop.search': '搜索工作空间',
 
   // AI command bar
   'ai.notConfigured': 'AI 未配置。前往 设置 → AI 进行配置。',
