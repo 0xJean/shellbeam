@@ -1,5 +1,5 @@
 import type { HostProfile } from '@/lib/hosts'
-import { runSshCommand } from '@/lib/sessions'
+import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 
 export interface WorkspaceMetrics {
   cpu: string
@@ -53,17 +53,7 @@ export function resolveWorkspaceMetricsHost(
   hosts: HostProfile[],
   options: { selectedHostId?: string | null; hostAddress?: string | null },
 ) {
-  const { selectedHostId = null, hostAddress = null } = options
-
-  if (selectedHostId) {
-    return hosts.find((entry) => entry.id === selectedHostId) ?? null
-  }
-
-  if (hostAddress) {
-    return hosts.find((entry) => entry.address === hostAddress) ?? null
-  }
-
-  return null
+  return resolveWorkspaceHost(hosts, options)
 }
 
 export async function fetchWorkspaceMetrics(options: {
@@ -71,15 +61,9 @@ export async function fetchWorkspaceMetrics(options: {
   resolveAuthSecret: (host: HostProfile) => Promise<string>
 }) {
   const { host, resolveAuthSecret } = options
-  const secret = await resolveAuthSecret(host)
-  const result = await runSshCommand({
-    hostId: host.id,
-    host: host.address,
-    port: host.port || 22,
-    username: host.username || 'root',
-    authType: host.authType,
-    password: host.authType === 'password' ? secret : undefined,
-    privateKey: host.authType === 'privateKey' ? secret : undefined,
+  const result = await runWorkspaceRemoteCommand({
+    host,
+    resolveAuthSecret,
     command: WORKSPACE_METRICS_COMMAND,
   })
 

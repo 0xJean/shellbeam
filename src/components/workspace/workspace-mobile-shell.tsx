@@ -30,26 +30,26 @@ export function WorkspaceMobileShell({
 }: WorkspaceMobileShellProps) {
   const content = (() => {
     if (activeApp === 'files') {
-      if (hostId && resolveAuthSecret) {
+      if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceFilesApp presentation="mobile" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'processes') {
-      if (hostId && resolveAuthSecret) {
-        return <WorkspaceProcessesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceProcessesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'services') {
-      if (hostId && resolveAuthSecret) {
-        return <WorkspaceServicesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceServicesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'logs') {
-      if (hostId && resolveAuthSecret) {
-        return <WorkspaceLogsApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }

@@ -65,4 +65,30 @@ describe('workspace services app', () => {
       expect(screen.getByText(/systemd services are not available/i)).toBeInTheDocument()
     })
   })
+
+  it('uses host address fallback when host id is unavailable', async () => {
+    runSshCommand.mockResolvedValue({
+      stdout: 'nginx.service loaded active running A high performance web server',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 18,
+    })
+
+    render(
+      <WorkspaceServicesApp
+        selectedHostId={null}
+        hostAddress="10.0.0.15"
+        hosts={[host]}
+        resolveAuthSecret={async () => 'secret'}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getAllByText('nginx.service').length).toBeGreaterThan(0)
+    })
+    expect(runSshCommand).toHaveBeenCalledWith(expect.objectContaining({
+      hostId: 'host-1',
+      host: '10.0.0.15',
+    }))
+  })
 })

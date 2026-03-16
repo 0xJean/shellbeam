@@ -72,4 +72,30 @@ describe('workspace processes app', () => {
     })
     expect(screen.getByRole('button', { name: /run top/i })).toBeInTheDocument()
   })
+
+  it('falls back to the active host address when host id is missing', async () => {
+    runSshCommand.mockResolvedValue({
+      stdout: '412 nginx 12.4 3.1 S',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 15,
+    })
+
+    render(
+      <WorkspaceProcessesApp
+        selectedHostId={null}
+        hostAddress="10.0.0.15"
+        hosts={[host]}
+        resolveAuthSecret={async () => 'secret'}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('nginx')).toBeInTheDocument()
+    })
+    expect(runSshCommand).toHaveBeenCalledWith(expect.objectContaining({
+      hostId: 'host-1',
+      host: '10.0.0.15',
+    }))
+  })
 })

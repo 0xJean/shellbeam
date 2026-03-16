@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
-import { runSshCommand } from '@/lib/sessions'
+import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 
 const PROCESS_COMMAND = 'ps -eo pid=,comm=,%cpu=,%mem=,state= --sort=-%cpu | head -n 24'
@@ -20,6 +20,7 @@ interface ProcessRow {
 
 interface WorkspaceProcessesAppProps {
   selectedHostId?: string | null
+  hostAddress?: string | null
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
 }
@@ -38,6 +39,7 @@ function parseProcesses(output: string): ProcessRow[] {
 
 export function WorkspaceProcessesApp({
   selectedHostId = null,
+  hostAddress = null,
   hosts,
   resolveAuthSecret,
 }: WorkspaceProcessesAppProps) {
@@ -48,8 +50,8 @@ export function WorkspaceProcessesApp({
   const [handoffCommand, setHandoffCommand] = useState(PROCESS_COMMAND)
 
   const host = useMemo(
-    () => hosts.find((entry) => entry.id === selectedHostId) ?? null,
-    [hosts, selectedHostId],
+    () => resolveWorkspaceHost(hosts, { selectedHostId, hostAddress }),
+    [hosts, selectedHostId, hostAddress],
   )
 
   const filteredRows = useMemo(() => {
@@ -65,15 +67,9 @@ export function WorkspaceProcessesApp({
     setError('')
 
     try {
-      const secret = await resolveAuthSecret(host)
-      const result = await runSshCommand({
-        hostId: host.id,
-        host: host.address,
-        port: host.port || 22,
-        username: host.username || 'root',
-        authType: host.authType,
-        password: host.authType === 'password' ? secret : undefined,
-        privateKey: host.authType === 'privateKey' ? secret : undefined,
+      const result = await runWorkspaceRemoteCommand({
+        host,
+        resolveAuthSecret,
         command: PROCESS_COMMAND,
       })
 

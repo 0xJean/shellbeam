@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
-import { runSshCommand } from '@/lib/sessions'
+import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 
 const SERVICES_COMMAND = 'systemctl list-units --type=service --all --no-pager --plain --no-legend | head -n 40'
@@ -15,6 +15,7 @@ interface ServiceRow {
 
 interface WorkspaceServicesAppProps {
   selectedHostId?: string | null
+  hostAddress?: string | null
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
 }
@@ -45,6 +46,7 @@ function getBadgeClass(active: string) {
 
 export function WorkspaceServicesApp({
   selectedHostId = null,
+  hostAddress = null,
   hosts,
   resolveAuthSecret,
 }: WorkspaceServicesAppProps) {
@@ -57,8 +59,8 @@ export function WorkspaceServicesApp({
   const [actionLoading, setActionLoading] = useState<'start' | 'stop' | 'restart' | 'status' | null>(null)
 
   const host = useMemo(
-    () => hosts.find((entry) => entry.id === selectedHostId) ?? null,
-    [hosts, selectedHostId],
+    () => resolveWorkspaceHost(hosts, { selectedHostId, hostAddress }),
+    [hosts, selectedHostId, hostAddress],
   )
 
   const selectedService = useMemo(
@@ -68,15 +70,9 @@ export function WorkspaceServicesApp({
 
   async function runRemoteCommand(command: string) {
     if (!host) throw new Error('No host selected')
-    const secret = await resolveAuthSecret(host)
-    return runSshCommand({
-      hostId: host.id,
-      host: host.address,
-      port: host.port || 22,
-      username: host.username || 'root',
-      authType: host.authType,
-      password: host.authType === 'password' ? secret : undefined,
-      privateKey: host.authType === 'privateKey' ? secret : undefined,
+    return runWorkspaceRemoteCommand({
+      host,
+      resolveAuthSecret,
       command,
     })
   }

@@ -84,26 +84,26 @@ export function WorkspaceDesktopShell({
 
   const content = (() => {
     if (activeApp === 'files') {
-      if (hostId && resolveAuthSecret) {
+      if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceFilesApp presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'processes') {
-      if (hostId && resolveAuthSecret) {
-        return <WorkspaceProcessesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceProcessesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'services') {
-      if (hostId && resolveAuthSecret) {
-        return <WorkspaceServicesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceServicesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'logs') {
-      if (hostId && resolveAuthSecret) {
-        return <WorkspaceLogsApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -177,26 +177,26 @@ export function WorkspaceDesktopShell({
     if (app === activeApp) return content
 
     if (app === 'files') {
-      if (hostId && resolveAuthSecret) {
+      if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceFilesApp presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
     if (app === 'processes') {
-      if (hostId && resolveAuthSecret) {
-        return <WorkspaceProcessesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceProcessesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
     if (app === 'services') {
-      if (hostId && resolveAuthSecret) {
-        return <WorkspaceServicesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceServicesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
     if (app === 'logs') {
-      if (hostId && resolveAuthSecret) {
-        return <WorkspaceLogsApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }

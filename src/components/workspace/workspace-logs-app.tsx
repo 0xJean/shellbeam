@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
-import { runSshCommand } from '@/lib/sessions'
+import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 
 type LogSourceId = 'journal' | 'syslog'
@@ -12,12 +12,14 @@ const LOG_SOURCES: Array<{ id: LogSourceId; label: string; command: string }> = 
 
 interface WorkspaceLogsAppProps {
   selectedHostId?: string | null
+  hostAddress?: string | null
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
 }
 
 export function WorkspaceLogsApp({
   selectedHostId = null,
+  hostAddress = null,
   hosts,
   resolveAuthSecret,
 }: WorkspaceLogsAppProps) {
@@ -27,8 +29,8 @@ export function WorkspaceLogsApp({
   const [error, setError] = useState('')
 
   const host = useMemo(
-    () => hosts.find((entry) => entry.id === selectedHostId) ?? null,
-    [hosts, selectedHostId],
+    () => resolveWorkspaceHost(hosts, { selectedHostId, hostAddress }),
+    [hosts, selectedHostId, hostAddress],
   )
 
   const activeSource = LOG_SOURCES.find((entry) => entry.id === source) ?? LOG_SOURCES[0]
@@ -40,15 +42,9 @@ export function WorkspaceLogsApp({
     setError('')
 
     try {
-      const secret = await resolveAuthSecret(host)
-      const result = await runSshCommand({
-        hostId: host.id,
-        host: host.address,
-        port: host.port || 22,
-        username: host.username || 'root',
-        authType: host.authType,
-        password: host.authType === 'password' ? secret : undefined,
-        privateKey: host.authType === 'privateKey' ? secret : undefined,
+      const result = await runWorkspaceRemoteCommand({
+        host,
+        resolveAuthSecret,
         command: target.command,
       })
 
