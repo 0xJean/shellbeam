@@ -12,6 +12,17 @@ import {
     type InteractiveSessionInfo,
 } from '@/lib/interactive-session'
 import type { PaneEvent, PaneId, ReconnectSettings, SessionTab } from '@/lib/types'
+import {
+  type SessionWorkspaceMode,
+  type SessionWorkspaceState,
+  type WorkspaceAppId,
+} from '@/lib/workspace'
+import {
+  removeSessionWorkspaceState,
+  setSessionWorkspaceAppState,
+  setSessionWorkspaceModeState,
+  syncSessionTabWorkspace,
+} from './session-workspace-state'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useHosts } from './hosts-context'
 import { useVault } from './vault-context'
@@ -26,8 +37,11 @@ interface SessionsContextValue {
   interactiveSessions: InteractiveSessionInfo[]
   interactiveChunksBySession: Record<string, InteractiveOutputChunk[]>
   pcSessionTabs: SessionTab[]
+  workspaceBySession: Record<string, SessionWorkspaceState>
   pcActiveSessionId: string | null
   setPcActiveSessionId: (id: string | null) => void
+  setSessionMode: (sessionId: string, mode: SessionWorkspaceMode) => void
+  setSessionWorkspaceApp: (sessionId: string, app: WorkspaceAppId) => void
   pcChunkEmitterRef: React.MutableRefObject<Record<string, (chunks: InteractiveOutputChunk[]) => void>>
   leftPaneSessionId: string | null
   setLeftPaneSessionId: (id: string | null) => void
@@ -66,13 +80,14 @@ interface SessionsContextValue {
 
 const SessionsContext = createContext<SessionsContextValue | null>(null)
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useSessions() {
   const ctx = useContext(SessionsContext)
   if (!ctx) throw new Error('useSessions must be used within SessionsProvider')
   return ctx
 }
 
-export function SessionsProvider({ children, setOutput: _setOutput }: { children: ReactNode; setOutput: (msg: string) => void }) {
+export function SessionsProvider({ children }: { children: ReactNode; setOutput: (msg: string) => void }) {
   const { resolveAuthSecret } = useVault()
   const { hosts, defaultUsername, keepAliveIntervalSecs, setSelectedHostId } = useHosts()
 
@@ -84,6 +99,7 @@ export function SessionsProvider({ children, setOutput: _setOutput }: { children
   const [interactiveHistoryCursorBySession, setInteractiveHistoryCursorBySession] = useState<Record<string, number | null>>({})
 
   const [pcSessionTabs, setPcSessionTabs] = useState<SessionTab[]>([])
+  const [workspaceBySession, setWorkspaceBySession] = useState<Record<string, SessionWorkspaceState>>({})
   const [pcActiveSessionId, setPcActiveSessionId] = useState<string | null>(null)
   const [leftPaneSessionId, setLeftPaneSessionId] = useState<string | null>(null)
   const [rightPaneSessionId, setRightPaneSessionId] = useState<string | null>(null)
@@ -247,7 +263,26 @@ export function SessionsProvider({ children, setOutput: _setOutput }: { children
     setInteractiveInputBySession((prev) => ({ ...prev, [sessionId]: '' }))
     setInteractiveHistoryBySession((prev) => ({ ...prev, [sessionId]: [] }))
     setInteractiveHistoryCursorBySession((prev) => ({ ...prev, [sessionId]: null }))
+    setWorkspaceBySession((prev) =>
+      setSessionWorkspaceAppState(setSessionWorkspaceModeState(prev, sessionId, 'terminal'), sessionId, 'overview'),
+    )
   }
+
+  const setSessionMode = useCallback((sessionId: string, mode: SessionWorkspaceMode) => {
+    setWorkspaceBySession((prev) => {
+      const next = setSessionWorkspaceModeState(prev, sessionId, mode)
+      setPcSessionTabs((tabs) => syncSessionTabWorkspace(tabs, next))
+      return next
+    })
+  }, [])
+
+  const setSessionWorkspaceApp = useCallback((sessionId: string, app: WorkspaceAppId) => {
+    setWorkspaceBySession((prev) => {
+      const next = setSessionWorkspaceAppState(prev, sessionId, app)
+      setPcSessionTabs((tabs) => syncSessionTabWorkspace(tabs, next))
+      return next
+    })
+  }, [])
 
   async function refreshInteractiveSessions() {
     const sessions = await listInteractiveSessions()
@@ -368,6 +403,7 @@ export function SessionsProvider({ children, setOutput: _setOutput }: { children
       setInteractiveInputBySession((prev) => { const n = { ...prev }; delete n[sessionId]; return n })
       setInteractiveHistoryBySession((prev) => { const n = { ...prev }; delete n[sessionId]; return n })
       setInteractiveHistoryCursorBySession((prev) => { const n = { ...prev }; delete n[sessionId]; return n })
+      setWorkspaceBySession((prev) => removeSessionWorkspaceState(prev, sessionId))
       setLeftPaneSessionId((prev) => {
         if (prev !== sessionId) return prev
         const rest = interactiveSessionsRef.current.filter((s) => s.sessionId !== sessionId)
@@ -382,7 +418,14 @@ export function SessionsProvider({ children, setOutput: _setOutput }: { children
     if (!host) return
     setSelectedHostId(hostId)
     const placeholderId = `pending-${Date.now()}`
-    const newTab: SessionTab = { sessionId: placeholderId, hostName: host.name, hostAddress: host.address, status: 'connecting' }
+    const newTab: SessionTab = {
+      sessionId: placeholderId,
+      hostName: host.name,
+      hostAddress: host.address,
+      status: 'connecting',
+      mode: 'terminal',
+      workspaceApp: 'overview',
+    }
     setPcSessionTabs((prev) => [...prev, newTab])
     setPcActiveSessionId(placeholderId)
     try {
@@ -399,7 +442,13 @@ export function SessionsProvider({ children, setOutput: _setOutput }: { children
       setLeftPaneSessionId(session.sessionId)
       appendPaneEvent('left', 'info', `Connected: ${host.username || defaultUsername}@${host.address}`, session.sessionId)
       initializeInteractiveSessionState(session.sessionId)
-      setPcSessionTabs((prev) => prev.map((t) => t.sessionId === placeholderId ? { ...t, sessionId: session.sessionId, status: 'connected' } : t))
+      setPcSessionTabs((prev) => prev.map((t) => t.sessionId === placeholderId ? {
+        ...t,
+        sessionId: session.sessionId,
+        status: 'connected',
+        mode: 'terminal',
+        workspaceApp: 'overview',
+      } : t))
       setPcActiveSessionId(session.sessionId)
       await refreshInteractiveSessions()
       void appendActivity({
@@ -423,7 +472,14 @@ export function SessionsProvider({ children, setOutput: _setOutput }: { children
 
   async function handleOpenLocalTerminal() {
     const placeholderId = `pending-${Date.now()}`
-    const newTab: SessionTab = { sessionId: placeholderId, hostName: t('common.local'), hostAddress: 'local', status: 'connecting' }
+    const newTab: SessionTab = {
+      sessionId: placeholderId,
+      hostName: t('common.local'),
+      hostAddress: 'local',
+      status: 'connecting',
+      mode: 'terminal',
+      workspaceApp: 'overview',
+    }
     setPcSessionTabs((prev) => [...prev, newTab])
     setPcActiveSessionId(placeholderId)
     try {
@@ -431,7 +487,13 @@ export function SessionsProvider({ children, setOutput: _setOutput }: { children
       setInteractiveSessions((prev) => [...prev, session])
       setLeftPaneSessionId(session.sessionId)
       initializeInteractiveSessionState(session.sessionId)
-      setPcSessionTabs((prev) => prev.map((t) => t.sessionId === placeholderId ? { ...t, sessionId: session.sessionId, status: 'connected' } : t))
+      setPcSessionTabs((prev) => prev.map((t) => t.sessionId === placeholderId ? {
+        ...t,
+        sessionId: session.sessionId,
+        status: 'connected',
+        mode: 'terminal',
+        workspaceApp: 'overview',
+      } : t))
       setPcActiveSessionId(session.sessionId)
       await refreshInteractiveSessions()
       void appendActivity({ event: 'local_terminal', hostName: t('common.local'), hostAddress: 'local' })
@@ -444,6 +506,7 @@ export function SessionsProvider({ children, setOutput: _setOutput }: { children
 
   function handleCloseSessionTab(sessionId: string) {
     setPcSessionTabs((prev) => prev.filter((t) => t.sessionId !== sessionId))
+    setWorkspaceBySession((prev) => removeSessionWorkspaceState(prev, sessionId))
     if (pcActiveSessionId === sessionId) setPcActiveSessionId(null)
     const session = interactiveSessions.find((s) => s.sessionId === sessionId)
     if (session) void closeInteractiveSession(sessionId).then(() => refreshInteractiveSessions())
@@ -457,8 +520,8 @@ export function SessionsProvider({ children, setOutput: _setOutput }: { children
 
   return (
     <SessionsContext.Provider value={{
-      interactiveSessions, interactiveChunksBySession, pcSessionTabs, pcActiveSessionId,
-      setPcActiveSessionId, pcChunkEmitterRef, leftPaneSessionId, setLeftPaneSessionId,
+      interactiveSessions, interactiveChunksBySession, pcSessionTabs, workspaceBySession, pcActiveSessionId,
+      setPcActiveSessionId, setSessionMode, setSessionWorkspaceApp, pcChunkEmitterRef, leftPaneSessionId, setLeftPaneSessionId,
       rightPaneSessionId, setRightPaneSessionId,
       handleConnectHost, handleOpenLocalTerminal, handleCloseSessionTab, sendRaw, refreshInteractiveSessions,
       initializeInteractiveSessionState, cleanupClosedSession,
