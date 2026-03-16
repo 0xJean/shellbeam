@@ -1,4 +1,5 @@
 import type { WorkspaceAppId } from '@/lib/workspace'
+import { t } from '@/lib/i18n'
 import {
   getWorkspaceRecommendations,
   type WorkspaceRecommendation,
@@ -29,7 +30,7 @@ export function WorkspaceOverview({
   return (
     <div className="space-y-6">
       <div className="rounded-[28px] border border-border/60 bg-card/80 px-6 py-5">
-        <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">Workspace</div>
+        <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">{t('workspace.mode.workspace')}</div>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{hostName}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{hostAddress}</p>
       </div>
@@ -37,17 +38,17 @@ export function WorkspaceOverview({
       <WorkspaceStatusCards hostAddress={hostAddress} />
 
       <section className="space-y-3">
-        <div className="text-sm font-semibold">Applications</div>
+        <div className="text-sm font-semibold">{t('workspace.section.applications')}</div>
         <WorkspaceAppGrid activeApp={activeApp} onSelectApp={onSelectApp} />
       </section>
 
       <section className="space-y-3">
-        <div className="text-sm font-semibold">Recent Activity</div>
+        <div className="text-sm font-semibold">{t('workspace.section.activity')}</div>
         <WorkspaceActivityFeed items={activityItems} />
       </section>
 
       <section className="space-y-3">
-        <div className="text-sm font-semibold">Recommendations</div>
+        <div className="text-sm font-semibold">{t('workspace.section.recommendations')}</div>
         <div className="space-y-2">
           {resolvedRecommendations.map((item) => (
             <div key={item.id} className="flex items-center justify-between rounded-2xl border border-border/60 bg-card/80 px-4 py-3">
@@ -57,7 +58,11 @@ export function WorkspaceOverview({
                 onClick={() => onSelectApp(item.targetApp)}
                 className="rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium hover:bg-muted/50"
               >
-                Open {item.targetApp === 'files' ? 'Files' : item.targetApp === 'services' ? 'Services' : 'Terminal'}
+                {item.targetApp === 'files'
+                  ? t('workspace.action.openFiles')
+                  : item.targetApp === 'services'
+                    ? t('workspace.action.openServices')
+                    : t('workspace.action.openTerminal')}
               </button>
             </div>
           ))}

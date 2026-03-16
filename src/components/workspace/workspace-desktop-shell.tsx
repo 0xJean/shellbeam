@@ -1,4 +1,5 @@
 import type { HostProfile } from '@/lib/hosts'
+import { t } from '@/lib/i18n'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { cn } from '@/lib/utils'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
@@ -8,13 +9,13 @@ import { WorkspaceOverview } from './workspace-overview'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
 
-const APP_LABELS: Array<{ id: WorkspaceAppId; label: string }> = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'files', label: 'Files' },
-  { id: 'processes', label: 'Processes' },
-  { id: 'services', label: 'Services' },
-  { id: 'logs', label: 'Logs' },
-  { id: 'terminal', label: 'Terminal' },
+const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
+  { id: 'overview', labelKey: 'workspace.app.overview' },
+  { id: 'files', labelKey: 'workspace.app.files' },
+  { id: 'processes', labelKey: 'workspace.app.processes' },
+  { id: 'services', labelKey: 'workspace.app.services' },
+  { id: 'logs', labelKey: 'workspace.app.logs' },
+  { id: 'terminal', labelKey: 'workspace.app.terminal' },
 ]
 
 interface WorkspaceDesktopShellProps {
@@ -46,8 +47,18 @@ export function WorkspaceDesktopShell({
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
-    if (activeApp === 'processes') return <WorkspaceProcessesApp />
-    if (activeApp === 'services') return <WorkspaceServicesApp />
+    if (activeApp === 'processes') {
+      if (hostId && resolveAuthSecret) {
+        return <WorkspaceProcessesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'services') {
+      if (hostId && resolveAuthSecret) {
+        return <WorkspaceServicesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
     if (activeApp === 'logs') {
       if (hostId && resolveAuthSecret) {
         return <WorkspaceLogsApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
@@ -61,7 +72,7 @@ export function WorkspaceDesktopShell({
     <div className="flex h-full min-h-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_32%),linear-gradient(180deg,rgba(15,23,42,0.96),rgba(15,23,42,0.88))] text-slate-50">
       <aside className="hidden w-56 shrink-0 border-r border-white/10 bg-black/15 p-4 md:block">
         <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-          <div className="text-xs uppercase tracking-[0.24em] text-slate-400">Workspace Apps</div>
+          <div className="text-xs uppercase tracking-[0.24em] text-slate-400">{t('workspace.section.appsPanel')}</div>
           <div className="mt-2 text-lg font-semibold">{hostName}</div>
           <div className="text-xs text-slate-400">{hostAddress}</div>
         </div>
@@ -76,7 +87,7 @@ export function WorkspaceDesktopShell({
                 activeApp === app.id ? 'bg-white/12 text-white' : 'text-slate-300 hover:bg-white/8 hover:text-white',
               )}
             >
-              {app.label}
+              {t(app.labelKey)}
             </button>
           ))}
         </div>

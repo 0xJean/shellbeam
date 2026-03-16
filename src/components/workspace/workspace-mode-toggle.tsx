@@ -1,4 +1,5 @@
 import type { SessionWorkspaceMode } from '@/lib/workspace'
+import { t } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
 interface WorkspaceModeToggleProps {
@@ -19,7 +20,7 @@ export function WorkspaceModeToggle({ mode, onChange, compact = false }: Workspa
           mode === 'terminal' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
         )}
       >
-        Terminal
+        {t('workspace.mode.terminal')}
       </button>
       <button
         type="button"
@@ -30,7 +31,7 @@ export function WorkspaceModeToggle({ mode, onChange, compact = false }: Workspa
           mode === 'workspace' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
         )}
       >
-        Workspace
+        {t('workspace.mode.workspace')}
       </button>
     </div>
   )
