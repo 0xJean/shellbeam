@@ -384,14 +384,16 @@ export function SessionsProvider({ children }: { children: ReactNode; setOutput:
 
   useEffect(() => {
     if (allPolledSessionIds.length === 0) return
-    let timer: ReturnType<typeof setTimeout>
+    let timer: number | undefined
     const poll = () => {
       void Promise.all(allPolledSessionIds.map((sid) => pollSessionRef.current(sid))).then(() => {
-        timer = window.setTimeout(poll, pollIntervalRef.current)
+        timer = window.setTimeout(poll, pollIntervalRef.current) as unknown as number
       })
     }
-    timer = window.setTimeout(poll, pollIntervalRef.current)
-    return () => window.clearTimeout(timer)
+    timer = window.setTimeout(poll, pollIntervalRef.current) as unknown as number
+    return () => {
+      if (typeof timer === 'number') window.clearTimeout(timer)
+    }
   }, [allPolledSessionIds])
 
   async function cleanupClosedSession(sessionId: string) {
