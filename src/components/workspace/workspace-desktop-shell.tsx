@@ -1,7 +1,11 @@
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { cn } from '@/lib/utils'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
+import { WorkspaceFilesApp } from './workspace-files-app'
+import { WorkspaceLogsApp } from './workspace-logs-app'
 import { WorkspaceOverview } from './workspace-overview'
+import { WorkspaceProcessesApp } from './workspace-processes-app'
+import { WorkspaceServicesApp } from './workspace-services-app'
 
 const APP_LABELS: Array<{ id: WorkspaceAppId; label: string }> = [
   { id: 'overview', label: 'Overview' },
@@ -25,6 +29,17 @@ export function WorkspaceDesktopShell({
   activeApp,
   onSelectApp,
 }: WorkspaceDesktopShellProps) {
+  const content = (() => {
+    if (activeApp === 'overview') {
+      return <WorkspaceOverview hostName={hostName} hostAddress={hostAddress} activeApp={activeApp} onSelectApp={onSelectApp} />
+    }
+    if (activeApp === 'files') return <WorkspaceFilesApp />
+    if (activeApp === 'processes') return <WorkspaceProcessesApp />
+    if (activeApp === 'services') return <WorkspaceServicesApp />
+    if (activeApp === 'logs') return <WorkspaceLogsApp />
+    return <WorkspaceEmptyApp app={activeApp} />
+  })()
+
   return (
     <div className="flex h-full min-h-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_32%),linear-gradient(180deg,rgba(15,23,42,0.96),rgba(15,23,42,0.88))] text-slate-50">
       <aside className="hidden w-56 shrink-0 border-r border-white/10 bg-black/15 p-4 md:block">
@@ -51,9 +66,7 @@ export function WorkspaceDesktopShell({
       </aside>
 
       <main className="min-w-0 flex-1 overflow-auto p-4 md:p-6">
-        {activeApp === 'overview'
-          ? <WorkspaceOverview hostName={hostName} hostAddress={hostAddress} activeApp={activeApp} onSelectApp={onSelectApp} />
-          : <WorkspaceEmptyApp app={activeApp} />}
+        {content}
       </main>
     </div>
   )

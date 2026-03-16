@@ -50,4 +50,32 @@ describe('workspace shell', () => {
 
     expect(onSelectApp).toHaveBeenCalledWith('logs')
   })
+
+  it('renders dedicated files and logs app shells when selected', () => {
+    const { rerender } = render(
+      <WorkspaceShell
+        mobile={false}
+        hostName="Production API"
+        hostAddress="10.0.0.15"
+        activeApp="files"
+        onSelectApp={() => {}}
+      />,
+    )
+
+    expect(screen.getByText('Remote Files')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /open in terminal/i })).toBeInTheDocument()
+
+    rerender(
+      <WorkspaceShell
+        mobile={false}
+        hostName="Production API"
+        hostAddress="10.0.0.15"
+        activeApp="logs"
+        onSelectApp={() => {}}
+      />,
+    )
+
+    expect(screen.getByText('Log Sources')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /run journalctl/i })).toBeInTheDocument()
+  })
 })

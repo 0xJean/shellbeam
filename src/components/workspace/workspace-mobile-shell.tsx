@@ -1,6 +1,10 @@
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
+import { WorkspaceFilesApp } from './workspace-files-app'
+import { WorkspaceLogsApp } from './workspace-logs-app'
 import { WorkspaceOverview } from './workspace-overview'
+import { WorkspaceProcessesApp } from './workspace-processes-app'
+import { WorkspaceServicesApp } from './workspace-services-app'
 
 interface WorkspaceMobileShellProps {
   hostName: string
@@ -15,6 +19,17 @@ export function WorkspaceMobileShell({
   activeApp,
   onSelectApp,
 }: WorkspaceMobileShellProps) {
+  const content = (() => {
+    if (activeApp === 'overview') {
+      return <WorkspaceOverview hostName={hostName} hostAddress={hostAddress} activeApp={activeApp} onSelectApp={onSelectApp} />
+    }
+    if (activeApp === 'files') return <WorkspaceFilesApp />
+    if (activeApp === 'processes') return <WorkspaceProcessesApp />
+    if (activeApp === 'services') return <WorkspaceServicesApp />
+    if (activeApp === 'logs') return <WorkspaceLogsApp />
+    return <WorkspaceEmptyApp app={activeApp} />
+  })()
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-auto bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_100%)] p-4 text-slate-950">
       <div className="rounded-[28px] bg-white/90 px-5 py-5 shadow-[0_18px_40px_rgba(15,23,42,0.10)]">
@@ -24,9 +39,7 @@ export function WorkspaceMobileShell({
       </div>
 
       <div className="mt-4 min-h-0 flex-1">
-        {activeApp === 'overview'
-          ? <WorkspaceOverview hostName={hostName} hostAddress={hostAddress} activeApp={activeApp} onSelectApp={onSelectApp} />
-          : <WorkspaceEmptyApp app={activeApp} />}
+        {content}
       </div>
     </div>
   )
