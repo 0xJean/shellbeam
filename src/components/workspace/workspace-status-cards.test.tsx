@@ -63,4 +63,20 @@ describe('workspace status cards', () => {
 
     expect(screen.getAllByText('Not connected').length).toBeGreaterThan(0)
   })
+
+  it('uses a container-adaptive grid so four cards reflow inside narrow widgets', async () => {
+    render(
+      <WorkspaceStatusCards
+        hostAddress="10.0.0.15"
+        selectedHostId="host-1"
+        hosts={[host]}
+        resolveAuthSecret={async () => 'secret'}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-status-grid')).toHaveClass('grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]')
+    })
+    expect(screen.getAllByTestId('workspace-status-card')).toHaveLength(4)
+  })
 })

@@ -95,7 +95,10 @@ export function WorkspaceStatusCards({
   }, [host, resolveAuthSecret])
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div
+      data-testid="workspace-status-grid"
+      className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3"
+    >
       {STATUS_CARDS.map((card) => (
         (() => {
           const value = metrics[card.key as keyof WorkspaceMetrics]
@@ -103,15 +106,21 @@ export function WorkspaceStatusCards({
           const primaryValue = value ? (card.key === 'network' ? value : `${value}%`) : t('workspace.statusValue.notConnected')
 
           return (
-            <div key={card.labelKey} className="overflow-hidden rounded-2xl border border-border/60 bg-card p-4 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
+            <div
+              key={card.labelKey}
+              data-testid="workspace-status-card"
+              className="min-w-0 overflow-hidden rounded-2xl border border-border/60 bg-card p-4 shadow-[0_12px_24px_rgba(15,23,42,0.05)]"
+            >
               <div className="flex items-center justify-between gap-3">
-                <div className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">{t(card.labelKey)}</div>
+                <div className="min-w-0 text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">{t(card.labelKey)}</div>
                 <div className={`h-2.5 w-2.5 rounded-full bg-gradient-to-br ${card.accent} ${loading ? 'animate-pulse' : ''}`} />
               </div>
-              <div className="mt-4 flex items-end justify-between gap-3">
-                <div className="text-3xl font-semibold tracking-tight">{primaryValue}</div>
-                <div className="text-right text-[11px] text-muted-foreground">
-                  <div>{hostAddress}</div>
+              <div className="mt-4 flex min-w-0 items-end justify-between gap-3">
+                <div className="min-w-0 text-[clamp(1.5rem,3vw,1.875rem)] font-semibold leading-none tracking-tight">
+                  <div className="truncate">{primaryValue}</div>
+                </div>
+                <div className="min-w-0 max-w-[42%] text-right text-[11px] text-muted-foreground">
+                  <div className="truncate">{hostAddress}</div>
                   <div>{updatedAt ? t('workspace.statusValue.live') : t('workspace.statusValue.notConnected')}</div>
                 </div>
               </div>
