@@ -1,3 +1,5 @@
+import type { SessionWorkspaceMode, WorkspaceAppId } from '@/lib/workspace'
+
 export type PaneId = 'left' | 'right'
 
 export interface PaneEvent {
@@ -27,4 +29,6 @@ export interface SessionTab {
   hostName: string
   hostAddress: string
   status: 'connecting' | 'connected' | 'closed' | 'error' | 'reconnecting'
+  mode?: SessionWorkspaceMode
+  workspaceApp?: WorkspaceAppId
 }
