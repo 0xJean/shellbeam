@@ -83,6 +83,7 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
   const [transferring, setTransferring] = useState(false)
   const [transferStatus, setTransferStatus] = useState('')
   const [selectedRemoteHostId, setSelectedRemoteHostId] = useState<string | null>(selectedHostId)
+  const autoConnectHostRef = useRef<string | null>(null)
 
   const remoteHost = hosts.find((h) => h.id === selectedRemoteHostId) ?? null
 
@@ -149,6 +150,17 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
       setRemoteLoading(false)
     }
   }, [remoteHost, remoteDir, getSftpAuth])
+
+  useEffect(() => {
+    if (!selectedRemoteHostId || !remoteHost || remoteConnected || remoteLoading) return
+    if (autoConnectHostRef.current === selectedRemoteHostId) return
+
+    autoConnectHostRef.current = selectedRemoteHostId
+    setRemoteLoading(true)
+    requestAnimationFrame(() => {
+      void loadRemoteDir()
+    })
+  }, [selectedRemoteHostId, remoteHost, remoteConnected, remoteLoading, loadRemoteDir])
 
   function handleConnectRemote() {
     if (!remoteHost) return
@@ -382,6 +394,7 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
             onChange={(v) => {
               const id = v || null
               setSelectedRemoteHostId(id)
+              autoConnectHostRef.current = null
               setRemoteConnected(false)
               setRemoteEntries([])
             }}
