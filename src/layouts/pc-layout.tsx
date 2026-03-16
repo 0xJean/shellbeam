@@ -15,6 +15,7 @@ import { SftpDualPane } from '@/components/sftp-dual-pane'
 import { SnippetPanel } from '@/components/snippet-panel'
 import { SyncCenterPanel } from '@/components/sync-center-panel'
 import { TerminalRightSidebar } from '@/components/terminal-right-sidebar'
+import { WorkspaceShell } from '@/components/workspace'
 import { useApp } from '@/contexts/app-context'
 import { useHosts } from '@/contexts/hosts-context'
 import { useSessions } from '@/contexts/sessions-context'
@@ -185,22 +186,32 @@ export function PcLayout() {
                       !(isSplit && (isActive || isRightPane)) && 'inset-x-0',
                     )}
                   >
-                    <SessionTerminalView
-                      sessionId={tab.sessionId}
-                      session={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId) ?? null}
-                      hostName={tab.hostName}
-                      hostAddress={tab.hostAddress}
-                      chunkEmitterRef={sessions.pcChunkEmitterRef}
-                      onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
-                      terminalPrefs={app.terminalPrefs}
-                      isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
-                      onReconnect={() => sessions.manualReconnect(tab.sessionId)}
-                      visible={isVisible && !!sessions.pcActiveSessionId}
-                      onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}
-                      rightSidebarOpen={isActive ? rightSidebarOpen : undefined}
-                      initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
-                      onInitialChunksConsumed={handleInitialChunksConsumed}
-                    />
+                    {(sessions.workspaceBySession[tab.sessionId]?.mode ?? 'terminal') === 'workspace' ? (
+                      <WorkspaceShell
+                        mobile={false}
+                        hostName={tab.hostName}
+                        hostAddress={tab.hostAddress}
+                        activeApp={sessions.workspaceBySession[tab.sessionId]?.activeApp ?? 'overview'}
+                        onSelectApp={(workspaceApp) => sessions.setSessionWorkspaceApp(tab.sessionId, workspaceApp)}
+                      />
+                    ) : (
+                      <SessionTerminalView
+                        sessionId={tab.sessionId}
+                        session={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId) ?? null}
+                        hostName={tab.hostName}
+                        hostAddress={tab.hostAddress}
+                        chunkEmitterRef={sessions.pcChunkEmitterRef}
+                        onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
+                        terminalPrefs={app.terminalPrefs}
+                        isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
+                        onReconnect={() => sessions.manualReconnect(tab.sessionId)}
+                        visible={isVisible && !!sessions.pcActiveSessionId}
+                        onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}
+                        rightSidebarOpen={isActive ? rightSidebarOpen : undefined}
+                        initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
+                        onInitialChunksConsumed={handleInitialChunksConsumed}
+                      />
+                    )}
                   </div>
                 )
               })}
@@ -261,22 +272,32 @@ export function PcLayout() {
                     key={tab.sessionId}
                     className={cn('absolute inset-0', !isActive && 'pointer-events-none invisible')}
                   >
-                    <SessionTerminalView
-                      sessionId={tab.sessionId}
-                      session={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId) ?? null}
-                      hostName={tab.hostName}
-                      hostAddress={tab.hostAddress}
-                      chunkEmitterRef={sessions.pcChunkEmitterRef}
-                      onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
-                      terminalPrefs={app.terminalPrefs}
-                      isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
-                      onReconnect={() => sessions.manualReconnect(tab.sessionId)}
-                      visible={isActive && app.pcSidebarNav === 'terminal'}
-                      initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
-                      onInitialChunksConsumed={handleInitialChunksConsumed}
-                      onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}
-                      rightSidebarOpen={isActive ? rightSidebarOpen : undefined}
-                    />
+                    {(sessions.workspaceBySession[tab.sessionId]?.mode ?? 'terminal') === 'workspace' ? (
+                      <WorkspaceShell
+                        mobile
+                        hostName={tab.hostName}
+                        hostAddress={tab.hostAddress}
+                        activeApp={sessions.workspaceBySession[tab.sessionId]?.activeApp ?? 'overview'}
+                        onSelectApp={(workspaceApp) => sessions.setSessionWorkspaceApp(tab.sessionId, workspaceApp)}
+                      />
+                    ) : (
+                      <SessionTerminalView
+                        sessionId={tab.sessionId}
+                        session={sessions.interactiveSessions.find((s) => s.sessionId === tab.sessionId) ?? null}
+                        hostName={tab.hostName}
+                        hostAddress={tab.hostAddress}
+                        chunkEmitterRef={sessions.pcChunkEmitterRef}
+                        onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
+                        terminalPrefs={app.terminalPrefs}
+                        isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
+                        onReconnect={() => sessions.manualReconnect(tab.sessionId)}
+                        visible={isActive && app.pcSidebarNav === 'terminal'}
+                        initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
+                        onInitialChunksConsumed={handleInitialChunksConsumed}
+                        onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}
+                        rightSidebarOpen={isActive ? rightSidebarOpen : undefined}
+                      />
+                    )}
                   </div>
                 )
               })}
