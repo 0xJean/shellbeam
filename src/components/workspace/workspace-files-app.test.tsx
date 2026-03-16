@@ -3,8 +3,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { WorkspaceFilesApp } from './workspace-files-app'
 
 vi.mock('@/components/sftp-dual-pane', () => ({
-  SftpDualPane: ({ className }: { className?: string }) => (
-    <div data-testid="sftp-dual-pane" className={className}>
+  SftpDualPane: ({
+    className,
+    selectedHostId,
+  }: {
+    className?: string
+    selectedHostId?: string | null
+  }) => (
+    <div data-testid="sftp-dual-pane" data-selected-host-id={selectedHostId} className={className}>
       mocked sftp
     </div>
   ),
@@ -51,5 +57,17 @@ describe('workspace files app', () => {
     )
 
     expect(screen.getByText('Remote Files')).toBeInTheDocument()
+  })
+
+  it('falls back to the current workspace host address when host id is unavailable', () => {
+    render(
+      <WorkspaceFilesApp
+        selectedHostAddress="10.0.0.15"
+        hosts={[host]}
+        resolveAuthSecret={async () => 'secret'}
+      />,
+    )
+
+    expect(screen.getByTestId('sftp-dual-pane')).toHaveAttribute('data-selected-host-id', 'host-1')
   })
 })

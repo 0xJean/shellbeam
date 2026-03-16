@@ -31,7 +31,7 @@ export function WorkspaceMobileShell({
   const content = (() => {
     if (activeApp === 'files') {
       if (hostId && resolveAuthSecret) {
-        return <WorkspaceFilesApp presentation="mobile" selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFilesApp presentation="mobile" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }

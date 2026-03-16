@@ -4,6 +4,7 @@ import { WorkspaceEmptyState } from './workspace-empty-state'
 
 interface WorkspaceFilesAppProps {
   selectedHostId?: string | null
+  selectedHostAddress?: string | null
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   presentation?: 'panel' | 'window' | 'mobile'
@@ -11,11 +12,16 @@ interface WorkspaceFilesAppProps {
 
 export function WorkspaceFilesApp({
   selectedHostId = null,
+  selectedHostAddress = null,
   hosts,
   resolveAuthSecret,
   presentation = 'panel',
 }: WorkspaceFilesAppProps) {
-  const activeHostId = selectedHostId
+  const activeHostId = selectedHostId ?? (
+    selectedHostAddress
+      ? hosts.find((host) => host.address === selectedHostAddress)?.id ?? null
+      : null
+  )
   const isEmbedded = presentation !== 'panel'
 
   if (!activeHostId) {
