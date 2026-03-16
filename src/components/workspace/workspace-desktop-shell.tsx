@@ -48,7 +48,12 @@ export function WorkspaceDesktopShell({
     }
     if (activeApp === 'processes') return <WorkspaceProcessesApp />
     if (activeApp === 'services') return <WorkspaceServicesApp />
-    if (activeApp === 'logs') return <WorkspaceLogsApp />
+    if (activeApp === 'logs') {
+      if (hostId && resolveAuthSecret) {
+        return <WorkspaceLogsApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
     return <WorkspaceEmptyApp app={activeApp} />
   })()
 
