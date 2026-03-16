@@ -36,38 +36,62 @@ export function SftpConnectPlaceholder({
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
       {loading ? (
-        <>
-          <div className="relative flex h-16 w-16 items-center justify-center">
-            <div className="absolute inset-0 animate-spin rounded-full border-2 border-primary/20 border-t-primary" style={{ animationDuration: '1.5s' }} />
-            <Server className="h-6 w-6 text-primary" />
+        <div data-testid="sftp-connect-skeleton" className="w-full max-w-sm space-y-4">
+          <div className="flex items-center gap-3 rounded-2xl border border-border/60 bg-card/85 px-4 py-4 shadow-sm">
+            <div className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
+              <div className="absolute inset-0 animate-pulse rounded-2xl bg-primary/10" />
+              <div className="absolute inset-[6px] animate-spin rounded-full border-2 border-primary/20 border-t-primary" style={{ animationDuration: '1.5s' }} />
+              <Server className="relative h-5 w-5 text-primary" />
+            </div>
+            <div className="min-w-0 flex-1 text-left">
+              <p className="text-sm font-medium">{t('sftpConnect.connecting', { host: hostName })}</p>
+              <p className="text-xs text-muted-foreground">{hostAddress}:{hostPort}</p>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+                <div className="h-full w-2/3 animate-pulse rounded-full bg-primary/50" />
+              </div>
+            </div>
           </div>
-          <div className="space-y-1">
-            <p className="text-sm font-medium">{t('sftpConnect.connecting', { host: hostName })}</p>
-            <p className="text-xs text-muted-foreground">{hostAddress}:{hostPort}</p>
-          </div>
-          <div className="w-56 space-y-2">
+          <div className="space-y-2 rounded-2xl border border-border/60 bg-card/70 p-3">
             {CONNECT_STEPS.map((s, i) => {
               const StepIcon = s.icon
               const active = step >= i + 1
               const current = step === i + 1
               return (
-                <div key={i} className={cn(
-                  'flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-xs transition-all duration-300',
-                  active ? 'text-foreground' : 'text-muted-foreground/40',
+                <div
+                  key={i}
+                  data-testid="sftp-connect-step-skeleton"
+                  className={cn(
+                  'flex items-center gap-2.5 rounded-xl border px-3 py-2 text-xs transition-all duration-300',
+                  active ? 'border-primary/20 bg-primary/5 text-foreground' : 'border-border/50 bg-background/60 text-muted-foreground/50',
                 )}>
-                  {current ? (
-                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
-                  ) : active ? (
-                    <StepIcon className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                  ) : (
-                    <StepIcon className="h-3.5 w-3.5 shrink-0" />
-                  )}
-                  <span>{s.label}</span>
+                  <div className={cn(
+                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
+                    active ? 'bg-primary/10' : 'bg-muted',
+                  )}>
+                    {current ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                    ) : active ? (
+                      <StepIcon className="h-3.5 w-3.5 text-emerald-500" />
+                    ) : (
+                      <StepIcon className="h-3.5 w-3.5" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 text-left">
+                    <span>{s.label}</span>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted/80">
+                      <div
+                        className={cn(
+                          'h-full rounded-full transition-all duration-500',
+                          active ? 'w-full bg-primary/35' : 'w-1/3 bg-muted-foreground/20',
+                        )}
+                      />
+                    </div>
+                  </div>
                 </div>
               )
             })}
           </div>
-        </>
+        </div>
       ) : (
         <>
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
