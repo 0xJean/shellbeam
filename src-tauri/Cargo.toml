@@ -44,7 +44,7 @@ if-addrs = { version = "0.15", features = ["link-local"] }
 # Use vendored (statically-linked) OpenSSL on macOS, iOS and Android so the app
 # doesn't depend on system libssl at runtime.
 # (openssl-sys is pulled in by ssh2 → libssh2-sys)
-[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows"))'.dependencies]
 openssl-sys = { version = "0.9", features = ["vendored"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
