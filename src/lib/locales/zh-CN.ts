@@ -242,6 +242,7 @@ const zhCN: Record<string, string> = {
   'workspace.desktop.quickHint': '提示',
   'workspace.desktop.doubleClickHint': '从桌面图标打开应用。',
   'workspace.desktop.taskbarHint': '通过任务栏快速切换正在使用的工具。',
+  'workspace.desktop.windowReady': '窗口已在后台打开，可从任务栏切回继续操作。',
 
   // AI command bar
   'ai.notConfigured': 'AI 未配置。前往 设置 → AI 进行配置。',

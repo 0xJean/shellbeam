@@ -60,6 +60,24 @@ describe('workspace shell', () => {
     expect(onSelectApp).toHaveBeenCalledWith('logs')
   })
 
+  it('lets desktop windows close back to the desktop surface', () => {
+    const onSelectApp = vi.fn()
+
+    render(
+      <WorkspaceShell
+        mobile={false}
+        hostName="Production API"
+        hostAddress="10.0.0.15"
+        activeApp="services"
+        onSelectApp={onSelectApp}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /close services window/i }))
+
+    expect(onSelectApp).toHaveBeenCalledWith('overview')
+  })
+
   it('renders files fallback and logs app shells when selected', async () => {
     const { rerender } = render(
       <WorkspaceShell

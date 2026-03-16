@@ -242,6 +242,7 @@ const en: Record<string, string> = {
   'workspace.desktop.quickHint': 'Tips',
   'workspace.desktop.doubleClickHint': 'Open apps from the desktop icons.',
   'workspace.desktop.taskbarHint': 'Use the taskbar to jump between active tools.',
+  'workspace.desktop.windowReady': 'Window open in background. Select it from the taskbar to continue.',
 
   // AI command bar
   'ai.notConfigured': 'AI not configured. Go to Settings → AI to set up.',
