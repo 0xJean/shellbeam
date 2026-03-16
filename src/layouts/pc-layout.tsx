@@ -163,11 +163,6 @@ export function PcLayout() {
           activeSessionId={sessions.pcActiveSessionId}
           isDashboard={!sessions.pcActiveSessionId}
           isSplit={isSplit}
-          activeMode={activeWorkspaceMode}
-          onModeChange={(mode) => {
-            const sid = sessions.pcActiveSessionId
-            if (sid) sessions.setSessionMode(sid, mode)
-          }}
           onSelectSession={(sid) => { sessions.setPcActiveSessionId(sid); setShowQuickConnect(false) }}
           onCloseSession={sessions.handleCloseSessionTab}
           onGoToDashboard={() => { sessions.setPcActiveSessionId(null); setShowQuickConnect(false); app.setPcSidebarNav('hosts') }}
@@ -209,6 +204,8 @@ export function PcLayout() {
                         isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
                         onReconnect={() => sessions.manualReconnect(tab.sessionId)}
                         visible={isVisible && !!sessions.pcActiveSessionId && !workspaceMode}
+                        workspaceMode={sessions.workspaceBySession[tab.sessionId]?.mode ?? 'terminal'}
+                        onWorkspaceModeChange={(mode) => sessions.setSessionMode(tab.sessionId, mode)}
                         onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}
                         rightSidebarOpen={isActive ? rightSidebarOpen : undefined}
                         initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
@@ -266,10 +263,6 @@ export function PcLayout() {
           <MobileSessionHeader
             sessionTabs={sessions.pcSessionTabs}
             activeSessionId={mobileActiveSessionId}
-            activeMode={mobileWorkspaceMode}
-            onModeChange={(mode) => {
-              if (mobileActiveSessionId) sessions.setSessionMode(mobileActiveSessionId, mode)
-            }}
             onSelectSession={setMobileActiveSessionId}
             onCloseSession={handleMobileCloseSession}
             onNewConnection={handleMobileNewConnection}
@@ -300,6 +293,8 @@ export function PcLayout() {
                         isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
                         onReconnect={() => sessions.manualReconnect(tab.sessionId)}
                         visible={isActive && app.pcSidebarNav === 'terminal' && !workspaceMode}
+                        workspaceMode={sessions.workspaceBySession[tab.sessionId]?.mode ?? 'terminal'}
+                        onWorkspaceModeChange={(mode) => sessions.setSessionMode(tab.sessionId, mode)}
                         initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
                         onInitialChunksConsumed={handleInitialChunksConsumed}
                         onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}

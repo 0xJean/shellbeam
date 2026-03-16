@@ -1,6 +1,7 @@
 import { useT } from '@/lib/i18n'
 import { recordInteractiveCommand } from '@/lib/interactive-history'
 import type { InteractiveOutputChunk, InteractiveSessionInfo } from '@/lib/interactive-session'
+import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { resizeInteractiveTerminal } from '@/lib/interactive-session'
 import { getThemeById, type TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
@@ -15,6 +16,7 @@ import { AICommandBar } from './ai-command-bar'
 import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
 import { SuggestBar } from './suggest-bar'
 import { TerminalSearchBar } from './terminal-search-bar'
+import { WorkspaceModeToggle } from './workspace/workspace-mode-toggle'
 
 interface SessionTerminalViewProps {
   sessionId: string
@@ -31,6 +33,8 @@ interface SessionTerminalViewProps {
   rightSidebarOpen?: boolean
   initialChunks?: InteractiveOutputChunk[]
   onInitialChunksConsumed?: (sessionId: string) => void
+  workspaceMode?: SessionWorkspaceMode
+  onWorkspaceModeChange?: (mode: SessionWorkspaceMode) => void
 }
 
 export function SessionTerminalView({
@@ -48,6 +52,8 @@ export function SessionTerminalView({
   rightSidebarOpen,
   initialChunks,
   onInitialChunksConsumed,
+  workspaceMode = 'terminal',
+  onWorkspaceModeChange,
 }: SessionTerminalViewProps) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -264,6 +270,11 @@ export function SessionTerminalView({
           {isReconnecting && <span className="ml-2 text-amber-400">{t('terminal.reconnecting')}</span>}
         </span>
         <div className="ml-auto flex items-center gap-1.5">
+          {onWorkspaceModeChange && (
+            <div className="shrink-0">
+              <WorkspaceModeToggle mode={workspaceMode} onChange={onWorkspaceModeChange} compact />
+            </div>
+          )}
           {isConnected && (
             <button
               type="button"

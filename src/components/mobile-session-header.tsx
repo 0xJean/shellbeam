@@ -1,11 +1,9 @@
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import type { SessionTab } from '@/lib/types'
-import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { cn } from '@/lib/utils'
 import { ChevronDown, Plus, Server, SquareTerminal, X, Zap } from 'lucide-react'
 import { useState } from 'react'
-import { WorkspaceModeToggle } from './workspace/workspace-mode-toggle'
 
 interface MobileSessionHeaderProps {
   sessionTabs: SessionTab[]
@@ -16,8 +14,6 @@ interface MobileSessionHeaderProps {
   onOpenLocalTerminal: () => void
   hosts?: HostProfile[]
   onConnectHost?: (hostId: string) => void
-  activeMode?: SessionWorkspaceMode
-  onModeChange?: (mode: SessionWorkspaceMode) => void
 }
 
 export function MobileSessionHeader({
@@ -29,8 +25,6 @@ export function MobileSessionHeader({
   onOpenLocalTerminal,
   hosts = [],
   onConnectHost,
-  activeMode = 'terminal',
-  onModeChange,
 }: MobileSessionHeaderProps) {
   const { t } = useT()
   const [listOpen, setListOpen] = useState(false)
@@ -115,7 +109,7 @@ export function MobileSessionHeader({
   return (
     <>
       {/* Compact header bar */}
-      <div className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border/50 bg-background/95 px-2 py-1.5">
+      <div className="flex h-11 shrink-0 items-center border-b border-border/50 bg-background/95 px-2">
         {/* Session selector */}
         <button
           type="button"
@@ -136,12 +130,6 @@ export function MobileSessionHeader({
             </span>
           )}
         </button>
-
-        {activeTab && onModeChange && (
-          <div className="shrink-0">
-            <WorkspaceModeToggle mode={activeMode} onChange={onModeChange} compact />
-          </div>
-        )}
 
         {/* Close active session */}
         {activeTab && (

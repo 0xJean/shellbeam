@@ -1,9 +1,7 @@
 import { useT } from '@/lib/i18n'
 import type { SessionTab } from '@/lib/types'
-import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { cn } from '@/lib/utils'
 import { Columns2, LayoutDashboard, Plus, RefreshCw, SquareTerminal, X } from 'lucide-react'
-import { WorkspaceModeToggle } from './workspace/workspace-mode-toggle'
 
 export type { SessionTab }
 
@@ -18,8 +16,6 @@ interface PcSessionTabBarProps {
   onOpenLocalTerminal?: () => void
   onNewConnection?: () => void
   onToggleSplit?: () => void
-  activeMode?: SessionWorkspaceMode
-  onModeChange?: (mode: SessionWorkspaceMode) => void
 }
 
 export function PcSessionTabBar({
@@ -33,8 +29,6 @@ export function PcSessionTabBar({
   onOpenLocalTerminal,
   onNewConnection,
   onToggleSplit,
-  activeMode = 'terminal',
-  onModeChange,
 }: PcSessionTabBarProps) {
   const { t } = useT()
   return (
@@ -92,11 +86,6 @@ export function PcSessionTabBar({
               )}
               <span className="max-w-[100px] truncate sm:max-w-[140px]">{session.hostName || session.hostAddress}</span>
             </button>
-            {isActive && onModeChange && (
-              <div className="ml-1 hidden items-center md:flex">
-                <WorkspaceModeToggle mode={activeMode} onChange={onModeChange} compact />
-              </div>
-            )}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onCloseSession(session.sessionId) }}
