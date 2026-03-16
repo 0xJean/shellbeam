@@ -31,7 +31,7 @@ export function WorkspaceMobileShell({
   const content = (() => {
     if (activeApp === 'files') {
       if (hostId && resolveAuthSecret) {
-        return <WorkspaceFilesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFilesApp presentation="mobile" selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -123,7 +123,10 @@ export function WorkspaceMobileShell({
             </div>
           </div>
         ) : (
-          <div className="absolute inset-0 z-20 flex flex-col overflow-hidden rounded-t-[34px] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.84),rgba(255,255,255,0.94))] shadow-[0_-8px_24px_rgba(15,23,42,0.10),0_18px_44px_rgba(15,23,42,0.16)] backdrop-blur-xl">
+          <div
+            data-testid="workspace-mobile-app-frame"
+            className="absolute inset-0 z-20 flex h-full min-h-0 flex-col overflow-hidden rounded-t-[34px] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.84),rgba(255,255,255,0.94))] shadow-[0_-8px_24px_rgba(15,23,42,0.10),0_18px_44px_rgba(15,23,42,0.16)] backdrop-blur-xl"
+          >
             <div className="flex justify-center pt-2">
               <div className="h-1.5 w-12 rounded-full bg-slate-300" />
             </div>
@@ -170,13 +173,16 @@ export function WorkspaceMobileShell({
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-auto px-3 pb-24">
-              <div className="overflow-hidden rounded-[28px] border border-white/80 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
+            <div className="min-h-0 flex-1 px-3 pb-24">
+              <div
+                data-testid="workspace-mobile-app-content"
+                className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-white/80 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.08)]"
+              >
                 <div className="flex items-center justify-between border-b border-slate-200/80 px-4 py-3 text-sm font-semibold text-slate-900">
                   <span>{t('workspace.mobile.title')}</span>
                   <Search className="h-4 w-4 text-slate-500" />
                 </div>
-                <div className="min-h-0 p-3">
+                <div className="min-h-0 flex-1 p-3">
                   {content}
                 </div>
               </div>

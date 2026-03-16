@@ -55,9 +55,10 @@ interface SftpDualPaneProps {
   hosts: HostProfile[]
   selectedHostId: string | null
   resolveAuthSecret: (host: HostProfile) => Promise<string>
+  className?: string
 }
 
-export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret }: SftpDualPaneProps) {
+export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, className }: SftpDualPaneProps) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
   const containerWidth = useContainerWidth(containerRef)
@@ -370,7 +371,7 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret }: SftpD
   )
 
   return (
-    <div ref={containerRef} className="absolute inset-0 flex flex-col">
+    <div ref={containerRef} className={cn('flex h-full min-h-0 flex-col', className)}>
       {/* Header toolbar */}
       <div className="flex shrink-0 items-center gap-3 border-b px-4 py-2.5">
         <span className="shrink-0 text-sm font-semibold">{t('sftp.title')}</span>

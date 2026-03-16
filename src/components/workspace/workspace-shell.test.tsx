@@ -11,6 +11,10 @@ vi.mock('@/lib/sessions', () => ({
   })),
 }))
 
+vi.mock('./workspace-files-app', () => ({
+  WorkspaceFilesApp: () => <div>Mock Files App</div>,
+}))
+
 describe('workspace shell', () => {
   it('renders the desktop shell when mobile is false', () => {
     render(
@@ -94,6 +98,36 @@ describe('workspace shell', () => {
     fireEvent.click(screen.getByRole('button', { name: /back to home screen/i }))
 
     expect(onSelectApp).toHaveBeenCalledWith('overview')
+  })
+
+  it('keeps the file window close action available when files app is open', () => {
+    render(
+      <WorkspaceShell
+        mobile={false}
+        hostName="Production API"
+        hostAddress="10.0.0.15"
+        hostId="host-1"
+        hosts={[
+          {
+            id: 'host-1',
+            name: 'Production API',
+            address: '10.0.0.15',
+            port: 22,
+            username: 'root',
+            group: 'Default',
+            authType: 'password',
+            tags: [],
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ]}
+        resolveAuthSecret={async () => 'secret'}
+        activeApp="files"
+        onSelectApp={() => {}}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /close files window/i })).toBeInTheDocument()
   })
 
   it('renders files fallback and logs app shells when selected', async () => {

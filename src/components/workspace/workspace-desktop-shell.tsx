@@ -85,7 +85,7 @@ export function WorkspaceDesktopShell({
   const content = (() => {
     if (activeApp === 'files') {
       if (hostId && resolveAuthSecret) {
-        return <WorkspaceFilesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFilesApp presentation="window" selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -178,7 +178,7 @@ export function WorkspaceDesktopShell({
 
     if (app === 'files') {
       if (hostId && resolveAuthSecret) {
-        return <WorkspaceFilesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFilesApp presentation="window" selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
