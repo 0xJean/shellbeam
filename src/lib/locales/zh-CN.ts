@@ -236,6 +236,12 @@ const zhCN: Record<string, string> = {
   'workspace.mobile.quickOps': '快速操作',
   'workspace.desktop.connected': '已连接',
   'workspace.desktop.search': '搜索工作空间',
+  'workspace.desktop.desktop': '桌面',
+  'workspace.desktop.ready': '已准备好打开远程工具',
+  'workspace.desktop.widgetStack': '小组件',
+  'workspace.desktop.quickHint': '提示',
+  'workspace.desktop.doubleClickHint': '从桌面图标打开应用。',
+  'workspace.desktop.taskbarHint': '通过任务栏快速切换正在使用的工具。',
 
   // AI command bar
   'ai.notConfigured': 'AI 未配置。前往 设置 → AI 进行配置。',

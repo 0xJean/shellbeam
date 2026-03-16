@@ -1,16 +1,13 @@
 import type { HostProfile } from '@/lib/hosts'
 import { t } from '@/lib/i18n'
 import type { WorkspaceAppId } from '@/lib/workspace'
-import { ArrowLeft, BatteryFull, Signal, Wifi } from 'lucide-react'
-import { WorkspaceActivityFeed } from './workspace-activity-feed'
+import { ArrowLeft, BatteryFull, Search, Signal, Wifi } from 'lucide-react'
 import { WorkspaceAppGrid } from './workspace-app-grid'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
 import { WorkspaceFilesApp } from './workspace-files-app'
 import { WorkspaceLogsApp } from './workspace-logs-app'
-import { WorkspaceOverview } from './workspace-overview'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
-import { WorkspaceStatusCards } from './workspace-status-cards'
 
 interface WorkspaceMobileShellProps {
   hostName: string
@@ -32,9 +29,6 @@ export function WorkspaceMobileShell({
   onSelectApp,
 }: WorkspaceMobileShellProps) {
   const content = (() => {
-    if (activeApp === 'overview') {
-      return <WorkspaceOverview hostName={hostName} hostAddress={hostAddress} activeApp={activeApp} onSelectApp={onSelectApp} />
-    }
     if (activeApp === 'files') {
       if (hostId && resolveAuthSecret) {
         return <WorkspaceFilesApp selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
@@ -85,26 +79,30 @@ export function WorkspaceMobileShell({
               <div className="mt-1 text-sm text-slate-600">{hostName} · {hostAddress}</div>
             </div>
 
-            <div className="rounded-[28px] border border-white/70 bg-white/70 px-4 py-4 shadow-[0_12px_30px_rgba(15,23,42,0.10)] backdrop-blur">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('workspace.mobile.surface')}</div>
-              <div className="mt-3">
-                <WorkspaceStatusCards hostAddress={hostAddress} />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-[26px] border border-white/70 bg-white/70 px-4 py-4 shadow-[0_12px_30px_rgba(15,23,42,0.10)] backdrop-blur">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{t('workspace.mobile.surface')}</div>
+                <div className="mt-3 text-2xl font-semibold text-slate-950">{t('workspace.mobile.touchReady')}</div>
+                <div className="mt-2 text-sm text-slate-600">{hostName}</div>
+              </div>
+              <div className="rounded-[26px] border border-white/70 bg-white/70 px-4 py-4 shadow-[0_12px_30px_rgba(15,23,42,0.10)] backdrop-blur">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{t('workspace.mobile.control')}</div>
+                <div className="mt-3 text-2xl font-semibold text-slate-950">{t('workspace.mobile.quickOps')}</div>
+                <div className="mt-2 text-sm text-slate-600">{hostAddress}</div>
               </div>
             </div>
 
-            <div>
-              <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('workspace.section.applications')}</div>
-              <WorkspaceAppGrid activeApp={activeApp} onSelectApp={onSelectApp} variant="mobile" />
+            <div className="flex items-center justify-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-slate-900/80" />
+              <span className="h-2.5 w-2.5 rounded-full bg-slate-400/40" />
+              <span className="h-2.5 w-2.5 rounded-full bg-slate-400/40" />
             </div>
 
-            <div className="rounded-[28px] border border-white/70 bg-white/70 px-4 py-4 shadow-[0_12px_30px_rgba(15,23,42,0.10)] backdrop-blur">
-              <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('workspace.section.activity')}</div>
-              <WorkspaceActivityFeed
-                items={[
-                  { id: 'host', label: hostName, detail: hostAddress },
-                  { id: 'surface', label: t('workspace.mobile.quickOps'), detail: t('workspace.mobile.touchReady') },
-                ]}
-              />
+            <div className="rounded-[32px] border border-white/65 bg-white/28 px-3 py-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.4)] backdrop-blur-sm">
+              <div className="mb-4 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">{t('workspace.section.applications')}</div>
+              <div className="min-h-[22rem]">
+                <WorkspaceAppGrid activeApp={activeApp} onSelectApp={onSelectApp} variant="mobile" />
+              </div>
             </div>
           </div>
         ) : (
@@ -120,13 +118,14 @@ export function WorkspaceMobileShell({
               </button>
               <div>
                 <div className="text-sm font-medium text-slate-600">{hostName}</div>
-                <div className="text-2xl font-semibold tracking-tight text-slate-950">{t('workspace.mobile.title')}</div>
+                <div className="text-2xl font-semibold tracking-tight text-slate-950">{t(`workspace.app.${activeApp}`)}</div>
               </div>
             </div>
 
             <div className="overflow-hidden rounded-[30px] border border-white/70 bg-white/78 shadow-[0_14px_36px_rgba(15,23,42,0.12)] backdrop-blur">
-              <div className="border-b border-slate-200/80 px-4 py-3 text-sm font-semibold text-slate-900">
-                {t(`workspace.app.${activeApp}`)}
+              <div className="flex items-center justify-between border-b border-slate-200/80 px-4 py-3 text-sm font-semibold text-slate-900">
+                <span>{t('workspace.mobile.title')}</span>
+                <Search className="h-4 w-4 text-slate-500" />
               </div>
               <div className="min-h-0 p-3">
                 {content}

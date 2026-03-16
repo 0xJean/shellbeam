@@ -236,6 +236,12 @@ const en: Record<string, string> = {
   'workspace.mobile.quickOps': 'Quick Ops',
   'workspace.desktop.connected': 'Connected',
   'workspace.desktop.search': 'Search workspace',
+  'workspace.desktop.desktop': 'Desktop',
+  'workspace.desktop.ready': 'Ready to open remote tools',
+  'workspace.desktop.widgetStack': 'Widgets',
+  'workspace.desktop.quickHint': 'Tips',
+  'workspace.desktop.doubleClickHint': 'Open apps from the desktop icons.',
+  'workspace.desktop.taskbarHint': 'Use the taskbar to jump between active tools.',
 
   // AI command bar
   'ai.notConfigured': 'AI not configured. Go to Settings → AI to set up.',
