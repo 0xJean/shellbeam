@@ -25,8 +25,13 @@ vi.mock('@/components/sftp-dual-pane', () => ({ SftpDualPane: () => <div /> }))
 vi.mock('@/components/snippet-panel', () => ({ SnippetPanel: () => <div /> }))
 vi.mock('@/components/sync-center-panel', () => ({ SyncCenterPanel: () => <div /> }))
 vi.mock('@/components/terminal-right-sidebar', () => ({ TerminalRightSidebar: () => <div /> }))
+const workspaceShellSpy = vi.fn()
+
 vi.mock('@/components/workspace', () => ({
-  WorkspaceShell: ({ hostName }: { hostName: string }) => <div data-testid="workspace-shell">{hostName}</div>,
+  WorkspaceShell: (props: { hostName: string; resolveAuthSecret?: (host: { id: string }) => Promise<string> }) => {
+    workspaceShellSpy(props)
+    return <div data-testid="workspace-shell">{props.hostName}</div>
+  },
 }))
 vi.mock('@/components/session-terminal-view', () => ({
   SessionTerminalView: ({ sessionId, visible }: { sessionId: string; visible?: boolean }) => (
@@ -119,6 +124,7 @@ describe('pc layout', () => {
       ],
       rightPaneSessionId: null,
       reconnectingSessionIds: new Set<string>(),
+      workspaceAuthBySession: { 'session-1': 'cached-secret' },
       pcChunkEmitterRef: { current: {} },
       interactiveChunksBySession: { 'session-1': [] },
       setInteractiveChunksBySession: vi.fn(),
@@ -142,5 +148,14 @@ describe('pc layout', () => {
 
     expect(screen.getByTestId('workspace-shell')).toBeInTheDocument()
     expect(screen.getByTestId('terminal-view')).toBeInTheDocument()
+  })
+
+  it('prefers the connected session auth cache for workspace tools', async () => {
+    render(<PcLayout />)
+
+    const props = workspaceShellSpy.mock.calls.at(-1)?.[0]
+    expect(props).toBeTruthy()
+
+    await expect(props.resolveAuthSecret?.({ id: 'host-1' })).resolves.toBe('cached-secret')
   })
 })

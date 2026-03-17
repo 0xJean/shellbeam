@@ -38,6 +38,7 @@ interface SessionsContextValue {
   interactiveChunksBySession: Record<string, InteractiveOutputChunk[]>
   pcSessionTabs: SessionTab[]
   workspaceBySession: Record<string, SessionWorkspaceState>
+  workspaceAuthBySession: Record<string, string>
   pcActiveSessionId: string | null
   setPcActiveSessionId: (id: string | null) => void
   setSessionMode: (sessionId: string, mode: SessionWorkspaceMode) => void
@@ -100,6 +101,7 @@ export function SessionsProvider({ children }: { children: ReactNode; setOutput:
 
   const [pcSessionTabs, setPcSessionTabs] = useState<SessionTab[]>([])
   const [workspaceBySession, setWorkspaceBySession] = useState<Record<string, SessionWorkspaceState>>({})
+  const [workspaceAuthBySession, setWorkspaceAuthBySession] = useState<Record<string, string>>({})
   const [pcActiveSessionId, setPcActiveSessionId] = useState<string | null>(null)
   const [leftPaneSessionId, setLeftPaneSessionId] = useState<string | null>(null)
   const [rightPaneSessionId, setRightPaneSessionId] = useState<string | null>(null)
@@ -214,6 +216,11 @@ export function SessionsProvider({ children }: { children: ReactNode; setOutput:
         setPcSessionTabs((prev) => prev.map((t) =>
           t.sessionId === sessionId ? { ...t, sessionId: newSession.sessionId, status: 'connected' } : t,
         ))
+        setWorkspaceAuthBySession((prev) => {
+          const next = { ...prev, [newSession.sessionId]: secret ?? '' }
+          delete next[sessionId]
+          return next
+        })
         setPcActiveSessionId((prev) => prev === sessionId ? newSession.sessionId : prev)
         appendPaneEvent(pane, 'info', `Reconnected to ${host.username || defaultUsername}@${host.address}`, newSession.sessionId)
         void appendActivity({
@@ -406,6 +413,11 @@ export function SessionsProvider({ children }: { children: ReactNode; setOutput:
       setInteractiveHistoryBySession((prev) => { const n = { ...prev }; delete n[sessionId]; return n })
       setInteractiveHistoryCursorBySession((prev) => { const n = { ...prev }; delete n[sessionId]; return n })
       setWorkspaceBySession((prev) => removeSessionWorkspaceState(prev, sessionId))
+      setWorkspaceAuthBySession((prev) => {
+        const next = { ...prev }
+        delete next[sessionId]
+        return next
+      })
       setLeftPaneSessionId((prev) => {
         if (prev !== sessionId) return prev
         const rest = interactiveSessionsRef.current.filter((s) => s.sessionId !== sessionId)
@@ -451,6 +463,7 @@ export function SessionsProvider({ children }: { children: ReactNode; setOutput:
         mode: 'terminal',
         workspaceApp: 'overview',
       } : t))
+      setWorkspaceAuthBySession((prev) => ({ ...prev, [session.sessionId]: resolvedSecret ?? '' }))
       setPcActiveSessionId(session.sessionId)
       await refreshInteractiveSessions()
       void appendActivity({
@@ -509,6 +522,11 @@ export function SessionsProvider({ children }: { children: ReactNode; setOutput:
   function handleCloseSessionTab(sessionId: string) {
     setPcSessionTabs((prev) => prev.filter((t) => t.sessionId !== sessionId))
     setWorkspaceBySession((prev) => removeSessionWorkspaceState(prev, sessionId))
+    setWorkspaceAuthBySession((prev) => {
+      const next = { ...prev }
+      delete next[sessionId]
+      return next
+    })
     if (pcActiveSessionId === sessionId) setPcActiveSessionId(null)
     const session = interactiveSessions.find((s) => s.sessionId === sessionId)
     if (session) void closeInteractiveSession(sessionId).then(() => refreshInteractiveSessions())
@@ -522,7 +540,7 @@ export function SessionsProvider({ children }: { children: ReactNode; setOutput:
 
   return (
     <SessionsContext.Provider value={{
-      interactiveSessions, interactiveChunksBySession, pcSessionTabs, workspaceBySession, pcActiveSessionId,
+      interactiveSessions, interactiveChunksBySession, pcSessionTabs, workspaceBySession, workspaceAuthBySession, pcActiveSessionId,
       setPcActiveSessionId, setSessionMode, setSessionWorkspaceApp, pcChunkEmitterRef, leftPaneSessionId, setLeftPaneSessionId,
       rightPaneSessionId, setRightPaneSessionId,
       handleConnectHost, handleOpenLocalTerminal, handleCloseSessionTab, sendRaw, refreshInteractiveSessions,
