@@ -78,14 +78,11 @@ export function WorkspaceMobileShell({
   return (
     <div
       data-testid="workspace-mobile-shell"
-      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#0a192f] text-foreground"
+      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--workspace-bg-950)] text-[var(--workspace-text)]"
     >
-      {/* iOS Springboard Wallpaper (Blurred Gradients) */}
-      <div className="absolute inset-0 z-0">
-        <div className="absolute -top-[20%] -left-[10%] h-[50%] w-[70%] rounded-full bg-blue-500/40 blur-[120px]" />
-        <div className="absolute top-[20%] -right-[20%] h-[60%] w-[60%] rounded-full bg-purple-600/30 blur-[100px]" />
-        <div className="absolute -bottom-[10%] left-[10%] h-[40%] w-[80%] rounded-full bg-teal-500/30 blur-[100px]" />
-        <div className="absolute inset-0 bg-black/10 backdrop-blur-[2px]" />
+      {/* iOS Springboard Wallpaper (Blurred Gradients matching PC) */}
+      <div className="absolute inset-0 z-0 pointer-events-none">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(26,42,58,0.92)_0%,rgba(16,25,34,0.98)_68%),radial-gradient(circle_at_top_right,rgba(19,127,236,0.18),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(70,160,245,0.12),transparent_30%)]" />
       </div>
 
       {/* iOS Status Bar */}
@@ -157,7 +154,7 @@ export function WorkspaceMobileShell({
               <button
                 type="button"
                 onClick={() => onSelectApp('overview')}
-                className="flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-blue-500 active:opacity-60 transition-opacity"
+                className="flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-[color:var(--workspace-primary-500)] active:opacity-60 transition-opacity"
                 aria-label="Back to Home Screen"
               >
                 <ChevronLeft className="h-6 w-6 -ml-1" />
@@ -175,7 +172,7 @@ export function WorkspaceMobileShell({
 
               <button
                 type="button"
-                className="flex h-11 min-w-[44px] items-center justify-end px-3 text-blue-500 active:opacity-60 transition-opacity"
+                className="flex h-11 min-w-[44px] items-center justify-end px-3 text-[color:var(--workspace-primary-500)] active:opacity-60 transition-opacity"
                 aria-label="Search"
               >
                 <Search className="h-5 w-5" />
@@ -183,7 +180,7 @@ export function WorkspaceMobileShell({
             </div>
 
             {/* App Content */}
-            <div className="flex-1 overflow-auto bg-slate-50 dark:bg-slate-950 pb-[env(safe-area-inset-bottom)]">
+            <div className="flex-1 overflow-auto bg-[var(--workspace-bg)] pb-[env(safe-area-inset-bottom)]">
               {content}
             </div>
           </motion.div>
