@@ -1,13 +1,28 @@
 import type { HostProfile } from '@/lib/hosts'
 import { t } from '@/lib/i18n'
 import type { WorkspaceAppId } from '@/lib/workspace'
-import { ArrowLeft, BatteryFull, Search, Signal, Wifi } from 'lucide-react'
+import { BatteryFull, ChevronLeft, Signal, Wifi, Search } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { WorkspaceAppGrid } from './workspace-app-grid'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
 import { WorkspaceFilesApp } from './workspace-files-app'
 import { WorkspaceLogsApp } from './workspace-logs-app'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
+
+function LiveClock() {
+  const [time, setTime] = useState(() =>
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  )
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+    }, 10000)
+    return () => window.clearInterval(id)
+  }, [])
+  return <>{time}</>
+}
 
 interface WorkspaceMobileShellProps {
   hostName: string
@@ -56,169 +71,124 @@ export function WorkspaceMobileShell({
     return <WorkspaceEmptyApp app={activeApp} />
   })()
 
-  const dockApps: WorkspaceAppId[] = ['overview', 'files', 'services', 'logs']
+  // Terminal is the primary app, then Files, Services, Overview for settings
+  const dockApps: WorkspaceAppId[] = ['terminal', 'files', 'services', 'overview']
   const isOverview = activeApp === 'overview'
-  const switcherApps = Array.from(new Set([...dockApps, activeApp]))
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[linear-gradient(180deg,#8ec5ff_0%,#b9d6ff_24%,#dbeafe_52%,#eff6ff_100%)] text-foreground">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.35),transparent_26%),radial-gradient(circle_at_bottom,rgba(59,130,246,0.18),transparent_30%)]" />
+    <div
+      data-testid="workspace-mobile-shell"
+      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#0a192f] text-foreground"
+    >
+      {/* iOS Springboard Wallpaper (Blurred Gradients) */}
+      <div className="absolute inset-0 z-0">
+        <div className="absolute -top-[20%] -left-[10%] h-[50%] w-[70%] rounded-full bg-blue-500/40 blur-[120px]" />
+        <div className="absolute top-[20%] -right-[20%] h-[60%] w-[60%] rounded-full bg-purple-600/30 blur-[100px]" />
+        <div className="absolute -bottom-[10%] left-[10%] h-[40%] w-[80%] rounded-full bg-teal-500/30 blur-[100px]" />
+        <div className="absolute inset-0 bg-black/10 backdrop-blur-[2px]" />
+      </div>
 
-      <div className="relative flex items-center justify-between px-5 pb-3 pt-4 text-sm font-semibold text-slate-900">
-        <span>9:41</span>
-        <div className="flex items-center gap-1.5 text-slate-700">
-          <Signal className="h-4 w-4" />
-          <Wifi className="h-4 w-4" />
-          <BatteryFull className="h-4 w-4" />
+      {/* iOS Status Bar */}
+      <div className="relative z-10 flex items-center justify-between px-6 pb-2 pt-[max(env(safe-area-inset-top),16px)] text-[15px] font-semibold text-white drop-shadow-md">
+        <span><LiveClock /></span>
+        <div className="flex items-center gap-1.5">
+          <Signal className="h-[14px] w-[14px]" />
+          <Wifi className="h-[14px] w-[14px]" />
+          <BatteryFull className="h-[18px] w-[18px]" />
         </div>
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto px-4">
-        {isOverview ? (
-          <div className="space-y-5 pb-32">
-            <div>
-              <div className="text-sm font-medium text-slate-600">{t('workspace.mobile.title')}</div>
-              <div className="mt-1 text-4xl font-semibold tracking-tight text-slate-950">Home Screen</div>
-              <div className="mt-1 text-sm text-slate-600">{hostName} · {hostAddress}</div>
-            </div>
+      {/* Springboard (Home Screen) */}
+      <motion.div 
+        className="relative z-10 flex flex-1 flex-col px-4 pt-6"
+        initial={false}
+        animate={{ 
+          scale: isOverview ? 1 : 0.95,
+          opacity: isOverview ? 1 : 0,
+          pointerEvents: isOverview ? 'auto' : 'none'
+        }}
+        transition={{ type: 'spring', damping: 26, stiffness: 260 }}
+      >
+        <div className="mb-8 text-center text-white drop-shadow-md">
+          <div className="text-2xl font-semibold tracking-tight">{hostName}</div>
+          <div className="text-sm text-white/80">{hostAddress}</div>
+        </div>
 
-            <button
-              type="button"
-              onClick={() => onSelectApp('terminal')}
-              className="flex w-full items-center gap-3 rounded-[22px] border border-white/70 bg-white/55 px-4 py-3 text-left shadow-[0_10px_30px_rgba(15,23,42,0.10)] backdrop-blur"
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900/8">
-                <Search className="h-5 w-5 text-slate-700" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-slate-900">{t('workspace.mobile.spotlight')}</div>
-                <div className="text-xs text-slate-600">{t('workspace.mobile.spotlightHint')}</div>
-              </div>
-            </button>
+        <div className="min-h-[22rem]">
+          <WorkspaceAppGrid activeApp={activeApp} onSelectApp={onSelectApp} variant="ios-grid" />
+        </div>
+      </motion.div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-[26px] border border-white/70 bg-white/70 px-4 py-4 shadow-[0_12px_30px_rgba(15,23,42,0.10)] backdrop-blur">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{t('workspace.mobile.surface')}</div>
-                <div className="mt-3 text-2xl font-semibold text-slate-950">{t('workspace.mobile.touchReady')}</div>
-                <div className="mt-2 text-sm text-slate-600">{hostName}</div>
-              </div>
-              <div className="rounded-[26px] border border-white/70 bg-white/70 px-4 py-4 shadow-[0_12px_30px_rgba(15,23,42,0.10)] backdrop-blur">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{t('workspace.mobile.control')}</div>
-                <div className="mt-3 text-2xl font-semibold text-slate-950">{t('workspace.mobile.quickOps')}</div>
-                <div className="mt-2 text-sm text-slate-600">{hostAddress}</div>
-              </div>
-            </div>
+      {/* Fixed iOS Dock */}
+      <motion.div 
+        className="absolute bottom-4 left-4 right-4 z-20"
+        initial={false}
+        animate={{ 
+          y: isOverview ? 0 : 100,
+          opacity: isOverview ? 1 : 0,
+          pointerEvents: isOverview ? 'auto' : 'none'
+        }}
+        transition={{ type: 'spring', damping: 26, stiffness: 260 }}
+      >
+        <div className="rounded-[32px] border border-white/20 bg-white/20 p-3 shadow-[0_8px_32px_rgba(0,0,0,0.25)] backdrop-blur-2xl dark:border-white/10 dark:bg-black/30 pb-[max(env(safe-area-inset-bottom,12px),12px)]">
+          <WorkspaceAppGrid
+            activeApp={activeApp}
+            onSelectApp={onSelectApp}
+            variant="ios-dock"
+            apps={dockApps}
+          />
+        </div>
+      </motion.div>
 
-            <div className="flex items-center justify-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full bg-slate-900/80" />
-              <span className="h-2.5 w-2.5 rounded-full bg-slate-400/40" />
-              <span className="h-2.5 w-2.5 rounded-full bg-slate-400/40" />
-            </div>
-
-            <div className="rounded-[32px] border border-white/65 bg-white/28 px-3 py-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.4)] backdrop-blur-sm">
-              <div className="mb-4 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">{t('workspace.section.applications')}</div>
-              <div className="min-h-[22rem]">
-                <WorkspaceAppGrid activeApp={activeApp} onSelectApp={onSelectApp} variant="mobile" />
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div
+      {/* Full Screen App View */}
+      <AnimatePresence>
+        {!isOverview && (
+          <motion.div
+            key="app-view"
             data-testid="workspace-mobile-app-frame"
-            className="absolute inset-0 z-20 flex h-full min-h-0 flex-col overflow-hidden rounded-t-[34px] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.84),rgba(255,255,255,0.94))] shadow-[0_-8px_24px_rgba(15,23,42,0.10),0_18px_44px_rgba(15,23,42,0.16)] backdrop-blur-xl"
+            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+            className="absolute inset-0 z-30 flex flex-col bg-white dark:bg-[#0f172a] overflow-hidden"
           >
-            <div className="flex justify-center pt-2">
-              <div className="h-1.5 w-12 rounded-full bg-slate-300" />
-            </div>
-            <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-3">
+            {/* Frosted Navigation Bar */}
+            <div className="relative z-40 flex items-center justify-between border-b border-slate-200/50 bg-white/80 pb-3 pt-[max(env(safe-area-inset-top),16px)] px-2 shadow-sm backdrop-blur-xl dark:border-slate-800/50 dark:bg-slate-900/80">
               <button
                 type="button"
                 onClick={() => onSelectApp('overview')}
-                className="flex h-10 items-center gap-2 rounded-full border border-white/80 bg-white/75 px-3 text-slate-800 shadow-sm"
+                className="flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-blue-500 active:opacity-60 transition-opacity"
                 aria-label="Back to Home Screen"
               >
-                <ArrowLeft className="h-4 w-4" />
-                <span className="text-sm font-semibold">{t('workspace.mobile.home')}</span>
+                <ChevronLeft className="h-6 w-6 -ml-1" />
+                <span className="text-[17px] font-medium leading-none">Home</span>
               </button>
-              <div className="text-center">
-                <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">{hostName}</div>
-                <div className="text-xl font-semibold tracking-tight text-slate-950">{t(`workspace.app.${activeApp}`)}</div>
+              
+              <div className="absolute left-1/2 -translate-x-1/2 text-center">
+                <div className="text-[17px] font-semibold tracking-tight text-slate-900 dark:text-white">
+                  {t(`workspace.app.${activeApp}`)}
+                </div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  {hostName}
+                </div>
               </div>
+
               <button
                 type="button"
-                onClick={() => onSelectApp('overview')}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/75 text-slate-700 shadow-sm"
-                aria-label="Close mobile app"
+                className="flex h-11 min-w-[44px] items-center justify-end px-3 text-blue-500 active:opacity-60 transition-opacity"
+                aria-label="Search"
               >
-                <Search className="h-4 w-4" />
+                <Search className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="px-4 pb-3">
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {switcherApps.map((app) => (
-                  <button
-                    key={app}
-                    type="button"
-                    onClick={() => onSelectApp(app)}
-                    className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                      activeApp === app
-                        ? 'border-sky-300 bg-sky-100 text-sky-800'
-                        : 'border-white/80 bg-white/80 text-slate-700'
-                    }`}
-                  >
-                    {t(`workspace.app.${app}`)}
-                  </button>
-                ))}
-              </div>
+            {/* App Content */}
+            <div className="flex-1 overflow-auto bg-slate-50 dark:bg-slate-950 pb-[env(safe-area-inset-bottom)]">
+              {content}
             </div>
-
-            <div className="min-h-0 flex-1 px-3 pb-24">
-              <div
-                data-testid="workspace-mobile-app-content"
-                className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-white/80 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.08)]"
-              >
-                <div className="flex items-center justify-between border-b border-slate-200/80 px-4 py-3 text-sm font-semibold text-slate-900">
-                  <span>{t('workspace.mobile.title')}</span>
-                  <Search className="h-4 w-4 text-slate-500" />
-                </div>
-                <div className="min-h-0 flex-1 p-3">
-                  {content}
-                </div>
-              </div>
-            </div>
-
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-3">
-              <div className="rounded-[30px] border border-white/75 bg-white/82 px-3 py-3 shadow-[0_10px_28px_rgba(15,23,42,0.10)] backdrop-blur">
-                <WorkspaceAppGrid
-                  activeApp={activeApp}
-                  onSelectApp={onSelectApp}
-                  variant="mobile"
-                  apps={dockApps}
-                />
-              </div>
-              <div className="mx-auto mt-3 h-1.5 w-32 rounded-full bg-slate-900/80" />
-            </div>
-          </div>
+          </motion.div>
         )}
-      </div>
-
-      {isOverview && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pb-3 pt-2">
-          <div className="pointer-events-auto rounded-[30px] border border-white/75 bg-white/82 px-3 py-3 shadow-[0_10px_28px_rgba(15,23,42,0.10)] backdrop-blur">
-            <div className="mb-2 text-center text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              {t('workspace.mobile.dock')}
-            </div>
-            <WorkspaceAppGrid
-              activeApp={activeApp}
-              onSelectApp={onSelectApp}
-              variant="mobile"
-              apps={dockApps}
-            />
-          </div>
-          <div className="mx-auto mt-3 h-1.5 w-32 rounded-full bg-slate-900/80" />
-        </div>
-      )}
+      </AnimatePresence>
     </div>
   )
 }

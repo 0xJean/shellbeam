@@ -11,18 +11,18 @@ import {
 } from 'lucide-react'
 
 const APPS: Array<{ id: WorkspaceAppId; labelKey: string; icon: typeof LayoutGrid; accent: string; glow: string }> = [
-  { id: 'overview', labelKey: 'workspace.app.overview', icon: LayoutGrid, accent: 'from-sky-400 to-blue-600 text-white', glow: 'shadow-sky-500/30' },
-  { id: 'files', labelKey: 'workspace.app.files', icon: FolderKanban, accent: 'from-amber-300 to-orange-500 text-white', glow: 'shadow-amber-500/30' },
-  { id: 'processes', labelKey: 'workspace.app.processes', icon: ActivitySquare, accent: 'from-emerald-400 to-green-600 text-white', glow: 'shadow-emerald-500/30' },
-  { id: 'services', labelKey: 'workspace.app.services', icon: Files, accent: 'from-indigo-400 to-violet-600 text-white', glow: 'shadow-indigo-500/30' },
-  { id: 'logs', labelKey: 'workspace.app.logs', icon: ScrollText, accent: 'from-rose-400 to-pink-600 text-white', glow: 'shadow-rose-500/30' },
-  { id: 'terminal', labelKey: 'workspace.app.terminal', icon: SquareTerminal, accent: 'from-slate-500 to-slate-800 text-white', glow: 'shadow-slate-500/30' },
+  { id: 'overview', labelKey: 'workspace.app.overview', icon: LayoutGrid, accent: 'from-[#55adff] via-[var(--workspace-primary-500)] to-[#0c4578] text-white', glow: 'shadow-[0_18px_34px_rgba(19,127,236,0.35)]' },
+  { id: 'files', labelKey: 'workspace.app.files', icon: FolderKanban, accent: 'from-[#7cbcff] via-[#2f8cf0] to-[#173755] text-white', glow: 'shadow-[0_18px_34px_rgba(52,123,196,0.28)]' },
+  { id: 'processes', labelKey: 'workspace.app.processes', icon: ActivitySquare, accent: 'from-[#4ecf89] via-[#1a8e5a] to-[#103d31] text-white', glow: 'shadow-[0_18px_34px_rgba(34,197,94,0.22)]' },
+  { id: 'services', labelKey: 'workspace.app.services', icon: Files, accent: 'from-[#62b5ff] via-[#2563eb] to-[#172554] text-white', glow: 'shadow-[0_18px_34px_rgba(37,99,235,0.26)]' },
+  { id: 'logs', labelKey: 'workspace.app.logs', icon: ScrollText, accent: 'from-[#93c5fd] via-[#2563eb] to-[#111827] text-white', glow: 'shadow-[0_18px_34px_rgba(59,130,246,0.2)]' },
+  { id: 'terminal', labelKey: 'workspace.app.terminal', icon: SquareTerminal, accent: 'from-[#526579] via-[#1f2d3a] to-[#0c1117] text-white', glow: 'shadow-[0_18px_34px_rgba(15,23,42,0.3)]' },
 ]
 
 interface WorkspaceAppGridProps {
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
-  variant?: 'panel' | 'desktop' | 'mobile'
+  variant?: 'panel' | 'desktop' | 'mobile' | 'ios-grid' | 'ios-dock'
   apps?: WorkspaceAppId[]
 }
 
@@ -32,12 +32,16 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
   return (
     <div
       className={cn(
-        'grid gap-3',
-        variant === 'mobile'
-          ? 'grid-cols-4'
-          : variant === 'desktop'
-            ? 'grid-cols-1 justify-items-start'
-            : 'sm:grid-cols-2 xl:grid-cols-3',
+        'grid gap-x-2 gap-y-4',
+        variant === 'ios-grid'
+          ? 'grid-cols-4 px-2'
+          : variant === 'ios-dock'
+            ? 'grid-cols-4 px-1 gap-2'
+            : variant === 'mobile'
+              ? 'grid-cols-4'
+              : variant === 'desktop'
+                ? 'grid-cols-1 justify-items-start'
+                : 'sm:grid-cols-2 xl:grid-cols-3',
       )}
     >
       {visibleApps.map((app) => {
@@ -50,46 +54,77 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
           onClick={() => onSelectApp(app.id)}
           className={cn(
             'relative z-10 text-left transition-all',
-            variant === 'mobile'
-              ? 'flex flex-col items-center gap-2 rounded-[26px] px-2 py-2'
-              : variant === 'desktop'
-                ? 'flex w-24 flex-col items-center gap-2 rounded-2xl px-2 py-2 hover:bg-white/20'
-                : 'rounded-2xl border px-4 py-4',
+            variant === 'ios-grid'
+              ? 'flex flex-col items-center gap-1.5 active:scale-90 active:opacity-75'
+              : variant === 'ios-dock'
+                ? 'flex flex-col items-center active:scale-90 active:opacity-75'
+                : variant === 'mobile'
+                  ? 'flex flex-col items-center gap-2 rounded-[26px] px-2 py-2'
+                  : variant === 'desktop'
+                    ? 'group flex w-20 flex-col items-center gap-1 px-2 py-2'
+                    : 'rounded-2xl border px-4 py-4',
             activeApp === app.id
               ? variant === 'panel'
                 ? 'border-primary/40 bg-primary/10 text-foreground'
-                : 'text-foreground scale-[1.02]'
+                : variant === 'desktop'
+                  ? 'text-[var(--workspace-text-strong)]'
+                  : variant === 'ios-grid' || variant === 'ios-dock'
+                    ? ''
+                    : 'scale-[1.02] text-[var(--workspace-text-strong)]'
               : variant === 'panel'
                 ? 'border-border/60 bg-card/70 hover:bg-muted/50'
-                : 'text-foreground/90 hover:text-foreground',
+                : variant === 'ios-grid' || variant === 'ios-dock'
+                  ? ''
+                  : 'text-[var(--workspace-text)] hover:text-[var(--workspace-text-strong)]',
           )}
           aria-label={label}
         >
           <div
             className={cn(
-              'relative flex items-center justify-center overflow-hidden shadow-lg',
-              variant === 'mobile'
-                ? 'h-14 w-14 rounded-[18px]'
-                : variant === 'desktop'
-                  ? 'h-16 w-16 rounded-[18px]'
-                  : 'h-12 w-12 rounded-2xl',
-              variant === 'panel'
-                ? 'bg-muted'
-                : `bg-gradient-to-br ${app.accent} ${app.glow}`,
-              activeApp === app.id && variant !== 'panel' && 'ring-2 ring-white/80',
+              'flex items-center justify-center transition-all',
+              variant === 'ios-grid'
+                ? 'h-[60px] w-[60px] rounded-[14px] shadow-md bg-gradient-to-br ring-1 ring-white/10 inset-0'
+                : variant === 'ios-dock'
+                  ? 'h-[52px] w-[52px] rounded-[12px] shadow-sm bg-gradient-to-br ring-1 ring-white/10'
+                  : variant === 'mobile'
+                    ? 'relative h-14 w-14 overflow-hidden rounded-[18px] shadow-lg'
+                    : variant === 'desktop'
+                      ? 'h-12 w-12 rounded-lg border border-primary/20 bg-primary/10 group-hover:border-primary/50 group-hover:bg-primary/25'
+                      : 'h-12 w-12 rounded-2xl bg-muted',
+              (variant === 'mobile' || variant === 'ios-grid' || variant === 'ios-dock') && `${app.accent} ${app.glow}`,
+              activeApp === app.id && variant === 'desktop' && 'border-primary/50 bg-primary/25',
+              activeApp === app.id && variant === 'mobile' && 'ring-2 ring-[color:var(--workspace-border-glow)]',
             )}
           >
-            {variant !== 'panel' && (
-              <div className="absolute inset-x-2 top-1 h-4 rounded-full bg-white/20 blur-sm" />
+            {variant === 'mobile' && (
+              <div className="absolute inset-x-2 top-1 h-4 rounded-full bg-white/24 blur-sm" />
             )}
-            <Icon className={cn(variant === 'mobile' ? 'h-7 w-7' : 'h-6 w-6')} />
+            <Icon
+              className={cn(
+                variant === 'ios-grid' ? 'h-8 w-8 text-white drop-shadow-sm' :
+                variant === 'ios-dock' ? 'h-7 w-7 text-white drop-shadow-sm' :
+                variant === 'mobile' ? 'h-7 w-7' : 'h-6 w-6',
+                variant === 'desktop' ? 'text-[color:var(--workspace-primary-400)]' : '',
+              )}
+            />
           </div>
-          <div className={cn(variant === 'panel' ? 'mt-3' : 'text-center')}>
-            <div className={cn('font-semibold', variant === 'mobile' ? 'text-[11px] text-slate-900' : variant === 'desktop' ? 'text-[12px] leading-4 text-white [text-shadow:0_1px_2px_rgba(15,23,42,0.45)]' : 'text-sm')}>{label}</div>
-            {variant === 'panel' && (
-              <div className="mt-1 text-xs text-muted-foreground">{t('workspace.action.openApp', { app: label.toLowerCase() })}</div>
-            )}
-          </div>
+          {variant !== 'ios-dock' && (
+            <div className={cn(variant === 'panel' ? 'mt-3' : 'text-center w-full')}>
+              <div 
+                className={cn(
+                  'font-semibold truncate w-full px-1', 
+                  variant === 'ios-grid' ? 'text-[11px] text-white drop-shadow-md tracking-wide' : 
+                  variant === 'mobile' ? 'text-[11px] text-slate-900' : 
+                  variant === 'desktop' ? 'text-[12px] leading-4 text-[var(--workspace-text-strong)] [text-shadow:0_1px_2px_rgba(15,23,42,0.55)]' : 'text-sm'
+                )}
+              >
+                {label}
+              </div>
+              {variant === 'panel' && (
+                <div className="mt-1 text-xs text-muted-foreground">{t('workspace.action.openApp', { app: label.toLowerCase() })}</div>
+              )}
+            </div>
+          )}
         </button>
         )
       })}
