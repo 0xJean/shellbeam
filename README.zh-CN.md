@@ -89,7 +89,7 @@
 
 ### 预编译安装包
 
-从 [Releases](#) 页面下载对应平台的安装包：
+从 [GitHub Releases](https://github.com/zorojean/shellbeam/releases) 页面下载对应平台的安装包：
 
 | 平台 | 格式 |
 |------|------|
@@ -97,6 +97,10 @@
 | macOS (Intel) | `.dmg` |
 | Windows | `.msi` / `.exe` |
 | Linux | `.deb` / `.AppImage` |
+| Android | `.apk` / `.aab` |
+| iOS | Release notes 中的 TestFlight 链接 |
+
+发布自动化配置见 [docs/ci-cd.md](./docs/ci-cd.md)。
 
 ### 从源码构建
 
