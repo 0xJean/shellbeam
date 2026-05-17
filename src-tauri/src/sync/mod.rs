@@ -39,7 +39,10 @@ pub(crate) fn pending_push_store(peer_device_id: &str, push: PendingPush) {
 
 pub(crate) fn pending_push_check(peer_device_id: &str) -> bool {
     let guard = PENDING_PUSHES.lock().unwrap();
-    guard.as_ref().map(|m| m.contains_key(peer_device_id)).unwrap_or(false)
+    guard
+        .as_ref()
+        .map(|m| m.contains_key(peer_device_id))
+        .unwrap_or(false)
 }
 
 pub(crate) fn pending_push_claim(peer_device_id: &str) -> Option<PendingPush> {

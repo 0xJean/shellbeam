@@ -107,6 +107,33 @@ export function FilePane({
     setNewDirName('')
   }
 
+  const loadingSkeleton = (
+    <div data-testid="sftp-file-pane-skeleton" className="space-y-2 px-3 py-3">
+      {Array.from({ length: 5 }).map((_, index) => (
+        <div
+          key={index}
+          data-testid="sftp-file-row-skeleton"
+          className="flex items-center gap-3 rounded-xl border border-border/40 bg-card/60 px-3 py-2.5"
+        >
+          <div className="h-4 w-4 animate-pulse rounded-sm bg-muted" />
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted/80">
+            <div className="h-4 w-4 animate-pulse rounded bg-muted-foreground/15" />
+          </div>
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-2.5 w-1/3 animate-pulse rounded-full bg-muted" />
+            <div className="h-2 w-2/3 animate-pulse rounded-full bg-muted/80" />
+          </div>
+          <div className="hidden w-16 shrink-0 sm:block">
+            <div className="h-2.5 w-full animate-pulse rounded-full bg-muted" />
+          </div>
+          <div className="hidden w-24 shrink-0 lg:block">
+            <div className="h-2.5 w-full animate-pulse rounded-full bg-muted/80" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-border/60 bg-background">
       <div className="flex items-center gap-2 border-b px-3 py-2">
@@ -225,9 +252,7 @@ export function FilePane({
           </div>
         )}
         {placeholder ? placeholder : loading ? (
-          <div className="flex h-20 items-center justify-center">
-            <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
-          </div>
+          loadingSkeleton
         ) : filtered.length === 0 ? (
           <p className="p-4 text-center text-xs text-muted-foreground">{t('sftpPane.emptyDir')}</p>
         ) : (

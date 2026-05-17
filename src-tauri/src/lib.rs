@@ -1,14 +1,15 @@
 #![allow(unexpected_cfgs)]
 
-mod ssh;
-mod sync;
-mod vault;
-mod net;
+mod biometric_store;
+mod browser;
 mod data;
 mod error;
-mod storage;
 mod keys;
-mod biometric_store;
+mod net;
+mod ssh;
+mod storage;
+mod sync;
+mod vault;
 
 // Re-exports for cross-module crate:: paths
 pub(crate) use data::history;
@@ -48,8 +49,12 @@ fn set_macos_dock_icon() {
 pub fn run() {
     let builder = {
         #[cfg(not(mobile))]
-        let b = tauri::Builder::default()
-            .plugin(tauri_plugin_window_state::Builder::default().build());
+        let b = tauri::Builder::default().plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_filename(".shellbeam-window-state.json")
+                .skip_initial_state("main")
+                .build(),
+        );
         #[cfg(mobile)]
         let b = tauri::Builder::default();
         b
@@ -75,14 +80,21 @@ pub fn run() {
             data::hosts::create_host,
             data::hosts::update_host,
             data::hosts::delete_host,
+            data::workspace_inventory::list_workspace_inventory_snapshots,
+            data::workspace_inventory::upsert_workspace_inventory_snapshot,
+            data::workspace_inventory::delete_workspace_inventory_snapshot,
+            data::workspace_inventory::clear_workspace_inventory_snapshots,
             ssh::commands::test_ssh_connection,
             ssh::commands::run_ssh_command,
+            net::sftp::sftp_home_dir,
             net::sftp::sftp_list_dir,
             net::sftp::sftp_download_file,
             net::sftp::sftp_upload_file,
             net::sftp::sftp_delete_path,
             net::sftp::sftp_rename_path,
             net::sftp::sftp_create_dir,
+            net::sftp::sftp_create_file,
+            net::sftp::sftp_write_file,
             net::sftp::sftp_chmod,
             net::sftp::local_list_dir,
             net::sftp::local_home_dir,
@@ -148,14 +160,27 @@ pub fn run() {
             biometric_store::biometric_retrieve_password,
             biometric_store::biometric_has_password,
             biometric_store::biometric_remove_password,
+            browser::open_browser_window,
+            browser::open_embedded_browser,
+            browser::close_browser_window,
+            browser::update_browser_bounds,
+            browser::show_browser_webview,
+            browser::hide_browser_webview,
+            browser::load_browser_source,
+            browser::reload_browser_window,
+            browser::go_back_browser_window,
+            browser::go_forward_browser_window,
+            browser::start_browser_port_forward,
+            browser::stop_browser_port_forward,
+            browser::start_browser_http_proxy,
+            browser::stop_browser_http_proxy,
+            browser::start_browser_socks_proxy,
+            browser::stop_browser_socks_proxy,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             set_macos_dock_icon();
 
-            // Disable WKWebView automatic safe-area content inset on iOS.
-            // Without this, WKWebView's scrollView adds its own bottom inset for the
-            // home indicator, doubling up with any CSS safe-area padding.
             #[cfg(target_os = "ios")]
             {
                 use tauri::Manager;
@@ -168,8 +193,8 @@ pub fn run() {
                             use objc::{msg_send, sel, sel_impl};
                             let wk_webview: *mut Object = webview.inner() as *mut Object;
                             let scroll_view: *mut Object = msg_send![wk_webview, scrollView];
-                            // UIScrollViewContentInsetAdjustmentNever = 2
-                            let _: () = msg_send![scroll_view, setContentInsetAdjustmentBehavior: 2_isize];
+                            let _: () =
+                                msg_send![scroll_view, setContentInsetAdjustmentBehavior: 2_isize];
                         }
                     });
                 }

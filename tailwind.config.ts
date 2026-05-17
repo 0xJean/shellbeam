@@ -6,9 +6,9 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        primary: '#135bec',
+        primary: '#137fec',
         'background-light': '#f6f6f8',
-        'background-dark': '#0a0c10',
+        'background-dark': '#101922',
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',

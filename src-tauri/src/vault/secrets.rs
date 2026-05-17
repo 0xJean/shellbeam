@@ -135,39 +135,53 @@ fn decrypt_vault_value(
         .map_err(|_| "Decrypt vault value failed. Wrong password or corrupted data.".to_string())
 }
 
-fn load_vault_file(app: &tauri::AppHandle, vault_id: Option<&str>) -> Result<Option<VaultFile>, String> {
-  let file = vault_file_name(vault_id);
-  let path = data_file_path(app, &file)?;
-  if !path.exists() {
-    return Ok(None);
-  }
-  let content =
-    fs::read_to_string(path).map_err(|err| format!("Read vault file failed: {err}"))?;
-  let vault = serde_json::from_str::<VaultFile>(&content)
-    .map_err(|err| format!("Parse vault file failed: {err}"))?;
-  Ok(Some(vault))
+fn load_vault_file(
+    app: &tauri::AppHandle,
+    vault_id: Option<&str>,
+) -> Result<Option<VaultFile>, String> {
+    let file = vault_file_name(vault_id);
+    let path = data_file_path(app, &file)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content =
+        fs::read_to_string(path).map_err(|err| format!("Read vault file failed: {err}"))?;
+    let vault = serde_json::from_str::<VaultFile>(&content)
+        .map_err(|err| format!("Parse vault file failed: {err}"))?;
+    Ok(Some(vault))
 }
 
 /// Load vault file as raw JSON string (for backup).
-pub fn load_vault_file_raw(app: &tauri::AppHandle, vault_id: Option<&str>) -> Result<Option<String>, String> {
-  let file = vault_file_name(vault_id);
-  let path = data_file_path(app, &file)?;
-  if !path.exists() {
-    return Ok(None);
-  }
-  let content =
-    fs::read_to_string(path).map_err(|err| format!("Read vault file failed: {err}"))?;
-  Ok(Some(content))
+pub fn load_vault_file_raw(
+    app: &tauri::AppHandle,
+    vault_id: Option<&str>,
+) -> Result<Option<String>, String> {
+    let file = vault_file_name(vault_id);
+    let path = data_file_path(app, &file)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content =
+        fs::read_to_string(path).map_err(|err| format!("Read vault file failed: {err}"))?;
+    Ok(Some(content))
 }
 
 /// Save vault file from raw JSON string (for restore).
-pub fn save_vault_file_raw(app: &tauri::AppHandle, content: &str, vault_id: Option<&str>) -> Result<(), String> {
-  let file = vault_file_name(vault_id);
-  let path = data_file_path(app, &file)?;
-  fs::write(path, content).map_err(|err| format!("Write vault file failed: {err}"))
+pub fn save_vault_file_raw(
+    app: &tauri::AppHandle,
+    content: &str,
+    vault_id: Option<&str>,
+) -> Result<(), String> {
+    let file = vault_file_name(vault_id);
+    let path = data_file_path(app, &file)?;
+    fs::write(path, content).map_err(|err| format!("Write vault file failed: {err}"))
 }
 
-fn save_vault_file(app: &tauri::AppHandle, vault: &VaultFile, vault_id: Option<&str>) -> Result<(), String> {
+fn save_vault_file(
+    app: &tauri::AppHandle,
+    vault: &VaultFile,
+    vault_id: Option<&str>,
+) -> Result<(), String> {
     let file = vault_file_name(vault_id);
     let path = data_file_path(app, &file)?;
     write_json(&path, vault)
@@ -202,8 +216,8 @@ pub fn vault_status(
     vault_id: Option<String>,
 ) -> Result<VaultStatus, String> {
     let vid = ensure_vault_id(vault_id.as_deref());
-    let vault =
-        load_vault_file(&app, Some(&vid)).map_err(|err| standard_error_from_raw("vault", "status", err))?;
+    let vault = load_vault_file(&app, Some(&vid))
+        .map_err(|err| standard_error_from_raw("vault", "status", err))?;
     let initialized = vault.is_some();
     let secret_count = vault.as_ref().map(|item| item.secrets.len()).unwrap_or(0);
     let unlocked = state
@@ -383,7 +397,8 @@ pub fn vault_set_secret(
             updated_at: now_unix_ms(),
         },
     );
-    save_vault_file(&app, &vault, Some(&vid)).map_err(|err| standard_error_from_raw("vault", "set secret", err))
+    save_vault_file(&app, &vault, Some(&vid))
+        .map_err(|err| standard_error_from_raw("vault", "set secret", err))
 }
 
 #[tauri::command]
@@ -429,11 +444,17 @@ pub fn vault_export_decrypted_secrets(
 ) -> Result<HashMap<String, String>, String> {
     let vid = ensure_vault_id(vault_id);
     let key = {
-        let guard = state.unlocked_keys.lock().map_err(|_| "Vault state lock poisoned".to_string())?;
-        guard.get(&vid).copied().ok_or_else(|| "Vault is locked — unlock before syncing secrets".to_string())?
+        let guard = state
+            .unlocked_keys
+            .lock()
+            .map_err(|_| "Vault state lock poisoned".to_string())?;
+        guard
+            .get(&vid)
+            .copied()
+            .ok_or_else(|| "Vault is locked — unlock before syncing secrets".to_string())?
     };
-    let vault = load_vault_file(app, Some(&vid))?
-        .ok_or_else(|| "Vault is not initialized".to_string())?;
+    let vault =
+        load_vault_file(app, Some(&vid))?.ok_or_else(|| "Vault is not initialized".to_string())?;
     let mut result = HashMap::new();
     for (secret_key, record) in &vault.secrets {
         let plain = decrypt_vault_value(&key, &record.nonce_b64, &record.ciphertext_b64)
@@ -462,13 +483,23 @@ pub fn vault_import_decrypted_secrets(
     let (key, mut vault) = if let Some(v) = existing_vault {
         // Vault exists — must be unlocked
         let k = {
-            let guard = state.unlocked_keys.lock().map_err(|_| "Vault state lock poisoned".to_string())?;
-            guard.get(&vid).copied().ok_or_else(|| "Vault is locked — unlock before syncing secrets".to_string())?
+            let guard = state
+                .unlocked_keys
+                .lock()
+                .map_err(|_| "Vault state lock poisoned".to_string())?;
+            guard
+                .get(&vid)
+                .copied()
+                .ok_or_else(|| "Vault is locked — unlock before syncing secrets".to_string())?
         };
         (k, v)
     } else {
         // Vault not initialized — auto-create with a random key
-        log::info!("[vault] auto-initializing vault '{}' for sync import ({} secrets)", vid, secrets.len());
+        log::info!(
+            "[vault] auto-initializing vault '{}' for sync import ({} secrets)",
+            vid,
+            secrets.len()
+        );
         let salt = rand::random::<[u8; VAULT_SALT_SIZE]>();
         // Use a random 32-byte key directly (not derived from a password)
         let key = rand::random::<[u8; VAULT_KEY_SIZE]>();
@@ -483,7 +514,10 @@ pub fn vault_import_decrypted_secrets(
             secrets: HashMap::new(),
         };
         // Keep the vault unlocked in memory
-        let mut guard = state.unlocked_keys.lock().map_err(|_| "Vault state lock poisoned".to_string())?;
+        let mut guard = state
+            .unlocked_keys
+            .lock()
+            .map_err(|_| "Vault state lock poisoned".to_string())?;
         guard.insert(vid.clone(), key);
         (key, v)
     };
@@ -492,11 +526,14 @@ pub fn vault_import_decrypted_secrets(
     for (secret_key, plaintext) in secrets {
         let (nonce_b64, ciphertext_b64) = encrypt_vault_value(&key, plaintext.as_bytes())
             .map_err(|e| format!("encrypt secret '{}': {}", secret_key, e))?;
-        vault.secrets.insert(secret_key.clone(), VaultSecretRecord {
-            nonce_b64,
-            ciphertext_b64,
-            updated_at: now_unix_ms(),
-        });
+        vault.secrets.insert(
+            secret_key.clone(),
+            VaultSecretRecord {
+                nonce_b64,
+                ciphertext_b64,
+                updated_at: now_unix_ms(),
+            },
+        );
         count += 1;
     }
     save_vault_file(app, &vault, Some(&vid))?;

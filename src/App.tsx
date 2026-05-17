@@ -1,4 +1,3 @@
-import { CommandPalette } from '@/components/command-palette'
 import { WelcomePage, useWelcomePage } from '@/components/welcome-page'
 import { AppProvider, useApp } from '@/contexts/app-context'
 import { HostsProvider, useHosts } from '@/contexts/hosts-context'
@@ -7,7 +6,12 @@ import { VaultProvider } from '@/contexts/vault-context'
 import { PcLayout } from '@/layouts/pc-layout'
 import { listCommandHistory } from '@/lib/history'
 import { I18nProvider } from '@/lib/i18n'
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
+
+const CommandPalette = lazy(async () => {
+  const module = await import('@/components/command-palette')
+  return { default: module.CommandPalette }
+})
 
 function AppInner() {
   const app = useApp()
@@ -16,7 +20,12 @@ function AppInner() {
   const [historyEntries, setHistoryEntries] = useState<Array<Awaited<ReturnType<typeof listCommandHistory>>[number]>>([])
 
   useEffect(() => {
-    void listCommandHistory().then(setHistoryEntries)
+    void listCommandHistory()
+      .then(setHistoryEntries)
+      .catch((error) => {
+        console.error('Load command history failed', error)
+        setHistoryEntries([])
+      })
   }, [])
 
   if (welcome.show) {
@@ -26,15 +35,19 @@ function AppInner() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden" style={{ paddingTop: 'env(safe-area-inset-top)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
       <PcLayout />
-      <CommandPalette
-        open={app.commandPaletteOpen}
-        onClose={() => app.setCommandPaletteOpen(false)}
-        hosts={hostsCtx.hosts}
-        historyEntries={historyEntries}
-        selectedHostId={hostsCtx.selectedHostId}
-        onSelectHost={hostsCtx.setSelectedHostId}
-        onAction={app.handleCommandPaletteAction}
-      />
+      {app.commandPaletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette
+            open={app.commandPaletteOpen}
+            onClose={() => app.setCommandPaletteOpen(false)}
+            hosts={hostsCtx.hosts}
+            historyEntries={historyEntries}
+            selectedHostId={hostsCtx.selectedHostId}
+            onSelectHost={hostsCtx.setSelectedHostId}
+            onAction={app.handleCommandPaletteAction}
+          />
+        </Suspense>
+      )}
     </div>
   )
 }

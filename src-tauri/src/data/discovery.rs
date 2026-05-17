@@ -56,10 +56,10 @@ mod android {
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod desktop {
     use super::*;
+    use crate::sync::transport::SHELLBEAM_SERVICE_TYPE;
     use mdns_sd::{ScopedIp, ServiceDaemon, ServiceEvent};
     use std::collections::HashMap;
     use std::time::Duration;
-    use crate::sync::transport::SHELLBEAM_SERVICE_TYPE;
 
     static DISCOVER_DAEMON: Mutex<Option<ServiceDaemon>> = Mutex::new(None);
 
@@ -68,7 +68,9 @@ mod desktop {
         for a in addr {
             if let ScopedIp::V4(v) = a {
                 let ip = *v.addr();
-                if ip.is_loopback() || ip.is_link_local() { continue; }
+                if ip.is_loopback() || ip.is_link_local() {
+                    continue;
+                }
                 good = Some(ip);
             }
         }
@@ -82,7 +84,8 @@ mod desktop {
     pub fn discover_devices() -> Result<Vec<DiscoveredDevice>, String> {
         // Always use a fresh daemon to avoid stale cache
         let daemon = ServiceDaemon::new().map_err(|e| format!("mDNS daemon: {e}"))?;
-        let receiver = daemon.browse(SHELLBEAM_SERVICE_TYPE)
+        let receiver = daemon
+            .browse(SHELLBEAM_SERVICE_TYPE)
             .map_err(|e| format!("mDNS browse: {e}"))?;
         let mut devices: HashMap<String, DiscoveredDevice> = HashMap::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(4);
@@ -91,10 +94,20 @@ mod desktop {
                 Ok(ServiceEvent::ServiceResolved(resolved)) => {
                     if let Some(addr) = best_lan_ipv4(&resolved.addresses) {
                         let name = instance_name_from_fullname(&resolved.fullname);
-                        let dt = resolved.get_properties().get_property_val_str("dt")
-                            .unwrap_or("computer").to_string();
-                        devices.insert(format!("{}:{}", addr, resolved.port),
-                            DiscoveredDevice { name, host: addr, port: resolved.port, device_type: dt });
+                        let dt = resolved
+                            .get_properties()
+                            .get_property_val_str("dt")
+                            .unwrap_or("computer")
+                            .to_string();
+                        devices.insert(
+                            format!("{}:{}", addr, resolved.port),
+                            DiscoveredDevice {
+                                name,
+                                host: addr,
+                                port: resolved.port,
+                                device_type: dt,
+                            },
+                        );
                     }
                 }
                 _ => {}
@@ -117,9 +130,12 @@ mod desktop {
         // A fresh daemon has no cache, so it will always re-query the network.
         log::info!("[discover] creating fresh daemon for browse");
         let daemon = ServiceDaemon::new().map_err(|e| format!("mDNS daemon: {e}"))?;
-        let receiver = daemon.browse(SHELLBEAM_SERVICE_TYPE)
+        let receiver = daemon
+            .browse(SHELLBEAM_SERVICE_TYPE)
             .map_err(|e| format!("mDNS browse: {e}"))?;
-        if let Ok(mut dg) = DISCOVER_DAEMON.lock() { *dg = Some(daemon); }
+        if let Ok(mut dg) = DISCOVER_DAEMON.lock() {
+            *dg = Some(daemon);
+        }
 
         DISCOVER_RUNNING.store(true, Ordering::SeqCst);
         std::thread::spawn(move || {
@@ -127,13 +143,22 @@ mod desktop {
             while DISCOVER_RUNNING.load(Ordering::SeqCst) {
                 match receiver.recv_timeout(Duration::from_millis(500)) {
                     Ok(ServiceEvent::ServiceResolved(resolved)) => {
-                        log::info!("[discover] RESOLVED: fullname={} addrs={:?}", resolved.fullname, resolved.addresses);
+                        log::info!(
+                            "[discover] RESOLVED: fullname={} addrs={:?}",
+                            resolved.fullname,
+                            resolved.addresses
+                        );
                         if let Some(addr) = best_lan_ipv4(&resolved.addresses) {
-                            let dt = resolved.get_properties().get_property_val_str("dt")
-                                .unwrap_or("computer").to_string();
+                            let dt = resolved
+                                .get_properties()
+                                .get_property_val_str("dt")
+                                .unwrap_or("computer")
+                                .to_string();
                             let device = DiscoveredDevice {
                                 name: instance_name_from_fullname(&resolved.fullname),
-                                host: addr, port: resolved.port, device_type: dt,
+                                host: addr,
+                                port: resolved.port,
+                                device_type: dt,
                             };
                             log::info!("[discover] emitting: {:?}", device);
                             let _ = app.emit("mdns-device-found", &device);
@@ -170,29 +195,47 @@ mod desktop {
 #[tauri::command]
 pub fn mdns_discover_devices() -> Result<Vec<DiscoveredDevice>, String> {
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    { desktop::discover_devices() }
+    {
+        desktop::discover_devices()
+    }
     #[cfg(target_os = "ios")]
-    { super::discovery_ios::discover_devices() }
+    {
+        super::discovery_ios::discover_devices()
+    }
     #[cfg(target_os = "android")]
-    { android::discover_devices() }
+    {
+        android::discover_devices()
+    }
 }
 
 #[tauri::command]
 pub fn mdns_start_discover(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    { desktop::start_discover(app) }
+    {
+        desktop::start_discover(app)
+    }
     #[cfg(target_os = "ios")]
-    { super::discovery_ios::start_discover(app) }
+    {
+        super::discovery_ios::start_discover(app)
+    }
     #[cfg(target_os = "android")]
-    { android::start_discover(app) }
+    {
+        android::start_discover(app)
+    }
 }
 
 #[tauri::command]
 pub fn mdns_stop_discover() {
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    { desktop::stop_discover() }
+    {
+        desktop::stop_discover()
+    }
     #[cfg(target_os = "ios")]
-    { super::discovery_ios::stop_discover() }
+    {
+        super::discovery_ios::stop_discover()
+    }
     #[cfg(target_os = "android")]
-    { android::stop_discover() }
+    {
+        android::stop_discover()
+    }
 }

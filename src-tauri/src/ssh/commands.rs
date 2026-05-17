@@ -4,7 +4,10 @@ use std::time::{Duration, Instant};
 
 use ssh2::Session;
 
-use super::{failed_result, CommandRunResult, ConnectionTestResult, SshRequest, TCP_CONNECT_TIMEOUT_SECS};
+use super::{
+    failed_result, format_ssh_handshake_error, CommandRunResult, ConnectionTestResult, SshRequest,
+    TCP_CONNECT_TIMEOUT_SECS,
+};
 use crate::history::append_history;
 
 fn failed_connection_test(
@@ -29,18 +32,31 @@ fn failed_connection_test(
 #[tauri::command]
 pub async fn test_ssh_connection(payload: SshRequest) -> Result<ConnectionTestResult, String> {
     tauri::async_runtime::spawn_blocking(move || test_ssh_connection_sync(payload))
-        .await.map_err(|e| format!("Task panicked: {e}"))
+        .await
+        .map_err(|e| format!("Task panicked: {e}"))
 }
 
 fn test_ssh_connection_sync(payload: SshRequest) -> ConnectionTestResult {
     let started_at = Instant::now();
     let address = format!("{}:{}", payload.host, payload.port);
-    let addr = match address.to_socket_addrs().and_then(|mut a| a.next().ok_or_else(||
-        std::io::Error::new(std::io::ErrorKind::Other, "No addresses"))) {
+    let addr = match address.to_socket_addrs().and_then(|mut a| {
+        a.next()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "No addresses"))
+    }) {
         Ok(a) => a,
-        Err(err) => return failed_connection_test(started_at, format!("DNS resolve failed: {err}"), "network", "network_error", "ssh", true),
+        Err(err) => {
+            return failed_connection_test(
+                started_at,
+                format!("DNS resolve failed: {err}"),
+                "network",
+                "network_error",
+                "ssh",
+                true,
+            )
+        }
     };
-    let tcp = match TcpStream::connect_timeout(&addr, Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) {
+    let tcp = match TcpStream::connect_timeout(&addr, Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
+    {
         Ok(tcp) => tcp,
         Err(err) => {
             return failed_connection_test(
@@ -54,6 +70,7 @@ fn test_ssh_connection_sync(payload: SshRequest) -> ConnectionTestResult {
         }
     };
 
+    tcp.set_nodelay(true).ok();
     tcp.set_read_timeout(Some(Duration::from_secs(15))).ok();
     tcp.set_write_timeout(Some(Duration::from_secs(15))).ok();
 
@@ -75,7 +92,7 @@ fn test_ssh_connection_sync(payload: SshRequest) -> ConnectionTestResult {
     if let Err(err) = session.handshake() {
         return failed_connection_test(
             started_at,
-            format!("SSH handshake failed: {err}"),
+            format_ssh_handshake_error(&err.to_string()),
             "network",
             "handshake_failed",
             "ssh",
@@ -170,9 +187,13 @@ fn test_ssh_connection_sync(payload: SshRequest) -> ConnectionTestResult {
 }
 
 #[tauri::command]
-pub async fn run_ssh_command(app: tauri::AppHandle, payload: SshRequest) -> Result<CommandRunResult, String> {
+pub async fn run_ssh_command(
+    app: tauri::AppHandle,
+    payload: SshRequest,
+) -> Result<CommandRunResult, String> {
     tauri::async_runtime::spawn_blocking(move || run_ssh_command_sync(app, payload))
-        .await.map_err(|e| format!("Task panicked: {e}"))
+        .await
+        .map_err(|e| format!("Task panicked: {e}"))
 }
 
 pub(crate) fn run_ssh_command_sync(app: tauri::AppHandle, payload: SshRequest) -> CommandRunResult {
@@ -190,12 +211,26 @@ pub(crate) fn run_ssh_command_sync(app: tauri::AppHandle, payload: SshRequest) -
         }
 
         let address = format!("{}:{}", payload.host, payload.port);
-        let addr = match address.to_socket_addrs().and_then(|mut a| a.next().ok_or_else(||
-            std::io::Error::new(std::io::ErrorKind::Other, "No addresses"))) {
+        let addr = match address.to_socket_addrs().and_then(|mut a| {
+            a.next()
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "No addresses"))
+        }) {
             Ok(a) => a,
-            Err(err) => return failed_result(started_at, format!("DNS resolve failed: {err}"), "network", "network_error", "ssh", true),
+            Err(err) => {
+                return failed_result(
+                    started_at,
+                    format!("DNS resolve failed: {err}"),
+                    "network",
+                    "network_error",
+                    "ssh",
+                    true,
+                )
+            }
         };
-        let tcp = match TcpStream::connect_timeout(&addr, Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) {
+        let tcp = match TcpStream::connect_timeout(
+            &addr,
+            Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS),
+        ) {
             Ok(tcp) => tcp,
             Err(err) => {
                 return failed_result(
@@ -208,6 +243,7 @@ pub(crate) fn run_ssh_command_sync(app: tauri::AppHandle, payload: SshRequest) -
                 )
             }
         };
+        tcp.set_nodelay(true).ok();
         tcp.set_read_timeout(Some(Duration::from_secs(15))).ok();
         tcp.set_write_timeout(Some(Duration::from_secs(15))).ok();
 
@@ -228,7 +264,7 @@ pub(crate) fn run_ssh_command_sync(app: tauri::AppHandle, payload: SshRequest) -
         if let Err(err) = session.handshake() {
             return failed_result(
                 started_at,
-                format!("SSH handshake failed: {err}"),
+                format_ssh_handshake_error(&err.to_string()),
                 "network",
                 "handshake_failed",
                 "ssh",
@@ -380,9 +416,21 @@ pub(crate) fn run_ssh_command_sync(app: tauri::AppHandle, payload: SshRequest) -
             stderr,
             exit_code,
             duration_ms: started_at.elapsed().as_millis(),
-            error_type: if exit_code == 0 { None } else { Some("command".to_string()) },
-            error_code: if exit_code == 0 { None } else { Some("remote_command_failed".to_string()) },
-            error_source: if exit_code == 0 { None } else { Some("remote".to_string()) },
+            error_type: if exit_code == 0 {
+                None
+            } else {
+                Some("command".to_string())
+            },
+            error_code: if exit_code == 0 {
+                None
+            } else {
+                Some("remote_command_failed".to_string())
+            },
+            error_source: if exit_code == 0 {
+                None
+            } else {
+                Some("remote".to_string())
+            },
             retryable: if exit_code == 0 { None } else { Some(false) },
         }
     })();

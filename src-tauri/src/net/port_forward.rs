@@ -18,14 +18,18 @@ fn port_forward_rules_file(vault_id: Option<&str>) -> String {
     format!("port_forward_rules{suffix}.json")
 }
 
-fn write_temp_private_key(app: &tauri::AppHandle, private_key: &str) -> Result<std::path::PathBuf, String> {
+fn write_temp_private_key(
+    app: &tauri::AppHandle,
+    private_key: &str,
+) -> Result<std::path::PathBuf, String> {
     let key_path = data_file_path(app, &format!("port_forward_{}.key", Uuid::new_v4()))?;
     fs::write(&key_path, private_key).map_err(|e| format!("Write temp key failed: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let permissions = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&key_path, permissions).map_err(|e| format!("Set key permissions failed: {e}"))?;
+        fs::set_permissions(&key_path, permissions)
+            .map_err(|e| format!("Set key permissions failed: {e}"))?;
     }
     Ok(key_path)
 }
@@ -63,13 +67,20 @@ lazy_static::lazy_static! {
     static ref RUNNING_TUNNELS: Mutex<HashMap<String, (Child, std::path::PathBuf)>> = Mutex::new(HashMap::new());
 }
 
-fn load_rules(app: &tauri::AppHandle, vault_id: Option<&str>) -> Result<Vec<PortForwardRule>, String> {
+fn load_rules(
+    app: &tauri::AppHandle,
+    vault_id: Option<&str>,
+) -> Result<Vec<PortForwardRule>, String> {
     let file = port_forward_rules_file(vault_id);
     let path = data_file_path(app, &file)?;
     read_json_or_default::<Vec<PortForwardRule>>(&path)
 }
 
-fn save_rules(app: &tauri::AppHandle, rules: &[PortForwardRule], vault_id: Option<&str>) -> Result<(), String> {
+fn save_rules(
+    app: &tauri::AppHandle,
+    rules: &[PortForwardRule],
+    vault_id: Option<&str>,
+) -> Result<(), String> {
     let file = port_forward_rules_file(vault_id);
     let path = data_file_path(app, &file)?;
     write_json(&path, rules)
@@ -140,7 +151,8 @@ pub fn start_port_forward_tunnel(
         .find(|r| r.id == rule_id)
         .ok_or_else(|| "Rule not found".to_string())?;
 
-    let hosts = load_hosts(&app, vid).map_err(|e| standard_error_from_raw("port_forward", "load hosts", e))?;
+    let hosts = load_hosts(&app, vid)
+        .map_err(|e| standard_error_from_raw("port_forward", "load hosts", e))?;
     let host = hosts
         .iter()
         .find(|h| h.id == rule.host_id)
@@ -157,16 +169,19 @@ pub fn start_port_forward_tunnel(
     let (ssh_flag, spec) = match rule.rule_type.as_str() {
         "local" => (
             "-L",
-            format!("{}:{}:{}:{}", rule.bind_host, rule.bind_port, rule.target_host, rule.target_port),
+            format!(
+                "{}:{}:{}:{}",
+                rule.bind_host, rule.bind_port, rule.target_host, rule.target_port
+            ),
         ),
         "remote" => (
             "-R",
-            format!("{}:{}:{}:{}", rule.bind_host, rule.bind_port, rule.target_host, rule.target_port),
+            format!(
+                "{}:{}:{}:{}",
+                rule.bind_host, rule.bind_port, rule.target_host, rule.target_port
+            ),
         ),
-        "dynamic" => (
-            "-D",
-            format!("{}:{}", rule.bind_host, rule.bind_port),
-        ),
+        "dynamic" => ("-D", format!("{}:{}", rule.bind_host, rule.bind_port)),
         _ => return Err("Invalid rule type".to_string()),
     };
 

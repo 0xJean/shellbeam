@@ -113,7 +113,8 @@ pub async fn fetch_and_add_known_host(
     port: u16,
 ) -> Result<KnownHostEntry, String> {
     tauri::async_runtime::spawn_blocking(move || fetch_and_add_known_host_sync(&app, &host, port))
-        .await.map_err(|e| format!("Task panicked: {e}"))?
+        .await
+        .map_err(|e| format!("Task panicked: {e}"))?
 }
 
 fn fetch_and_add_known_host_sync(
@@ -129,18 +130,22 @@ fn fetch_and_add_known_host_sync(
         return Err("Host is required".to_string());
     }
     let address = format!("{}:{}", host, port);
-    let addr = address.to_socket_addrs()
+    let addr = address
+        .to_socket_addrs()
         .map_err(|e| format!("DNS resolve failed: {e}"))?
         .next()
         .ok_or_else(|| "DNS resolve returned no addresses".to_string())?;
     let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(10))
         .map_err(|e| format!("Connect failed: {e}"))?;
+    tcp.set_nodelay(true).ok();
     tcp.set_read_timeout(Some(Duration::from_secs(10))).ok();
     tcp.set_write_timeout(Some(Duration::from_secs(10))).ok();
 
     let mut session = ssh2::Session::new().map_err(|e| format!("Create session failed: {e}"))?;
     session.set_tcp_stream(tcp);
-    session.handshake().map_err(|e| format!("Handshake failed: {e}"))?;
+    session
+        .handshake()
+        .map_err(|e| format!("Handshake failed: {e}"))?;
 
     let (key_bytes, key_type) = session
         .host_key()
@@ -152,11 +157,7 @@ fn fetch_and_add_known_host_sync(
 }
 
 #[tauri::command]
-pub fn remove_known_host(
-    app: tauri::AppHandle,
-    host: String,
-    port: u16,
-) -> Result<(), String> {
+pub fn remove_known_host(app: tauri::AppHandle, host: String, port: u16) -> Result<(), String> {
     let mut entries = load_entries(&app)?;
     let key = host_key(&host, port);
     let before = entries.len();

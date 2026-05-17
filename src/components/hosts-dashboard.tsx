@@ -40,6 +40,7 @@ interface HostsDashboardProps {
   vaultKeys?: string[]
   vaultUnlocked?: boolean
   onSaveToVault?: (key: string, value: string) => Promise<void>
+  onLoadVaultSecret?: (key: string) => Promise<string | null>
   vaultName?: string
 }
 
@@ -48,7 +49,7 @@ export function HostsDashboard({
   onSelectHost, onConnectHost, onCreateHost, onUpdateHost, onDeleteHost,
     openAddForm = false, onAddFormClose,
     externalSearch, onExternalSearchChange, onCheckHostStatus, onRefreshHosts,
-    vaultKeys = [], vaultUnlocked = false, onSaveToVault, vaultName = 'Vault',
+    vaultKeys = [], vaultUnlocked = false, onSaveToVault, onLoadVaultSecret, vaultName = 'Vault',
 }: HostsDashboardProps) {
   const [internalSearch, setInternalSearch] = useState('')
   const effectiveSearch = externalSearch ?? internalSearch
@@ -300,7 +301,7 @@ export function HostsDashboard({
             <DialogContent>
               <HostForm
                 defaultUsername={defaultUsername} vaultKeys={vaultKeys} vaultUnlocked={vaultUnlocked}
-                onSaveToVault={onSaveToVault} vaultName={vaultName}
+                onSaveToVault={onSaveToVault} onLoadVaultSecret={onLoadVaultSecret} vaultName={vaultName}
                 existingGroups={allExistingGroups} existingTags={allExistingTags}
                 onSubmit={async (draft) => { await onCreateHost(draft); setShowAddForm(false); onAddFormClose?.() }}
                 onCancel={() => { setShowAddForm(false); onAddFormClose?.() }}
@@ -314,7 +315,7 @@ export function HostsDashboard({
                 <HostForm
                   initial={editingHost}
                   defaultUsername={defaultUsername} vaultKeys={vaultKeys} vaultUnlocked={vaultUnlocked}
-                  onSaveToVault={onSaveToVault} vaultName={vaultName}
+                  onSaveToVault={onSaveToVault} onLoadVaultSecret={onLoadVaultSecret} vaultName={vaultName}
                   existingGroups={allExistingGroups} existingTags={allExistingTags}
                   onSubmit={async (draft) => { await onUpdateHost(editingHost, draft); setEditingHost(null) }}
                   onCancel={() => setEditingHost(null)}

@@ -45,7 +45,10 @@ fn snippets_file_name(vault_id: Option<&str>) -> String {
     format!("snippets{suffix}.json")
 }
 
-pub fn load_snippets(app: &tauri::AppHandle, vault_id: Option<&str>) -> Result<Vec<SnippetEntry>, String> {
+pub fn load_snippets(
+    app: &tauri::AppHandle,
+    vault_id: Option<&str>,
+) -> Result<Vec<SnippetEntry>, String> {
     let file = snippets_file_name(vault_id);
     let path = data_file_path(app, &file)?;
     read_json_or_default::<Vec<SnippetEntry>>(&path)
@@ -62,7 +65,10 @@ pub fn save_snippets(
 }
 
 #[tauri::command]
-pub fn list_snippets(app: tauri::AppHandle, vault_id: Option<String>) -> Result<Vec<SnippetEntry>, String> {
+pub fn list_snippets(
+    app: tauri::AppHandle,
+    vault_id: Option<String>,
+) -> Result<Vec<SnippetEntry>, String> {
     load_snippets(&app, vault_id.as_deref())
 }
 
@@ -190,5 +196,7 @@ pub async fn run_snippet_command(
             let _ = save_snippets(&app, &snippets, vid);
         }
         result
-    }).await.map_err(|e| format!("Task panicked: {e}"))
+    })
+    .await
+    .map_err(|e| format!("Task panicked: {e}"))
 }

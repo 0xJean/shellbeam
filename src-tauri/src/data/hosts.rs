@@ -51,7 +51,10 @@ fn hosts_file_name(vault_id: Option<&str>) -> String {
     format!("hosts{suffix}.json")
 }
 
-pub fn load_hosts(app: &tauri::AppHandle, vault_id: Option<&str>) -> Result<Vec<HostProfile>, String> {
+pub fn load_hosts(
+    app: &tauri::AppHandle,
+    vault_id: Option<&str>,
+) -> Result<Vec<HostProfile>, String> {
     let file = hosts_file_name(vault_id);
     let path = data_file_path(app, &file)?;
     read_json_or_default::<Vec<HostProfile>>(&path)
@@ -68,7 +71,10 @@ pub fn save_hosts(
 }
 
 #[tauri::command]
-pub fn list_hosts(app: tauri::AppHandle, vault_id: Option<String>) -> Result<Vec<HostProfile>, String> {
+pub fn list_hosts(
+    app: tauri::AppHandle,
+    vault_id: Option<String>,
+) -> Result<Vec<HostProfile>, String> {
     load_hosts(&app, vault_id.as_deref())
 }
 
@@ -102,9 +108,15 @@ pub fn create_host(
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty()),
         tags: payload.tags.unwrap_or_default(),
-        jump_host: payload.jump_host.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
+        jump_host: payload
+            .jump_host
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
         jump_port: payload.jump_port,
-        jump_user: payload.jump_user.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
+        jump_user: payload
+            .jump_user
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
         created_at: now,
         updated_at: now,
     };

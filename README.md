@@ -89,7 +89,7 @@
 
 ### Pre-built Binaries
 
-Download the latest release for your platform from the [Releases](#) page:
+Download the latest release for your platform from the [GitHub Releases](https://github.com/zorojean/shellbeam/releases) page:
 
 | Platform | Format |
 |----------|--------|
@@ -97,6 +97,10 @@ Download the latest release for your platform from the [Releases](#) page:
 | macOS (Intel) | `.dmg` |
 | Windows | `.msi` / `.exe` |
 | Linux | `.deb` / `.AppImage` |
+| Android | `.apk` / `.aab` |
+| iOS | TestFlight link in the release notes |
+
+Release automation is documented in [docs/ci-cd.md](./docs/ci-cd.md).
 
 ### Build from Source
 

@@ -21,7 +21,8 @@ tauri-build = { version = "2.5.4", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.10.0", features = [] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tauri = { version = "2.10.0", features = ["unstable", "webview-data-url", "macos-proxy"] }
 tauri-plugin-log = "2"
 ssh2 = "0.9"
 uuid = { version = "1", features = ["v4"] }
@@ -30,6 +31,8 @@ pbkdf2 = "0.12.2"
 sha2 = "0.10.9"
 rand = "0.9.2"
 base64 = "0.22.1"
+url = "2"
+urlencoding = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-biometry = "0.2"
 tauri-plugin-window-state = "2"
@@ -47,5 +50,11 @@ if-addrs = { version = "0.15", features = ["link-local"] }
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows"))'.dependencies]
 openssl-sys = { version = "0.9", features = ["vendored"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com-sys = "0.38"
+
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc = "0.2"
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+webkit2gtk = "2"

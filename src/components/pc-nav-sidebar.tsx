@@ -10,6 +10,7 @@ import {
   Settings,
   Ellipsis,
   Clock,
+  Network,
   SquareTerminal,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -19,6 +20,7 @@ import logoSrc from '@/assets/logo.png'
 
 export type SidebarNavId =
   | 'hosts'
+  | 'asset-inventory'
   | 'keychain'
   | 'snippets'
   | 'port-forwarding'
@@ -38,6 +40,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'hosts', labelKey: 'nav.hosts', icon: <Server className="h-4 w-4" /> },
+  { id: 'asset-inventory', labelKey: 'nav.assetInventory', icon: <Network className="h-4 w-4" /> },
   { id: 'keychain', labelKey: 'nav.keychain', icon: <KeyRound className="h-4 w-4" /> },
   { id: 'port-forwarding', labelKey: 'nav.portForward', icon: <ArrowLeftRight className="h-4 w-4" /> },
   { id: 'snippets', labelKey: 'nav.snippets', icon: <Code2 className="h-4 w-4" /> },

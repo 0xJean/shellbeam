@@ -7,8 +7,8 @@ import { validateHostDraft } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import type { AuthType } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
-import { Archive, ChevronDown, Key, Lock, Server, User, X } from 'lucide-react'
-import { useState } from 'react'
+import { Archive, ChevronDown, Eye, EyeOff, Key, Lock, RefreshCw, Server, User, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 interface HostFormProps {
   initial?: Partial<HostProfileDraft> | null
@@ -16,6 +16,7 @@ interface HostFormProps {
   vaultKeys?: string[]
   vaultUnlocked?: boolean
   onSaveToVault?: (key: string, value: string) => Promise<void>
+  onLoadVaultSecret?: (key: string) => Promise<string | null>
   onSubmit: (draft: HostProfileDraft) => Promise<void>
   onCancel: () => void
   vaultName?: string
@@ -29,6 +30,7 @@ export function HostForm({
   vaultKeys = [],
   vaultUnlocked = false,
   onSaveToVault,
+  onLoadVaultSecret,
   onSubmit,
   onCancel,
   vaultName = 'Vault',
@@ -63,6 +65,14 @@ export function HostForm({
   const unusedTags = existingTags.filter((et) => !tags.includes(et))
   const groupLabel = (g: string) => t(`group.${g}`) !== `group.${g}` ? t(`group.${g}`) : g
 
+  useEffect(() => {
+    if (!initial) return
+    const nextRef = authType === 'password' ? (initial.passwordKeyRef ?? '') : (initial.privateKeyRef ?? '')
+    setVaultKeyRef(nextRef)
+    setUseInlineSecret(!nextRef)
+    setVaultSaveName('')
+  }, [authType, initial])
+
   async function handleSubmit() {
     setError('')
     let passwordKeyRef = initial?.passwordKeyRef
@@ -70,7 +80,8 @@ export function HostForm({
 
     if (useInlineSecret) {
       const suffix = authType === 'password' ? 'password' : 'key'
-      const saveName = vaultSaveName.trim() || `${addrSlug}-${suffix}`
+      const existingRef = authType === 'password' ? initial?.passwordKeyRef : initial?.privateKeyRef
+      const saveName = vaultSaveName.trim() || existingRef || `${addrSlug}-${suffix}`
       const secret = authType === 'password' ? password : privateKey
       if (secret) {
         try {
@@ -285,6 +296,8 @@ export function HostForm({
             <CredentialInput
               authType={authType} vaultKeys={vaultKeys} vaultKeyRef={vaultKeyRef} useInline={useInlineSecret}
               password={password} privateKey={privateKey} vaultSaveName={vaultSaveName} addrSlug={addrSlug}
+              defaultVaultSaveName={(authType === 'password' ? initial?.passwordKeyRef : initial?.privateKeyRef) || `${addrSlug}-${authType === 'password' ? 'password' : 'key'}`}
+              onLoadVaultSecret={onLoadVaultSecret}
               onVaultKeyRef={setVaultKeyRef} onUseInline={setUseInlineSecret}
               onPassword={setPassword} onPrivateKey={setPrivateKey} onVaultSaveName={setVaultSaveName}
             />
@@ -335,10 +348,12 @@ export function HostForm({
 }
 
 function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password, privateKey, vaultSaveName, addrSlug,
+  defaultVaultSaveName, onLoadVaultSecret,
   onVaultKeyRef, onUseInline, onPassword, onPrivateKey, onVaultSaveName,
 }: {
   authType: AuthType; vaultKeys: string[]; vaultKeyRef: string; useInline: boolean
   password: string; privateKey: string; vaultSaveName: string; addrSlug: string
+  defaultVaultSaveName: string; onLoadVaultSecret?: (key: string) => Promise<string | null>
   onVaultKeyRef: (v: string) => void; onUseInline: (v: boolean) => void
   onPassword: (v: string) => void; onPrivateKey: (v: string) => void; onVaultSaveName: (v: string) => void
 }) {
@@ -346,38 +361,128 @@ function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password
   const hasVaultKeys = vaultKeys.length > 0
   const isPassword = authType === 'password'
   const Icon = isPassword ? Lock : Key
+  const [showManualPassword, setShowManualPassword] = useState(false)
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null)
+  const [showRevealedSecret, setShowRevealedSecret] = useState(false)
+  const [loadingSecret, setLoadingSecret] = useState(false)
+  const [loadError, setLoadError] = useState('')
+
+  useEffect(() => {
+    setRevealedSecret(null)
+    setShowRevealedSecret(false)
+    setLoadError('')
+  }, [vaultKeyRef, authType])
+
+  async function handleToggleSavedSecret() {
+    if (showRevealedSecret) {
+      setShowRevealedSecret(false)
+      return
+    }
+    if (revealedSecret !== null) {
+      setShowRevealedSecret(true)
+      return
+    }
+    if (!vaultKeyRef || !onLoadVaultSecret) return
+    setLoadingSecret(true)
+    setLoadError('')
+    try {
+      const value = await onLoadVaultSecret(vaultKeyRef)
+      if (value === null) {
+        setLoadError(t('hostForm.secretNotFound'))
+        return
+      }
+      setRevealedSecret(value)
+      setShowRevealedSecret(true)
+    } catch (e) {
+      setLoadError(t('hostForm.loadSecretError', { error: String(e) }))
+    } finally {
+      setLoadingSecret(false)
+    }
+  }
 
   return (
     <div className="space-y-2.5">
       {/* Vault key picker */}
-      {hasVaultKeys && !useInline && (
+      {(hasVaultKeys || vaultKeyRef) && !useInline && (
         <div className="space-y-1.5">
           <label className="text-xs text-muted-foreground">{t('hostForm.selectVaultKey')}</label>
-          <div className="flex flex-wrap gap-1.5">
-            {vaultKeys.map((k) => (
-              <button key={k} type="button" onClick={() => { onVaultKeyRef(k); onUseInline(false) }}
-                className={cn(
-                  'flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
-                  vaultKeyRef === k && !useInline
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-border bg-muted/50 text-muted-foreground hover:border-primary/50 hover:text-foreground',
-                )}>
-                <Icon className="h-3 w-3" />{k}
-              </button>
-            ))}
-          </div>
+          {hasVaultKeys ? (
+            <div className="flex flex-wrap gap-1.5">
+              {vaultKeys.map((k) => (
+                <button key={k} type="button" onClick={() => { onVaultKeyRef(k); onUseInline(false) }}
+                  className={cn(
+                    'flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                    vaultKeyRef === k && !useInline
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-muted/50 text-muted-foreground hover:border-primary/50 hover:text-foreground',
+                  )}>
+                  <Icon className="h-3 w-3" />{k}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="inline-flex items-center gap-1 rounded-md border border-primary bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+              <Icon className="h-3 w-3" />{vaultKeyRef}
+            </div>
+          )}
+          {vaultKeyRef && (
+            <div className="space-y-1.5">
+              <label className="text-xs text-muted-foreground">{t('hostForm.savedCredential')}</label>
+              <div className="relative">
+                {isPassword ? (
+                  <Input
+                    readOnly
+                    type={showRevealedSecret ? 'text' : 'password'}
+                    value={revealedSecret ?? ''}
+                    placeholder="••••••••"
+                    className="pr-9 font-mono"
+                  />
+                ) : (
+                  <Textarea
+                    readOnly
+                    value={showRevealedSecret ? (revealedSecret ?? '') : (revealedSecret ? '••••••••' : '')}
+                    placeholder="••••••••"
+                    className="min-h-[72px] pr-9 font-mono text-sm"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => void handleToggleSavedSecret()}
+                  disabled={loadingSecret || !onLoadVaultSecret}
+                  title={showRevealedSecret ? t('hostForm.hideSecret') : t('hostForm.showSecret')}
+                  className="absolute right-1.5 top-4 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loadingSecret
+                    ? <RefreshCw className="h-4 w-4 animate-spin" />
+                    : showRevealedSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {loadError && <p className="text-xs text-destructive">{loadError}</p>}
+            </div>
+          )}
           <button type="button" onClick={() => { onUseInline(true); onVaultKeyRef('') }}
             className="text-xs text-primary hover:underline">{t('hostForm.orEnterNew')}</button>
         </div>
       )}
 
       {/* Manual entry */}
-      {(useInline || !hasVaultKeys) && (
+      {(useInline || (!hasVaultKeys && !vaultKeyRef)) && (
         <div className="space-y-2">
           {isPassword ? (
-            <Input type="password" value={password}
-              onChange={(e) => { onPassword(e.target.value); onUseInline(true) }}
-              placeholder={t('hostForm.passwordPlaceholder')} className="font-mono" />
+            <div className="relative">
+              <Input type={showManualPassword ? 'text' : 'password'} value={password}
+                onChange={(e) => { onPassword(e.target.value); onUseInline(true) }}
+                placeholder={t('hostForm.passwordPlaceholder')} className="pr-9 font-mono" />
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setShowManualPassword((v) => !v)}
+                title={showManualPassword ? t('hostForm.hideSecret') : t('hostForm.showSecret')}
+                className="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {showManualPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           ) : (
             <Textarea value={privateKey}
               onChange={(e) => { onPrivateKey(e.target.value); onUseInline(true) }}
@@ -386,7 +491,7 @@ function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password
           <div className="flex items-center gap-2">
             <Archive className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <Input value={vaultSaveName} onChange={(e) => onVaultSaveName(e.target.value)}
-              placeholder={`${addrSlug}-${isPassword ? 'password' : 'key'}`} className="h-7 text-xs" />
+              placeholder={defaultVaultSaveName || `${addrSlug}-${isPassword ? 'password' : 'key'}`} className="h-7 text-xs" />
           </div>
           {hasVaultKeys && (
             <button type="button" onClick={() => { onUseInline(false); onPassword(''); onPrivateKey('') }}

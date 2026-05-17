@@ -16,9 +16,17 @@ export function Dialog({ open, onOpenChange, children, className }: DialogProps)
     const el = ref.current
     if (!el) return
     if (open) {
-      el.showModal()
+      if (typeof el.showModal === 'function') {
+        el.showModal()
+      } else {
+        el.setAttribute('open', '')
+      }
     } else {
-      el.close()
+      if (typeof el.close === 'function') {
+        el.close()
+      } else {
+        el.removeAttribute('open')
+      }
     }
   }, [open])
 

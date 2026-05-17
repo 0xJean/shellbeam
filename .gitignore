@@ -13,6 +13,15 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/schemas/
 
+# Tauri mobile generated intermediates
+src-tauri/gen/**/.gradle/
+src-tauri/gen/**/build/
+src-tauri/gen/apple/Externals/
+src-tauri/gen/apple/**/xcuserdata/
+src-tauri/gen/android/app/src/main/assets/tauri.conf.json
+src-tauri/gen/android/app/src/main/java/**/generated/
+src-tauri/gen/android/app/src/main/jniLibs/
+
 # Tauri dev-mode local storage & WebView data
 # On macOS: ~/Library/Application Support/<identifier>/
 # On Linux: ~/.local/share/<identifier>/
@@ -73,6 +82,10 @@ Desktop.ini
 
 # Test coverage
 coverage/
+
+# Local agent planning drafts
+docs/superpowers/plans/
+docs/superpowers/specs/
 
 # Misc
 .cache/

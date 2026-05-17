@@ -123,7 +123,15 @@ fn checkout_with_sftp(
     passphrase: Option<&str>,
 ) -> Result<(Session, Sftp), String> {
     let session = pool
-        .checkout(host, port, username, auth_type, password, private_key, passphrase)
+        .checkout(
+            host,
+            port,
+            username,
+            auth_type,
+            password,
+            private_key,
+            passphrase,
+        )
         .map_err(|err| sftp_error_from_raw("ssh", "connect/authenticate", err))?;
 
     match session.sftp() {
@@ -132,7 +140,15 @@ fn checkout_with_sftp(
             drop(session);
             std::thread::sleep(Duration::from_millis(200));
             let session = pool
-                .checkout(host, port, username, auth_type, password, private_key, passphrase)
+                .checkout(
+                    host,
+                    port,
+                    username,
+                    auth_type,
+                    password,
+                    private_key,
+                    passphrase,
+                )
                 .map_err(|err| sftp_error_from_raw("ssh", "reconnect", err))?;
             let sftp = session.sftp().map_err(|err| {
                 sftp_error_from_raw(
@@ -152,13 +168,24 @@ pub fn sftp_list_dir(
     payload: SftpRequest,
 ) -> Result<Vec<SftpEntry>, String> {
     let (session, sftp) = checkout_with_sftp(
-        &pool, &payload.host, payload.port, &payload.username, &payload.auth_type,
-        payload.password.as_deref(), payload.private_key.as_deref(), payload.passphrase.as_deref(),
+        &pool,
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
     )?;
 
     let result = (|| -> Result<Vec<SftpEntry>, String> {
-        let remote_path = if payload.remote_path.trim().is_empty() { "/" } else { payload.remote_path.trim() };
-        let items = sftp.readdir(Path::new(remote_path))
+        let remote_path = if payload.remote_path.trim().is_empty() {
+            "/"
+        } else {
+            payload.remote_path.trim()
+        };
+        let items = sftp
+            .readdir(Path::new(remote_path))
             .map_err(|err| sftp_error_from_raw("sftp", "list directory", err.to_string()))?;
 
         let mut entries = items
@@ -187,38 +214,106 @@ pub fn sftp_list_dir(
 }
 
 #[tauri::command]
+pub fn sftp_home_dir(
+    pool: tauri::State<'_, SshSessionPool>,
+    payload: SftpRequest,
+) -> Result<String, String> {
+    let (session, sftp) = checkout_with_sftp(
+        &pool,
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
+    )?;
+
+    let result = (|| -> Result<String, String> {
+        sftp.realpath(Path::new("."))
+            .map(|path| path.to_string_lossy().to_string())
+            .map_err(|err| sftp_error_from_raw("sftp", "resolve home directory", err.to_string()))
+    })();
+
+    if result.is_ok() {
+        pool.checkin(&payload.host, payload.port, &payload.username, session);
+    }
+    result
+}
+
+#[tauri::command]
 pub fn sftp_download_file(
     app: tauri::AppHandle,
     pool: tauri::State<'_, SshSessionPool>,
     payload: SftpRequest,
 ) -> Result<SftpFileData, String> {
     if payload.remote_path.trim().is_empty() {
-        return Err(sftp_error_payload("validation_error", "client", false, "remotePath is required", None));
+        return Err(sftp_error_payload(
+            "validation_error",
+            "client",
+            false,
+            "remotePath is required",
+            None,
+        ));
     }
-    let transfer_id = payload.transfer_id.clone().unwrap_or_else(|| format!("download-{}", Uuid::new_v4()));
+    let transfer_id = payload
+        .transfer_id
+        .clone()
+        .unwrap_or_else(|| format!("download-{}", Uuid::new_v4()));
     let (session, sftp) = checkout_with_sftp(
-        &pool, &payload.host, payload.port, &payload.username, &payload.auth_type,
-        payload.password.as_deref(), payload.private_key.as_deref(), payload.passphrase.as_deref(),
+        &pool,
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
     )?;
 
     let result = (|| -> Result<SftpFileData, String> {
         let remote_path = Path::new(payload.remote_path.trim());
         let total_size = sftp.stat(remote_path).ok().and_then(|stat| stat.size);
-        let mut remote_file = sftp.open(remote_path)
+        let mut remote_file = sftp
+            .open(remote_path)
             .map_err(|err| sftp_error_from_raw("sftp", "open remote file", err.to_string()))?;
-        emit_sftp_progress(&app, &transfer_id, "download_start", 0, total_size, "Download started");
+        emit_sftp_progress(
+            &app,
+            &transfer_id,
+            "download_start",
+            0,
+            total_size,
+            "Download started",
+        );
         let mut content = Vec::<u8>::new();
         let mut buffer = [0u8; 64 * 1024];
         let mut processed = 0u64;
         loop {
-            let read = remote_file.read(&mut buffer)
+            let read = remote_file
+                .read(&mut buffer)
                 .map_err(|err| sftp_error_from_raw("sftp", "read remote file", err.to_string()))?;
-            if read == 0 { break; }
+            if read == 0 {
+                break;
+            }
             content.extend_from_slice(&buffer[..read]);
             processed += read as u64;
-            emit_sftp_progress(&app, &transfer_id, "download_progress", processed, total_size, "Downloading");
+            emit_sftp_progress(
+                &app,
+                &transfer_id,
+                "download_progress",
+                processed,
+                total_size,
+                "Downloading",
+            );
         }
-        emit_sftp_progress(&app, &transfer_id, "download_done", processed, total_size, "Download completed");
+        emit_sftp_progress(
+            &app,
+            &transfer_id,
+            "download_done",
+            processed,
+            total_size,
+            "Download completed",
+        );
         Ok(SftpFileData {
             path: payload.remote_path.trim().to_string(),
             content_b64: BASE64_STANDARD.encode(&content),
@@ -239,32 +334,72 @@ pub fn sftp_upload_file(
     payload: SftpUploadRequest,
 ) -> Result<(), String> {
     if payload.remote_path.trim().is_empty() {
-        return Err(sftp_error_payload("validation_error", "client", false, "remotePath is required", None));
+        return Err(sftp_error_payload(
+            "validation_error",
+            "client",
+            false,
+            "remotePath is required",
+            None,
+        ));
     }
-    let transfer_id = payload.transfer_id.clone().unwrap_or_else(|| format!("upload-{}", Uuid::new_v4()));
-    let content = BASE64_STANDARD.decode(payload.content_b64)
+    let transfer_id = payload
+        .transfer_id
+        .clone()
+        .unwrap_or_else(|| format!("upload-{}", Uuid::new_v4()));
+    let content = BASE64_STANDARD
+        .decode(payload.content_b64)
         .map_err(|err| sftp_error_from_raw("client", "decode upload content", err.to_string()))?;
     let total_size = content.len() as u64;
     let (session, sftp) = checkout_with_sftp(
-        &pool, &payload.host, payload.port, &payload.username, &payload.auth_type,
-        payload.password.as_deref(), payload.private_key.as_deref(), payload.passphrase.as_deref(),
+        &pool,
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
-        emit_sftp_progress(&app, &transfer_id, "upload_start", 0, Some(total_size), "Upload started");
-        let mut remote_file = sftp.create(Path::new(payload.remote_path.trim()))
+        emit_sftp_progress(
+            &app,
+            &transfer_id,
+            "upload_start",
+            0,
+            Some(total_size),
+            "Upload started",
+        );
+        let mut remote_file = sftp
+            .create(Path::new(payload.remote_path.trim()))
             .map_err(|err| sftp_error_from_raw("sftp", "create remote file", err.to_string()))?;
         let chunk_size = 64 * 1024;
         let mut processed = 0u64;
         for chunk in content.chunks(chunk_size) {
-            remote_file.write_all(chunk)
+            remote_file
+                .write_all(chunk)
                 .map_err(|err| sftp_error_from_raw("sftp", "write remote file", err.to_string()))?;
             processed += chunk.len() as u64;
-            emit_sftp_progress(&app, &transfer_id, "upload_progress", processed, Some(total_size), "Uploading");
+            emit_sftp_progress(
+                &app,
+                &transfer_id,
+                "upload_progress",
+                processed,
+                Some(total_size),
+                "Uploading",
+            );
         }
-        remote_file.flush()
+        remote_file
+            .flush()
             .map_err(|err| sftp_error_from_raw("sftp", "flush remote file", err.to_string()))?;
-        emit_sftp_progress(&app, &transfer_id, "upload_done", processed, Some(total_size), "Upload completed");
+        emit_sftp_progress(
+            &app,
+            &transfer_id,
+            "upload_done",
+            processed,
+            Some(total_size),
+            "Upload completed",
+        );
         Ok(())
     })();
 
@@ -280,11 +415,23 @@ pub fn sftp_delete_path(
     payload: SftpRequest,
 ) -> Result<(), String> {
     if payload.remote_path.trim().is_empty() {
-        return Err(sftp_error_payload("validation_error", "client", false, "remotePath is required", None));
+        return Err(sftp_error_payload(
+            "validation_error",
+            "client",
+            false,
+            "remotePath is required",
+            None,
+        ));
     }
     let (session, sftp) = checkout_with_sftp(
-        &pool, &payload.host, payload.port, &payload.username, &payload.auth_type,
-        payload.password.as_deref(), payload.private_key.as_deref(), payload.passphrase.as_deref(),
+        &pool,
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
@@ -292,7 +439,11 @@ pub fn sftp_delete_path(
         match sftp.unlink(target) {
             Ok(_) => Ok(()),
             Err(file_err) => sftp.rmdir(target).map_err(|dir_err| {
-                sftp_error_from_raw("sftp", "delete path", format!("Delete path failed (file: {file_err}; dir: {dir_err})"))
+                sftp_error_from_raw(
+                    "sftp",
+                    "delete path",
+                    format!("Delete path failed (file: {file_err}; dir: {dir_err})"),
+                )
             }),
         }
     })();
@@ -309,11 +460,23 @@ pub fn sftp_rename_path(
     payload: SftpRenameRequest,
 ) -> Result<(), String> {
     if payload.old_remote_path.trim().is_empty() || payload.new_remote_path.trim().is_empty() {
-        return Err(sftp_error_payload("validation_error", "client", false, "oldRemotePath and newRemotePath are required", None));
+        return Err(sftp_error_payload(
+            "validation_error",
+            "client",
+            false,
+            "oldRemotePath and newRemotePath are required",
+            None,
+        ));
     }
     let (session, sftp) = checkout_with_sftp(
-        &pool, &payload.host, payload.port, &payload.username, &payload.auth_type,
-        payload.password.as_deref(), payload.private_key.as_deref(), payload.passphrase.as_deref(),
+        &pool,
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
@@ -321,7 +484,8 @@ pub fn sftp_rename_path(
             Path::new(payload.old_remote_path.trim()),
             Path::new(payload.new_remote_path.trim()),
             None,
-        ).map_err(|err| sftp_error_from_raw("sftp", "rename path", err.to_string()))
+        )
+        .map_err(|err| sftp_error_from_raw("sftp", "rename path", err.to_string()))
     })();
 
     if result.is_ok() {
@@ -336,16 +500,116 @@ pub fn sftp_create_dir(
     payload: SftpRequest,
 ) -> Result<(), String> {
     if payload.remote_path.trim().is_empty() {
-        return Err(sftp_error_payload("validation_error", "client", false, "remotePath is required", None));
+        return Err(sftp_error_payload(
+            "validation_error",
+            "client",
+            false,
+            "remotePath is required",
+            None,
+        ));
     }
     let (session, sftp) = checkout_with_sftp(
-        &pool, &payload.host, payload.port, &payload.username, &payload.auth_type,
-        payload.password.as_deref(), payload.private_key.as_deref(), payload.passphrase.as_deref(),
+        &pool,
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
         sftp.mkdir(Path::new(payload.remote_path.trim()), 0o755)
             .map_err(|err| sftp_error_from_raw("sftp", "create directory", err.to_string()))
+    })();
+
+    if result.is_ok() {
+        pool.checkin(&payload.host, payload.port, &payload.username, session);
+    }
+    result
+}
+
+#[tauri::command]
+pub fn sftp_create_file(
+    pool: tauri::State<'_, SshSessionPool>,
+    payload: SftpRequest,
+) -> Result<(), String> {
+    if payload.remote_path.trim().is_empty() {
+        return Err(sftp_error_payload(
+            "validation_error",
+            "client",
+            false,
+            "remotePath is required",
+            None,
+        ));
+    }
+    let (session, sftp) = checkout_with_sftp(
+        &pool,
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
+    )?;
+
+    let result = (|| -> Result<(), String> {
+        let mut remote_file = sftp
+            .create(Path::new(payload.remote_path.trim()))
+            .map_err(|err| sftp_error_from_raw("sftp", "create remote file", err.to_string()))?;
+        remote_file
+            .flush()
+            .map_err(|err| sftp_error_from_raw("sftp", "flush remote file", err.to_string()))
+    })();
+
+    if result.is_ok() {
+        pool.checkin(&payload.host, payload.port, &payload.username, session);
+    }
+    result
+}
+
+#[tauri::command]
+pub fn sftp_write_file(
+    pool: tauri::State<'_, SshSessionPool>,
+    payload: SftpUploadRequest,
+) -> Result<(), String> {
+    if payload.remote_path.trim().is_empty() {
+        return Err(sftp_error_payload(
+            "validation_error",
+            "client",
+            false,
+            "remotePath is required",
+            None,
+        ));
+    }
+    let content = BASE64_STANDARD
+        .decode(payload.content_b64)
+        .map_err(|err| sftp_error_from_raw("client", "decode file content", err.to_string()))?;
+    let (session, sftp) = checkout_with_sftp(
+        &pool,
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
+    )?;
+
+    let result = (|| -> Result<(), String> {
+        let mut remote_file =
+            sftp.create(Path::new(payload.remote_path.trim()))
+                .map_err(|err| {
+                    sftp_error_from_raw("sftp", "open remote file for write", err.to_string())
+                })?;
+        remote_file
+            .write_all(&content)
+            .map_err(|err| sftp_error_from_raw("sftp", "write remote file", err.to_string()))?;
+        remote_file
+            .flush()
+            .map_err(|err| sftp_error_from_raw("sftp", "flush remote file", err.to_string()))
     })();
 
     if result.is_ok() {
@@ -374,16 +638,29 @@ pub fn sftp_chmod(
     payload: SftpChmodRequest,
 ) -> Result<(), String> {
     if payload.remote_path.trim().is_empty() {
-        return Err(sftp_error_payload("validation_error", "client", false, "remotePath is required", None));
+        return Err(sftp_error_payload(
+            "validation_error",
+            "client",
+            false,
+            "remotePath is required",
+            None,
+        ));
     }
     let (session, sftp) = checkout_with_sftp(
-        &pool, &payload.host, payload.port, &payload.username, &payload.auth_type,
-        payload.password.as_deref(), payload.private_key.as_deref(), payload.passphrase.as_deref(),
+        &pool,
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
         let path = Path::new(payload.remote_path.trim());
-        let mut stat = sftp.stat(path)
+        let mut stat = sftp
+            .stat(path)
             .map_err(|err| sftp_error_from_raw("sftp", "stat path", err.to_string()))?;
         stat.perm = Some(payload.mode);
         sftp.setstat(path, stat)
@@ -429,7 +706,9 @@ pub fn local_list_dir(payload: LocalListRequest) -> Result<Vec<LocalEntry>, Stri
         };
         let metadata = item.metadata().ok();
         let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-        let size = metadata.as_ref().and_then(|m| if !m.is_dir() { Some(m.len()) } else { None });
+        let size = metadata
+            .as_ref()
+            .and_then(|m| if !m.is_dir() { Some(m.len()) } else { None });
         let modified_at = metadata
             .as_ref()
             .and_then(|m| m.modified().ok())
@@ -445,7 +724,11 @@ pub fn local_list_dir(payload: LocalListRequest) -> Result<Vec<LocalEntry>, Stri
     }
     entries.sort_by(|a, b| {
         if a.is_dir != b.is_dir {
-            return if a.is_dir { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+            return if a.is_dir {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            };
         }
         a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase())
     });
