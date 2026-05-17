@@ -1,6 +1,8 @@
 const en: Record<string, string> = {
   // Navigation
   'nav.hosts': 'Hosts',
+  'nav.assetInventory': 'VPS Assets',
+  'nav.projectDeployments': 'Deployments',
   'nav.keychain': 'Keychain',
   'nav.portForward': 'Port Forward',
   'nav.snippets': 'Snippets',
@@ -206,9 +208,11 @@ const en: Record<string, string> = {
   'workspace.mode.terminal': 'Terminal',
   'workspace.mode.workspace': 'Workspace',
   'workspace.app.overview': 'Overview',
+  'workspace.app.assetInventory': 'VPS Assets',
   'workspace.app.files': 'Files',
   'workspace.app.processes': 'Processes',
   'workspace.app.services': 'Services',
+  'workspace.app.toolManager': 'Tool Manager',
   'workspace.app.logs': 'Logs',
   'workspace.app.terminal': 'Terminal',
   'workspace.section.applications': 'Applications',

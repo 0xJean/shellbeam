@@ -15,6 +15,7 @@ import { SftpDualPane } from '@/components/sftp-dual-pane'
 import { SnippetPanel } from '@/components/snippet-panel'
 import { SyncCenterPanel } from '@/components/sync-center-panel'
 import { TerminalRightSidebar } from '@/components/terminal-right-sidebar'
+import { WorkspaceAssetInventoryApp } from '@/components/workspace/workspace-asset-inventory-app'
 import { WorkspaceShell } from '@/components/workspace'
 import { useApp } from '@/contexts/app-context'
 import { useHosts } from '@/contexts/hosts-context'
@@ -402,6 +403,15 @@ export function PcLayout() {
                   onSaveToVault={hostsCtx.handleSaveToVault}
                   vaultName={vault.vaults.find((v) => v.id === vault.activeVaultId)?.name ?? 'Vault'}
                 />
+              )}
+              {app.pcSidebarNav === 'asset-inventory' && (
+                <div className="h-full min-h-0 p-4 md:p-6">
+                  <WorkspaceAssetInventoryApp
+                    selectedHostId={hostsCtx.selectedHostId}
+                    hosts={hostsCtx.hosts}
+                    resolveAuthSecret={resolveWorkspaceAuthSecret}
+                  />
+                </div>
               )}
               {app.pcSidebarNav === 'keychain' && (
                 <KeychainTab

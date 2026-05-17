@@ -3,18 +3,22 @@ import { t } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import {
   ActivitySquare,
+  Boxes,
   Files,
   FolderKanban,
   LayoutGrid,
+  Network,
   ScrollText,
   SquareTerminal,
 } from 'lucide-react'
 
 const APPS: Array<{ id: WorkspaceAppId; labelKey: string; icon: typeof LayoutGrid; accent: string; glow: string }> = [
   { id: 'overview', labelKey: 'workspace.app.overview', icon: LayoutGrid, accent: 'from-[#55adff] via-[var(--workspace-primary-500)] to-[#0c4578] text-white', glow: 'shadow-[0_18px_34px_rgba(19,127,236,0.35)]' },
+  { id: 'assetInventory', labelKey: 'workspace.app.assetInventory', icon: Network, accent: 'from-[#7dd3fc] via-[#2563eb] to-[#0f172a] text-white', glow: 'shadow-[0_18px_34px_rgba(37,99,235,0.28)]' },
   { id: 'files', labelKey: 'workspace.app.files', icon: FolderKanban, accent: 'from-[#7cbcff] via-[#2f8cf0] to-[#173755] text-white', glow: 'shadow-[0_18px_34px_rgba(52,123,196,0.28)]' },
   { id: 'processes', labelKey: 'workspace.app.processes', icon: ActivitySquare, accent: 'from-[#4ecf89] via-[#1a8e5a] to-[#103d31] text-white', glow: 'shadow-[0_18px_34px_rgba(34,197,94,0.22)]' },
   { id: 'services', labelKey: 'workspace.app.services', icon: Files, accent: 'from-[#62b5ff] via-[#2563eb] to-[#172554] text-white', glow: 'shadow-[0_18px_34px_rgba(37,99,235,0.26)]' },
+  { id: 'toolManager', labelKey: 'workspace.app.toolManager', icon: Boxes, accent: 'from-[#73d7f7] via-[#0891b2] to-[#164e63] text-white', glow: 'shadow-[0_18px_34px_rgba(14,165,233,0.24)]' },
   { id: 'logs', labelKey: 'workspace.app.logs', icon: ScrollText, accent: 'from-[#93c5fd] via-[#2563eb] to-[#111827] text-white', glow: 'shadow-[0_18px_34px_rgba(59,130,246,0.2)]' },
   { id: 'terminal', labelKey: 'workspace.app.terminal', icon: SquareTerminal, accent: 'from-[#526579] via-[#1f2d3a] to-[#0c1117] text-white', glow: 'shadow-[0_18px_34px_rgba(15,23,42,0.3)]' },
 ]

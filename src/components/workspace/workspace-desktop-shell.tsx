@@ -5,18 +5,22 @@ import { cn } from '@/lib/utils'
 import { Clock3, LayoutGrid, Monitor, Search, Wifi, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
+import { WorkspaceAssetInventoryApp } from './workspace-asset-inventory-app'
 import { WorkspaceAppGrid } from './workspace-app-grid'
 import { WorkspaceFilesApp } from './workspace-files-app'
 import { WorkspaceLogsApp } from './workspace-logs-app'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
 import { WorkspaceStatusCards } from './workspace-status-cards'
+import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
 
 const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
   { id: 'overview', labelKey: 'workspace.app.overview' },
+  { id: 'assetInventory', labelKey: 'workspace.app.assetInventory' },
   { id: 'files', labelKey: 'workspace.app.files' },
   { id: 'processes', labelKey: 'workspace.app.processes' },
   { id: 'services', labelKey: 'workspace.app.services' },
+  { id: 'toolManager', labelKey: 'workspace.app.toolManager' },
   { id: 'logs', labelKey: 'workspace.app.logs' },
   { id: 'terminal', labelKey: 'workspace.app.terminal' },
 ]
@@ -42,9 +46,11 @@ interface DesktopWindowState {
 
 const DEFAULT_WINDOW_POSITIONS: Record<WorkspaceAppId, { x: number; y: number }> = {
   overview: { x: 0, y: 0 },
+  assetInventory: { x: 150, y: 48 },
   files: { x: 170, y: 56 },
   processes: { x: 220, y: 90 },
   services: { x: 250, y: 70 },
+  toolManager: { x: 190, y: 72 },
   logs: { x: 200, y: 120 },
   terminal: { x: 240, y: 100 },
 }
@@ -83,6 +89,12 @@ export function WorkspaceDesktopShell({
   }, [activeApp])
 
   const content = (() => {
+    if (activeApp === 'assetInventory') {
+      if (resolveAuthSecret) {
+        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenConsole={() => onSelectApp('terminal')} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
     if (activeApp === 'files') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceFilesApp presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
@@ -98,6 +110,12 @@ export function WorkspaceDesktopShell({
     if (activeApp === 'services') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceServicesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'toolManager') {
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -176,6 +194,12 @@ export function WorkspaceDesktopShell({
   function renderWindowContent(app: WorkspaceAppId) {
     if (app === activeApp) return content
 
+    if (app === 'assetInventory') {
+      if (resolveAuthSecret) {
+        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenConsole={() => onSelectApp('terminal')} />
+      }
+      return <WorkspaceEmptyApp app={app} />
+    }
     if (app === 'files') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceFilesApp presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
@@ -191,6 +215,12 @@ export function WorkspaceDesktopShell({
     if (app === 'services') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceServicesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={app} />
+    }
+    if (app === 'toolManager') {
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }

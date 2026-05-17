@@ -1,6 +1,8 @@
 const zhCN: Record<string, string> = {
   // Navigation
   'nav.hosts': '主机',
+  'nav.assetInventory': 'VPS 资产',
+  'nav.projectDeployments': '部署项目',
   'nav.keychain': '密钥链',
   'nav.portForward': '端口转发',
   'nav.snippets': '代码片段',
@@ -206,9 +208,11 @@ const zhCN: Record<string, string> = {
   'workspace.mode.terminal': '终端',
   'workspace.mode.workspace': '工作空间',
   'workspace.app.overview': '总览',
+  'workspace.app.assetInventory': 'VPS 资产',
   'workspace.app.files': '文件',
   'workspace.app.processes': '进程',
   'workspace.app.services': '服务',
+  'workspace.app.toolManager': '工具管理',
   'workspace.app.logs': '日志',
   'workspace.app.terminal': '终端',
   'workspace.section.applications': '应用入口',

@@ -5,11 +5,13 @@ import { BatteryFull, ChevronLeft, Signal, Wifi, Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { WorkspaceAppGrid } from './workspace-app-grid'
+import { WorkspaceAssetInventoryApp } from './workspace-asset-inventory-app'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
 import { WorkspaceFilesApp } from './workspace-files-app'
 import { WorkspaceLogsApp } from './workspace-logs-app'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
+import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
 
 function LiveClock() {
   const [time, setTime] = useState(() =>
@@ -44,6 +46,12 @@ export function WorkspaceMobileShell({
   onSelectApp,
 }: WorkspaceMobileShellProps) {
   const content = (() => {
+    if (activeApp === 'assetInventory') {
+      if (resolveAuthSecret) {
+        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenConsole={() => onSelectApp('terminal')} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
     if (activeApp === 'files') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceFilesApp presentation="mobile" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
@@ -62,6 +70,12 @@ export function WorkspaceMobileShell({
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
+    if (activeApp === 'toolManager') {
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
     if (activeApp === 'logs') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
@@ -72,7 +86,7 @@ export function WorkspaceMobileShell({
   })()
 
   // Terminal is the primary app, then Files, Services, Overview for settings
-  const dockApps: WorkspaceAppId[] = ['terminal', 'files', 'services', 'overview']
+  const dockApps: WorkspaceAppId[] = ['terminal', 'assetInventory', 'files', 'overview']
   const isOverview = activeApp === 'overview'
 
   return (

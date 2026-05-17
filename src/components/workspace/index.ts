@@ -1,3 +1,5 @@
 export * from './workspace-shell'
 export * from './workspace-overview'
 export * from './workspace-mode-toggle'
+export * from './workspace-tool-manager-app'
+export * from './workspace-asset-inventory-app'
