@@ -45,6 +45,8 @@ describe('workspace logs app', () => {
     await waitFor(() => {
       expect(screen.getByText(/Accepted publickey/i)).toBeInTheDocument()
     })
+    expect(screen.getByTestId('workspace-logs-app')).toHaveClass('space-y-4')
+    expect(screen.getByTestId('workspace-logs-output')).toHaveClass('max-h-[26rem]', 'overflow-auto')
   })
 
   it('falls back to host address when host id is missing', async () => {

@@ -1,9 +1,6 @@
 use serde::Deserialize;
 
-use super::{
-    load_sync_state, save_sync_state,
-    SyncPairingSessionResponse, SyncTrustedPeer,
-};
+use super::{load_sync_state, save_sync_state, SyncPairingSessionResponse, SyncTrustedPeer};
 use crate::error::{standard_error_from_raw, standard_error_payload};
 use crate::storage::now_unix_ms;
 
@@ -35,7 +32,13 @@ pub async fn sync_send_pair_request(
     let state = load_sync_state(&app)
         .map_err(|err| standard_error_from_raw("sync", "send pair request", err))?;
     let device = state.local_device.clone().ok_or_else(|| {
-        standard_error_payload("not_initialized", "sync", false, "Local sync device is not initialized", None)
+        standard_error_payload(
+            "not_initialized",
+            "sync",
+            false,
+            "Local sync device is not initialized",
+            None,
+        )
     })?;
 
     let endpoint = format!("{}:{}", payload.peer_host, payload.peer_port);
@@ -58,17 +61,26 @@ pub async fn sync_send_pair_request(
             }),
             None,
         )
-    }).await.map_err(|e| standard_error_from_raw("sync", "send pair request", format!("{e}")))?
-      .map_err(|e| standard_error_from_raw("sync", "send pair request", e))?;
+    })
+    .await
+    .map_err(|e| standard_error_from_raw("sync", "send pair request", format!("{e}")))?
+    .map_err(|e| standard_error_from_raw("sync", "send pair request", e))?;
 
-    let remote_session_id = resp.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let remote_session_id = resp
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     // Also create a local session record so the UI can track it
     let local_session_id = uuid::Uuid::new_v4().to_string();
     let session = super::SyncPairingSessionRecord {
         session_id: local_session_id.clone(),
         initiator_device_id: device.device_id.clone(),
-        initiator_device_name: payload.peer_name.clone().unwrap_or_else(|| "unknown".to_string()),
+        initiator_device_name: payload
+            .peer_name
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string()),
         verification_code: verification_code.clone(),
         status: "pending".to_string(),
         created_at: now,
@@ -82,7 +94,12 @@ pub async fn sync_send_pair_request(
     save_sync_state(&app, &state)
         .map_err(|err| standard_error_from_raw("sync", "send pair request", err))?;
 
-    log::info!("[pair] sent pair_request to {} — remote session={}, code={}", endpoint, remote_session_id, verification_code);
+    log::info!(
+        "[pair] sent pair_request to {} — remote session={}, code={}",
+        endpoint,
+        remote_session_id,
+        verification_code
+    );
 
     // Start background polling: periodically ask the receiver if they accepted.
     // This handles the case where the receiver can't connect back to us
@@ -94,7 +111,8 @@ pub async fn sync_send_pair_request(
         for i in 0..60 {
             std::thread::sleep(std::time::Duration::from_secs(2));
             let result = super::transport::sync_request_peer_encrypted(
-                &poll_endpoint, "pair_check",
+                &poll_endpoint,
+                "pair_check",
                 serde_json::json!({ "device_id": poll_device_id }),
                 None,
             );
@@ -102,9 +120,20 @@ pub async fn sync_send_pair_request(
                 Ok(resp) => {
                     let status = resp.get("status").and_then(|v| v.as_str()).unwrap_or("");
                     if status == "confirmed" {
-                        let peer_device_id = resp.get("device_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let peer_device_name = resp.get("device_name").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let peer_sync_secret = resp.get("sync_secret").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let peer_device_id = resp
+                            .get("device_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let peer_device_name = resp
+                            .get("device_name")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let peer_sync_secret = resp
+                            .get("sync_secret")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         if !peer_device_id.is_empty() && !peer_sync_secret.is_empty() {
                             if let Ok(mut state) = super::load_sync_state_for_transport(&poll_app) {
                                 let now = crate::storage::now_unix_ms();
@@ -117,7 +146,11 @@ pub async fn sync_send_pair_request(
                                     peer_endpoint: Some(poll_endpoint.clone()),
                                     sync_secret: Some(peer_sync_secret),
                                 };
-                                if let Some(existing) = state.trusted_peers.iter_mut().find(|p| p.peer_device_id == peer_device_id) {
+                                if let Some(existing) = state
+                                    .trusted_peers
+                                    .iter_mut()
+                                    .find(|p| p.peer_device_id == peer_device_id)
+                                {
                                     *existing = peer;
                                 } else {
                                     state.trusted_peers.push(peer);
@@ -132,11 +165,18 @@ pub async fn sync_send_pair_request(
                                 let _ = super::save_sync_state_for_transport(&poll_app, &state);
                             }
                             use tauri::Emitter;
-                            let _ = poll_app.emit("pair-confirmed", serde_json::json!({
-                                "peerDeviceId": peer_device_id,
-                                "peerDeviceName": peer_device_name,
-                            }));
-                            log::info!("[pair] poll confirmed: peer {} accepted (attempt {})", peer_device_id, i + 1);
+                            let _ = poll_app.emit(
+                                "pair-confirmed",
+                                serde_json::json!({
+                                    "peerDeviceId": peer_device_id,
+                                    "peerDeviceName": peer_device_name,
+                                }),
+                            );
+                            log::info!(
+                                "[pair] poll confirmed: peer {} accepted (attempt {})",
+                                peer_device_id,
+                                i + 1
+                            );
                         }
                         break;
                     }
@@ -167,18 +207,40 @@ pub async fn sync_accept_pair(
     app: tauri::AppHandle,
     payload: SyncAcceptPairPayload,
 ) -> Result<SyncTrustedPeer, String> {
-    let state = load_sync_state(&app)
-        .map_err(|err| standard_error_from_raw("sync", "accept pair", err))?;
+    let state =
+        load_sync_state(&app).map_err(|err| standard_error_from_raw("sync", "accept pair", err))?;
     let device = state.local_device.clone().ok_or_else(|| {
-        standard_error_payload("not_initialized", "sync", false, "Local sync device is not initialized", None)
+        standard_error_payload(
+            "not_initialized",
+            "sync",
+            false,
+            "Local sync device is not initialized",
+            None,
+        )
     })?;
 
     // Find the session
-    let session = state.pairing_sessions.iter().find(|s| s.session_id == payload.session_id).ok_or_else(|| {
-        standard_error_payload("not_found", "sync", false, "Pairing session not found", None)
-    })?;
+    let session = state
+        .pairing_sessions
+        .iter()
+        .find(|s| s.session_id == payload.session_id)
+        .ok_or_else(|| {
+            standard_error_payload(
+                "not_found",
+                "sync",
+                false,
+                "Pairing session not found",
+                None,
+            )
+        })?;
     if session.status != "pending" {
-        return Err(standard_error_payload("invalid_state", "sync", false, "Session is not pending", None));
+        return Err(standard_error_payload(
+            "invalid_state",
+            "sync",
+            false,
+            "Session is not pending",
+            None,
+        ));
     }
 
     // Generate a sync secret
@@ -206,15 +268,23 @@ pub async fn sync_accept_pair(
         sync_secret: Some(sync_secret.clone()),
     };
 
-    let mut state = load_sync_state(&app)
-        .map_err(|err| standard_error_from_raw("sync", "accept pair", err))?;
+    let mut state =
+        load_sync_state(&app).map_err(|err| standard_error_from_raw("sync", "accept pair", err))?;
     // Update session status
-    if let Some(s) = state.pairing_sessions.iter_mut().find(|s| s.session_id == payload.session_id) {
+    if let Some(s) = state
+        .pairing_sessions
+        .iter_mut()
+        .find(|s| s.session_id == payload.session_id)
+    {
         s.status = "verified".to_string();
         s.verified_at = Some(now);
     }
     // Add trusted peer
-    if let Some(existing) = state.trusted_peers.iter_mut().find(|p| p.peer_device_id == peer_device_id) {
+    if let Some(existing) = state
+        .trusted_peers
+        .iter_mut()
+        .find(|p| p.peer_device_id == peer_device_id)
+    {
         *existing = peer.clone();
     } else {
         state.trusted_peers.push(peer.clone());
@@ -243,9 +313,14 @@ pub async fn sync_accept_pair(
         );
         match result {
             Ok(_) => log::info!("[pair] pair_confirm sent to {} — trust established", ep),
-            Err(e) => log::warn!("[pair] pair_confirm to {} failed: {} — trust only local", ep, e),
+            Err(e) => log::warn!(
+                "[pair] pair_confirm to {} failed: {} — trust only local",
+                ep,
+                e
+            ),
         }
-    }).await;
+    })
+    .await;
 
     Ok(peer)
 }
@@ -257,18 +332,24 @@ pub fn sync_list_pairing_sessions(
     let mut state = load_sync_state(&app)
         .map_err(|err| standard_error_from_raw("sync", "list pairing sessions", err))?;
     let now = now_unix_ms();
-    state.pairing_sessions.retain(|item| item.status != "pending" || item.expires_at > now);
+    state
+        .pairing_sessions
+        .retain(|item| item.status != "pending" || item.expires_at > now);
     save_sync_state(&app, &state)
         .map_err(|err| standard_error_from_raw("sync", "list pairing sessions", err))?;
-    let mut sessions: Vec<_> = state.pairing_sessions.into_iter().map(|item| SyncPairingSessionResponse {
-        session_id: item.session_id,
-        initiator_device_id: item.initiator_device_id,
-        initiator_device_name: item.initiator_device_name,
-        verification_code: item.verification_code,
-        status: item.status,
-        created_at: item.created_at,
-        expires_at: item.expires_at,
-    }).collect();
+    let mut sessions: Vec<_> = state
+        .pairing_sessions
+        .into_iter()
+        .map(|item| SyncPairingSessionResponse {
+            session_id: item.session_id,
+            initiator_device_id: item.initiator_device_id,
+            initiator_device_name: item.initiator_device_name,
+            verification_code: item.verification_code,
+            status: item.status,
+            created_at: item.created_at,
+            expires_at: item.expires_at,
+        })
+        .collect();
     sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(sessions)
 }

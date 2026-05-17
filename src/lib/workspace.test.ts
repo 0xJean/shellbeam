@@ -3,6 +3,7 @@ import {
   DEFAULT_WORKSPACE_MODE,
   getInitialWorkspaceSessionState,
   isWorkspaceApp,
+  normalizeWorkspaceApp,
 } from './workspace'
 
 describe('workspace helpers', () => {
@@ -19,6 +20,19 @@ describe('workspace helpers', () => {
 
   it('validates known workspace apps', () => {
     expect(isWorkspaceApp('logs')).toBe(true)
+    expect(isWorkspaceApp('fileTransfer')).toBe(true)
+    expect(isWorkspaceApp('fileSystem')).toBe(true)
+    expect(isWorkspaceApp('assetInventory')).toBe(true)
+    expect(isWorkspaceApp('toolManager')).toBe(true)
     expect(isWorkspaceApp('bogus')).toBe(false)
+  })
+
+  it('maps legacy files app ids to file transfer', () => {
+    expect(normalizeWorkspaceApp('files')).toBe('fileTransfer')
+    expect(normalizeWorkspaceApp('fileTransfer')).toBe('fileTransfer')
+    expect(normalizeWorkspaceApp('fileSystem')).toBe('fileSystem')
+    expect(normalizeWorkspaceApp('assetInventory')).toBe('assetInventory')
+    expect(normalizeWorkspaceApp('toolManager')).toBe('toolManager')
+    expect(normalizeWorkspaceApp('bogus')).toBe('overview')
   })
 })

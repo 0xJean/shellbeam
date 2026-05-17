@@ -132,6 +132,18 @@ export async function sftpCreateDir(payload: SftpRequest) {
   return invoke<void>('sftp_create_dir', { payload })
 }
 
+export async function sftpCreateFile(payload: SftpRequest) {
+  return invoke<void>('sftp_create_file', { payload })
+}
+
+export async function sftpWriteFile(payload: SftpUploadRequest) {
+  return invoke<void>('sftp_write_file', { payload })
+}
+
+export async function sftpHomeDir(payload: SftpRequest) {
+  return invoke<string>('sftp_home_dir', { payload })
+}
+
 export interface SftpChmodRequest {
   host: string
   port: number

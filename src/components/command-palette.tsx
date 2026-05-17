@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '@/lib/i18n'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Search, Server, Terminal, FolderOpen, Settings, LayoutDashboard, X } from 'lucide-react'
+import { Search, Server, FolderOpen, Settings, Plus, Rocket, Cloud, X } from 'lucide-react'
 import type { HostProfile } from '@/lib/hosts'
 import type { HistoryEntry } from '@/lib/history'
 import { cn } from '@/lib/utils'
@@ -23,7 +23,10 @@ export interface CommandPaletteActionItem {
   icon: React.ReactNode
 }
 
-type FlatItem = { kind: 'host'; host: HostProfile; id: string } | { kind: 'action'; action: CommandPaletteAction; label: string; icon: React.ReactNode; id: string }
+type FlatItem =
+  | { kind: 'host'; host: HostProfile; id: string; section: string }
+  | { kind: 'action'; action: CommandPaletteAction; label: string; icon: React.ReactNode; id: string; shortcut?: string[]; section: string }
+  | { kind: 'section-header'; label: string; id: string }
 
 interface CommandPaletteProps {
   open: boolean
@@ -35,19 +38,25 @@ interface CommandPaletteProps {
   onAction?: (action: CommandPaletteAction) => void
 }
 
-const ACTION_ITEMS: Array<{ action: CommandPaletteAction; labelKey: string; icon: React.ReactNode }> = [
-  { action: 'focus-interactive', labelKey: 'cmdPalette.interactive', icon: <Terminal className="h-4 w-4" /> },
-  { action: 'focus-sftp', labelKey: 'cmdPalette.openSftp', icon: <FolderOpen className="h-4 w-4" /> },
-  { action: 'focus-vaults-dashboard', labelKey: 'cmdPalette.dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
-  { action: 'focus-settings', labelKey: 'cmdPalette.settings', icon: <Settings className="h-4 w-4" /> },
+const MONO = { fontFamily: "'JetBrains Mono', ui-monospace, monospace" } as const
+
+const ACTION_ITEMS: Array<{ action: CommandPaletteAction; labelKey: string; icon: React.ReactNode; shortcut: string[] }> = [
+  { action: 'focus-interactive', labelKey: 'cmdPalette.interactive', icon: <Plus className="h-4 w-4" />, shortcut: ['Ctrl', 'N'] },
+  { action: 'focus-sftp', labelKey: 'cmdPalette.openSftp', icon: <FolderOpen className="h-4 w-4" />, shortcut: ['Shift', 'Alt', 'F'] },
+  { action: 'focus-settings', labelKey: 'cmdPalette.settings', icon: <Settings className="h-4 w-4" />, shortcut: ['Cmd', ','] },
 ]
+
+function authLabel(host: HostProfile): string {
+  if (host.authType === 'password') return 'password'
+  if (host.privateKeyRef) return 'ssh-rsa'
+  return host.authType || 'key'
+}
 
 export function CommandPalette({
   open,
   onClose,
   hosts,
   historyEntries,
-  selectedHostId,
   onSelectHost,
   onAction,
 }: CommandPaletteProps) {
@@ -71,33 +80,80 @@ export function CommandPalette({
     return result
   }, [hosts, historyEntries])
 
-  const flatItems = useMemo((): FlatItem[] => {
+  const recentHostIds = useMemo(() => new Set(recentHosts.map((h) => h.id)), [recentHosts])
+
+  const { flatItems, selectableIndices } = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const actionItems: FlatItem[] = ACTION_ITEMS.map((a) => ({
-      kind: 'action' as const,
-      action: a.action,
-      label: t(a.labelKey),
-      icon: a.icon,
-      id: `action-${a.action}`,
-    }))
+    const items: FlatItem[] = []
+    const selectable: number[] = []
 
-    const filteredHosts = q
-      ? hosts.filter(
-          (h) =>
-            h.name.toLowerCase().includes(q) ||
-            h.address.toLowerCase().includes(q) ||
-            (h.username && h.username.toLowerCase().includes(q))
-        )
-      : recentHosts
+    if (q) {
+      // Filtered mode: flat list of matching hosts + matching actions
+      const filteredHosts = hosts.filter(
+        (h) =>
+          h.name.toLowerCase().includes(q) ||
+          h.address.toLowerCase().includes(q) ||
+          (h.username && h.username.toLowerCase().includes(q)),
+      )
+      if (filteredHosts.length > 0) {
+        items.push({ kind: 'section-header', label: 'RESULTS', id: 'sh-results' })
+        for (const h of filteredHosts) {
+          selectable.push(items.length)
+          items.push({ kind: 'host', host: h, id: h.id, section: 'results' })
+        }
+      }
+      const filteredActions = ACTION_ITEMS.filter((a) => t(a.labelKey).toLowerCase().includes(q))
+      if (filteredActions.length > 0) {
+        items.push({ kind: 'section-header', label: 'COMMANDS', id: 'sh-commands' })
+        for (const a of filteredActions) {
+          selectable.push(items.length)
+          items.push({
+            kind: 'action',
+            action: a.action,
+            label: t(a.labelKey),
+            icon: a.icon,
+            id: `action-${a.action}`,
+            shortcut: a.shortcut,
+            section: 'commands',
+          })
+        }
+      }
+    } else {
+      // Default mode: recent connections + commands + saved sessions
+      if (recentHosts.length > 0) {
+        items.push({ kind: 'section-header', label: 'RECENT CONNECTIONS', id: 'sh-recent' })
+        for (const h of recentHosts) {
+          selectable.push(items.length)
+          items.push({ kind: 'host', host: h, id: h.id, section: 'recent' })
+        }
+      }
 
-    const hostItems: FlatItem[] = filteredHosts.map((h) => ({
-      kind: 'host' as const,
-      host: h,
-      id: h.id,
-    }))
+      items.push({ kind: 'section-header', label: 'COMMANDS', id: 'sh-commands' })
+      for (const a of ACTION_ITEMS) {
+        selectable.push(items.length)
+        items.push({
+          kind: 'action',
+          action: a.action,
+          label: t(a.labelKey),
+          icon: a.icon,
+          id: `action-${a.action}`,
+          shortcut: a.shortcut,
+          section: 'commands',
+        })
+      }
 
-    return [...hostItems, ...actionItems]
-  }, [query, hosts, recentHosts, t])
+      const savedHosts = hosts.filter((h) => !recentHostIds.has(h.id))
+      if (savedHosts.length > 0) {
+        items.push({ kind: 'section-header', label: 'SAVED SESSIONS', id: 'sh-saved' })
+        for (const h of savedHosts) {
+          selectable.push(items.length)
+          items.push({ kind: 'host', host: h, id: h.id, section: 'saved' })
+        }
+      }
+    }
+
+    return { flatItems: items, selectableIndices: selectable }
+  }, [query, hosts, recentHosts, recentHostIds, t])
 
   useEffect(() => {
     if (open) {
@@ -117,7 +173,9 @@ export function CommandPalette({
     if (!el) return
     const active = el.querySelector('[data-active="true"]')
     active?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [activeIndex, flatItems])
+  }, [activeIndex, open])
+
+  const activeItemIndex = selectableIndices[activeIndex] ?? -1
 
   function handleKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
     if (!open) return
@@ -128,31 +186,33 @@ export function CommandPalette({
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setActiveIndex((i) => (i + 1) % Math.max(1, flatItems.length))
+      setActiveIndex((i) => (i + 1) % Math.max(1, selectableIndices.length))
       return
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setActiveIndex((i) => (i - 1 + flatItems.length) % Math.max(1, flatItems.length))
+      setActiveIndex((i) => (i - 1 + selectableIndices.length) % Math.max(1, selectableIndices.length))
       return
     }
     if (e.key === 'Enter') {
       e.preventDefault()
-      const item = flatItems[activeIndex]
-      if (item) {
-        if (item.kind === 'host') {
-          onSelectHost(item.host.id)
-          onClose()
-        } else {
-          onAction?.(item.action)
-          onClose()
-        }
+      const itemIdx = selectableIndices[activeIndex]
+      if (itemIdx == null) return
+      const item = flatItems[itemIdx]
+      if (!item || item.kind === 'section-header') return
+      if (item.kind === 'host') {
+        onSelectHost(item.host.id)
+        onClose()
+      } else {
+        onAction?.(item.action)
+        onClose()
       }
       return
     }
   }
 
   function handleSelect(item: FlatItem) {
+    if (item.kind === 'section-header') return
     if (item.kind === 'host') {
       onSelectHost(item.host.id)
       onClose()
@@ -166,73 +226,127 @@ export function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center bg-black/60 pt-0 md:pt-[12vh]"
+      className="fixed inset-0 z-[100] flex items-start justify-center bg-black/70 pt-0 backdrop-blur-sm md:pt-[12vh]"
       onClick={(e) => e.target === e.currentTarget && onClose()}
       onKeyDown={handleKeyDown}
       role="dialog"
       aria-label="Command palette"
     >
       <div
-        className="flex h-full w-full flex-col overflow-hidden bg-background md:h-auto md:max-w-2xl md:rounded-xl md:border md:border-border md:shadow-2xl"
+        className="flex h-full w-full flex-col overflow-hidden border-[#1e3a5f]/60 bg-[#0c1222] md:h-auto md:max-w-[620px] md:rounded-xl md:border md:shadow-2xl md:shadow-black/40"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b px-4 py-3">
-          <Search className="h-5 w-5 shrink-0 text-primary" />
+        {/* ── Search bar ── */}
+        <div className="flex items-center gap-3 border-b border-[#1e3a5f]/40 px-4 py-3.5">
+          <Search className="h-5 w-5 shrink-0 text-[#3b82f6]" />
           <input
             ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('cmdPalette.search')}
-            className="flex-1 bg-transparent border-none focus:ring-0 text-base md:text-lg placeholder:text-muted-foreground"
+            className="flex-1 border-none bg-transparent text-[15px] text-[#e2e8f0] outline-none placeholder:text-[#475569]"
+            style={MONO}
             autoComplete="off"
           />
-          <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted md:hidden">
+          <button type="button" onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded text-[#475569] transition-colors hover:text-[#94a3b8] md:hidden">
             <X className="h-4 w-4" />
           </button>
-          <kbd className="hidden text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded md:inline">ESC</kbd>
+          <kbd className="hidden rounded border border-[#1e3a5f]/60 bg-[#0d1b2a] px-2 py-0.5 text-[10px] font-semibold text-[#475569] md:inline" style={MONO}>
+            ESC
+          </kbd>
         </div>
 
-        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-2 md:max-h-[50vh] md:flex-none">
-          {flatItems.length === 0 ? (
-            <p className="px-4 py-6 text-center text-muted-foreground text-sm">{t('cmdPalette.noResults')}</p>
+        {/* ── Item list ── */}
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1 md:max-h-[54vh] md:flex-none">
+          {selectableIndices.length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-[#475569]">{t('cmdPalette.noResults')}</p>
           ) : (
             flatItems.map((item, idx) => {
-              const isActive = idx === activeIndex
+              if (item.kind === 'section-header') {
+                return (
+                  <div key={item.id} className="px-5 pb-1.5 pt-4 first:pt-2.5">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#475569]" style={MONO}>
+                      {item.label}
+                    </span>
+                  </div>
+                )
+              }
+
+              const isActive = idx === activeItemIndex
+
+              if (item.kind === 'host') {
+                const isSaved = item.section === 'saved'
+                const IconComp = isSaved ? (item.host.group === 'Cloud' ? Cloud : Rocket) : Server
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    data-active={isActive}
+                    className={cn(
+                      'group flex w-full items-center gap-3 border-l-2 px-4 py-2.5 text-left transition-colors',
+                      isActive
+                        ? 'border-[#3b82f6] bg-[#3b82f6]/10'
+                        : 'border-transparent hover:bg-[#1e293b]/50',
+                    )}
+                    onClick={() => handleSelect(item)}
+                    onMouseEnter={() => {
+                      const si = selectableIndices.indexOf(idx)
+                      if (si >= 0) setActiveIndex(si)
+                    }}
+                  >
+                    <div className={cn(
+                      'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+                      isActive ? 'bg-[#3b82f6]/20 text-[#3b82f6]' : 'bg-[#1e293b] text-[#3b82f6]/70',
+                    )}>
+                      <IconComp className="h-4.5 w-4.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-[#e2e8f0]">{item.host.name}</p>
+                      <p className="truncate text-xs text-[#475569]">
+                        {item.host.address}{item.host.username ? ` \u00b7 ${authLabel(item.host)}` : ''}
+                      </p>
+                    </div>
+                    {isActive && (
+                      <span className="shrink-0 text-xs font-medium text-[#3b82f6]/70" style={MONO}>Enter</span>
+                    )}
+                  </button>
+                )
+              }
+
+              // action item
               return (
                 <button
                   key={item.id}
                   type="button"
                   data-active={isActive}
                   className={cn(
-                    'w-full flex items-center gap-3 px-4 py-3 text-left transition-colors md:py-2.5',
-                    isActive ? 'bg-primary/15 border-l-2 border-primary' : 'border-l-2 border-transparent hover:bg-muted/50'
+                    'group flex w-full items-center gap-3 border-l-2 px-4 py-2.5 text-left transition-colors',
+                    isActive
+                      ? 'border-[#3b82f6] bg-[#3b82f6]/10'
+                      : 'border-transparent hover:bg-[#1e293b]/50',
                   )}
                   onClick={() => handleSelect(item)}
-                  onMouseEnter={() => setActiveIndex(idx)}
+                  onMouseEnter={() => {
+                    const si = selectableIndices.indexOf(idx)
+                    if (si >= 0) setActiveIndex(si)
+                  }}
                 >
-                  {item.kind === 'host' ? (
-                    <>
-                      <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
-                        <Server className="h-5 w-5 text-primary" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium truncate">{item.host.name}</p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {item.host.username}@{item.host.address}:{item.host.port}
-                        </p>
-                      </div>
-                      {selectedHostId === item.host.id && (
-                        <span className="text-xs text-primary shrink-0">{t('cmdPalette.selected')}</span>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0 text-muted-foreground">
-                        {item.icon}
-                      </div>
-                      <p className="font-medium">{item.label}</p>
-                    </>
+                  <div className={cn(
+                    'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+                    isActive ? 'bg-[#3b82f6]/20 text-[#e2e8f0]' : 'bg-[#1e293b] text-[#64748b]',
+                  )}>
+                    {item.icon}
+                  </div>
+                  <p className="min-w-0 flex-1 text-sm font-medium text-[#e2e8f0]">{item.label}</p>
+                  {item.shortcut && (
+                    <div className="flex shrink-0 items-center gap-1">
+                      {item.shortcut.map((key) => (
+                        <kbd key={key} className="rounded border border-[#1e3a5f]/60 bg-[#0d1b2a] px-1.5 py-0.5 text-[10px] font-semibold text-[#475569]" style={MONO}>
+                          {key}
+                        </kbd>
+                      ))}
+                    </div>
                   )}
                 </button>
               )
@@ -240,21 +354,24 @@ export function CommandPalette({
           )}
         </div>
 
-        <div className="hidden flex-wrap items-center gap-3 px-4 py-2 border-t bg-muted/30 text-xs text-muted-foreground sm:flex sm:gap-4">
-          <span className="flex items-center gap-1">
-            <kbd className="px-1 py-0.5 rounded bg-muted border">↑</kbd>
-            <kbd className="px-1 py-0.5 rounded bg-muted border">↓</kbd>
-            {t('cmdPalette.navigate')}
+        {/* ── Bottom hints bar ── */}
+        <div className="flex items-center gap-4 border-t border-[#1e3a5f]/40 bg-[#080e1a] px-4 py-2 text-[11px] text-[#475569]" style={MONO}>
+          <span className="flex items-center gap-1.5">
+            <kbd className="rounded border border-[#1e3a5f]/60 bg-[#0d1b2a] px-1 py-0.5 text-[9px]">&#8593;</kbd>
+            <kbd className="rounded border border-[#1e3a5f]/60 bg-[#0d1b2a] px-1 py-0.5 text-[9px]">&#8595;</kbd>
+            <span className="ml-0.5">{t('cmdPalette.navigate')}</span>
           </span>
-          <span className="flex items-center gap-1">
-            <kbd className="px-1 py-0.5 rounded bg-muted border">Enter</kbd>
-            {t('cmdPalette.select')}
+          <span className="flex items-center gap-1.5">
+            <kbd className="rounded border border-[#1e3a5f]/60 bg-[#0d1b2a] px-1.5 py-0.5 text-[9px]">ENTER</kbd>
+            <span>{t('cmdPalette.select')}</span>
           </span>
-          <span className="flex items-center gap-1">
-            <kbd className="px-1 py-0.5 rounded bg-muted border">Esc</kbd>
-            {t('cmdPalette.close')}
+          <span className="flex items-center gap-1.5">
+            <kbd className="rounded border border-[#1e3a5f]/60 bg-[#0d1b2a] px-1.5 py-0.5 text-[9px]">ESC</kbd>
+            <span>{t('cmdPalette.close')}</span>
           </span>
-          <span className="ml-auto text-primary/70 font-medium">Cmd+J</span>
+          <span className="ml-auto flex items-center gap-1.5 text-[#3b82f6]/50 font-medium">
+            <span>&#9889;</span> Quick Launch v2.4
+          </span>
         </div>
       </div>
     </div>

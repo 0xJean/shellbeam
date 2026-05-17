@@ -31,7 +31,8 @@ describe('workspace overview', () => {
 
     expect(screen.getByText('Production API')).toBeInTheDocument()
     expect(screen.getByText('CPU')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /files/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /file transfer/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /file system/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /logs/i })).toBeInTheDocument()
   })
 
@@ -77,12 +78,12 @@ describe('workspace overview', () => {
         activeApp="overview"
         onSelectApp={() => {}}
         recommendations={[
-          { id: 'disk', title: 'Disk is getting full', targetApp: 'files' },
+          { id: 'disk', title: 'Disk is getting full', targetApp: 'fileTransfer' },
         ]}
       />,
     )
 
     expect(screen.getByText('Disk is getting full')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /open files/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /open file transfer/i })).toBeInTheDocument()
   })
 })

@@ -79,8 +79,8 @@ mod macos_impl {
         if !path.exists() {
             return Err("itemNotFound".into());
         }
-        let json = std::fs::read_to_string(&path)
-            .map_err(|e| format!("Read bio store failed: {e}"))?;
+        let json =
+            std::fs::read_to_string(&path).map_err(|e| format!("Read bio store failed: {e}"))?;
         let store: BioStore =
             serde_json::from_str(&json).map_err(|e| format!("Parse bio store failed: {e}"))?;
         let key = derive_key()?;
@@ -117,31 +117,51 @@ mod macos_impl {
 #[tauri::command]
 pub fn biometric_store_password(app: tauri::AppHandle, password: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    { return macos_impl::store_password(&app, password); }
+    {
+        return macos_impl::store_password(&app, password);
+    }
     #[cfg(not(target_os = "macos"))]
-    { let _ = (app, password); Err("Use native biometric plugin on this platform".into()) }
+    {
+        let _ = (app, password);
+        Err("Use native biometric plugin on this platform".into())
+    }
 }
 
 #[tauri::command]
 pub fn biometric_retrieve_password(app: tauri::AppHandle) -> Result<String, String> {
     #[cfg(target_os = "macos")]
-    { return macos_impl::retrieve_password(&app); }
+    {
+        return macos_impl::retrieve_password(&app);
+    }
     #[cfg(not(target_os = "macos"))]
-    { let _ = app; Err("Use native biometric plugin on this platform".into()) }
+    {
+        let _ = app;
+        Err("Use native biometric plugin on this platform".into())
+    }
 }
 
 #[tauri::command]
 pub fn biometric_has_password(app: tauri::AppHandle) -> Result<bool, String> {
     #[cfg(target_os = "macos")]
-    { return macos_impl::has_password(&app); }
+    {
+        return macos_impl::has_password(&app);
+    }
     #[cfg(not(target_os = "macos"))]
-    { let _ = app; Err("Use native biometric plugin on this platform".into()) }
+    {
+        let _ = app;
+        Err("Use native biometric plugin on this platform".into())
+    }
 }
 
 #[tauri::command]
 pub fn biometric_remove_password(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    { return macos_impl::remove_password(&app); }
+    {
+        return macos_impl::remove_password(&app);
+    }
     #[cfg(not(target_os = "macos"))]
-    { let _ = app; Err("Use native biometric plugin on this platform".into()) }
+    {
+        let _ = app;
+        Err("Use native biometric plugin on this platform".into())
+    }
 }

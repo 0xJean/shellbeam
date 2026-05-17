@@ -70,7 +70,7 @@ export function WorkspaceOverview({
                 onClick={() => onSelectApp(item.targetApp)}
                 className="rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium hover:bg-muted/50"
               >
-                {item.targetApp === 'files'
+                {item.targetApp === 'fileTransfer'
                   ? t('workspace.action.openFiles')
                   : item.targetApp === 'services'
                     ? t('workspace.action.openServices')

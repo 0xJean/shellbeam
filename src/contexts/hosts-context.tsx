@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { type HostProfile, type HostProfileDraft, createHost, updateHost, deleteHost, listHosts } from '@/lib/hosts'
 import { testSshConnection } from '@/lib/sessions'
 import { vaultSetSecret } from '@/lib/vault'
@@ -58,7 +58,7 @@ export function HostsProvider({ children }: { children: ReactNode }) {
     [hosts, selectedHostId],
   )
 
-  async function refreshHosts() {
+  const refreshHosts = useCallback(async () => {
     setLoadingHosts(true)
     try {
       const items = await listHosts(activeVaultId)
@@ -70,7 +70,7 @@ export function HostsProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoadingHosts(false)
     }
-  }
+  }, [activeVaultId])
 
   useEffect(() => { void refreshHosts() }, [activeVaultId])
 
@@ -90,12 +90,12 @@ export function HostsProvider({ children }: { children: ReactNode }) {
     if (Number.isFinite(parsed)) setKeepAliveIntervalSecs(Math.max(10, Math.min(300, Math.floor(parsed))))
   }, [])
 
-  async function handleCreateHost(payload: Parameters<typeof createHost>[0]) {
+  const handleCreateHost = useCallback(async (payload: Parameters<typeof createHost>[0]) => {
     await createHost(payload, activeVaultId)
     await refreshHosts()
-  }
+  }, [activeVaultId, refreshHosts])
 
-  async function handleUpdateHost(host: HostProfile, draft: HostProfileDraft) {
+  const handleUpdateHost = useCallback(async (host: HostProfile, draft: HostProfileDraft) => {
     const updated: HostProfile = {
       ...host,
       ...draft,
@@ -105,19 +105,19 @@ export function HostsProvider({ children }: { children: ReactNode }) {
     }
     await updateHost(updated, activeVaultId)
     await refreshHosts()
-  }
+  }, [activeVaultId, refreshHosts])
 
-  async function handleDeleteHost(hostId: string) {
+  const handleDeleteHost = useCallback(async (hostId: string) => {
     await deleteHost(hostId, activeVaultId)
     await refreshHosts()
-  }
+  }, [activeVaultId, refreshHosts])
 
-  async function handleSaveToVault(key: string, value: string) {
+  const handleSaveToVault = useCallback(async (key: string, value: string) => {
     await vaultSetSecret(key, value, activeVaultId)
     await refreshVault()
-  }
+  }, [activeVaultId, refreshVault])
 
-  async function handleCheckHostStatus(host: HostProfile): Promise<'online' | 'offline'> {
+  const handleCheckHostStatus = useCallback(async (host: HostProfile): Promise<'online' | 'offline'> => {
     try {
       const authType = host.authType as AuthType
       const resolvedSecret = await resolveAuthSecret({
@@ -140,26 +140,47 @@ export function HostsProvider({ children }: { children: ReactNode }) {
     } catch {
       return 'offline'
     }
-  }
+  }, [resolveAuthSecret])
 
-  function handleDefaultUsernameChange(value: string) {
+  const handleDefaultUsernameChange = useCallback((value: string) => {
     setDefaultUsername(value.trim() || 'root')
-  }
+  }, [])
 
-  function handleKeepAliveIntervalSecsChange(value: number) {
+  const handleKeepAliveIntervalSecsChange = useCallback((value: number) => {
     if (Number.isNaN(value)) return
     setKeepAliveIntervalSecs(Math.max(10, Math.min(300, Math.floor(value))))
-  }
+  }, [])
+
+  const value = useMemo(() => ({
+    hosts, selectedHostId, setSelectedHostId, selectedHost, loadingHosts,
+    defaultUsername, savingHost, testing, pcOpenAddHost, setPcOpenAddHost,
+    pcTopBarSearch, setPcTopBarSearch,
+    refreshHosts, handleCreateHost, handleUpdateHost, handleDeleteHost, handleSaveToVault,
+    handleCheckHostStatus, handleDefaultUsernameChange,
+    keepAliveIntervalSecs, handleKeepAliveIntervalSecsChange,
+  }), [
+    defaultUsername,
+    handleCheckHostStatus,
+    handleCreateHost,
+    handleDefaultUsernameChange,
+    handleDeleteHost,
+    handleKeepAliveIntervalSecsChange,
+    handleSaveToVault,
+    handleUpdateHost,
+    hosts,
+    keepAliveIntervalSecs,
+    loadingHosts,
+    pcOpenAddHost,
+    pcTopBarSearch,
+    refreshHosts,
+    savingHost,
+    selectedHost,
+    selectedHostId,
+    testing,
+  ])
 
   return (
-    <HostsContext.Provider value={{
-      hosts, selectedHostId, setSelectedHostId, selectedHost, loadingHosts,
-      defaultUsername, savingHost, testing, pcOpenAddHost, setPcOpenAddHost,
-      pcTopBarSearch, setPcTopBarSearch,
-      refreshHosts, handleCreateHost, handleUpdateHost, handleDeleteHost, handleSaveToVault,
-      handleCheckHostStatus, handleDefaultUsernameChange,
-      keepAliveIntervalSecs, handleKeepAliveIntervalSecsChange,
-    }}>
+    <HostsContext.Provider value={value}>
       {children}
     </HostsContext.Provider>
   )

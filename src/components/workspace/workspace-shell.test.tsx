@@ -11,14 +11,30 @@ vi.mock('@/lib/sessions', () => ({
   })),
 }))
 
-vi.mock('./workspace-files-app', () => ({
-  WorkspaceFilesApp: () => <div>Mock Files App</div>,
+vi.mock('./workspace-file-transfer-app', () => ({
+  WorkspaceFileTransferApp: () => <div>Mock File Transfer App</div>,
+}))
+
+vi.mock('./workspace-file-system-app', () => ({
+  WorkspaceFileSystemApp: () => <div>Mock File System App</div>,
+}))
+
+vi.mock('./workspace-tool-manager-app', () => ({
+  WorkspaceToolManagerApp: () => <div data-testid="workspace-tool-manager-app">Mock Tool Manager App</div>,
+}))
+
+vi.mock('./workspace-asset-inventory-app', () => ({
+  WorkspaceAssetInventoryApp: ({ onOpenConsole }: { onOpenConsole?: () => void }) => (
+    <button type="button" data-testid="workspace-asset-inventory-app" onClick={onOpenConsole}>Mock Asset Inventory App</button>
+  ),
 }))
 
 describe('workspace shell', () => {
+  const sessionId = 'session-1'
   it('renders the desktop shell when mobile is false', () => {
     render(
       <WorkspaceShell
+        sessionId={sessionId}
         mobile={false}
         hostName="Production API"
         hostAddress="10.0.0.15"
@@ -27,6 +43,8 @@ describe('workspace shell', () => {
       />,
     )
 
+    expect(screen.getByTestId('workspace-desktop-shell')).toHaveClass('w-full', 'min-w-0', 'flex-1', 'bg-[var(--workspace-bg-950)]')
+    expect(screen.getByTestId('workspace-desktop-taskbar')).toHaveClass('w-full', 'min-w-0', 'bg-[var(--workspace-surface-900)]')
     expect(screen.getByText('Start')).toBeInTheDocument()
     expect(screen.getAllByText('Production API').length).toBeGreaterThan(0)
   })
@@ -34,6 +52,7 @@ describe('workspace shell', () => {
   it('renders the mobile shell when mobile is true', () => {
     render(
       <WorkspaceShell
+        sessionId={sessionId}
         mobile
         hostName="Production API"
         hostAddress="10.0.0.15"
@@ -42,8 +61,9 @@ describe('workspace shell', () => {
       />,
     )
 
-    expect(screen.getByText('Home Screen')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-mobile-shell')).toHaveClass('bg-[var(--workspace-bg-950)]')
     expect(screen.getAllByText('Production API').length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: /overview/i }).length).toBeGreaterThan(0)
   })
 
   it('routes app selection through the shared shell callbacks', () => {
@@ -51,6 +71,7 @@ describe('workspace shell', () => {
 
     render(
       <WorkspaceShell
+        sessionId={sessionId}
         mobile={false}
         hostName="Production API"
         hostAddress="10.0.0.15"
@@ -69,6 +90,7 @@ describe('workspace shell', () => {
 
     render(
       <WorkspaceShell
+        sessionId={sessionId}
         mobile={false}
         hostName="Production API"
         hostAddress="10.0.0.15"
@@ -87,10 +109,11 @@ describe('workspace shell', () => {
 
     render(
       <WorkspaceShell
+        sessionId={sessionId}
         mobile
         hostName="Production API"
         hostAddress="10.0.0.15"
-        activeApp="files"
+        activeApp="fileTransfer"
         onSelectApp={onSelectApp}
       />,
     )
@@ -100,9 +123,10 @@ describe('workspace shell', () => {
     expect(onSelectApp).toHaveBeenCalledWith('overview')
   })
 
-  it('keeps the file window close action available when files app is open', () => {
+  it('keeps the file transfer window close action available when file transfer is open', () => {
     render(
       <WorkspaceShell
+        sessionId={sessionId}
         mobile={false}
         hostName="Production API"
         hostAddress="10.0.0.15"
@@ -122,30 +146,147 @@ describe('workspace shell', () => {
           },
         ]}
         resolveAuthSecret={async () => 'secret'}
-        activeApp="files"
+        activeApp="fileTransfer"
         onSelectApp={() => {}}
       />,
     )
 
-    expect(screen.getByRole('button', { name: /close files window/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /close file transfer window/i })).toBeInTheDocument()
   })
 
-  it('renders files fallback and logs app shells when selected', async () => {
-    const { rerender } = render(
+  it('renders the tool manager desktop window when selected', () => {
+    render(
       <WorkspaceShell
+        sessionId={sessionId}
         mobile={false}
         hostName="Production API"
         hostAddress="10.0.0.15"
-        activeApp="files"
+        hostId="host-1"
+        hosts={[
+          {
+            id: 'host-1',
+            name: 'Production API',
+            address: '10.0.0.15',
+            port: 22,
+            username: 'root',
+            group: 'Default',
+            authType: 'password',
+            tags: [],
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ]}
+        resolveAuthSecret={async () => 'secret'}
+        activeApp="toolManager"
         onSelectApp={() => {}}
       />,
     )
 
-    expect(screen.getAllByText('Files').length).toBeGreaterThan(0)
+    expect(screen.getByTestId('workspace-desktop-window-toolManager')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tool-manager-app')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /close tool manager window/i })).toBeInTheDocument()
+  })
+
+  it('renders the asset inventory desktop window when selected', () => {
+    render(
+      <WorkspaceShell
+        sessionId={sessionId}
+        mobile={false}
+        hostName="Production API"
+        hostAddress="10.0.0.15"
+        hostId="host-1"
+        hosts={[
+          {
+            id: 'host-1',
+            name: 'Production API',
+            address: '10.0.0.15',
+            port: 22,
+            username: 'root',
+            group: 'Default',
+            authType: 'password',
+            tags: [],
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ]}
+        resolveAuthSecret={async () => 'secret'}
+        activeApp="assetInventory"
+        onSelectApp={() => {}}
+      />,
+    )
+
+    expect(screen.getByTestId('workspace-desktop-window-assetInventory')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-asset-inventory-app')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /close vps assets window/i })).toBeInTheDocument()
+  })
+
+  it('routes the asset inventory console action to the terminal app', () => {
+    const onSelectApp = vi.fn()
+
+    render(
+      <WorkspaceShell
+        sessionId={sessionId}
+        mobile={false}
+        hostName="Production API"
+        hostAddress="10.0.0.15"
+        hostId="host-1"
+        hosts={[
+          {
+            id: 'host-1',
+            name: 'Production API',
+            address: '10.0.0.15',
+            port: 22,
+            username: 'root',
+            group: 'Default',
+            authType: 'password',
+            tags: [],
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ]}
+        resolveAuthSecret={async () => 'secret'}
+        activeApp="assetInventory"
+        onSelectApp={onSelectApp}
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId('workspace-asset-inventory-app'))
+
+    expect(onSelectApp).toHaveBeenCalledWith('terminal')
+  })
+
+  it('renders file transfer, file system, and logs app shells when selected', async () => {
+    const { rerender } = render(
+      <WorkspaceShell
+        sessionId={sessionId}
+        mobile={false}
+        hostName="Production API"
+        hostAddress="10.0.0.15"
+        activeApp="fileTransfer"
+        onSelectApp={() => {}}
+      />,
+    )
+
+    expect(screen.getAllByText('File Transfer').length).toBeGreaterThan(0)
     expect(screen.getByText(/scaffolded and ready/i)).toBeInTheDocument()
 
     rerender(
       <WorkspaceShell
+        sessionId={sessionId}
+        mobile={false}
+        hostName="Production API"
+        hostAddress="10.0.0.15"
+        activeApp="fileSystem"
+        onSelectApp={() => {}}
+      />,
+    )
+
+    expect(screen.getAllByText('File System').length).toBeGreaterThan(0)
+    expect(screen.getByText(/scaffolded and ready/i)).toBeInTheDocument()
+
+    rerender(
+      <WorkspaceShell
+        sessionId={sessionId}
         mobile={false}
         hostName="Production API"
         hostAddress="10.0.0.15"

@@ -33,6 +33,17 @@ export function WorkspaceModeToggle({ mode, onChange, compact = false }: Workspa
       >
         {t('workspace.mode.workspace')}
       </button>
+      <button
+        type="button"
+        onClick={() => onChange('browser')}
+        className={cn(
+          'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+          compact && 'px-2.5 py-1 text-[11px]',
+          mode === 'browser' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+        )}
+      >
+        {t('workspace.mode.browser')}
+      </button>
     </div>
   )
 }

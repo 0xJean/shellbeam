@@ -4,10 +4,12 @@ import type { WorkspaceAppId } from '@/lib/workspace'
 import { BatteryFull, ChevronLeft, Signal, Wifi, Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { WorkspaceAppGrid } from './workspace-app-grid'
 import { WorkspaceAssetInventoryApp } from './workspace-asset-inventory-app'
+import { WorkspaceBrowserApp } from './workspace-browser-app'
+import { WorkspaceAppGrid } from './workspace-app-grid'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
-import { WorkspaceFilesApp } from './workspace-files-app'
+import { WorkspaceFileSystemApp } from './workspace-file-system-app'
+import { WorkspaceFileTransferApp } from './workspace-file-transfer-app'
 import { WorkspaceLogsApp } from './workspace-logs-app'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
@@ -27,6 +29,7 @@ function LiveClock() {
 }
 
 interface WorkspaceMobileShellProps {
+  sessionId: string
   hostName: string
   hostAddress: string
   hostId?: string | null
@@ -34,9 +37,11 @@ interface WorkspaceMobileShellProps {
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
+  onBrowserCloseRequest?: () => void
 }
 
 export function WorkspaceMobileShell({
+  sessionId,
   hostName,
   hostAddress,
   hostId,
@@ -44,6 +49,7 @@ export function WorkspaceMobileShell({
   resolveAuthSecret,
   activeApp,
   onSelectApp,
+  onBrowserCloseRequest,
 }: WorkspaceMobileShellProps) {
   const content = (() => {
     if (activeApp === 'assetInventory') {
@@ -52,9 +58,15 @@ export function WorkspaceMobileShell({
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
-    if (activeApp === 'files') {
+    if (activeApp === 'fileTransfer') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceFilesApp presentation="mobile" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFileTransferApp presentation="mobile" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'fileSystem') {
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceFileSystemApp presentation="mobile" sessionId={sessionId} selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -82,11 +94,14 @@ export function WorkspaceMobileShell({
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
+    if (activeApp === 'browser') {
+      return <WorkspaceBrowserApp sessionId={sessionId} onCloseRequest={onBrowserCloseRequest ?? (() => onSelectApp('overview'))} />
+    }
     return <WorkspaceEmptyApp app={activeApp} />
   })()
 
   // Terminal is the primary app, then Files, Services, Overview for settings
-  const dockApps: WorkspaceAppId[] = ['terminal', 'assetInventory', 'files', 'overview']
+  const dockApps: WorkspaceAppId[] = ['terminal', 'assetInventory', 'fileSystem', 'overview']
   const isOverview = activeApp === 'overview'
 
   return (
@@ -194,7 +209,11 @@ export function WorkspaceMobileShell({
             </div>
 
             {/* App Content */}
-            <div className="flex-1 overflow-auto bg-[var(--workspace-bg)] pb-[env(safe-area-inset-bottom)]">
+            <div
+              className={activeApp === 'browser'
+                ? 'flex-1 overflow-hidden bg-[var(--workspace-bg)] pb-[env(safe-area-inset-bottom)]'
+                : 'flex-1 overflow-auto bg-[var(--workspace-bg)] pb-[env(safe-area-inset-bottom)]'}
+            >
               {content}
             </div>
           </motion.div>

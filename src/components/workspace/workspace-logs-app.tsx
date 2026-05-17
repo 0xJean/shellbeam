@@ -74,7 +74,7 @@ export function WorkspaceLogsApp({
   }
 
   return (
-    <div className="space-y-4">
+    <div data-testid="workspace-logs-app" className="space-y-4">
       <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
         <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">Logs</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">Log Sources</h2>
@@ -111,7 +111,7 @@ export function WorkspaceLogsApp({
           {error}
         </div>
       ) : (
-        <pre className="max-h-[26rem] overflow-auto rounded-xl border border-border/60 bg-card p-4 text-xs leading-6 text-foreground">
+        <pre data-testid="workspace-logs-output" className="max-h-[26rem] overflow-auto rounded-xl border border-border/60 bg-card p-4 text-xs leading-6 text-foreground">
           {loading ? 'Loading logs…' : output}
         </pre>
       )}

@@ -143,7 +143,7 @@ export function WorkspaceServicesApp({
   }
 
   return (
-    <div className="space-y-4">
+    <div data-testid="workspace-services-app" className="space-y-4">
       <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
         <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">Services</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">Service Control</h2>
@@ -181,7 +181,7 @@ export function WorkspaceServicesApp({
               <div>Active</div>
               <div>Sub</div>
             </div>
-            <div className="max-h-[28rem] overflow-auto">
+            <div data-testid="workspace-services-list" className="max-h-[28rem] overflow-auto">
               {loading ? (
                 <div className="px-4 py-6 text-sm text-muted-foreground">Loading services…</div>
               ) : rows.length === 0 ? (
@@ -258,7 +258,7 @@ export function WorkspaceServicesApp({
 
             <div className="rounded-2xl border border-border/60 bg-background/70 p-4">
               <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Terminal Output</div>
-              <pre className="mt-3 max-h-[20rem] overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-200">
+              <pre data-testid="workspace-services-output" className="mt-3 max-h-[20rem] overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-200">
                 {actionOutput || 'Choose a service action to inspect status output.'}
               </pre>
             </div>

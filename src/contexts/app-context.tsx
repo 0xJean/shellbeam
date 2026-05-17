@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTheme } from '@/hooks/use-theme'
 import type { SidebarNavId } from '@/components/pc-nav-sidebar'
 import { loadTerminalPrefs, saveTerminalPrefs, type TerminalPrefs } from '@/lib/terminal-themes'
@@ -59,22 +59,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  function handleCommandPaletteAction(action: CommandPaletteAction) {
+  const handleCommandPaletteAction = useCallback((action: CommandPaletteAction) => {
     if (action === 'focus-sftp') setPcSidebarNav('sftp')
     else if (action === 'focus-settings') setPcSidebarNav('settings')
     else if (action === 'focus-vaults-dashboard') setPcSidebarNav('keychain')
     else if (action === 'focus-interactive') setTerminalMode('interactive')
-  }
+  }, [])
+
+  const value = useMemo(() => ({
+    theme, toggleTheme, output, setOutput, command, setCommand,
+    pcSidebarNav, setPcSidebarNav,
+    commandPaletteOpen, setCommandPaletteOpen,
+    terminalMode, setTerminalMode,
+    handleCommandPaletteAction,
+    terminalPrefs, updateTerminalPrefs,
+  }), [
+    command,
+    commandPaletteOpen,
+    handleCommandPaletteAction,
+    output,
+    pcSidebarNav,
+    terminalMode,
+    terminalPrefs,
+    theme,
+    toggleTheme,
+    updateTerminalPrefs,
+  ])
 
   return (
-    <AppContext.Provider value={{
-      theme, toggleTheme, output, setOutput, command, setCommand,
-      pcSidebarNav, setPcSidebarNav,
-      commandPaletteOpen, setCommandPaletteOpen,
-      terminalMode, setTerminalMode,
-      handleCommandPaletteAction,
-      terminalPrefs, updateTerminalPrefs,
-    }}>
+    <AppContext.Provider value={value}>
       {children}
     </AppContext.Provider>
   )

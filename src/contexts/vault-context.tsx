@@ -14,7 +14,7 @@ import {
     type VaultStatus,
 } from '@/lib/vault'
 import { DEFAULT_VAULT_ID, listVaults, type VaultMeta } from '@/lib/vaults'
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 const VAULT_AUTO_LOCK_MINUTES_KEY = 'shellbeam.vaultAutoLockMinutes'
 const SECURITY_EVENTS_KEY = 'shellbeam.securityEvents'
@@ -38,6 +38,7 @@ interface VaultContextValue {
   handleLock: () => Promise<void>
   handleSaveSecret: (key: string, value: string) => Promise<void>
   handleLoadSecret: (key: string) => Promise<void>
+  handleRevealSecret: (key: string) => Promise<string | null>
   handleDeleteSecret: (key: string) => Promise<void>
   handleAutoLockMinutesChange: (value: number) => void
   handleClearSecurityEvents: () => void
@@ -76,7 +77,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
 
   const gateOpen = !!vaultStatusState && !vaultStatusState.unlocked
 
-  function appendSecurityEvent(level: SecurityEvent['level'], message: string) {
+  const appendSecurityEvent = useCallback((level: SecurityEvent['level'], message: string) => {
     const entry: SecurityEvent = {
       id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
       timestamp: Date.now(),
@@ -84,14 +85,30 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       message,
     }
     setSecurityEvents((prev) => [...prev, entry].slice(-120))
-  }
+  }, [])
 
-  function touchVaultActivity(reason: string) {
+  const touchVaultActivity = useCallback((reason: string) => {
     setVaultLastActivityAt(Date.now())
     appendSecurityEvent('info', reason)
-  }
+  }, [appendSecurityEvent])
 
-  const handleGateSubmit = async (password: string) => {
+  const refreshVault = useCallback(async () => {
+    const st = await vaultStatus(activeVaultId)
+    setVaultStatusState(st)
+    if (st.initialized) {
+      const keys = await vaultListSecretKeys(activeVaultId)
+      setVaultKeys(keys)
+    } else {
+      setVaultKeys([])
+    }
+  }, [activeVaultId])
+
+  const refreshVaults = useCallback(async () => {
+    const items = await listVaults()
+    setVaults(items)
+  }, [])
+
+  const handleGateSubmit = useCallback(async (password: string) => {
     const wasInitialized = vaultStatusState?.initialized
     if (wasInitialized) {
       await vaultUnlock(password, activeVaultId)
@@ -102,37 +119,21 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     sessionPasswordRef.current = password
     touchVaultActivity(wasInitialized ? 'Vault unlocked.' : 'Vault initialized and unlocked.')
     return !wasInitialized
-  }
+  }, [activeVaultId, refreshVault, touchVaultActivity, vaultStatusState?.initialized])
 
-  const handleGateSubmitWithOptIn = async (password: string) => {
+  const handleGateSubmitWithOptIn = useCallback(async (password: string) => {
     const wasFirstInit = await handleGateSubmit(password)
     if (wasFirstInit) {
       // Store password temporarily for potential biometric enrollment
       biometricOptInPasswordRef.current = password
       setShowBiometricOptIn(true)
     }
-  }
+  }, [handleGateSubmit])
 
-  const handleBiometricOptInDone = () => {
+  const handleBiometricOptInDone = useCallback(() => {
     biometricOptInPasswordRef.current = ''
     setShowBiometricOptIn(false)
-  }
-
-  async function refreshVault() {
-    const st = await vaultStatus(activeVaultId)
-    setVaultStatusState(st)
-    if (st.initialized) {
-      const keys = await vaultListSecretKeys(activeVaultId)
-      setVaultKeys(keys)
-    } else {
-      setVaultKeys([])
-    }
-  }
-
-  async function refreshVaults() {
-    const items = await listVaults()
-    setVaults(items)
-  }
+  }, [])
 
   useEffect(() => { void refreshVaults() }, [])
   useEffect(() => { void refreshVault() }, [activeVaultId])
@@ -185,7 +186,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     return () => window.clearInterval(timer)
   }, [vaultStatusState?.unlocked, vaultLastActivityAt, vaultAutoLockMinutes, activeVaultId])
 
-  async function handleInitialize(masterPassword: string) {
+  const handleInitialize = useCallback(async (masterPassword: string) => {
     setVaultBusy(true)
     try {
       await vaultInitialize(masterPassword, activeVaultId)
@@ -193,9 +194,9 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       touchVaultActivity('Vault initialized and unlocked.')
       setOutput('Vault initialized and unlocked.')
     } catch (error) { setOutput(String(error)) } finally { setVaultBusy(false) }
-  }
+  }, [activeVaultId, refreshVault, setOutput, touchVaultActivity])
 
-  async function handleUnlock(masterPassword: string) {
+  const handleUnlock = useCallback(async (masterPassword: string) => {
     setVaultBusy(true)
     try {
       await vaultUnlock(masterPassword, activeVaultId)
@@ -203,9 +204,9 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       touchVaultActivity('Vault unlocked.')
       setOutput('Vault unlocked.')
     } catch (error) { setOutput(String(error)) } finally { setVaultBusy(false) }
-  }
+  }, [activeVaultId, refreshVault, setOutput, touchVaultActivity])
 
-  async function handleLock() {
+  const handleLock = useCallback(async () => {
     setVaultBusy(true)
     try {
       await vaultLock(activeVaultId)
@@ -214,9 +215,9 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       appendSecurityEvent('info', 'Vault locked manually.')
       setOutput('Vault locked.')
     } catch (error) { setOutput(String(error)) } finally { setVaultBusy(false) }
-  }
+  }, [activeVaultId, appendSecurityEvent, refreshVault, setOutput])
 
-  async function handleSaveSecret(key: string, value: string) {
+  const handleSaveSecret = useCallback(async (key: string, value: string) => {
     setVaultBusy(true)
     try {
       await vaultSetSecret(key, value, activeVaultId)
@@ -224,9 +225,9 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       touchVaultActivity(`Vault secret saved: ${key}`)
       setOutput(`Saved vault key: ${key}`)
     } catch (error) { setOutput(String(error)) } finally { setVaultBusy(false) }
-  }
+  }, [activeVaultId, refreshVault, setOutput, touchVaultActivity])
 
-  async function handleLoadSecret(key: string) {
+  const handleLoadSecret = useCallback(async (key: string) => {
     setVaultBusy(true)
     try {
       const value = await vaultGetSecret(key, activeVaultId)
@@ -234,9 +235,21 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       if (value === null) { setOutput(`Vault key not found: ${key}`); return }
       setOutput(`Vault key is available at runtime: ${key}.`)
     } catch (error) { setOutput(String(error)) } finally { setVaultBusy(false) }
-  }
+  }, [activeVaultId, setOutput, touchVaultActivity])
 
-  async function handleDeleteSecret(key: string) {
+  const handleRevealSecret = useCallback(async (key: string) => {
+    if (!vaultStatusState?.initialized) {
+      throw new Error('Vault 尚未初始化。')
+    }
+    if (!vaultStatusState.unlocked) {
+      throw new Error('Vault 已锁定。')
+    }
+    const value = await vaultGetSecret(key, activeVaultId)
+    touchVaultActivity(`Vault secret revealed: ${key}`)
+    return value
+  }, [activeVaultId, touchVaultActivity, vaultStatusState?.initialized, vaultStatusState?.unlocked])
+
+  const handleDeleteSecret = useCallback(async (key: string) => {
     setVaultBusy(true)
     try {
       await vaultDeleteSecret(key, activeVaultId)
@@ -244,21 +257,21 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       touchVaultActivity(`Vault secret deleted: ${key}`)
       setOutput(`Deleted vault key: ${key}`)
     } catch (error) { setOutput(String(error)) } finally { setVaultBusy(false) }
-  }
+  }, [activeVaultId, refreshVault, setOutput, touchVaultActivity])
 
-  function handleAutoLockMinutesChange(value: number) {
+  const handleAutoLockMinutesChange = useCallback((value: number) => {
     if (Number.isNaN(value)) return
     setVaultAutoLockMinutes(Math.max(1, Math.min(120, Math.floor(value))))
-  }
+  }, [])
 
-  function handleClearSecurityEvents() { setSecurityEvents([]) }
+  const handleClearSecurityEvents = useCallback(() => { setSecurityEvents([]) }, [])
 
-  async function resolveAuthSecret(options: {
+  const resolveAuthSecret = useCallback(async (options: {
     authType: AuthType
     explicitSecret: string
     hostForRef?: HostProfile | null
     inputMode?: 'vault' | 'manual'
-  }): Promise<string | undefined> {
+  }): Promise<string | undefined> => {
     const { authType: targetAuthType, explicitSecret, hostForRef, inputMode } = options
     const mode = inputMode ?? 'vault'
     if (mode === 'manual') {
@@ -282,19 +295,44 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     if (!value) throw new Error(`Vault 中未找到密钥: ${secretKeyRef}`)
     if (targetAuthType === 'password' || targetAuthType === 'privateKey') return value
     return undefined
-  }
+  }, [activeVaultId, appendSecurityEvent, touchVaultActivity, vaultStatusState?.initialized, vaultStatusState?.unlocked])
+
+  const value = useMemo(() => ({
+    activeVaultId, setActiveVaultId, vaults, vaultStatusState, vaultKeys, vaultBusy,
+    vaultAutoLockMinutes, vaultLastActivityAt, securityEvents,
+    sessionPassword: sessionPasswordRef.current,
+    refreshVault, refreshVaults,
+    handleInitialize, handleUnlock, handleLock,
+    handleSaveSecret, handleLoadSecret, handleRevealSecret, handleDeleteSecret,
+    handleAutoLockMinutesChange, handleClearSecurityEvents,
+    touchVaultActivity, appendSecurityEvent, resolveAuthSecret,
+  }), [
+    activeVaultId,
+    appendSecurityEvent,
+    handleAutoLockMinutesChange,
+    handleClearSecurityEvents,
+    handleDeleteSecret,
+    handleInitialize,
+    handleLoadSecret,
+    handleLock,
+    handleRevealSecret,
+    handleSaveSecret,
+    handleUnlock,
+    refreshVault,
+    refreshVaults,
+    resolveAuthSecret,
+    securityEvents,
+    touchVaultActivity,
+    vaultAutoLockMinutes,
+    vaultBusy,
+    vaultKeys,
+    vaultLastActivityAt,
+    vaultStatusState,
+    vaults,
+  ])
 
   return (
-    <VaultContext.Provider value={{
-      activeVaultId, setActiveVaultId, vaults, vaultStatusState, vaultKeys, vaultBusy,
-      vaultAutoLockMinutes, vaultLastActivityAt, securityEvents,
-      sessionPassword: sessionPasswordRef.current,
-      refreshVault, refreshVaults,
-      handleInitialize, handleUnlock, handleLock,
-      handleSaveSecret, handleLoadSecret, handleDeleteSecret,
-      handleAutoLockMinutesChange, handleClearSecurityEvents,
-      touchVaultActivity, appendSecurityEvent, resolveAuthSecret,
-    }}>
+    <VaultContext.Provider value={value}>
       {children}
 
       <VaultGateDialog

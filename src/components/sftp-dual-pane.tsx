@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '@/lib/i18n'
 import {
   ArrowRight,
@@ -17,17 +17,13 @@ import type { SftpEntry } from '@/lib/sftp'
 import {
   localListDir,
   localHomeDir,
-  sftpListDir,
   sftpDownloadFile,
   sftpUploadFile,
-  sftpDeletePath,
-  sftpRenamePath,
-  sftpCreateDir,
   sftpChmod,
   localReadFileB64,
   localWriteFileB64,
 } from '@/lib/sftp'
-import type { AuthType } from '@/lib/ssh'
+import { createRemoteFsClient, resolveRemoteFsAuth } from '@/lib/remote-fs'
 import { fetchAndAddKnownHost } from '@/lib/known-hosts'
 import { FilePane, type UnifiedEntry } from './sftp-file-pane'
 import { SftpConnectPlaceholder } from './sftp-connect-placeholder'
@@ -86,6 +82,10 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
   const autoConnectHostRef = useRef<string | null>(null)
 
   const remoteHost = hosts.find((h) => h.id === selectedRemoteHostId) ?? null
+  const remoteFs = useMemo(
+    () => (remoteHost ? createRemoteFsClient(remoteHost, resolveAuthSecret) : null),
+    [remoteHost, resolveAuthSecret],
+  )
 
   useEffect(() => {
     if (localInitRef.current) return
@@ -118,26 +118,13 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
     }
   }, [localDir])
 
-  const getSftpAuth = useCallback(async (host: HostProfile) => {
-    const secret = await resolveAuthSecret(host)
-    return {
-      host: host.address,
-      port: host.port || 22,
-      username: host.username || 'root',
-      authType: host.authType as AuthType,
-      password: host.authType === 'password' ? secret : undefined,
-      privateKey: host.authType === 'privateKey' ? secret : undefined,
-    }
-  }, [resolveAuthSecret])
-
   const loadRemoteDir = useCallback(async (dir?: string) => {
-    if (!remoteHost) return
+    if (!remoteHost || !remoteFs) return
     const target = dir ?? remoteDir
     setRemoteLoading(true)
     setRemoteSelected(new Set())
     try {
-      const auth = await getSftpAuth(remoteHost)
-      const entries = await sftpListDir({ ...auth, remotePath: target })
+      const entries = await remoteFs.listDir(target)
       setRemoteEntries(entries.map((e: SftpEntry) => ({
         path: e.path, fileName: e.fileName, isDir: e.isDir,
         size: e.size, modifiedAt: e.modifiedAt,
@@ -149,7 +136,7 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
     } finally {
       setRemoteLoading(false)
     }
-  }, [remoteHost, remoteDir, getSftpAuth])
+  }, [remoteHost, remoteDir, remoteFs])
 
   useEffect(() => {
     if (!selectedRemoteHostId || !remoteHost || remoteConnected || remoteLoading) return
@@ -176,7 +163,7 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
     setTransferStatus('')
     let done = 0
     try {
-      const auth = await getSftpAuth(remoteHost)
+      const auth = await resolveRemoteFsAuth(remoteHost, resolveAuthSecret)
       for (const localPath of localSelected) {
         const entry = localEntries.find((e) => e.path === localPath)
         if (!entry || entry.isDir) continue
@@ -201,7 +188,7 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
     setTransferStatus('')
     let done = 0
     try {
-      const auth = await getSftpAuth(remoteHost)
+      const auth = await resolveRemoteFsAuth(remoteHost, resolveAuthSecret)
       for (const remotePath of remoteSelected) {
         const entry = remoteEntries.find((e) => e.path === remotePath)
         if (!entry || entry.isDir) continue
@@ -251,32 +238,29 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
   }
 
   async function handleRemoteDelete(path: string) {
-    if (!remoteHost) return
+    if (!remoteFs) return
     try {
-      const auth = await getSftpAuth(remoteHost)
-      await sftpDeletePath({ ...auth, remotePath: path })
+      await remoteFs.deletePath(path)
       setTransferStatus(`Deleted: ${path.split('/').pop()}`)
       await loadRemoteDir()
     } catch (err) { setTransferStatus(`Delete error: ${err}`) }
   }
 
   async function handleRemoteRename(oldPath: string, newName: string) {
-    if (!remoteHost) return
+    if (!remoteFs) return
     const dir = oldPath.substring(0, oldPath.lastIndexOf('/') + 1)
     try {
-      const auth = await getSftpAuth(remoteHost)
-      await sftpRenamePath({ ...auth, oldRemotePath: oldPath, newRemotePath: `${dir}${newName}` })
+      await remoteFs.renamePath(oldPath, `${dir}${newName}`)
       setTransferStatus(`Renamed to: ${newName}`)
       await loadRemoteDir()
     } catch (err) { setTransferStatus(`Rename error: ${err}`) }
   }
 
   async function handleRemoteCreateDir(name: string) {
-    if (!remoteHost) return
+    if (!remoteFs) return
     const path = remoteDir.endsWith('/') ? `${remoteDir}${name}` : `${remoteDir}/${name}`
     try {
-      const auth = await getSftpAuth(remoteHost)
-      await sftpCreateDir({ ...auth, remotePath: path })
+      await remoteFs.createDir(path)
       setTransferStatus(`Created folder: ${name}`)
       await loadRemoteDir()
     } catch (err) { setTransferStatus(`Create dir error: ${err}`) }
@@ -285,7 +269,7 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
   async function handleRemoteChmod(path: string, mode: number) {
     if (!remoteHost) return
     try {
-      const auth = await getSftpAuth(remoteHost)
+      const auth = await resolveRemoteFsAuth(remoteHost, resolveAuthSecret)
       await sftpChmod({ ...auth, remotePath: path, mode })
       setTransferStatus(`chmod ${mode.toString(8)} → ${path.split('/').pop()}`)
       await loadRemoteDir()
@@ -298,7 +282,7 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
     setTransferStatus('')
     let done = 0
     try {
-      const auth = await getSftpAuth(remoteHost)
+      const auth = await resolveRemoteFsAuth(remoteHost, resolveAuthSecret)
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
         setTransferStatus(`Uploading ${file.name}... (${i + 1}/${files.length})`)

@@ -3,16 +3,30 @@ pub mod interactive;
 
 pub(crate) use commands::run_ssh_command_sync;
 
+use base64;
 use serde::{Deserialize, Serialize};
+use sha2;
 use ssh2::Session;
 use std::collections::HashMap;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use base64;
-use sha2;
 
 pub(crate) const TCP_CONNECT_TIMEOUT_SECS: u64 = 10;
+type SshProgress<'a> = Option<&'a mut dyn FnMut(&str)>;
+
+pub(crate) fn format_ssh_handshake_error(err: &str) -> String {
+    let raw = format!("SSH handshake failed: {err}");
+    let lower = err.to_ascii_lowercase();
+
+    if lower.contains("failed getting banner") {
+        format!(
+            "{raw}. The TCP connection opened, but the remote side did not send a valid SSH banner. This usually means the port is not serving SSH, sshd is temporarily unavailable, or a proxy/firewall/security device interrupted the connection. If this happens only sometimes, the remote host or network path is likely unstable."
+        )
+    } else {
+        raw
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,28 +101,106 @@ pub fn connect_and_authenticate(
     app: Option<&tauri::AppHandle>,
     accept_host_key: bool,
 ) -> Result<Session, String> {
+    connect_and_authenticate_with_progress(
+        host,
+        port,
+        username,
+        auth_type,
+        password,
+        private_key,
+        passphrase,
+        app,
+        accept_host_key,
+        None,
+    )
+}
+
+pub fn connect_and_authenticate_with_progress(
+    host: &str,
+    port: u16,
+    username: &str,
+    auth_type: &str,
+    password: Option<&str>,
+    private_key: Option<&str>,
+    passphrase: Option<&str>,
+    app: Option<&tauri::AppHandle>,
+    accept_host_key: bool,
+    mut progress: SshProgress<'_>,
+) -> Result<Session, String> {
     let address = format!("{host}:{port}");
-    let addr = address.to_socket_addrs()
+    if let Some(cb) = progress.as_mut() {
+        cb("resolve_host");
+    }
+    let addr = address
+        .to_socket_addrs()
         .map_err(|e| format!("DNS resolve failed: {e}"))?
         .next()
         .ok_or_else(|| "DNS resolve returned no addresses".to_string())?;
+    if let Some(cb) = progress.as_mut() {
+        cb("open_tcp");
+    }
     let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
-        .map_err(|err| format!("TCP connect failed (timeout {TCP_CONNECT_TIMEOUT_SECS}s): {err}"))?;
+        .map_err(|err| {
+            format!("TCP connect failed (timeout {TCP_CONNECT_TIMEOUT_SECS}s): {err}")
+        })?;
+    // SSH is latency-sensitive; disable Nagle so small keystroke packets are sent immediately.
+    tcp.set_nodelay(true).ok();
     tcp.set_read_timeout(Some(Duration::from_secs(15))).ok();
     tcp.set_write_timeout(Some(Duration::from_secs(15))).ok();
 
     let mut session = Session::new().map_err(|err| format!("Create SSH session failed: {err}"))?;
     session.set_tcp_stream(tcp);
+    if let Some(cb) = progress.as_mut() {
+        cb("secure_session");
+    }
     session
         .handshake()
-        .map_err(|err| format!("SSH handshake failed: {err}"))?;
+        .map_err(|err| format_ssh_handshake_error(&err.to_string()))?;
 
     if let Some(app) = app {
+        if let Some(cb) = progress.as_mut() {
+            cb("verify_host");
+        }
         verify_or_accept_host_key(&session, app, host, port, accept_host_key)?;
     }
 
-    authenticate_session(&mut session, username, auth_type, password, private_key, passphrase)?;
+    if let Some(cb) = progress.as_mut() {
+        cb("authenticate");
+    }
+    authenticate_session(
+        &mut session,
+        username,
+        auth_type,
+        password,
+        private_key,
+        passphrase,
+    )?;
     Ok(session)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_ssh_handshake_error;
+
+    #[test]
+    fn adds_diagnostic_context_for_missing_banner_errors() {
+        let message = format_ssh_handshake_error("[Session(-13)] Failed getting banner");
+
+        assert!(message.contains("SSH handshake failed: [Session(-13)] Failed getting banner"));
+        assert!(message.contains("did not send a valid SSH banner"));
+        assert!(message.contains("not serving SSH"));
+        assert!(message.contains("happens only sometimes"));
+    }
+
+    #[test]
+    fn leaves_other_handshake_errors_unchanged() {
+        let message = format_ssh_handshake_error("Unable to exchange encryption keys");
+
+        assert_eq!(
+            message,
+            "SSH handshake failed: Unable to exchange encryption keys"
+        );
+    }
 }
 
 /// Legacy wrapper that skips host key verification (used by pool/sftp where keys are checked elsewhere).
@@ -121,7 +213,17 @@ pub fn connect_authenticated_ssh_session(
     private_key: Option<&str>,
     passphrase: Option<&str>,
 ) -> Result<Session, String> {
-    connect_and_authenticate(host, port, username, auth_type, password, private_key, passphrase, None, false)
+    connect_and_authenticate(
+        host,
+        port,
+        username,
+        auth_type,
+        password,
+        private_key,
+        passphrase,
+        None,
+        false,
+    )
 }
 
 fn verify_or_accept_host_key(
@@ -131,8 +233,8 @@ fn verify_or_accept_host_key(
     port: u16,
     accept_host_key: bool,
 ) -> Result<(), String> {
-    use crate::net::known_hosts::{verify_known_host, add_known_host};
-    use crate::error::{host_key_unknown_payload, host_key_mismatch_payload};
+    use crate::error::{host_key_mismatch_payload, host_key_unknown_payload};
+    use crate::net::known_hosts::{add_known_host, verify_known_host};
 
     let (key_bytes, key_type) = session
         .host_key()
@@ -150,16 +252,24 @@ fn verify_or_accept_host_key(
                 add_known_host(app, host, port, &fingerprint, &key_type_str)?;
                 Ok(())
             } else {
-                Err(host_key_unknown_payload(host, port, &fingerprint, &key_type_str))
+                Err(host_key_unknown_payload(
+                    host,
+                    port,
+                    &fingerprint,
+                    &key_type_str,
+                ))
             }
         }
-        Err(_mismatch) => {
-            Err(host_key_mismatch_payload(host, port, &fingerprint, &key_type_str))
-        }
+        Err(_mismatch) => Err(host_key_mismatch_payload(
+            host,
+            port,
+            &fingerprint,
+            &key_type_str,
+        )),
     }
 }
 
-fn authenticate_session(
+pub(crate) fn authenticate_session(
     session: &mut Session,
     username: &str,
     auth_type: &str,
@@ -222,7 +332,15 @@ impl SshSessionPool {
                 }
             }
         }
-        connect_authenticated_ssh_session(host, port, username, auth_type, password, private_key, passphrase)
+        connect_authenticated_ssh_session(
+            host,
+            port,
+            username,
+            auth_type,
+            password,
+            private_key,
+            passphrase,
+        )
     }
 
     pub fn checkin(&self, host: &str, port: u16, username: &str, session: Session) {

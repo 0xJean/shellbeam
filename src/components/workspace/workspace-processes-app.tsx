@@ -98,7 +98,7 @@ export function WorkspaceProcessesApp({
   }
 
   return (
-    <div className="space-y-4">
+    <div data-testid="workspace-processes-app" className="space-y-4">
       <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
         <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">Processes</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">Process Monitor</h2>
@@ -154,7 +154,7 @@ export function WorkspaceProcessesApp({
             <div>Memory</div>
             <div>State</div>
           </div>
-          <div className="max-h-[26rem] overflow-auto">
+          <div data-testid="workspace-processes-list" className="max-h-[26rem] overflow-auto">
             {loading ? (
               <div className="px-4 py-6 text-sm text-muted-foreground">Loading process list…</div>
             ) : filteredRows.length === 0 ? (

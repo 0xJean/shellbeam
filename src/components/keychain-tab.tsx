@@ -5,8 +5,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { useT } from '@/lib/i18n'
 import { generateSshKey, importPrivateKeyFromFile } from '@/lib/keys'
 import { cn } from '@/lib/utils'
-import { vaultSetSecret } from '@/lib/vault'
-import { ClipboardPaste, FileUp, Key, Plus, Search, Trash2, Wand2 } from 'lucide-react'
+import { vaultGetSecret, vaultSetSecret } from '@/lib/vault'
+import { ClipboardPaste, Copy, Eye, EyeOff, FileUp, Key, Plus, RefreshCw, Search, Trash2, Wand2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 function isSshKey(key: string): boolean {
@@ -17,6 +17,11 @@ function isPublicKey(key: string): boolean {
   return key.includes('publicKey') || key.endsWith('.pub')
 }
 
+function maskSecretValue(value: string): string {
+  if (!value.includes('\n')) return '••••••••'
+  return value.split('\n').map((line) => (line ? '••••••••' : '')).join('\n')
+}
+
 type AddKeyMode = 'generate' | 'import' | 'paste'
 
 interface KeychainTabProps {
@@ -25,6 +30,7 @@ interface KeychainTabProps {
   vaultBusy: boolean
   activeVaultId: string
   onRefresh: () => Promise<void>
+  onLoadSecret?: (key: string) => Promise<string | null>
   onDeleteSecret: (key: string) => Promise<void>
   onOutput?: (message: string) => void
   onError?: (message: string) => void
@@ -32,7 +38,7 @@ interface KeychainTabProps {
 
 export function KeychainTab({
   vaultKeys, vaultUnlocked, vaultBusy, activeVaultId,
-  onRefresh, onDeleteSecret, onOutput, onError,
+  onRefresh, onLoadSecret, onDeleteSecret, onOutput, onError,
 }: KeychainTabProps) {
   const { t } = useT()
   const [showAddKey, setShowAddKey] = useState(false)
@@ -45,6 +51,9 @@ export function KeychainTab({
   const [savingPaste, setSavingPaste] = useState(false)
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState<'all' | 'ssh' | 'public' | 'other'>('all')
+  const [revealingKey, setRevealingKey] = useState<string | null>(null)
+  const [revealedSecret, setRevealedSecret] = useState<{ key: string; value: string } | null>(null)
+  const [showRevealedValue, setShowRevealedValue] = useState(true)
 
   const addKeyModes: { id: AddKeyMode; label: string; icon: React.ReactNode }[] = [
     { id: 'generate', label: t('keychain.generate'), icon: <Wand2 className="h-4 w-4" /> },
@@ -127,6 +136,31 @@ export function KeychainTab({
     } catch (e) { onError?.(String(e)) }
   }
 
+  async function handleRevealKey(key: string) {
+    if (!vaultUnlocked) { onError?.('Vault must be unlocked.'); return }
+    setRevealingKey(key)
+    try {
+      const value = onLoadSecret ? await onLoadSecret(key) : await vaultGetSecret(key, activeVaultId)
+      if (value === null) { onError?.(`Vault key not found: ${key}`); return }
+      setRevealedSecret({ key, value })
+      setShowRevealedValue(true)
+    } catch (e) {
+      onError?.(String(e))
+    } finally {
+      setRevealingKey(null)
+    }
+  }
+
+  async function handleCopySecret() {
+    if (!revealedSecret) return
+    try {
+      await navigator.clipboard.writeText(revealedSecret.value)
+      onOutput?.(`Copied: ${revealedSecret.key}`)
+    } catch (e) {
+      onError?.(String(e))
+    }
+  }
+
   const filterTabs = [
     { id: 'all' as const, label: t('hosts.all') },
     { id: 'ssh' as const, label: 'SSH' },
@@ -201,6 +235,57 @@ export function KeychainTab({
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={!!revealedSecret}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRevealedSecret(null)
+            setShowRevealedValue(true)
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl p-0 overflow-hidden shadow-2xl">
+          {revealedSecret && (
+            <div className="space-y-4 px-4 py-5 sm:px-8 sm:py-7">
+              <div>
+                <h3 className="text-lg font-semibold text-foreground">{t('keychain.revealTitle')}</h3>
+                <p className="mt-1 break-all text-sm text-muted-foreground">{revealedSecret.key}</p>
+              </div>
+              <div className="relative">
+                {revealedSecret.value.includes('\n') ? (
+                  <Textarea
+                    readOnly
+                    value={showRevealedValue ? revealedSecret.value : maskSecretValue(revealedSecret.value)}
+                    className="min-h-[220px] pr-11 font-mono text-sm text-foreground"
+                  />
+                ) : (
+                  <Input
+                    readOnly
+                    type={showRevealedValue ? 'text' : 'password'}
+                    value={revealedSecret.value}
+                    className="h-10 pr-11 font-mono text-foreground"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowRevealedValue((v) => !v)}
+                  title={showRevealedValue ? t('keychain.hideSecret') : t('keychain.showSecret')}
+                  className="absolute right-2 top-5 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {showRevealedValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => void handleCopySecret()} className="gap-2">
+                  <Copy className="h-4 w-4" /> {t('common.copy')}
+                </Button>
+                <Button onClick={() => setRevealedSecret(null)}>{t('common.close')}</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Title section */}
       <div className="shrink-0 px-6 py-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -267,7 +352,10 @@ export function KeychainTab({
                       </div>
                     </div>
                     <div className="mt-3 flex justify-end">
-                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive" onClick={() => void handleDeleteKey(key)} title={t('common.delete')}>
+                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 hover:text-foreground disabled:opacity-50" onClick={() => void handleRevealKey(key)} title={t('keychain.showSecret')} disabled={!vaultUnlocked || revealingKey === key}>
+                        {revealingKey === key ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 hover:text-destructive" onClick={() => void handleDeleteKey(key)} title={t('common.delete')}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>

@@ -1,3 +1,4 @@
+import { normalizeBrowserUrl } from '@/contexts/session-browser-state'
 import { useT } from '@/lib/i18n'
 import { recordInteractiveCommand } from '@/lib/interactive-history'
 import type { InteractiveOutputChunk, InteractiveSessionInfo } from '@/lib/interactive-session'
@@ -10,7 +11,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { PanelRightClose, PanelRightOpen, RefreshCw, Sparkles, WifiOff } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, RefreshCw, Sparkles, WifiOff, ExternalLink, Globe } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { AICommandBar } from './ai-command-bar'
 import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
@@ -35,6 +36,9 @@ interface SessionTerminalViewProps {
   onInitialChunksConsumed?: (sessionId: string) => void
   workspaceMode?: SessionWorkspaceMode
   onWorkspaceModeChange?: (mode: SessionWorkspaceMode) => void
+  chromeOnly?: boolean
+  onOpenLinkInBrowser?: (url: string) => void
+  onOpenBrowser?: () => void
 }
 
 export function SessionTerminalView({
@@ -54,6 +58,9 @@ export function SessionTerminalView({
   onInitialChunksConsumed,
   workspaceMode = 'terminal',
   onWorkspaceModeChange,
+  chromeOnly = false,
+  onOpenLinkInBrowser,
+  onOpenBrowser,
 }: SessionTerminalViewProps) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -64,7 +71,12 @@ export function SessionTerminalView({
   const [showSearch, setShowSearch] = useState(false)
   const [currentInputLine, setCurrentInputLine] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [detectedLinks, setDetectedLinks] = useState<string[]>([])
+  const [showLinkMenu, setShowLinkMenu] = useState(false)
+  const [entered, setEntered] = useState(false)
   const inputLineRef = useRef('')
+  const showSuggestionsRef = useRef(false)
+  const uiSyncFrameRef = useRef<number | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
 
   onSendRawRef.current = onSendRaw
@@ -89,9 +101,33 @@ export function SessionTerminalView({
     return lines.join('\n').trim()
   }, [])
 
+  const detectLinks = useCallback((text: string) => {
+    const httpMatches = text.match(/https?:\/\/[^\s)\]}>"']+/g) ?? []
+    const bareMatches = Array.from(
+      text.matchAll(/\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|(?:\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9.-]+):\d{2,5}(?:\/[^\s)\]}>"']*)?/g),
+      (match) => normalizeBrowserUrl(match[0]),
+    ).filter(Boolean)
+    setDetectedLinks((prev) => Array.from(new Set([...prev, ...httpMatches, ...bareMatches])).slice(-5))
+  }, [])
+
   const handleExecuteCommand = useCallback((cmd: string) => {
     onSendRawRef.current(cmd)
   }, [])
+
+  const scheduleInputUiSync = useCallback(() => {
+    if (uiSyncFrameRef.current !== null) return
+    uiSyncFrameRef.current = window.requestAnimationFrame(() => {
+      uiSyncFrameRef.current = null
+      setCurrentInputLine(inputLineRef.current)
+      setShowSuggestions(showSuggestionsRef.current)
+    })
+  }, [])
+
+  useEffect(() => {
+    setEntered(false)
+    const frame = window.requestAnimationFrame(() => setEntered(true))
+    return () => window.cancelAnimationFrame(frame)
+  }, [sessionId])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -105,14 +141,16 @@ export function SessionTerminalView({
       }
       if (e.ctrlKey && e.key === ' ') {
         e.preventDefault()
-        setShowSuggestions((v) => !v)
+        showSuggestionsRef.current = !showSuggestionsRef.current
+        scheduleInputUiSync()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [scheduleInputUiSync])
 
   useEffect(() => {
+    if (chromeOnly) return
     if (!containerRef.current) return
 
     const activeTheme = getThemeById(terminalPrefs?.themeId ?? 'hacker-green')
@@ -159,6 +197,7 @@ export function SessionTerminalView({
 
       if (writeWatermark > WATERMARK_HIGH) return
       writeWatermark += batch.length
+      detectLinks(batch)
       term.write(batch, drain)
     }
 
@@ -167,6 +206,7 @@ export function SessionTerminalView({
       let batch = ''
       for (let i = 0; i < initialChunks.length; i++) batch += initialChunks[i].data
       if (batch) {
+        detectLinks(batch)
         term.write(batch, drain)
       }
       onInitialChunksConsumed?.(sessionId)
@@ -179,19 +219,20 @@ export function SessionTerminalView({
           recordInteractiveCommand(hostAddress, inputLineRef.current)
         }
         inputLineRef.current = ''
-        setCurrentInputLine('')
-        setShowSuggestions(false)
+        showSuggestionsRef.current = false
+        scheduleInputUiSync()
       } else if (data === '\x7f' || data === '\b') {
         inputLineRef.current = inputLineRef.current.slice(0, -1)
-        setCurrentInputLine(inputLineRef.current)
+        showSuggestionsRef.current = inputLineRef.current.length >= 2
+        scheduleInputUiSync()
       } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
         inputLineRef.current += data
-        setCurrentInputLine(inputLineRef.current)
-        setShowSuggestions(inputLineRef.current.length >= 2)
+        showSuggestionsRef.current = inputLineRef.current.length >= 2
+        scheduleInputUiSync()
       } else {
         inputLineRef.current = ''
-        setCurrentInputLine('')
-        setShowSuggestions(false)
+        showSuggestionsRef.current = false
+        scheduleInputUiSync()
       }
     })
     const onBinary = term.onBinary((data: string) => {
@@ -220,14 +261,19 @@ export function SessionTerminalView({
       onResize.dispose()
       resizeObs.disconnect()
       if (fitTimer) clearTimeout(fitTimer)
+      if (uiSyncFrameRef.current !== null) {
+        window.cancelAnimationFrame(uiSyncFrameRef.current)
+        uiSyncFrameRef.current = null
+      }
       searchAddonRef.current = null
       term.dispose()
       termRef.current = null
       fitRef.current = null
     }
-  }, [sessionId, chunkEmitterRef])
+  }, [sessionId, chunkEmitterRef, chromeOnly])
 
   useEffect(() => {
+    if (chromeOnly) return
     const term = termRef.current
     if (!term || !terminalPrefs) return
     const themeDef = getThemeById(terminalPrefs.themeId)
@@ -235,19 +281,19 @@ export function SessionTerminalView({
     term.options.fontSize = terminalPrefs.fontSize
     term.options.fontFamily = terminalPrefs.fontFamily
     try { fitRef.current?.fit() } catch { /* teardown */ }
-  }, [terminalPrefs?.themeId, terminalPrefs?.fontSize, terminalPrefs?.fontFamily])
+  }, [terminalPrefs?.themeId, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, chromeOnly])
 
   const prevVisibleRef = useRef(visible)
   useEffect(() => {
     const wasHidden = !prevVisibleRef.current
     prevVisibleRef.current = visible
-    if (visible && wasHidden) {
+    if (!chromeOnly && visible && wasHidden) {
       requestAnimationFrame(() => {
         try { fitRef.current?.fit() } catch { /* teardown */ }
         termRef.current?.focus()
       })
     }
-  }, [visible])
+  }, [visible, chromeOnly])
 
   const handleContainerClick = useCallback(() => {
     termRef.current?.focus()
@@ -256,10 +302,22 @@ export function SessionTerminalView({
   const activeThemeDef = getThemeById(terminalPrefs?.themeId ?? 'hacker-green')
   const bg = activeThemeDef.theme.background ?? '#000000'
   const fg = activeThemeDef.theme.foreground ?? '#00ff41'
+  const showBrowserShortcuts = !onWorkspaceModeChange
 
   return (
-    <div className="relative flex h-full flex-col" style={{ background: bg }}>
-      <div className="flex h-9 shrink-0 items-center gap-2 overflow-hidden px-4" style={{ borderBottom: `1px solid ${fg}15` }}>
+    <div
+      className={cn('relative flex flex-col', chromeOnly ? 'shrink-0' : 'h-full')}
+      style={{
+        ...(chromeOnly ? {} : { background: bg }),
+        opacity: entered ? 1 : 0,
+        transform: entered ? 'translateY(0px)' : 'translateY(6px)',
+        transition: 'opacity 180ms ease, transform 180ms ease',
+      }}
+    >
+      <div
+        className="flex h-9 shrink-0 items-center gap-2 overflow-hidden px-4"
+        style={{ borderBottom: `1px solid ${fg}15`, background: bg }}
+      >
         <span className={cn(
           'h-2 w-2 shrink-0 rounded-full',
           isConnected ? 'bg-emerald-500' : isReconnecting ? 'bg-amber-500 animate-pulse' : isDisconnected ? 'bg-red-500' : 'bg-gray-500',
@@ -270,6 +328,59 @@ export function SessionTerminalView({
           {isReconnecting && <span className="ml-2 text-amber-400">{t('terminal.reconnecting')}</span>}
         </span>
         <div className="ml-auto flex items-center gap-1.5">
+          {showBrowserShortcuts && onOpenBrowser && (
+            <button
+              type="button"
+              onClick={onOpenBrowser}
+              className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-[11px] font-semibold tracking-wide text-primary shadow-[0_0_6px_rgba(19,91,236,0.15)] transition-all hover:bg-primary/20 hover:shadow-[0_0_10px_rgba(19,91,236,0.25)] md:px-3"
+              title="Open browser"
+            >
+              <Globe className="h-3.5 w-3.5" />
+              <span className="hidden max-w-40 truncate md:inline">Browser</span>
+            </button>
+          )}
+          {showBrowserShortcuts && detectedLinks.length > 0 && onOpenLinkInBrowser && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => onOpenLinkInBrowser(detectedLinks[detectedLinks.length - 1])}
+                className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-[11px] font-semibold tracking-wide text-primary shadow-[0_0_6px_rgba(19,91,236,0.15)] transition-all hover:bg-primary/20 hover:shadow-[0_0_10px_rgba(19,91,236,0.25)] md:px-3"
+                title="Open latest detected link in browser"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span className="hidden max-w-40 truncate md:inline">Open Link</span>
+              </button>
+              {detectedLinks.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setShowLinkMenu((value) => !value)}
+                  className="absolute -bottom-2 right-0 rounded-full border border-border/60 bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground shadow-sm"
+                  title="Show recent terminal links"
+                >
+                  {detectedLinks.length}
+                </button>
+              )}
+              {showLinkMenu && (
+                <div className="absolute right-0 top-10 z-20 w-72 rounded-lg border border-border bg-popover p-1 shadow-xl">
+                  {detectedLinks.slice().reverse().map((url) => (
+                    <button
+                      key={url}
+                      type="button"
+                      onClick={() => {
+                        onOpenLinkInBrowser(url)
+                        setShowLinkMenu(false)
+                      }}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-popover-foreground hover:bg-accent"
+                      title={url}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{url}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {onWorkspaceModeChange && (
             <div className="shrink-0">
               <WorkspaceModeToggle mode={workspaceMode} onChange={onWorkspaceModeChange} compact />
@@ -311,7 +422,7 @@ export function SessionTerminalView({
           )}
         </div>
       </div>
-      {showSearch && (
+      {!chromeOnly && showSearch && (
         <TerminalSearchBar
           searchAddon={searchAddonRef.current}
           onClose={() => { setShowSearch(false); termRef.current?.focus() }}
@@ -325,51 +436,58 @@ export function SessionTerminalView({
           onClose={() => setShowAI(false)}
         />
       )}
-      <div
-        ref={containerRef}
-        className="min-h-0 flex-1"
-        onClick={handleContainerClick}
-      />
-      <SuggestBar
-        visible={showSuggestions && isConnected}
-        inputLine={currentInputLine}
-        historyEntries={[]}
-        terminalContext={showSuggestions ? getTerminalContext() : ''}
-        onAccept={(cmd) => {
-          const remaining = cmd.slice(currentInputLine.length)
-          if (remaining) onSendRawRef.current(remaining)
-          inputLineRef.current = ''
-          setCurrentInputLine('')
-          setShowSuggestions(false)
-        }}
-        onDismiss={() => setShowSuggestions(false)}
-      />
-      {isDisconnected && !isReconnecting && onReconnect && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: `${bg}cc` }}>
-          <div className="flex flex-col items-center gap-4 rounded-xl border border-red-500/20 bg-black/60 px-8 py-6 shadow-lg backdrop-blur-sm">
-            <WifiOff className="h-8 w-8 text-red-400" />
-            <p className="text-sm font-medium text-red-300">{t('terminal.connectionLost')}</p>
-            <button
-              type="button"
-              onClick={onReconnect}
-              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/80"
-            >
-              <RefreshCw className="h-4 w-4" />
-              {t('terminal.reconnect')}
-            </button>
-          </div>
-        </div>
-      )}
-      {isReconnecting && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: `${bg}99` }}>
-          <div className="flex flex-col items-center gap-3 rounded-xl border border-amber-500/20 bg-black/60 px-8 py-6 shadow-lg backdrop-blur-sm">
-            <RefreshCw className="h-7 w-7 animate-spin text-amber-400" />
-            <p className="text-sm font-medium text-amber-300">{t('terminal.reconnecting')}</p>
-          </div>
-        </div>
-      )}
-      {isConnected && (
-        <MobileTerminalToolbar onSend={onSendRaw} />
+      {!chromeOnly && (
+        <>
+          <div
+            ref={containerRef}
+            className="min-h-0 flex-1"
+            onClick={handleContainerClick}
+          />
+          <SuggestBar
+            visible={showSuggestions && isConnected}
+            inputLine={currentInputLine}
+            historyEntries={[]}
+            terminalContext={showSuggestions ? getTerminalContext() : ''}
+            onAccept={(cmd) => {
+              const remaining = cmd.slice(currentInputLine.length)
+              if (remaining) onSendRawRef.current(remaining)
+              inputLineRef.current = ''
+              showSuggestionsRef.current = false
+              scheduleInputUiSync()
+            }}
+            onDismiss={() => {
+              showSuggestionsRef.current = false
+              scheduleInputUiSync()
+            }}
+          />
+          {isDisconnected && !isReconnecting && onReconnect && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: `${bg}cc` }}>
+              <div className="flex flex-col items-center gap-4 rounded-xl border border-red-500/20 bg-black/60 px-8 py-6 shadow-lg backdrop-blur-sm">
+                <WifiOff className="h-8 w-8 text-red-400" />
+                <p className="text-sm font-medium text-red-300">{t('terminal.connectionLost')}</p>
+                <button
+                  type="button"
+                  onClick={onReconnect}
+                  className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/80"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  {t('terminal.reconnect')}
+                </button>
+              </div>
+            </div>
+          )}
+          {isReconnecting && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: `${bg}99` }}>
+              <div className="flex flex-col items-center gap-3 rounded-xl border border-amber-500/20 bg-black/60 px-8 py-6 shadow-lg backdrop-blur-sm">
+                <RefreshCw className="h-7 w-7 animate-spin text-amber-400" />
+                <p className="text-sm font-medium text-amber-300">{t('terminal.reconnecting')}</p>
+              </div>
+            </div>
+          )}
+          {isConnected && (
+            <MobileTerminalToolbar onSend={onSendRaw} />
+          )}
+        </>
       )}
     </div>
   )

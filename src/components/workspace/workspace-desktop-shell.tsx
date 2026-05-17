@@ -2,12 +2,14 @@ import type { HostProfile } from '@/lib/hosts'
 import { t } from '@/lib/i18n'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { cn } from '@/lib/utils'
-import { Clock3, LayoutGrid, Monitor, Search, Wifi, X } from 'lucide-react'
+import { LayoutGrid, Minus, Monitor, Search, Square, Volume2, Wifi, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { WorkspaceEmptyApp } from './workspace-empty-app'
 import { WorkspaceAssetInventoryApp } from './workspace-asset-inventory-app'
+import { WorkspaceBrowserApp } from './workspace-browser-app'
+import { WorkspaceEmptyApp } from './workspace-empty-app'
 import { WorkspaceAppGrid } from './workspace-app-grid'
-import { WorkspaceFilesApp } from './workspace-files-app'
+import { WorkspaceFileSystemApp } from './workspace-file-system-app'
+import { WorkspaceFileTransferApp } from './workspace-file-transfer-app'
 import { WorkspaceLogsApp } from './workspace-logs-app'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
@@ -17,17 +19,20 @@ import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
 const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
   { id: 'overview', labelKey: 'workspace.app.overview' },
   { id: 'assetInventory', labelKey: 'workspace.app.assetInventory' },
-  { id: 'files', labelKey: 'workspace.app.files' },
+  { id: 'fileTransfer', labelKey: 'workspace.app.fileTransfer' },
+  { id: 'fileSystem', labelKey: 'workspace.app.fileSystem' },
   { id: 'processes', labelKey: 'workspace.app.processes' },
   { id: 'services', labelKey: 'workspace.app.services' },
   { id: 'toolManager', labelKey: 'workspace.app.toolManager' },
   { id: 'logs', labelKey: 'workspace.app.logs' },
+  { id: 'browser', labelKey: 'workspace.app.browser' },
   { id: 'terminal', labelKey: 'workspace.app.terminal' },
 ]
 
 const TASKBAR_APPS = APP_LABELS.filter((item) => item.id !== 'overview')
 
 interface WorkspaceDesktopShellProps {
+  sessionId: string
   hostName: string
   hostAddress: string
   hostId?: string | null
@@ -35,6 +40,7 @@ interface WorkspaceDesktopShellProps {
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
+  onBrowserCloseRequest?: () => void
 }
 
 interface DesktopWindowState {
@@ -44,18 +50,80 @@ interface DesktopWindowState {
   z: number
 }
 
+const DESKTOP_ICON_RAIL_WIDTH = 112
+const DESKTOP_WINDOW_MIN_WIDTH = 420
+const DESKTOP_WINDOW_MIN_HEIGHT = 360
+const DESKTOP_WINDOW_WIDTH_OFFSET = 176
+const DESKTOP_WINDOW_HEIGHT_OFFSET = 112
+const DESKTOP_WINDOW_MAX_WIDTH = 1080
+const DESKTOP_WINDOW_MAX_HEIGHT = 720
+const DESKTOP_BROWSER_WINDOW_WIDTH_OFFSET = 144
+const DESKTOP_BROWSER_WINDOW_HEIGHT_OFFSET = 96
+const DESKTOP_BROWSER_WINDOW_MAX_WIDTH = 1180
+const DESKTOP_BROWSER_WINDOW_MAX_HEIGHT = 760
+
 const DEFAULT_WINDOW_POSITIONS: Record<WorkspaceAppId, { x: number; y: number }> = {
   overview: { x: 0, y: 0 },
-  assetInventory: { x: 150, y: 48 },
-  files: { x: 170, y: 56 },
-  processes: { x: 220, y: 90 },
-  services: { x: 250, y: 70 },
-  toolManager: { x: 190, y: 72 },
-  logs: { x: 200, y: 120 },
-  terminal: { x: 240, y: 100 },
+  assetInventory: { x: 128, y: 28 },
+  fileTransfer: { x: 128, y: 28 },
+  fileSystem: { x: 144, y: 40 },
+  processes: { x: 160, y: 52 },
+  services: { x: 176, y: 44 },
+  toolManager: { x: 136, y: 36 },
+  logs: { x: 152, y: 64 },
+  browser: { x: 120, y: 24 },
+  terminal: { x: 168, y: 72 },
+}
+
+function getDesktopWindowFrame(app: WorkspaceAppId) {
+  if (app === 'browser') {
+    return {
+      width: `min(${DESKTOP_BROWSER_WINDOW_MAX_WIDTH}px, calc(100% - 9rem))`,
+      height: `min(${DESKTOP_BROWSER_WINDOW_MAX_HEIGHT}px, calc(100% - 6rem))`,
+    }
+  }
+
+  return {
+    width: `min(${DESKTOP_WINDOW_MAX_WIDTH}px, calc(100% - 11rem))`,
+    height: `min(${DESKTOP_WINDOW_MAX_HEIGHT}px, calc(100% - 7rem))`,
+  }
+}
+
+function getDesktopWindowPixelSize(app: WorkspaceAppId, surfaceWidth: number, surfaceHeight: number) {
+  const isBrowser = app === 'browser'
+  const widthOffset = isBrowser ? DESKTOP_BROWSER_WINDOW_WIDTH_OFFSET : DESKTOP_WINDOW_WIDTH_OFFSET
+  const heightOffset = isBrowser ? DESKTOP_BROWSER_WINDOW_HEIGHT_OFFSET : DESKTOP_WINDOW_HEIGHT_OFFSET
+  const maxWidth = isBrowser ? DESKTOP_BROWSER_WINDOW_MAX_WIDTH : DESKTOP_WINDOW_MAX_WIDTH
+  const maxHeight = isBrowser ? DESKTOP_BROWSER_WINDOW_MAX_HEIGHT : DESKTOP_WINDOW_MAX_HEIGHT
+
+  return {
+    width: Math.min(maxWidth, Math.max(DESKTOP_WINDOW_MIN_WIDTH, surfaceWidth - widthOffset)),
+    height: Math.min(maxHeight, Math.max(DESKTOP_WINDOW_MIN_HEIGHT, surfaceHeight - heightOffset)),
+  }
+}
+
+function LiveClock() {
+  const [time, setTime] = useState(() =>
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  )
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+    }, 10000)
+    return () => window.clearInterval(id)
+  }, [])
+  return <>{time}</>
+}
+
+function LiveDate() {
+  const [date] = useState(() =>
+    new Date().toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }),
+  )
+  return <>{date}</>
 }
 
 export function WorkspaceDesktopShell({
+  sessionId,
   hostName,
   hostAddress,
   hostId,
@@ -63,11 +131,13 @@ export function WorkspaceDesktopShell({
   resolveAuthSecret,
   activeApp,
   onSelectApp,
+  onBrowserCloseRequest,
 }: WorkspaceDesktopShellProps) {
   const isOverview = activeApp === 'overview'
   const [showIntroPanel, setShowIntroPanel] = useState(true)
   const [showWidgets, setShowWidgets] = useState(true)
   const [windows, setWindows] = useState<DesktopWindowState[]>([])
+  const desktopSurfaceRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ app: WorkspaceAppId; offsetX: number; offsetY: number } | null>(null)
   const zCounterRef = useRef(3)
 
@@ -95,9 +165,15 @@ export function WorkspaceDesktopShell({
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
-    if (activeApp === 'files') {
+    if (activeApp === 'fileTransfer') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceFilesApp presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFileTransferApp presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'fileSystem') {
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceFileSystemApp presentation="window" sessionId={sessionId} selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -124,6 +200,9 @@ export function WorkspaceDesktopShell({
         return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'browser') {
+      return <WorkspaceBrowserApp sessionId={sessionId} onCloseRequest={onBrowserCloseRequest ?? (() => onSelectApp('overview'))} />
     }
     return <WorkspaceEmptyApp app={activeApp} />
   })()
@@ -168,12 +247,19 @@ export function WorkspaceDesktopShell({
     function handlePointerMove(event: PointerEvent) {
       const drag = dragRef.current
       if (!drag) return
+      const bounds = desktopSurfaceRef.current?.getBoundingClientRect()
+      const surfaceWidth = bounds?.width ?? window.innerWidth
+      const surfaceHeight = bounds?.height ?? window.innerHeight
+      const windowSize = getDesktopWindowPixelSize(drag.app, surfaceWidth, surfaceHeight)
+      const maxX = Math.max(DESKTOP_ICON_RAIL_WIDTH, surfaceWidth - windowSize.width)
+      const maxY = Math.max(24, surfaceHeight - windowSize.height)
+
       setWindows((prev) => prev.map((windowState) => (
         windowState.app === drag.app
           ? {
               ...windowState,
-              x: Math.max(112, event.clientX - drag.offsetX),
-              y: Math.max(24, event.clientY - drag.offsetY),
+              x: Math.min(Math.max(DESKTOP_ICON_RAIL_WIDTH, event.clientX - drag.offsetX), maxX),
+              y: Math.min(Math.max(24, event.clientY - drag.offsetY), maxY),
             }
           : windowState
       )))
@@ -200,9 +286,15 @@ export function WorkspaceDesktopShell({
       }
       return <WorkspaceEmptyApp app={app} />
     }
-    if (app === 'files') {
+    if (app === 'fileTransfer') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceFilesApp presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFileTransferApp presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={app} />
+    }
+    if (app === 'fileSystem') {
+      if ((hostId || hostAddress) && resolveAuthSecret) {
+        return <WorkspaceFileSystemApp presentation="window" sessionId={sessionId} selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
@@ -230,6 +322,9 @@ export function WorkspaceDesktopShell({
       }
       return <WorkspaceEmptyApp app={app} />
     }
+    if (app === 'browser') {
+      return <WorkspaceBrowserApp sessionId={sessionId} onCloseRequest={onBrowserCloseRequest ?? (() => onSelectApp('overview'))} />
+    }
     return <WorkspaceEmptyApp app={app} />
   }
 
@@ -246,9 +341,13 @@ export function WorkspaceDesktopShell({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[linear-gradient(180deg,#dbeafe_0%,#bfdbfe_40%,#93c5fd_100%)] text-foreground">
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.55),transparent_22%),radial-gradient(circle_at_bottom_right,rgba(59,130,246,0.3),transparent_28%),linear-gradient(135deg,rgba(255,255,255,0.15),transparent_42%)]" />
+    <div
+      data-testid="workspace-desktop-shell"
+      className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-[var(--workspace-bg-950)] text-[var(--workspace-text)]"
+    >
+      <div ref={desktopSurfaceRef} className="relative min-h-0 flex-1 overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(26,42,58,0.92)_0%,rgba(16,25,34,0.98)_68%),radial-gradient(circle_at_top_right,rgba(19,127,236,0.18),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(70,160,245,0.12),transparent_30%)]" />
+        <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.05)_1px,transparent_1px)] [background-size:28px_28px]" />
         <div className="absolute left-6 top-6 z-20 hidden md:block">
           <WorkspaceAppGrid activeApp={activeApp} onSelectApp={openDesktopApp} variant="desktop" />
         </div>
@@ -256,23 +355,23 @@ export function WorkspaceDesktopShell({
         {isOverview ? (
           <div className="relative h-full w-full">
             {showIntroPanel && (
-              <div className="absolute left-[8.5rem] top-8 z-10 hidden w-[24rem] rounded-2xl border border-white/55 bg-white/44 px-5 py-4 shadow-[0_12px_30px_rgba(15,23,42,0.14)] backdrop-blur md:block">
+              <div className="absolute left-[8.5rem] top-8 z-10 hidden w-[24rem] rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-5 py-4 shadow-[0_20px_25px_-5px_rgba(0,0,0,0.5),0_10px_10px_-5px_rgba(0,0,0,0.4)] backdrop-blur-md md:block">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-600">{t('workspace.desktop.desktop')}</div>
-                    <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">{hostName}</div>
-                    <div className="mt-1 text-sm text-slate-700">{hostAddress}</div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--workspace-text-subtle)]">{t('workspace.desktop.desktop')}</div>
+                    <div className="mt-3 text-3xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">{hostName}</div>
+                    <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">{hostAddress}</div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setShowIntroPanel(false)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-white/50 hover:text-slate-900"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-white/8 hover:text-[var(--workspace-text-strong)]"
                     aria-label="Close desktop intro"
                   >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="mt-4 flex items-center gap-2 text-sm text-slate-700">
+                <div className="mt-4 flex items-center gap-2 text-sm text-[var(--workspace-text)]">
                   <Monitor className="h-4 w-4" />
                   <span>{t('workspace.desktop.ready')}</span>
                 </div>
@@ -281,13 +380,13 @@ export function WorkspaceDesktopShell({
 
             {showWidgets && (
               <div className="absolute bottom-8 right-8 z-10 hidden w-[26rem] space-y-4 md:block">
-                <div className="rounded-[24px] border border-white/65 bg-white/52 px-4 py-4 shadow-[0_16px_36px_rgba(15,23,42,0.15)] backdrop-blur">
+                <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-4 py-4 shadow-[0_20px_25px_-5px_rgba(0,0,0,0.5),0_10px_10px_-5px_rgba(0,0,0,0.4)] backdrop-blur-md">
                   <div className="mb-3 flex items-center justify-between gap-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-600">{t('workspace.desktop.widgetStack')}</div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-subtle)]">{t('workspace.desktop.widgetStack')}</div>
                     <button
                       type="button"
                       onClick={() => setShowWidgets(false)}
-                      className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-600 hover:bg-white/50 hover:text-slate-900"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-white/8 hover:text-[var(--workspace-text-strong)]"
                       aria-label="Close desktop widgets"
                     >
                       <X className="h-3.5 w-3.5" />
@@ -300,10 +399,10 @@ export function WorkspaceDesktopShell({
                   resolveAuthSecret={resolveAuthSecret}
                 />
                 </div>
-                <div className="rounded-[24px] border border-white/65 bg-white/52 px-4 py-4 shadow-[0_16px_36px_rgba(15,23,42,0.15)] backdrop-blur">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-600">{t('workspace.desktop.quickHint')}</div>
-                  <div className="mt-3 text-sm font-medium text-slate-900">{t('workspace.desktop.doubleClickHint')}</div>
-                  <div className="mt-1 text-sm text-slate-700">{t('workspace.desktop.taskbarHint')}</div>
+                <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] px-4 py-4 shadow-[0_20px_25px_-5px_rgba(0,0,0,0.4)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-subtle)]">{t('workspace.desktop.quickHint')}</div>
+                  <div className="mt-3 text-sm font-medium text-[var(--workspace-text-strong)]">{t('workspace.desktop.doubleClickHint')}</div>
+                  <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">{t('workspace.desktop.taskbarHint')}</div>
                 </div>
               </div>
             )}
@@ -316,45 +415,71 @@ export function WorkspaceDesktopShell({
               .map((windowState) => (
                 <section
                   key={windowState.app}
-                  className="absolute flex min-h-[24rem] min-w-0 flex-col overflow-hidden rounded-[22px] border border-white/72 bg-white/82 shadow-[0_18px_48px_rgba(15,23,42,0.20)] backdrop-blur"
+                  data-testid={`workspace-desktop-window-${windowState.app}`}
+                  className={cn(
+                    'absolute flex min-h-[20rem] min-w-[20rem] flex-col overflow-hidden rounded-xl border bg-[var(--workspace-surface-900)] shadow-[0_20px_25px_-5px_rgba(0,0,0,0.5),0_10px_10px_-5px_rgba(0,0,0,0.4)] backdrop-blur-md',
+                    activeApp === windowState.app
+                      ? 'border-[color:var(--workspace-border-glow)]'
+                      : 'border-[color:var(--workspace-border-strong)]',
+                  )}
                   style={{
                     left: windowState.x,
                     top: windowState.y,
-                    width: 'min(1080px, calc(100vw - 22rem))',
-                    height: 'min(720px, calc(100vh - 11rem))',
+                    ...getDesktopWindowFrame(windowState.app),
                     zIndex: windowState.z,
                   }}
                 >
                   <div
-                    className="flex cursor-move items-center justify-between gap-4 border-b border-slate-200/80 bg-white/84 px-4 py-3"
+                    className="flex cursor-move items-center justify-between gap-4 border-b border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] px-4 py-2"
                     onPointerDown={(event) => beginDrag(windowState.app, event.clientX, event.clientY)}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-sky-500/15 text-sky-700">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[rgba(19,127,236,0.18)] text-[var(--workspace-primary-300)]">
                         <LayoutGrid className="h-4 w-4" />
                       </div>
                       <div>
-                        <div className="text-sm font-semibold">{t(APP_LABELS.find((app) => app.id === windowState.app)?.labelKey ?? 'workspace.app.overview')}</div>
-                        <div className="text-xs text-muted-foreground">{hostName} · {hostAddress}</div>
+                        <div className="text-sm font-semibold text-[var(--workspace-text-strong)]">{t(APP_LABELS.find((app) => app.id === windowState.app)?.labelKey ?? 'workspace.app.overview')}</div>
+                        <div className="text-xs text-[var(--workspace-text-muted)]">{hostName} · {hostAddress}</div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="hidden items-center gap-2 text-xs text-slate-600 md:flex">
+                      <div className="hidden items-center gap-2 text-xs text-[var(--workspace-text-muted)] md:flex">
                         <Wifi className="h-3.5 w-3.5" />
                         <span>{t('workspace.desktop.connected')}</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => closeWindow(windowState.app)}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-red-50 hover:text-red-600"
-                        aria-label={`Close ${t(APP_LABELS.find((app) => app.id === windowState.app)?.labelKey ?? 'workspace.app.overview')} window`}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-white/8 hover:text-[var(--workspace-text-strong)]"
+                          aria-label="Minimize window"
+                        >
+                          <Minus className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-white/8 hover:text-[var(--workspace-text-strong)]"
+                          aria-label="Maximize window"
+                        >
+                          <Square className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => closeWindow(windowState.app)}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[rgba(239,68,68,0.12)] hover:text-[#fda4af]"
+                          aria-label={`Close ${t(APP_LABELS.find((app) => app.id === windowState.app)?.labelKey ?? 'workspace.app.overview')} window`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                   <div
-                    className="min-h-0 flex-1 overflow-auto p-4 md:p-5"
+                    className={cn(
+                      'min-h-0 flex-1',
+                      windowState.app === 'browser'
+                        ? 'overflow-hidden p-0'
+                        : 'overflow-auto p-4 md:p-5',
+                    )}
                     onMouseDown={() => focusWindow(windowState.app)}
                   >
                     {renderWindowBody(windowState.app)}
@@ -365,43 +490,67 @@ export function WorkspaceDesktopShell({
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t border-slate-200/70 bg-white/80 px-3 py-2 backdrop-blur">
+      <div
+        data-testid="workspace-desktop-taskbar"
+        className="flex w-full min-w-0 items-center justify-between gap-3 border-t border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-3 py-2 backdrop-blur-xl"
+      >
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => onSelectApp('overview')}
-            className="flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-sky-700"
+            className="flex items-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[linear-gradient(180deg,var(--workspace-primary-400),var(--workspace-primary-500))] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_26px_rgba(19,127,236,0.25)] hover:brightness-110"
           >
             <LayoutGrid className="h-4 w-4" />
             Start
           </button>
-          <div className="hidden items-center gap-1.5 md:flex">
-            {TASKBAR_APPS.map((app) => (
-              <button
-                key={app.id}
-                type="button"
-                onClick={() => openDesktopApp(app.id)}
-                className={cn(
-                  'rounded-xl border px-3 py-2 text-xs font-medium transition-colors',
-                  windows.some((windowState) => windowState.app === app.id) && activeApp === app.id
-                    ? 'border-sky-300 bg-sky-100 text-sky-800'
-                    : 'border-white/70 bg-white/65 text-slate-700 hover:bg-white',
-                )}
-              >
-                {t(app.labelKey)}
-              </button>
-            ))}
+          <div className="mx-1 h-6 w-px bg-[color:var(--workspace-border-strong)]" />
+          <div className="hidden items-center gap-1 md:flex">
+            {TASKBAR_APPS.map((app) => {
+              const isOpen = windows.some((w) => w.app === app.id)
+              const isActive = isOpen && activeApp === app.id
+              return (
+                <button
+                  key={app.id}
+                  type="button"
+                  onClick={() => openDesktopApp(app.id)}
+                  className={cn(
+                    'relative rounded-lg px-3 py-2 text-xs font-medium transition-colors',
+                    isActive
+                      ? 'bg-[rgba(30,44,60,0.9)] text-[var(--workspace-text-strong)]'
+                      : isOpen
+                        ? 'bg-[rgba(24,35,48,0.72)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]'
+                        : 'text-[var(--workspace-text-muted)] hover:bg-[rgba(24,35,48,0.72)] hover:text-[var(--workspace-text-strong)]',
+                  )}
+                >
+                  {t(app.labelKey)}
+                  {isActive && (
+                    <span className="absolute bottom-0 left-1/2 h-0.5 w-4 -translate-x-1/2 rounded-full bg-[color:var(--workspace-primary-400)]" />
+                  )}
+                  {isOpen && !isActive && (
+                    <span className="absolute bottom-0 left-1/2 h-0.5 w-1.5 -translate-x-1/2 rounded-full bg-[color:var(--workspace-text-subtle)]" />
+                  )}
+                </button>
+              )
+            })}
           </div>
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-slate-700">
-          <div className="hidden items-center gap-1 rounded-lg border border-white/70 bg-white/60 px-3 py-2 md:flex">
+        <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]">
+          <div className="hidden items-center gap-1 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.72)] px-3 py-2 md:flex">
             <Search className="h-3.5 w-3.5" />
             <span>{t('workspace.desktop.search')}</span>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-white/70 bg-white/60 px-3 py-2">
-            <Clock3 className="h-3.5 w-3.5" />
-            <span>09:41</span>
+          <div className="hidden items-center gap-3 px-2 md:flex">
+            <Wifi className="h-4 w-4" />
+            <Volume2 className="h-4 w-4" />
+          </div>
+          <div className="flex flex-col items-end leading-none rounded-lg border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.72)] px-3 py-1.5">
+            <span className="text-[11px] font-bold text-[var(--workspace-text-strong)]">
+              <LiveClock />
+            </span>
+            <span className="mt-0.5 text-[9px] text-[var(--workspace-text-subtle)]">
+              <LiveDate />
+            </span>
           </div>
         </div>
       </div>

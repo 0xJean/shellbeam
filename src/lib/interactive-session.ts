@@ -1,7 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { toInvokeErrorMessage } from '@/lib/invoke-error'
 
 import type { AuthType } from '@/lib/ssh'
+
+const INTERACTIVE_OUTPUT_EVENT = 'shellbeam://interactive-output'
+const INTERACTIVE_STATUS_EVENT = 'shellbeam://interactive-status'
+const INTERACTIVE_PROGRESS_EVENT = 'shellbeam://interactive-progress'
 
 export interface InteractiveSessionCreateRequest {
   hostId?: string
@@ -43,6 +49,21 @@ export interface InteractivePollResponse {
   status: string
   nextSeq: number
   chunks: InteractiveOutputChunk[]
+}
+
+export interface InteractiveOutputEventPayload {
+  sessionId: string
+  chunks: InteractiveOutputChunk[]
+}
+
+export interface InteractiveStatusEventPayload {
+  sessionId: string
+  status: string
+}
+
+export interface InteractiveProgressEventPayload {
+  sessionId: string
+  stage: string
 }
 
 export async function createInteractiveSession(payload: InteractiveSessionCreateRequest) {
@@ -103,4 +124,28 @@ export async function createLocalTerminal(cols?: number, rows?: number) {
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))
   }
+}
+
+export async function listenToInteractiveOutputEvents(
+  handler: (payload: InteractiveOutputEventPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<InteractiveOutputEventPayload>(INTERACTIVE_OUTPUT_EVENT, (event) => {
+    handler(event.payload)
+  })
+}
+
+export async function listenToInteractiveStatusEvents(
+  handler: (payload: InteractiveStatusEventPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<InteractiveStatusEventPayload>(INTERACTIVE_STATUS_EVENT, (event) => {
+    handler(event.payload)
+  })
+}
+
+export async function listenToInteractiveProgressEvents(
+  handler: (payload: InteractiveProgressEventPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<InteractiveProgressEventPayload>(INTERACTIVE_PROGRESS_EVENT, (event) => {
+    handler(event.payload)
+  })
 }

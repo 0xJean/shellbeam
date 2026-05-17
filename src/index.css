@@ -23,6 +23,30 @@
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
+
+    --workspace-primary-500: #137fec;
+    --workspace-primary-400: #46a0f5;
+    --workspace-primary-300: #7dc1ff;
+    --workspace-bg-950: #101922;
+    --workspace-bg-900: #162330;
+    --workspace-bg-850: #1a2a3a;
+    --workspace-surface-900: rgba(15, 23, 42, 0.93);
+    --workspace-surface-800: rgba(30, 41, 59, 0.95);
+    --workspace-surface-700: rgba(51, 65, 85, 0.82);
+    --workspace-border-strong: rgba(51, 65, 85, 0.65);
+    --workspace-border-soft: rgba(51, 65, 85, 0.28);
+    --workspace-border-glow: rgba(19, 127, 236, 0.55);
+    --workspace-text-strong: #f1f5f9;
+    --workspace-text: #cbd5e1;
+    --workspace-text-muted: #94a3b8;
+    --workspace-text-subtle: #64748b;
+    --workspace-mobile-bg-top: #d9e9f8;
+    --workspace-mobile-bg-mid: #c8dcf2;
+    --workspace-mobile-bg-bottom: #edf4fb;
+    --workspace-mobile-card: rgba(255, 255, 255, 0.74);
+    --workspace-mobile-card-strong: rgba(255, 255, 255, 0.88);
+    --workspace-mobile-stroke: rgba(111, 131, 152, 0.16);
+    --workspace-mobile-accent: #137fec;
   }
 
   .dark {

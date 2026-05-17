@@ -5,20 +5,19 @@
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use std::collections::HashMap;
-#[cfg(target_os = "ios")]
-use std::sync::Mutex;
 use std::net::TcpListener;
 use std::sync::atomic::Ordering;
+#[cfg(target_os = "ios")]
+use std::sync::Mutex;
 use std::thread;
 
-use super::transport::{
-    SERVER_RUNNING, SERVER_PORT, SYNC_DEFAULT_PORT, serve_connection,
-};
+use super::transport::{serve_connection, SERVER_PORT, SERVER_RUNNING, SYNC_DEFAULT_PORT};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
-use super::transport::{SHELLBEAM_SERVICE_TYPE, MDNS_DAEMON};
+use super::transport::{MDNS_DAEMON, SHELLBEAM_SERVICE_TYPE};
 
 fn sanitize_hostname_for_dns(name: &str) -> String {
-    let s: String = name.chars()
+    let s: String = name
+        .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
     let s = s.trim_matches('-');
@@ -43,8 +42,12 @@ fn native_device_name() -> String {
             let name: *mut Object = msg_send![device, name];
             let utf8: *const std::os::raw::c_char = msg_send![name, UTF8String];
             if !utf8.is_null() {
-                let s = std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned();
-                if !s.is_empty() { return s; }
+                let s = std::ffi::CStr::from_ptr(utf8)
+                    .to_string_lossy()
+                    .into_owned();
+                if !s.is_empty() {
+                    return s;
+                }
             }
         }
     }
@@ -83,13 +86,21 @@ fn native_device_name() -> String {
 
 fn device_type() -> &'static str {
     #[cfg(target_os = "ios")]
-    { "phone" }
+    {
+        "phone"
+    }
     #[cfg(target_os = "android")]
-    { "phone" }
+    {
+        "phone"
+    }
     #[cfg(target_os = "macos")]
-    { "computer" }
+    {
+        "computer"
+    }
     #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "android")))]
-    { "computer" }
+    {
+        "computer"
+    }
 }
 
 pub(crate) fn find_lan_ipv4() -> Option<std::net::Ipv4Addr> {
@@ -97,11 +108,17 @@ pub(crate) fn find_lan_ipv4() -> Option<std::net::Ipv4Addr> {
         let mut preferred: Option<std::net::Ipv4Addr> = None;
         let mut fallback: Option<std::net::Ipv4Addr> = None;
         for iface in &ifaces {
-            if iface.is_loopback() { continue; }
+            if iface.is_loopback() {
+                continue;
+            }
             if let std::net::IpAddr::V4(v4) = iface.ip() {
-                if v4.is_link_local() || v4.is_loopback() { continue; }
+                if v4.is_link_local() || v4.is_loopback() {
+                    continue;
+                }
                 if iface.name.starts_with("en") || iface.name.starts_with("wlan") {
-                    if preferred.is_none() { preferred = Some(v4); }
+                    if preferred.is_none() {
+                        preferred = Some(v4);
+                    }
                 } else if fallback.is_none() {
                     fallback = Some(v4);
                 }
@@ -122,62 +139,94 @@ pub(crate) fn register_mdns_service(port: u16) {
     let device_name = native_device_name();
     let instance_name = if device_name.is_empty() || device_name == "localhost" {
         format!("ShellBeam-{port}")
-    } else { device_name };
+    } else {
+        device_name
+    };
 
     #[cfg(target_os = "ios")]
-    { register_mdns_service_ios(port, &instance_name); }
+    {
+        register_mdns_service_ios(port, &instance_name);
+    }
     #[cfg(target_os = "android")]
-    { log::info!("[android] mDNS registration skipped (handled by NsdHelper): name={} port={}", instance_name, port); }
+    {
+        log::info!(
+            "[android] mDNS registration skipped (handled by NsdHelper): name={} port={}",
+            instance_name,
+            port
+        );
+    }
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    { register_mdns_service_mdns_sd(port, &instance_name); }
+    {
+        register_mdns_service_mdns_sd(port, &instance_name);
+    }
 }
 
 #[cfg(target_os = "ios")]
 fn register_mdns_service_ios(port: u16, instance_name: &str) {
     let name_owned = instance_name.to_string();
-    std::thread::spawn(move || {
-        unsafe {
-            use objc::runtime::{Class, Object, BOOL};
-            use objc::{msg_send, sel, sel_impl};
-            let cls = Class::get("NSNetService").unwrap();
-            let alloc: *mut Object = msg_send![cls, alloc];
-            let ns_string_cls = Class::get("NSString").unwrap();
-            let domain: *mut Object = msg_send![ns_string_cls, stringWithUTF8String: b"\0".as_ptr()];
-            let svc_type_str = b"_shellbeam._tcp.\0";
-            let svc_type: *mut Object = msg_send![ns_string_cls, stringWithUTF8String: svc_type_str.as_ptr()];
-            let name_cstr = std::ffi::CString::new(name_owned.as_str()).unwrap_or_default();
-            let name: *mut Object = msg_send![ns_string_cls, stringWithUTF8String: name_cstr.as_ptr()];
-            let service: *mut Object = msg_send![alloc,
-                initWithDomain: domain type: svc_type name: name port: (port as i32)
-            ];
-            if service.is_null() { log::warn!("[iOS] NSNetService init returned nil"); return; }
-
-            let dt_key: *mut Object = msg_send![ns_string_cls, stringWithUTF8String: b"dt\0".as_ptr()];
-            let dt_val: *mut Object = msg_send![ns_string_cls, stringWithUTF8String: b"phone\0".as_ptr()];
-            let dict_cls = Class::get("NSDictionary").unwrap();
-            let txt_dict: *mut Object = msg_send![dict_cls, dictionaryWithObject: dt_val forKey: dt_key];
-            let ns_net_service_cls = Class::get("NSNetService").unwrap();
-            let txt_data: *mut Object = msg_send![ns_net_service_cls, dataFromTXTRecordDictionary: txt_dict];
-            let _: BOOL = msg_send![service, setTXTRecordData: txt_data];
-
-            let run_loop_cls = Class::get("NSRunLoop").unwrap();
-            let current_rl: *mut Object = msg_send![run_loop_cls, currentRunLoop];
-            let default_mode: *mut Object = msg_send![ns_string_cls, stringWithUTF8String: b"kCFRunLoopDefaultMode\0".as_ptr()];
-            let _: () = msg_send![service, scheduleInRunLoop: current_rl forMode: default_mode];
-            let _: () = msg_send![service, publish];
-            log::info!("[iOS] NSNetService published: name={} port={}", name_owned, port);
-
-            let cf_rl: *mut std::ffi::c_void = msg_send![current_rl, getCFRunLoop];
-            if let Ok(mut guard) = IOS_NET_SERVICE.lock() { *guard = Some(service as usize); }
-            if let Ok(mut guard) = IOS_SERVICE_RUNLOOP.lock() { *guard = Some(cf_rl as usize); }
-
-            #[link(name = "CoreFoundation", kind = "framework")]
-            extern "C" { fn CFRunLoopRun(); }
-            CFRunLoopRun();
-            log::info!("[iOS] NSNetService RunLoop exited");
+    std::thread::spawn(move || unsafe {
+        use objc::runtime::{Class, Object, BOOL};
+        use objc::{msg_send, sel, sel_impl};
+        let cls = Class::get("NSNetService").unwrap();
+        let alloc: *mut Object = msg_send![cls, alloc];
+        let ns_string_cls = Class::get("NSString").unwrap();
+        let domain: *mut Object = msg_send![ns_string_cls, stringWithUTF8String: b"\0".as_ptr()];
+        let svc_type_str = b"_shellbeam._tcp.\0";
+        let svc_type: *mut Object =
+            msg_send![ns_string_cls, stringWithUTF8String: svc_type_str.as_ptr()];
+        let name_cstr = std::ffi::CString::new(name_owned.as_str()).unwrap_or_default();
+        let name: *mut Object = msg_send![ns_string_cls, stringWithUTF8String: name_cstr.as_ptr()];
+        let service: *mut Object = msg_send![alloc,
+            initWithDomain: domain type: svc_type name: name port: (port as i32)
+        ];
+        if service.is_null() {
+            log::warn!("[iOS] NSNetService init returned nil");
+            return;
         }
+
+        let dt_key: *mut Object = msg_send![ns_string_cls, stringWithUTF8String: b"dt\0".as_ptr()];
+        let dt_val: *mut Object =
+            msg_send![ns_string_cls, stringWithUTF8String: b"phone\0".as_ptr()];
+        let dict_cls = Class::get("NSDictionary").unwrap();
+        let txt_dict: *mut Object =
+            msg_send![dict_cls, dictionaryWithObject: dt_val forKey: dt_key];
+        let ns_net_service_cls = Class::get("NSNetService").unwrap();
+        let txt_data: *mut Object =
+            msg_send![ns_net_service_cls, dataFromTXTRecordDictionary: txt_dict];
+        let _: BOOL = msg_send![service, setTXTRecordData: txt_data];
+
+        let run_loop_cls = Class::get("NSRunLoop").unwrap();
+        let current_rl: *mut Object = msg_send![run_loop_cls, currentRunLoop];
+        let default_mode: *mut Object =
+            msg_send![ns_string_cls, stringWithUTF8String: b"kCFRunLoopDefaultMode\0".as_ptr()];
+        let _: () = msg_send![service, scheduleInRunLoop: current_rl forMode: default_mode];
+        let _: () = msg_send![service, publish];
+        log::info!(
+            "[iOS] NSNetService published: name={} port={}",
+            name_owned,
+            port
+        );
+
+        let cf_rl: *mut std::ffi::c_void = msg_send![current_rl, getCFRunLoop];
+        if let Ok(mut guard) = IOS_NET_SERVICE.lock() {
+            *guard = Some(service as usize);
+        }
+        if let Ok(mut guard) = IOS_SERVICE_RUNLOOP.lock() {
+            *guard = Some(cf_rl as usize);
+        }
+
+        #[link(name = "CoreFoundation", kind = "framework")]
+        extern "C" {
+            fn CFRunLoopRun();
+        }
+        CFRunLoopRun();
+        log::info!("[iOS] NSNetService RunLoop exited");
     });
-    log::info!("[iOS] mDNS Bonjour service thread started: name={} port={}", instance_name, port);
+    log::info!(
+        "[iOS] mDNS Bonjour service thread started: name={} port={}",
+        instance_name,
+        port
+    );
 }
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
@@ -190,8 +239,15 @@ fn register_mdns_service_mdns_sd(port: u16, instance_name: &str) {
 
     match ServiceDaemon::new() {
         Ok(daemon) => {
-            match ServiceInfo::new(SHELLBEAM_SERVICE_TYPE, instance_name, &host_name, &ip_str, port, Some(props))
-                .map(|s| s.enable_addr_auto())
+            match ServiceInfo::new(
+                SHELLBEAM_SERVICE_TYPE,
+                instance_name,
+                &host_name,
+                &ip_str,
+                port,
+                Some(props),
+            )
+            .map(|s| s.enable_addr_auto())
             {
                 Ok(info) => {
                     if let Err(e) = daemon.register(info) {
@@ -202,7 +258,9 @@ fn register_mdns_service_mdns_sd(port: u16, instance_name: &str) {
                 }
                 Err(e) => log::warn!("mDNS ServiceInfo creation failed: {e}"),
             }
-            if let Ok(mut guard) = MDNS_DAEMON.lock() { *guard = Some(daemon); }
+            if let Ok(mut guard) = MDNS_DAEMON.lock() {
+                *guard = Some(daemon);
+            }
         }
         Err(e) => log::warn!("mDNS daemon creation failed: {e}"),
     }
@@ -226,7 +284,9 @@ pub(crate) fn unregister_mdns_service() {
             if let Some(rl_ptr) = guard.take() {
                 unsafe {
                     #[link(name = "CoreFoundation", kind = "framework")]
-                    extern "C" { fn CFRunLoopStop(rl: *mut std::ffi::c_void); }
+                    extern "C" {
+                        fn CFRunLoopStop(rl: *mut std::ffi::c_void);
+                    }
                     CFRunLoopStop(rl_ptr as *mut std::ffi::c_void);
                     log::info!("[iOS] NSNetService RunLoop stopped");
                 }
@@ -234,7 +294,9 @@ pub(crate) fn unregister_mdns_service() {
         }
     }
     #[cfg(target_os = "android")]
-    { log::info!("[android] mDNS unregistration skipped (handled by NsdHelper)"); }
+    {
+        log::info!("[android] mDNS unregistration skipped (handled by NsdHelper)");
+    }
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         if let Ok(mut guard) = MDNS_DAEMON.lock() {
@@ -279,13 +341,18 @@ pub fn server_loop(app: tauri::AppHandle, port: u16) {
             }
         }
     };
-    let actual_addr = listener.local_addr().map(|a| a.to_string()).unwrap_or_default();
+    let actual_addr = listener
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_default();
     SERVER_RUNNING.store(true, Ordering::SeqCst);
     SERVER_PORT.store(port, Ordering::SeqCst);
     register_mdns_service(port);
     log::info!("Sync server listening on {actual_addr}");
     for stream in listener.incoming() {
-        if !SERVER_RUNNING.load(Ordering::SeqCst) { break; }
+        if !SERVER_RUNNING.load(Ordering::SeqCst) {
+            break;
+        }
         match stream {
             Ok(s) => {
                 let app_clone = app.clone();
@@ -312,10 +379,15 @@ pub fn mdns_diagnose() -> Vec<String> {
     }
     match if_addrs::get_if_addrs() {
         Ok(ifaces) => {
-            let ipv4_non_lo: Vec<_> = ifaces.iter()
+            let ipv4_non_lo: Vec<_> = ifaces
+                .iter()
                 .filter(|i| !i.is_loopback() && matches!(i.ip(), std::net::IpAddr::V4(_)))
                 .collect();
-            log.push(format!("[OK] if_addrs: {} total, {} non-loopback IPv4", ifaces.len(), ipv4_non_lo.len()));
+            log.push(format!(
+                "[OK] if_addrs: {} total, {} non-loopback IPv4",
+                ifaces.len(),
+                ipv4_non_lo.len()
+            ));
             for iface in &ipv4_non_lo {
                 log.push(format!("  - {} ip={}", iface.name, iface.ip()));
             }
@@ -325,15 +397,26 @@ pub fn mdns_diagnose() -> Vec<String> {
 
     let port = SERVER_PORT.load(Ordering::SeqCst);
     let test_port = if port > 0 { port } else { SYNC_DEFAULT_PORT };
-    log.push(format!("[INFO] sync server port = {} (0 = not started)", port));
+    log.push(format!(
+        "[INFO] sync server port = {} (0 = not started)",
+        port
+    ));
 
     let instance_name = if device_name.is_empty() || device_name == "localhost" {
         format!("ShellBeam-{test_port}")
-    } else { device_name };
+    } else {
+        device_name
+    };
     let dns_safe = sanitize_hostname_for_dns(&instance_name);
     let host_name = format!("{dns_safe}.local.");
     let ip_str = find_lan_ipv4().map(|ip| ip.to_string()).unwrap_or_default();
-    log.push(format!("[INFO] instance={:?} host={:?} ip={:?} dt={:?}", instance_name, host_name, ip_str, device_type()));
+    log.push(format!(
+        "[INFO] instance={:?} host={:?} ip={:?} dt={:?}",
+        instance_name,
+        host_name,
+        ip_str,
+        device_type()
+    ));
 
     #[cfg(target_os = "android")]
     {
@@ -348,7 +431,14 @@ pub fn mdns_diagnose() -> Vec<String> {
         match ServiceDaemon::new() {
             Ok(daemon) => {
                 log.push("[OK] ServiceDaemon::new() succeeded".to_string());
-                match ServiceInfo::new(SHELLBEAM_SERVICE_TYPE, &instance_name, &host_name, &ip_str, test_port, None) {
+                match ServiceInfo::new(
+                    SHELLBEAM_SERVICE_TYPE,
+                    &instance_name,
+                    &host_name,
+                    &ip_str,
+                    test_port,
+                    None,
+                ) {
                     Ok(info) => {
                         let info = info.enable_addr_auto();
                         log.push("[OK] ServiceInfo::new() succeeded".to_string());

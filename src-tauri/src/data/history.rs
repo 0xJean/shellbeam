@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 use uuid::Uuid;
 
 use crate::ssh::{CommandRunResult, SshRequest};
@@ -6,6 +7,10 @@ use crate::storage::{
     data_file_path, now_unix_ms, read_json_or_default, write_json, HISTORY_FILE,
     MAX_HISTORY_ENTRIES,
 };
+
+lazy_static::lazy_static! {
+    static ref HISTORY_FILE_LOCK: Mutex<()> = Mutex::new(());
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +54,9 @@ pub fn append_history(
     payload: &SshRequest,
     result: &CommandRunResult,
 ) -> Result<(), String> {
+    let _guard = HISTORY_FILE_LOCK
+        .lock()
+        .map_err(|_| "History file mutex poisoned".to_string())?;
     let mut history = load_history(app)?;
     let status = if result.error_type.is_none() && result.exit_code == 0 {
         "success"
@@ -81,6 +89,9 @@ pub fn list_command_history(
     app: tauri::AppHandle,
     filter: Option<HistoryFilter>,
 ) -> Result<Vec<CommandHistoryEntry>, String> {
+    let _guard = HISTORY_FILE_LOCK
+        .lock()
+        .map_err(|_| "History file mutex poisoned".to_string())?;
     let history = load_history(&app)?;
     let Some(filter) = filter else {
         return Ok(history);

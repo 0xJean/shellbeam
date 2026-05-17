@@ -5,6 +5,22 @@ import { Columns2, LayoutDashboard, Plus, RefreshCw, SquareTerminal, X } from 'l
 
 export type { SessionTab }
 
+export interface SessionBrowserTabMeta {
+  tabCount: number
+  routeScope: 'local' | 'remote' | 'pending'
+  routeLabel: 'Local' | 'Server' | 'Pending'
+  detail: string
+}
+
+export interface BrowserSwitcherSummary {
+  totalTabs: number
+  recentHostLabel: string | null
+  remoteTabs: number
+  localTabs: number
+  pendingTabs: number
+  scope: 'remote' | 'local' | 'pending' | 'mixed'
+}
+
 interface PcSessionTabBarProps {
   sessionTabs: SessionTab[]
   activeSessionId: string | null
@@ -31,6 +47,7 @@ export function PcSessionTabBar({
   onToggleSplit,
 }: PcSessionTabBarProps) {
   const { t } = useT()
+
   return (
     <div className="sticky top-0 z-50 hidden h-12 shrink-0 items-end gap-0 overflow-x-auto border-b border-border/50 bg-background/95 px-1 shadow-sm backdrop-blur-sm scrollbar-none md:flex md:h-10">
       <button

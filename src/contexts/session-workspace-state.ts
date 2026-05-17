@@ -1,6 +1,7 @@
 import type { SessionTab } from '@/lib/types'
 import {
   getInitialWorkspaceSessionState,
+  normalizeWorkspaceApp,
   type SessionWorkspaceMode,
   type SessionWorkspaceState,
   type WorkspaceAppId,
@@ -53,7 +54,7 @@ export function syncSessionTabWorkspace(
     return {
       ...tab,
       mode: workspace.mode,
-      workspaceApp: workspace.activeApp,
+      workspaceApp: normalizeWorkspaceApp(workspace.activeApp),
     }
   })
 }

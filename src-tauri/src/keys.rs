@@ -1,8 +1,8 @@
 //! SSH key generation and import from file.
 
 use serde::{Deserialize, Serialize};
-use ssh_key::{Algorithm, LineEnding, PrivateKey};
 use ssh_key::rand_core::OsRng;
+use ssh_key::{Algorithm, LineEnding, PrivateKey};
 use std::fs;
 use std::path::Path;
 
@@ -20,17 +20,26 @@ pub struct GenerateSshKeyResult {
 #[tauri::command]
 pub fn generate_ssh_key(comment: Option<String>) -> Result<GenerateSshKeyResult, String> {
     let mut rng = OsRng;
-    let mut private_key = PrivateKey::random(&mut rng, Algorithm::Ed25519)
-        .map_err(|err| standard_error_from_raw("keys", "generate", format!("Generate key failed: {err}")))?;
+    let mut private_key = PrivateKey::random(&mut rng, Algorithm::Ed25519).map_err(|err| {
+        standard_error_from_raw("keys", "generate", format!("Generate key failed: {err}"))
+    })?;
     if let Some(c) = comment.filter(|s| !s.trim().is_empty()) {
         private_key.set_comment(c);
     }
-    let private_pem = private_key
-        .to_openssh(LineEnding::LF)
-        .map_err(|err| standard_error_from_raw("keys", "generate", format!("Encode private key failed: {err}")))?;
-    let public_openssh = private_key.public_key()
-        .to_openssh()
-        .map_err(|err| standard_error_from_raw("keys", "generate", format!("Encode public key failed: {err}")))?;
+    let private_pem = private_key.to_openssh(LineEnding::LF).map_err(|err| {
+        standard_error_from_raw(
+            "keys",
+            "generate",
+            format!("Encode private key failed: {err}"),
+        )
+    })?;
+    let public_openssh = private_key.public_key().to_openssh().map_err(|err| {
+        standard_error_from_raw(
+            "keys",
+            "generate",
+            format!("Encode public key failed: {err}"),
+        )
+    })?;
     Ok(GenerateSshKeyResult {
         private_key: private_pem.to_string(),
         public_key: public_openssh.to_string(),
@@ -62,8 +71,9 @@ pub fn import_private_key_from_file(payload: ImportPrivateKeyRequest) -> Result<
             "Path is not a file",
         ));
     }
-    let content = fs::read_to_string(path)
-        .map_err(|err| standard_error_from_raw("keys", "import", format!("Read file failed: {err}")))?;
+    let content = fs::read_to_string(path).map_err(|err| {
+        standard_error_from_raw("keys", "import", format!("Read file failed: {err}"))
+    })?;
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Err(standard_error_from_raw("keys", "import", "File is empty"));

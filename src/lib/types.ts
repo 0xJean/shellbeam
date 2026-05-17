@@ -28,7 +28,11 @@ export interface SessionTab {
   sessionId: string
   hostName: string
   hostAddress: string
+  hostId?: string
+  connectionKind?: 'host' | 'local'
+  connectionStage?: string
   status: 'connecting' | 'connected' | 'closed' | 'error' | 'reconnecting'
+  errorMessage?: string
   mode?: SessionWorkspaceMode
   workspaceApp?: WorkspaceAppId
 }

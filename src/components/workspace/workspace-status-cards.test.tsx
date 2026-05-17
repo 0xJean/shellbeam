@@ -88,6 +88,33 @@ describe('workspace status cards', () => {
     })
   })
 
+  it('marks telemetry as unreachable when the host cannot be accessed', async () => {
+    runSshCommand.mockResolvedValue({
+      stdout: '',
+      stderr: 'TCP connect failed: timed out',
+      exitCode: -1,
+      durationMs: 15000,
+      errorType: 'network',
+      errorCode: 'network_error',
+      errorSource: 'ssh',
+      retryable: true,
+    })
+
+    render(
+      <WorkspaceStatusCards
+        hostAddress="10.0.0.15"
+        selectedHostId="host-1"
+        hosts={[host]}
+        resolveAuthSecret={async () => 'secret'}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Unreachable').length).toBeGreaterThan(0)
+    })
+    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'unreachable')
+  })
+
   it('uses a container-adaptive grid so four cards reflow inside narrow widgets', async () => {
     render(
       <WorkspaceStatusCards
@@ -102,5 +129,21 @@ describe('workspace status cards', () => {
       expect(screen.getByTestId('workspace-status-grid')).toHaveClass('grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]')
     })
     expect(screen.getAllByTestId('workspace-status-card')).toHaveLength(4)
+  })
+
+  it('uses the darker workspace monitor card styling from the visual language spec', async () => {
+    render(
+      <WorkspaceStatusCards
+        hostAddress="10.0.0.15"
+        selectedHostId="host-1"
+        hosts={[host]}
+        resolveAuthSecret={async () => 'secret'}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveClass('bg-[var(--workspace-surface-900)]')
+    })
+    expect(screen.getAllByTestId('workspace-status-meter')[0]).toHaveClass('bg-[rgba(8,15,22,0.9)]')
   })
 })

@@ -4,6 +4,7 @@ import { WorkspaceDesktopShell } from './workspace-desktop-shell'
 import { WorkspaceMobileShell } from './workspace-mobile-shell'
 
 interface WorkspaceShellProps {
+  sessionId: string
   mobile: boolean
   hostName: string
   hostAddress: string
@@ -12,6 +13,7 @@ interface WorkspaceShellProps {
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
+  onBrowserCloseRequest?: () => void
 }
 
 export function WorkspaceShell(props: WorkspaceShellProps) {

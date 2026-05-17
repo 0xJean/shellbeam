@@ -24,7 +24,10 @@ fn expand_home(path: &str) -> PathBuf {
 }
 
 fn ssh_config_path() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".ssh").join("config")
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".ssh")
+        .join("config")
 }
 
 fn parse_config_content(content: &str) -> Vec<SshConfigEntry> {
@@ -70,9 +73,9 @@ fn build_entry(alias: &str, fields: &HashMap<String, String>) -> SshConfigEntry 
         host_name: fields.get("hostname").cloned(),
         port: fields.get("port").and_then(|p| p.parse().ok()),
         user: fields.get("user").cloned(),
-        identity_file: fields.get("identityfile").map(|p| {
-            expand_home(p).to_string_lossy().to_string()
-        }),
+        identity_file: fields
+            .get("identityfile")
+            .map(|p| expand_home(p).to_string_lossy().to_string()),
         proxy_jump: fields.get("proxyjump").cloned(),
     }
 }
@@ -83,7 +86,7 @@ pub fn parse_ssh_config() -> Result<Vec<SshConfigEntry>, String> {
     if !path.exists() {
         return Err("SSH config file not found (~/.ssh/config)".to_string());
     }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read SSH config: {e}"))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read SSH config: {e}"))?;
     Ok(parse_config_content(&content))
 }

@@ -49,6 +49,8 @@ describe('workspace processes app', () => {
       expect(screen.getByText('nginx')).toBeInTheDocument()
     })
     expect(screen.getByText('node')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-processes-app')).toHaveClass('space-y-4')
+    expect(screen.getByTestId('workspace-processes-list')).toHaveClass('max-h-[26rem]', 'overflow-auto')
   })
 
   it('shows a terminal fallback command for process inspection', async () => {

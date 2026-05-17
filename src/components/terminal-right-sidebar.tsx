@@ -1,4 +1,4 @@
-import { SnippetCompactList } from '@/components/snippet-panel'
+import { SnippetCompactList } from '@/components/snippet-compact-list'
 import { FontSizeControl, TerminalThemeGrid } from '@/components/terminal-widgets'
 import { useT } from '@/lib/i18n'
 import {
