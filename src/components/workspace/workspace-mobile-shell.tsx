@@ -113,11 +113,11 @@ export function WorkspaceMobileShell({
   return (
     <div
       data-testid="workspace-mobile-shell"
-      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--workspace-bg-950)] text-[var(--workspace-text)]"
+      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-workspace-shell text-[var(--workspace-text)]"
     >
       {/* iOS Springboard Wallpaper (Blurred Gradients matching PC) */}
       <div className="absolute inset-0 z-0 pointer-events-none">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(26,42,58,0.92)_0%,rgba(16,25,34,0.98)_68%),radial-gradient(circle_at_top_right,rgba(19,127,236,0.18),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(70,160,245,0.12),transparent_30%)]" />
+        <div className="absolute inset-0 bg-workspace-mobile-wallpaper" />
       </div>
 
       {/* iOS Status Bar */}
@@ -217,8 +217,8 @@ export function WorkspaceMobileShell({
             {/* App Content */}
             <div
               className={activeApp === 'browser'
-                ? 'flex-1 overflow-hidden bg-[var(--workspace-bg)] pb-[env(safe-area-inset-bottom)]'
-                : 'flex-1 overflow-auto bg-[var(--workspace-bg)] pb-[env(safe-area-inset-bottom)]'}
+                ? 'flex-1 overflow-hidden bg-workspace-shell pb-[env(safe-area-inset-bottom)]'
+                : 'flex-1 overflow-auto bg-workspace-shell pb-[env(safe-area-inset-bottom)]'}
             >
               {content}
             </div>

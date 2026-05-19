@@ -349,6 +349,10 @@ function AssetInventoryHeader({
     <WorkspacePanelHeader
       className="border-b border-[color:var(--workspace-border-strong)] pb-4"
       headerClassName="xl:flex-row xl:items-start xl:justify-between"
+      eyebrowClassName="text-[var(--workspace-text-subtle)]"
+      titleClassName="text-[var(--workspace-text-strong)]"
+      descriptionClassName="text-[var(--workspace-text-muted)]"
+      noteClassName="text-[var(--workspace-text-subtle)]"
       eyebrow={<><Network className="h-3.5 w-3.5" />VPS Asset Inventory</>}
       title="资源总览"
       description="把所有 VPS 的剩余资源、已安装工具、运行服务和疑似部署项目放到一张可搜索的资产地图里。"

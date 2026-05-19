@@ -375,6 +375,11 @@ export function ProjectDeploymentsPanel({
   return (
     <div data-testid="project-deployments-panel" className="flex min-h-[34rem] min-w-0 flex-col text-[var(--workspace-text)]">
       <WorkspacePanelHeader
+        className="border-b border-[color:var(--workspace-border-strong)]"
+        eyebrowClassName="text-[var(--workspace-text-subtle)]"
+        titleClassName="text-[var(--workspace-text-strong)]"
+        descriptionClassName="text-[var(--workspace-text-muted)]"
+        noteClassName="text-[var(--workspace-text-subtle)]"
         eyebrow={<><GitBranch className="h-3.5 w-3.5" />Deployed Projects</>}
         title="部署项目"
         description="按服务器聚合疑似项目、Docker/PM2/systemd 信号和资源余量，用来快速确认部署项目位于哪台 VPS 上。"

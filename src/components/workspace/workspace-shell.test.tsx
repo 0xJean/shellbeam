@@ -54,7 +54,7 @@ describe('workspace shell', () => {
       />,
     )
 
-    expect(screen.getByTestId('workspace-desktop-shell')).toHaveClass('w-full', 'min-w-0', 'flex-1', 'bg-[var(--workspace-bg-950)]')
+    expect(screen.getByTestId('workspace-desktop-shell')).toHaveClass('w-full', 'min-w-0', 'flex-1', 'bg-workspace-desktop-wallpaper')
     expect(screen.getByTestId('workspace-desktop-taskbar')).toHaveClass('w-full', 'min-w-0', 'bg-[var(--workspace-surface-900)]')
     expect(screen.getByText('Start')).toBeInTheDocument()
     expect(screen.getAllByText('Production API').length).toBeGreaterThan(0)
@@ -72,7 +72,7 @@ describe('workspace shell', () => {
       />,
     )
 
-    expect(screen.getByTestId('workspace-mobile-shell')).toHaveClass('bg-[var(--workspace-bg-950)]')
+    expect(screen.getByTestId('workspace-mobile-shell')).toHaveClass('bg-workspace-shell')
     expect(screen.getAllByText('Production API').length).toBeGreaterThan(0)
     expect(screen.getAllByRole('button', { name: /overview/i }).length).toBeGreaterThan(0)
   })

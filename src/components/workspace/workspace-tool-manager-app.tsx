@@ -871,6 +871,10 @@ export function WorkspaceToolManagerApp({
   return (
     <div data-testid="workspace-tool-manager-app" className="space-y-4">
       <WorkspacePanelHeader
+        className="border-b border-[color:var(--workspace-border-strong)]"
+        eyebrowClassName="text-[var(--workspace-text-subtle)]"
+        titleClassName="text-[var(--workspace-text-strong)]"
+        descriptionClassName="text-[var(--workspace-text-muted)]"
         eyebrow="Tool Manager"
         title="Common Services & Toolchains"
         description="在当前 VPS 上扫描常用工具和服务，并执行安装、升级、启停和日志操作。"

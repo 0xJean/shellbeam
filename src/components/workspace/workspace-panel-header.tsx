@@ -37,24 +37,24 @@ export function WorkspacePanelHeader({
   const hasActions = Boolean(actions)
 
   return (
-    <section className={cn('border-b border-[color:var(--workspace-border-strong)] pb-4', className)}>
+    <section className={cn('border-b border-border pb-4', className)}>
       <div className={cn('flex flex-col gap-4', hasActions && 'lg:flex-row lg:items-start lg:justify-between', headerClassName)}>
         <div className="min-w-0">
           {eyebrow && (
-            <div className={cn('flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-subtle)]', eyebrowClassName)}>
+            <div className={cn('flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground', eyebrowClassName)}>
               {eyebrow}
             </div>
           )}
-          <h2 className={cn('mt-2 text-2xl font-semibold tracking-tight text-[var(--workspace-text-strong)]', titleClassName)}>
+          <h2 className={cn('mt-2 text-2xl font-semibold tracking-tight text-foreground', titleClassName)}>
             {title}
           </h2>
           {description && (
-            <div className={cn('mt-1 max-w-3xl text-sm text-[var(--workspace-text-muted)]', descriptionClassName)}>
+            <div className={cn('mt-1 max-w-3xl text-sm text-muted-foreground', descriptionClassName)}>
               {description}
             </div>
           )}
           {note && (
-            <div className={cn('mt-2 text-xs text-[var(--workspace-text-subtle)]', noteClassName)}>
+            <div className={cn('mt-2 text-xs text-muted-foreground', noteClassName)}>
               {note}
             </div>
           )}

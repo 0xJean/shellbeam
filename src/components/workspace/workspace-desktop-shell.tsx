@@ -349,11 +349,10 @@ export function WorkspaceDesktopShell({
   return (
     <div
       data-testid="workspace-desktop-shell"
-      className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-[var(--workspace-bg-950)] text-[var(--workspace-text)]"
+      className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-workspace-desktop-wallpaper text-foreground"
     >
       <div ref={desktopSurfaceRef} className="relative min-h-0 flex-1 overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(26,42,58,0.92)_0%,rgba(16,25,34,0.98)_68%),radial-gradient(circle_at_top_right,rgba(19,127,236,0.18),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(70,160,245,0.12),transparent_30%)]" />
-        <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.05)_1px,transparent_1px)] [background-size:28px_28px]" />
+        <div className="pointer-events-none absolute inset-0 bg-workspace-desktop-overlay" />
         <div className="absolute left-6 top-6 z-20 hidden md:block">
           <WorkspaceAppGrid activeApp={activeApp} onSelectApp={openDesktopApp} variant="desktop" />
         </div>
