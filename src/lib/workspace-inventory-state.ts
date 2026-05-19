@@ -10,6 +10,8 @@ export interface WorkspaceInventoryHostState {
   error?: string
 }
 
+export type WorkspaceInventoryDisplayStatus = 'online' | 'offline' | 'checking'
+
 type Listener = () => void
 
 let states: Record<string, WorkspaceInventoryHostState> = {}
@@ -37,6 +39,11 @@ export function mergeWorkspaceInventoryStates(nextStates: Record<string, Workspa
   setWorkspaceInventoryStates((current) => ({ ...current, ...nextStates }))
 }
 
+export function clearWorkspaceInventoryStates() {
+  states = {}
+  emit()
+}
+
 export function selectWorkspaceInventoryStatesForHosts(hosts: HostProfile[], source = states) {
   return hosts.reduce<Record<string, WorkspaceInventoryHostState>>((next, host) => {
     const key = getWorkspaceInventoryHostKey(host)
@@ -48,13 +55,31 @@ export function selectWorkspaceInventoryStatesForHosts(hosts: HostProfile[], sou
 export function createReadyWorkspaceInventoryStates(cache: Record<string, { inventory: WorkspaceInventory; updatedAt: number }>, current = states) {
   return Object.entries(cache).reduce<Record<string, WorkspaceInventoryHostState>>((next, [key, entry]) => {
     const existing = current[key]
-    next[key] = existing?.status === 'error'
-      ? { ...existing, inventory: existing.inventory ?? entry.inventory, updatedAt: existing.updatedAt ?? entry.updatedAt }
-      : { status: 'ready', inventory: entry.inventory, updatedAt: entry.updatedAt }
+    if (existing?.status === 'error') {
+      next[key] = { ...existing, inventory: existing.inventory ?? entry.inventory, updatedAt: existing.updatedAt ?? entry.updatedAt }
+      return next
+    }
+    if (existing?.status === 'scanning') {
+      next[key] = { ...existing, inventory: existing.inventory ?? entry.inventory, updatedAt: existing.updatedAt ?? entry.updatedAt }
+      return next
+    }
+    if (existing?.status === 'ready' && (existing.updatedAt ?? 0) >= entry.updatedAt) {
+      next[key] = existing
+      return next
+    }
+    next[key] = { status: 'ready', inventory: entry.inventory, updatedAt: entry.updatedAt }
     return next
   }, {})
 }
 
 export function useWorkspaceInventoryStates() {
   return useSyncExternalStore(subscribeWorkspaceInventoryStates, getWorkspaceInventoryStates, getWorkspaceInventoryStates)
+}
+
+export function getWorkspaceInventoryDisplayStatus(state?: WorkspaceInventoryHostState): WorkspaceInventoryDisplayStatus | undefined {
+  if (!state) return undefined
+  if (state.status === 'scanning') return 'checking'
+  if (state.status === 'error') return 'offline'
+  if (state.status === 'ready' || (state.status === 'idle' && state.inventory)) return 'online'
+  return undefined
 }

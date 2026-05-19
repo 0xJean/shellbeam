@@ -7,8 +7,8 @@ export interface TerminalPrefs {
 }
 
 export const DEFAULT_TERMINAL_PREFS: TerminalPrefs = {
-  fontSize: 13,
-  fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Monaco, 'Courier New', monospace",
+  fontSize: 14,
+  fontFamily: "'JetBrains Mono', 'Fira Code', ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Monaco, 'Courier New', monospace",
   themeId: 'hacker-green',
 }
 

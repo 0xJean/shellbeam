@@ -205,6 +205,8 @@ const en: Record<string, string> = {
   'terminal.aiGenerator': 'AI Command Generator',
   'terminal.connectionLost': 'Connection lost',
   'terminal.reconnect': 'Reconnect',
+  'terminal.clearScrollback': 'Clear terminal scrollback',
+  'terminal.outputThrottled': 'Output was too fast; some buffered text was omitted to keep the terminal responsive.',
   'terminal.snippetPasted': 'Snippet pasted to terminal',
   'terminal.snippetCopied': 'No active terminal session - snippet copied to command input',
   'terminal.runningSnippet': 'Running snippet: {name}',

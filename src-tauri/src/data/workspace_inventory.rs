@@ -34,7 +34,8 @@ pub struct WorkspaceInventorySnapshotPayload {
 
 fn open_workspace_inventory_db(app: &tauri::AppHandle) -> Result<Connection, String> {
     let path = data_file_path(app, WORKSPACE_INVENTORY_DB)?;
-    let conn = Connection::open(path).map_err(|err| format!("Open workspace inventory db failed: {err}"))?;
+    let conn = Connection::open(path)
+        .map_err(|err| format!("Open workspace inventory db failed: {err}"))?;
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;

@@ -34,6 +34,7 @@ vi.mock('@/components/session-connect-placeholder', () => ({
 vi.mock('@/components/settings-panel', () => ({ SettingsPanel: () => <div /> }))
 vi.mock('@/components/sftp-dual-pane', () => ({ SftpDualPane: () => <div /> }))
 vi.mock('@/components/snippet-panel', () => ({ SnippetPanel: () => <div /> }))
+vi.mock('@/components/ssh-import-dialog', () => ({ SshImportDialog: () => <div data-testid="ssh-import-dialog" /> }))
 vi.mock('@/components/sync-center-panel', () => ({ SyncCenterPanel: () => <div /> }))
 vi.mock('@/components/terminal-right-sidebar', () => ({ TerminalRightSidebar: () => <div /> }))
 vi.mock('@/components/ui/dialog', () => ({
@@ -52,9 +53,30 @@ vi.mock('@/components/workspace', () => ({
 
 const workspaceAssetInventorySpy = vi.fn()
 vi.mock('@/components/workspace/workspace-asset-inventory-app', () => ({
-  WorkspaceAssetInventoryApp: (props: unknown) => {
+  WorkspaceAssetInventoryApp: (props: {
+    hosts?: Array<{ id: string }>
+    onOpenTerminal?: (host: { id: string }) => void
+    onEditHost?: (host: { id: string }) => void
+    onImportSsh?: () => void
+    onCreateHost?: () => void
+  }) => {
     workspaceAssetInventorySpy(props)
-    return <div data-testid="workspace-asset-inventory-app" />
+    return (
+      <div>
+        <button type="button" data-testid="workspace-asset-inventory-app" onClick={() => props.hosts?.[0] && props.onOpenTerminal?.(props.hosts[0])}>
+          Asset Inventory
+        </button>
+        <button type="button" data-testid="workspace-asset-edit" onClick={() => props.hosts?.[0] && props.onEditHost?.(props.hosts[0])}>
+          Asset Edit
+        </button>
+        <button type="button" data-testid="workspace-asset-import" onClick={() => props.onImportSsh?.()}>
+          Asset Import
+        </button>
+        <button type="button" data-testid="workspace-asset-create" onClick={() => props.onCreateHost?.()}>
+          Asset Create
+        </button>
+      </div>
+    )
   },
 }))
 vi.mock('@/components/browser/browser-view', () => ({
@@ -158,7 +180,7 @@ describe('pc layout', () => {
       handleCreateHost: vi.fn(),
       handleUpdateHost: vi.fn(),
       handleDeleteHost: vi.fn(),
-      handleCheckHostStatus: vi.fn(),
+      handleScanHosts: vi.fn(),
       handleSaveToVault: vi.fn(),
       pcTopBarSearch: '',
       setPcTopBarSearch: vi.fn(),
@@ -272,10 +294,23 @@ describe('pc layout', () => {
       handleCreateHost: vi.fn(),
       handleUpdateHost: vi.fn(),
       handleDeleteHost: vi.fn(),
-      handleCheckHostStatus: vi.fn(),
+      handleScanHosts: vi.fn(),
       handleSaveToVault: vi.fn(),
       pcTopBarSearch: '',
       setPcTopBarSearch: vi.fn(),
+    })
+    useVault.mockReturnValue({
+      activeVaultId: 'vault-1',
+      vaults: [{ id: 'vault-1', name: 'Vault' }],
+      vaultStatusState: { unlocked: true },
+      vaultKeys: ['prod-password'],
+      vaultBusy: false,
+      vaultAutoLockMinutes: 15,
+      resolveAuthSecret: vi.fn(async () => 'secret'),
+      refreshVault: vi.fn(async () => {}),
+      handleRevealSecret: vi.fn(async () => 'secret'),
+      handleDeleteSecret: vi.fn(),
+      handleAutoLockMinutesChange: vi.fn(),
     })
     useSessions.mockReturnValue({
       ...defaultSessionsValue,
@@ -291,7 +326,237 @@ describe('pc layout', () => {
       selectedHostId: 'host-1',
       hosts: expect.arrayContaining([expect.objectContaining({ id: 'host-1' })]),
       resolveAuthSecret: expect.any(Function),
+      onOpenTerminal: expect.any(Function),
+      onOpenProviderConsole: expect.any(Function),
+      onEditHost: expect.any(Function),
+      onImportSsh: expect.any(Function),
+      onCreateHost: expect.any(Function),
     }))
+  })
+
+  it('returns from terminal to the last dashboard route', () => {
+    const setPcSidebarNav = vi.fn()
+    let pcSidebarNav: 'asset-inventory' | 'terminal' = 'asset-inventory'
+
+    useApp.mockImplementation(() => ({
+      setOutput: vi.fn(),
+      pcSidebarNav,
+      setPcSidebarNav,
+      terminalPrefs: {},
+      updateTerminalPrefs: vi.fn(),
+      setCommand: vi.fn(),
+    }))
+
+    const { rerender } = render(<PcLayout />)
+
+    pcSidebarNav = 'terminal'
+    rerender(<PcLayout />)
+
+    const call = pcSessionTabBarSpy.mock.calls.at(-1)?.[0] as { onGoToDashboard: () => void } | undefined
+    act(() => {
+      call?.onGoToDashboard()
+    })
+
+    expect(setPcSidebarNav).toHaveBeenCalledWith('asset-inventory')
+    expect(setPcSidebarNav).not.toHaveBeenCalledWith('hosts')
+  })
+
+  it('routes the top-level asset inventory terminal action to the selected host', () => {
+    const handleConnectHost = vi.fn()
+    const setPcSidebarNav = vi.fn()
+    useApp.mockReturnValue({
+      setOutput: vi.fn(),
+      pcSidebarNav: 'asset-inventory',
+      setPcSidebarNav,
+      terminalPrefs: {},
+      updateTerminalPrefs: vi.fn(),
+      setCommand: vi.fn(),
+    })
+    useHosts.mockReturnValue({
+      hosts: [
+        {
+          id: 'host-1',
+          name: 'Production API',
+          address: '10.0.0.15',
+          port: 22,
+          username: 'root',
+          group: 'Production',
+          authType: 'password',
+          tags: [],
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+      refreshHosts: vi.fn(async () => {}),
+      setPcOpenAddHost: vi.fn(),
+      pcOpenAddHost: false,
+      selectedHostId: 'host-1',
+      setSelectedHostId: vi.fn(),
+      loadingHosts: false,
+      defaultUsername: 'root',
+      keepAliveIntervalSecs: 30,
+      handleCreateHost: vi.fn(),
+      handleUpdateHost: vi.fn(),
+      handleDeleteHost: vi.fn(),
+      handleScanHosts: vi.fn(),
+      handleSaveToVault: vi.fn(),
+      pcTopBarSearch: '',
+      setPcTopBarSearch: vi.fn(),
+    })
+    useSessions.mockReturnValue({
+      ...defaultSessionsValue,
+      pcSessionTabs: [],
+      pcActiveSessionId: null,
+      workspaceBySession: {},
+      handleConnectHost,
+    })
+
+    render(<PcLayout />)
+
+    fireEvent.click(screen.getByTestId('workspace-asset-inventory-app'))
+
+    expect(setPcSidebarNav).toHaveBeenCalledWith('terminal')
+    expect(handleConnectHost).toHaveBeenCalledWith('host-1')
+  })
+
+  it('opens the shared host editor from top-level asset inventory and saves through host update', async () => {
+    const handleUpdateHost = vi.fn(async () => {})
+    const setSelectedHostId = vi.fn()
+    const host = {
+      id: 'host-1',
+      name: 'Production API',
+      address: '10.0.0.15',
+      port: 22,
+      username: 'root',
+      group: 'Production',
+      authType: 'password' as const,
+      passwordKeyRef: 'prod-password',
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+    }
+    useApp.mockReturnValue({
+      setOutput: vi.fn(),
+      pcSidebarNav: 'asset-inventory',
+      setPcSidebarNav: vi.fn(),
+      terminalPrefs: {},
+      updateTerminalPrefs: vi.fn(),
+      setCommand: vi.fn(),
+    })
+    useHosts.mockReturnValue({
+      hosts: [host],
+      refreshHosts: vi.fn(async () => {}),
+      setPcOpenAddHost: vi.fn(),
+      pcOpenAddHost: false,
+      selectedHostId: 'host-1',
+      setSelectedHostId,
+      loadingHosts: false,
+      defaultUsername: 'root',
+      keepAliveIntervalSecs: 30,
+      handleCreateHost: vi.fn(),
+      handleUpdateHost,
+      handleDeleteHost: vi.fn(),
+      handleScanHosts: vi.fn(),
+      handleSaveToVault: vi.fn(),
+      pcTopBarSearch: '',
+      setPcTopBarSearch: vi.fn(),
+    })
+    useVault.mockReturnValue({
+      activeVaultId: 'vault-1',
+      vaults: [{ id: 'vault-1', name: 'Vault' }],
+      vaultStatusState: { unlocked: false },
+      vaultKeys: ['prod-password'],
+      vaultBusy: false,
+      vaultAutoLockMinutes: 15,
+      resolveAuthSecret: vi.fn(async () => 'secret'),
+      refreshVault: vi.fn(async () => {}),
+      handleRevealSecret: vi.fn(async () => 'secret'),
+      handleDeleteSecret: vi.fn(),
+      handleAutoLockMinutesChange: vi.fn(),
+    })
+    useSessions.mockReturnValue({
+      ...defaultSessionsValue,
+      pcSessionTabs: [],
+      pcActiveSessionId: null,
+      workspaceBySession: {},
+    })
+
+    render(<PcLayout />)
+
+    fireEvent.click(screen.getByTestId('workspace-asset-edit'))
+
+    expect(screen.getByText('hostForm.editHost')).toBeInTheDocument()
+    expect(setSelectedHostId).toHaveBeenCalledWith('host-1')
+
+    fireEvent.change(screen.getByDisplayValue('Production API'), { target: { value: 'Production API Edited' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'hostForm.save' }))
+      await Promise.resolve()
+    })
+
+    expect(handleUpdateHost).toHaveBeenCalledWith(host, expect.objectContaining({
+      name: 'Production API Edited',
+      address: '10.0.0.15',
+      passwordKeyRef: 'prod-password',
+    }))
+  })
+
+  it('opens shared host creation and ssh import from the asset inventory header actions', async () => {
+    const handleCreateHost = vi.fn(async () => {})
+    const refreshHosts = vi.fn(async () => {})
+    useApp.mockReturnValue({
+      setOutput: vi.fn(),
+      pcSidebarNav: 'asset-inventory',
+      setPcSidebarNav: vi.fn(),
+      terminalPrefs: {},
+      updateTerminalPrefs: vi.fn(),
+      setCommand: vi.fn(),
+    })
+    useHosts.mockReturnValue({
+      hosts: [],
+      refreshHosts,
+      setPcOpenAddHost: vi.fn(),
+      pcOpenAddHost: false,
+      selectedHostId: null,
+      setSelectedHostId: vi.fn(),
+      loadingHosts: false,
+      defaultUsername: 'root',
+      keepAliveIntervalSecs: 30,
+      handleCreateHost,
+      handleUpdateHost: vi.fn(),
+      handleDeleteHost: vi.fn(),
+      handleScanHosts: vi.fn(),
+      handleSaveToVault: vi.fn(async () => {}),
+      pcTopBarSearch: '',
+      setPcTopBarSearch: vi.fn(),
+    })
+    useVault.mockReturnValue({
+      activeVaultId: 'vault-1',
+      vaults: [{ id: 'vault-1', name: 'Vault' }],
+      vaultStatusState: { unlocked: true },
+      vaultKeys: [],
+      vaultBusy: false,
+      vaultAutoLockMinutes: 15,
+      resolveAuthSecret: vi.fn(async () => 'secret'),
+      refreshVault: vi.fn(async () => {}),
+      handleRevealSecret: vi.fn(async () => 'secret'),
+      handleDeleteSecret: vi.fn(),
+      handleAutoLockMinutesChange: vi.fn(),
+    })
+    useSessions.mockReturnValue({
+      ...defaultSessionsValue,
+      pcSessionTabs: [],
+      pcActiveSessionId: null,
+      workspaceBySession: {},
+    })
+
+    render(<PcLayout />)
+
+    fireEvent.click(screen.getByTestId('workspace-asset-create'))
+    expect(screen.getByText('hostForm.newHost')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('workspace-asset-import'))
+    expect(screen.getByTestId('ssh-import-dialog')).toBeInTheDocument()
   })
 
   it('keeps terminal views mounted while workspace mode is active', async () => {

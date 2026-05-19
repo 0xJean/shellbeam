@@ -36,6 +36,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace-empty-state'
+import { WorkspacePanelHeader } from './workspace-panel-header'
 import { WorkspaceServerList } from './workspace-server-list'
 import { Dialog, DialogContent } from '../ui/dialog'
 
@@ -114,6 +115,7 @@ interface WorkspaceToolManagerAppProps {
   hostAddress?: string | null
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
+  onOpenTerminal?: (host: HostProfile) => void
 }
 
 interface HostInventoryState {
@@ -648,30 +650,6 @@ function hostKey(host: HostProfile) {
   return getWorkspaceInventoryHostKey(host)
 }
 
-function formatPercent(value: number | null | undefined) {
-  return value == null ? 'n/a' : `${Math.round(value)}%`
-}
-
-function getHostInventoryLabel(state?: HostInventoryState) {
-  if (state?.status === 'scanning') return '扫描中'
-  if (state?.status === 'error') return '无法访问'
-  if (state?.inventory || state?.status === 'ready') return '可访问'
-  return '未扫描'
-}
-
-function getHostInventoryTone(state?: HostInventoryState): 'default' | 'good' | 'warn' | 'bad' {
-  if (state?.status === 'scanning') return 'warn'
-  if (state?.status === 'error') return 'bad'
-  return state?.inventory || state?.status === 'ready' ? 'good' : 'default'
-}
-
-function getNetworkTone(network: HostNetworkDisplay): 'default' | 'good' | 'warn' | 'info' {
-  if (network.scope === 'public') return 'info'
-  if (network.scope === 'private') return 'good'
-  if (network.locationStatus === 'error') return 'warn'
-  return 'default'
-}
-
 function formatAge(timestamp?: number) {
   if (!timestamp) return '未扫描'
   const diff = Math.max(0, Date.now() - timestamp)
@@ -710,23 +688,7 @@ function HostStatusIcon({ state }: { state?: HostInventoryState }) {
 
 function HostNetworkLine({ network }: { network?: HostNetworkDisplay }) {
   if (!network) return null
-  return (
-    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
-      <span className={cn(
-        'inline-flex max-w-full items-center rounded-lg border px-2 py-1 text-[11px] font-medium',
-        getNetworkTone(network) === 'good' && 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
-        getNetworkTone(network) === 'warn' && 'border-amber-500/30 bg-amber-500/10 text-amber-200',
-        getNetworkTone(network) === 'info' && 'border-sky-500/30 bg-sky-500/10 text-sky-200',
-        getNetworkTone(network) === 'default' && 'border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.7)] text-[var(--workspace-text)]',
-      )}>
-        <span className="truncate">{network.scopeLabel}</span>
-      </span>
-      <span className="inline-flex max-w-full items-center rounded-lg border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.7)] px-2 py-1 text-[11px] font-medium text-[var(--workspace-text)]">
-        <span className="truncate">{network.versionLabel}</span>
-      </span>
-      <span className="min-w-0 truncate text-[11px] text-[var(--workspace-text-subtle)]">{network.resolvedLocationLabel}</span>
-    </div>
-  )
+  return <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{network.resolvedLocationLabel}</div>
 }
 
 export function WorkspaceToolManagerApp({
@@ -734,6 +696,7 @@ export function WorkspaceToolManagerApp({
   hostAddress = null,
   hosts,
   resolveAuthSecret,
+  onOpenTerminal,
 }: WorkspaceToolManagerAppProps) {
   const [category, setCategory] = useState<ToolCategoryId | 'all'>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -907,29 +870,30 @@ export function WorkspaceToolManagerApp({
 
   return (
     <div data-testid="workspace-tool-manager-app" className="space-y-4">
-      <div className="rounded-xl border border-border/60 bg-card px-5 py-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div>
-            <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">Tool Manager</div>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight">Common Services & Toolchains</h2>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <span className="rounded-full border border-border/60 px-2.5 py-1 text-[11px] text-muted-foreground">{hosts.length} VPS</span>
-              <span className="rounded-full border border-border/60 px-2.5 py-1 text-[11px] text-muted-foreground">{TOOL_CATALOG.length} tools</span>
-              <span className="rounded-full border border-border/60 px-2.5 py-1 text-[11px] text-muted-foreground">{checkedCount} checked</span>
-              <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-300">{installedCount} installed</span>
-            </div>
-          </div>
+      <WorkspacePanelHeader
+        eyebrow="Tool Manager"
+        title="Common Services & Toolchains"
+        description="在当前 VPS 上扫描常用工具和服务，并执行安装、升级、启停和日志操作。"
+        actions={
           <button
             type="button"
             onClick={() => void scanVisibleTools()}
             disabled={running !== null || visibleTools.length === 0}
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-xs font-medium hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.52)] px-3 py-2 text-xs font-semibold text-[var(--workspace-text)] transition-colors hover:bg-[rgba(30,44,60,0.82)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', running?.action === 'check' && 'animate-spin')} />
             Scan Visible
           </button>
+        }
+        contentClassName="space-y-3"
+      >
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{hosts.length} VPS</span>
+          <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{TOOL_CATALOG.length} tools</span>
+          <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{checkedCount} checked</span>
+          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-300">{installedCount} installed</span>
         </div>
-      </div>
+      </WorkspacePanelHeader>
 
       <div className="grid min-h-[34rem] gap-4 xl:grid-cols-[minmax(22rem,0.72fr)_minmax(15rem,0.44fr)_minmax(0,1.35fr)]">
         <WorkspaceServerList
@@ -942,14 +906,15 @@ export function WorkspaceToolManagerApp({
           renderStatusIcon={(entry) => <HostStatusIcon state={inventoryStates[hostKey(entry)]} />}
           getStatusBadge={(entry) => {
             const state = inventoryStates[hostKey(entry)]
-            return { label: getHostInventoryLabel(state), tone: getHostInventoryTone(state) }
+            if (state?.status === 'error') return { label: '无法访问', tone: 'bad' }
+            return undefined
           }}
           getPrimaryBadge={(entry) => {
             const state = inventoryStates[hostKey(entry)]
             if (!state?.inventory) return { label: entry.authType }
             return { label: `${state.inventory.tools.length} 工具`, tone: 'info' }
           }}
-          renderNetworkLine={(entry) => <HostNetworkLine network={networkByAddress[entry.address]} />}
+          renderRegionLine={(entry) => <HostNetworkLine network={networkByAddress[entry.address]} />}
           getSearchData={(entry) => {
             const state = inventoryStates[hostKey(entry)]
             const network = networkByAddress[entry.address]
@@ -960,15 +925,17 @@ export function WorkspaceToolManagerApp({
               projects: getProjectSearchValues(state?.inventory),
             }
           }}
-          renderMetrics={(entry) => {
+          getResourceMetrics={(entry) => {
             const inventory = inventoryStates[hostKey(entry)]?.inventory
-            return (
-              <div className="mt-3 grid grid-cols-3 gap-2 font-mono text-[11px] text-[var(--workspace-text-muted)]">
-                <div>CPU {formatPercent(inventory?.resource.cpuPercent)}</div>
-                <div>MEM {formatPercent(inventory?.resource.memoryPercent)}</div>
-                <div>DISK {formatPercent(inventory?.resource.diskPercent)}</div>
-              </div>
-            )
+            if (!inventory) return undefined
+            return {
+              cpuPercent: inventory?.resource.cpuPercent,
+              memoryPercent: inventory?.resource.memoryPercent,
+              diskPercent: inventory?.resource.diskPercent,
+              cpuDetail: inventory?.resource.uptime,
+              memoryDetail: inventory?.resource.memoryText,
+              diskDetail: inventory?.resource.diskText,
+            }
           }}
           renderFooter={(entry) => {
             const state = inventoryStates[hostKey(entry)]
@@ -979,6 +946,7 @@ export function WorkspaceToolManagerApp({
               </div>
             )
           }}
+          onRowDoubleClick={(entry) => onOpenTerminal?.(entry)}
         />
 
         <aside className="space-y-3 rounded-xl border border-border/60 bg-card p-3">

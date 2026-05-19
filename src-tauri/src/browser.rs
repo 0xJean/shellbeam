@@ -869,13 +869,18 @@ pub async fn open_embedded_browser<R: Runtime>(
                 browser_proxy_config(&request.browser_id).flatten(),
                 request.proxy_url
             );
-            close_browser_window(app.clone(), request.browser_id.clone(), request.session_id.clone()).await?;
+            close_browser_window(
+                app.clone(),
+                request.browser_id.clone(),
+                request.session_id.clone(),
+            )
+            .await?;
         } else {
-        log::info!(
-            "[Browser] open_embedded_browser: already exists, reusing id={}",
-            request.browser_id
-        );
-        return Ok(());
+            log::info!(
+                "[Browser] open_embedded_browser: already exists, reusing id={}",
+                request.browser_id
+            );
+            return Ok(());
         }
     }
     if let Err(error) = build_embedded_browser(&app, &request) {

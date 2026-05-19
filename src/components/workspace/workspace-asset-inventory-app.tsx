@@ -3,43 +3,52 @@ import type { HostProfile } from '@/lib/hosts'
 import { useHostNetworkMetadata, type HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import { ProjectDeploymentsPanel, getProjectDeploymentSignals } from '@/components/project-deployments-panel'
 import {
-  fetchWorkspaceInventory,
   getWorkspaceInventoryHostKey,
   loadWorkspaceInventoryCache,
   loadWorkspaceInventoryPersistedCache,
-  saveWorkspaceInventoryCacheEntry,
   type WorkspaceInventory,
   type WorkspaceInventoryProject,
 } from '@/lib/workspace-inventory'
+import { getServerConsoleLink } from '@/lib/server-console'
 import {
   createReadyWorkspaceInventoryStates,
-  getWorkspaceInventoryStates,
   mergeWorkspaceInventoryStates,
   selectWorkspaceInventoryStatesForHosts,
   useWorkspaceInventoryStates,
 } from '@/lib/workspace-inventory-state'
+import { scanWorkspaceInventoryHosts } from '@/lib/workspace-inventory-scan'
 import { cn } from '@/lib/utils'
 import {
   AlertTriangle,
   Boxes,
+  Check,
   CheckCircle2,
+  ChevronDown,
   CircleDot,
+  Clock,
   Cpu,
+  ExternalLink,
+  FileDown,
   FolderGit2,
   GitBranch,
+  Grid2X2,
   HardDrive,
+  List,
   Loader2,
   MemoryStick,
   Network,
   Settings2,
+  Pencil,
+  Plus,
   RefreshCw,
   Search,
   ServerCog,
-  ShieldCheck,
   SquareTerminal,
+  Tags,
   Wrench,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace-empty-state'
+import { WorkspacePanelHeader } from './workspace-panel-header'
 import { WorkspaceServerList, workspaceServerMatchesSearch, type WorkspaceServerSearchData } from './workspace-server-list'
 import { WorkspaceToolManagerApp, TOOL_CATALOG } from './workspace-tool-manager-app'
 
@@ -49,7 +58,11 @@ interface WorkspaceAssetInventoryAppProps {
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   initialView?: 'assets' | 'tools' | 'deployments'
-  onOpenConsole?: () => void
+  onOpenTerminal?: (host: HostProfile) => void
+  onOpenProviderConsole?: (url: string, host: HostProfile) => void
+  onEditHost?: (host: HostProfile) => void
+  onImportSsh?: () => void
+  onCreateHost?: () => void
 }
 
 interface HostInventoryState {
@@ -60,6 +73,19 @@ interface HostInventoryState {
 }
 
 const SCAN_CONCURRENCY = 3
+const ASSET_GROUP_COLORS = [
+  'bg-[color:var(--workspace-primary-400)]',
+  'bg-emerald-400',
+  'bg-sky-400',
+  'bg-amber-300',
+  'bg-violet-400',
+  'bg-rose-400',
+  'bg-cyan-400',
+  'bg-orange-400',
+]
+
+type AssetSortMode = 'recent' | 'name' | 'resource' | 'status'
+type AssetSummaryMode = 'grid' | 'compact'
 
 function hostKey(host: HostProfile) {
   return getWorkspaceInventoryHostKey(host)
@@ -181,32 +207,377 @@ function HostStatusDot({ state }: { state: HostInventoryState }) {
 
 function getHostScanLabel(state: HostInventoryState) {
   if (state.status === 'scanning') return '扫描中'
-  if (state.status === 'ready') return '可访问'
   if (state.status === 'error') return '无法访问'
   return '未扫描'
 }
 
-function getHostScanTone(state: HostInventoryState): 'default' | 'good' | 'warn' | 'bad' {
-  if (state.status === 'ready') return 'good'
-  if (state.status === 'error') return 'bad'
-  if (state.status === 'scanning') return 'warn'
-  return 'default'
+function HostRegionLine({ network }: { network: HostNetworkDisplay }) {
+  return <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{network.resolvedLocationLabel}</div>
 }
 
-function getNetworkTone(network: HostNetworkDisplay): 'default' | 'good' | 'warn' | 'bad' | 'info' {
-  if (network.scope === 'public') return 'info'
-  if (network.scope === 'private') return 'good'
-  if (network.locationStatus === 'error') return 'warn'
-  return 'default'
+function groupLabel(group: string) {
+  const labels: Record<string, string> = {
+    Production: '生产',
+    Development: '开发',
+    Staging: '预发布',
+    Custom: '自定义',
+  }
+  return labels[group] ?? group
 }
 
-function HostNetworkBadges({ network }: { network: HostNetworkDisplay }) {
+function getResourcePressure(state: HostInventoryState | undefined) {
+  const resource = state?.inventory?.resource
+  return Math.max(
+    resource?.cpuPercent ?? 0,
+    resource?.memoryPercent ?? 0,
+    resource?.diskPercent ?? 0,
+  )
+}
+
+function AssetMetricCard({
+  icon: Icon,
+  label,
+  value,
+  compact = false,
+}: {
+  icon: ComponentType<{ className?: string }>
+  label: string
+  value: ReactNode
+  compact?: boolean
+}) {
   return (
-    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
-      <Badge tone={getNetworkTone(network)}>{network.scopeLabel}</Badge>
-      <Badge>{network.versionLabel}</Badge>
-      <span className="min-w-0 truncate text-[11px] text-[var(--workspace-text-subtle)]">{network.resolvedLocationLabel}</span>
+    <div
+      className={cn(
+        'min-w-0 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(8,15,22,0.32)]',
+        compact ? 'px-3 py-2' : 'px-3 py-3',
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <Icon className="h-3.5 w-3.5 shrink-0 text-[color:var(--workspace-primary-300)]" />
+        <span className="truncate text-[11px] font-medium text-[var(--workspace-text-muted)]">{label}</span>
+      </div>
+      <div className={cn('mt-1 truncate font-mono font-semibold text-[var(--workspace-text-strong)]', compact ? 'text-sm' : 'text-base')}>
+        {value}
+      </div>
     </div>
+  )
+}
+
+function AssetInventoryHeader({
+  hosts,
+  visibleCount,
+  cachedCount,
+  groupFilter,
+  tagFilter,
+  sortMode,
+  summaryMode,
+  query,
+  onGroupFilter,
+  onTagFilter,
+  onSortMode,
+  onSummaryMode,
+  onQueryChange,
+  readyCount,
+  serviceCount,
+  projectCount,
+  errorCount,
+  onScan,
+  scanning,
+  scanLabel,
+  lastScanAt,
+  onImportSsh,
+  onCreateHost,
+}: {
+  hosts: HostProfile[]
+  visibleCount: number
+  cachedCount: number
+  groupFilter: string
+  tagFilter: Set<string>
+  sortMode: AssetSortMode
+  summaryMode: AssetSummaryMode
+  query: string
+  onGroupFilter: (group: string) => void
+  onTagFilter: (tags: Set<string>) => void
+  onSortMode: (mode: AssetSortMode) => void
+  onSummaryMode: (mode: AssetSummaryMode) => void
+  onQueryChange: (value: string) => void
+  readyCount: number
+  serviceCount: number
+  projectCount: number
+  errorCount: number
+  onScan: () => void
+  scanning: boolean
+  scanLabel: string
+  lastScanAt: number | null
+  onImportSsh?: () => void
+  onCreateHost?: () => void
+}) {
+  const [tagOpen, setTagOpen] = useState(false)
+  const [sortOpen, setSortOpen] = useState(false)
+  const groups = useMemo(() => {
+    const counts = new Map<string, number>()
+    hosts.forEach((host) => {
+      const group = host.group || 'Custom'
+      counts.set(group, (counts.get(group) ?? 0) + 1)
+    })
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
+  }, [hosts])
+  const tags = useMemo(() => {
+    const set = new Set<string>()
+    hosts.forEach((host) => host.tags?.forEach((tag) => set.add(tag)))
+    return Array.from(set).sort()
+  }, [hosts])
+  const sortLabels: Record<AssetSortMode, string> = {
+    recent: '最近优先',
+    name: '名称排序',
+    resource: '资源压力',
+    status: '状态优先',
+  }
+
+  if (hosts.length === 0) return null
+
+  const note = (
+    <div className="space-y-1">
+      {cachedCount > 0 && (
+        <div>已先显示 {cachedCount} 台 VPS 的本地缓存，后台扫描完成后会自动更新。</div>
+      )}
+      <div>{lastScanAt ? `上次扫描 ${new Date(lastScanAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '等待首次扫描'}</div>
+    </div>
+  )
+
+  return (
+    <WorkspacePanelHeader
+      className="border-b border-[color:var(--workspace-border-strong)] pb-4"
+      headerClassName="xl:flex-row xl:items-start xl:justify-between"
+      eyebrow={<><Network className="h-3.5 w-3.5" />VPS Asset Inventory</>}
+      title="资源总览"
+      description="把所有 VPS 的剩余资源、已安装工具、运行服务和疑似部署项目放到一张可搜索的资产地图里。"
+      note={note}
+      actionsClassName="justify-start xl:justify-end"
+      actions={
+        <>
+          <button
+            type="button"
+            onClick={onScan}
+            disabled={scanning}
+            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.52)] px-3 text-xs font-semibold text-[var(--workspace-text)] transition-colors hover:bg-[rgba(30,44,60,0.82)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            {scanLabel}
+          </button>
+          {onImportSsh && (
+            <button
+              type="button"
+              onClick={onImportSsh}
+              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.52)] px-3 text-xs font-semibold text-[var(--workspace-text)] transition-colors hover:bg-[rgba(30,44,60,0.82)]"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              导入 SSH 配置
+            </button>
+          )}
+          {onCreateHost && (
+            <button
+              type="button"
+              onClick={onCreateHost}
+              className="inline-flex h-9 items-center gap-2 rounded-xl bg-[color:var(--workspace-primary-500)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[color:var(--workspace-primary-400)]"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              新建连接
+            </button>
+          )}
+        </>
+      }
+      contentClassName="mt-4 space-y-4"
+    >
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,28rem)]">
+        <div className="min-w-0">
+          <div className="flex items-end gap-2">
+            <span className="text-3xl font-semibold leading-none text-[var(--workspace-text-strong)]">{hosts.length}</span>
+            <span className="pb-1 text-sm text-[var(--workspace-text-muted)]">全部主机</span>
+            {visibleCount !== hosts.length && (
+              <span className="pb-1 text-xs text-[var(--workspace-text-subtle)]">{visibleCount} 台匹配</span>
+            )}
+          </div>
+          {groups.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <div className="flex h-2 overflow-hidden rounded-full bg-[rgba(148,163,184,0.18)]">
+                {groups.map(([group, count], index) => (
+                  <div
+                    key={group}
+                    className={cn('h-full', ASSET_GROUP_COLORS[index % ASSET_GROUP_COLORS.length])}
+                    style={{ width: `${(count / hosts.length) * 100}%` }}
+                    title={`${groupLabel(group)} ${count}`}
+                  />
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {groups.map(([group, count], index) => (
+                  <button
+                    key={group}
+                    type="button"
+                    onClick={() => onGroupFilter(groupFilter === group ? 'All' : group)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 text-xs transition-colors',
+                      groupFilter === group ? 'text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text)]',
+                    )}
+                  >
+                    <span className={cn('h-2 w-2 rounded-full', ASSET_GROUP_COLORS[index % ASSET_GROUP_COLORS.length])} />
+                    <span>{groupLabel(group)}</span>
+                    <span className="font-semibold">{count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="mt-4 flex flex-wrap gap-1 rounded-lg bg-[rgba(24,35,48,0.42)] p-0.5">
+            {['All', ...groups.map(([group]) => group)].map((group) => (
+              <button
+                key={group}
+                type="button"
+                onClick={() => onGroupFilter(group)}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+                  groupFilter === group
+                    ? 'bg-[rgba(8,15,22,0.84)] text-[var(--workspace-text-strong)] shadow-sm'
+                    : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text)]',
+                )}
+              >
+                {group === 'All' ? '全部' : groupLabel(group)}
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
+            <input
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="搜索主机、IP、地区、工具、项目路径..."
+              className="h-10 w-full rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(8,15,22,0.72)] pl-9 pr-3 text-sm text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
+            />
+          </div>
+        </div>
+        <div className={cn('grid gap-2 sm:grid-cols-2 xl:grid-cols-4', summaryMode === 'compact' ? 'items-stretch' : '')}>
+          <AssetMetricCard icon={ServerCog} label="主机" value={`${readyCount}/${hosts.length}`} compact={summaryMode === 'compact'} />
+          <AssetMetricCard icon={Boxes} label="服务" value={serviceCount} compact={summaryMode === 'compact'} />
+          <AssetMetricCard icon={FolderGit2} label="项目" value={projectCount} compact={summaryMode === 'compact'} />
+          <AssetMetricCard icon={AlertTriangle} label="异常" value={errorCount} compact={summaryMode === 'compact'} />
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => { setTagOpen((value) => !value); setSortOpen(false) }}
+            className={cn(
+              'inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-colors',
+              tagFilter.size > 0
+                ? 'border-[color:var(--workspace-border-glow)] bg-[rgba(19,127,236,0.14)] text-[var(--workspace-text-strong)]'
+                : 'border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.52)] text-[var(--workspace-text)] hover:bg-[rgba(30,44,60,0.82)]',
+            )}
+          >
+            <Tags className="h-3.5 w-3.5" />
+            标签{tagFilter.size > 0 ? ` ${tagFilter.size}` : ''}
+            <ChevronDown className="h-3.5 w-3.5" />
+          </button>
+          {tagOpen && (
+            <>
+              <button type="button" aria-label="关闭标签筛选" className="fixed inset-0 z-40 cursor-default" onClick={() => setTagOpen(false)} />
+              <div className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] p-1 shadow-xl">
+                {tagFilter.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { onTagFilter(new Set()); setTagOpen(false) }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--workspace-text-muted)] transition-colors hover:bg-[rgba(24,35,48,0.72)] hover:text-[var(--workspace-text)]"
+                  >
+                    清除标签筛选
+                  </button>
+                )}
+                <div className="max-h-60 overflow-auto">
+                  {tags.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-xs text-[var(--workspace-text-muted)]">暂无标签</div>
+                  ) : tags.map((tag) => {
+                    const active = tagFilter.has(tag)
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          const next = new Set(tagFilter)
+                          if (active) next.delete(tag)
+                          else next.add(tag)
+                          onTagFilter(next)
+                        }}
+                        className={cn(
+                          'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
+                          active ? 'bg-[rgba(19,127,236,0.14)] text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text)] hover:bg-[rgba(24,35,48,0.72)]',
+                        )}
+                      >
+                        <span className={cn('flex h-4 w-4 items-center justify-center rounded border text-[10px]', active ? 'border-[color:var(--workspace-border-glow)] bg-[color:var(--workspace-primary-500)] text-white' : 'border-[color:var(--workspace-border-soft)]')}>
+                          {active && <Check className="h-3 w-3" />}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-left">{tag}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => { setSortOpen((value) => !value); setTagOpen(false) }}
+            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.52)] px-3 text-xs font-semibold text-[var(--workspace-text)] transition-colors hover:bg-[rgba(30,44,60,0.82)]"
+          >
+            <Clock className="h-3.5 w-3.5" />
+            {sortLabels[sortMode]}
+            <ChevronDown className="h-3.5 w-3.5" />
+          </button>
+          {sortOpen && (
+            <>
+              <button type="button" aria-label="关闭排序菜单" className="fixed inset-0 z-40 cursor-default" onClick={() => setSortOpen(false)} />
+              <div className="absolute right-0 top-full z-50 mt-2 w-44 overflow-hidden rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] p-1 shadow-xl">
+                {(Object.keys(sortLabels) as AssetSortMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => { onSortMode(mode); setSortOpen(false) }}
+                    className={cn(
+                      'flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors',
+                      sortMode === mode ? 'bg-[rgba(19,127,236,0.14)] text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text)] hover:bg-[rgba(24,35,48,0.72)]',
+                    )}
+                  >
+                    <span>{sortLabels[mode]}</span>
+                    {sortMode === mode && <Check className="h-3.5 w-3.5" />}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="inline-flex h-9 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.52)] p-0.5">
+          <button
+            type="button"
+            aria-label="卡片摘要"
+            onClick={() => onSummaryMode('grid')}
+            className={cn('flex h-8 w-8 items-center justify-center rounded-lg transition-colors', summaryMode === 'grid' ? 'bg-[rgba(8,15,22,0.84)] text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text)]')}
+          >
+            <Grid2X2 className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="紧凑摘要"
+            onClick={() => onSummaryMode('compact')}
+            className={cn('flex h-8 w-8 items-center justify-center rounded-lg transition-colors', summaryMode === 'compact' ? 'bg-[rgba(8,15,22,0.84)] text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text)]')}
+          >
+            <List className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </WorkspacePanelHeader>
   )
 }
 
@@ -216,7 +587,11 @@ export function WorkspaceAssetInventoryApp({
   hosts,
   resolveAuthSecret,
   initialView = 'assets',
-  onOpenConsole,
+  onOpenTerminal,
+  onOpenProviderConsole,
+  onEditHost,
+  onImportSsh,
+  onCreateHost,
 }: WorkspaceAssetInventoryAppProps) {
   const initialHost = useMemo(() => {
     if (selectedHostId) return hosts.find((host) => host.id === selectedHostId)
@@ -228,6 +603,10 @@ export function WorkspaceAssetInventoryApp({
   const [selectedKey, setSelectedKey] = useState(() => (initialHost ? hostKey(initialHost) : ''))
   const [managedToolHostId, setManagedToolHostId] = useState(() => initialHost?.id ?? selectedHostId ?? null)
   const [query, setQuery] = useState('')
+  const [groupFilter, setGroupFilter] = useState('All')
+  const [tagFilter, setTagFilter] = useState<Set<string>>(() => new Set())
+  const [sortMode, setSortMode] = useState<AssetSortMode>('recent')
+  const [summaryMode, setSummaryMode] = useState<AssetSummaryMode>('grid')
   const sharedStates = useWorkspaceInventoryStates()
   const [states, setStates] = useState<Record<string, HostInventoryState>>(() => {
     const shared = selectWorkspaceInventoryStatesForHosts(hosts)
@@ -240,7 +619,7 @@ export function WorkspaceAssetInventoryApp({
     const cachedEntries = Object.values(loadWorkspaceInventoryCache(hosts))
     return cachedEntries.reduce<number | null>((latest, entry) => Math.max(latest ?? 0, entry.updatedAt), null)
   })
-  const runIdRef = useRef(0)
+  const scanRunIdRef = useRef(0)
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   useEffect(() => {
@@ -258,7 +637,9 @@ export function WorkspaceAssetInventoryApp({
   const hostRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
 
-    return hosts.filter((host) => {
+    const filtered = hosts.filter((host) => {
+      if (groupFilter !== 'All' && (host.group || 'Custom') !== groupFilter) return false
+      if (tagFilter.size > 0 && !host.tags?.some((tag) => tagFilter.has(tag))) return false
       const state = states[hostKey(host)]
       const inventory = state?.inventory
       const network = networkByAddress[host.address]
@@ -274,14 +655,31 @@ export function WorkspaceAssetInventoryApp({
       }
       return workspaceServerMatchesSearch(host, normalizedQuery, searchData)
     })
-  }, [hosts, networkByAddress, query, states])
+
+    return filtered.sort((a, b) => {
+      if (sortMode === 'name') return a.name.localeCompare(b.name)
+      if (sortMode === 'resource') return getResourcePressure(states[hostKey(b)]) - getResourcePressure(states[hostKey(a)])
+      if (sortMode === 'status') {
+        const score = (host: HostProfile) => {
+          const status = states[hostKey(host)]?.status
+          if (status === 'error') return 0
+          if (status === 'scanning') return 1
+          if (status === 'idle') return 2
+          return 3
+        }
+        return score(a) - score(b)
+      }
+      return (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)
+    })
+  }, [groupFilter, hosts, networkByAddress, query, sortMode, states, tagFilter])
 
   const selectedHost = useMemo(() => {
-    return hosts.find((host) => hostKey(host) === selectedKey) ?? hostRows[0] ?? hosts[0]
+    return hostRows.find((host) => hostKey(host) === selectedKey) ?? hostRows[0] ?? hosts.find((host) => hostKey(host) === selectedKey) ?? hosts[0]
   }, [hostRows, hosts, selectedKey])
 
   const selectedState = selectedHost ? states[hostKey(selectedHost)] : undefined
   const selectedInventory = selectedState?.inventory
+  const selectedConsoleLink = selectedHost ? getServerConsoleLink(selectedHost) : null
   const readyStates = Object.values(states).filter((state) => state.status === 'ready')
   const scanningCount = Object.values(states).filter((state) => state.status === 'scanning').length
   const errorCount = Object.values(states).filter((state) => state.status === 'error').length
@@ -296,60 +694,17 @@ export function WorkspaceAssetInventoryApp({
   }
 
   async function scanHosts(targetHosts: HostProfile[]) {
-    const runId = ++runIdRef.current
-    const pending = targetHosts.slice()
-    const scanningStates = targetHosts.reduce<Record<string, HostInventoryState>>((next, host) => {
-      const key = hostKey(host)
-      next[key] = { status: 'scanning', inventory: states[key]?.inventory, updatedAt: states[key]?.updatedAt }
-      return next
-    }, {})
-    mergeWorkspaceInventoryStates(scanningStates)
-    setStates((prev) => {
-      const next = { ...prev }
-      targetHosts.forEach((host) => {
-        const key = hostKey(host)
-        next[key] = { status: 'scanning', inventory: prev[key]?.inventory, updatedAt: prev[key]?.updatedAt }
-      })
-      return next
+    const runId = ++scanRunIdRef.current
+    await scanWorkspaceInventoryHosts({
+      hosts: targetHosts,
+      resolveAuthSecret,
+      concurrency: SCAN_CONCURRENCY,
+      currentStates: states,
+      isCurrent: () => scanRunIdRef.current === runId,
     })
-
-    async function worker() {
-      while (pending.length > 0 && runIdRef.current === runId) {
-        const host = pending.shift()
-        if (!host) return
-        const key = hostKey(host)
-        try {
-          const inventory = await fetchWorkspaceInventory({ host, resolveAuthSecret })
-          if (runIdRef.current !== runId) return
-          saveWorkspaceInventoryCacheEntry(host, inventory)
-          const nextState = { status: 'ready' as const, inventory, updatedAt: Date.now() }
-          mergeWorkspaceInventoryStates({ [key]: nextState })
-          setStates((prev) => ({ ...prev, [key]: nextState }))
-        } catch (error) {
-          if (runIdRef.current !== runId) return
-          const message = error instanceof Error ? error.message : String(error)
-          const previousState = getWorkspaceInventoryStates()[key]
-          const nextState = {
-            status: 'error',
-            inventory: previousState?.inventory,
-            updatedAt: previousState?.updatedAt,
-            error: message,
-          } satisfies HostInventoryState
-          mergeWorkspaceInventoryStates({ [key]: nextState })
-          setStates((prev) => ({
-            ...prev,
-            [key]: {
-              ...nextState,
-              inventory: prev[key]?.inventory ?? nextState.inventory,
-              updatedAt: prev[key]?.updatedAt ?? nextState.updatedAt,
-            },
-          }))
-        }
-      }
+    if (scanRunIdRef.current === runId) {
+      setLastScanAt(Date.now())
     }
-
-    await Promise.all(Array.from({ length: Math.min(SCAN_CONCURRENCY, targetHosts.length) }, () => worker()))
-    if (runIdRef.current === runId) setLastScanAt(Date.now())
   }
 
   useEffect(() => {
@@ -376,7 +731,7 @@ export function WorkspaceAssetInventoryApp({
     }
     return () => {
       cancelled = true
-      runIdRef.current += 1
+      scanRunIdRef.current += 1
     }
   }, [hosts, resolveAuthSecret])
 
@@ -463,68 +818,31 @@ export function WorkspaceAssetInventoryApp({
         </div>
       ) : (
         <>
-      <div className="flex flex-col gap-4 border-b border-[color:var(--workspace-border-strong)] pb-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-subtle)]">
-            <Network className="h-3.5 w-3.5" />
-            VPS Asset Inventory
-          </div>
-          <div className="mt-2 text-2xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">资源总览</div>
-          <div className="mt-1 max-w-3xl text-sm text-[var(--workspace-text-muted)]">
-            把所有 VPS 的剩余资源、已安装工具、运行服务和疑似部署项目放到一张可搜索的资产地图里。
-          </div>
-          {cachedCount > 0 && (
-            <div className="mt-2 text-xs text-[var(--workspace-text-subtle)]">
-              已先显示 {cachedCount} 台 VPS 的本地缓存，后台扫描完成后会自动更新。
-            </div>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void scanHosts(hostRows.length > 0 ? hostRows : hosts)}
-            disabled={scanningCount > 0}
-            className="inline-flex h-10 items-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[rgba(19,127,236,0.18)] px-4 text-sm font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[rgba(19,127,236,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {scanningCount > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            扫描{hostRows.length > 0 && hostRows.length !== hosts.length ? '筛选结果' : '全部'}
-          </button>
-        </div>
-      </div>
-
-      <div className="grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-          <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><ServerCog className="h-4 w-4" />主机</div>
-          <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{readyStates.length}/{hosts.length}</div>
-        </div>
-        <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-          <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><ShieldCheck className="h-4 w-4" />活跃服务</div>
-          <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{serviceCount}</div>
-        </div>
-        <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-          <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><FolderGit2 className="h-4 w-4" />疑似项目</div>
-          <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{projectCount}</div>
-        </div>
-        <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-          <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><AlertTriangle className="h-4 w-4" />异常</div>
-          <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{errorCount}</div>
-        </div>
-      </div>
-
-      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索主机、IP、地区、工具、项目路径..."
-            className="h-10 w-full rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(8,15,22,0.72)] pl-9 pr-3 text-sm text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
-          />
-        </div>
-        <div className="text-xs text-[var(--workspace-text-muted)]">
-          {lastScanAt ? `上次扫描 ${new Date(lastScanAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '等待首次扫描'}
-        </div>
-      </div>
+        <AssetInventoryHeader
+          hosts={hosts}
+          visibleCount={hostRows.length}
+          cachedCount={cachedCount}
+          groupFilter={groupFilter}
+          tagFilter={tagFilter}
+          sortMode={sortMode}
+          summaryMode={summaryMode}
+          query={query}
+          onGroupFilter={setGroupFilter}
+          onTagFilter={setTagFilter}
+          onSortMode={setSortMode}
+          onSummaryMode={setSummaryMode}
+          onQueryChange={setQuery}
+          readyCount={readyStates.length}
+          serviceCount={serviceCount}
+          projectCount={projectCount}
+          errorCount={errorCount}
+          onScan={() => void scanHosts(hostRows.length > 0 ? hostRows : hosts)}
+          scanning={scanningCount > 0}
+          scanLabel={`扫描${hostRows.length > 0 && hostRows.length !== hosts.length ? '筛选结果' : '全部'}`}
+          lastScanAt={lastScanAt}
+          onImportSsh={onImportSsh}
+          onCreateHost={onCreateHost}
+        />
 
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(20rem,0.72fr)_minmax(0,1.35fr)]">
         <WorkspaceServerList
@@ -537,16 +855,17 @@ export function WorkspaceAssetInventoryApp({
           renderStatusIcon={(host) => <HostStatusDot state={states[hostKey(host)] ?? { status: 'idle' }} />}
           getStatusBadge={(host) => {
             const state = states[hostKey(host)] ?? { status: 'idle' as const }
-            return { label: getHostScanLabel(state), tone: getHostScanTone(state) }
+            if (state.status === 'error') return { label: '无法访问', tone: 'bad' }
+            return undefined
           }}
           getPrimaryBadge={(host) => {
             const state = states[hostKey(host)] ?? { status: 'idle' as const }
-            if (state.status === 'error') return { label: '无法访问', tone: 'bad' }
+            if (state.status === 'error') return undefined
             return { label: state.inventory?.projects.length ? `${state.inventory.projects.length} 项目` : '资产', tone: state.status === 'ready' ? 'info' : 'default' }
           }}
-          renderNetworkLine={(host) => {
+          renderRegionLine={(host) => {
             const network = networkByAddress[host.address]
-            return network ? <HostNetworkBadges network={network} /> : null
+            return network ? <HostRegionLine network={network} /> : null
           }}
           getSearchData={(host) => {
             const inventory = states[hostKey(host)]?.inventory
@@ -558,15 +877,17 @@ export function WorkspaceAssetInventoryApp({
               projects: getProjectSearchValues(inventory),
             }
           }}
-          renderMetrics={(host) => {
+          getResourceMetrics={(host) => {
             const inventory = states[hostKey(host)]?.inventory
-            return (
-              <div className="mt-3 grid grid-cols-3 gap-2 font-mono text-[11px] text-[var(--workspace-text-muted)]">
-                <div>CPU {formatPercent(inventory?.resource.cpuPercent ?? null)}</div>
-                <div>MEM {formatPercent(inventory?.resource.memoryPercent ?? null)}</div>
-                <div>DISK {formatPercent(inventory?.resource.diskPercent ?? null)}</div>
-              </div>
-            )
+            if (!inventory) return undefined
+            return {
+              cpuPercent: inventory?.resource.cpuPercent,
+              memoryPercent: inventory?.resource.memoryPercent,
+              diskPercent: inventory?.resource.diskPercent,
+              cpuDetail: inventory?.resource.uptime,
+              memoryDetail: inventory?.resource.memoryText,
+              diskDetail: inventory?.resource.diskText,
+            }
           }}
           renderFooter={(host) => {
             const inventory = states[hostKey(host)]?.inventory
@@ -576,6 +897,7 @@ export function WorkspaceAssetInventoryApp({
               </div>
             )
           }}
+          onRowDoubleClick={onOpenTerminal}
         />
 
         <div className="min-h-0 overflow-auto rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.38)] p-4">
@@ -584,36 +906,62 @@ export function WorkspaceAssetInventoryApp({
           ) : (
             <div className="space-y-4">
               <div className="border-b border-[color:var(--workspace-border-strong)] pb-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-lg font-semibold text-[var(--workspace-text-strong)]">
-                    <ServerCog className="h-5 w-5 text-[color:var(--workspace-primary-300)]" />
-                    <span className="truncate">{selectedHost.name}</span>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-lg font-semibold text-[var(--workspace-text-strong)]">
+                      <ServerCog className="h-5 w-5 text-[color:var(--workspace-primary-300)]" />
+                      <span className="truncate">{selectedHost.name}</span>
+                    </div>
+                    <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">
+                      {selectedHost.username}@{selectedHost.address}:{selectedHost.port}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Badge>{selectedHost.group || 'Custom'}</Badge>
+                      {selectedState?.status === 'error' && <Badge tone="bad">{getHostScanLabel(selectedState)}</Badge>}
+                      {selectedNetwork && <Badge>{selectedNetwork.resolvedLocationLabel}</Badge>}
+                      {(selectedHost.tags ?? []).map((tag) => <Badge key={tag}>{tag}</Badge>)}
+                      {selectedInventory?.resource.os && <Badge>{selectedInventory.resource.os}</Badge>}
+                      {selectedInventory?.resource.kernel && <Badge>{selectedInventory.resource.kernel}</Badge>}
+                    </div>
                   </div>
-                  <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">
-                    {selectedHost.username}@{selectedHost.address}:{selectedHost.port}
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Badge>{selectedHost.group || 'Custom'}</Badge>
-                    {selectedState && <Badge tone={getHostScanTone(selectedState)}>{getHostScanLabel(selectedState)}</Badge>}
-                    {selectedNetwork && <Badge tone={getNetworkTone(selectedNetwork)}>{selectedNetwork.scopeLabel}</Badge>}
-                    {selectedNetwork && <Badge>{selectedNetwork.versionLabel}</Badge>}
-                    {selectedNetwork && <Badge>{selectedNetwork.resolvedLocationLabel}</Badge>}
-                    {(selectedHost.tags ?? []).map((tag) => <Badge key={tag}>{tag}</Badge>)}
-                    {selectedInventory?.resource.os && <Badge>{selectedInventory.resource.os}</Badge>}
-                    {selectedInventory?.resource.kernel && <Badge>{selectedInventory.resource.kernel}</Badge>}
-                  </div>
+                  {(onOpenTerminal || onEditHost || (selectedConsoleLink && onOpenProviderConsole)) && (
+                    <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+                      {onOpenTerminal && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenTerminal(selectedHost)}
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.72)] px-3 text-xs font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[rgba(30,44,60,0.9)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-primary-400)]"
+                        >
+                          <SquareTerminal className="h-3.5 w-3.5" />
+                          终端
+                        </button>
+                      )}
+                      {onEditHost && (
+                        <button
+                          type="button"
+                          onClick={() => onEditHost(selectedHost)}
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.72)] px-3 text-xs font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[rgba(30,44,60,0.9)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-primary-400)]"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          编辑
+                        </button>
+                      )}
+                      {selectedConsoleLink && onOpenProviderConsole && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenProviderConsole(selectedConsoleLink.url, selectedHost)}
+                          aria-label={`打开 ${selectedConsoleLink.label} 控制台`}
+                          title={`打开 ${selectedConsoleLink.label} 控制台`}
+                          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.72)] px-3 text-xs font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[rgba(30,44,60,0.9)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-primary-400)]"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          <span>{selectedConsoleLink.label} 控制台</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="mt-4 flex flex-wrap items-center gap-2">
-                  {onOpenConsole && (
-                    <button
-                      type="button"
-                      onClick={onOpenConsole}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.72)] px-3 text-xs font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[rgba(30,44,60,0.9)]"
-                    >
-                      <SquareTerminal className="h-3.5 w-3.5" />
-                      控制台
-                    </button>
-                  )}
                   <button
                     type="button"
                     onClick={() => void scanHosts([selectedHost])}

@@ -4,20 +4,22 @@ import { recordInteractiveCommand } from '@/lib/interactive-history'
 import type { InteractiveOutputChunk, InteractiveSessionInfo } from '@/lib/interactive-session'
 import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { resizeInteractiveTerminal } from '@/lib/interactive-session'
-import { getThemeById, type TerminalPrefs } from '@/lib/terminal-themes'
+import { DEFAULT_TERMINAL_PREFS, getThemeById, type TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
-import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { PanelRightClose, PanelRightOpen, RefreshCw, Sparkles, WifiOff, ExternalLink, Globe } from 'lucide-react'
+import { Eraser, PanelRightClose, PanelRightOpen, RefreshCw, Sparkles, WifiOff, ExternalLink, Globe } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { AICommandBar } from './ai-command-bar'
 import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
 import { SuggestBar } from './suggest-bar'
 import { TerminalSearchBar } from './terminal-search-bar'
 import { WorkspaceModeToggle } from './workspace/workspace-mode-toggle'
+
+const TERMINAL_SCROLLBACK_ROWS = 10000
+const TERMINAL_WRITE_BACKLOG_LIMIT_CHARS = 1 << 20
 
 interface SessionTerminalViewProps {
   sessionId: string
@@ -83,6 +85,7 @@ export function SessionTerminalView({
 
   const isConnected = session?.status?.startsWith('running') ?? false
   const isDisconnected = session?.status?.startsWith('closed') ?? false
+  const outputThrottledText = t('terminal.outputThrottled')
 
   const prefsRef = useRef(terminalPrefs)
   prefsRef.current = terminalPrefs
@@ -153,14 +156,18 @@ export function SessionTerminalView({
     if (chromeOnly) return
     if (!containerRef.current) return
 
-    const activeTheme = getThemeById(terminalPrefs?.themeId ?? 'hacker-green')
+    const activeTheme = getThemeById(terminalPrefs?.themeId ?? DEFAULT_TERMINAL_PREFS.themeId)
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'block',
-      fontSize: terminalPrefs?.fontSize ?? 13,
-      fontFamily: terminalPrefs?.fontFamily ?? "'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Monaco, 'Courier New', monospace",
+      fontSize: terminalPrefs?.fontSize ?? DEFAULT_TERMINAL_PREFS.fontSize,
+      fontFamily: terminalPrefs?.fontFamily ?? DEFAULT_TERMINAL_PREFS.fontFamily,
+      fontWeight: 400,
+      fontWeightBold: 700,
+      letterSpacing: 0,
       lineHeight: 1.2,
-      scrollback: 10000,
+      minimumContrastRatio: 4.5,
+      scrollback: TERMINAL_SCROLLBACK_ROWS,
       fastScrollSensitivity: 10,
       smoothScrollDuration: 0,
       rescaleOverlappingGlyphs: true,
@@ -172,14 +179,6 @@ export function SessionTerminalView({
     term.open(containerRef.current)
     fit.fit()
 
-    try {
-      const webgl = new WebglAddon()
-      webgl.onContextLoss(() => { webgl.dispose() })
-      term.loadAddon(webgl)
-    } catch {
-      // WebGL not available, fall back to canvas renderer
-    }
-
     const search = new SearchAddon()
     term.loadAddon(search)
     searchAddonRef.current = search
@@ -187,18 +186,34 @@ export function SessionTerminalView({
     termRef.current = term
     fitRef.current = fit
 
-    let writeWatermark = 0
-    const WATERMARK_HIGH = 1 << 18
-    const drain = () => { writeWatermark = 0 }
+    let pendingWriteChars = 0
+    let droppedOutput = false
+
+    const writeThrottleNoticeIfIdle = () => {
+      if (pendingWriteChars !== 0 || !droppedOutput) return
+      droppedOutput = false
+      const notice = `\r\n\x1b[33m[ShellBeam] ${outputThrottledText}\x1b[0m\r\n`
+      pendingWriteChars += notice.length
+      term.write(notice, () => {
+        pendingWriteChars = Math.max(0, pendingWriteChars - notice.length)
+      })
+    }
 
     chunkEmitterRef.current[sessionId] = (chunks) => {
       let batch = ''
       for (let i = 0; i < chunks.length; i++) batch += chunks[i].data
 
-      if (writeWatermark > WATERMARK_HIGH) return
-      writeWatermark += batch.length
+      if (pendingWriteChars + batch.length > TERMINAL_WRITE_BACKLOG_LIMIT_CHARS) {
+        droppedOutput = true
+        writeThrottleNoticeIfIdle()
+        return
+      }
+      pendingWriteChars += batch.length
       detectLinks(batch)
-      term.write(batch, drain)
+      term.write(batch, () => {
+        pendingWriteChars = Math.max(0, pendingWriteChars - batch.length)
+        writeThrottleNoticeIfIdle()
+      })
     }
 
     // Replay any chunks that were buffered before the emitter was registered
@@ -207,7 +222,11 @@ export function SessionTerminalView({
       for (let i = 0; i < initialChunks.length; i++) batch += initialChunks[i].data
       if (batch) {
         detectLinks(batch)
-        term.write(batch, drain)
+        pendingWriteChars += batch.length
+        term.write(batch, () => {
+          pendingWriteChars = Math.max(0, pendingWriteChars - batch.length)
+          writeThrottleNoticeIfIdle()
+        })
       }
       onInitialChunksConsumed?.(sessionId)
     }
@@ -270,16 +289,16 @@ export function SessionTerminalView({
       termRef.current = null
       fitRef.current = null
     }
-  }, [sessionId, chunkEmitterRef, chromeOnly])
+  }, [sessionId, chunkEmitterRef, chromeOnly, outputThrottledText])
 
   useEffect(() => {
     if (chromeOnly) return
     const term = termRef.current
     if (!term || !terminalPrefs) return
-    const themeDef = getThemeById(terminalPrefs.themeId)
+    const themeDef = getThemeById(terminalPrefs.themeId ?? DEFAULT_TERMINAL_PREFS.themeId)
     term.options.theme = themeDef.theme
-    term.options.fontSize = terminalPrefs.fontSize
-    term.options.fontFamily = terminalPrefs.fontFamily
+    term.options.fontSize = terminalPrefs.fontSize ?? DEFAULT_TERMINAL_PREFS.fontSize
+    term.options.fontFamily = terminalPrefs.fontFamily ?? DEFAULT_TERMINAL_PREFS.fontFamily
     try { fitRef.current?.fit() } catch { /* teardown */ }
   }, [terminalPrefs?.themeId, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, chromeOnly])
 
@@ -299,7 +318,12 @@ export function SessionTerminalView({
     termRef.current?.focus()
   }, [])
 
-  const activeThemeDef = getThemeById(terminalPrefs?.themeId ?? 'hacker-green')
+  const handleClearTerminalBuffer = useCallback(() => {
+    termRef.current?.clear()
+    termRef.current?.focus()
+  }, [])
+
+  const activeThemeDef = getThemeById(terminalPrefs?.themeId ?? DEFAULT_TERMINAL_PREFS.themeId)
   const bg = activeThemeDef.theme.background ?? '#000000'
   const fg = activeThemeDef.theme.foreground ?? '#00ff41'
   const showBrowserShortcuts = !onWorkspaceModeChange
@@ -310,8 +334,7 @@ export function SessionTerminalView({
       style={{
         ...(chromeOnly ? {} : { background: bg }),
         opacity: entered ? 1 : 0,
-        transform: entered ? 'translateY(0px)' : 'translateY(6px)',
-        transition: 'opacity 180ms ease, transform 180ms ease',
+        transition: 'opacity 160ms ease',
       }}
     >
       <div
@@ -386,6 +409,17 @@ export function SessionTerminalView({
               <WorkspaceModeToggle mode={workspaceMode} onChange={onWorkspaceModeChange} compact />
             </div>
           )}
+          {!chromeOnly && (
+            <button
+              type="button"
+              onClick={handleClearTerminalBuffer}
+              className="flex items-center rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
+              title={t('terminal.clearScrollback')}
+              aria-label={t('terminal.clearScrollback')}
+            >
+              <Eraser className="h-4 w-4" />
+            </button>
+          )}
           {isConnected && (
             <button
               type="button"
@@ -440,7 +474,7 @@ export function SessionTerminalView({
         <>
           <div
             ref={containerRef}
-            className="min-h-0 flex-1"
+            className="terminal-surface min-h-0 flex-1"
             onClick={handleContainerClick}
           />
           <SuggestBar

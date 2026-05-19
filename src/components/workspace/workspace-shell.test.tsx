@@ -24,8 +24,19 @@ vi.mock('./workspace-tool-manager-app', () => ({
 }))
 
 vi.mock('./workspace-asset-inventory-app', () => ({
-  WorkspaceAssetInventoryApp: ({ onOpenConsole }: { onOpenConsole?: () => void }) => (
-    <button type="button" data-testid="workspace-asset-inventory-app" onClick={onOpenConsole}>Mock Asset Inventory App</button>
+  WorkspaceAssetInventoryApp: ({
+    hosts = [],
+    onOpenTerminal,
+    onEditHost,
+  }: {
+    hosts?: Array<{ id: string }>
+    onOpenTerminal?: (host: { id: string }) => void
+    onEditHost?: (host: { id: string }) => void
+  }) => (
+    <div>
+      <button type="button" data-testid="workspace-asset-inventory-app" onClick={() => hosts[0] && onOpenTerminal?.(hosts[0])}>Mock Asset Inventory App</button>
+      <button type="button" data-testid="workspace-asset-edit" onClick={() => hosts[0] && onEditHost?.(hosts[0])}>Mock Asset Edit</button>
+    </div>
   ),
 }))
 
@@ -220,8 +231,20 @@ describe('workspace shell', () => {
     expect(screen.getByRole('button', { name: /close vps assets window/i })).toBeInTheDocument()
   })
 
-  it('routes the asset inventory console action to the terminal app', () => {
-    const onSelectApp = vi.fn()
+  it('routes the asset inventory terminal action through the terminal callback', () => {
+    const onOpenTerminal = vi.fn()
+    const host = {
+      id: 'host-1',
+      name: 'Production API',
+      address: '10.0.0.15',
+      port: 22,
+      username: 'root',
+      group: 'Default',
+      authType: 'password' as const,
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+    }
 
     render(
       <WorkspaceShell
@@ -230,29 +253,52 @@ describe('workspace shell', () => {
         hostName="Production API"
         hostAddress="10.0.0.15"
         hostId="host-1"
-        hosts={[
-          {
-            id: 'host-1',
-            name: 'Production API',
-            address: '10.0.0.15',
-            port: 22,
-            username: 'root',
-            group: 'Default',
-            authType: 'password',
-            tags: [],
-            createdAt: 0,
-            updatedAt: 0,
-          },
-        ]}
+        hosts={[host]}
         resolveAuthSecret={async () => 'secret'}
         activeApp="assetInventory"
-        onSelectApp={onSelectApp}
+        onSelectApp={() => {}}
+        onOpenTerminal={onOpenTerminal}
       />,
     )
 
     fireEvent.click(screen.getByTestId('workspace-asset-inventory-app'))
 
-    expect(onSelectApp).toHaveBeenCalledWith('terminal')
+    expect(onOpenTerminal).toHaveBeenCalledWith(host)
+  })
+
+  it('routes the asset inventory edit action through the edit callback', () => {
+    const onEditHost = vi.fn()
+    const host = {
+      id: 'host-1',
+      name: 'Production API',
+      address: '10.0.0.15',
+      port: 22,
+      username: 'root',
+      group: 'Default',
+      authType: 'password' as const,
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+    }
+
+    render(
+      <WorkspaceShell
+        sessionId={sessionId}
+        mobile={false}
+        hostName="Production API"
+        hostAddress="10.0.0.15"
+        hostId="host-1"
+        hosts={[host]}
+        resolveAuthSecret={async () => 'secret'}
+        activeApp="assetInventory"
+        onSelectApp={() => {}}
+        onEditHost={onEditHost}
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId('workspace-asset-edit'))
+
+    expect(onEditHost).toHaveBeenCalledWith(host)
   })
 
   it('renders file transfer, file system, and logs app shells when selected', async () => {

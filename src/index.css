@@ -85,6 +85,13 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  .terminal-surface .xterm,
+  .terminal-surface .xterm-rows {
+    -webkit-font-smoothing: subpixel-antialiased;
+    -moz-osx-font-smoothing: auto;
+    text-rendering: geometricPrecision;
+  }
+
   /* Prevent iOS Safari auto-zoom on input focus (requires font-size >= 16px) */
   @media screen and (max-width: 767px) {
     input, select, textarea {

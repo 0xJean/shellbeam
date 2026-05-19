@@ -8,6 +8,11 @@ vi.mock('@/lib/i18n', () => ({
 }))
 
 vi.mock('@/lib/terminal-themes', () => ({
+  DEFAULT_TERMINAL_PREFS: {
+    fontSize: 14,
+    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+    themeId: 'hacker-green',
+  },
   getThemeById: () => ({
     theme: {
       background: '#000000',

@@ -37,6 +37,9 @@ interface WorkspaceMobileShellProps {
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
+  onOpenTerminal?: (host: HostProfile) => void
+  onOpenProviderConsole?: (url: string, host: HostProfile) => void
+  onEditHost?: (host: HostProfile) => void
   onBrowserCloseRequest?: () => void
 }
 
@@ -49,12 +52,15 @@ export function WorkspaceMobileShell({
   resolveAuthSecret,
   activeApp,
   onSelectApp,
+  onOpenTerminal,
+  onOpenProviderConsole,
+  onEditHost,
   onBrowserCloseRequest,
 }: WorkspaceMobileShellProps) {
   const content = (() => {
     if (activeApp === 'assetInventory') {
       if (resolveAuthSecret) {
-        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenConsole={() => onSelectApp('terminal')} />
+        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -84,7 +90,7 @@ export function WorkspaceMobileShell({
     }
     if (activeApp === 'toolManager') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }

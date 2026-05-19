@@ -1,16 +1,19 @@
 import { HostGridCard, HostListItem } from '@/components/host-card'
-import { HostForm } from '@/components/host-form'
+import { HostCreateDialog } from '@/components/host-create-dialog'
+import { HostEditorDialog } from '@/components/host-editor-dialog'
 import { PullToRefresh } from '@/components/pull-to-refresh'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
+import { getWorkspaceInventoryDisplayStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
+import { WorkspacePanelHeader } from './workspace/workspace-panel-header'
 
 type SortMode = 'az' | 'za' | 'newest' | 'oldest'
 const SORT_KEY = 'shellbeam.hostSortMode'
@@ -35,7 +38,7 @@ interface HostsDashboardProps {
   onAddFormClose?: () => void
   externalSearch?: string
   onExternalSearchChange?: (q: string) => void
-  onCheckHostStatus?: (host: HostProfile) => Promise<'online' | 'offline'>
+  onScanHosts?: (hosts: HostProfile[]) => Promise<void>
   onRefreshHosts?: () => Promise<void>
   vaultKeys?: string[]
   vaultUnlocked?: boolean
@@ -47,8 +50,8 @@ interface HostsDashboardProps {
 export function HostsDashboard({
   hosts, selectedHostId, loading, defaultUsername = 'root',
   onSelectHost, onConnectHost, onCreateHost, onUpdateHost, onDeleteHost,
-    openAddForm = false, onAddFormClose,
-    externalSearch, onExternalSearchChange, onCheckHostStatus, onRefreshHosts,
+  openAddForm = false, onAddFormClose,
+    externalSearch, onExternalSearchChange, onScanHosts, onRefreshHosts,
     vaultKeys = [], vaultUnlocked = false, onSaveToVault, onLoadVaultSecret, vaultName = 'Vault',
 }: HostsDashboardProps) {
   const [internalSearch, setInternalSearch] = useState('')
@@ -59,7 +62,6 @@ export function HostsDashboard({
   const [showAddForm, setShowAddForm] = useState(openAddForm)
   useEffect(() => { setShowAddForm((prev) => (openAddForm ? true : prev)) }, [openAddForm])
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
-  const [statusByHostId, setStatusByHostId] = useState<Record<string, 'online' | 'offline' | 'checking'>>({})
   const [checkingStatus, setCheckingStatus] = useState(false)
   const [showSshImport, setShowSshImport] = useState(false)
   const [editingHost, setEditingHost] = useState<HostProfile | null>(null)
@@ -68,6 +70,11 @@ export function HostsDashboard({
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set())
   const [tagFilterOpen, setTagFilterOpen] = useState(false)
   const { t } = useT()
+  const sharedStates = useWorkspaceInventoryStates()
+
+  function hostKey(host: HostProfile) {
+    return getWorkspaceInventoryHostKey(host)
+  }
 
   function handleSortChange(mode: SortMode) {
     setSortMode(mode)
@@ -93,22 +100,13 @@ export function HostsDashboard({
   }
 
   async function handleCheckAllStatus() {
-    if (!onCheckHostStatus || filteredHosts.length === 0) return
+    if (!onScanHosts || filteredHosts.length === 0) return
     setCheckingStatus(true)
-    setStatusByHostId((prev) => {
-      const next = { ...prev }
-      for (const h of filteredHosts) next[h.id] = 'checking'
-      return next
-    })
-    for (const host of filteredHosts) {
-      try {
-        const status = await onCheckHostStatus(host)
-        setStatusByHostId((prev) => ({ ...prev, [host.id]: status }))
-      } catch {
-        setStatusByHostId((prev) => ({ ...prev, [host.id]: 'offline' as const }))
-      }
+    try {
+      await onScanHosts(filteredHosts)
+    } finally {
+      setCheckingStatus(false)
     }
-    setCheckingStatus(false)
   }
 
   const filteredHosts = useMemo(() => {
@@ -149,7 +147,7 @@ export function HostsDashboard({
     return Array.from(groups.entries())
   }, [filteredHosts])
 
-  const onlineCount = Object.values(statusByHostId).filter((s) => s === 'online').length
+  const onlineCount = hosts.filter((host) => getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)]) === 'online').length
 
   const allGroupCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -164,13 +162,11 @@ export function HostsDashboard({
     <div className="flex w-full flex-col overflow-x-hidden">
       <StatsRow hostsTotal={hosts.length} onlineCount={onlineCount} groupCounts={allGroupCounts} />
 
-      <div className="shrink-0 px-4 py-5 md:px-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">{t('hosts.title')}</h2>
-            <p className="text-sm text-muted-foreground">{t('hosts.subtitle')}</p>
-          </div>
-          <div className="flex items-center gap-2">
+      <WorkspacePanelHeader
+        title={t('hosts.title')}
+        description={t('hosts.subtitle')}
+        actions={
+          <>
             <div className="relative">
               <button type="button" onClick={() => { setTagFilterOpen((v) => !v); setSortOpen(false) }}
                 className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
@@ -254,77 +250,76 @@ export function HostsDashboard({
                 <List className="h-4 w-4" />
               </button>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1">
-        <div className="flex min-h-[200px] min-w-0 flex-1 flex-col px-4 md:px-6">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            {externalSearch === undefined && (
-              <div className="relative flex-1 max-w-xs">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input value={effectiveSearch} onChange={(e) => setEffectiveSearch(e.target.value)} placeholder={t('hosts.search')} className="h-9 pl-9 text-sm" />
-              </div>
-            )}
-            <div className="flex flex-wrap gap-1 rounded-lg bg-muted/50 p-0.5">
-              {allGroups.map((g) => {
-                const label = g === 'All' ? t('hosts.all') : (t(`group.${g}`) !== `group.${g}` ? t(`group.${g}`) : g)
-                return (
-                  <button key={g} type="button" onClick={() => setGroupFilter(g)} className={cn('rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors sm:px-3', groupFilter === g ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
-                    {label}
-                  </button>
-                )
-              })}
+          </>
+        }
+        contentClassName="space-y-4"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          {externalSearch === undefined && (
+            <div className="relative flex-1 max-w-xs">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={effectiveSearch} onChange={(e) => setEffectiveSearch(e.target.value)} placeholder={t('hosts.search')} className="h-9 pl-9 text-sm" />
             </div>
-            <div className="flex-1" />
-            {onCheckHostStatus && filteredHosts.length > 0 && (
-              <Button size="sm" variant="outline" onClick={handleCheckAllStatus} disabled={checkingStatus} className="h-9 gap-1.5 text-xs">
-                <RefreshCw className={cn('h-3.5 w-3.5', checkingStatus && 'animate-spin')} />
-                {checkingStatus ? t('hosts.checking') : t('hosts.checkStatus')}
-              </Button>
-            )}
-            <button
-              type="button"
-              onClick={() => setShowSshImport(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium transition-colors hover:bg-muted"
-            >
-              <FileDown className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{t('hosts.importSsh')}</span>
-            </button>
-            <Button size="sm" onClick={() => setShowAddForm(!showAddForm)} className="h-9 gap-1.5 text-xs">
-              <Plus className="h-3.5 w-3.5" /> {t('hosts.newConnection')}
-            </Button>
+          )}
+          <div className="flex flex-wrap gap-1 rounded-lg bg-muted/50 p-0.5">
+            {allGroups.map((g) => {
+              const label = g === 'All' ? t('hosts.all') : (t(`group.${g}`) !== `group.${g}` ? t(`group.${g}`) : g)
+              return (
+                <button key={g} type="button" onClick={() => setGroupFilter(g)} className={cn('rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors sm:px-3', groupFilter === g ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                  {label}
+                </button>
+              )
+            })}
           </div>
+          <div className="flex-1" />
+          {onScanHosts && filteredHosts.length > 0 && (
+            <Button size="sm" variant="outline" onClick={() => void handleCheckAllStatus()} disabled={checkingStatus} className="h-9 gap-1.5 text-xs">
+              <RefreshCw className={cn('h-3.5 w-3.5', checkingStatus && 'animate-spin')} />
+              {checkingStatus ? t('hosts.checking') : t('hosts.checkStatus')}
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowSshImport(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium transition-colors hover:bg-muted"
+          >
+            <FileDown className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{t('hosts.importSsh')}</span>
+          </button>
+          <Button size="sm" onClick={() => setShowAddForm(!showAddForm)} className="h-9 gap-1.5 text-xs">
+            <Plus className="h-3.5 w-3.5" /> {t('hosts.newConnection')}
+          </Button>
+        </div>
 
-          <Dialog open={showAddForm} onOpenChange={(o) => { setShowAddForm(o); if (!o) onAddFormClose?.() }}>
-            <DialogContent>
-              <HostForm
-                defaultUsername={defaultUsername} vaultKeys={vaultKeys} vaultUnlocked={vaultUnlocked}
-                onSaveToVault={onSaveToVault} onLoadVaultSecret={onLoadVaultSecret} vaultName={vaultName}
-                existingGroups={allExistingGroups} existingTags={allExistingTags}
-                onSubmit={async (draft) => { await onCreateHost(draft); setShowAddForm(false); onAddFormClose?.() }}
-                onCancel={() => { setShowAddForm(false); onAddFormClose?.() }}
-              />
-            </DialogContent>
-          </Dialog>
+          <HostCreateDialog
+            open={showAddForm}
+            defaultUsername={defaultUsername}
+            vaultKeys={vaultKeys}
+            vaultUnlocked={vaultUnlocked}
+            onSaveToVault={onSaveToVault}
+            onLoadVaultSecret={onLoadVaultSecret}
+            vaultName={vaultName}
+            existingGroups={allExistingGroups}
+            existingTags={allExistingTags}
+            onSubmit={async (draft) => { await onCreateHost(draft); setShowAddForm(false); onAddFormClose?.() }}
+            onCancel={() => { setShowAddForm(false); onAddFormClose?.() }}
+          />
 
-          <Dialog open={!!editingHost} onOpenChange={(o) => { if (!o) setEditingHost(null) }}>
-            <DialogContent>
-              {editingHost && (
-                <HostForm
-                  initial={editingHost}
-                  defaultUsername={defaultUsername} vaultKeys={vaultKeys} vaultUnlocked={vaultUnlocked}
-                  onSaveToVault={onSaveToVault} onLoadVaultSecret={onLoadVaultSecret} vaultName={vaultName}
-                  existingGroups={allExistingGroups} existingTags={allExistingTags}
-                  onSubmit={async (draft) => { await onUpdateHost(editingHost, draft); setEditingHost(null) }}
-                  onCancel={() => setEditingHost(null)}
-                />
-              )}
-            </DialogContent>
-          </Dialog>
+          <HostEditorDialog
+            host={editingHost}
+            defaultUsername={defaultUsername}
+            vaultKeys={vaultKeys}
+            vaultUnlocked={vaultUnlocked}
+            onSaveToVault={onSaveToVault}
+            onLoadVaultSecret={onLoadVaultSecret}
+            vaultName={vaultName}
+            existingGroups={allExistingGroups}
+            existingTags={allExistingTags}
+            onSubmit={async (host, draft) => { await onUpdateHost(host, draft); setEditingHost(null) }}
+            onCancel={() => setEditingHost(null)}
+          />
 
-          <PullToRefresh onRefresh={onRefreshHosts ?? (async () => {})} className="pb-6">
+        <PullToRefresh onRefresh={onRefreshHosts ?? (async () => {})} className="pb-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-16">
                 <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground/40" />
@@ -352,7 +347,7 @@ export function HostsDashboard({
                     key={host.id}
                     host={host}
                     isSelected={selectedHostId === host.id}
-                    status={statusByHostId[host.id]}
+                    status={getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)])}
                     onConnect={handleConnect}
                     onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                     onDelete={(id) => void onDeleteHost(id)}
@@ -375,7 +370,7 @@ export function HostsDashboard({
                           key={host.id}
                           host={host}
                           isSelected={selectedHostId === host.id}
-                          status={statusByHostId[host.id]}
+                          status={getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)])}
                           onSelect={onSelectHost}
                           onConnect={handleConnect}
                           onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
@@ -387,9 +382,8 @@ export function HostsDashboard({
                 ))}
               </div>
             )}
-          </PullToRefresh>
-        </div>
-      </div>
+        </PullToRefresh>
+      </WorkspacePanelHeader>
 
         {showSshImport && (
           <SshImportDialog

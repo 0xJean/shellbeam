@@ -129,6 +129,44 @@ describe('workspace asset inventory app', () => {
     expect(screen.getByText('没有匹配的 VPS 资产。')).toBeInTheDocument()
   })
 
+  it('filters and sorts hosts from the VPS asset header controls', async () => {
+    const datedHosts = [
+      { ...hosts[0], updatedAt: 10 },
+      { ...hosts[1], updatedAt: 20 },
+    ]
+
+    render(
+      <WorkspaceAssetInventoryApp
+        selectedHostId="host-1"
+        hosts={datedHosts}
+        resolveAuthSecret={async () => 'secret'}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(runSshCommand).toHaveBeenCalledTimes(2)
+    })
+
+    expect(screen.getByText('全部主机')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '生产 1' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '开发 1' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^标签/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'api' }))
+
+    expect(screen.getByText('1/2 台匹配')).toBeInTheDocument()
+    expect(screen.getAllByText('Production API').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Worker Node')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '清除标签筛选' }))
+
+    fireEvent.click(screen.getByRole('button', { name: '全部' }))
+    fireEvent.click(screen.getByRole('button', { name: '开发' }))
+    expect(screen.getByText('1/2 台匹配')).toBeInTheDocument()
+    expect(screen.getAllByText('Worker Node').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Worker Node').length).toBeGreaterThan(0)
+  })
+
   it('filters the shared server list by installed tools without matching service candidates', async () => {
     runSshCommand.mockImplementation(({ host }: { host: string }) => Promise.resolve({
       stdout: host === '10.0.0.15' ? inventoryOutput(host) : inventoryOutputWithoutNginxTool(host),
@@ -215,15 +253,15 @@ describe('workspace asset inventory app', () => {
     expect(screen.getByTestId('workspace-tool-host-host-2')).toHaveClass('border-[color:var(--workspace-border-glow)]')
   })
 
-  it('opens the console from the selected server detail actions', async () => {
-    const onOpenConsole = vi.fn()
+  it('opens the terminal from the selected server detail actions', async () => {
+    const onOpenTerminal = vi.fn()
 
     render(
       <WorkspaceAssetInventoryApp
         selectedHostId="host-1"
         hosts={hosts}
         resolveAuthSecret={async () => 'secret'}
-        onOpenConsole={onOpenConsole}
+        onOpenTerminal={onOpenTerminal}
       />,
     )
 
@@ -231,9 +269,54 @@ describe('workspace asset inventory app', () => {
       expect(runSshCommand).toHaveBeenCalledTimes(2)
     })
 
-    fireEvent.click(screen.getByRole('button', { name: '控制台' }))
+    fireEvent.click(screen.getByRole('button', { name: '终端' }))
 
-    expect(onOpenConsole).toHaveBeenCalledTimes(1)
+    expect(onOpenTerminal).toHaveBeenCalledWith(hosts[0])
+  })
+
+  it('opens host editing from the selected server detail actions', async () => {
+    const onEditHost = vi.fn()
+
+    render(
+      <WorkspaceAssetInventoryApp
+        selectedHostId="host-1"
+        hosts={hosts}
+        resolveAuthSecret={async () => 'secret'}
+        onEditHost={onEditHost}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(runSshCommand).toHaveBeenCalledTimes(2)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+
+    expect(onEditHost).toHaveBeenCalledWith(hosts[0])
+  })
+
+  it('shows a provider console link for recognized VPS hosts', async () => {
+    const onOpenProviderConsole = vi.fn()
+    const contaboHost = { ...hosts[0], tags: ['Contabo'] }
+
+    render(
+      <WorkspaceAssetInventoryApp
+        selectedHostId="host-1"
+        hosts={[contaboHost]}
+        resolveAuthSecret={async () => 'secret'}
+        onOpenProviderConsole={onOpenProviderConsole}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(runSshCommand).toHaveBeenCalledTimes(1)
+    })
+
+    const button = screen.getByRole('button', { name: '打开 Contabo 控制台' })
+
+    fireEvent.click(button)
+
+    expect(onOpenProviderConsole).toHaveBeenCalledWith('https://my.contabo.com/account/login', contaboHost)
   })
 
   it('marks hosts as inaccessible when the scan cannot connect', async () => {

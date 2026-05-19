@@ -163,6 +163,8 @@ type SharedOutput = Arc<Mutex<Vec<InteractiveOutputChunk>>>;
 type SharedSeq = Arc<AtomicU64>;
 
 const OUTPUT_BUFFER_CAP: usize = 2000;
+const OUTPUT_BUFFER_MAX_BYTES: usize = 8 * 1024 * 1024;
+const OUTPUT_BUFFER_TRIM_TO_BYTES: usize = 4 * 1024 * 1024;
 const INTERACTIVE_OUTPUT_EVENT: &str = "shellbeam://interactive-output";
 const INTERACTIVE_STATUS_EVENT: &str = "shellbeam://interactive-status";
 const INTERACTIVE_PROGRESS_EVENT: &str = "shellbeam://interactive-progress";
@@ -229,6 +231,21 @@ fn push_chunk(
         if guard.len() > OUTPUT_BUFFER_CAP {
             let excess = guard.len() - OUTPUT_BUFFER_CAP / 2;
             guard.drain(..excess);
+        }
+        let mut total_bytes = guard.iter().map(|item| item.data.len()).sum::<usize>();
+        if total_bytes > OUTPUT_BUFFER_MAX_BYTES {
+            let mut drain_up_to = 0usize;
+            for item in guard.iter() {
+                if total_bytes <= OUTPUT_BUFFER_TRIM_TO_BYTES {
+                    break;
+                }
+                total_bytes = total_bytes.saturating_sub(item.data.len());
+                drain_up_to += 1;
+            }
+            let drain_count = drain_up_to.min(guard.len().saturating_sub(1));
+            if drain_count > 0 {
+                guard.drain(..drain_count);
+            }
         }
     }
     emit_output(app, session_id, chunk);

@@ -36,12 +36,14 @@ import {
   ServerCog,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace/workspace-empty-state'
+import { WorkspacePanelHeader } from './workspace/workspace-panel-header'
 import { WorkspaceServerList } from './workspace/workspace-server-list'
 
 interface ProjectDeploymentsPanelProps {
   selectedHostId?: string | null
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
+  onOpenTerminal?: (host: HostProfile) => void
 }
 
 interface HostInventoryState {
@@ -117,36 +119,10 @@ function HostStatusIcon({ state }: { state?: HostInventoryState }) {
   return <CircleDot className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />
 }
 
-function getHostInventoryLabel(state?: HostInventoryState) {
-  if (state?.status === 'scanning') return '扫描中'
-  if (state?.status === 'ready') return '可访问'
-  if (state?.status === 'error') return '无法访问'
-  return '未扫描'
-}
-
-function getHostInventoryTone(state?: HostInventoryState): 'default' | 'good' | 'warn' | 'bad' | 'info' {
-  if (state?.status === 'ready') return 'good'
-  if (state?.status === 'error') return 'bad'
-  if (state?.status === 'scanning') return 'warn'
-  return 'default'
-}
-
-function getNetworkTone(network: HostNetworkDisplay): 'default' | 'good' | 'warn' | 'bad' | 'info' {
-  if (network.scope === 'public') return 'info'
-  if (network.scope === 'private') return 'good'
-  if (network.locationStatus === 'error') return 'warn'
-  return 'default'
-}
 
 function HostNetworkLine({ network }: { network?: HostNetworkDisplay }) {
   if (!network) return null
-  return (
-    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
-      <Badge tone={getNetworkTone(network)}>{network.scopeLabel}</Badge>
-      <Badge>{network.versionLabel}</Badge>
-      <span className="min-w-0 truncate text-[11px] text-[var(--workspace-text-subtle)]">{network.resolvedLocationLabel}</span>
-    </div>
-  )
+  return <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{network.resolvedLocationLabel}</div>
 }
 
 function getInstalledToolSearchValues(inventory: WorkspaceInventory | undefined) {
@@ -234,6 +210,7 @@ export function ProjectDeploymentsPanel({
   selectedHostId = null,
   hosts,
   resolveAuthSecret,
+  onOpenTerminal,
 }: ProjectDeploymentsPanelProps) {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | DeploymentViewStatus>('all')
@@ -397,78 +374,72 @@ export function ProjectDeploymentsPanel({
 
   return (
     <div data-testid="project-deployments-panel" className="flex min-h-[34rem] min-w-0 flex-col text-[var(--workspace-text)]">
-      <div className="flex flex-col gap-4 border-b border-[color:var(--workspace-border-strong)] pb-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-subtle)]">
-            <GitBranch className="h-3.5 w-3.5" />
-            Deployed Projects
+      <WorkspacePanelHeader
+        eyebrow={<><GitBranch className="h-3.5 w-3.5" />Deployed Projects</>}
+        title="部署项目"
+        description="按服务器聚合疑似项目、Docker/PM2/systemd 信号和资源余量，用来快速确认部署项目位于哪台 VPS 上。"
+        note={loadingCache ? '正在读取本地快照...' : `已载入 ${scannedHostCount} 台 VPS 的本地快照`}
+        actions={
+          <button
+            type="button"
+            onClick={() => void scanHosts(selectedKey === 'all' ? hosts : hosts.filter((host) => hostKey(host) === selectedKey))}
+            disabled={scanningCount > 0}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[rgba(19,127,236,0.18)] px-4 text-sm font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[rgba(19,127,236,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {scanningCount > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {selectedKey === 'all' ? '扫描全部 VPS' : '扫描当前 VPS'}
+          </button>
+        }
+        contentClassName="space-y-4"
+      >
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
+            <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><ServerCog className="h-4 w-4" />已扫描主机</div>
+            <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{scannedHostCount}/{hosts.length}</div>
           </div>
-          <div className="mt-2 text-2xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">部署项目</div>
-          <div className="mt-1 max-w-3xl text-sm text-[var(--workspace-text-muted)]">
-            按服务器聚合疑似项目、Docker/PM2/systemd 信号和资源余量，用来快速确认部署项目位于哪台 VPS 上。
+          <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
+            <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><FolderGit2 className="h-4 w-4" />疑似部署</div>
+            <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{deploymentRows.length}</div>
           </div>
-          <div className="mt-2 text-xs text-[var(--workspace-text-subtle)]">
-            {loadingCache ? '正在读取本地快照...' : `已载入 ${scannedHostCount} 台 VPS 的本地快照`}
+          <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
+            <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><Boxes className="h-4 w-4" />运行信号</div>
+            <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{runningCount}</div>
+          </div>
+          <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
+            <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><Database className="h-4 w-4" />活跃服务</div>
+            <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{activeServiceCount}</div>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void scanHosts(selectedKey === 'all' ? hosts : hosts.filter((host) => hostKey(host) === selectedKey))}
-          disabled={scanningCount > 0}
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[rgba(19,127,236,0.18)] px-4 text-sm font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[rgba(19,127,236,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {scanningCount > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          {selectedKey === 'all' ? '扫描全部 VPS' : '扫描当前 VPS'}
-        </button>
-      </div>
 
-      <div className="grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-          <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><ServerCog className="h-4 w-4" />已扫描主机</div>
-          <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{scannedHostCount}/{hosts.length}</div>
+        <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索项目、路径、服务器、运行信号..."
+              className="h-10 w-full rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(8,15,22,0.72)] pl-9 pr-3 text-sm text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(['all', 'running', 'detected', 'stale', 'inaccessible'] as const).map((status) => (
+              <button
+                key={status}
+                type="button"
+                onClick={() => setStatusFilter(status)}
+                className={cn(
+                  'h-10 rounded-xl border px-3 text-xs font-semibold transition-colors',
+                  statusFilter === status
+                    ? 'border-[color:var(--workspace-border-glow)] bg-[rgba(19,127,236,0.18)] text-[var(--workspace-text-strong)]'
+                    : 'border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.62)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
+                )}
+              >
+                {status === 'all' ? '全部' : status === 'running' ? '运行中' : status === 'detected' ? '已发现' : status === 'stale' ? '缓存过期' : '无法访问'}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-          <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><FolderGit2 className="h-4 w-4" />疑似部署</div>
-          <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{deploymentRows.length}</div>
-        </div>
-        <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-          <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><Boxes className="h-4 w-4" />运行信号</div>
-          <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{runningCount}</div>
-        </div>
-        <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-          <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><Database className="h-4 w-4" />活跃服务</div>
-          <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{activeServiceCount}</div>
-        </div>
-      </div>
-
-      <div className="mb-4 flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索项目、路径、服务器、运行信号..."
-            className="h-10 w-full rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(8,15,22,0.72)] pl-9 pr-3 text-sm text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {(['all', 'running', 'detected', 'stale', 'inaccessible'] as const).map((status) => (
-            <button
-              key={status}
-              type="button"
-              onClick={() => setStatusFilter(status)}
-              className={cn(
-                'h-10 rounded-xl border px-3 text-xs font-semibold transition-colors',
-                statusFilter === status
-                  ? 'border-[color:var(--workspace-border-glow)] bg-[rgba(19,127,236,0.18)] text-[var(--workspace-text-strong)]'
-                  : 'border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.62)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
-              )}
-            >
-              {status === 'all' ? '全部' : status === 'running' ? '运行中' : status === 'detected' ? '已发现' : status === 'stale' ? '缓存过期' : '无法访问'}
-            </button>
-          ))}
-        </div>
-      </div>
+      </WorkspacePanelHeader>
 
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(20rem,0.42fr)_minmax(0,1fr)]">
         <WorkspaceServerList
@@ -486,18 +457,19 @@ export function ProjectDeploymentsPanel({
           renderStatusIcon={(host) => <HostStatusIcon state={states[hostKey(host)]} />}
           getStatusBadge={(host) => {
             const state = states[hostKey(host)]
-            return { label: getHostInventoryLabel(state), tone: getHostInventoryTone(state) }
+            if (state?.status === 'error') return { label: '无法访问', tone: 'bad' }
+            return undefined
           }}
           getPrimaryBadge={(host) => {
             const state = states[hostKey(host)]
             const rows = deploymentRows.filter((row) => hostKey(row.host) === hostKey(host))
-            if (state?.status === 'error') return { label: '无法访问', tone: 'bad' }
+            if (state?.status === 'error') return undefined
             return {
               label: `${rows.length} 项目`,
               tone: rows.some((row) => row.status === 'running') ? 'good' : rows.length > 0 ? 'info' : 'default',
             }
           }}
-          renderNetworkLine={(host) => <HostNetworkLine network={networkByAddress[host.address]} />}
+          renderRegionLine={(host) => <HostNetworkLine network={networkByAddress[host.address]} />}
           getSearchData={(host) => {
             const key = hostKey(host)
             const state = states[key]
@@ -515,15 +487,17 @@ export function ProjectDeploymentsPanel({
               ]),
             }
           }}
-          renderMetrics={(host) => {
+          getResourceMetrics={(host) => {
             const state = states[hostKey(host)]
-            return (
-              <div className="mt-3 grid grid-cols-3 gap-2 font-mono text-[11px] text-[var(--workspace-text-muted)]">
-                <div>CPU {formatPercent(state?.inventory?.resource.cpuPercent)}</div>
-                <div>MEM {formatPercent(state?.inventory?.resource.memoryPercent)}</div>
-                <div>DISK {formatPercent(state?.inventory?.resource.diskPercent)}</div>
-              </div>
-            )
+            if (!state?.inventory) return undefined
+            return {
+              cpuPercent: state?.inventory?.resource.cpuPercent,
+              memoryPercent: state?.inventory?.resource.memoryPercent,
+              diskPercent: state?.inventory?.resource.diskPercent,
+              cpuDetail: state?.inventory?.resource.uptime,
+              memoryDetail: state?.inventory?.resource.memoryText,
+              diskDetail: state?.inventory?.resource.diskText,
+            }
           }}
           renderFooter={(host) => {
             const state = states[hostKey(host)]
@@ -534,6 +508,7 @@ export function ProjectDeploymentsPanel({
               </div>
             )
           }}
+          onRowDoubleClick={onOpenTerminal}
         />
 
         <section className="min-h-0 overflow-hidden rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.38)]">

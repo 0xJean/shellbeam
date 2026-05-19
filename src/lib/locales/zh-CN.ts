@@ -205,6 +205,8 @@ const zhCN: Record<string, string> = {
   'terminal.aiGenerator': 'AI 命令生成器',
   'terminal.connectionLost': '连接已断开',
   'terminal.reconnect': '重新连接',
+  'terminal.clearScrollback': '清理终端滚动缓存',
+  'terminal.outputThrottled': '输出过快，已跳过部分积压内容以保持终端响应。',
   'terminal.snippetPasted': '代码片段已粘贴到终端',
   'terminal.snippetCopied': '无活动终端会话 - 片段已复制到命令输入',
   'terminal.runningSnippet': '正在运行片段：{name}',

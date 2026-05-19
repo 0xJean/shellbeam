@@ -81,6 +81,7 @@ import { useHosts } from './hosts-context'
 import { useVault } from './vault-context'
 
 const INTERACTIVE_OUTPUT_MAX_CHUNKS = 500
+const INTERACTIVE_OUTPUT_MAX_CHARS = 1 << 20
 const ACTIVE_INTERACTIVE_SESSION_KEY = 'shellbeam.activeInteractiveSessionId'
 const LEFT_INTERACTIVE_SESSION_KEY = 'shellbeam.leftInteractiveSessionId'
 const RIGHT_INTERACTIVE_SESSION_KEY = 'shellbeam.rightInteractiveSessionId'
@@ -143,6 +144,30 @@ function shouldIgnoreSettledBrowserLoadEvent(
     browserUrlsMatch(targetTab.currentUrl, payload.url)
     || browserUrlsMatch(targetTab.source.url, payload.url)
   )
+}
+
+function trimInteractiveOutputChunks(chunks: InteractiveOutputChunk[]) {
+  let totalChars = 0
+  const retained: InteractiveOutputChunk[] = []
+
+  for (let i = chunks.length - 1; i >= 0; i -= 1) {
+    const chunk = chunks[i]
+    const chunkChars = chunk.data.length
+    if (retained.length >= INTERACTIVE_OUTPUT_MAX_CHUNKS) break
+    if (totalChars + chunkChars > INTERACTIVE_OUTPUT_MAX_CHARS) {
+      if (retained.length === 0) {
+        retained.unshift({
+          ...chunk,
+          data: chunk.data.slice(-INTERACTIVE_OUTPUT_MAX_CHARS),
+        })
+      }
+      break
+    }
+    totalChars += chunkChars
+    retained.unshift(chunk)
+  }
+
+  return retained
 }
 
 function readStoredBrowserRouteModes(): Record<string, BrowserRouteMode> {
@@ -654,7 +679,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         } else {
           setInteractiveChunksBySession((prev) => ({
             ...prev,
-            [sessionId]: [...(prev[sessionId] ?? []), ...chunks].slice(-INTERACTIVE_OUTPUT_MAX_CHUNKS),
+            [sessionId]: trimInteractiveOutputChunks([...(prev[sessionId] ?? []), ...chunks]),
           }))
         }
       })

@@ -13,6 +13,9 @@ interface WorkspaceShellProps {
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
+  onOpenTerminal?: (host: HostProfile) => void
+  onOpenProviderConsole?: (url: string, host: HostProfile) => void
+  onEditHost?: (host: HostProfile) => void
   onBrowserCloseRequest?: () => void
 }
 

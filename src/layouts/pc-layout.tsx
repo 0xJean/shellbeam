@@ -10,6 +10,9 @@ import { SessionConnectPlaceholder } from '@/components/session-connect-placehol
 import { SessionTerminalView } from '@/components/session-terminal-view'
 import { TerminalRightSidebar } from '@/components/terminal-right-sidebar'
 import { WorkspaceAssetInventoryApp } from '@/components/workspace/workspace-asset-inventory-app'
+import { HostCreateDialog } from '@/components/host-create-dialog'
+import { HostEditorDialog } from '@/components/host-editor-dialog'
+import { SshImportDialog } from '@/components/ssh-import-dialog'
 import { useApp } from '@/contexts/app-context'
 import { useHosts } from '@/contexts/hosts-context'
 import { getBrowserSourceTitle, resolveBrowserRouteMode } from '@/contexts/session-browser-state'
@@ -18,6 +21,7 @@ import { useVault } from '@/contexts/vault-context'
 import { useSnippets } from '@/hooks/use-snippets'
 import { useSync } from '@/hooks/use-sync'
 import type { HostProfile } from '@/lib/hosts'
+import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { Globe, MoveRight, Search, Trash2, X } from 'lucide-react'
@@ -178,11 +182,19 @@ export function PcLayout() {
   const [browserSwitcherQuery, setBrowserSwitcherQuery] = useState('')
   const [browserSwitcherActiveIndex, setBrowserSwitcherActiveIndex] = useState(0)
   const [browserSwitcherRecentTabIds, setBrowserSwitcherRecentTabIds] = useState<string[]>(() => readStoredBrowserSwitcherRecents())
+  const [assetCreateHostOpen, setAssetCreateHostOpen] = useState(false)
+  const [assetEditingHost, setAssetEditingHost] = useState<HostProfile | null>(null)
+  const [assetSshImportOpen, setAssetSshImportOpen] = useState(false)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(() => {
     try { return localStorage.getItem('shellbeam.rightSidebar') === 'true' } catch { return false }
   })
+  const [lastDashboardNav, setLastDashboardNav] = useState(() => app.pcSidebarNav === 'terminal' ? 'hosts' : app.pcSidebarNav)
   const browserSwitcherInputRef = useRef<HTMLInputElement | null>(null)
   const observedActiveBrowserTabIdsRef = useRef<string[] | null>(null)
+
+  useEffect(() => {
+    if (app.pcSidebarNav !== 'terminal') setLastDashboardNav(app.pcSidebarNav)
+  }, [app.pcSidebarNav])
 
   // Auto-switch to terminal tab on mobile when a new session is created
   const prevTabCountRef = useRef(sessions.pcSessionTabs.length)
@@ -228,6 +240,54 @@ export function PcLayout() {
     void sessions.handleConnectHost(hostId)
   }
 
+  const handleOpenHostTerminal = (host: HostProfile) => {
+    app.setPcSidebarNav('terminal')
+    void sessions.handleConnectHost(host.id)
+  }
+
+  const handleOpenProviderConsole = (url: string, host: HostProfile, sessionId?: string) => {
+    if (sessionId) {
+      sessions.openSessionBrowserUrl(sessionId, url, 'embedded')
+      sessions.setSessionWorkspaceApp(sessionId, 'browser')
+      return
+    }
+
+    const targetSessionId = sessions.pcSessionTabs.find((tab) => tab.hostId === host.id)?.sessionId ?? sessions.pcActiveSessionId
+    if (!targetSessionId) return
+
+    app.setPcSidebarNav('terminal')
+    sessions.openSessionBrowserUrl(targetSessionId, url, 'embedded')
+    sessions.setSessionWorkspaceApp(targetSessionId, 'browser')
+  }
+
+  const handleEditHostFromAssetInventory = useCallback((host: HostProfile) => {
+    const latestHost = hostsCtx.hosts.find((entry) => entry.id === host.id) ?? host
+    hostsCtx.setSelectedHostId(latestHost.id)
+    setAssetEditingHost(latestHost)
+  }, [hostsCtx.hosts, hostsCtx.setSelectedHostId])
+
+  const allExistingGroups = useMemo(() => {
+    const set = new Set<string>([...DEFAULT_GROUPS])
+    hostsCtx.hosts.forEach((host) => { if (host.group) set.add(host.group) })
+    return Array.from(set)
+  }, [hostsCtx.hosts])
+
+  const allExistingTags = useMemo(() => {
+    const set = new Set<string>()
+    hostsCtx.hosts.forEach((host) => host.tags?.forEach((tag) => set.add(tag)))
+    return Array.from(set).sort()
+  }, [hostsCtx.hosts])
+
+  const handleSubmitAssetHostEdit = useCallback(async (...args: Parameters<typeof hostsCtx.handleUpdateHost>) => {
+    await hostsCtx.handleUpdateHost(...args)
+    setAssetEditingHost(null)
+  }, [hostsCtx.handleUpdateHost])
+
+  const handleSubmitAssetHostCreate = useCallback(async (...args: Parameters<typeof hostsCtx.handleCreateHost>) => {
+    await hostsCtx.handleCreateHost(...args)
+    setAssetCreateHostOpen(false)
+  }, [hostsCtx.handleCreateHost])
+
   const handleQuickConnectNewHost = () => {
     setShowQuickConnect(false)
     app.setPcSidebarNav('hosts')
@@ -241,6 +301,12 @@ export function PcLayout() {
 
   const handleMobileCloseSession = (sessionId: string) => {
     requestCloseSession(sessionId)
+  }
+
+  const handleGoToDashboard = () => {
+    sessions.setPcActiveSessionId(null)
+    setShowQuickConnect(false)
+    app.setPcSidebarNav(lastDashboardNav)
   }
 
   const validRightPaneSessionId =
@@ -661,6 +727,39 @@ export function PcLayout() {
         onAccept={sessions.acceptPendingHostKey}
         onReject={sessions.rejectPendingHostKey}
       />
+      <HostEditorDialog
+        host={assetEditingHost}
+        defaultUsername={hostsCtx.defaultUsername}
+        vaultKeys={vault.vaultKeys}
+        vaultUnlocked={vault.vaultStatusState?.unlocked ?? false}
+        onSaveToVault={hostsCtx.handleSaveToVault}
+        onLoadVaultSecret={vault.handleRevealSecret}
+        vaultName={vault.vaults.find((item) => item.id === vault.activeVaultId)?.name ?? 'Vault'}
+        existingGroups={allExistingGroups}
+        existingTags={allExistingTags}
+        onSubmit={handleSubmitAssetHostEdit}
+        onCancel={() => setAssetEditingHost(null)}
+      />
+      <HostCreateDialog
+        open={assetCreateHostOpen}
+        defaultUsername={hostsCtx.defaultUsername}
+        vaultKeys={vault.vaultKeys}
+        vaultUnlocked={vault.vaultStatusState?.unlocked ?? false}
+        onSaveToVault={hostsCtx.handleSaveToVault}
+        onLoadVaultSecret={vault.handleRevealSecret}
+        vaultName={vault.vaults.find((item) => item.id === vault.activeVaultId)?.name ?? 'Vault'}
+        existingGroups={allExistingGroups}
+        existingTags={allExistingTags}
+        onSubmit={handleSubmitAssetHostCreate}
+        onCancel={() => setAssetCreateHostOpen(false)}
+      />
+      {assetSshImportOpen && (
+        <SshImportDialog
+          vaultId={vault.activeVaultId}
+          onClose={() => setAssetSshImportOpen(false)}
+          onImported={() => { setAssetSshImportOpen(false); void hostsCtx.refreshHosts() }}
+        />
+      )}
       <Dialog open={!!pendingCloseSession} onOpenChange={(open) => { if (!open) setPendingCloseSessionId(null) }}>
         <DialogContent className="md:max-w-md">
           <div className="space-y-4">
@@ -848,7 +947,7 @@ export function PcLayout() {
           isSplit={isSplit}
           onSelectSession={(sid) => { sessions.setPcActiveSessionId(sid); setShowQuickConnect(false) }}
           onCloseSession={requestCloseSession}
-          onGoToDashboard={() => { sessions.setPcActiveSessionId(null); setShowQuickConnect(false); app.setPcSidebarNav('hosts') }}
+          onGoToDashboard={handleGoToDashboard}
           onOpenLocalTerminal={() => sessions.handleOpenLocalTerminal()}
           onNewConnection={handlePcNewConnection}
           onToggleSplit={canToggleSplit ? handleToggleSplit : undefined}
@@ -948,6 +1047,9 @@ export function PcLayout() {
                             resolveAuthSecret={workspaceAuthResolvers[tab.sessionId]}
                             activeApp={sessions.workspaceBySession[tab.sessionId]?.activeApp ?? 'overview'}
                             onSelectApp={(workspaceApp) => sessions.setSessionWorkspaceApp(tab.sessionId, workspaceApp)}
+                            onOpenTerminal={handleOpenHostTerminal}
+                            onOpenProviderConsole={(url, host) => handleOpenProviderConsole(url, host, tab.sessionId)}
+                            onEditHost={handleEditHostFromAssetInventory}
                             onBrowserCloseRequest={() => handleCloseBrowserContext(tab.sessionId)}
                           />
                         </Suspense>
@@ -1083,6 +1185,9 @@ export function PcLayout() {
                             resolveAuthSecret={workspaceAuthResolvers[tab.sessionId]}
                             activeApp={sessions.workspaceBySession[tab.sessionId]?.activeApp ?? 'overview'}
                             onSelectApp={(workspaceApp) => sessions.setSessionWorkspaceApp(tab.sessionId, workspaceApp)}
+                            onOpenTerminal={handleOpenHostTerminal}
+                            onOpenProviderConsole={(url, host) => handleOpenProviderConsole(url, host, tab.sessionId)}
+                            onEditHost={handleEditHostFromAssetInventory}
                             onBrowserCloseRequest={() => handleCloseBrowserContext(tab.sessionId)}
                           />
                         </Suspense>
@@ -1316,7 +1421,7 @@ export function PcLayout() {
                     onAddFormClose={() => hostsCtx.setPcOpenAddHost(false)}
                     externalSearch={hostsCtx.pcTopBarSearch}
                     onExternalSearchChange={hostsCtx.setPcTopBarSearch}
-                    onCheckHostStatus={hostsCtx.handleCheckHostStatus}
+                    onScanHosts={hostsCtx.handleScanHosts}
                     onRefreshHosts={hostsCtx.refreshHosts}
                     vaultKeys={vault.vaultKeys}
                     vaultUnlocked={vault.vaultStatusState?.unlocked ?? false}
@@ -1332,6 +1437,11 @@ export function PcLayout() {
                     selectedHostId={hostsCtx.selectedHostId}
                     hosts={hostsCtx.hosts}
                     resolveAuthSecret={resolveWorkspaceAuthSecret}
+                    onOpenTerminal={handleOpenHostTerminal}
+                    onOpenProviderConsole={handleOpenProviderConsole}
+                    onEditHost={handleEditHostFromAssetInventory}
+                    onImportSsh={() => setAssetSshImportOpen(true)}
+                    onCreateHost={() => setAssetCreateHostOpen(true)}
                   />
                 </div>
               )}

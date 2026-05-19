@@ -40,6 +40,9 @@ interface WorkspaceDesktopShellProps {
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
+  onOpenTerminal?: (host: HostProfile) => void
+  onOpenProviderConsole?: (url: string, host: HostProfile) => void
+  onEditHost?: (host: HostProfile) => void
   onBrowserCloseRequest?: () => void
 }
 
@@ -131,6 +134,9 @@ export function WorkspaceDesktopShell({
   resolveAuthSecret,
   activeApp,
   onSelectApp,
+  onOpenTerminal,
+  onOpenProviderConsole,
+  onEditHost,
   onBrowserCloseRequest,
 }: WorkspaceDesktopShellProps) {
   const isOverview = activeApp === 'overview'
@@ -161,7 +167,7 @@ export function WorkspaceDesktopShell({
   const content = (() => {
     if (activeApp === 'assetInventory') {
       if (resolveAuthSecret) {
-        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenConsole={() => onSelectApp('terminal')} />
+        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -191,7 +197,7 @@ export function WorkspaceDesktopShell({
     }
     if (activeApp === 'toolManager') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -282,7 +288,7 @@ export function WorkspaceDesktopShell({
 
     if (app === 'assetInventory') {
       if (resolveAuthSecret) {
-        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenConsole={() => onSelectApp('terminal')} />
+        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
@@ -312,7 +318,7 @@ export function WorkspaceDesktopShell({
     }
     if (app === 'toolManager') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
       }
       return <WorkspaceEmptyApp app={app} />
     }

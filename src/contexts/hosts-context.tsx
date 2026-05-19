@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { type HostProfile, type HostProfileDraft, createHost, updateHost, deleteHost, listHosts } from '@/lib/hosts'
-import { testSshConnection } from '@/lib/sessions'
 import { vaultSetSecret } from '@/lib/vault'
-import type { AuthType } from '@/lib/ssh'
+import { loadWorkspaceInventoryPersistedCache } from '@/lib/workspace-inventory'
+import { createReadyWorkspaceInventoryStates, mergeWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { scanWorkspaceInventoryHosts } from '@/lib/workspace-inventory-scan'
 import { useVault } from './vault-context'
 
 interface HostsContextValue {
@@ -23,7 +24,7 @@ interface HostsContextValue {
   handleUpdateHost: (host: HostProfile, draft: HostProfileDraft) => Promise<void>
   handleDeleteHost: (hostId: string) => Promise<void>
   handleSaveToVault: (key: string, value: string) => Promise<void>
-  handleCheckHostStatus: (host: HostProfile) => Promise<'online' | 'offline'>
+  handleScanHosts: (hosts: HostProfile[]) => Promise<void>
   handleDefaultUsernameChange: (value: string) => void
   keepAliveIntervalSecs: number
   handleKeepAliveIntervalSecsChange: (value: number) => void
@@ -75,6 +76,17 @@ export function HostsProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void refreshHosts() }, [activeVaultId])
 
   useEffect(() => {
+    let cancelled = false
+    void loadWorkspaceInventoryPersistedCache(hosts).then((cache) => {
+      if (cancelled) return
+      mergeWorkspaceInventoryStates(createReadyWorkspaceInventoryStates(cache))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [hosts])
+
+  useEffect(() => {
     localStorage.setItem(DEFAULT_USERNAME_KEY, defaultUsername)
   }, [defaultUsername])
 
@@ -117,29 +129,18 @@ export function HostsProvider({ children }: { children: ReactNode }) {
     await refreshVault()
   }, [activeVaultId, refreshVault])
 
-  const handleCheckHostStatus = useCallback(async (host: HostProfile): Promise<'online' | 'offline'> => {
-    try {
-      const authType = host.authType as AuthType
-      const resolvedSecret = await resolveAuthSecret({
-        authType,
-        explicitSecret: '',
-        hostForRef: host,
-        inputMode: 'vault',
-      })
-      const result = await testSshConnection({
-        hostId: host.id,
-        host: host.address,
-        port: host.port,
-        username: host.username,
-        authType,
-        password: authType === 'password' ? resolvedSecret : undefined,
-        privateKey: authType === 'privateKey' ? resolvedSecret : undefined,
-        command: '',
-      })
-      return result.connected ? 'online' : 'offline'
-    } catch {
-      return 'offline'
-    }
+  const handleScanHosts = useCallback(async (hosts: HostProfile[]) => {
+    await scanWorkspaceInventoryHosts({
+      hosts,
+      resolveAuthSecret: async (host) => (
+        await resolveAuthSecret({
+          authType: host.authType,
+          explicitSecret: '',
+          hostForRef: host,
+          inputMode: 'vault',
+        })
+      ) ?? '',
+    })
   }, [resolveAuthSecret])
 
   const handleDefaultUsernameChange = useCallback((value: string) => {
@@ -156,17 +157,17 @@ export function HostsProvider({ children }: { children: ReactNode }) {
     defaultUsername, savingHost, testing, pcOpenAddHost, setPcOpenAddHost,
     pcTopBarSearch, setPcTopBarSearch,
     refreshHosts, handleCreateHost, handleUpdateHost, handleDeleteHost, handleSaveToVault,
-    handleCheckHostStatus, handleDefaultUsernameChange,
+    handleScanHosts, handleDefaultUsernameChange,
     keepAliveIntervalSecs, handleKeepAliveIntervalSecsChange,
   }), [
     defaultUsername,
-    handleCheckHostStatus,
     handleCreateHost,
     handleDefaultUsernameChange,
     handleDeleteHost,
     handleKeepAliveIntervalSecsChange,
     handleSaveToVault,
     handleUpdateHost,
+    handleScanHosts,
     hosts,
     keepAliveIntervalSecs,
     loadingHosts,
