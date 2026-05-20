@@ -1,11 +1,14 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Check } from 'lucide-react'
+import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
 export interface SelectOption {
   value: string
   label: string
+  icon?: React.ReactNode
+  description?: React.ReactNode
 }
 
 interface SelectProps {
@@ -18,6 +21,7 @@ interface SelectProps {
 }
 
 export function Select({ value, onChange, options, placeholder, className, disabled }: SelectProps) {
+  const { t } = useT()
   const [open, setOpen] = React.useState(false)
   const triggerRef = React.useRef<HTMLButtonElement>(null)
   const listRef = React.useRef<HTMLDivElement>(null)
@@ -82,7 +86,7 @@ export function Select({ value, onChange, options, placeholder, className, disab
         )}
       >
         <span className={cn('min-w-0 truncate', !selected && 'text-muted-foreground')}>
-          {selected?.label ?? placeholder ?? 'Select...'}
+          {selected?.label ?? placeholder ?? t('common.select')}
         </span>
         <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
@@ -105,11 +109,15 @@ export function Select({ value, onChange, options, placeholder, className, disab
               )}
             >
               <Check className={cn('h-3.5 w-3.5 shrink-0', opt.value === value ? 'opacity-100' : 'opacity-0')} />
-              <span className="min-w-0 truncate">{opt.label}</span>
+              {opt.icon}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{opt.label}</span>
+                {opt.description && <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{opt.description}</span>}
+              </span>
             </button>
           ))}
           {options.length === 0 && (
-            <div className="px-2 py-4 text-center text-xs text-muted-foreground">No options</div>
+            <div className="px-2 py-4 text-center text-xs text-muted-foreground">{t('common.noOptions')}</div>
           )}
         </div>,
         document.body,

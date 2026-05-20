@@ -1,6 +1,13 @@
 import type { HostProfile } from './hosts'
 import { fetchWorkspaceInventory, getWorkspaceInventoryHostKey, saveWorkspaceInventoryCacheEntry } from './workspace-inventory'
-import { getWorkspaceInventoryStates, mergeWorkspaceInventoryStates, type WorkspaceInventoryHostState } from './workspace-inventory-state'
+import {
+  createWorkspaceInventoryScanId,
+  createWorkspaceInventoryScanningStates,
+  getWorkspaceInventoryStates,
+  mergeWorkspaceInventoryStates,
+  restoreWorkspaceInventoryStatesFromScan,
+  type WorkspaceInventoryHostState,
+} from './workspace-inventory-state'
 
 interface WorkspaceInventoryScanOptions {
   hosts: HostProfile[]
@@ -20,16 +27,13 @@ export async function scanWorkspaceInventoryHosts({
   if (hosts.length === 0 || !isCurrent()) return
 
   const pending = hosts.slice()
-  const scanningStates = hosts.reduce<Record<string, WorkspaceInventoryHostState>>((next, host) => {
+  const scanId = createWorkspaceInventoryScanId()
+  const previousStates = hosts.reduce<Record<string, WorkspaceInventoryHostState | undefined>>((next, host) => {
     const key = getWorkspaceInventoryHostKey(host)
-    const current = currentStates[key]
-    next[key] = {
-      status: 'scanning',
-      inventory: current?.inventory,
-      updatedAt: current?.updatedAt,
-    }
+    next[key] = currentStates[key]
     return next
   }, {})
+  const scanningStates = createWorkspaceInventoryScanningStates(hosts, scanId, currentStates)
 
   mergeWorkspaceInventoryStates(scanningStates)
 
@@ -42,11 +46,12 @@ export async function scanWorkspaceInventoryHosts({
       try {
         const inventory = await fetchWorkspaceInventory({ host, resolveAuthSecret })
         if (!isCurrent()) return
-        saveWorkspaceInventoryCacheEntry(host, inventory)
+        const cacheEntry = await saveWorkspaceInventoryCacheEntry(host, inventory)
+        if (!isCurrent()) return
         const nextState: WorkspaceInventoryHostState = {
           status: 'ready',
-          inventory,
-          updatedAt: Date.now(),
+          inventory: cacheEntry.inventory,
+          updatedAt: cacheEntry.updatedAt,
         }
         mergeWorkspaceInventoryStates({ [key]: nextState })
       } catch (error) {
@@ -64,5 +69,11 @@ export async function scanWorkspaceInventoryHosts({
     }
   }
 
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, hosts.length)) }, () => worker()))
+  try {
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, hosts.length)) }, () => worker()))
+  } finally {
+    if (!isCurrent()) {
+      restoreWorkspaceInventoryStatesFromScan(scanId, previousStates)
+    }
+  }
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNod
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { useHostNetworkMetadata, type HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
+import { HostRegionMeta, HostSystemMeta } from '@/components/host-display-meta'
 import { ProjectDeploymentsPanel, getProjectDeploymentSignals } from '@/components/project-deployments-panel'
 import {
   getWorkspaceInventoryHostKey,
@@ -11,6 +12,7 @@ import {
   type WorkspaceInventoryProject,
 } from '@/lib/workspace-inventory'
 import { getServerConsoleLink } from '@/lib/server-console'
+import { getResourceUsageFillClassName, RESOURCE_USAGE_BAD_THRESHOLD, RESOURCE_USAGE_WARN_THRESHOLD } from '@/lib/resource-usage'
 import {
   createReadyWorkspaceInventoryStates,
   mergeWorkspaceInventoryStates,
@@ -41,13 +43,14 @@ import {
   Plus,
   RefreshCw,
   Search,
-  ServerCog,
   SquareTerminal,
   Tags,
   Wrench,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace-empty-state'
+import { WorkspaceOsIcon } from './workspace-os-icon'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup, type WorkspaceResourceHeaderTab } from './workspace-resource-overview-header'
+import { WorkspaceServiceIcon } from './workspace-service-icon'
 import { WorkspaceServerList, workspaceServerMatchesSearch, type WorkspaceServerSearchData } from './workspace-server-list'
 import { WorkspaceToolManagerApp, TOOL_CATALOG } from './workspace-tool-manager-app'
 
@@ -62,6 +65,7 @@ interface WorkspaceAssetInventoryAppProps {
   onEditHost?: (host: HostProfile) => void
   onImportSsh?: () => void
   onCreateHost?: () => void
+  headerExtraAction?: ReactNode
 }
 
 interface HostInventoryState {
@@ -94,17 +98,10 @@ function formatPercent(value: number | null, t: TFunction) {
   return value === null ? t('workspace.common.notAvailable') : `${Math.round(value)}%`
 }
 
-function getUsageTone(value: number | null) {
-  if (value === null) return 'bg-[var(--workspace-text-subtle)]'
-  if (value >= 90) return 'bg-[var(--workspace-status-bad)]'
-  if (value >= 75) return 'bg-[var(--workspace-status-warn)]'
-  return 'bg-[var(--workspace-status-good)]'
-}
-
 function getRiskLabel(value: number | null, t: TFunction) {
   if (value === null) return t('workspace.asset.unknown')
-  if (value >= 90) return t('workspace.asset.riskTight')
-  if (value >= 75) return t('workspace.asset.riskHigh')
+  if (value >= RESOURCE_USAGE_BAD_THRESHOLD) return t('workspace.asset.riskTight')
+  if (value >= RESOURCE_USAGE_WARN_THRESHOLD) return t('workspace.asset.riskHigh')
   return t('workspace.asset.riskEnough')
 }
 
@@ -134,7 +131,7 @@ function ResourceMeter({
         <span className="font-mono text-xs font-semibold text-[var(--workspace-text-strong)]">{formatPercent(value, t)}</span>
       </div>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--workspace-meter-track)]">
-        <div className={cn('h-full rounded-full transition-[width] duration-300', getUsageTone(value))} style={{ width: `${width}%` }} />
+        <div className={cn('h-full rounded-full transition-[width] duration-300', getResourceUsageFillClassName(value))} style={{ width: `${width}%` }} />
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-[var(--workspace-text-muted)]">
         <span>{getRiskLabel(value, t)}</span>
@@ -233,9 +230,20 @@ function getProjectSearchValues(inventory: WorkspaceInventory | undefined) {
 }
 
 function HostStatusDot({ state }: { state: HostInventoryState }) {
+  if (state.inventory || state.status === 'ready') {
+    return (
+      <span className="relative inline-flex h-5 w-5 items-center justify-center">
+        <WorkspaceOsIcon os={state.inventory?.resource.os} className="h-4 w-4 text-[var(--workspace-text-muted)]" />
+        {state.status === 'scanning' ? (
+          <Loader2 className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 animate-spin rounded-full bg-[var(--workspace-surface-row)] text-[color:var(--workspace-primary-300)]" />
+        ) : (
+          <CheckCircle2 className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-[var(--workspace-surface-row)] text-[color:var(--workspace-status-good)]" />
+        )}
+      </span>
+    )
+  }
   if (state.status === 'scanning') return <Loader2 className="h-3.5 w-3.5 animate-spin text-[color:var(--workspace-primary-300)]" />
-  if (state.status === 'ready') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
-  if (state.status === 'error') return <AlertTriangle className="h-3.5 w-3.5 text-red-300" />
+  if (state.status === 'error') return <AlertTriangle className="h-3.5 w-3.5 text-[color:var(--workspace-status-bad)]" />
   return <CircleDot className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />
 }
 
@@ -246,7 +254,11 @@ function getHostScanLabel(state: HostInventoryState, t: TFunction) {
 }
 
 function HostRegionLine({ network }: { network: HostNetworkDisplay }) {
-  return <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{network.resolvedLocationLabel}</div>
+  return (
+    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--workspace-text-subtle)]">
+      <HostRegionMeta network={network} />
+    </div>
+  )
 }
 
 function groupLabel(group: string, t: TFunction) {
@@ -290,6 +302,7 @@ function AssetInventoryHeader({
   lastScanAt,
   onImportSsh,
   onCreateHost,
+  headerExtraAction,
   preheader,
   tabs,
   activeTab,
@@ -316,6 +329,7 @@ function AssetInventoryHeader({
   lastScanAt: number | null
   onImportSsh?: () => void
   onCreateHost?: () => void
+  headerExtraAction?: ReactNode
   preheader?: ReactNode
   tabs?: WorkspaceResourceHeaderTab[]
   activeTab?: string
@@ -372,6 +386,7 @@ function AssetInventoryHeader({
         note={note}
         actions={
           <>
+            {headerExtraAction}
             <div className="relative">
               <button
                 type="button"
@@ -578,6 +593,7 @@ export function WorkspaceAssetInventoryApp({
   onEditHost,
   onImportSsh,
   onCreateHost,
+  headerExtraAction,
 }: WorkspaceAssetInventoryAppProps) {
   const initialHost = useMemo(() => {
     if (selectedHostId) return hosts.find((host) => host.id === selectedHostId)
@@ -781,6 +797,7 @@ export function WorkspaceAssetInventoryApp({
           lastScanAt={lastScanAt}
           onImportSsh={onImportSsh}
           onCreateHost={onCreateHost}
+          headerExtraAction={headerExtraAction}
         />
 
       <div className="grid min-h-0 flex-1 gap-4 pt-4 xl:grid-cols-[minmax(20rem,0.68fr)_minmax(0,1.42fr)]">
@@ -806,6 +823,7 @@ export function WorkspaceAssetInventoryApp({
             const network = networkByAddress[host.address]
             return network ? <HostRegionLine network={network} /> : null
           }}
+          getSystemLabel={(host) => states[hostKey(host)]?.inventory?.resource.os}
           getSearchData={(host) => {
             const inventory = states[hostKey(host)]?.inventory
             const network = networkByAddress[host.address]
@@ -873,7 +891,7 @@ export function WorkspaceAssetInventoryApp({
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-start gap-3">
                       <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
-                        <ServerCog className="h-5 w-5" />
+                        <WorkspaceOsIcon os={selectedInventory?.resource.os} className="h-5 w-5" />
                       </span>
                       <div className="min-w-0">
                         <div className="truncate text-xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">{selectedHost.name}</div>
@@ -885,9 +903,13 @@ export function WorkspaceAssetInventoryApp({
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Badge>{groupLabel(selectedHost.group || 'Custom', t)}</Badge>
                       {selectedState?.status === 'error' && <Badge tone="bad">{getHostScanLabel(selectedState, t)}</Badge>}
-                      {selectedNetwork && <Badge>{selectedNetwork.resolvedLocationLabel}</Badge>}
+                      {selectedNetwork && (
+                        <Badge>
+                          <HostRegionMeta network={selectedNetwork} />
+                        </Badge>
+                      )}
                       {(selectedHost.tags ?? []).map((tag) => <Badge key={tag}>{tag}</Badge>)}
-                      {selectedInventory?.resource.os && <Badge>{selectedInventory.resource.os}</Badge>}
+                      <Badge><HostSystemMeta resource={selectedInventory?.resource} fallbackKey="workspace.asset.versionPending" /></Badge>
                       {selectedInventory?.resource.kernel && <Badge>{selectedInventory.resource.kernel}</Badge>}
                     </div>
                   </div>
@@ -980,7 +1002,10 @@ export function WorkspaceAssetInventoryApp({
                         return (
                           <div key={`${tool.id}-${tool.binary}`} className="min-w-0 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] px-3 py-2.5">
                             <div className="flex min-w-0 items-center justify-between gap-2">
-                              <div className="truncate text-xs font-semibold text-[var(--workspace-text-strong)]">{tool.name}</div>
+                              <div className="flex min-w-0 items-center gap-2">
+                                <WorkspaceServiceIcon name={tool.id} className="h-4 w-4 text-[var(--workspace-text-muted)]" />
+                                <div className="truncate text-xs font-semibold text-[var(--workspace-text-strong)]">{tool.name}</div>
+                              </div>
                               {service && <Badge tone={getServiceTone(service.active)}>{service.active || service.enabled}</Badge>}
                             </div>
                             <div className="mt-1 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{tool.binary}</div>

@@ -1,7 +1,10 @@
 import { useMemo } from 'react'
 import { AlertCircle, CheckCircle2, Loader2, MonitorCog, Server, ShieldCheck, Sparkles, TerminalSquare, X } from 'lucide-react'
+import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
+import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
+import { HostMetadataLine } from './host-display-meta'
 
 interface SessionConnectPlaceholderProps {
   hostName: string
@@ -10,6 +13,8 @@ interface SessionConnectPlaceholderProps {
   status: 'connecting' | 'error'
   stage?: string
   errorMessage?: string
+  network?: HostNetworkDisplay
+  resource?: Pick<WorkspaceInventoryResource, 'os'>
   onRetry?: () => void
   onCancel?: () => void
 }
@@ -31,6 +36,8 @@ export function SessionConnectPlaceholder({
   status,
   stage,
   errorMessage,
+  network,
+  resource,
   onRetry,
   onCancel,
 }: SessionConnectPlaceholderProps) {
@@ -98,6 +105,16 @@ export function SessionConnectPlaceholder({
                 <span className="h-1 w-1 rounded-full bg-border" />
                 <span>{isLocal ? t('terminalConnect.localShellTag') : t('terminalConnect.remoteSessionTag')}</span>
               </div>
+              {!isLocal && (
+                <HostMetadataLine
+                  network={network}
+                  resource={resource}
+                  regionLabel={hostAddress}
+                  className="mt-3 text-xs text-muted-foreground"
+                  itemClassName="max-w-[10rem]"
+                  iconClassName="h-3.5 w-3.5"
+                />
+              )}
             </div>
 
             <p className="mt-4 text-xs text-muted-foreground">
@@ -146,6 +163,16 @@ export function SessionConnectPlaceholder({
         <div className="mt-2 text-[11px] font-medium uppercase tracking-[0.22em] text-[#64748b]">
           {isLocal ? 'LOCAL SESSION' : `CONNECTING TO: ${hostAddress}`}
         </div>
+        {!isLocal && (
+          <HostMetadataLine
+            network={network}
+            resource={resource}
+            regionLabel={hostAddress}
+            className="mt-3 justify-center text-xs text-[#64748b]"
+            itemClassName="max-w-[10rem]"
+            iconClassName="h-3.5 w-3.5"
+          />
+        )}
 
         {/* ── 3D Encryption Card ── */}
         <div className="relative mt-10 flex flex-col items-center">

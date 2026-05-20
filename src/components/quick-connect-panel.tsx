@@ -1,8 +1,11 @@
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import { cn } from '@/lib/utils'
 import { Command, Plus, Search, Server, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { getHostInventoryResource, HostMetadataLine } from './host-display-meta'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 
 interface QuickConnectPanelProps {
   hosts: HostProfile[]
@@ -15,6 +18,8 @@ export function QuickConnectPanel({ hosts, onConnectHost, onNewHost, onClose }: 
   const { t } = useT()
   const [search, setSearch] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   useEffect(() => {
     searchRef.current?.focus()
@@ -144,10 +149,22 @@ export function QuickConnectPanel({ hosts, onConnectHost, onNewHost, onClose }: 
                         'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold',
                         'bg-primary/10 text-primary'
                       )}>
-                        {host.name.charAt(0).toUpperCase()}
+                        <HostMetadataLine
+                          resource={getHostInventoryResource(host, inventoryStates)}
+                          showLocation={false}
+                          showSystemText={false}
+                          iconClassName="h-4 w-4 text-primary"
+                        />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-foreground">{host.name}</p>
+                        <HostMetadataLine
+                          network={networkByAddress[host.address]}
+                          resource={getHostInventoryResource(host, inventoryStates)}
+                          className="mt-0.5 flex-nowrap text-xs text-muted-foreground"
+                          itemClassName="max-w-[9rem]"
+                          iconClassName="h-3 w-3"
+                        />
                       </div>
                       <span className="shrink-0 text-xs text-muted-foreground/60">
                         {groupLabel(host.group || 'Custom')}

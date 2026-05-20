@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '@/lib/i18n'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Search, Server, FolderOpen, Settings, Plus, Rocket, Cloud, X } from 'lucide-react'
+import { Search, Server, FolderOpen, Settings, Plus, X } from 'lucide-react'
 import type { HostProfile } from '@/lib/hosts'
 import type { HistoryEntry } from '@/lib/history'
 import { cn } from '@/lib/utils'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { getHostInventoryResource, HostMetadataLine } from './host-display-meta'
+import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 
 export type CommandPaletteAction = 'focus-sftp' | 'focus-settings' | 'focus-interactive' | 'focus-vaults-dashboard'
 
@@ -65,6 +69,8 @@ export function CommandPalette({
   const [activeIndex, setActiveIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   const recentHosts = useMemo(() => {
     const seen = new Set<string>()
@@ -277,7 +283,7 @@ export function CommandPalette({
 
               if (item.kind === 'host') {
                 const isSaved = item.section === 'saved'
-                const IconComp = isSaved ? (item.host.group === 'Cloud' ? Cloud : Rocket) : Server
+                const resource = getHostInventoryResource(item.host, inventoryStates)
                 return (
                   <button
                     key={item.id}
@@ -299,13 +305,27 @@ export function CommandPalette({
                       'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
                       isActive ? 'bg-[#3b82f6]/20 text-[#3b82f6]' : 'bg-[#1e293b] text-[#3b82f6]/70',
                     )}>
-                      <IconComp className="h-4.5 w-4.5" />
+                      {isSaved && resource?.os ? (
+                        <WorkspaceOsIcon os={resource.os} className="h-4.5 w-4.5" />
+                      ) : (
+                        <Server className="h-4.5 w-4.5" />
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-[#e2e8f0]">{item.host.name}</p>
-                      <p className="truncate text-xs text-[#475569]">
-                        {item.host.address}{item.host.username ? ` \u00b7 ${authLabel(item.host)}` : ''}
-                      </p>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <p className="truncate text-xs text-[#475569]">
+                          {item.host.address}{item.host.username ? ` \u00b7 ${authLabel(item.host)}` : ''}
+                        </p>
+                        <HostMetadataLine
+                          network={networkByAddress[item.host.address]}
+                          resource={resource}
+                          showSystem={!isSaved}
+                          className="min-w-0 flex-nowrap gap-x-2 text-xs text-[#64748b]"
+                          itemClassName="max-w-[7rem]"
+                          iconClassName="h-3 w-3"
+                        />
+                      </div>
                     </div>
                     {isActive && (
                       <span className="shrink-0 text-xs font-medium text-[#3b82f6]/70" style={MONO}>Enter</span>

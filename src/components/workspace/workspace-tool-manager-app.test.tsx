@@ -95,7 +95,7 @@ describe('workspace tool manager app', () => {
     expect(command).toContain('__SB_ACTION_EXIT')
   })
 
-  it('falls back to a text badge when a brand logo is not available', async () => {
+  it('uses service-aware icons for unbranded tools', async () => {
     runSshCommand.mockResolvedValue({
       stdout: '__SB_INSTALLED=0',
       stderr: '',
@@ -114,7 +114,7 @@ describe('workspace tool manager app', () => {
     fireEvent.change(screen.getByPlaceholderText(/search nginx/i), { target: { value: 'cron' } })
     const cronCard = screen.getByTestId('workspace-tool-card-cron')
     expect(cronCard).toBeInTheDocument()
-    expect(cronCard).toHaveTextContent('CR')
+    expect(cronCard.querySelector('img')?.getAttribute('src')).toContain('/linux')
 
     await waitFor(() => {
       expect(runSshCommand).toHaveBeenCalled()

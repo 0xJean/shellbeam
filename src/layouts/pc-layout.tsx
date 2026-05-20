@@ -18,13 +18,16 @@ import { useHosts } from '@/contexts/hosts-context'
 import { getBrowserSourceTitle, resolveBrowserRouteMode } from '@/contexts/session-browser-state'
 import { useSessions } from '@/contexts/sessions-context'
 import { useVault } from '@/contexts/vault-context'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import { useSnippets } from '@/hooks/use-snippets'
 import { useSync } from '@/hooks/use-sync'
+import { getHostInventoryResource, resolveHostForDisplay } from '@/components/host-display-meta'
 import type { HostProfile } from '@/lib/hosts'
 import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
-import { Globe, MoveRight, Search, Trash2, X } from 'lucide-react'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { Globe, MoveRight, PanelTopOpen, Search, Trash2, X } from 'lucide-react'
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
 type BrowserOverviewScope = 'all' | 'remote' | 'local' | 'pending'
@@ -140,6 +143,8 @@ export function PcLayout() {
   const vault = useVault()
   const hostsCtx = useHosts()
   const sessions = useSessions()
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hostsCtx.hosts.map((host) => host.address))
   const getBrowserScopeLabel = useCallback((scope: BrowserOverviewScope) => {
     if (scope === 'all') return t('workspace.common.all')
     if (scope === 'remote') return t('browser.route.server')
@@ -184,6 +189,7 @@ export function PcLayout() {
   const [pendingCloseSessionId, setPendingCloseSessionId] = useState<string | null>(null)
   const [browserOverviewQuery, setBrowserOverviewQuery] = useState('')
   const [browserOverviewScope, setBrowserOverviewScope] = useState<BrowserOverviewScope>('all')
+  const [browserOverviewOpen, setBrowserOverviewOpen] = useState(false)
   const [browserSwitcherOpen, setBrowserSwitcherOpen] = useState(false)
   const [browserSwitcherQuery, setBrowserSwitcherQuery] = useState('')
   const [browserSwitcherActiveIndex, setBrowserSwitcherActiveIndex] = useState(0)
@@ -569,6 +575,7 @@ export function PcLayout() {
   }, [browserSwitcherEntries, browserSwitcherQuery])
 
   const handleResumeBrowserSession = useCallback((sessionId: string) => {
+    setBrowserOverviewOpen(false)
     sessions.setPcActiveSessionId(sessionId)
     sessions.setSessionBrowserPresentation(sessionId, 'embedded')
     sessions.setSessionMode(sessionId, 'browser')
@@ -653,6 +660,20 @@ export function PcLayout() {
     closeSessionWithGuards(sessionId)
   }, [browserMetaBySession, closeSessionWithGuards])
   const activeBrowserSwitcherEntry = filteredBrowserSwitcherEntries[browserSwitcherActiveIndex] ?? filteredBrowserSwitcherEntries[0] ?? null
+  const browserOverviewEntry = resumableBrowserSessions.length > 0 ? (
+    <button
+      type="button"
+      onClick={() => setBrowserOverviewOpen(true)}
+      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 text-xs font-medium text-[var(--workspace-text-muted)] transition-colors hover:border-[color:var(--workspace-border-glow)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-text-strong)]"
+      aria-label={t('browser.overview.title')}
+    >
+      <PanelTopOpen className="h-3.5 w-3.5" />
+      <span className="hidden sm:inline">{t('browser.overview.title')}</span>
+      <span className="rounded-full bg-[var(--workspace-accent-muted)] px-1.5 py-0.5 font-mono text-[10px] leading-none text-[var(--workspace-text-strong)]">
+        {browserOverviewCounts.all.tabs}
+      </span>
+    </button>
+  ) : null
 
   useEffect(() => {
     if (!browserSwitcherOpen) return
@@ -963,6 +984,175 @@ export function PcLayout() {
           </div>
         </DialogContent>
       </Dialog>
+      <Dialog open={browserOverviewOpen} onOpenChange={setBrowserOverviewOpen}>
+        <DialogContent className="max-md:w-full md:max-w-5xl">
+          <section className="max-h-[90vh] overflow-y-auto bg-[var(--workspace-surface-950)] p-4 text-[var(--workspace-text)] md:max-h-[86vh] md:rounded-2xl md:p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-semibold text-[var(--workspace-text-strong)]">
+                  <PanelTopOpen className="h-4 w-4 text-[var(--workspace-accent-text)]" />
+                  {t('browser.overview.title')}
+                </div>
+                <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">{t('browser.overview.description')}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBrowserOverviewOpen(false)}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[var(--workspace-text-subtle)] transition-colors hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text)]"
+                aria-label={t('common.close')}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap gap-2">
+                {([
+                  'all',
+                  'remote',
+                  'local',
+                  'pending',
+                ] as const).map((scope) => {
+                  const label = getBrowserScopeLabel(scope)
+                  return (
+                    <button
+                      key={scope}
+                      type="button"
+                      onClick={() => setBrowserOverviewScope(scope)}
+                      className={cn(
+                        'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                        browserOverviewScope === scope
+                          ? 'border-[var(--workspace-accent-solid)]/45 bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]'
+                          : 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-subtle)] hover:border-[var(--workspace-border-strong)] hover:text-[var(--workspace-text)]',
+                      )}
+                      aria-label={t('browser.overview.filterScope', { label })}
+                    >
+                      {label} {browserOverviewCounts[scope].tabs}
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 py-1 text-[11px] font-semibold text-[var(--workspace-text-subtle)]">
+                  {t('browser.overview.counts', {
+                    sessions: filteredResumableBrowserSessions.length,
+                    tabs: filteredBrowserOverviewTabCount,
+                  })}
+                </div>
+                <div className="relative w-full sm:w-72">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
+                  <Input
+                    value={browserOverviewQuery}
+                    onChange={(event) => setBrowserOverviewQuery(event.target.value)}
+                    placeholder={t('browser.overview.searchPlaceholder')}
+                    aria-label={t('browser.overview.searchLabel')}
+                    className="h-10 rounded-2xl border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 text-[var(--workspace-text)] placeholder:text-[var(--workspace-text-subtle)]"
+                  />
+                </div>
+              </div>
+            </div>
+            {filteredResumableBrowserSessions.length > 0 ? (
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {filteredResumableBrowserSessions.map((item) => (
+                  <section
+                    key={item.sessionId}
+                    className="rounded-2xl border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]/82 p-3 shadow-[var(--workspace-shadow-card)]"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleResumeBrowserSession(item.sessionId)}
+                      className="group flex w-full items-start gap-3 rounded-2xl px-1 py-1 text-left transition-[background-color,transform] hover:bg-[var(--workspace-surface-800)]"
+                      aria-label={t('browser.overview.resumeSession', { host: item.hostName })}
+                    >
+                      <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
+                        <Globe className="h-4.5 w-4.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{item.hostName}</div>
+                          <span className="shrink-0 rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
+                            {item.visibleTabs.length === item.browserTabs
+                              ? t('browser.overview.tabCount', { count: item.browserTabs })
+                              : t('browser.overview.visibleTabCount', { visible: item.visibleTabs.length, total: item.browserTabs })}
+                          </span>
+                        </div>
+                        <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{item.hostAddress}</div>
+                        <div className="mt-3 truncate text-sm font-medium text-[var(--workspace-text)]">{item.previewTitle}</div>
+                        {item.activeUrl && (
+                          <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{item.activeUrl}</div>
+                        )}
+                      </div>
+                      <MoveRight className="mt-1 h-4 w-4 shrink-0 text-[var(--workspace-text-subtle)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--workspace-text)]" />
+                    </button>
+                    {item.visibleTabs.length > 0 && (
+                      <div className="mt-3 space-y-2 border-t border-[var(--workspace-border-soft)] pt-3">
+                        <div className="flex items-center justify-between gap-2 px-1">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-subtle)]">{t('browser.overview.openTabs')}</div>
+                          <div className="text-[11px] text-[var(--workspace-text-subtle)]">{t('browser.overview.openTabsHint')}</div>
+                        </div>
+                        {item.visibleTabs.slice(0, 4).map((tab) => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => handleResumeBrowserTab(item.sessionId, tab.id)}
+                            className="flex w-full items-start gap-3 rounded-2xl border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/72 px-3 py-2 text-left transition-[border-color,background-color] hover:border-[var(--workspace-accent-solid)]/40 hover:bg-[var(--workspace-surface-800)]"
+                            aria-label={t('browser.overview.resumeTab', { title: tab.title, host: item.hostName })}
+                          >
+                            <div className={cn(
+                              'mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full',
+                              tab.routeIndicator?.scope === 'remote'
+                                ? 'bg-[color:var(--workspace-status-info)]'
+                                : tab.routeIndicator?.scope === 'pending'
+                                  ? 'bg-[color:var(--workspace-status-warn)]'
+                                  : 'bg-[color:var(--workspace-status-good)]',
+                            )} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <div className="truncate text-sm font-medium text-[var(--workspace-text)]">{tab.title}</div>
+                                {tab.isActive && (
+                                  <span className="shrink-0 rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
+                                    {t('browser.tab.active')}
+                                  </span>
+                                )}
+                                {tab.routeIndicator && (
+                                  <span className={cn(
+                                    'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]',
+                                    tab.routeIndicator.scope === 'remote'
+                                      ? 'border-[color:var(--workspace-status-info-border)] bg-[var(--workspace-status-info-bg)] text-[color:var(--workspace-status-info-text)]'
+                                      : tab.routeIndicator.scope === 'pending'
+                                        ? 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]'
+                                        : 'border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]',
+                                  )}>
+                                    {tab.routeIndicator.label}
+                                  </span>
+                                )}
+                              </div>
+                              {tab.url && (
+                                <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{tab.url}</div>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                        {item.visibleTabs.length > 4 && (
+                          <div className="px-1 text-xs text-[var(--workspace-text-subtle)]">
+                            {t('browser.overview.moreTabs', { count: item.visibleTabs.length - 4 })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-dashed border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]/66 px-4 py-6 text-center">
+                <div className="text-sm font-medium text-[var(--workspace-text)]">{t('browser.overview.noMatches')}</div>
+                <div className="mt-1 text-xs text-[var(--workspace-text-subtle)]">
+                  {t('browser.overview.noMatchesHint')}
+                </div>
+              </div>
+            )}
+          </section>
+        </DialogContent>
+      </Dialog>
       <div className="hidden shrink-0 md:block">
         <PcSessionTabBar
           sessionTabs={sessions.pcSessionTabs}
@@ -975,6 +1165,7 @@ export function PcLayout() {
           onOpenLocalTerminal={() => sessions.handleOpenLocalTerminal()}
           onNewConnection={handlePcNewConnection}
           onToggleSplit={canToggleSplit ? handleToggleSplit : undefined}
+          hosts={hostsCtx.hosts}
         />
       </div>
       <div className="relative min-h-0 flex-1">
@@ -993,6 +1184,9 @@ export function PcLayout() {
                 const browserPageMode = mode === 'browser'
                 const showTerminalChrome = workspaceMode || browserPageMode
                 const showConnectionPlaceholder = !sessionInfo && (tab.status === 'connecting' || tab.status === 'error')
+                const displayHost = resolveHostForDisplay(hostsCtx.hosts, sessionInfo?.hostId ?? tab.hostId, tab.hostAddress)
+                const displayNetwork = displayHost ? networkByAddress[displayHost.address] : undefined
+                const displayResource = getHostInventoryResource(displayHost, inventoryStates)
                 return (
                   <div
                     key={tab.sessionId}
@@ -1014,6 +1208,8 @@ export function PcLayout() {
                           status={tab.status === 'error' ? 'error' : 'connecting'}
                           stage={tab.connectionStage}
                           errorMessage={tab.errorMessage}
+                          network={displayNetwork}
+                          resource={displayResource}
                           onRetry={tab.status === 'error' ? () => sessions.retrySessionConnection(tab.sessionId) : undefined}
                         />
                       </div>
@@ -1024,6 +1220,8 @@ export function PcLayout() {
                           session={sessionInfo}
                           hostName={tab.hostName}
                           hostAddress={tab.hostAddress}
+                          network={displayNetwork}
+                          resource={displayResource}
                           chunkEmitterRef={sessions.pcChunkEmitterRef}
                           onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
                           terminalPrefs={app.terminalPrefs}
@@ -1138,6 +1336,9 @@ export function PcLayout() {
                 const showTerminalChrome = workspaceMode || browserPageMode
                 const terminalSurfaceVisible = isActive && app.pcSidebarNav === 'terminal'
                 const showConnectionPlaceholder = !sessionInfo && (tab.status === 'connecting' || tab.status === 'error')
+                const displayHost = resolveHostForDisplay(hostsCtx.hosts, sessionInfo?.hostId ?? tab.hostId, tab.hostAddress)
+                const displayNetwork = displayHost ? networkByAddress[displayHost.address] : undefined
+                const displayResource = getHostInventoryResource(displayHost, inventoryStates)
                 return (
                   <div
                     key={tab.sessionId}
@@ -1153,6 +1354,8 @@ export function PcLayout() {
                           status={tab.status === 'error' ? 'error' : 'connecting'}
                           stage={tab.connectionStage}
                           errorMessage={tab.errorMessage}
+                          network={displayNetwork}
+                          resource={displayResource}
                           onRetry={tab.status === 'error' ? () => sessions.retrySessionConnection(tab.sessionId) : undefined}
                         />
                       </div>
@@ -1163,6 +1366,8 @@ export function PcLayout() {
                           session={sessionInfo}
                           hostName={tab.hostName}
                           hostAddress={tab.hostAddress}
+                          network={displayNetwork}
+                          resource={displayResource}
                           chunkEmitterRef={sessions.pcChunkEmitterRef}
                           onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
                           terminalPrefs={app.terminalPrefs}
@@ -1281,162 +1486,6 @@ export function PcLayout() {
                 </Suspense>
               ) : (
               <>
-              {resumableBrowserSessions.length > 0 && (
-                <div className="p-6 pb-0">
-                  <section className="rounded-3xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)]/94 p-4 shadow-[var(--workspace-shadow-overlay)]">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-subtle)]">{t('browser.overview.title')}</div>
-                        <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">{t('browser.overview.description')}</div>
-                      </div>
-                      <div className="rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-1 text-[11px] font-semibold text-[var(--workspace-text-subtle)]">
-                        {t('browser.overview.counts', {
-                          sessions: filteredResumableBrowserSessions.length,
-                          tabs: filteredBrowserOverviewTabCount,
-                        })}
-                      </div>
-                    </div>
-                    <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                      <div className="flex flex-wrap gap-2">
-                        {([
-                          'all',
-                          'remote',
-                          'local',
-                          'pending',
-                        ] as const).map((scope) => {
-                          const label = getBrowserScopeLabel(scope)
-                          return (
-                          <button
-                            key={scope}
-                            type="button"
-                            onClick={() => setBrowserOverviewScope(scope)}
-                            className={cn(
-                              'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
-                              browserOverviewScope === scope
-                                ? 'border-[var(--workspace-accent-solid)]/45 bg-[var(--workspace-accent-soft)] text-[var(--workspace-text-strong)]'
-                                : 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/70 text-[var(--workspace-text-subtle)] hover:border-[var(--workspace-border-strong)] hover:text-[var(--workspace-text)]',
-                            )}
-                            aria-label={t('browser.overview.filterScope', { label })}
-                          >
-                            {label} {browserOverviewCounts[scope].tabs}
-                          </button>
-                          )
-                        })}
-                      </div>
-                      <div className="relative w-full lg:max-w-sm">
-                        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
-                        <Input
-                          value={browserOverviewQuery}
-                          onChange={(event) => setBrowserOverviewQuery(event.target.value)}
-                          placeholder={t('browser.overview.searchPlaceholder')}
-                          aria-label={t('browser.overview.searchLabel')}
-                          className="h-10 rounded-2xl border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] pl-9 text-[var(--workspace-text)] placeholder:text-[var(--workspace-text-subtle)]"
-                        />
-                      </div>
-                    </div>
-                    {filteredResumableBrowserSessions.length > 0 ? (
-                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                      {filteredResumableBrowserSessions.map((item) => (
-                        <section
-                          key={item.sessionId}
-                          className="rounded-2xl border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/88 p-3"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleResumeBrowserSession(item.sessionId)}
-                            className="group flex w-full items-start gap-3 rounded-2xl px-1 py-1 text-left transition-[background-color,transform] hover:bg-[var(--workspace-surface-900)]"
-                            aria-label={t('browser.overview.resumeSession', { host: item.hostName })}
-                          >
-                            <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-sky-500/12 text-sky-200">
-                              <Globe className="h-4.5 w-4.5" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{item.hostName}</div>
-                                <span className="shrink-0 rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
-                                  {item.visibleTabs.length === item.browserTabs
-                                    ? t('browser.overview.tabCount', { count: item.browserTabs })
-                                    : t('browser.overview.visibleTabCount', { visible: item.visibleTabs.length, total: item.browserTabs })}
-                                </span>
-                              </div>
-                              <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{item.hostAddress}</div>
-                              <div className="mt-3 truncate text-sm font-medium text-[var(--workspace-text)]">{item.previewTitle}</div>
-                              {item.activeUrl && (
-                                <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{item.activeUrl}</div>
-                              )}
-                            </div>
-                            <MoveRight className="mt-1 h-4 w-4 shrink-0 text-[var(--workspace-text-subtle)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--workspace-text)]" />
-                          </button>
-                          {item.visibleTabs.length > 0 && (
-                            <div className="mt-3 space-y-2 border-t border-[var(--workspace-border-soft)] pt-3">
-                              <div className="flex items-center justify-between gap-2 px-1">
-                                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-subtle)]">{t('browser.overview.openTabs')}</div>
-                                <div className="text-[11px] text-[var(--workspace-text-subtle)]">{t('browser.overview.openTabsHint')}</div>
-                              </div>
-                              {item.visibleTabs.slice(0, 4).map((tab) => (
-                                <button
-                                  key={tab.id}
-                                  type="button"
-                                  onClick={() => handleResumeBrowserTab(item.sessionId, tab.id)}
-                                  className="flex w-full items-start gap-3 rounded-2xl border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]/72 px-3 py-2 text-left transition-[border-color,background-color] hover:border-[var(--workspace-accent-solid)]/40 hover:bg-[var(--workspace-surface-900)]"
-                                  aria-label={t('browser.overview.resumeTab', { title: tab.title, host: item.hostName })}
-                                >
-                                  <div className={cn(
-                                    'mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full',
-                                    tab.routeIndicator?.scope === 'remote'
-                                      ? 'bg-sky-300'
-                                      : tab.routeIndicator?.scope === 'pending'
-                                        ? 'bg-amber-300'
-                                        : 'bg-emerald-300',
-                                  )} />
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <div className="truncate text-sm font-medium text-[var(--workspace-text)]">{tab.title}</div>
-                                      {tab.isActive && (
-                                        <span className="shrink-0 rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
-                                          {t('browser.tab.active')}
-                                        </span>
-                                      )}
-                                      {tab.routeIndicator && (
-                                        <span className={cn(
-                                          'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]',
-                                          tab.routeIndicator.scope === 'remote'
-                                            ? 'border-sky-500/25 bg-sky-500/10 text-sky-200'
-                                            : tab.routeIndicator.scope === 'pending'
-                                              ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
-                                              : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
-                                        )}>
-                                          {tab.routeIndicator.label}
-                                        </span>
-                                      )}
-                                    </div>
-                                    {tab.url && (
-                                      <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{tab.url}</div>
-                                    )}
-                                  </div>
-                                </button>
-                              ))}
-                              {item.visibleTabs.length > 4 && (
-                                <div className="px-1 text-xs text-[var(--workspace-text-subtle)]">
-                                  {t('browser.overview.moreTabs', { count: item.visibleTabs.length - 4 })}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </section>
-                      ))}
-                    </div>
-                    ) : (
-                      <div className="mt-4 rounded-2xl border border-dashed border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/66 px-4 py-6 text-center">
-                        <div className="text-sm font-medium text-[var(--workspace-text)]">{t('browser.overview.noMatches')}</div>
-                        <div className="mt-1 text-xs text-[var(--workspace-text-subtle)]">
-                          {t('browser.overview.noMatchesHint')}
-                        </div>
-                      </div>
-                    )}
-                  </section>
-                </div>
-              )}
               {app.pcSidebarNav === 'hosts' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
                   <div className="h-full min-h-0 p-4 md:p-6">
@@ -1461,6 +1510,7 @@ export function PcLayout() {
                       onSaveToVault={hostsCtx.handleSaveToVault}
                       onLoadVaultSecret={vault.handleRevealSecret}
                       vaultName={vault.vaults.find((v) => v.id === vault.activeVaultId)?.name ?? 'Vault'}
+                      headerExtraAction={browserOverviewEntry}
                     />
                   </div>
                 </Suspense>
@@ -1476,6 +1526,7 @@ export function PcLayout() {
                     onEditHost={handleEditHostFromAssetInventory}
                     onImportSsh={() => setAssetSshImportOpen(true)}
                     onCreateHost={() => setAssetCreateHostOpen(true)}
+                    headerExtraAction={browserOverviewEntry}
                   />
                 </div>
               )}
@@ -1590,7 +1641,7 @@ export function PcLayout() {
               )}
               {app.pcSidebarNav === 'activity' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
-                  <ActivityLogPanel />
+                  <ActivityLogPanel hosts={hostsCtx.hosts} />
                 </Suspense>
               )}
               {app.pcSidebarNav === 'backup' && (

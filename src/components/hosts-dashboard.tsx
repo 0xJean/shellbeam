@@ -4,19 +4,134 @@ import { HostEditorDialog } from '@/components/host-editor-dialog'
 import { PullToRefresh } from '@/components/pull-to-refresh'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { getWorkspaceInventoryDisplayStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
-import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
 type SortMode = 'az' | 'za' | 'newest' | 'oldest'
+type HostStatusFilter = 'all' | 'online' | 'checking' | 'offline'
 const SORT_KEY = 'shellbeam.hostSortMode'
+const SHOW_HOST_SUMMARY_STRIP = false
+
+function HostSummaryStrip({
+  totalHosts,
+  onlineCount,
+  checkingCount,
+  offlineCount,
+  groups,
+}: {
+  totalHosts: number
+  onlineCount: number
+  checkingCount: number
+  offlineCount: number
+  groups: WorkspaceResourceGroup[]
+}) {
+  const { t } = useT()
+
+  if (totalHosts === 0) return null
+
+  const cards = [
+    {
+      key: 'total',
+      label: t('hosts.totalHosts'),
+      value: totalHosts,
+      icon: Server,
+      shellClassName: 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]',
+      fillClassName: 'bg-[color:var(--workspace-primary-500)]',
+    },
+    {
+      key: 'online',
+      label: t('hosts.statusOnline'),
+      value: onlineCount,
+      icon: CheckCircle2,
+      shellClassName: 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]',
+      fillClassName: 'bg-[color:var(--workspace-status-good)]',
+    },
+    {
+      key: 'checking',
+      label: t('hosts.statusChecking'),
+      value: checkingCount,
+      icon: RefreshCw,
+      shellClassName: 'bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]',
+      fillClassName: 'bg-[color:var(--workspace-status-warn)]',
+    },
+    {
+      key: 'offline',
+      label: t('hosts.statusOffline'),
+      value: offlineCount,
+      icon: X,
+      shellClassName: 'bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]',
+      fillClassName: 'bg-[color:var(--workspace-status-bad)]',
+    },
+  ]
+
+  return (
+    <div className="mb-4 space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map((card) => {
+          const Icon = card.icon
+          const ratio = totalHosts === 0 ? 0 : Math.max(0, Math.min(100, (card.value / totalHosts) * 100))
+
+          return (
+            <div
+              key={card.key}
+              className="min-w-0 rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4 shadow-[var(--workspace-shadow-card)]"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--workspace-text-subtle)]">
+                    {card.label}
+                  </div>
+                  <div className="mt-2 text-3xl font-semibold leading-none tracking-tight text-[var(--workspace-text-strong)]">
+                    {card.value}
+                  </div>
+                </div>
+                <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[color:var(--workspace-border-soft)]', card.shellClassName)}>
+                  <Icon className="h-4 w-4" />
+                </span>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--workspace-meter-track)]">
+                <div className={cn('h-full rounded-full', card.fillClassName)} style={{ width: `${ratio}%` }} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {groups.length > 0 && (
+        <div className="rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-4 py-3 shadow-[var(--workspace-shadow-card)]">
+          <div className="flex h-2 overflow-hidden rounded-full bg-[var(--workspace-meter-track)]">
+            {groups.map((group) => (
+              <div
+                key={group.key}
+                className={cn('h-full', group.colorClassName)}
+                style={{ width: `${totalHosts === 0 ? 0 : (group.count / totalHosts) * 100}%` }}
+                title={`${group.label} ${group.count}`}
+              />
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+            {groups.map((group) => (
+              <div key={group.key} className="flex items-center gap-1.5">
+                <span className={cn('h-2 w-2 rounded-full', group.colorClassName)} />
+                <span className="text-xs text-[var(--workspace-text-muted)]">{group.label}</span>
+                <span className="text-xs font-semibold text-[var(--workspace-text-strong)]">{group.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface HostsDashboardProps {
   hosts: HostProfile[]
@@ -39,6 +154,7 @@ interface HostsDashboardProps {
   onSaveToVault?: (key: string, value: string) => Promise<void>
   onLoadVaultSecret?: (key: string) => Promise<string | null>
   vaultName?: string
+  headerExtraAction?: ReactNode
 }
 
 export function HostsDashboard({
@@ -47,6 +163,7 @@ export function HostsDashboard({
   openAddForm = false, onAddFormClose,
     externalSearch, onExternalSearchChange, onScanHosts, onRefreshHosts,
     vaultKeys = [], vaultUnlocked = false, onSaveToVault, onLoadVaultSecret, vaultName = 'Vault',
+    headerExtraAction,
 }: HostsDashboardProps) {
   const [internalSearch, setInternalSearch] = useState('')
   const effectiveSearch = externalSearch ?? internalSearch
@@ -54,16 +171,18 @@ export function HostsDashboard({
   const [groupFilter, setGroupFilter] = useState('All')
   const [showAddForm, setShowAddForm] = useState(openAddForm)
   useEffect(() => { setShowAddForm((prev) => (openAddForm ? true : prev)) }, [openAddForm])
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list')
   const [checkingStatus, setCheckingStatus] = useState(false)
   const [showSshImport, setShowSshImport] = useState(false)
   const [editingHost, setEditingHost] = useState<HostProfile | null>(null)
   const [sortMode, setSortMode] = useState<SortMode>(() => (localStorage.getItem(SORT_KEY) as SortMode) || 'newest')
+  const [statusFilter, setStatusFilter] = useState<HostStatusFilter>('all')
   const [sortOpen, setSortOpen] = useState(false)
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set())
   const [tagFilterOpen, setTagFilterOpen] = useState(false)
   const { t } = useT()
   const sharedStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   function hostKey(host: HostProfile) {
     return getWorkspaceInventoryHostKey(host)
@@ -121,6 +240,9 @@ export function HostsDashboard({
     if (tagFilter.size > 0) {
       filtered = filtered.filter((h) => h.tags?.some((tg) => tagFilter.has(tg)))
     }
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter((h) => (getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(h)]) ?? 'offline') === statusFilter)
+    }
     const sorted = [...filtered]
     switch (sortMode) {
       case 'az': sorted.sort((a, b) => a.name.localeCompare(b.name)); break
@@ -129,18 +251,13 @@ export function HostsDashboard({
       case 'oldest': sorted.sort((a, b) => (a.updatedAt || a.createdAt) - (b.updatedAt || b.createdAt)); break
     }
     return sorted
-  }, [hosts, effectiveSearch, groupFilter, tagFilter, sortMode])
+  }, [hosts, effectiveSearch, groupFilter, networkByAddress, sharedStates, statusFilter, tagFilter, sortMode])
 
-  const groupedHosts = useMemo(() => {
-    const groups = new Map<string, HostProfile[]>()
-    for (const host of filteredHosts) {
-      const key = host.group || 'Custom'
-      groups.set(key, [...(groups.get(key) ?? []), host])
-    }
-    return Array.from(groups.entries())
-  }, [filteredHosts])
-
-  const onlineCount = hosts.filter((host) => getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)]) === 'online').length
+  const statusCounts = useMemo(() => hosts.reduce<Record<Exclude<HostStatusFilter, 'all'>, number>>((counts, host) => {
+    const status = getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)]) ?? 'offline'
+    counts[status] += 1
+    return counts
+  }, { online: 0, checking: 0, offline: 0 }), [hosts, sharedStates])
 
   const allGroupCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -158,20 +275,29 @@ export function HostsDashboard({
       colorClassName: groupColors[index % groupColors.length],
     }))
   ), [allGroupCounts, t])
+  const statusFilterLabels: Record<HostStatusFilter, string> = {
+    all: t('hosts.statusAll'),
+    online: t('hosts.statusOnline'),
+    checking: t('hosts.statusChecking'),
+    offline: t('hosts.statusOffline'),
+  }
 
   return (
     <div className="flex w-full flex-col overflow-x-hidden text-[var(--workspace-text)]">
+      {SHOW_HOST_SUMMARY_STRIP && (
+        <HostSummaryStrip
+          totalHosts={hosts.length}
+          onlineCount={statusCounts.online}
+          checkingCount={statusCounts.checking}
+          offlineCount={statusCounts.offline}
+          groups={resourceGroups}
+        />
+      )}
       <WorkspaceResourceOverviewHeader
         title={t('hosts.title')}
         description={t('hosts.subtitle')}
         total={hosts.length}
         totalLabel={t('hosts.totalHosts')}
-        totalMeta={onlineCount > 0 && (
-          <span className="flex items-center gap-1.5 rounded-full bg-[var(--workspace-status-good-bg)] px-2.5 py-1 text-xs font-medium text-[color:var(--workspace-status-good-text)]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--workspace-status-good)]" />
-            {t('hosts.online', { n: onlineCount })}
-          </span>
-        )}
         visibleCount={filteredHosts.length}
         visibleLabel={t('hosts.totalHosts')}
         groups={resourceGroups}
@@ -180,6 +306,7 @@ export function HostsDashboard({
         onGroupSelect={setGroupFilter}
         actions={
           <>
+            {headerExtraAction}
             <div className="relative">
               <button type="button" onClick={() => { setTagFilterOpen((v) => !v); setSortOpen(false) }}
                 className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
@@ -351,6 +478,8 @@ export function HostsDashboard({
                     host={host}
                     isSelected={selectedHostId === host.id}
                     status={getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)])}
+                    resource={sharedStates[hostKey(host)]?.inventory?.resource}
+                    network={networkByAddress[host.address]}
                     onConnect={handleConnect}
                     onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                     onDelete={(id) => void onDeleteHost(id)}
@@ -359,30 +488,62 @@ export function HostsDashboard({
                 ))}
               </div>
             ) : (
-              <div className="space-y-5">
-                {groupedHosts.map(([grp, groupHosts]) => (
-                  <div key={grp}>
-                    <div className="mb-2 flex items-center gap-2">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--workspace-text-muted)]">{t(`group.${grp}`) !== `group.${grp}` ? t(`group.${grp}`) : grp}</p>
-                      <span className="text-[10px] text-[var(--workspace-text-subtle)]">{groupHosts.length}</span>
-                      <div className="flex-1 border-t border-[color:var(--workspace-border-soft)]" />
-                    </div>
-                    <div className="space-y-1">
-                      {groupHosts.map((host) => (
-                        <HostListItem
-                          key={host.id}
-                          host={host}
-                          isSelected={selectedHostId === host.id}
-                          status={getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)])}
-                          onSelect={onSelectHost}
-                          onConnect={handleConnect}
-                          onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
-                          onDelete={(id) => void onDeleteHost(id)}
-                        />
-                      ))}
-                    </div>
+              <div className="overflow-hidden rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]">
+                <div className="flex flex-col gap-2 border-b border-[color:var(--workspace-border-soft)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-[var(--workspace-text-strong)]">{t('hosts.activeHosts')}</div>
+                    <div className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{t('hosts.listPanelMeta', { visible: filteredHosts.length, total: hosts.length })}</div>
                   </div>
-                ))}
+                  <div className="flex flex-wrap gap-2">
+                    {statusFilter !== 'all' && (
+                      <button
+                        type="button"
+                        onClick={() => setStatusFilter('all')}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-subtle)] px-2.5 py-1 text-[11px] font-medium text-[var(--workspace-accent-text)] transition-colors hover:bg-[var(--workspace-accent-muted)]"
+                      >
+                        <X className="h-3 w-3" />
+                        {statusFilterLabels[statusFilter]}
+                      </button>
+                    )}
+                    {tagFilter.size > 0 && (
+                      <span className="rounded-full border border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-subtle)] px-2.5 py-1 text-[11px] font-medium text-[var(--workspace-accent-text)]">
+                        {tagFilter.size} {t('hosts.tagsSelected')}
+                      </span>
+                    )}
+                    {groupFilter !== 'All' && (
+                      <span className="rounded-full border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-1 text-[11px] font-medium text-[var(--workspace-text-muted)]">
+                        {t(`group.${groupFilter}`) !== `group.${groupFilter}` ? t(`group.${groupFilter}`) : groupFilter}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="hidden border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)] xl:grid xl:grid-cols-[3.25rem_minmax(14rem,1.14fr)_minmax(12rem,0.92fr)_minmax(10rem,0.75fr)_7rem_minmax(15rem,1.02fr)_7rem_6.5rem] xl:items-center xl:gap-4">
+                  <span>{t('hosts.columnIndex')}</span>
+                  <span>{t('hosts.columnHost')}</span>
+                  <span>{t('hosts.columnLocation')}</span>
+                  <span>{t('hosts.columnIp')}</span>
+                  <span>{t('hosts.columnUpdated')}</span>
+                  <span>{t('hosts.columnResource')}</span>
+                  <span>{t('hosts.columnStatus')}</span>
+                  <span className="text-right">{t('hosts.columnActions')}</span>
+                </div>
+                <div className="space-y-2 p-3">
+                  {filteredHosts.map((host, index) => (
+                    <HostListItem
+                      key={host.id}
+                      index={index + 1}
+                      host={host}
+                      isSelected={selectedHostId === host.id}
+                      status={getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)])}
+                      resource={sharedStates[hostKey(host)]?.inventory?.resource}
+                      network={networkByAddress[host.address]}
+                      onSelect={onSelectHost}
+                      onConnect={handleConnect}
+                      onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
+                      onDelete={(id) => void onDeleteHost(id)}
+                    />
+                  ))}
+                </div>
               </div>
             )}
         </PullToRefresh>

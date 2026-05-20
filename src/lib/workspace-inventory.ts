@@ -482,7 +482,7 @@ export async function loadWorkspaceInventoryPersistedCache(hosts: HostProfile[])
   return { ...fallbackCache, ...nativeCache }
 }
 
-export function saveWorkspaceInventoryCacheEntry(host: HostProfile, inventory: WorkspaceInventory) {
+export async function saveWorkspaceInventoryCacheEntry(host: HostProfile, inventory: WorkspaceInventory) {
   const key = getWorkspaceInventoryHostKey(host)
   const entry = { inventory: normalizeWorkspaceInventory(inventory), updatedAt: Date.now() }
   memoryInventoryCache[key] = entry
@@ -491,9 +491,11 @@ export function saveWorkspaceInventoryCacheEntry(host: HostProfile, inventory: W
   localCache[key] = entry
   writeLocalInventoryCache(localCache)
 
-  void invokeWorkspaceInventoryCommand<void>('upsert_workspace_inventory_snapshot', {
+  await invokeWorkspaceInventoryCommand<void>('upsert_workspace_inventory_snapshot', {
     payload: toWorkspaceInventorySnapshot(host, entry),
   })
+
+  return entry
 }
 
 export function clearWorkspaceInventoryMemoryCache() {

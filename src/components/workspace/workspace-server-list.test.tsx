@@ -82,4 +82,23 @@ describe('workspace server list', () => {
     expect(onRowDoubleClick).toHaveBeenCalledWith(hosts[0])
     expect(screen.getByText('Asia Pacific')).toBeInTheDocument()
   })
+
+  it('renders system metadata as the title subtitle and keeps region metadata below endpoint', () => {
+    render(
+      <WorkspaceServerList
+        hosts={hosts}
+        selectedKey="host-1"
+        getHostKey={(host) => host.id}
+        onSelect={vi.fn()}
+        renderRegionLine={() => <div>Singapore</div>}
+        getSystemLabel={() => 'Ubuntu 24.04 LTS'}
+      />,
+    )
+
+    expect(screen.getByText('Singapore')).toBeInTheDocument()
+    const row = screen.getByRole('button', { name: /Production API/i })
+    const endpointLine = screen.getByText('root@10.0.0.15:22')
+    expect(row).toHaveTextContent('Production API (Ubuntu 24.04 LTS)')
+    expect(row.textContent?.indexOf('Ubuntu 24.04 LTS') ?? -1).toBeLessThan(row.textContent?.indexOf(endpointLine.textContent ?? '') ?? 0)
+  })
 })

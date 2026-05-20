@@ -1,7 +1,11 @@
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
+import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import type { SessionTab } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { Columns2, LayoutDashboard, Plus, RefreshCw, SquareTerminal, X } from 'lucide-react'
+import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from './host-display-meta'
 
 export type { SessionTab }
 
@@ -32,6 +36,7 @@ interface PcSessionTabBarProps {
   onOpenLocalTerminal?: () => void
   onNewConnection?: () => void
   onToggleSplit?: () => void
+  hosts?: HostProfile[]
 }
 
 export function PcSessionTabBar({
@@ -45,8 +50,11 @@ export function PcSessionTabBar({
   onOpenLocalTerminal,
   onNewConnection,
   onToggleSplit,
+  hosts = [],
 }: PcSessionTabBarProps) {
   const { t } = useT()
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   return (
     <div className="sticky top-0 z-50 hidden h-12 shrink-0 items-end gap-0 overflow-x-auto border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-1 shadow-[var(--workspace-shadow-card)] backdrop-blur-sm scrollbar-none md:flex md:h-10">
@@ -78,6 +86,7 @@ export function PcSessionTabBar({
 
       {sessionTabs.map((session) => {
         const isActive = !isDashboard && activeSessionId === session.sessionId
+        const host = resolveHostForDisplay(hosts, session.hostId, session.hostAddress)
         return (
           <div
             key={session.sessionId}
@@ -100,6 +109,16 @@ export function PcSessionTabBar({
                   'h-2 w-2 shrink-0 rounded-full',
                   session.status === 'connected' ? 'bg-[color:var(--workspace-status-good)]' : session.status === 'error' ? 'bg-[color:var(--workspace-status-bad)]' : 'bg-[color:var(--workspace-text-muted)]'
                 )} />
+              )}
+              {host && (
+                <HostMetadataLine
+                  network={networkByAddress[host.address]}
+                  resource={getHostInventoryResource(host, inventoryStates)}
+                  showLocationText={false}
+                  showSystemText={false}
+                  className="hidden flex-nowrap gap-x-1 sm:flex"
+                  iconClassName="h-3 w-3"
+                />
               )}
               <span className="max-w-[100px] truncate sm:max-w-[140px]">{session.hostName || session.hostAddress}</span>
             </button>

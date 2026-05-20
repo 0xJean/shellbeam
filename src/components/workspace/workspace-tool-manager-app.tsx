@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { t as translate, useT } from '@/lib/i18n'
 import { useHostNetworkMetadata, type HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
+import { HostRegionMeta } from '@/components/host-display-meta'
 import { cn } from '@/lib/utils'
 import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import {
@@ -35,10 +36,13 @@ import {
   Square,
   TerminalSquare,
   Trash2,
+  type LucideIcon,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace-empty-state'
+import { WorkspaceOsIcon } from './workspace-os-icon'
 import { WorkspaceResourceOverviewHeader } from './workspace-resource-overview-header'
 import { WorkspaceServerList } from './workspace-server-list'
+import { WorkspaceServiceIcon } from './workspace-service-icon'
 import { Dialog, DialogContent } from '../ui/dialog'
 
 const TOOL_CATEGORIES = [
@@ -139,83 +143,6 @@ const DEFAULT_PACKAGE_SPEC = {
   zypper: [''],
   apk: [''],
 } satisfies Record<LinuxPackageManager, string[]>
-
-const SIMPLE_ICONS_BASE_URL = 'https://cdn.simpleicons.org'
-
-const TOOL_LOGO_SLUGS: Partial<Record<string, string>> = {
-  nginx: 'nginx',
-  apache: 'apache',
-  caddy: 'caddy',
-  haproxy: 'haproxy',
-  certbot: 'letsencrypt',
-  traefik: 'traefikproxy',
-  mysql: 'mysql',
-  mariadb: 'mariadb',
-  postgresql: 'postgresql',
-  sqlite: 'sqlite',
-  mongodb: 'mongodb',
-  clickhouse: 'clickhouse',
-  redis: 'redis',
-  memcached: 'memcached',
-  rabbitmq: 'rabbitmq',
-  kafka: 'apachekafka',
-  docker: 'docker',
-  'docker-compose': 'docker',
-  podman: 'podman',
-  containerd: 'containerd',
-  kubectl: 'kubernetes',
-  helm: 'helm',
-  k3s: 'k3s',
-  node: 'nodedotjs',
-  npm: 'npm',
-  pnpm: 'pnpm',
-  yarn: 'yarn',
-  bun: 'bun',
-  deno: 'deno',
-  python3: 'python',
-  pip: 'pypi',
-  pipx: 'python',
-  go: 'go',
-  rust: 'rust',
-  java: 'openjdk',
-  maven: 'apachemaven',
-  gradle: 'gradle',
-  php: 'php',
-  'php-fpm': 'php',
-  composer: 'composer',
-  ruby: 'ruby',
-  gem: 'rubygems',
-  git: 'git',
-  curl: 'curl',
-  wget: 'gnu',
-  jq: 'jq',
-  yq: 'yaml',
-  make: 'gnu',
-  gcc: 'gnu',
-  cmake: 'cmake',
-  tmux: 'tmux',
-  htop: 'linux',
-  unzip: 'linux',
-  rsync: 'linux',
-  ripgrep: 'rust',
-  fd: 'rust',
-  ufw: 'ubuntu',
-  firewalld: 'redhat',
-  fail2ban: 'linux',
-  openssl: 'openssl',
-  nmap: 'nmap',
-  tcpdump: 'linux',
-  wireguard: 'wireguard',
-  claude: 'anthropic',
-  codex: 'openai',
-  gemini: 'googlegemini',
-  aider: 'aider',
-  ollama: 'ollama',
-  'langchain-cli': 'langchain',
-  pm2: 'pm2',
-  supervisor: 'python',
-  systemd: 'systemd',
-}
 
 export const TOOL_CATALOG: ToolDefinition[] = [
   {
@@ -560,70 +487,38 @@ function getToolDescription(tool: ToolDefinition, t: TFunction) {
   return t(tool.descriptionKey)
 }
 
-function getToolLogoSlug(tool: ToolDefinition) {
-  return tool.logoSlug ?? TOOL_LOGO_SLUGS[tool.id]
-}
-
-function getToolInitials(name: string) {
-  const words = name
-    .replace(/\./g, ' ')
-    .split(/[\s-]+/)
-    .filter(Boolean)
-
-  return (words.length > 1 ? `${words[0][0]}${words[1][0]}` : name.slice(0, 2)).toUpperCase()
-}
-
 function ToolLogo({ tool, size = 'sm' }: { tool: ToolDefinition; size?: 'sm' | 'lg' }) {
-  const [failed, setFailed] = useState(false)
-  const logoSlug = getToolLogoSlug(tool)
   const dimensions = size === 'lg' ? 'h-12 w-12 rounded-2xl' : 'h-9 w-9 rounded-xl'
   const imageSize = size === 'lg' ? 'h-7 w-7' : 'h-5 w-5'
-
-  useEffect(() => {
-    setFailed(false)
-  }, [logoSlug, tool.id])
 
   return (
     <div
       className={cn(
-        'flex shrink-0 items-center justify-center border border-border/60 bg-background/80 shadow-sm',
+        'flex shrink-0 items-center justify-center border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] shadow-sm',
         dimensions,
       )}
       title={tool.name}
       aria-hidden="true"
     >
-      {logoSlug && !failed ? (
-        <img
-          src={`${SIMPLE_ICONS_BASE_URL}/${logoSlug}`}
-          alt=""
-          className={cn('object-contain', imageSize)}
-          loading="lazy"
-          decoding="async"
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <span className={cn('font-semibold text-[color:var(--workspace-primary-300)]', size === 'lg' ? 'text-sm' : 'text-[11px]')}>
-          {getToolInitials(tool.name)}
-        </span>
-      )}
+      <WorkspaceServiceIcon name={tool.id} slug={tool.logoSlug} className={imageSize} />
     </div>
   )
 }
 
 function getStatusBadge(status: ToolStatus | undefined, t: ReturnType<typeof useT>['t']) {
   if (!status || status.installed === null) return { label: t('workspace.tools.statusUnknown'), className: 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]' }
-  if (status.installed) return { label: t('workspace.tools.statusInstalled'), className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' }
-  return { label: t('workspace.tools.statusMissing'), className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' }
+  if (status.installed) return { label: t('workspace.tools.statusInstalled'), className: 'border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' }
+  return { label: t('workspace.tools.statusMissing'), className: 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]' }
 }
 
 function getServiceBadge(status: ToolStatus | undefined, t: ReturnType<typeof useT>['t']) {
   const value = status?.serviceActive
   if (!value) return { label: t('workspace.tools.noService'), className: 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]' }
-  if (value === 'active') return { label: t('workspace.tools.serviceActive'), className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' }
-  if (value === 'failed') return { label: t('workspace.tools.serviceFailed'), className: 'border-red-500/30 bg-red-500/10 text-red-300' }
-  if (value === 'inactive') return { label: t('workspace.tools.serviceInactive'), className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' }
-  if (value === 'activating') return { label: t('workspace.tools.serviceActivating'), className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' }
-  return { label: value, className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' }
+  if (value === 'active') return { label: t('workspace.tools.serviceActive'), className: 'border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' }
+  if (value === 'failed') return { label: t('workspace.tools.serviceFailed'), className: 'border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]' }
+  if (value === 'inactive') return { label: t('workspace.tools.serviceInactive'), className: 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]' }
+  if (value === 'activating') return { label: t('workspace.tools.serviceActivating'), className: 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]' }
+  return { label: value, className: 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]' }
 }
 
 function getActionIcon(action: ToolAction) {
@@ -638,6 +533,23 @@ function getActionIcon(action: ToolAction) {
   if (action === 'disable') return PowerOff
   if (action === 'status') return TerminalSquare
   return PackageOpen
+}
+
+const CATEGORY_ICONS: Record<ToolCategoryId, LucideIcon> = {
+  web: PackageSearch,
+  database: PackageOpen,
+  cacheQueue: CircleDot,
+  containers: PackageOpen,
+  runtime: TerminalSquare,
+  packageManagers: PackagePlus,
+  buildOps: PackageSearch,
+  securityNetwork: Shield,
+  aiAgents: CircleAlert,
+  processManagers: TerminalSquare,
+}
+
+function getCategoryIcon(category: ToolCategoryId) {
+  return CATEGORY_ICONS[category]
 }
 
 function formatInstallType(recipe: InstallRecipe | undefined, t: ReturnType<typeof useT>['t']) {
@@ -700,14 +612,25 @@ function getProjectSearchValues(inventory: WorkspaceInventory | undefined) {
 }
 
 function HostStatusIcon({ state }: { state?: HostInventoryState }) {
-  if (state?.status === 'error') return <AlertTriangle className="h-3.5 w-3.5 text-red-300" />
-  if (state?.inventory || state?.status === 'ready') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
+  if (state?.status === 'error') return <AlertTriangle className="h-3.5 w-3.5 text-[color:var(--workspace-status-bad)]" />
+  if (state?.inventory || state?.status === 'ready') {
+    return (
+      <span className="relative inline-flex h-5 w-5 items-center justify-center">
+        <WorkspaceOsIcon os={state.inventory?.resource.os} className="h-4 w-4 text-[var(--workspace-text-muted)]" />
+        <CheckCircle2 className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-[var(--workspace-surface-row)] text-[color:var(--workspace-status-good)]" />
+      </span>
+    )
+  }
   return <CircleDot className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />
 }
 
 function HostNetworkLine({ network }: { network?: HostNetworkDisplay }) {
   if (!network) return null
-  return <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{network.resolvedLocationLabel}</div>
+  return (
+    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--workspace-text-subtle)]">
+      <HostRegionMeta network={network} />
+    </div>
+  )
 }
 
 export function WorkspaceToolManagerApp({
@@ -923,7 +846,7 @@ export function WorkspaceToolManagerApp({
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{t('workspace.tools.toolsCount', { count: TOOL_CATALOG.length })}</span>
             <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{checkedCount} {t('workspace.tools.checked')}</span>
-            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-300">{installedCount} {t('workspace.tools.installed')}</span>
+            <span className="rounded-full border border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] px-2.5 py-1 text-[11px] text-[color:var(--workspace-status-good-text)]">{installedCount} {t('workspace.tools.installed')}</span>
             {scanVisibleButton}
           </div>
         </div>
@@ -969,6 +892,7 @@ export function WorkspaceToolManagerApp({
               return { label: t('workspace.tools.toolsCount', { count: state.inventory.tools.length }), tone: 'info' }
             }}
             renderRegionLine={(entry) => <HostNetworkLine network={networkByAddress[entry.address]} />}
+            getSystemLabel={(entry) => inventoryStates[hostKey(entry)]?.inventory?.resource.os}
             getSearchData={(entry) => {
               const state = inventoryStates[hostKey(entry)]
               const network = networkByAddress[entry.address]
@@ -997,7 +921,7 @@ export function WorkspaceToolManagerApp({
                 <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[var(--workspace-text-subtle)]">
                   <span>{formatAge(state?.updatedAt, t)}</span>
                   {state?.status === 'error'
-                    ? <span className="truncate text-red-200">{t('workspace.serverIndex.inaccessible')}</span>
+                    ? <span className="truncate text-[color:var(--workspace-status-bad-text)]">{t('workspace.serverIndex.inaccessible')}</span>
                     : <span className="truncate">{state?.inventory?.resource.os || t('workspace.tools.notScanned')}</span>}
                 </div>
               )
@@ -1006,13 +930,15 @@ export function WorkspaceToolManagerApp({
           />
         )}
 
-        <aside className="space-y-3 rounded-xl border border-border/60 bg-card p-3">
+        <aside className="space-y-3 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-3 shadow-[var(--workspace-shadow-card)]">
           <button
             type="button"
             onClick={() => setCategory('all')}
             className={cn(
               'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors',
-              category === 'all' ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+              category === 'all'
+                ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]'
+                : 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]',
             )}
           >
             <span>{t('workspace.tools.allTools')}</span>
@@ -1020,6 +946,7 @@ export function WorkspaceToolManagerApp({
           </button>
           {TOOL_CATEGORIES.map((item) => {
             const count = TOOL_CATALOG.filter((tool) => tool.category === item.id).length
+            const Icon = getCategoryIcon(item.id)
             return (
               <button
                 key={item.id}
@@ -1027,20 +954,25 @@ export function WorkspaceToolManagerApp({
                 onClick={() => setCategory(item.id)}
                 className={cn(
                   'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors',
-                  category === item.id ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                  category === item.id
+                    ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]'
+                    : 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]',
                 )}
               >
-                <span className="truncate">{t(item.labelKey)}</span>
+                <span className="flex min-w-0 items-center gap-2">
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{t(item.labelKey)}</span>
+                </span>
                 <span className="text-xs">{count}</span>
               </button>
             )
           })}
         </aside>
 
-        <section className="min-w-0 overflow-hidden rounded-xl border border-border/60 bg-card">
+        <section className="min-w-0 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]">
           <div data-testid="workspace-tool-catalog" className="max-h-[32rem] overflow-auto">
             {visibleTools.length === 0 ? (
-              <div className="px-4 py-8 text-sm text-muted-foreground">{t('workspace.tools.noMatchingTools')}</div>
+              <div className="px-4 py-8 text-sm text-[var(--workspace-text-muted)]">{t('workspace.tools.noMatchingTools')}</div>
             ) : (
               visibleTools.map((tool) => {
                 const isSelected = tool.id === selectedTool.id
@@ -1057,19 +989,19 @@ export function WorkspaceToolManagerApp({
                       setDetailOpen(true)
                     }}
                     className={cn(
-                      'grid w-full grid-cols-[minmax(0,1fr)_7rem_7rem] gap-3 border-b border-border/40 px-4 py-3 text-left text-sm transition-colors last:border-b-0',
-                      isSelected ? 'bg-primary/10' : 'hover:bg-muted/40',
+                      'grid w-full grid-cols-[minmax(0,1fr)_7rem_7rem] gap-3 border-b border-[color:var(--workspace-border-soft)] px-4 py-3 text-left text-sm transition-colors last:border-b-0',
+                      isSelected ? 'bg-[var(--workspace-accent-soft)]' : 'hover:bg-[var(--workspace-surface-800)]',
                     )}
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <ToolLogo tool={tool} />
                         <div className="min-w-0">
-                          <span className="block truncate font-semibold">{tool.name}</span>
-                          <span className="block truncate text-[11px] text-muted-foreground">{tool.binary}</span>
+                          <span className="block truncate font-semibold text-[var(--workspace-text-strong)]">{tool.name}</span>
+                          <span className="block truncate text-[11px] text-[var(--workspace-text-muted)]">{tool.binary}</span>
                         </div>
                       </div>
-                      <div className="mt-1 truncate text-xs text-muted-foreground">{getToolDescription(tool, t)}</div>
+                      <div className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">{getToolDescription(tool, t)}</div>
                     </div>
                     <div>
                       <span className={cn('rounded-full border px-2 py-1 text-[11px] font-medium', badge.className)}>
@@ -1091,44 +1023,44 @@ export function WorkspaceToolManagerApp({
       </div>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="w-[min(72rem,calc(100vw-2rem))] rounded-xl border border-border/60 bg-card p-0">
+        <DialogContent className="w-[min(72rem,calc(100vw-2rem))] rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-0 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-overlay)]">
           <section className="min-w-0 p-6">
             <div className="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(24rem,0.75fr)]">
               <div className="min-w-0">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{getCategoryLabel(selectedTool.category, t)}</div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--workspace-text-muted)]">{getCategoryLabel(selectedTool.category, t)}</div>
                     <h3 className="mt-2 truncate text-2xl font-semibold tracking-tight">{selectedTool.name}</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">{getToolDescription(selectedTool, t)}</p>
+                    <p className="mt-1 text-sm text-[var(--workspace-text-muted)]">{getToolDescription(selectedTool, t)}</p>
                   </div>
                   <ToolLogo tool={selectedTool} size="lg" />
                 </div>
 
                 <div className="mt-5 grid grid-cols-2 gap-3 text-xs">
-                  <div className="rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-                    <div className="text-muted-foreground">{t('workspace.tools.binary')}</div>
+                  <div className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2">
+                    <div className="text-[var(--workspace-text-muted)]">{t('workspace.tools.binary')}</div>
                     <div className="mt-1 truncate font-medium">{selectedTool.binary}</div>
                   </div>
-                  <div className="rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-                    <div className="text-muted-foreground">{t('workspace.tools.install')}</div>
+                  <div className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2">
+                    <div className="text-[var(--workspace-text-muted)]">{t('workspace.tools.install')}</div>
                     <div className="mt-1 truncate font-medium">{formatInstallType(selectedTool.install, t)}</div>
                   </div>
-                  <div className="rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-                    <div className="text-muted-foreground">{t('workspace.tools.status')}</div>
+                  <div className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2">
+                    <div className="text-[var(--workspace-text-muted)]">{t('workspace.tools.status')}</div>
                     <div className="mt-1 flex items-center gap-1.5 font-medium">
-                      {selectedStatus?.installed ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" /> : <CircleDot className="h-3.5 w-3.5 text-muted-foreground" />}
+                      {selectedStatus?.installed ? <CheckCircle2 className="h-3.5 w-3.5 text-[color:var(--workspace-status-good)]" /> : <CircleDot className="h-3.5 w-3.5 text-[var(--workspace-text-muted)]" />}
                       {statusBadge.label}
                     </div>
                   </div>
-                  <div className="rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-                    <div className="text-muted-foreground">{t('workspace.tools.service')}</div>
+                  <div className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2">
+                    <div className="text-[var(--workspace-text-muted)]">{t('workspace.tools.service')}</div>
                     <div className="mt-1 truncate font-medium">{selectedTool.service ?? t('workspace.tools.noServiceValue')}</div>
                   </div>
                 </div>
 
                 {selectedStatus?.version && (
-                  <div className="mt-3 rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs">
-                    <div className="text-muted-foreground">{t('workspace.tools.version')}</div>
+                  <div className="mt-3 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2 text-xs">
+                    <div className="text-[var(--workspace-text-muted)]">{t('workspace.tools.version')}</div>
                     <div className="mt-1 break-words font-medium">{selectedStatus.version}</div>
                   </div>
                 )}
@@ -1136,7 +1068,7 @@ export function WorkspaceToolManagerApp({
 
               <div className="space-y-4">
                 <div className="space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{t('workspace.tools.packageActions')}</div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)]">{t('workspace.tools.packageActions')}</div>
                   <div className="grid grid-cols-2 gap-2">
                     {installActions.map((action) => {
                       const Icon = getActionIcon(action)
@@ -1147,7 +1079,7 @@ export function WorkspaceToolManagerApp({
                           type="button"
                           onClick={() => void runToolAction(action)}
                           disabled={disabled}
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-xs font-medium capitalize hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-45"
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] px-3 py-2 text-xs font-medium capitalize transition-colors hover:bg-[var(--workspace-surface-800)] disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Icon className={cn('h-3.5 w-3.5', running?.toolId === selectedTool.id && running.action === action && 'animate-spin')} />
                           {running?.toolId === selectedTool.id && running.action === action ? t('workspace.tools.running') : t(`workspace.tools.action.${action}`)}
@@ -1159,7 +1091,7 @@ export function WorkspaceToolManagerApp({
 
                 {selectedTool.service && (
                   <div className="space-y-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{t('workspace.tools.serviceActions')}</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)]">{t('workspace.tools.serviceActions')}</div>
                     <div className="grid grid-cols-2 gap-2">
                       {serviceActions.map((action) => {
                         const Icon = getActionIcon(action)
@@ -1169,7 +1101,7 @@ export function WorkspaceToolManagerApp({
                             type="button"
                             onClick={() => void runToolAction(action)}
                             disabled={running !== null}
-                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-xs font-medium capitalize hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-45"
+                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] px-3 py-2 text-xs font-medium capitalize transition-colors hover:bg-[var(--workspace-surface-800)] disabled:cursor-not-allowed disabled:opacity-45"
                           >
                             <Icon className={cn('h-3.5 w-3.5', running?.toolId === selectedTool.id && running.action === action && 'animate-spin')} />
                             {running?.toolId === selectedTool.id && running.action === action ? t('workspace.tools.running') : t(`workspace.tools.action.${action}`)}
@@ -1183,7 +1115,7 @@ export function WorkspaceToolManagerApp({
             </div>
 
             {error && (
-              <div className="mt-4 flex gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-300">
+              <div className="mt-4 flex gap-2 rounded-lg border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[color:var(--workspace-status-bad-text)]">
                 <CircleAlert className="h-4 w-4 shrink-0" />
                 <span>{error}</span>
               </div>
@@ -1192,15 +1124,15 @@ export function WorkspaceToolManagerApp({
         </DialogContent>
       </Dialog>
 
-      <div className="rounded-xl border border-border/60 bg-card p-4">
+      <div className="rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4 shadow-[var(--workspace-shadow-card)]">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)]">
             <Shield className="h-3.5 w-3.5" />
             {t('workspace.tools.remoteOutput')}
           </div>
-          <div className="text-xs text-muted-foreground">{selectedStatus?.checkedAt ? t('workspace.tools.checkedAt', { time: selectedStatus.checkedAt }) : selectedTool.name}</div>
+          <div className="text-xs text-[var(--workspace-text-muted)]">{selectedStatus?.checkedAt ? t('workspace.tools.checkedAt', { time: selectedStatus.checkedAt }) : selectedTool.name}</div>
         </div>
-        <pre data-testid="workspace-tool-output" className="mt-3 max-h-[16rem] overflow-auto whitespace-pre-wrap rounded-lg border border-border/60 bg-background/70 p-3 text-xs leading-6 text-foreground">
+        <pre data-testid="workspace-tool-output" className="mt-3 max-h-[16rem] overflow-auto whitespace-pre-wrap rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] p-3 text-xs leading-6 text-[var(--workspace-text)]">
           {output || (running ? t('workspace.tools.runningRemoteCommand') : t('workspace.tools.noCommandOutput'))}
         </pre>
       </div>

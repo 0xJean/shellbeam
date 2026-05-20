@@ -76,12 +76,13 @@ __SB_PROJECT=/opt/satoshi-dao/current|compose|current|2026-05-01 10:21
     })
   })
 
-  it('persists successful inventory scans to local cache', () => {
+  it('persists successful inventory scans to local cache', async () => {
     const inventory = parseWorkspaceInventory('__SB_HOSTNAME=vps-prod-1\n__SB_TOOL=nginx|Nginx|web|nginx|/usr/sbin/nginx|nginx version')
 
-    saveWorkspaceInventoryCacheEntry(host, inventory)
+    const entry = await saveWorkspaceInventoryCacheEntry(host, inventory)
 
     const cache = loadWorkspaceInventoryCache([host])
+    expect(entry.inventory.resource.hostname).toBe('vps-prod-1')
     expect(cache[getWorkspaceInventoryHostKey(host)]?.inventory.resource.hostname).toBe('vps-prod-1')
     expect(cache[getWorkspaceInventoryHostKey(host)]?.inventory.tools[0]).toMatchObject({ id: 'nginx', name: 'Nginx' })
   })

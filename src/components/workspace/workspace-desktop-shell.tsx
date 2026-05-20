@@ -1,5 +1,7 @@
 import type { HostProfile } from '@/lib/hosts'
 import { t } from '@/lib/i18n'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { cn } from '@/lib/utils'
 import { LayoutGrid, Minus, Monitor, Search, Square, Volume2, Wifi, X } from 'lucide-react'
@@ -15,6 +17,7 @@ import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
 import { WorkspaceStatusCards } from './workspace-status-cards'
 import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
+import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
 const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
   { id: 'overview', labelKey: 'workspace.app.overview' },
@@ -146,6 +149,9 @@ export function WorkspaceDesktopShell({
   const desktopSurfaceRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ app: WorkspaceAppId; offsetX: number; offsetY: number } | null>(null)
   const zCounterRef = useRef(3)
+  const activeHost = resolveHostForDisplay(hosts, hostId, hostAddress)
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   useEffect(() => {
     if (activeApp === 'overview') return
@@ -365,7 +371,16 @@ export function WorkspaceDesktopShell({
                   <div>
                     <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--workspace-text-subtle)]">{t('workspace.desktop.desktop')}</div>
                     <div className="mt-3 text-3xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">{hostName}</div>
-                    <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">{hostAddress}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--workspace-text-muted)]">
+                      <span>{hostAddress}</span>
+                      <HostMetadataLine
+                        network={activeHost ? networkByAddress[activeHost.address] : undefined}
+                        resource={getHostInventoryResource(activeHost, inventoryStates)}
+                        className="text-sm text-[var(--workspace-text-muted)]"
+                        itemClassName="max-w-[10rem]"
+                        iconClassName="h-3.5 w-3.5"
+                      />
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -444,7 +459,17 @@ export function WorkspaceDesktopShell({
                       </div>
                       <div>
                         <div className="text-sm font-semibold text-[var(--workspace-text-strong)]">{t(APP_LABELS.find((app) => app.id === windowState.app)?.labelKey ?? 'workspace.app.overview')}</div>
-                        <div className="text-xs text-[var(--workspace-text-muted)]">{hostName} · {hostAddress}</div>
+                        <div className="flex min-w-0 items-center gap-2 text-xs text-[var(--workspace-text-muted)]">
+                          <span className="truncate">{hostName} · {hostAddress}</span>
+                          <HostMetadataLine
+                            network={activeHost ? networkByAddress[activeHost.address] : undefined}
+                            resource={getHostInventoryResource(activeHost, inventoryStates)}
+                            showLocationText={false}
+                            showSystemText={false}
+                            className="hidden flex-nowrap gap-x-1 sm:flex"
+                            iconClassName="h-3 w-3"
+                          />
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">

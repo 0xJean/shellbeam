@@ -1,6 +1,8 @@
 import type { WorkspaceAppId } from '@/lib/workspace'
 import type { HostProfile } from '@/lib/hosts'
 import { t } from '@/lib/i18n'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import {
   getWorkspaceRecommendations,
   type WorkspaceRecommendation,
@@ -8,6 +10,7 @@ import {
 import { WorkspaceActivityFeed, type WorkspaceActivityItem } from './workspace-activity-feed'
 import { WorkspaceAppGrid } from './workspace-app-grid'
 import { WorkspaceStatusCards } from './workspace-status-cards'
+import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
 interface WorkspaceOverviewProps {
   hostName: string
@@ -33,13 +36,25 @@ export function WorkspaceOverview({
   recommendations,
 }: WorkspaceOverviewProps) {
   const resolvedRecommendations = recommendations ?? getWorkspaceRecommendations({})
+  const activeHost = resolveHostForDisplay(hosts, hostId, hostAddress)
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
         <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">{t('workspace.mode.workspace')}</div>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{hostName}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{hostAddress}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+          <span>{hostAddress}</span>
+          <HostMetadataLine
+            network={activeHost ? networkByAddress[activeHost.address] : undefined}
+            resource={getHostInventoryResource(activeHost, inventoryStates)}
+            className="text-sm text-muted-foreground"
+            itemClassName="max-w-[11rem]"
+            iconClassName="h-3.5 w-3.5"
+          />
+        </div>
       </div>
 
       <WorkspaceStatusCards

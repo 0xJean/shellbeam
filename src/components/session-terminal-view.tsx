@@ -1,4 +1,5 @@
 import { normalizeBrowserUrl } from '@/contexts/session-browser-state'
+import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import { useT } from '@/lib/i18n'
 import { recordInteractiveCommand } from '@/lib/interactive-history'
 import type { InteractiveOutputChunk, InteractiveSessionInfo } from '@/lib/interactive-session'
@@ -6,6 +7,7 @@ import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { resizeInteractiveTerminal } from '@/lib/interactive-session'
 import { DEFAULT_TERMINAL_PREFS, getThemeById, type TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
+import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
@@ -16,6 +18,7 @@ import { AICommandBar } from './ai-command-bar'
 import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
 import { SuggestBar } from './suggest-bar'
 import { TerminalSearchBar } from './terminal-search-bar'
+import { HostMetadataLine } from './host-display-meta'
 import { WorkspaceModeToggle } from './workspace/workspace-mode-toggle'
 
 const TERMINAL_SCROLLBACK_ROWS = 10000
@@ -41,6 +44,8 @@ interface SessionTerminalViewProps {
   chromeOnly?: boolean
   onOpenLinkInBrowser?: (url: string) => void
   onOpenBrowser?: () => void
+  network?: HostNetworkDisplay
+  resource?: Pick<WorkspaceInventoryResource, 'os'>
 }
 
 export function SessionTerminalView({
@@ -63,6 +68,8 @@ export function SessionTerminalView({
   chromeOnly = false,
   onOpenLinkInBrowser,
   onOpenBrowser,
+  network,
+  resource,
 }: SessionTerminalViewProps) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -350,6 +357,14 @@ export function SessionTerminalView({
           {hostName && <span style={{ color: `${fg}66` }}> ({hostName})</span>}
           {isReconnecting && <span className="ml-2 text-amber-400">{t('terminal.reconnecting')}</span>}
         </span>
+        <HostMetadataLine
+          network={network}
+          resource={resource}
+          showLocationText={false}
+          showSystemText={false}
+          className="hidden flex-nowrap gap-x-1 sm:flex"
+          iconClassName="h-3 w-3"
+        />
         <div className="ml-auto flex items-center gap-1.5">
           {showBrowserShortcuts && onOpenBrowser && (
             <button

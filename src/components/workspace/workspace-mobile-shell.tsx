@@ -1,5 +1,7 @@
 import type { HostProfile } from '@/lib/hosts'
 import { t } from '@/lib/i18n'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { BatteryFull, ChevronLeft, Signal, Wifi, Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -14,6 +16,7 @@ import { WorkspaceLogsApp } from './workspace-logs-app'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
 import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
+import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
 function LiveClock() {
   const [time, setTime] = useState(() =>
@@ -57,6 +60,9 @@ export function WorkspaceMobileShell({
   onEditHost,
   onBrowserCloseRequest,
 }: WorkspaceMobileShellProps) {
+  const activeHost = resolveHostForDisplay(hosts, hostId, hostAddress)
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
   const content = (() => {
     if (activeApp === 'assetInventory') {
       if (resolveAuthSecret) {
@@ -143,7 +149,16 @@ export function WorkspaceMobileShell({
       >
         <div className="mb-8 text-center text-[var(--workspace-primary-foreground)] drop-shadow-md">
           <div className="text-2xl font-semibold tracking-tight">{hostName}</div>
-          <div className="text-sm opacity-80">{hostAddress}</div>
+          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm opacity-80">
+            <span>{hostAddress}</span>
+            <HostMetadataLine
+              network={activeHost ? networkByAddress[activeHost.address] : undefined}
+              resource={getHostInventoryResource(activeHost, inventoryStates)}
+              className="justify-center text-sm"
+              itemClassName="max-w-[9rem]"
+              iconClassName="h-3.5 w-3.5"
+            />
+          </div>
         </div>
 
         <div className="min-h-[22rem]">
@@ -203,6 +218,14 @@ export function WorkspaceMobileShell({
                 <div className="text-[10px] uppercase tracking-wider text-[var(--workspace-text-muted)]">
                   {hostName}
                 </div>
+                <HostMetadataLine
+                  network={activeHost ? networkByAddress[activeHost.address] : undefined}
+                  resource={getHostInventoryResource(activeHost, inventoryStates)}
+                  showLocationText={false}
+                  showSystemText={false}
+                  className="mt-0.5 justify-center gap-x-1"
+                  iconClassName="h-3 w-3"
+                />
               </div>
 
               <button

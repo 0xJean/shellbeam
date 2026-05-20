@@ -1,9 +1,13 @@
 import type { HostProfile } from '@/lib/hosts'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import { useT } from '@/lib/i18n'
 import type { SessionTab } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { ChevronDown, Plus, Server, SquareTerminal, X, Zap } from 'lucide-react'
 import { useState } from 'react'
+import { getHostInventoryResource, HostMetadataLine, HostSystemMeta, resolveHostForDisplay } from './host-display-meta'
+import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 
 interface MobileSessionHeaderProps {
   sessionTabs: SessionTab[]
@@ -28,8 +32,11 @@ export function MobileSessionHeader({
 }: MobileSessionHeaderProps) {
   const { t } = useT()
   const [listOpen, setListOpen] = useState(false)
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   const activeTab = sessionTabs.find((tab) => tab.sessionId === activeSessionId)
+  const activeHost = activeTab ? resolveHostForDisplay(hosts, activeTab.hostId, activeTab.hostAddress) : null
 
   // No sessions — show rich empty state with recent hosts
   if (sessionTabs.length === 0) {
@@ -76,29 +83,40 @@ export function MobileSessionHeader({
               </span>
             </div>
             <div className="space-y-1.5">
-              {recentHosts.map((host) => (
-                <button
-                  key={host.id}
-                  type="button"
-                  onClick={() => onConnectHost(host.id)}
-                  className="flex w-full items-center gap-3 rounded-xl border border-border/50 bg-card/50 px-4 py-3 text-left transition-colors active:bg-muted/40"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted/60">
-                    <Server className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{host.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {host.username || 'root'}@{host.address}
-                    </p>
-                  </div>
-                  {host.group && (
-                    <span className="shrink-0 rounded-md bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      {host.group}
-                    </span>
-                  )}
-                </button>
-              ))}
+              {recentHosts.map((host) => {
+                const resource = getHostInventoryResource(host, inventoryStates)
+                return (
+                  <button
+                    key={host.id}
+                    type="button"
+                    onClick={() => onConnectHost(host.id)}
+                    className="flex w-full items-center gap-3 rounded-xl border border-border/50 bg-card/50 px-4 py-3 text-left transition-colors active:bg-muted/40"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted/60">
+                      {resource?.os ? (
+                        <WorkspaceOsIcon os={resource.os} className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <Server className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{host.name}</p>
+                      <HostMetadataLine
+                        network={networkByAddress[host.address]}
+                        resource={resource}
+                        className="mt-0.5 flex-nowrap text-xs text-muted-foreground"
+                        itemClassName="max-w-[9rem]"
+                        iconClassName="h-3 w-3"
+                      />
+                    </div>
+                    {host.group && (
+                      <span className="shrink-0 rounded-md bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {host.group}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           </div>
         )}
@@ -120,6 +138,13 @@ export function MobileSessionHeader({
             'h-2 w-2 shrink-0 rounded-full',
             activeTab?.status === 'connected' ? 'bg-emerald-500' : activeTab?.status === 'error' ? 'bg-red-500' : 'bg-amber-500'
           )} />
+          {activeHost && (
+            <HostSystemMeta
+              resource={getHostInventoryResource(activeHost, inventoryStates)}
+              showText={false}
+              iconClassName="h-3.5 w-3.5"
+            />
+          )}
           <span className="min-w-0 truncate text-sm font-medium">
             {activeTab?.hostName || activeTab?.hostAddress || t('mobile.selectSession')}
           </span>
@@ -162,6 +187,7 @@ export function MobileSessionHeader({
             <div className="max-h-64 overflow-y-auto p-2">
               {sessionTabs.map((tab) => {
                 const isActive = tab.sessionId === activeSessionId
+                const tabHost = resolveHostForDisplay(hosts, tab.hostId, tab.hostAddress)
                 return (
                   <button
                     key={tab.sessionId}
@@ -178,9 +204,14 @@ export function MobileSessionHeader({
                     )} />
                     <div className="min-w-0 flex-1">
                       <p className={cn('truncate text-sm', isActive ? 'font-medium text-primary' : '')}>{tab.hostName || tab.hostAddress}</p>
-                      {tab.hostAddress && tab.hostName && (
-                        <p className="truncate text-[11px] text-muted-foreground">{tab.hostAddress}</p>
-                      )}
+                      <HostMetadataLine
+                        network={tabHost ? networkByAddress[tabHost.address] : undefined}
+                        resource={getHostInventoryResource(tabHost, inventoryStates)}
+                        regionLabel={tab.hostAddress && tab.hostName ? tab.hostAddress : undefined}
+                        className="mt-0.5 flex-nowrap text-[11px] text-muted-foreground"
+                        itemClassName="max-w-[8rem]"
+                        iconClassName="h-3 w-3"
+                      />
                     </div>
                     <button
                       type="button"

@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
+import type { HostProfile } from '@/lib/hosts'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import {
   Clock,
   Server,
@@ -12,6 +14,8 @@ import {
 import { listActivityLog, type ActivityEntry } from '@/lib/activity-log'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from './host-display-meta'
 
 const EVENT_ICONS: Record<string, { Icon: typeof Plug; color: string }> = {
   connect: { Icon: Plug, color: 'text-emerald-500' },
@@ -52,10 +56,16 @@ function groupByDate(entries: ActivityEntry[]): { label: string; items: Activity
   return Array.from(groups.entries()).map(([label, items]) => ({ label, items }))
 }
 
-export function ActivityLogPanel() {
+interface ActivityLogPanelProps {
+  hosts?: HostProfile[]
+}
+
+export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
   const { t } = useT()
   const [entries, setEntries] = useState<ActivityEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -106,6 +116,7 @@ export function ActivityLogPanel() {
             <div className="space-y-1">
               {group.items.map((entry) => {
                 const meta = EVENT_ICONS[entry.event] ?? { Icon: Server, color: 'text-muted-foreground' }
+                const host = resolveHostForDisplay(hosts, entry.hostId, entry.hostAddress)
                 return (
                   <div
                     key={entry.id}
@@ -119,6 +130,16 @@ export function ActivityLogPanel() {
                         <span className="truncate text-sm font-medium">
                           {entry.hostName || entry.hostAddress}
                         </span>
+                        {host && (
+                          <HostMetadataLine
+                            network={networkByAddress[host.address]}
+                            resource={getHostInventoryResource(host, inventoryStates)}
+                            showLocationText={false}
+                            showSystemText={false}
+                            className="gap-x-1"
+                            iconClassName="h-3 w-3"
+                          />
+                        )}
                         <span className="shrink-0 text-[10px] text-muted-foreground">
                           {formatRelative(entry.createdAt)}
                         </span>
@@ -126,6 +147,15 @@ export function ActivityLogPanel() {
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
                         <span>{t(`activity.event.${entry.event}`)}</span>
                         {entry.username && <span>{entry.username}@{entry.hostAddress}</span>}
+                        {host && (
+                          <HostMetadataLine
+                            network={networkByAddress[host.address]}
+                            resource={getHostInventoryResource(host, inventoryStates)}
+                            className="flex-nowrap"
+                            itemClassName="max-w-[8rem]"
+                            iconClassName="h-3 w-3"
+                          />
+                        )}
                         {entry.authType && (
                           <span className="flex items-center gap-0.5">
                             <KeyRound className="h-2.5 w-2.5" />

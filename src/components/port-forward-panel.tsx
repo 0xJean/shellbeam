@@ -4,9 +4,12 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import type { HostProfile } from '@/lib/hosts'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { getHostInventoryResource, HostMetadataLine } from './host-display-meta'
 import {
   addPortForwardRule,
   deletePortForwardRule,
@@ -50,6 +53,8 @@ export function PortForwardPanel({
     targetHost: '127.0.0.1',
     targetPort: 3000,
   })
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   async function refresh() {
     setLoading(true)
@@ -148,7 +153,8 @@ export function PortForwardPanel({
     }
   }
 
-  const hostName = (id: string) => hosts.find((h) => h.id === id)?.name ?? id
+  const getHost = (id: string) => hosts.find((h) => h.id === id) ?? null
+  const hostName = (id: string) => getHost(id)?.name ?? id
 
   return (
     <div className="flex w-full flex-col">
@@ -169,7 +175,29 @@ export function PortForwardPanel({
                   placeholder={t('portForward.selectHost')}
                   options={[
                     { value: '', label: t('portForward.selectHost') },
-                    ...hosts.map((h) => ({ value: h.id, label: h.name })),
+                    ...hosts.map((h) => ({
+                      value: h.id,
+                      label: h.name,
+                      icon: (
+                        <HostMetadataLine
+                          network={networkByAddress[h.address]}
+                          resource={getHostInventoryResource(h, inventoryStates)}
+                          showLocationText={false}
+                          showSystemText={false}
+                          className="gap-x-1"
+                          iconClassName="h-3 w-3"
+                        />
+                      ),
+                      description: (
+                        <HostMetadataLine
+                          network={networkByAddress[h.address]}
+                          resource={getHostInventoryResource(h, inventoryStates)}
+                          className="flex-nowrap"
+                          itemClassName="max-w-[7rem]"
+                          iconClassName="h-3 w-3"
+                        />
+                      ),
+                    })),
                   ]}
                 />
               </div>
@@ -293,7 +321,9 @@ export function PortForwardPanel({
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {filteredRules.map((rule) => (
+                {filteredRules.map((rule) => {
+                  const host = getHost(rule.hostId)
+                  return (
                   <div key={rule.id} className="group relative overflow-hidden rounded-xl border bg-card p-4 transition-colors hover:border-primary/30 hover:shadow-sm">
                     <div className="flex items-start gap-3">
                       <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', runningIds.has(rule.id) ? 'bg-emerald-500/10 text-emerald-500' : 'bg-muted text-muted-foreground')}>
@@ -304,6 +334,15 @@ export function PortForwardPanel({
                         <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
                           {rule.type} · {hostName(rule.hostId)}
                         </span>
+                        {host && (
+                          <HostMetadataLine
+                            network={networkByAddress[host.address]}
+                            resource={getHostInventoryResource(host, inventoryStates)}
+                            className="mt-0.5 flex-nowrap text-[11px] text-muted-foreground"
+                            itemClassName="max-w-[8rem]"
+                            iconClassName="h-3 w-3"
+                          />
+                        )}
                         <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
                           {rule.bindHost}:{rule.bindPort} → {rule.targetHost}:{rule.targetPort}
                         </span>
@@ -329,7 +368,8 @@ export function PortForwardPanel({
                       </Button>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>

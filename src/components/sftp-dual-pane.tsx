@@ -11,9 +11,11 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
+import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import { cn } from '@/lib/utils'
 import type { HostProfile } from '@/lib/hosts'
 import type { SftpEntry } from '@/lib/sftp'
+import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import {
   localListDir,
   localHomeDir,
@@ -27,6 +29,8 @@ import { createRemoteFsClient, resolveRemoteFsAuth } from '@/lib/remote-fs'
 import { fetchAndAddKnownHost } from '@/lib/known-hosts'
 import { FilePane, type UnifiedEntry } from './sftp-file-pane'
 import { SftpConnectPlaceholder } from './sftp-connect-placeholder'
+import { getHostInventoryResource, HostMetadataLine } from './host-display-meta'
+import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 
 const COMPACT_BREAKPOINT = 700
 
@@ -59,6 +63,8 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
   const containerRef = useRef<HTMLDivElement>(null)
   const containerWidth = useContainerWidth(containerRef)
   const isCompact = containerWidth < COMPACT_BREAKPOINT
+  const inventoryStates = useWorkspaceInventoryStates()
+  const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   const [activeTab, setActiveTab] = useState<'local' | 'remote'>('local')
 
@@ -336,10 +342,13 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
     />
   )
 
+  const remoteResource = getHostInventoryResource(remoteHost, inventoryStates)
   const remotePaneEl = (
     <FilePane
       title={remoteHost ? `${remoteHost.name} (${remoteHost.address})` : 'Remote'}
-      icon={<Server className="h-3.5 w-3.5 text-emerald-500" />}
+      icon={remoteHost && remoteResource?.os
+        ? <WorkspaceOsIcon os={remoteResource.os} className="h-3.5 w-3.5 text-emerald-500" />
+        : <Server className="h-3.5 w-3.5 text-emerald-500" />}
       entries={remoteEntries}
       currentDir={remoteDir}
       loading={remoteLoading}
@@ -386,7 +395,29 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
             className="h-7 max-w-[200px] text-xs [&_button]:h-7 [&_button]:text-xs"
             options={[
               { value: '', label: t('sftp.selectHost') },
-              ...hosts.map((h) => ({ value: h.id, label: `${h.name} (${h.address})` })),
+              ...hosts.map((h) => ({
+                value: h.id,
+                label: `${h.name} (${h.address})`,
+                icon: (
+                  <HostMetadataLine
+                    network={networkByAddress[h.address]}
+                    resource={getHostInventoryResource(h, inventoryStates)}
+                    showLocationText={false}
+                    showSystemText={false}
+                    className="gap-x-1"
+                    iconClassName="h-3 w-3"
+                  />
+                ),
+                description: (
+                  <HostMetadataLine
+                    network={networkByAddress[h.address]}
+                    resource={getHostInventoryResource(h, inventoryStates)}
+                    className="flex-nowrap"
+                    itemClassName="max-w-[7rem]"
+                    iconClassName="h-3 w-3"
+                  />
+                ),
+              })),
             ]}
           />
         </div>

@@ -2,23 +2,23 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { t as translate, useT } from '@/lib/i18n'
 import { useHostNetworkMetadata, type HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
+import { HostRegionMeta, HostSystemMeta } from '@/components/host-display-meta'
 import {
-  fetchWorkspaceInventory,
   getWorkspaceInventoryHostKey,
   loadWorkspaceInventoryCache,
   loadWorkspaceInventoryPersistedCache,
-  saveWorkspaceInventoryCacheEntry,
   type WorkspaceInventory,
   type WorkspaceInventoryCache,
   type WorkspaceInventoryProject,
 } from '@/lib/workspace-inventory'
 import {
   createReadyWorkspaceInventoryStates,
-  getWorkspaceInventoryStates,
   mergeWorkspaceInventoryStates,
   selectWorkspaceInventoryStatesForHosts,
   useWorkspaceInventoryStates,
 } from '@/lib/workspace-inventory-state'
+import { scanWorkspaceInventoryHosts } from '@/lib/workspace-inventory-scan'
+import { getResourceUsageTextClassName } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
 import {
   AlertTriangle,
@@ -37,6 +37,7 @@ import {
   ServerCog,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace/workspace-empty-state'
+import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { WorkspaceResourceOverviewHeader } from './workspace/workspace-resource-overview-header'
 import { WorkspaceServerList } from './workspace/workspace-server-list'
 
@@ -55,6 +56,7 @@ interface HostInventoryState {
   inventory?: WorkspaceInventory
   updatedAt?: number
   error?: string
+  scanId?: number
 }
 
 type DeploymentStatus = 'running' | 'detected' | 'stale'
@@ -98,9 +100,9 @@ function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'de
     <span
       className={cn(
         'inline-flex max-w-full items-center rounded-lg border px-2 py-1 text-[11px] font-medium',
-        tone === 'good' && 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
-        tone === 'warn' && 'border-amber-500/30 bg-amber-500/10 text-amber-200',
-        tone === 'bad' && 'border-red-500/30 bg-red-500/10 text-red-200',
+        tone === 'good' && 'border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]',
+        tone === 'warn' && 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]',
+        tone === 'bad' && 'border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]',
         tone === 'info' && 'border-sky-500/30 bg-sky-500/10 text-sky-200',
         tone === 'default' && 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] text-[var(--workspace-text)]',
       )}
@@ -118,16 +120,31 @@ function StatusBadge({ status, t }: { status: DeploymentViewStatus; t: TFunction
 }
 
 function HostStatusIcon({ state }: { state?: HostInventoryState }) {
+  if (state?.inventory || state?.status === 'ready') {
+    return (
+      <span className="relative inline-flex h-5 w-5 items-center justify-center">
+        <WorkspaceOsIcon os={state.inventory?.resource.os} className="h-4 w-4 text-[var(--workspace-text-muted)]" />
+        {state.status === 'scanning' ? (
+          <Loader2 className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 animate-spin rounded-full bg-[var(--workspace-surface-row)] text-[color:var(--workspace-primary-300)]" />
+        ) : (
+          <CheckCircle2 className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-[var(--workspace-surface-row)] text-[color:var(--workspace-status-good)]" />
+        )}
+      </span>
+    )
+  }
   if (state?.status === 'scanning') return <Loader2 className="h-3.5 w-3.5 animate-spin text-[color:var(--workspace-primary-300)]" />
-  if (state?.status === 'ready') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
-  if (state?.status === 'error') return <AlertTriangle className="h-3.5 w-3.5 text-red-300" />
+  if (state?.status === 'error') return <AlertTriangle className="h-3.5 w-3.5 text-[color:var(--workspace-status-bad)]" />
   return <CircleDot className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />
 }
 
 
 function HostNetworkLine({ network }: { network?: HostNetworkDisplay }) {
   if (!network) return null
-  return <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{network.resolvedLocationLabel}</div>
+  return (
+    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--workspace-text-subtle)]">
+      <HostRegionMeta network={network} />
+    </div>
+  )
 }
 
 function getInstalledToolSearchValues(inventory: WorkspaceInventory | undefined) {
@@ -292,59 +309,15 @@ export function ProjectDeploymentsPanel({
   }, [deploymentViewRows, networkByAddress, query, selectedKey, statusFilter])
 
   async function scanHosts(targetHosts: HostProfile[]) {
-    const runId = ++runIdRef.current
-    const pending = targetHosts.slice()
-    const scanningStates = targetHosts.reduce<Record<string, HostInventoryState>>((next, host) => {
-      const key = hostKey(host)
-      next[key] = { status: 'scanning', inventory: states[key]?.inventory, updatedAt: states[key]?.updatedAt }
-      return next
-    }, {})
-    mergeWorkspaceInventoryStates(scanningStates)
-    setStates((prev) => {
-      const next = { ...prev }
-      targetHosts.forEach((host) => {
-        const key = hostKey(host)
-        next[key] = { status: 'scanning', inventory: prev[key]?.inventory, updatedAt: prev[key]?.updatedAt }
-      })
-      return next
+    const runId = runIdRef.current + 1
+    runIdRef.current = runId
+    await scanWorkspaceInventoryHosts({
+      hosts: targetHosts,
+      resolveAuthSecret,
+      concurrency: SCAN_CONCURRENCY,
+      currentStates: states,
+      isCurrent: () => runIdRef.current === runId,
     })
-
-    async function worker() {
-      while (pending.length > 0 && runIdRef.current === runId) {
-        const host = pending.shift()
-        if (!host) return
-        const key = hostKey(host)
-        try {
-          const inventory = await fetchWorkspaceInventory({ host, resolveAuthSecret })
-          if (runIdRef.current !== runId) return
-          saveWorkspaceInventoryCacheEntry(host, inventory)
-          const nextState = { status: 'ready' as const, inventory, updatedAt: Date.now() }
-          mergeWorkspaceInventoryStates({ [key]: nextState })
-          setStates((prev) => ({ ...prev, [key]: nextState }))
-        } catch (error) {
-          if (runIdRef.current !== runId) return
-          const message = error instanceof Error ? error.message : String(error)
-          const previousState = getWorkspaceInventoryStates()[key]
-          const nextState = {
-            status: 'error',
-            inventory: previousState?.inventory,
-            updatedAt: previousState?.updatedAt,
-            error: message,
-          } satisfies HostInventoryState
-          mergeWorkspaceInventoryStates({ [key]: nextState })
-          setStates((prev) => ({
-            ...prev,
-            [key]: {
-              ...nextState,
-              inventory: prev[key]?.inventory ?? nextState.inventory,
-              updatedAt: prev[key]?.updatedAt ?? nextState.updatedAt,
-            },
-          }))
-        }
-      }
-    }
-
-    await Promise.all(Array.from({ length: Math.min(SCAN_CONCURRENCY, targetHosts.length) }, () => worker()))
   }
 
   useEffect(() => {
@@ -513,6 +486,7 @@ export function ProjectDeploymentsPanel({
               }
             }}
             renderRegionLine={(host) => <HostNetworkLine network={networkByAddress[host.address]} />}
+            getSystemLabel={(host) => states[hostKey(host)]?.inventory?.resource.os}
             getSearchData={(host) => {
               const key = hostKey(host)
               const state = states[key]
@@ -548,7 +522,7 @@ export function ProjectDeploymentsPanel({
                 <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[var(--workspace-text-subtle)]">
                   <span>{formatAge(state?.updatedAt, t)}</span>
                   {state?.status === 'error'
-                    ? <span className="truncate text-red-200">{t('workspace.deployments.statusLabelInaccessible')}</span>
+                    ? <span className="truncate text-[color:var(--workspace-status-bad-text)]">{t('workspace.deployments.statusLabelInaccessible')}</span>
                     : <span>{state?.inventory?.resource.os || t('workspace.deployments.versionPending')}</span>}
                 </div>
               )
@@ -573,7 +547,7 @@ export function ProjectDeploymentsPanel({
                   key={row.id}
                   className={cn(
                     'grid grid-cols-[minmax(14rem,1.15fr)_minmax(10rem,0.8fr)_8rem_9rem] gap-3 border-b border-[color:var(--workspace-border-soft)] px-4 py-3 last:border-b-0',
-                    rowHostState?.status === 'error' && 'bg-red-500/5',
+                    rowHostState?.status === 'error' && 'bg-[var(--workspace-status-bad-bg)]',
                   )}
                 >
                 <div className="min-w-0">
@@ -595,16 +569,27 @@ export function ProjectDeploymentsPanel({
                   </div>
                   <div className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">{row.host.username}@{row.host.address}</div>
                   <HostNetworkLine network={rowNetwork} />
-                  {row.inventory.resource.os && <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.deployments.version', { version: row.inventory.resource.os })}</div>}
+                  <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--workspace-text-subtle)]">
+                    <HostSystemMeta resource={row.inventory.resource} fallbackKey="workspace.deployments.versionPending" />
+                  </div>
                   <div className="mt-1 text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.deployments.snapshotAge', { age: formatAge(row.updatedAt, t) })}</div>
                 </div>
                 <div className="self-center">
                   <StatusBadge status={row.displayStatus} t={t} />
                 </div>
                 <div className="self-center space-y-1 font-mono text-[11px] text-[var(--workspace-text)]">
-                  <div className="flex items-center gap-1.5"><Cpu className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />{formatPercent(row.inventory.resource.cpuPercent, t)}</div>
-                  <div className="flex items-center gap-1.5"><MemoryStick className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />{formatPercent(row.inventory.resource.memoryPercent, t)}</div>
-                  <div className="flex items-center gap-1.5"><HardDrive className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />{formatPercent(row.inventory.resource.diskPercent, t)}</div>
+                  <div className={cn('flex items-center gap-1.5', getResourceUsageTextClassName(row.inventory.resource.cpuPercent))}>
+                    <Cpu className="h-3.5 w-3.5" />
+                    {formatPercent(row.inventory.resource.cpuPercent, t)}
+                  </div>
+                  <div className={cn('flex items-center gap-1.5', getResourceUsageTextClassName(row.inventory.resource.memoryPercent))}>
+                    <MemoryStick className="h-3.5 w-3.5" />
+                    {formatPercent(row.inventory.resource.memoryPercent, t)}
+                  </div>
+                  <div className={cn('flex items-center gap-1.5', getResourceUsageTextClassName(row.inventory.resource.diskPercent))}>
+                    <HardDrive className="h-3.5 w-3.5" />
+                    {formatPercent(row.inventory.resource.diskPercent, t)}
+                  </div>
                 </div>
                 </div>
               )

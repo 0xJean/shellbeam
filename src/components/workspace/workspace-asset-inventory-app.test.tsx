@@ -395,7 +395,7 @@ describe('workspace asset inventory app', () => {
     runSshCommand.mockImplementation(() => new Promise((resolve) => {
       scanController.resolve = resolve
     }))
-    saveWorkspaceInventoryCacheEntry(hosts[0], parseWorkspaceInventory(`
+    await saveWorkspaceInventoryCacheEntry(hosts[0], parseWorkspaceInventory(`
 __SB_HOSTNAME=cached-vps
 __SB_CPU=42
 __SB_MEMORY=55|550M/1000M

@@ -9,7 +9,9 @@ vi.mock('@/lib/i18n', () => ({
 vi.mock('@/components/activity-log-panel', () => ({ ActivityLogPanel: () => <div /> }))
 vi.mock('@/components/backup-restore-panel', () => ({ BackupRestorePanel: () => <div /> }))
 vi.mock('@/components/host-key-confirm-dialog', () => ({ HostKeyConfirmDialog: () => <div /> }))
-vi.mock('@/components/hosts-dashboard', () => ({ HostsDashboard: () => <div /> }))
+vi.mock('@/components/hosts-dashboard', () => ({
+  HostsDashboard: ({ headerExtraAction }: { headerExtraAction?: React.ReactNode }) => <div>{headerExtraAction}</div>,
+}))
 vi.mock('@/components/keychain-tab', () => ({ KeychainTab: () => <div /> }))
 vi.mock('@/components/known-hosts-panel', () => ({ KnownHostsPanel: () => <div /> }))
 vi.mock('@/components/mobile-session-header', () => ({ MobileSessionHeader: () => <div /> }))
@@ -59,6 +61,7 @@ vi.mock('@/components/workspace/workspace-asset-inventory-app', () => ({
     onEditHost?: (host: { id: string }) => void
     onImportSsh?: () => void
     onCreateHost?: () => void
+    headerExtraAction?: React.ReactNode
   }) => {
     workspaceAssetInventorySpy(props)
     return (
@@ -75,6 +78,7 @@ vi.mock('@/components/workspace/workspace-asset-inventory-app', () => ({
         <button type="button" data-testid="workspace-asset-create" onClick={() => props.onCreateHost?.()}>
           Asset Create
         </button>
+        {props.headerExtraAction}
       </div>
     )
   },
@@ -749,8 +753,11 @@ describe('pc layout', () => {
       await Promise.resolve()
     })
 
+    const browserOverviewEntry = await screen.findByRole('button', { name: 'browser.overview.title' })
+    fireEvent.click(browserOverviewEntry)
+
     const resumeCard = await screen.findByRole('button', { name: 'browser.overview.resumeSession' })
-    expect(await screen.findByText('browser.overview.title')).toBeInTheDocument()
+    expect(screen.getAllByText('browser.overview.title').length).toBeGreaterThan(0)
 
     fireEvent.click(resumeCard)
 
@@ -1028,6 +1035,8 @@ describe('pc layout', () => {
 
     render(<PcLayout />)
 
+    fireEvent.click(screen.getByRole('button', { name: 'browser.overview.title' }))
+
     const docsTabButton = screen
       .getAllByRole('button', { name: 'browser.overview.resumeTab' })
       .find((button) => button.textContent?.includes('Docs'))
@@ -1042,6 +1051,15 @@ describe('pc layout', () => {
   })
 
   it('filters and searches tabs inside the dashboard browser overview', () => {
+    useApp.mockReturnValue({
+      setOutput: vi.fn(),
+      pcSidebarNav: 'hosts',
+      setPcSidebarNav: vi.fn(),
+      terminalPrefs: {},
+      updateTerminalPrefs: vi.fn(),
+      setCommand: vi.fn(),
+    })
+
     useSessions.mockReturnValue({
       ...defaultSessionsValue,
       pcActiveSessionId: null,
@@ -1108,6 +1126,8 @@ describe('pc layout', () => {
     })
 
     render(<PcLayout />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'browser.overview.title' }))
 
     expect(screen.getAllByRole('button', { name: 'browser.overview.resumeTab' })).toHaveLength(2)
 

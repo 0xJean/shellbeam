@@ -15,6 +15,8 @@ export interface HostAddressMetadata {
 export interface PublicIpLocation {
   ip: string
   locationLabel: string
+  countryCode?: string
+  countryName?: string
   provider: string
   updatedAt: number
 }
@@ -203,6 +205,10 @@ function compactLocation(parts: Array<string | null | undefined>) {
     .join(' · ')
 }
 
+function normalizeCountryCode(value: unknown) {
+  return typeof value === 'string' && /^[a-z]{2}$/i.test(value) ? value.toUpperCase() : undefined
+}
+
 export async function lookupPublicIpLocation(ip: string): Promise<PublicIpLocation> {
   const cached = getCachedPublicIpLocation(ip)
   if (cached) return cached
@@ -219,10 +225,14 @@ export async function lookupPublicIpLocation(ip: string): Promise<PublicIpLocati
     typeof data.region === 'string' ? data.region : undefined,
     typeof data.city === 'string' ? data.city : undefined,
   ]) || (typeof data.timezone === 'string' ? data.timezone : undefined) || '地区未知'
+  const countryCode = normalizeCountryCode(data.country_code)
+  const countryName = typeof data.country_name === 'string' ? data.country_name : undefined
 
   const location: PublicIpLocation = {
     ip,
     locationLabel,
+    countryCode,
+    countryName,
     provider: 'ipapi.co',
     updatedAt: Date.now(),
   }

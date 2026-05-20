@@ -1,8 +1,9 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ComponentType, type ReactNode } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { getResourceUsageTextClassName } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
-import { Clock, KeyRound, LockKeyhole, Route, Search, Tags } from 'lucide-react'
+import { Clock, Cpu, HardDrive, KeyRound, LockKeyhole, MemoryStick, Route, Search, Tags } from 'lucide-react'
 
 type ServerBadgeTone = 'default' | 'good' | 'warn' | 'bad' | 'info'
 type ServerSearchValue = string | number | null | undefined | false
@@ -48,6 +49,7 @@ interface WorkspaceServerListProps {
   getStatusBadge?: (host: HostProfile) => ServerListBadge | undefined
   getPrimaryBadge?: (host: HostProfile) => ServerListBadge | undefined
   renderRegionLine?: (host: HostProfile) => ReactNode
+  getSystemLabel?: (host: HostProfile) => string | undefined
   getResourceMetrics?: (host: HostProfile) => WorkspaceServerResourceMetrics | undefined
   renderMetrics?: (host: HostProfile) => ReactNode
   renderFooter?: (host: HostProfile) => ReactNode
@@ -146,19 +148,14 @@ function formatPercent(value: number | null | undefined, t: ReturnType<typeof us
   return value == null ? t('workspace.common.notAvailable') : `${Math.round(value)}%`
 }
 
-function getMetricToneClass(value: number | null | undefined) {
-  if (value == null) return 'text-[var(--workspace-text-subtle)]'
-  if (value >= 90) return 'text-[color:var(--workspace-status-bad)]'
-  if (value >= 75) return 'text-[color:var(--workspace-status-warn)]'
-  return 'text-[color:var(--workspace-status-good)]'
-}
-
 function CompactResourceMetric({
+  icon: Icon,
   label,
   value,
   detail,
   t,
 }: {
+  icon: ComponentType<{ className?: string }>
   label: string
   value?: number | null
   detail?: ReactNode
@@ -177,7 +174,7 @@ function CompactResourceMetric({
       title={title}
       className="flex min-w-0 items-center gap-1.5"
     >
-      <span className={cn('relative h-8 w-8 shrink-0', getMetricToneClass(value))}>
+      <span className={cn('relative h-8 w-8 shrink-0', getResourceUsageTextClassName(value))}>
         <svg viewBox="0 0 32 32" className="h-8 w-8 -rotate-90" aria-hidden="true">
           <circle cx="16" cy="16" r={radius} fill="none" stroke="var(--workspace-meter-track)" strokeWidth="3.5" />
           <circle
@@ -197,7 +194,10 @@ function CompactResourceMetric({
         </span>
       </span>
       <span className="min-w-0">
-        <span className="block truncate text-[10px] font-semibold uppercase text-[var(--workspace-text-muted)]">{label}</span>
+        <span className="flex items-center gap-1 truncate text-[10px] font-semibold uppercase text-[var(--workspace-text-muted)]">
+          <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">{label}</span>
+        </span>
         <span className="block truncate font-mono text-[10px] text-[var(--workspace-text-strong)]">{formatPercent(value, t)}</span>
       </span>
     </div>
@@ -207,9 +207,9 @@ function CompactResourceMetric({
 function ServerResourceMetrics({ metrics, t }: { metrics: WorkspaceServerResourceMetrics; t: ReturnType<typeof useT>['t'] }) {
   return (
     <div className="mt-3 grid min-w-0 grid-cols-3 gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-2">
-      <CompactResourceMetric label={t('workspace.common.cpu')} value={metrics.cpuPercent} detail={metrics.cpuDetail} t={t} />
-      <CompactResourceMetric label={t('workspace.common.memoryShort')} value={metrics.memoryPercent} detail={metrics.memoryDetail} t={t} />
-      <CompactResourceMetric label={t('workspace.common.diskShort')} value={metrics.diskPercent} detail={metrics.diskDetail} t={t} />
+      <CompactResourceMetric icon={Cpu} label={t('workspace.common.cpu')} value={metrics.cpuPercent} detail={metrics.cpuDetail} t={t} />
+      <CompactResourceMetric icon={MemoryStick} label={t('workspace.common.memoryShort')} value={metrics.memoryPercent} detail={metrics.memoryDetail} t={t} />
+      <CompactResourceMetric icon={HardDrive} label={t('workspace.common.diskShort')} value={metrics.diskPercent} detail={metrics.diskDetail} t={t} />
     </div>
   )
 }
@@ -257,6 +257,7 @@ export function WorkspaceServerList({
   getStatusBadge,
   getPrimaryBadge,
   renderRegionLine,
+  getSystemLabel,
   getResourceMetrics,
   renderMetrics,
   renderFooter,
@@ -317,6 +318,7 @@ export function WorkspaceServerList({
             const isInaccessible = visibleStatusBadge?.tone === 'bad'
             const metrics = getResourceMetrics?.(host)
             const metricsContent = renderMetrics?.(host) ?? (!isInaccessible && metrics ? <ServerResourceMetrics metrics={metrics} t={t} /> : null)
+            const systemLabel = getSystemLabel?.(host)
             return (
               <button
                 key={key}
@@ -335,7 +337,10 @@ export function WorkspaceServerList({
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
                       {renderStatusIcon?.(host)}
-                      <span className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{host.name}</span>
+                      <span className="min-w-0 truncate text-sm font-semibold text-[var(--workspace-text-strong)]">
+                        {host.name}
+                        {systemLabel && <span className="font-medium text-[var(--workspace-text-muted)]"> ({systemLabel})</span>}
+                      </span>
                       {visibleStatusBadge && <Badge tone={visibleStatusBadge.tone}>{visibleStatusBadge.label}</Badge>}
                     </div>
                     <div className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">{formatHostEndpoint(host)}</div>
