@@ -355,11 +355,11 @@ export function SessionTerminalView({
             <button
               type="button"
               onClick={onOpenBrowser}
-              className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-[11px] font-semibold tracking-wide text-primary shadow-[0_0_6px_rgba(19,91,236,0.15)] transition-all hover:bg-primary/20 hover:shadow-[0_0_10px_rgba(19,91,236,0.25)] md:px-3"
-              title="Open browser"
+              className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-[11px] font-semibold tracking-wide text-primary shadow-[0_0_6px_var(--workspace-accent-soft)] transition-all hover:bg-primary/20 hover:shadow-[0_0_10px_var(--workspace-accent-muted)] md:px-3"
+              title={t('terminal.openBrowser')}
             >
               <Globe className="h-3.5 w-3.5" />
-              <span className="hidden max-w-40 truncate md:inline">Browser</span>
+              <span className="hidden max-w-40 truncate md:inline">{t('terminal.browser')}</span>
             </button>
           )}
           {showBrowserShortcuts && detectedLinks.length > 0 && onOpenLinkInBrowser && (
@@ -367,18 +367,18 @@ export function SessionTerminalView({
               <button
                 type="button"
                 onClick={() => onOpenLinkInBrowser(detectedLinks[detectedLinks.length - 1])}
-                className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-[11px] font-semibold tracking-wide text-primary shadow-[0_0_6px_rgba(19,91,236,0.15)] transition-all hover:bg-primary/20 hover:shadow-[0_0_10px_rgba(19,91,236,0.25)] md:px-3"
-                title="Open latest detected link in browser"
+                className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-[11px] font-semibold tracking-wide text-primary shadow-[0_0_6px_var(--workspace-accent-soft)] transition-all hover:bg-primary/20 hover:shadow-[0_0_10px_var(--workspace-accent-muted)] md:px-3"
+                title={t('terminal.openLatestLink')}
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-                <span className="hidden max-w-40 truncate md:inline">Open Link</span>
+                <span className="hidden max-w-40 truncate md:inline">{t('terminal.openLink')}</span>
               </button>
               {detectedLinks.length > 1 && (
                 <button
                   type="button"
                   onClick={() => setShowLinkMenu((value) => !value)}
                   className="absolute -bottom-2 right-0 rounded-full border border-border/60 bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground shadow-sm"
-                  title="Show recent terminal links"
+                  title={t('terminal.showRecentLinks')}
                 >
                   {detectedLinks.length}
                 </button>
@@ -427,8 +427,8 @@ export function SessionTerminalView({
               className={cn(
                 'flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold tracking-wide transition-all md:px-3',
                 showAI
-                  ? 'bg-primary/25 text-blue-300 shadow-[0_0_12px_rgba(19,91,236,0.3)]'
-                  : 'border border-primary/30 bg-primary/10 text-primary shadow-[0_0_6px_rgba(19,91,236,0.15)] hover:bg-primary/20 hover:shadow-[0_0_10px_rgba(19,91,236,0.25)]',
+                  ? 'bg-primary/25 text-primary shadow-[0_0_12px_var(--workspace-accent-muted)]'
+                  : 'border border-primary/30 bg-primary/10 text-primary shadow-[0_0_6px_var(--workspace-accent-soft)] hover:bg-primary/20 hover:shadow-[0_0_10px_var(--workspace-accent-muted)]',
               )}
               title={`${t('terminal.aiGenerator')} (⌘+I)`}
             >
@@ -502,7 +502,7 @@ export function SessionTerminalView({
                 <button
                   type="button"
                   onClick={onReconnect}
-                  className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/80"
+                  className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-[var(--workspace-primary-foreground)] transition-colors hover:bg-primary/80"
                 >
                   <RefreshCw className="h-4 w-4" />
                   {t('terminal.reconnect')}

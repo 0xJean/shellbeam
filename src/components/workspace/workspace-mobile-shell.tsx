@@ -121,7 +121,7 @@ export function WorkspaceMobileShell({
       </div>
 
       {/* iOS Status Bar */}
-      <div className="relative z-10 flex items-center justify-between px-6 pb-2 pt-[max(env(safe-area-inset-top),16px)] text-[15px] font-semibold text-white drop-shadow-md">
+      <div className="relative z-10 flex items-center justify-between px-6 pb-2 pt-[max(env(safe-area-inset-top),16px)] text-[15px] font-semibold text-[var(--workspace-primary-foreground)] drop-shadow-md">
         <span><LiveClock /></span>
         <div className="flex items-center gap-1.5">
           <Signal className="h-[14px] w-[14px]" />
@@ -141,9 +141,9 @@ export function WorkspaceMobileShell({
         }}
         transition={{ type: 'spring', damping: 26, stiffness: 260 }}
       >
-        <div className="mb-8 text-center text-white drop-shadow-md">
+        <div className="mb-8 text-center text-[var(--workspace-primary-foreground)] drop-shadow-md">
           <div className="text-2xl font-semibold tracking-tight">{hostName}</div>
-          <div className="text-sm text-white/80">{hostAddress}</div>
+          <div className="text-sm opacity-80">{hostAddress}</div>
         </div>
 
         <div className="min-h-[22rem]">
@@ -162,7 +162,7 @@ export function WorkspaceMobileShell({
         }}
         transition={{ type: 'spring', damping: 26, stiffness: 260 }}
       >
-        <div className="rounded-[32px] border border-white/20 bg-white/20 p-3 shadow-[0_8px_32px_rgba(0,0,0,0.25)] backdrop-blur-2xl dark:border-white/10 dark:bg-black/30 pb-[max(env(safe-area-inset-bottom,12px),12px)]">
+        <div className="rounded-[32px] border border-[var(--workspace-mobile-stroke)] bg-[var(--workspace-mobile-card)] p-3 shadow-[var(--workspace-shadow-overlay)] backdrop-blur-2xl pb-[max(env(safe-area-inset-bottom,12px),12px)]">
           <WorkspaceAppGrid
             activeApp={activeApp}
             onSelectApp={onSelectApp}
@@ -182,25 +182,25 @@ export function WorkspaceMobileShell({
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.95, opacity: 0, y: 20 }}
             transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-            className="absolute inset-0 z-30 flex flex-col bg-white dark:bg-[#0f172a] overflow-hidden"
+            className="absolute inset-0 z-30 flex flex-col overflow-hidden bg-[var(--workspace-surface-950)]"
           >
             {/* Frosted Navigation Bar */}
-            <div className="relative z-40 flex items-center justify-between border-b border-slate-200/50 bg-white/80 pb-3 pt-[max(env(safe-area-inset-top),16px)] px-2 shadow-sm backdrop-blur-xl dark:border-slate-800/50 dark:bg-slate-900/80">
+            <div className="relative z-40 flex items-center justify-between border-b border-[var(--workspace-border-soft)] bg-[var(--workspace-nav-translucent)] pb-3 pt-[max(env(safe-area-inset-top),16px)] px-2 shadow-[var(--workspace-shadow-card)] backdrop-blur-xl">
               <button
                 type="button"
                 onClick={() => onSelectApp('overview')}
                 className="flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-[color:var(--workspace-primary-500)] active:opacity-60 transition-opacity"
-                aria-label="Back to Home Screen"
+                aria-label={t('workspace.mobile.backToHomeScreen')}
               >
                 <ChevronLeft className="h-6 w-6 -ml-1" />
-                <span className="text-[17px] font-medium leading-none">Home</span>
+                <span className="text-[17px] font-medium leading-none">{t('workspace.mobile.home')}</span>
               </button>
               
               <div className="absolute left-1/2 -translate-x-1/2 text-center">
-                <div className="text-[17px] font-semibold tracking-tight text-slate-900 dark:text-white">
+                <div className="text-[17px] font-semibold tracking-tight text-[var(--workspace-text-strong)]">
                   {t(`workspace.app.${activeApp}`)}
                 </div>
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                <div className="text-[10px] uppercase tracking-wider text-[var(--workspace-text-muted)]">
                   {hostName}
                 </div>
               </div>
@@ -208,7 +208,7 @@ export function WorkspaceMobileShell({
               <button
                 type="button"
                 className="flex h-11 min-w-[44px] items-center justify-end px-3 text-[color:var(--workspace-primary-500)] active:opacity-60 transition-opacity"
-                aria-label="Search"
+                aria-label={t('workspace.mobile.search')}
               >
                 <Search className="h-5 w-5" />
               </button>

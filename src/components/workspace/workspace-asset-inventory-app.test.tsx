@@ -72,6 +72,7 @@ __SB_PROJECT=/srv/worker|node|worker|2026-05-15 10:20
 
 describe('workspace asset inventory app', () => {
   beforeEach(() => {
+    localStorage.setItem('shellbeam.locale', 'zh-CN')
     runSshCommand.mockReset()
     clearWorkspaceInventoryCache()
     runSshCommand.mockImplementation(({ host }: { host: string }) => Promise.resolve({
@@ -148,8 +149,8 @@ describe('workspace asset inventory app', () => {
     })
 
     expect(screen.getByText('全部主机')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '生产 1' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '开发 1' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '生产环境 1' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '开发环境 1' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /^标签/ }))
     fireEvent.click(screen.getByRole('button', { name: 'api' }))
@@ -161,7 +162,7 @@ describe('workspace asset inventory app', () => {
     fireEvent.click(screen.getByRole('button', { name: '清除标签筛选' }))
 
     fireEvent.click(screen.getByRole('button', { name: '全部' }))
-    fireEvent.click(screen.getByRole('button', { name: '开发' }))
+    fireEvent.click(screen.getByRole('button', { name: '开发环境' }))
     expect(screen.getByText('1/2 台匹配')).toBeInTheDocument()
     expect(screen.getAllByText('Worker Node').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Worker Node').length).toBeGreaterThan(0)
@@ -207,7 +208,7 @@ describe('workspace asset inventory app', () => {
       expect(runSshCommand).toHaveBeenCalledTimes(2)
     })
 
-    fireEvent.click(screen.getByRole('button', { name: '部署项目' }))
+    fireEvent.click(screen.getByRole('tab', { name: '部署项目' }))
 
     expect(screen.getByTestId('project-deployments-panel')).toBeInTheDocument()
   })
@@ -225,10 +226,10 @@ describe('workspace asset inventory app', () => {
       expect(runSshCommand).toHaveBeenCalledTimes(2)
     })
 
-    const tabButtons = screen.getAllByRole('button').slice(0, 3)
+    const tabButtons = screen.getAllByRole('tab')
     expect(tabButtons.map((button) => button.textContent)).toEqual(['资源总览', '工具管理', '部署项目'])
 
-    fireEvent.click(screen.getByRole('button', { name: '工具管理' }))
+    fireEvent.click(screen.getByRole('tab', { name: '工具管理' }))
 
     expect(screen.getByTestId('workspace-tool-manager-app')).toBeInTheDocument()
   })
@@ -250,7 +251,36 @@ describe('workspace asset inventory app', () => {
     fireEvent.click(screen.getByRole('button', { name: '管理当前服务器工具' }))
 
     expect(screen.getByTestId('workspace-tool-manager-app')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-tool-host-host-2')).toHaveClass('border-[color:var(--workspace-border-glow)]')
+    expect(screen.getByTestId('workspace-tool-manager-app')).toHaveAttribute('data-selected-host-id', 'host-2')
+  })
+
+  it('keeps a single shared server list when switching VPS asset tabs', async () => {
+    render(
+      <WorkspaceAssetInventoryApp
+        selectedHostId="host-1"
+        hosts={hosts}
+        resolveAuthSecret={async () => 'secret'}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(runSshCommand).toHaveBeenCalledTimes(2)
+    })
+
+    await waitFor(() => {
+      expect(screen.getAllByPlaceholderText(/搜索服务器/)).toHaveLength(1)
+    })
+
+    fireEvent.click(screen.getByText('Worker Node'))
+    fireEvent.click(screen.getByRole('tab', { name: '工具管理' }))
+
+    expect(screen.getAllByPlaceholderText(/搜索服务器/)).toHaveLength(1)
+    expect(screen.getByTestId('workspace-tool-manager-app')).toHaveAttribute('data-selected-host-id', 'host-2')
+
+    fireEvent.click(screen.getByRole('tab', { name: '部署项目' }))
+
+    expect(screen.getAllByPlaceholderText(/搜索服务器/)).toHaveLength(1)
+    expect(screen.getByTestId('project-deployments-panel')).toHaveAttribute('data-selected-host-key', 'host-2')
   })
 
   it('opens the terminal from the selected server detail actions', async () => {
@@ -355,7 +385,7 @@ describe('workspace asset inventory app', () => {
     fireEvent.click(screen.getByText('Worker Node'))
     expect(screen.queryByText(/TCP connect failed: timed out/)).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '工具管理' }))
+    fireEvent.click(screen.getByRole('tab', { name: '工具管理' }))
     expect(screen.getByTestId('workspace-tool-manager-app')).toBeInTheDocument()
     expect(screen.getAllByText('无法访问').length).toBeGreaterThan(0)
   })

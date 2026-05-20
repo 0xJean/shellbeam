@@ -1,3 +1,5 @@
+import { useT } from '@/lib/i18n'
+
 export interface WorkspaceActivityItem {
   id: string
   label: string
@@ -9,10 +11,12 @@ interface WorkspaceActivityFeedProps {
 }
 
 export function WorkspaceActivityFeed({ items }: WorkspaceActivityFeedProps) {
+  const { t } = useT()
+
   if (items.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-border/60 p-4 text-sm text-muted-foreground">
-        No recent activity yet
+        {t('workspace.activity.empty')}
       </div>
     )
   }

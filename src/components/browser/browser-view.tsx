@@ -46,6 +46,11 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
     resolvedUrl: state?.resolvedUrl,
     proxyUrl: state?.proxyUrl,
   })
+  const localizedRouteIndicator = useMemo(() => ({
+    ...routeIndicator,
+    label: t(routeIndicator.labelKey),
+    detail: t(routeIndicator.detailKey),
+  }), [routeIndicator, t])
 
   // Log state changes
   useEffect(() => {
@@ -90,7 +95,7 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
   const tabs = useMemo(() => getSessionBrowserTabs(state).map((tab) => ({
     id: tab.id,
     pinned: tab.pinned,
-    title: tab.title || tab.currentUrl || tab.addressInput || 'New Tab',
+    title: tab.title || tab.currentUrl || tab.addressInput || t('browser.tab.newTitle'),
     active: tab.id === state.activeTabId,
     isLoading: tab.isLoading,
     sourceKind: tab.source?.kind ?? null,
@@ -104,7 +109,7 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
       resolvedUrl: tab.resolvedUrl,
       proxyUrl: tab.proxyUrl,
     }),
-  })), [effectiveRouteMode, hasRemoteSession, state])
+  })), [effectiveRouteMode, hasRemoteSession, state, t])
   const hasClosedTabs = state.closedTabs.length > 0
   const canRebuildTransport = hasRemoteSession && state.source?.kind === 'url' && effectiveRouteMode === 'remote'
   const showTransportRecovering = canRebuildTransport && state.transportStatus === 'recovering'
@@ -182,7 +187,7 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
       <BrowserChrome
         state={state}
         tabs={tabs}
-        routeIndicator={routeIndicator}
+        routeIndicator={localizedRouteIndicator}
         routeMode={effectiveRouteMode}
         canToggleRouteMode={hasRemoteSession && state.source?.kind === 'url'}
         onCreateTab={() => sessions.createSessionBrowserTab(sessionId)}
@@ -246,7 +251,7 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
                 <div className="max-w-xl rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
                   <div>{state.error}</div>
                   <div className="mt-2 text-xs text-red-200/75">
-                    Active route: {routeIndicator.detail}
+                    {t('browser.status.activeRoute', { detail: localizedRouteIndicator.detail })}
                   </div>
                 </div>
               </div>
@@ -261,7 +266,7 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
                   : t('browser.transport.preparingTitle')}
               </div>
               <div className="mt-2 text-xs text-[var(--workspace-text-muted)]">
-                {routeIndicator.detail}
+                {localizedRouteIndicator.detail}
               </div>
             </div>
           </div>
@@ -274,10 +279,10 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
                   : t('browser.transport.errorTitle')}
               </div>
               <div className="mt-2 text-sm text-red-100/90">
-                {state.error ?? routeIndicator.detail}
+                {state.error ?? localizedRouteIndicator.detail}
               </div>
               <div className="mt-2 text-xs text-red-100/70">
-                {routeIndicator.detail}
+                {localizedRouteIndicator.detail}
               </div>
               {canRebuildTransport && (
                 <div className="mt-4">

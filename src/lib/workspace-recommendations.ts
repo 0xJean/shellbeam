@@ -1,4 +1,5 @@
 import type { WorkspaceAppId } from '@/lib/workspace'
+import { t } from './i18n'
 
 export interface WorkspaceRecommendation {
   id: string
@@ -16,15 +17,15 @@ export function getWorkspaceRecommendations(input: WorkspaceRecommendationInput)
   const items: WorkspaceRecommendation[] = []
 
   if ((input.diskUsagePercent ?? 0) >= 85) {
-    items.push({ id: 'disk', title: 'Disk is getting full', targetApp: 'fileTransfer' })
+    items.push({ id: 'disk', title: t('workspace.recommendation.disk'), targetApp: 'fileTransfer' })
   }
 
   if (input.hasNginx) {
-    items.push({ id: 'nginx', title: 'Nginx is running', targetApp: 'services' })
+    items.push({ id: 'nginx', title: t('workspace.recommendation.nginx'), targetApp: 'services' })
   }
 
   if (input.hasDocker) {
-    items.push({ id: 'docker', title: 'Docker is available', targetApp: 'terminal' })
+    items.push({ id: 'docker', title: t('workspace.recommendation.docker'), targetApp: 'terminal' })
   }
 
   return items

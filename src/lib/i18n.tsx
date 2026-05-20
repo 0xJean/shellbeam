@@ -41,7 +41,7 @@ interface I18nContextValue {
   t: (key: string, params?: Record<string, string | number>) => string
 }
 
-const I18nContext = createContext<I18nContextValue>(null!)
+const I18nContext = createContext<I18nContextValue | null>(null)
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(detectLocale)
@@ -61,5 +61,15 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 }
 
 export function useT() {
-  return useContext(I18nContext)
+  const context = useContext(I18nContext)
+  if (context) return context
+
+  const locale = detectLocale()
+  return {
+    locale,
+    setLocale: (l: Locale) => {
+      localStorage.setItem(LOCALE_KEY, l)
+    },
+    t: (key: string, params?: Record<string, string | number>) => translate(locale, key, params),
+  }
 }

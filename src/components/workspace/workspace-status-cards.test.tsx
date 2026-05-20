@@ -144,6 +144,6 @@ describe('workspace status cards', () => {
     await waitFor(() => {
       expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveClass('bg-[var(--workspace-surface-900)]')
     })
-    expect(screen.getAllByTestId('workspace-status-meter')[0]).toHaveClass('bg-[rgba(8,15,22,0.9)]')
+    expect(screen.getAllByTestId('workspace-status-meter')[0]).toHaveClass('bg-[var(--workspace-surface-950)]')
   })
 })

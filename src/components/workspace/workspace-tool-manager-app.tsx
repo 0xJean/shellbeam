@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { HostProfile } from '@/lib/hosts'
+import { t as translate, useT } from '@/lib/i18n'
 import { useHostNetworkMetadata, type HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import { cn } from '@/lib/utils'
 import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
@@ -36,21 +37,21 @@ import {
   Trash2,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace-empty-state'
-import { WorkspacePanelHeader } from './workspace-panel-header'
+import { WorkspaceResourceOverviewHeader } from './workspace-resource-overview-header'
 import { WorkspaceServerList } from './workspace-server-list'
 import { Dialog, DialogContent } from '../ui/dialog'
 
 const TOOL_CATEGORIES = [
-  { id: 'web', label: 'Web / Proxy' },
-  { id: 'database', label: 'Databases' },
-  { id: 'cacheQueue', label: 'Cache / Queue' },
-  { id: 'containers', label: 'Containers' },
-  { id: 'runtime', label: 'Runtimes' },
-  { id: 'packageManagers', label: 'Package Managers' },
-  { id: 'buildOps', label: 'Build / Ops' },
-  { id: 'securityNetwork', label: 'Security / Network' },
-  { id: 'aiAgents', label: 'AI Agent CLI' },
-  { id: 'processManagers', label: 'Process Managers' },
+  { id: 'web', labelKey: 'workspace.tools.category.web' },
+  { id: 'database', labelKey: 'workspace.tools.category.database' },
+  { id: 'cacheQueue', labelKey: 'workspace.tools.category.cacheQueue' },
+  { id: 'containers', labelKey: 'workspace.tools.category.containers' },
+  { id: 'runtime', labelKey: 'workspace.tools.category.runtime' },
+  { id: 'packageManagers', labelKey: 'workspace.tools.category.packageManagers' },
+  { id: 'buildOps', labelKey: 'workspace.tools.category.buildOps' },
+  { id: 'securityNetwork', labelKey: 'workspace.tools.category.securityNetwork' },
+  { id: 'aiAgents', labelKey: 'workspace.tools.category.aiAgents' },
+  { id: 'processManagers', labelKey: 'workspace.tools.category.processManagers' },
 ] as const
 
 type ToolCategoryId = (typeof TOOL_CATEGORIES)[number]['id']
@@ -82,7 +83,7 @@ export interface ToolDefinition {
   logoSlug?: string
   binaries?: string[]
   aliases?: string[]
-  description: string
+  descriptionKey: string
   install?: InstallRecipe
   service?: string
   versionCommand?: string
@@ -116,6 +117,9 @@ interface WorkspaceToolManagerAppProps {
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   onOpenTerminal?: (host: HostProfile) => void
+  preheader?: ReactNode
+  hideHeader?: boolean
+  hideHostList?: boolean
 }
 
 interface HostInventoryState {
@@ -124,6 +128,8 @@ interface HostInventoryState {
   updatedAt?: number
   error?: string
 }
+
+type TFunction = ReturnType<typeof useT>['t']
 
 const DEFAULT_PACKAGE_SPEC = {
   apt: [''],
@@ -218,7 +224,7 @@ export const TOOL_CATALOG: ToolDefinition[] = [
     category: 'web',
     binary: 'nginx',
     aliases: ['reverse proxy', 'web server'],
-    description: 'HTTP server and reverse proxy.',
+    descriptionKey: 'workspace.tools.catalog.nginx.description',
     service: 'nginx',
     versionCommand: '$found -v 2>&1 | head -n 1',
     install: { type: 'package', packages: ['nginx'] },
@@ -230,98 +236,102 @@ export const TOOL_CATALOG: ToolDefinition[] = [
     binary: 'apache2',
     binaries: ['apache2', 'httpd'],
     aliases: ['httpd', 'apache2'],
-    description: 'General purpose HTTP server.',
+    descriptionKey: 'workspace.tools.catalog.apache.description',
     service: 'apache2',
     install: {
       type: 'package',
       packages: { apt: ['apache2'], dnf: ['httpd'], yum: ['httpd'], pacman: ['apache'], zypper: ['apache2'], apk: ['apache2'] },
     },
   },
-  { id: 'caddy', name: 'Caddy', category: 'web', binary: 'caddy', description: 'Automatic HTTPS web server.', service: 'caddy', install: { type: 'package', packages: ['caddy'] } },
-  { id: 'haproxy', name: 'HAProxy', category: 'web', binary: 'haproxy', description: 'TCP and HTTP load balancer.', service: 'haproxy', install: { type: 'package', packages: ['haproxy'] } },
-  { id: 'certbot', name: 'Certbot', category: 'web', binary: 'certbot', description: 'Let us encrypt certificate automation.', install: { type: 'package', packages: ['certbot'] } },
-  { id: 'traefik', name: 'Traefik', category: 'web', binary: 'traefik', description: 'Cloud-native reverse proxy.', service: 'traefik', install: { type: 'package', packages: ['traefik'] } },
+  { id: 'caddy', name: 'Caddy', category: 'web', binary: 'caddy', descriptionKey: 'workspace.tools.catalog.caddy.description', service: 'caddy', install: { type: 'package', packages: ['caddy'] } },
+  { id: 'haproxy', name: 'HAProxy', category: 'web', binary: 'haproxy', descriptionKey: 'workspace.tools.catalog.haproxy.description', service: 'haproxy', install: { type: 'package', packages: ['haproxy'] } },
+  { id: 'certbot', name: 'Certbot', category: 'web', binary: 'certbot', descriptionKey: 'workspace.tools.catalog.certbot.description', install: { type: 'package', packages: ['certbot'] } },
+  { id: 'traefik', name: 'Traefik', category: 'web', binary: 'traefik', descriptionKey: 'workspace.tools.catalog.traefik.description', service: 'traefik', install: { type: 'package', packages: ['traefik'] } },
 
-  { id: 'mysql', name: 'MySQL', category: 'database', binary: 'mysql', aliases: ['mysqld'], description: 'MySQL client and server tooling.', service: 'mysql', install: { type: 'package', packages: { apt: ['mysql-server'], dnf: ['mysql-server'], yum: ['mysql-server'], pacman: ['mysql'], zypper: ['mysql'], apk: ['mysql', 'mysql-client'] } } },
-  { id: 'mariadb', name: 'MariaDB', category: 'database', binary: 'mariadb', binaries: ['mariadb', 'mysql'], description: 'MariaDB server and client tooling.', service: 'mariadb', install: { type: 'package', packages: { apt: ['mariadb-server'], dnf: ['mariadb-server'], yum: ['mariadb-server'], pacman: ['mariadb'], zypper: ['mariadb'], apk: ['mariadb', 'mariadb-client'] } } },
-  { id: 'postgresql', name: 'PostgreSQL', category: 'database', binary: 'psql', aliases: ['pgsql', 'postgres'], description: 'PostgreSQL server and psql client.', service: 'postgresql', install: { type: 'package', packages: ['postgresql'] } },
-  { id: 'sqlite', name: 'SQLite', category: 'database', binary: 'sqlite3', description: 'Embedded SQL database tools.', install: { type: 'package', packages: ['sqlite3'] } },
-  { id: 'mongodb', name: 'MongoDB', category: 'database', binary: 'mongod', aliases: ['mongo', 'mongosh'], description: 'MongoDB daemon and shell.', service: 'mongod', install: { type: 'package', packages: { apt: ['mongodb'], dnf: ['mongodb'], yum: ['mongodb'], pacman: ['mongodb'], zypper: ['mongodb'], apk: ['mongodb'] } } },
-  { id: 'clickhouse', name: 'ClickHouse', category: 'database', binary: 'clickhouse', description: 'Column-oriented OLAP database.', service: 'clickhouse-server', install: { type: 'package', packages: ['clickhouse-server', 'clickhouse-client'] } },
+  { id: 'mysql', name: 'MySQL', category: 'database', binary: 'mysql', aliases: ['mysqld'], descriptionKey: 'workspace.tools.catalog.mysql.description', service: 'mysql', install: { type: 'package', packages: { apt: ['mysql-server'], dnf: ['mysql-server'], yum: ['mysql-server'], pacman: ['mysql'], zypper: ['mysql'], apk: ['mysql', 'mysql-client'] } } },
+  { id: 'mariadb', name: 'MariaDB', category: 'database', binary: 'mariadb', binaries: ['mariadb', 'mysql'], descriptionKey: 'workspace.tools.catalog.mariadb.description', service: 'mariadb', install: { type: 'package', packages: { apt: ['mariadb-server'], dnf: ['mariadb-server'], yum: ['mariadb-server'], pacman: ['mariadb'], zypper: ['mariadb'], apk: ['mariadb', 'mariadb-client'] } } },
+  { id: 'postgresql', name: 'PostgreSQL', category: 'database', binary: 'psql', aliases: ['pgsql', 'postgres'], descriptionKey: 'workspace.tools.catalog.postgresql.description', service: 'postgresql', install: { type: 'package', packages: ['postgresql'] } },
+  { id: 'sqlite', name: 'SQLite', category: 'database', binary: 'sqlite3', descriptionKey: 'workspace.tools.catalog.sqlite.description', install: { type: 'package', packages: ['sqlite3'] } },
+  { id: 'mongodb', name: 'MongoDB', category: 'database', binary: 'mongod', aliases: ['mongo', 'mongosh'], descriptionKey: 'workspace.tools.catalog.mongodb.description', service: 'mongod', install: { type: 'package', packages: { apt: ['mongodb'], dnf: ['mongodb'], yum: ['mongodb'], pacman: ['mongodb'], zypper: ['mongodb'], apk: ['mongodb'] } } },
+  { id: 'clickhouse', name: 'ClickHouse', category: 'database', binary: 'clickhouse', descriptionKey: 'workspace.tools.catalog.clickhouse.description', service: 'clickhouse-server', install: { type: 'package', packages: ['clickhouse-server', 'clickhouse-client'] } },
 
-  { id: 'redis', name: 'Redis', category: 'cacheQueue', binary: 'redis-server', aliases: ['redis-cli'], description: 'In-memory data store and cache.', service: 'redis-server', install: { type: 'package', packages: { apt: ['redis-server'], dnf: ['redis'], yum: ['redis'], pacman: ['redis'], zypper: ['redis'], apk: ['redis'] } } },
-  { id: 'memcached', name: 'Memcached', category: 'cacheQueue', binary: 'memcached', description: 'Distributed memory object cache.', service: 'memcached', install: { type: 'package', packages: ['memcached'] } },
-  { id: 'rabbitmq', name: 'RabbitMQ', category: 'cacheQueue', binary: 'rabbitmqctl', description: 'Message broker and queue server.', service: 'rabbitmq-server', install: { type: 'package', packages: ['rabbitmq-server'] } },
-  { id: 'kafka', name: 'Kafka', category: 'cacheQueue', binary: 'kafka-server-start', description: 'Distributed event streaming platform.', service: 'kafka', install: { type: 'package', packages: ['kafka'] } },
+  { id: 'redis', name: 'Redis', category: 'cacheQueue', binary: 'redis-server', aliases: ['redis-cli'], descriptionKey: 'workspace.tools.catalog.redis.description', service: 'redis-server', install: { type: 'package', packages: { apt: ['redis-server'], dnf: ['redis'], yum: ['redis'], pacman: ['redis'], zypper: ['redis'], apk: ['redis'] } } },
+  { id: 'memcached', name: 'Memcached', category: 'cacheQueue', binary: 'memcached', descriptionKey: 'workspace.tools.catalog.memcached.description', service: 'memcached', install: { type: 'package', packages: ['memcached'] } },
+  { id: 'rabbitmq', name: 'RabbitMQ', category: 'cacheQueue', binary: 'rabbitmqctl', descriptionKey: 'workspace.tools.catalog.rabbitmq.description', service: 'rabbitmq-server', install: { type: 'package', packages: ['rabbitmq-server'] } },
+  { id: 'kafka', name: 'Kafka', category: 'cacheQueue', binary: 'kafka-server-start', descriptionKey: 'workspace.tools.catalog.kafka.description', service: 'kafka', install: { type: 'package', packages: ['kafka'] } },
 
-  { id: 'docker', name: 'Docker', category: 'containers', binary: 'docker', description: 'Container runtime and CLI.', service: 'docker', install: { type: 'package', packages: { apt: ['docker.io'], dnf: ['docker'], yum: ['docker'], pacman: ['docker'], zypper: ['docker'], apk: ['docker'] } } },
-  { id: 'docker-compose', name: 'Docker Compose', category: 'containers', binary: 'docker', aliases: ['compose'], description: 'Docker multi-container project runner.', versionCommand: 'docker compose version 2>&1 | head -n 1', install: { type: 'package', packages: { apt: ['docker-compose-plugin'], dnf: ['docker-compose-plugin'], yum: ['docker-compose-plugin'], pacman: ['docker-compose'], zypper: ['docker-compose'], apk: ['docker-compose'] } } },
-  { id: 'podman', name: 'Podman', category: 'containers', binary: 'podman', description: 'Daemonless container engine.', service: 'podman', install: { type: 'package', packages: ['podman'] } },
-  { id: 'containerd', name: 'containerd', category: 'containers', binary: 'containerd', description: 'Container runtime daemon.', service: 'containerd', install: { type: 'package', packages: ['containerd'] } },
-  { id: 'kubectl', name: 'kubectl', category: 'containers', binary: 'kubectl', aliases: ['kubernetes'], description: 'Kubernetes command line client.', install: { type: 'package', packages: ['kubectl'] } },
-  { id: 'helm', name: 'Helm', category: 'containers', binary: 'helm', description: 'Kubernetes package manager.', install: { type: 'package', packages: ['helm'] } },
-  { id: 'k3s', name: 'k3s', category: 'containers', binary: 'k3s', description: 'Lightweight Kubernetes distribution.', service: 'k3s' },
+  { id: 'docker', name: 'Docker', category: 'containers', binary: 'docker', descriptionKey: 'workspace.tools.catalog.docker.description', service: 'docker', install: { type: 'package', packages: { apt: ['docker.io'], dnf: ['docker'], yum: ['docker'], pacman: ['docker'], zypper: ['docker'], apk: ['docker'] } } },
+  { id: 'docker-compose', name: 'Docker Compose', category: 'containers', binary: 'docker', aliases: ['compose'], descriptionKey: 'workspace.tools.catalog.docker-compose.description', versionCommand: 'docker compose version 2>&1 | head -n 1', install: { type: 'package', packages: { apt: ['docker-compose-plugin'], dnf: ['docker-compose-plugin'], yum: ['docker-compose-plugin'], pacman: ['docker-compose'], zypper: ['docker-compose'], apk: ['docker-compose'] } } },
+  { id: 'podman', name: 'Podman', category: 'containers', binary: 'podman', descriptionKey: 'workspace.tools.catalog.podman.description', service: 'podman', install: { type: 'package', packages: ['podman'] } },
+  { id: 'containerd', name: 'containerd', category: 'containers', binary: 'containerd', descriptionKey: 'workspace.tools.catalog.containerd.description', service: 'containerd', install: { type: 'package', packages: ['containerd'] } },
+  { id: 'kubectl', name: 'kubectl', category: 'containers', binary: 'kubectl', aliases: ['kubernetes'], descriptionKey: 'workspace.tools.catalog.kubectl.description', install: { type: 'package', packages: ['kubectl'] } },
+  { id: 'helm', name: 'Helm', category: 'containers', binary: 'helm', descriptionKey: 'workspace.tools.catalog.helm.description', install: { type: 'package', packages: ['helm'] } },
+  { id: 'k3s', name: 'k3s', category: 'containers', binary: 'k3s', descriptionKey: 'workspace.tools.catalog.k3s.description', service: 'k3s' },
 
-  { id: 'node', name: 'Node.js', category: 'runtime', binary: 'node', description: 'JavaScript runtime.', install: { type: 'package', packages: { apt: ['nodejs'], dnf: ['nodejs'], yum: ['nodejs'], pacman: ['nodejs'], zypper: ['nodejs'], apk: ['nodejs'] } } },
-  { id: 'npm', name: 'npm', category: 'packageManagers', binary: 'npm', description: 'Node.js package manager.', install: { type: 'package', packages: ['npm'] } },
-  { id: 'pnpm', name: 'pnpm', category: 'packageManagers', binary: 'pnpm', description: 'Fast Node.js package manager.', install: { type: 'npm', packageName: 'pnpm' } },
-  { id: 'yarn', name: 'Yarn', category: 'packageManagers', binary: 'yarn', description: 'Node.js package manager.', install: { type: 'npm', packageName: 'yarn' } },
-  { id: 'bun', name: 'Bun', category: 'runtime', binary: 'bun', description: 'JavaScript runtime and package manager.', install: { type: 'npm', packageName: 'bun' } },
-  { id: 'deno', name: 'Deno', category: 'runtime', binary: 'deno', description: 'Secure JavaScript and TypeScript runtime.' },
-  { id: 'python3', name: 'Python 3', category: 'runtime', binary: 'python3', description: 'Python runtime.', install: { type: 'package', packages: ['python3'] } },
-  { id: 'pip', name: 'pip', category: 'packageManagers', binary: 'pip3', binaries: ['pip3', 'pip'], description: 'Python package installer.', install: { type: 'package', packages: { apt: ['python3-pip'], dnf: ['python3-pip'], yum: ['python3-pip'], pacman: ['python-pip'], zypper: ['python3-pip'], apk: ['py3-pip'] } } },
-  { id: 'pipx', name: 'pipx', category: 'packageManagers', binary: 'pipx', description: 'Python application installer.', install: { type: 'package', packages: { apt: ['pipx'], dnf: ['pipx'], yum: ['pipx'], pacman: ['python-pipx'], zypper: ['python3-pipx'], apk: ['pipx'] } } },
-  { id: 'go', name: 'Go', category: 'runtime', binary: 'go', aliases: ['golang'], description: 'Go compiler and tooling.', install: { type: 'package', packages: { apt: ['golang-go'], dnf: ['golang'], yum: ['golang'], pacman: ['go'], zypper: ['go'], apk: ['go'] } } },
-  { id: 'rust', name: 'Rust', category: 'runtime', binary: 'rustc', aliases: ['cargo'], description: 'Rust compiler and cargo.', install: { type: 'package', packages: { apt: ['rustc', 'cargo'], dnf: ['rust', 'cargo'], yum: ['rust', 'cargo'], pacman: ['rust'], zypper: ['rust', 'cargo'], apk: ['rust', 'cargo'] } } },
-  { id: 'java', name: 'Java', category: 'runtime', binary: 'java', description: 'Java runtime and JDK.', install: { type: 'package', packages: { apt: ['openjdk-17-jdk'], dnf: ['java-17-openjdk-devel'], yum: ['java-17-openjdk-devel'], pacman: ['jdk-openjdk'], zypper: ['java-17-openjdk-devel'], apk: ['openjdk17'] } } },
-  { id: 'maven', name: 'Maven', category: 'buildOps', binary: 'mvn', description: 'Java build and dependency tool.', install: { type: 'package', packages: ['maven'] } },
-  { id: 'gradle', name: 'Gradle', category: 'buildOps', binary: 'gradle', description: 'Build automation tool.', install: { type: 'package', packages: ['gradle'] } },
-  { id: 'php', name: 'PHP', category: 'runtime', binary: 'php', description: 'PHP runtime.', install: { type: 'package', packages: { apt: ['php-cli'], dnf: ['php-cli'], yum: ['php-cli'], pacman: ['php'], zypper: ['php8'], apk: ['php'] } } },
-  { id: 'php-fpm', name: 'PHP-FPM', category: 'runtime', binary: 'php-fpm', description: 'PHP FastCGI process manager.', service: 'php-fpm', install: { type: 'package', packages: { apt: ['php-fpm'], dnf: ['php-fpm'], yum: ['php-fpm'], pacman: ['php-fpm'], zypper: ['php8-fpm'], apk: ['php-fpm'] } } },
-  { id: 'composer', name: 'Composer', category: 'packageManagers', binary: 'composer', description: 'PHP dependency manager.', install: { type: 'package', packages: ['composer'] } },
-  { id: 'ruby', name: 'Ruby', category: 'runtime', binary: 'ruby', description: 'Ruby runtime.', install: { type: 'package', packages: ['ruby'] } },
-  { id: 'gem', name: 'RubyGems', category: 'packageManagers', binary: 'gem', description: 'Ruby package manager.', install: { type: 'package', packages: { apt: ['ruby-full'], dnf: ['rubygems'], yum: ['rubygems'], pacman: ['ruby'], zypper: ['rubygem-bundler'], apk: ['ruby'] } } },
+  { id: 'node', name: 'Node.js', category: 'runtime', binary: 'node', descriptionKey: 'workspace.tools.catalog.node.description', install: { type: 'package', packages: { apt: ['nodejs'], dnf: ['nodejs'], yum: ['nodejs'], pacman: ['nodejs'], zypper: ['nodejs'], apk: ['nodejs'] } } },
+  { id: 'npm', name: 'npm', category: 'packageManagers', binary: 'npm', descriptionKey: 'workspace.tools.catalog.npm.description', install: { type: 'package', packages: ['npm'] } },
+  { id: 'pnpm', name: 'pnpm', category: 'packageManagers', binary: 'pnpm', descriptionKey: 'workspace.tools.catalog.pnpm.description', install: { type: 'npm', packageName: 'pnpm' } },
+  { id: 'yarn', name: 'Yarn', category: 'packageManagers', binary: 'yarn', descriptionKey: 'workspace.tools.catalog.yarn.description', install: { type: 'npm', packageName: 'yarn' } },
+  { id: 'bun', name: 'Bun', category: 'runtime', binary: 'bun', descriptionKey: 'workspace.tools.catalog.bun.description', install: { type: 'npm', packageName: 'bun' } },
+  { id: 'deno', name: 'Deno', category: 'runtime', binary: 'deno', descriptionKey: 'workspace.tools.catalog.deno.description' },
+  { id: 'python3', name: 'Python 3', category: 'runtime', binary: 'python3', descriptionKey: 'workspace.tools.catalog.python3.description', install: { type: 'package', packages: ['python3'] } },
+  { id: 'pip', name: 'pip', category: 'packageManagers', binary: 'pip3', binaries: ['pip3', 'pip'], descriptionKey: 'workspace.tools.catalog.pip.description', install: { type: 'package', packages: { apt: ['python3-pip'], dnf: ['python3-pip'], yum: ['python3-pip'], pacman: ['python-pip'], zypper: ['python3-pip'], apk: ['py3-pip'] } } },
+  { id: 'pipx', name: 'pipx', category: 'packageManagers', binary: 'pipx', descriptionKey: 'workspace.tools.catalog.pipx.description', install: { type: 'package', packages: { apt: ['pipx'], dnf: ['pipx'], yum: ['pipx'], pacman: ['python-pipx'], zypper: ['python3-pipx'], apk: ['pipx'] } } },
+  { id: 'go', name: 'Go', category: 'runtime', binary: 'go', aliases: ['golang'], descriptionKey: 'workspace.tools.catalog.go.description', install: { type: 'package', packages: { apt: ['golang-go'], dnf: ['golang'], yum: ['golang'], pacman: ['go'], zypper: ['go'], apk: ['go'] } } },
+  { id: 'rust', name: 'Rust', category: 'runtime', binary: 'rustc', aliases: ['cargo'], descriptionKey: 'workspace.tools.catalog.rust.description', install: { type: 'package', packages: { apt: ['rustc', 'cargo'], dnf: ['rust', 'cargo'], yum: ['rust', 'cargo'], pacman: ['rust'], zypper: ['rust', 'cargo'], apk: ['rust', 'cargo'] } } },
+  { id: 'java', name: 'Java', category: 'runtime', binary: 'java', descriptionKey: 'workspace.tools.catalog.java.description', install: { type: 'package', packages: { apt: ['openjdk-17-jdk'], dnf: ['java-17-openjdk-devel'], yum: ['java-17-openjdk-devel'], pacman: ['jdk-openjdk'], zypper: ['java-17-openjdk-devel'], apk: ['openjdk17'] } } },
+  { id: 'maven', name: 'Maven', category: 'buildOps', binary: 'mvn', descriptionKey: 'workspace.tools.catalog.maven.description', install: { type: 'package', packages: ['maven'] } },
+  { id: 'gradle', name: 'Gradle', category: 'buildOps', binary: 'gradle', descriptionKey: 'workspace.tools.catalog.gradle.description', install: { type: 'package', packages: ['gradle'] } },
+  { id: 'php', name: 'PHP', category: 'runtime', binary: 'php', descriptionKey: 'workspace.tools.catalog.php.description', install: { type: 'package', packages: { apt: ['php-cli'], dnf: ['php-cli'], yum: ['php-cli'], pacman: ['php'], zypper: ['php8'], apk: ['php'] } } },
+  { id: 'php-fpm', name: 'PHP-FPM', category: 'runtime', binary: 'php-fpm', descriptionKey: 'workspace.tools.catalog.php-fpm.description', service: 'php-fpm', install: { type: 'package', packages: { apt: ['php-fpm'], dnf: ['php-fpm'], yum: ['php-fpm'], pacman: ['php-fpm'], zypper: ['php8-fpm'], apk: ['php-fpm'] } } },
+  { id: 'composer', name: 'Composer', category: 'packageManagers', binary: 'composer', descriptionKey: 'workspace.tools.catalog.composer.description', install: { type: 'package', packages: ['composer'] } },
+  { id: 'ruby', name: 'Ruby', category: 'runtime', binary: 'ruby', descriptionKey: 'workspace.tools.catalog.ruby.description', install: { type: 'package', packages: ['ruby'] } },
+  { id: 'gem', name: 'RubyGems', category: 'packageManagers', binary: 'gem', descriptionKey: 'workspace.tools.catalog.gem.description', install: { type: 'package', packages: { apt: ['ruby-full'], dnf: ['rubygems'], yum: ['rubygems'], pacman: ['ruby'], zypper: ['rubygem-bundler'], apk: ['ruby'] } } },
 
-  { id: 'git', name: 'Git', category: 'buildOps', binary: 'git', description: 'Version control system.', install: { type: 'package', packages: ['git'] } },
-  { id: 'curl', name: 'curl', category: 'buildOps', binary: 'curl', description: 'HTTP client and transfer tool.', install: { type: 'package', packages: ['curl'] } },
-  { id: 'wget', name: 'wget', category: 'buildOps', binary: 'wget', description: 'Network downloader.', install: { type: 'package', packages: ['wget'] } },
-  { id: 'jq', name: 'jq', category: 'buildOps', binary: 'jq', description: 'JSON processor.', install: { type: 'package', packages: ['jq'] } },
-  { id: 'yq', name: 'yq', category: 'buildOps', binary: 'yq', description: 'YAML processor.', install: { type: 'package', packages: ['yq'] } },
-  { id: 'make', name: 'make', category: 'buildOps', binary: 'make', description: 'Build automation utility.', install: { type: 'package', packages: ['make'] } },
-  { id: 'gcc', name: 'GCC', category: 'buildOps', binary: 'gcc', description: 'C and C++ compiler toolchain.', install: { type: 'package', packages: { apt: ['build-essential'], dnf: ['gcc', 'gcc-c++', 'make'], yum: ['gcc', 'gcc-c++', 'make'], pacman: ['base-devel'], zypper: ['gcc', 'gcc-c++', 'make'], apk: ['build-base'] } } },
-  { id: 'cmake', name: 'CMake', category: 'buildOps', binary: 'cmake', description: 'Cross-platform build system.', install: { type: 'package', packages: ['cmake'] } },
-  { id: 'tmux', name: 'tmux', category: 'buildOps', binary: 'tmux', description: 'Terminal multiplexer.', install: { type: 'package', packages: ['tmux'] } },
-  { id: 'htop', name: 'htop', category: 'buildOps', binary: 'htop', description: 'Interactive process viewer.', install: { type: 'package', packages: ['htop'] } },
-  { id: 'unzip', name: 'unzip', category: 'buildOps', binary: 'unzip', description: 'Zip archive extractor.', install: { type: 'package', packages: ['unzip'] } },
-  { id: 'rsync', name: 'rsync', category: 'buildOps', binary: 'rsync', description: 'File synchronization utility.', install: { type: 'package', packages: ['rsync'] } },
-  { id: 'ripgrep', name: 'ripgrep', category: 'buildOps', binary: 'rg', aliases: ['rg'], description: 'Fast recursive text search.', install: { type: 'package', packages: { apt: ['ripgrep'], dnf: ['ripgrep'], yum: ['ripgrep'], pacman: ['ripgrep'], zypper: ['ripgrep'], apk: ['ripgrep'] } } },
-  { id: 'fd', name: 'fd', category: 'buildOps', binary: 'fd', binaries: ['fd', 'fdfind'], description: 'Fast file finder.', install: { type: 'package', packages: { apt: ['fd-find'], dnf: ['fd-find'], yum: ['fd-find'], pacman: ['fd'], zypper: ['fd'], apk: ['fd'] } } },
+  { id: 'git', name: 'Git', category: 'buildOps', binary: 'git', descriptionKey: 'workspace.tools.catalog.git.description', install: { type: 'package', packages: ['git'] } },
+  { id: 'curl', name: 'curl', category: 'buildOps', binary: 'curl', descriptionKey: 'workspace.tools.catalog.curl.description', install: { type: 'package', packages: ['curl'] } },
+  { id: 'wget', name: 'wget', category: 'buildOps', binary: 'wget', descriptionKey: 'workspace.tools.catalog.wget.description', install: { type: 'package', packages: ['wget'] } },
+  { id: 'jq', name: 'jq', category: 'buildOps', binary: 'jq', descriptionKey: 'workspace.tools.catalog.jq.description', install: { type: 'package', packages: ['jq'] } },
+  { id: 'yq', name: 'yq', category: 'buildOps', binary: 'yq', descriptionKey: 'workspace.tools.catalog.yq.description', install: { type: 'package', packages: ['yq'] } },
+  { id: 'make', name: 'make', category: 'buildOps', binary: 'make', descriptionKey: 'workspace.tools.catalog.make.description', install: { type: 'package', packages: ['make'] } },
+  { id: 'gcc', name: 'GCC', category: 'buildOps', binary: 'gcc', descriptionKey: 'workspace.tools.catalog.gcc.description', install: { type: 'package', packages: { apt: ['build-essential'], dnf: ['gcc', 'gcc-c++', 'make'], yum: ['gcc', 'gcc-c++', 'make'], pacman: ['base-devel'], zypper: ['gcc', 'gcc-c++', 'make'], apk: ['build-base'] } } },
+  { id: 'cmake', name: 'CMake', category: 'buildOps', binary: 'cmake', descriptionKey: 'workspace.tools.catalog.cmake.description', install: { type: 'package', packages: ['cmake'] } },
+  { id: 'tmux', name: 'tmux', category: 'buildOps', binary: 'tmux', descriptionKey: 'workspace.tools.catalog.tmux.description', install: { type: 'package', packages: ['tmux'] } },
+  { id: 'htop', name: 'htop', category: 'buildOps', binary: 'htop', descriptionKey: 'workspace.tools.catalog.htop.description', install: { type: 'package', packages: ['htop'] } },
+  { id: 'unzip', name: 'unzip', category: 'buildOps', binary: 'unzip', descriptionKey: 'workspace.tools.catalog.unzip.description', install: { type: 'package', packages: ['unzip'] } },
+  { id: 'rsync', name: 'rsync', category: 'buildOps', binary: 'rsync', descriptionKey: 'workspace.tools.catalog.rsync.description', install: { type: 'package', packages: ['rsync'] } },
+  { id: 'ripgrep', name: 'ripgrep', category: 'buildOps', binary: 'rg', aliases: ['rg'], descriptionKey: 'workspace.tools.catalog.ripgrep.description', install: { type: 'package', packages: { apt: ['ripgrep'], dnf: ['ripgrep'], yum: ['ripgrep'], pacman: ['ripgrep'], zypper: ['ripgrep'], apk: ['ripgrep'] } } },
+  { id: 'fd', name: 'fd', category: 'buildOps', binary: 'fd', binaries: ['fd', 'fdfind'], descriptionKey: 'workspace.tools.catalog.fd.description', install: { type: 'package', packages: { apt: ['fd-find'], dnf: ['fd-find'], yum: ['fd-find'], pacman: ['fd'], zypper: ['fd'], apk: ['fd'] } } },
 
-  { id: 'ufw', name: 'ufw', category: 'securityNetwork', binary: 'ufw', description: 'Uncomplicated firewall.', service: 'ufw', install: { type: 'package', packages: ['ufw'] } },
-  { id: 'firewalld', name: 'firewalld', category: 'securityNetwork', binary: 'firewall-cmd', description: 'Dynamic firewall manager.', service: 'firewalld', install: { type: 'package', packages: ['firewalld'] } },
-  { id: 'fail2ban', name: 'Fail2ban', category: 'securityNetwork', binary: 'fail2ban-client', description: 'Log-based intrusion prevention.', service: 'fail2ban', install: { type: 'package', packages: ['fail2ban'] } },
-  { id: 'openssl', name: 'OpenSSL', category: 'securityNetwork', binary: 'openssl', description: 'TLS and cryptography toolkit.', install: { type: 'package', packages: ['openssl'] } },
-  { id: 'nmap', name: 'nmap', category: 'securityNetwork', binary: 'nmap', description: 'Network scanner.', install: { type: 'package', packages: ['nmap'] } },
-  { id: 'tcpdump', name: 'tcpdump', category: 'securityNetwork', binary: 'tcpdump', description: 'Packet capture tool.', install: { type: 'package', packages: ['tcpdump'] } },
-  { id: 'netcat', name: 'netcat', category: 'securityNetwork', binary: 'nc', aliases: ['nc'], description: 'TCP and UDP utility.', install: { type: 'package', packages: { apt: ['netcat-openbsd'], dnf: ['nmap-ncat'], yum: ['nmap-ncat'], pacman: ['gnu-netcat'], zypper: ['netcat-openbsd'], apk: ['netcat-openbsd'] } } },
-  { id: 'wireguard', name: 'WireGuard', category: 'securityNetwork', binary: 'wg', description: 'VPN tunnel tools.', service: 'wg-quick@wg0', install: { type: 'package', packages: { apt: ['wireguard-tools'], dnf: ['wireguard-tools'], yum: ['wireguard-tools'], pacman: ['wireguard-tools'], zypper: ['wireguard-tools'], apk: ['wireguard-tools'] } } },
+  { id: 'ufw', name: 'ufw', category: 'securityNetwork', binary: 'ufw', descriptionKey: 'workspace.tools.catalog.ufw.description', service: 'ufw', install: { type: 'package', packages: ['ufw'] } },
+  { id: 'firewalld', name: 'firewalld', category: 'securityNetwork', binary: 'firewall-cmd', descriptionKey: 'workspace.tools.catalog.firewalld.description', service: 'firewalld', install: { type: 'package', packages: ['firewalld'] } },
+  { id: 'fail2ban', name: 'Fail2ban', category: 'securityNetwork', binary: 'fail2ban-client', descriptionKey: 'workspace.tools.catalog.fail2ban.description', service: 'fail2ban', install: { type: 'package', packages: ['fail2ban'] } },
+  { id: 'openssl', name: 'OpenSSL', category: 'securityNetwork', binary: 'openssl', descriptionKey: 'workspace.tools.catalog.openssl.description', install: { type: 'package', packages: ['openssl'] } },
+  { id: 'nmap', name: 'nmap', category: 'securityNetwork', binary: 'nmap', descriptionKey: 'workspace.tools.catalog.nmap.description', install: { type: 'package', packages: ['nmap'] } },
+  { id: 'tcpdump', name: 'tcpdump', category: 'securityNetwork', binary: 'tcpdump', descriptionKey: 'workspace.tools.catalog.tcpdump.description', install: { type: 'package', packages: ['tcpdump'] } },
+  { id: 'netcat', name: 'netcat', category: 'securityNetwork', binary: 'nc', aliases: ['nc'], descriptionKey: 'workspace.tools.catalog.netcat.description', install: { type: 'package', packages: { apt: ['netcat-openbsd'], dnf: ['nmap-ncat'], yum: ['nmap-ncat'], pacman: ['gnu-netcat'], zypper: ['netcat-openbsd'], apk: ['netcat-openbsd'] } } },
+  { id: 'wireguard', name: 'WireGuard', category: 'securityNetwork', binary: 'wg', descriptionKey: 'workspace.tools.catalog.wireguard.description', service: 'wg-quick@wg0', install: { type: 'package', packages: { apt: ['wireguard-tools'], dnf: ['wireguard-tools'], yum: ['wireguard-tools'], pacman: ['wireguard-tools'], zypper: ['wireguard-tools'], apk: ['wireguard-tools'] } } },
 
-  { id: 'claude', name: 'Claude Code', category: 'aiAgents', binary: 'claude', aliases: ['anthropic'], description: 'Anthropic agent CLI.', install: { type: 'npm', packageName: '@anthropic-ai/claude-code' } },
-  { id: 'codex', name: 'Codex CLI', category: 'aiAgents', binary: 'codex', aliases: ['openai'], description: 'OpenAI agent CLI.', install: { type: 'npm', packageName: '@openai/codex' } },
-  { id: 'gemini', name: 'Gemini CLI', category: 'aiAgents', binary: 'gemini', aliases: ['gemmni', 'google'], description: 'Google Gemini agent CLI.', install: { type: 'npm', packageName: '@google/gemini-cli' } },
-  { id: 'aider', name: 'Aider', category: 'aiAgents', binary: 'aider', description: 'AI pair programming CLI.', install: { type: 'pipx', packageName: 'aider-chat' } },
-  { id: 'ollama', name: 'Ollama', category: 'aiAgents', binary: 'ollama', description: 'Local model runner.', service: 'ollama' },
-  { id: 'langchain-cli', name: 'LangChain CLI', category: 'aiAgents', binary: 'langchain', description: 'LangChain project CLI.', install: { type: 'pipx', packageName: 'langchain-cli' } },
+  { id: 'claude', name: 'Claude Code', category: 'aiAgents', binary: 'claude', aliases: ['anthropic'], descriptionKey: 'workspace.tools.catalog.claude.description', install: { type: 'npm', packageName: '@anthropic-ai/claude-code' } },
+  { id: 'codex', name: 'Codex CLI', category: 'aiAgents', binary: 'codex', aliases: ['openai'], descriptionKey: 'workspace.tools.catalog.codex.description', install: { type: 'npm', packageName: '@openai/codex' } },
+  { id: 'gemini', name: 'Gemini CLI', category: 'aiAgents', binary: 'gemini', aliases: ['gemmni', 'google'], descriptionKey: 'workspace.tools.catalog.gemini.description', install: { type: 'npm', packageName: '@google/gemini-cli' } },
+  { id: 'aider', name: 'Aider', category: 'aiAgents', binary: 'aider', descriptionKey: 'workspace.tools.catalog.aider.description', install: { type: 'pipx', packageName: 'aider-chat' } },
+  { id: 'ollama', name: 'Ollama', category: 'aiAgents', binary: 'ollama', descriptionKey: 'workspace.tools.catalog.ollama.description', service: 'ollama' },
+  { id: 'langchain-cli', name: 'LangChain CLI', category: 'aiAgents', binary: 'langchain', descriptionKey: 'workspace.tools.catalog.langchain-cli.description', install: { type: 'pipx', packageName: 'langchain-cli' } },
 
-  { id: 'pm2', name: 'PM2', category: 'processManagers', binary: 'pm2', description: 'Node.js process manager.', install: { type: 'npm', packageName: 'pm2' } },
-  { id: 'supervisor', name: 'Supervisor', category: 'processManagers', binary: 'supervisorctl', description: 'Process control system.', service: 'supervisor', install: { type: 'package', packages: ['supervisor'] } },
-  { id: 'systemd', name: 'systemd', category: 'processManagers', binary: 'systemctl', description: 'Linux service manager.' },
-  { id: 'cron', name: 'cron', category: 'processManagers', binary: 'crontab', description: 'Scheduled job manager.', service: 'cron', install: { type: 'package', packages: { apt: ['cron'], dnf: ['cronie'], yum: ['cronie'], pacman: ['cronie'], zypper: ['cron'], apk: ['dcron'] } } },
-  { id: 'logrotate', name: 'logrotate', category: 'processManagers', binary: 'logrotate', description: 'Log rotation utility.', install: { type: 'package', packages: ['logrotate'] } },
+  { id: 'pm2', name: 'PM2', category: 'processManagers', binary: 'pm2', descriptionKey: 'workspace.tools.catalog.pm2.description', install: { type: 'npm', packageName: 'pm2' } },
+  { id: 'supervisor', name: 'Supervisor', category: 'processManagers', binary: 'supervisorctl', descriptionKey: 'workspace.tools.catalog.supervisor.description', service: 'supervisor', install: { type: 'package', packages: ['supervisor'] } },
+  { id: 'systemd', name: 'systemd', category: 'processManagers', binary: 'systemctl', descriptionKey: 'workspace.tools.catalog.systemd.description' },
+  { id: 'cron', name: 'cron', category: 'processManagers', binary: 'crontab', descriptionKey: 'workspace.tools.catalog.cron.description', service: 'cron', install: { type: 'package', packages: { apt: ['cron'], dnf: ['cronie'], yum: ['cronie'], pacman: ['cronie'], zypper: ['cron'], apk: ['dcron'] } } },
+  { id: 'logrotate', name: 'logrotate', category: 'processManagers', binary: 'logrotate', descriptionKey: 'workspace.tools.catalog.logrotate.description', install: { type: 'package', packages: ['logrotate'] } },
 ]
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function shellPrint(message: string) {
+  return `printf '%s\\n' ${shellQuote(message)}`
 }
 
 function packageNamesFor(spec: PackageSpec, manager: LinuxPackageManager) {
@@ -340,13 +350,13 @@ function packageArgs(spec: PackageSpec, manager: LinuxPackageManager) {
   return packageNamesFor(spec, manager).filter(Boolean).map(shellQuote).join(' ')
 }
 
-function noRecipeCommand(manager: LinuxPackageManager) {
-  return `echo "No ${manager} package recipe is available for this tool"; return 127`
+function noRecipeCommand(manager: LinuxPackageManager, t: TFunction = translate) {
+  return `${shellPrint(t('workspace.tools.command.noPackageRecipe', { manager }))}; return 127`
 }
 
-function packageActionCommand(spec: PackageSpec, manager: LinuxPackageManager, action: 'install' | 'upgrade' | 'uninstall') {
+function packageActionCommand(spec: PackageSpec, manager: LinuxPackageManager, action: 'install' | 'upgrade' | 'uninstall', t: TFunction = translate) {
   const args = packageArgs(spec, manager)
-  if (!args) return noRecipeCommand(manager)
+  if (!args) return noRecipeCommand(manager, t)
 
   if (manager === 'apt') {
     if (action === 'install') return `sb_root env DEBIAN_FRONTEND=noninteractive apt-get update && sb_root env DEBIAN_FRONTEND=noninteractive apt-get install -y ${args}`
@@ -378,7 +388,7 @@ function packageActionCommand(spec: PackageSpec, manager: LinuxPackageManager, a
   return `sb_root apk ${action === 'upgrade' ? 'upgrade' : 'add --no-cache'} ${args}`
 }
 
-function rootHelperScript() {
+function rootHelperScript(t: TFunction = translate) {
   return `
 sb_root() {
   if [ "$(id -u)" -eq 0 ]; then
@@ -386,31 +396,31 @@ sb_root() {
   elif command -v sudo >/dev/null 2>&1; then
     sudo -n "$@"
   else
-    echo "Root privileges are required and sudo is not available"
+    ${shellPrint(t('workspace.tools.command.rootRequired'))}
     return 126
   fi
 }
 `.trim()
 }
 
-function buildPackageManagerCommand(recipe: PackageInstallRecipe, action: 'install' | 'upgrade' | 'uninstall') {
+function buildPackageManagerCommand(recipe: PackageInstallRecipe, action: 'install' | 'upgrade' | 'uninstall', t: TFunction = translate) {
   return `
-${rootHelperScript()}
+${rootHelperScript(t)}
 sb_package_action() {
   if command -v apt-get >/dev/null 2>&1; then
-    ${packageActionCommand(recipe.packages, 'apt', action)}
+    ${packageActionCommand(recipe.packages, 'apt', action, t)}
   elif command -v dnf >/dev/null 2>&1; then
-    ${packageActionCommand(recipe.packages, 'dnf', action)}
+    ${packageActionCommand(recipe.packages, 'dnf', action, t)}
   elif command -v yum >/dev/null 2>&1; then
-    ${packageActionCommand(recipe.packages, 'yum', action)}
+    ${packageActionCommand(recipe.packages, 'yum', action, t)}
   elif command -v pacman >/dev/null 2>&1; then
-    ${packageActionCommand(recipe.packages, 'pacman', action)}
+    ${packageActionCommand(recipe.packages, 'pacman', action, t)}
   elif command -v zypper >/dev/null 2>&1; then
-    ${packageActionCommand(recipe.packages, 'zypper', action)}
+    ${packageActionCommand(recipe.packages, 'zypper', action, t)}
   elif command -v apk >/dev/null 2>&1; then
-    ${packageActionCommand(recipe.packages, 'apk', action)}
+    ${packageActionCommand(recipe.packages, 'apk', action, t)}
   else
-    echo "No supported package manager found"
+    ${shellPrint(t('workspace.tools.command.noSupportedPackageManager'))}
     return 127
   fi
 }
@@ -418,31 +428,33 @@ sb_package_action
 `.trim()
 }
 
-function buildNpmCommand(recipe: NpmInstallRecipe, action: 'install' | 'upgrade' | 'uninstall') {
+function buildNpmCommand(recipe: NpmInstallRecipe, action: 'install' | 'upgrade' | 'uninstall', t: TFunction = translate) {
   const packageName = action === 'upgrade' ? `${recipe.packageName}@latest` : recipe.packageName
+  const requireNpm = `command -v npm >/dev/null 2>&1 || { ${shellPrint(t('workspace.tools.command.npmRequired'))}; exit 127; }`
   if (action === 'uninstall') {
-    return `command -v npm >/dev/null 2>&1 || { echo "npm is required for this action"; exit 127; }\nnpm uninstall -g ${shellQuote(recipe.packageName)}`
+    return `${requireNpm}\nnpm uninstall -g ${shellQuote(recipe.packageName)}`
   }
-  return `command -v npm >/dev/null 2>&1 || { echo "npm is required for this action"; exit 127; }\nnpm install -g ${shellQuote(packageName)}`
+  return `${requireNpm}\nnpm install -g ${shellQuote(packageName)}`
 }
 
-function buildPipxCommand(recipe: PipxInstallRecipe, action: 'install' | 'upgrade' | 'uninstall') {
+function buildPipxCommand(recipe: PipxInstallRecipe, action: 'install' | 'upgrade' | 'uninstall', t: TFunction = translate) {
+  const requirePipx = `command -v pipx >/dev/null 2>&1 || { ${shellPrint(t('workspace.tools.command.pipxRequired'))}; exit 127; }`
   if (action === 'uninstall') {
-    return `command -v pipx >/dev/null 2>&1 || { echo "pipx is required for this action"; exit 127; }\npipx uninstall ${shellQuote(recipe.packageName)}`
+    return `${requirePipx}\npipx uninstall ${shellQuote(recipe.packageName)}`
   }
   if (action === 'upgrade') {
-    return `command -v pipx >/dev/null 2>&1 || { echo "pipx is required for this action"; exit 127; }\npipx upgrade ${shellQuote(recipe.packageName)}`
+    return `${requirePipx}\npipx upgrade ${shellQuote(recipe.packageName)}`
   }
-  return `command -v pipx >/dev/null 2>&1 || { echo "pipx is required for this action"; exit 127; }\npipx install ${shellQuote(recipe.packageName)}`
+  return `${requirePipx}\npipx install ${shellQuote(recipe.packageName)}`
 }
 
-function buildInstallRecipeCommand(recipe: InstallRecipe, action: 'install' | 'upgrade' | 'uninstall') {
-  if (recipe.type === 'package') return buildPackageManagerCommand(recipe, action)
-  if (recipe.type === 'npm') return buildNpmCommand(recipe, action)
-  return buildPipxCommand(recipe, action)
+function buildInstallRecipeCommand(recipe: InstallRecipe, action: 'install' | 'upgrade' | 'uninstall', t: TFunction = translate) {
+  if (recipe.type === 'package') return buildPackageManagerCommand(recipe, action, t)
+  if (recipe.type === 'npm') return buildNpmCommand(recipe, action, t)
+  return buildPipxCommand(recipe, action, t)
 }
 
-function buildToolCheckCommand(tool: ToolDefinition) {
+function buildToolCheckCommand(tool: ToolDefinition, t: TFunction = translate) {
   const candidates = [tool.binary, ...(tool.binaries ?? [])]
   const candidateArgs = Array.from(new Set(candidates)).map(shellQuote).join(' ')
   const versionCommand = tool.versionCommand ?? '"$found" --version 2>&1 | head -n 1'
@@ -472,48 +484,48 @@ if command -v systemctl >/dev/null 2>&1; then
   printf '__SB_SERVICE_ACTIVE=%s\\n' "$active"
   printf '__SB_SERVICE_ENABLED=%s\\n' "$enabled"
 else
-  printf '__SB_SERVICE_ACTIVE=systemctl unavailable\\n'
-  printf '__SB_SERVICE_ENABLED=systemctl unavailable\\n'
+  printf '__SB_SERVICE_ACTIVE=%s\\n' ${shellQuote(t('workspace.tools.command.systemctlUnavailable'))}
+  printf '__SB_SERVICE_ENABLED=%s\\n' ${shellQuote(t('workspace.tools.command.systemctlUnavailable'))}
 fi
 ` : ''}
 `.trim()
 }
 
-function buildServiceCommand(tool: ToolDefinition, action: Exclude<ToolAction, 'check' | 'install' | 'upgrade' | 'uninstall'>) {
-  if (!tool.service) throw new Error('This tool has no service unit')
+function buildServiceCommand(tool: ToolDefinition, action: Exclude<ToolAction, 'check' | 'install' | 'upgrade' | 'uninstall'>, t: TFunction = translate) {
+  if (!tool.service) throw new Error(t('workspace.tools.command.noServiceUnit'))
   const service = shellQuote(tool.service)
 
   if (action === 'logs') {
-    return `command -v journalctl >/dev/null 2>&1 || { echo "journalctl is not available"; exit 127; }\njournalctl -u ${service} -n 120 --no-pager`
+    return `command -v journalctl >/dev/null 2>&1 || { ${shellPrint(t('workspace.tools.command.journalctlUnavailable'))}; exit 127; }\njournalctl -u ${service} -n 120 --no-pager`
   }
 
   if (action === 'status') {
-    return `command -v systemctl >/dev/null 2>&1 || { echo "systemctl is not available"; exit 127; }\nsystemctl status ${service} --no-pager`
+    return `command -v systemctl >/dev/null 2>&1 || { ${shellPrint(t('workspace.tools.command.systemctlUnavailable'))}; exit 127; }\nsystemctl status ${service} --no-pager`
   }
 
   return `
-${rootHelperScript()}
-command -v systemctl >/dev/null 2>&1 || { echo "systemctl is not available"; exit 127; }
+${rootHelperScript(t)}
+command -v systemctl >/dev/null 2>&1 || { ${shellPrint(t('workspace.tools.command.systemctlUnavailable'))}; exit 127; }
 sb_root systemctl ${action} ${service}
 systemctl status ${service} --no-pager
 `.trim()
 }
 
-export function buildToolActionCommand(tool: ToolDefinition, action: ToolAction) {
-  if (action === 'check') return buildToolCheckCommand(tool)
+export function buildToolActionCommand(tool: ToolDefinition, action: ToolAction, t: TFunction = translate) {
+  if (action === 'check') return buildToolCheckCommand(tool, t)
 
   const actionBody = action === 'install' || action === 'upgrade' || action === 'uninstall'
     ? tool.install
-      ? buildInstallRecipeCommand(tool.install, action)
-      : 'echo "Install recipe is not available for this tool"; exit 127'
-    : buildServiceCommand(tool, action)
+      ? buildInstallRecipeCommand(tool.install, action, t)
+      : `${shellPrint(t('workspace.tools.command.installRecipeUnavailable'))}; exit 127`
+    : buildServiceCommand(tool, action, t)
 
   return `
 sb_action_status=0
 ${actionBody} || sb_action_status=$?
 printf '\\n__SB_ACTION_EXIT=%s\\n' "$sb_action_status"
-printf '\\n--- ShellBeam status ---\\n'
-${buildToolCheckCommand(tool)}
+printf '\\n--- %s ---\\n' ${shellQuote(t('workspace.tools.command.statusHeader'))}
+${buildToolCheckCommand(tool, t)}
 exit "$sb_action_status"
 `.trim()
 }
@@ -539,8 +551,13 @@ export function parseToolStatus(output: string): ToolStatus {
   }
 }
 
-function getCategoryLabel(category: ToolCategoryId) {
-  return TOOL_CATEGORIES.find((item) => item.id === category)?.label ?? category
+function getCategoryLabel(category: ToolCategoryId, t: TFunction) {
+  const labelKey = TOOL_CATEGORIES.find((item) => item.id === category)?.labelKey
+  return labelKey ? t(labelKey) : category
+}
+
+function getToolDescription(tool: ToolDefinition, t: TFunction) {
+  return t(tool.descriptionKey)
 }
 
 function getToolLogoSlug(tool: ToolDefinition) {
@@ -593,17 +610,19 @@ function ToolLogo({ tool, size = 'sm' }: { tool: ToolDefinition; size?: 'sm' | '
   )
 }
 
-function getStatusBadge(status: ToolStatus | undefined) {
-  if (!status || status.installed === null) return { label: 'Unknown', className: 'border-slate-500/30 bg-slate-500/10 text-slate-300' }
-  if (status.installed) return { label: 'Installed', className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' }
-  return { label: 'Missing', className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' }
+function getStatusBadge(status: ToolStatus | undefined, t: ReturnType<typeof useT>['t']) {
+  if (!status || status.installed === null) return { label: t('workspace.tools.statusUnknown'), className: 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]' }
+  if (status.installed) return { label: t('workspace.tools.statusInstalled'), className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' }
+  return { label: t('workspace.tools.statusMissing'), className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' }
 }
 
-function getServiceBadge(status: ToolStatus | undefined) {
+function getServiceBadge(status: ToolStatus | undefined, t: ReturnType<typeof useT>['t']) {
   const value = status?.serviceActive
-  if (!value) return { label: 'No service', className: 'border-slate-500/30 bg-slate-500/10 text-slate-300' }
-  if (value === 'active') return { label: 'active', className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' }
-  if (value === 'failed') return { label: 'failed', className: 'border-red-500/30 bg-red-500/10 text-red-300' }
+  if (!value) return { label: t('workspace.tools.noService'), className: 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]' }
+  if (value === 'active') return { label: t('workspace.tools.serviceActive'), className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' }
+  if (value === 'failed') return { label: t('workspace.tools.serviceFailed'), className: 'border-red-500/30 bg-red-500/10 text-red-300' }
+  if (value === 'inactive') return { label: t('workspace.tools.serviceInactive'), className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' }
+  if (value === 'activating') return { label: t('workspace.tools.serviceActivating'), className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' }
   return { label: value, className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' }
 }
 
@@ -621,21 +640,21 @@ function getActionIcon(action: ToolAction) {
   return PackageOpen
 }
 
-function formatInstallType(recipe?: InstallRecipe) {
-  if (!recipe) return 'Status only'
-  if (recipe.type === 'package') return 'System package'
-  if (recipe.type === 'npm') return 'npm global'
-  return 'pipx app'
+function formatInstallType(recipe: InstallRecipe | undefined, t: ReturnType<typeof useT>['t']) {
+  if (!recipe) return t('workspace.tools.statusOnly')
+  if (recipe.type === 'package') return t('workspace.tools.installType.package')
+  if (recipe.type === 'npm') return t('workspace.tools.installType.npm')
+  return t('workspace.tools.installType.pipx')
 }
 
-function toolMatchesSearch(tool: ToolDefinition, query: string) {
+function toolMatchesSearch(tool: ToolDefinition, query: string, t: ReturnType<typeof useT>['t']) {
   if (!query) return true
   const haystack = [
     tool.name,
     tool.id,
     tool.binary,
-    tool.description,
-    getCategoryLabel(tool.category),
+    getToolDescription(tool, t),
+    getCategoryLabel(tool.category, t),
     ...(tool.aliases ?? []),
   ].join(' ').toLowerCase()
   return haystack.includes(query)
@@ -650,15 +669,15 @@ function hostKey(host: HostProfile) {
   return getWorkspaceInventoryHostKey(host)
 }
 
-function formatAge(timestamp?: number) {
-  if (!timestamp) return '未扫描'
+function formatAge(timestamp: number | undefined, t: ReturnType<typeof useT>['t']) {
+  if (!timestamp) return t('workspace.tools.notScanned')
   const diff = Math.max(0, Date.now() - timestamp)
   const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes} 分钟前`
+  if (minutes < 1) return t('workspace.tools.justNow')
+  if (minutes < 60) return t('workspace.tools.minutesAgo', { count: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 48) return `${hours} 小时前`
-  return `${Math.floor(hours / 24)} 天前`
+  if (hours < 48) return t('workspace.tools.hoursAgo', { count: hours })
+  return t('workspace.tools.daysAgo', { count: Math.floor(hours / 24) })
 }
 
 function getInstalledToolSearchValues(inventory: WorkspaceInventory | undefined) {
@@ -697,7 +716,11 @@ export function WorkspaceToolManagerApp({
   hosts,
   resolveAuthSecret,
   onOpenTerminal,
+  preheader,
+  hideHeader = false,
+  hideHostList = false,
 }: WorkspaceToolManagerAppProps) {
+  const { t } = useT()
   const [category, setCategory] = useState<ToolCategoryId | 'all'>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedToolId, setSelectedToolId] = useState(TOOL_CATALOG[0].id)
@@ -721,8 +744,8 @@ export function WorkspaceToolManagerApp({
 
   const query = searchQuery.trim().toLowerCase()
   const visibleTools = useMemo(
-    () => TOOL_CATALOG.filter((tool) => (category === 'all' || tool.category === category) && toolMatchesSearch(tool, query)),
-    [category, query],
+    () => TOOL_CATALOG.filter((tool) => (category === 'all' || tool.category === category) && toolMatchesSearch(tool, query, t)),
+    [category, query, t],
   )
 
   const selectedTool = useMemo(
@@ -738,7 +761,7 @@ export function WorkspaceToolManagerApp({
   const installedCount = Object.values(statuses).filter((status) => status.installed).length
 
   async function runRemoteCommand(command: string) {
-    if (!host) throw new Error('No host selected')
+    if (!host) throw new Error(t('workspace.tools.noHostSelected'))
     return runWorkspaceRemoteCommand({
       host,
       resolveAuthSecret,
@@ -749,7 +772,7 @@ export function WorkspaceToolManagerApp({
   async function runToolAction(action: ToolAction, tool = selectedTool, options: { silent?: boolean } = {}) {
     if (!host) return
     if ((action === 'uninstall' || action === 'stop' || action === 'restart' || action === 'disable') && !options.silent) {
-      const confirmed = window.confirm(`${action} ${tool.name}?`)
+      const confirmed = window.confirm(t('workspace.tools.confirmAction', { action: t(`workspace.tools.action.${action}`), name: tool.name }))
       if (!confirmed) return
     }
 
@@ -760,10 +783,10 @@ export function WorkspaceToolManagerApp({
     }
 
     try {
-      const command = buildToolActionCommand(tool, action)
+      const command = buildToolActionCommand(tool, action, t)
       const result = await runRemoteCommand(command)
       const combined = [result.stdout, result.stderr ? `[stderr]\n${result.stderr}` : ''].filter(Boolean).join('\n')
-      const displayOutput = combined || `${action} completed`
+      const displayOutput = combined || t('workspace.tools.actionCompleted', { action: t(`workspace.tools.action.${action}`) })
 
       if (displayOutput.includes('__SB_INSTALLED=')) {
         setStatuses((current) => ({
@@ -777,7 +800,7 @@ export function WorkspaceToolManagerApp({
       }
 
       if (result.exitCode !== 0) {
-        setError(`Remote command exited with ${result.exitCode}`)
+        setError(t('workspace.tools.remoteCommandExited', { code: result.exitCode }))
       }
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught)
@@ -804,10 +827,12 @@ export function WorkspaceToolManagerApp({
 
   useEffect(() => {
     setManagedHostId((current) => {
+      const next = getInitialManagedHostId(hosts, selectedHostId, hostAddress)
+      if (hideHostList) return next ?? current
       if (hosts.some((entry) => entry.id === current)) return current
-      return getInitialManagedHostId(hosts, selectedHostId, hostAddress)
+      return next
     })
-  }, [hostAddress, hosts, selectedHostId])
+  }, [hideHostList, hostAddress, hosts, selectedHostId])
 
   useEffect(() => {
     setInventoryStates((prev) => ({ ...prev, ...selectWorkspaceInventoryStatesForHosts(hosts, sharedInventoryStates) }))
@@ -858,100 +883,128 @@ export function WorkspaceToolManagerApp({
   if (!host) {
     return (
       <WorkspaceEmptyState
-        title="Tool Manager"
-        description="Connect a remote host to manage common tools and services here."
+        title={t('workspace.tools.emptyTitle')}
+        description={t('workspace.tools.emptyDescription')}
       />
     )
   }
 
   const installActions: ToolAction[] = ['check', 'install', 'upgrade', 'uninstall']
   const serviceActions: ToolAction[] = ['status', 'start', 'stop', 'restart', 'enable', 'disable', 'logs']
-  const statusBadge = getStatusBadge(selectedStatus)
+  const statusBadge = getStatusBadge(selectedStatus, t)
+  const toolSearchControl = (
+    <div className="relative min-w-0 flex-1">
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
+      <input
+        value={searchQuery}
+        onChange={(event) => setSearchQuery(event.target.value)}
+        placeholder={t('workspace.tools.searchPlaceholder')}
+        className="h-10 w-full rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 pr-3 text-sm text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
+      />
+    </div>
+  )
+  const scanVisibleButton = (
+    <button
+      type="button"
+      onClick={() => void scanVisibleTools()}
+      disabled={running !== null || visibleTools.length === 0}
+      className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-xs font-semibold text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <RefreshCw className={cn('h-3.5 w-3.5', running?.action === 'check' && 'animate-spin')} />
+      {t('workspace.tools.scanVisible')}
+    </button>
+  )
 
   return (
-    <div data-testid="workspace-tool-manager-app" className="space-y-4">
-      <WorkspacePanelHeader
-        className="border-b border-[color:var(--workspace-border-strong)]"
-        eyebrowClassName="text-[var(--workspace-text-subtle)]"
-        titleClassName="text-[var(--workspace-text-strong)]"
-        descriptionClassName="text-[var(--workspace-text-muted)]"
-        eyebrow="Tool Manager"
-        title="Common Services & Toolchains"
-        description="在当前 VPS 上扫描常用工具和服务，并执行安装、升级、启停和日志操作。"
-        actions={
-          <button
-            type="button"
-            onClick={() => void scanVisibleTools()}
-            disabled={running !== null || visibleTools.length === 0}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.52)] px-3 py-2 text-xs font-semibold text-[var(--workspace-text)] transition-colors hover:bg-[rgba(30,44,60,0.82)] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <RefreshCw className={cn('h-3.5 w-3.5', running?.action === 'check' && 'animate-spin')} />
-            Scan Visible
-          </button>
-        }
-        contentClassName="space-y-3"
-      >
-        <div className="flex flex-wrap gap-2">
-          <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{hosts.length} VPS</span>
-          <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{TOOL_CATALOG.length} tools</span>
-          <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{checkedCount} checked</span>
-          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-300">{installedCount} installed</span>
+    <div data-testid="workspace-tool-manager-app" data-selected-host-id={host?.id ?? ''} className="space-y-4">
+      {hideHeader ? (
+        <div className="flex flex-col gap-3 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-panel)] p-3 md:flex-row md:items-center md:justify-between">
+          {toolSearchControl}
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{t('workspace.tools.toolsCount', { count: TOOL_CATALOG.length })}</span>
+            <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{checkedCount} {t('workspace.tools.checked')}</span>
+            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-300">{installedCount} {t('workspace.tools.installed')}</span>
+            {scanVisibleButton}
+          </div>
         </div>
-      </WorkspacePanelHeader>
-
-      <div className="grid min-h-[34rem] gap-4 xl:grid-cols-[minmax(22rem,0.72fr)_minmax(15rem,0.44fr)_minmax(0,1.35fr)]">
-        <WorkspaceServerList
-          hosts={hosts}
-          totalCount={hosts.length}
-          selectedKey={host.id}
-          getHostKey={(entry) => entry.id}
-          onSelect={(key) => setManagedHostId(key)}
-          itemTestIdPrefix="workspace-tool-host"
-          renderStatusIcon={(entry) => <HostStatusIcon state={inventoryStates[hostKey(entry)]} />}
-          getStatusBadge={(entry) => {
-            const state = inventoryStates[hostKey(entry)]
-            if (state?.status === 'error') return { label: '无法访问', tone: 'bad' }
-            return undefined
-          }}
-          getPrimaryBadge={(entry) => {
-            const state = inventoryStates[hostKey(entry)]
-            if (!state?.inventory) return { label: entry.authType }
-            return { label: `${state.inventory.tools.length} 工具`, tone: 'info' }
-          }}
-          renderRegionLine={(entry) => <HostNetworkLine network={networkByAddress[entry.address]} />}
-          getSearchData={(entry) => {
-            const state = inventoryStates[hostKey(entry)]
-            const network = networkByAddress[entry.address]
-            return {
-              network: [network?.scopeLabel, network?.versionLabel, network?.resolvedLocationLabel],
-              system: [state?.inventory?.resource.os, state?.inventory?.resource.kernel],
-              tools: getInstalledToolSearchValues(state?.inventory),
-              projects: getProjectSearchValues(state?.inventory),
-            }
-          }}
-          getResourceMetrics={(entry) => {
-            const inventory = inventoryStates[hostKey(entry)]?.inventory
-            if (!inventory) return undefined
-            return {
-              cpuPercent: inventory?.resource.cpuPercent,
-              memoryPercent: inventory?.resource.memoryPercent,
-              diskPercent: inventory?.resource.diskPercent,
-              cpuDetail: inventory?.resource.uptime,
-              memoryDetail: inventory?.resource.memoryText,
-              diskDetail: inventory?.resource.diskText,
-            }
-          }}
-          renderFooter={(entry) => {
-            const state = inventoryStates[hostKey(entry)]
-            return (
-              <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[var(--workspace-text-subtle)]">
-                <span>{formatAge(state?.updatedAt)}</span>
-                {state?.status === 'error' ? <span className="truncate text-red-200">无法访问</span> : <span className="truncate">{state?.inventory?.resource.os || '版本待扫描'}</span>}
-              </div>
-            )
-          }}
-          onRowDoubleClick={(entry) => onOpenTerminal?.(entry)}
+      ) : (
+        <WorkspaceResourceOverviewHeader
+          preheader={preheader}
+          eyebrow={t('workspace.tools.eyebrow')}
+          title={t('workspace.tools.title')}
+          description={t('workspace.tools.description')}
+          actions={scanVisibleButton}
+          total={TOOL_CATALOG.length}
+          totalLabel={t('workspace.tools.totalTools')}
+          totalMeta={<span className="text-xs text-[var(--workspace-text-subtle)]">{hosts.length} {t('workspace.tools.vps')}</span>}
+          visibleCount={visibleTools.length}
+          visibleLabel={t('workspace.tools.visible')}
+          search={toolSearchControl}
+          metrics={[
+            { key: 'hosts', label: t('workspace.tools.vps'), value: hosts.length, icon: TerminalSquare },
+            { key: 'checked', label: t('workspace.tools.checked'), value: checkedCount, icon: PackageSearch },
+            { key: 'installed', label: t('workspace.tools.installed'), value: installedCount, icon: CheckCircle2 },
+          ]}
         />
+      )}
+
+      <div className={cn('grid min-h-[34rem] gap-4', hideHostList ? 'xl:grid-cols-[minmax(15rem,0.44fr)_minmax(0,1.35fr)]' : 'xl:grid-cols-[minmax(22rem,0.72fr)_minmax(15rem,0.44fr)_minmax(0,1.35fr)]')}>
+        {!hideHostList && (
+          <WorkspaceServerList
+            hosts={hosts}
+            totalCount={hosts.length}
+            selectedKey={host.id}
+            getHostKey={(entry) => entry.id}
+            onSelect={(key) => setManagedHostId(key)}
+            itemTestIdPrefix="workspace-tool-host"
+            renderStatusIcon={(entry) => <HostStatusIcon state={inventoryStates[hostKey(entry)]} />}
+            getStatusBadge={(entry) => {
+              const state = inventoryStates[hostKey(entry)]
+              if (state?.status === 'error') return { label: t('workspace.serverIndex.inaccessible'), tone: 'bad' }
+              return undefined
+            }}
+            getPrimaryBadge={(entry) => {
+              const state = inventoryStates[hostKey(entry)]
+              if (!state?.inventory) return { label: entry.authType }
+              return { label: t('workspace.tools.toolsCount', { count: state.inventory.tools.length }), tone: 'info' }
+            }}
+            renderRegionLine={(entry) => <HostNetworkLine network={networkByAddress[entry.address]} />}
+            getSearchData={(entry) => {
+              const state = inventoryStates[hostKey(entry)]
+              const network = networkByAddress[entry.address]
+              return {
+                network: [network?.scopeLabel, network?.versionLabel, network?.resolvedLocationLabel],
+                system: [state?.inventory?.resource.os, state?.inventory?.resource.kernel],
+                tools: getInstalledToolSearchValues(state?.inventory),
+                projects: getProjectSearchValues(state?.inventory),
+              }
+            }}
+            getResourceMetrics={(entry) => {
+              const inventory = inventoryStates[hostKey(entry)]?.inventory
+              if (!inventory) return undefined
+              return {
+                cpuPercent: inventory?.resource.cpuPercent,
+                memoryPercent: inventory?.resource.memoryPercent,
+                diskPercent: inventory?.resource.diskPercent,
+                cpuDetail: inventory?.resource.uptime,
+                memoryDetail: inventory?.resource.memoryText,
+                diskDetail: inventory?.resource.diskText,
+              }
+            }}
+            renderFooter={(entry) => {
+              const state = inventoryStates[hostKey(entry)]
+              return (
+                <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[var(--workspace-text-subtle)]">
+                  <span>{formatAge(state?.updatedAt, t)}</span>
+                  {state?.status === 'error'
+                    ? <span className="truncate text-red-200">{t('workspace.serverIndex.inaccessible')}</span>
+                    : <span className="truncate">{state?.inventory?.resource.os || t('workspace.tools.notScanned')}</span>}
+                </div>
+              )
+            }}
+            onRowDoubleClick={(entry) => onOpenTerminal?.(entry)}
+          />
+        )}
 
         <aside className="space-y-3 rounded-xl border border-border/60 bg-card p-3">
           <button
@@ -962,7 +1015,7 @@ export function WorkspaceToolManagerApp({
               category === 'all' ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground',
             )}
           >
-            <span>All tools</span>
+            <span>{t('workspace.tools.allTools')}</span>
             <span className="text-xs">{TOOL_CATALOG.length}</span>
           </button>
           {TOOL_CATEGORIES.map((item) => {
@@ -977,7 +1030,7 @@ export function WorkspaceToolManagerApp({
                   category === item.id ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground',
                 )}
               >
-                <span className="truncate">{item.label}</span>
+                <span className="truncate">{t(item.labelKey)}</span>
                 <span className="text-xs">{count}</span>
               </button>
             )
@@ -985,27 +1038,15 @@ export function WorkspaceToolManagerApp({
         </aside>
 
         <section className="min-w-0 overflow-hidden rounded-xl border border-border/60 bg-card">
-          <div className="flex flex-col gap-3 border-b border-border/60 px-4 py-3 md:flex-row md:items-center md:justify-between">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search nginx, docker, node, codex..."
-                className="h-10 w-full rounded-lg border border-border/60 bg-background/80 pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground"
-              />
-            </div>
-            <div className="text-xs text-muted-foreground">{visibleTools.length} visible</div>
-          </div>
           <div data-testid="workspace-tool-catalog" className="max-h-[32rem] overflow-auto">
             {visibleTools.length === 0 ? (
-              <div className="px-4 py-8 text-sm text-muted-foreground">No matching tools.</div>
+              <div className="px-4 py-8 text-sm text-muted-foreground">{t('workspace.tools.noMatchingTools')}</div>
             ) : (
               visibleTools.map((tool) => {
                 const isSelected = tool.id === selectedTool.id
                 const toolStatus = statuses[tool.id]
-                const badge = getStatusBadge(toolStatus)
-                const service = getServiceBadge(toolStatus)
+                const badge = getStatusBadge(toolStatus, t)
+                const service = getServiceBadge(toolStatus, t)
                 return (
                   <button
                     key={tool.id}
@@ -1028,7 +1069,7 @@ export function WorkspaceToolManagerApp({
                           <span className="block truncate text-[11px] text-muted-foreground">{tool.binary}</span>
                         </div>
                       </div>
-                      <div className="mt-1 truncate text-xs text-muted-foreground">{tool.description}</div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">{getToolDescription(tool, t)}</div>
                     </div>
                     <div>
                       <span className={cn('rounded-full border px-2 py-1 text-[11px] font-medium', badge.className)}>
@@ -1036,8 +1077,8 @@ export function WorkspaceToolManagerApp({
                       </span>
                     </div>
                     <div>
-                      <span className={cn('rounded-full border px-2 py-1 text-[11px] font-medium', tool.service ? service.className : 'border-slate-500/30 bg-slate-500/10 text-slate-300')}>
-                        {tool.service ? service.label : 'binary'}
+                      <span className={cn('rounded-full border px-2 py-1 text-[11px] font-medium', tool.service ? service.className : 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]')}>
+                        {tool.service ? service.label : t('workspace.tools.binaryBadge')}
                       </span>
                     </div>
                   </button>
@@ -1056,38 +1097,38 @@ export function WorkspaceToolManagerApp({
               <div className="min-w-0">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{getCategoryLabel(selectedTool.category)}</div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{getCategoryLabel(selectedTool.category, t)}</div>
                     <h3 className="mt-2 truncate text-2xl font-semibold tracking-tight">{selectedTool.name}</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">{selectedTool.description}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{getToolDescription(selectedTool, t)}</p>
                   </div>
                   <ToolLogo tool={selectedTool} size="lg" />
                 </div>
 
                 <div className="mt-5 grid grid-cols-2 gap-3 text-xs">
                   <div className="rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-                    <div className="text-muted-foreground">Binary</div>
+                    <div className="text-muted-foreground">{t('workspace.tools.binary')}</div>
                     <div className="mt-1 truncate font-medium">{selectedTool.binary}</div>
                   </div>
                   <div className="rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-                    <div className="text-muted-foreground">Install</div>
-                    <div className="mt-1 truncate font-medium">{formatInstallType(selectedTool.install)}</div>
+                    <div className="text-muted-foreground">{t('workspace.tools.install')}</div>
+                    <div className="mt-1 truncate font-medium">{formatInstallType(selectedTool.install, t)}</div>
                   </div>
                   <div className="rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-                    <div className="text-muted-foreground">Status</div>
+                    <div className="text-muted-foreground">{t('workspace.tools.status')}</div>
                     <div className="mt-1 flex items-center gap-1.5 font-medium">
                       {selectedStatus?.installed ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" /> : <CircleDot className="h-3.5 w-3.5 text-muted-foreground" />}
                       {statusBadge.label}
                     </div>
                   </div>
                   <div className="rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-                    <div className="text-muted-foreground">Service</div>
-                    <div className="mt-1 truncate font-medium">{selectedTool.service ?? 'none'}</div>
+                    <div className="text-muted-foreground">{t('workspace.tools.service')}</div>
+                    <div className="mt-1 truncate font-medium">{selectedTool.service ?? t('workspace.tools.noServiceValue')}</div>
                   </div>
                 </div>
 
                 {selectedStatus?.version && (
                   <div className="mt-3 rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs">
-                    <div className="text-muted-foreground">Version</div>
+                    <div className="text-muted-foreground">{t('workspace.tools.version')}</div>
                     <div className="mt-1 break-words font-medium">{selectedStatus.version}</div>
                   </div>
                 )}
@@ -1095,7 +1136,7 @@ export function WorkspaceToolManagerApp({
 
               <div className="space-y-4">
                 <div className="space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Package Actions</div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{t('workspace.tools.packageActions')}</div>
                   <div className="grid grid-cols-2 gap-2">
                     {installActions.map((action) => {
                       const Icon = getActionIcon(action)
@@ -1109,7 +1150,7 @@ export function WorkspaceToolManagerApp({
                           className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-xs font-medium capitalize hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Icon className={cn('h-3.5 w-3.5', running?.toolId === selectedTool.id && running.action === action && 'animate-spin')} />
-                          {running?.toolId === selectedTool.id && running.action === action ? 'Running' : action}
+                          {running?.toolId === selectedTool.id && running.action === action ? t('workspace.tools.running') : t(`workspace.tools.action.${action}`)}
                         </button>
                       )
                     })}
@@ -1118,7 +1159,7 @@ export function WorkspaceToolManagerApp({
 
                 {selectedTool.service && (
                   <div className="space-y-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Service Actions</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{t('workspace.tools.serviceActions')}</div>
                     <div className="grid grid-cols-2 gap-2">
                       {serviceActions.map((action) => {
                         const Icon = getActionIcon(action)
@@ -1131,7 +1172,7 @@ export function WorkspaceToolManagerApp({
                             className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-xs font-medium capitalize hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-45"
                           >
                             <Icon className={cn('h-3.5 w-3.5', running?.toolId === selectedTool.id && running.action === action && 'animate-spin')} />
-                            {running?.toolId === selectedTool.id && running.action === action ? 'Running' : action}
+                            {running?.toolId === selectedTool.id && running.action === action ? t('workspace.tools.running') : t(`workspace.tools.action.${action}`)}
                           </button>
                         )
                       })}
@@ -1155,12 +1196,12 @@ export function WorkspaceToolManagerApp({
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             <Shield className="h-3.5 w-3.5" />
-            Remote Output
+            {t('workspace.tools.remoteOutput')}
           </div>
-          <div className="text-xs text-muted-foreground">{selectedStatus?.checkedAt ? `Checked ${selectedStatus.checkedAt}` : selectedTool.name}</div>
+          <div className="text-xs text-muted-foreground">{selectedStatus?.checkedAt ? t('workspace.tools.checkedAt', { time: selectedStatus.checkedAt }) : selectedTool.name}</div>
         </div>
         <pre data-testid="workspace-tool-output" className="mt-3 max-h-[16rem] overflow-auto whitespace-pre-wrap rounded-lg border border-border/60 bg-background/70 p-3 text-xs leading-6 text-foreground">
-          {output || (running ? 'Running remote command...' : 'No command output yet.')}
+          {output || (running ? t('workspace.tools.runningRemoteCommand') : t('workspace.tools.noCommandOutput'))}
         </pre>
       </div>
     </div>

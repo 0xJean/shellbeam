@@ -42,6 +42,7 @@ function findTool(id: string) {
 
 describe('workspace tool manager app', () => {
   beforeEach(() => {
+    localStorage.setItem('shellbeam.locale', 'en')
     runSshCommand.mockReset()
     vi.spyOn(window, 'confirm').mockReturnValue(true)
   })

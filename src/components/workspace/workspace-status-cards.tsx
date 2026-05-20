@@ -16,10 +16,10 @@ interface WorkspaceStatusCardsProps {
 }
 
 const STATUS_CARDS = [
-  { key: 'cpu', labelKey: 'workspace.status.cpu', accent: 'from-[#58b2ff] to-[var(--workspace-primary-500)]', glow: 'bg-[rgba(19,127,236,0.14)]' },
-  { key: 'memory', labelKey: 'workspace.status.memory', accent: 'from-[#4ade80] to-[#15803d]', glow: 'bg-[rgba(34,197,94,0.12)]' },
-  { key: 'disk', labelKey: 'workspace.status.disk', accent: 'from-[#fbbf24] to-[#ea580c]', glow: 'bg-[rgba(245,158,11,0.12)]' },
-  { key: 'network', labelKey: 'workspace.status.network', accent: 'from-[#7dd3fc] to-[#2563eb]', glow: 'bg-[rgba(56,189,248,0.12)]' },
+  { key: 'cpu', labelKey: 'workspace.status.cpu', accent: 'from-[var(--workspace-metric-cpu-from)] to-[var(--workspace-metric-cpu-to)]', glow: 'bg-[var(--workspace-metric-cpu-glow)]' },
+  { key: 'memory', labelKey: 'workspace.status.memory', accent: 'from-[var(--workspace-metric-memory-from)] to-[var(--workspace-metric-memory-to)]', glow: 'bg-[var(--workspace-metric-memory-glow)]' },
+  { key: 'disk', labelKey: 'workspace.status.disk', accent: 'from-[var(--workspace-metric-disk-from)] to-[var(--workspace-metric-disk-to)]', glow: 'bg-[var(--workspace-metric-disk-glow)]' },
+  { key: 'network', labelKey: 'workspace.status.network', accent: 'from-[var(--workspace-metric-network-from)] to-[var(--workspace-metric-network-to)]', glow: 'bg-[var(--workspace-metric-network-glow)]' },
 ]
 
 function normalizePercent(value: string) {
@@ -119,8 +119,8 @@ export function WorkspaceStatusCards({
               key={card.labelKey}
               data-testid="workspace-status-card"
               data-status={unreachable ? 'unreachable' : updatedAt ? 'live' : 'idle'}
-              className={`min-w-0 overflow-hidden rounded-xl border bg-[var(--workspace-surface-900)] p-4 text-[var(--workspace-text)] shadow-[0_4px_6px_-1px_rgba(0,0,0,0.3)] ${
-                unreachable ? 'border-red-500/30' : 'border-[color:var(--workspace-border-strong)]'
+              className={`min-w-0 overflow-hidden rounded-xl border bg-[var(--workspace-surface-900)] p-4 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-card)] ${
+                unreachable ? 'border-[color:var(--workspace-status-bad-border)]' : 'border-[color:var(--workspace-border-soft)]'
               }`}
             >
               <div className="flex items-center justify-between gap-3">
@@ -132,7 +132,7 @@ export function WorkspaceStatusCards({
                       : t('workspace.statusHint.percent')}
                   </div>
                 </div>
-                <div className={`flex h-9 w-9 items-center justify-center rounded-full border border-white/10 ${card.glow}`}>
+                <div className={`flex h-9 w-9 items-center justify-center rounded-full border border-[color:var(--workspace-border-soft)] ${card.glow}`}>
                   <div className={`h-2.5 w-2.5 rounded-full bg-gradient-to-br ${card.accent} ${loading ? 'animate-pulse' : ''}`} />
                 </div>
               </div>
@@ -147,7 +147,7 @@ export function WorkspaceStatusCards({
               </div>
               <div
                 data-testid="workspace-status-meter"
-                className="mt-4 h-1.5 overflow-hidden rounded-full bg-[rgba(8,15,22,0.9)]"
+                className="mt-4 h-1.5 overflow-hidden rounded-full bg-[var(--workspace-surface-950)]"
               >
                 <div
                   className={`h-full rounded-full bg-gradient-to-r ${card.accent} transition-[width] duration-500`}

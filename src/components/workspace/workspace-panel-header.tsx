@@ -2,42 +2,55 @@ import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 interface WorkspacePanelHeaderProps {
+  preheader?: ReactNode
   eyebrow?: ReactNode
   title: ReactNode
   description?: ReactNode
   note?: ReactNode
   actions?: ReactNode
+  toolbar?: ReactNode
   children?: ReactNode
   className?: string
+  preheaderClassName?: string
   headerClassName?: string
   eyebrowClassName?: string
   titleClassName?: string
   descriptionClassName?: string
   noteClassName?: string
   actionsClassName?: string
+  toolbarClassName?: string
   contentClassName?: string
 }
 
 export function WorkspacePanelHeader({
+  preheader,
   eyebrow,
   title,
   description,
   note,
   actions,
+  toolbar,
   children,
   className,
+  preheaderClassName,
   headerClassName,
   eyebrowClassName,
   titleClassName,
   descriptionClassName,
   noteClassName,
   actionsClassName,
+  toolbarClassName,
   contentClassName,
 }: WorkspacePanelHeaderProps) {
   const hasActions = Boolean(actions)
 
   return (
     <section className={cn('border-b border-border pb-4', className)}>
+      {preheader && (
+        <div className={cn('mb-4', preheaderClassName)}>
+          {preheader}
+        </div>
+      )}
       <div className={cn('flex flex-col gap-4', hasActions && 'lg:flex-row lg:items-start lg:justify-between', headerClassName)}>
         <div className="min-w-0">
           {eyebrow && (
@@ -65,6 +78,11 @@ export function WorkspacePanelHeader({
           </div>
         )}
       </div>
+      {toolbar && (
+        <div className={cn('mt-4', toolbarClassName)}>
+          {toolbar}
+        </div>
+      )}
       {children && (
         <div className={cn('mt-4', contentClassName)}>
           {children}

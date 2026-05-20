@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { HostProfile } from '@/lib/hosts'
 import { parseWorkspaceInventory, type WorkspaceInventoryCache } from '@/lib/workspace-inventory'
 import { buildProjectDeploymentRows, getProjectDeploymentSignals } from './project-deployments-panel'
@@ -17,6 +17,10 @@ const host: HostProfile = {
 }
 
 describe('project deployments panel helpers', () => {
+  beforeEach(() => {
+    localStorage.setItem('shellbeam.locale', 'en')
+  })
+
   it('derives deployment rows and running signals from cached inventory', () => {
     const inventory = parseWorkspaceInventory(`
 __SB_SERVICE=nginx|active|enabled

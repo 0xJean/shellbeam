@@ -19,13 +19,13 @@ import { Input } from '@/components/ui/input'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import type { BrowserRouteMode, SessionBrowserState } from '@/contexts/session-browser-state'
-import type { BrowserRouteIndicator, BrowserTabRouteIndicator } from './browser-view-state'
+import type { BrowserTabRouteIndicator, LocalizedBrowserRouteIndicator } from './browser-view-state'
 import { filterBrowserTabs, getBrowserTabDensity, getBrowserTabMonogram, useBrowserTabFavicons } from './browser-tab-visuals'
 
 interface BrowserChromeProps {
   state: SessionBrowserState
   tabs: Array<{ id: string; pinned: boolean; title: string; active: boolean; isLoading: boolean; sourceKind: 'url' | 'html' | 'markdown' | null; url: string; routeIndicator: BrowserTabRouteIndicator | null }>
-  routeIndicator: BrowserRouteIndicator
+  routeIndicator: LocalizedBrowserRouteIndicator
   routeMode: Exclude<BrowserRouteMode, 'auto'>
   canToggleRouteMode: boolean
   onCreateTab: () => void
@@ -108,7 +108,22 @@ export function BrowserChrome({
   const canGoBack = state.canGoBack
   const canGoForward = state.canGoForward
   const faviconByTabId = useBrowserTabFavicons(tabs)
-  const filteredTabs = useMemo(() => filterBrowserTabs(tabs, tabSwitcherQuery), [tabs, tabSwitcherQuery])
+  const searchableTabs = useMemo(() => tabs.map((tab) => ({
+    ...tab,
+    routeIndicator: tab.routeIndicator
+      ? {
+          ...tab.routeIndicator,
+          label: t(tab.routeIndicator.labelKey),
+          detail: t(tab.routeIndicator.detailKey),
+        }
+      : null,
+  })), [tabs, t])
+  const filteredTabs = useMemo(() => filterBrowserTabs(searchableTabs, tabSwitcherQuery), [searchableTabs, tabSwitcherQuery])
+  const localizedRouteIndicator = useMemo(() => ({
+    ...routeIndicator,
+    label: routeIndicator.label,
+    detail: routeIndicator.detail,
+  }), [routeIndicator])
   const tabDensity = useMemo(() => getBrowserTabDensity(tabs.length), [tabs.length])
   const lastPinnedTabId = useMemo(() => {
     for (let index = tabs.length - 1; index >= 0; index -= 1) {
@@ -116,9 +131,9 @@ export function BrowserChrome({
     }
     return null
   }, [tabs])
-  const routeBadgeClassName = routeIndicator.scope === 'local'
+  const routeBadgeClassName = localizedRouteIndicator.scope === 'local'
     ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
-    : routeIndicator.scope === 'pending'
+    : localizedRouteIndicator.scope === 'pending'
       ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
       : 'border-sky-500/25 bg-sky-500/10 text-sky-200'
   const transportBadge = state.transportStatus === 'recovering'
@@ -149,7 +164,7 @@ export function BrowserChrome({
     if (faviconUrl) {
       return {
         icon: <img src={faviconUrl} alt="" className="h-4 w-4 rounded-[4px] object-cover" />,
-        className: 'bg-white/90 text-slate-900',
+        className: 'bg-[var(--workspace-surface-950)] text-[var(--workspace-text-strong)]',
       }
     }
     if (tab.sourceKind === 'url' && tab.url) {
@@ -260,7 +275,7 @@ export function BrowserChrome({
                 'group relative flex items-center rounded-xl border transition-[border-color,background-color,box-shadow,transform] duration-150',
                 densityClasses.tab,
                 tab.active
-                  ? 'border-[var(--workspace-accent-solid)]/55 bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-[0_10px_24px_rgba(15,23,42,0.28)]'
+                  ? 'border-[var(--workspace-accent-solid)]/55 bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-[var(--workspace-shadow-card-hover)]'
                   : 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/60 text-[var(--workspace-text-muted)] hover:border-[var(--workspace-border-strong)] hover:bg-[var(--workspace-surface-900)]/80',
                 dragState?.targetTabId === tab.id && dragState.position === 'before' && 'before:absolute before:inset-y-1 before:left-[-5px] before:w-0.5 before:rounded-full before:bg-[var(--workspace-accent-solid)]',
                 dragState?.targetTabId === tab.id && dragState.position === 'after' && 'after:absolute after:inset-y-1 after:right-[-5px] after:w-0.5 after:rounded-full after:bg-[var(--workspace-accent-solid)]',
@@ -318,7 +333,7 @@ export function BrowserChrome({
                     'inline-flex shrink-0 items-center justify-center rounded-md bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]',
                     tabDensity === 'dense' ? 'h-4.5 w-4.5' : 'h-5 w-5',
                   )}
-                  title="Pinned tab"
+                  title={t('browser.tab.pinnedTitle')}
                 >
                   <Pin className={tabDensity === 'dense' ? 'h-2.5 w-2.5' : 'h-3 w-3'} />
                 </span>
@@ -350,7 +365,7 @@ export function BrowserChrome({
                   tab.active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
                 )}
                 onClick={() => onCloseTab(tab.id)}
-                aria-label={`Close ${tab.title}`}
+                aria-label={t('browser.tab.close', { title: tab.title })}
               >
                 <X className={tabDensity === 'dense' ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
               </button>
@@ -362,7 +377,7 @@ export function BrowserChrome({
                     densityClasses.action,
                   )}
                   onClick={() => setOpenTabMenuId((current) => current === tab.id ? null : tab.id)}
-                  aria-label={`More actions for ${tab.title}`}
+                  aria-label={t('browser.tab.moreActions', { title: tab.title })}
                 >
                   <MoreHorizontal className={tabDensity === 'dense' ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
                 </button>
@@ -376,7 +391,7 @@ export function BrowserChrome({
                         setOpenTabMenuId(null)
                       }}
                     >
-                      {tab.pinned ? 'Unpin tab' : 'Pin tab'}
+                      {tab.pinned ? t('browser.tab.unpin') : t('browser.tab.pin')}
                     </button>
                     <button
                       type="button"
@@ -386,7 +401,7 @@ export function BrowserChrome({
                         setOpenTabMenuId(null)
                       }}
                     >
-                      Duplicate tab
+                      {t('browser.tab.duplicate')}
                     </button>
                     <button
                       type="button"
@@ -394,7 +409,7 @@ export function BrowserChrome({
                       onClick={() => void handleCopyTabLink(tab.url)}
                       disabled={!tab.url}
                     >
-                      Copy link
+                      {t('browser.tab.copyLink')}
                     </button>
                     <button
                       type="button"
@@ -405,7 +420,7 @@ export function BrowserChrome({
                       }}
                       disabled={tabs.length <= 1}
                     >
-                      Close other tabs
+                      {t('browser.tab.closeOthers')}
                     </button>
                     <button
                       type="button"
@@ -415,7 +430,7 @@ export function BrowserChrome({
                         setOpenTabMenuId(null)
                       }}
                     >
-                      Close tabs to right
+                      {t('browser.tab.closeRight')}
                     </button>
                   </div>
                 )}
@@ -432,14 +447,14 @@ export function BrowserChrome({
                   aria-hidden="true"
                 >
                   <div className="h-px w-3 bg-[var(--workspace-border-strong)]" />
-                  <span className="font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)]">Pinned</span>
+                  <span className="font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)]">{t('browser.tab.pinned')}</span>
                   <div className="h-px w-3 bg-[var(--workspace-border-strong)]" />
                 </div>
               )] : []),
             ]
           })}
         </div>
-        <Button type="button" size="icon" variant="outline" className="h-8 w-8 shrink-0" onClick={onCreateTab} aria-label="New browser tab">
+        <Button type="button" size="icon" variant="outline" className="h-8 w-8 shrink-0" onClick={onCreateTab} aria-label={t('browser.tab.new')}>
           <Plus className="h-4 w-4" />
         </Button>
         <Button
@@ -450,7 +465,7 @@ export function BrowserChrome({
           onClick={openTabSwitcher}
         >
           <Search className="h-3.5 w-3.5" />
-          Tabs
+          {t('browser.tab.tabs')}
           <span className="rounded-md bg-[var(--workspace-surface-700)] px-1.5 py-0.5 text-[10px]">{tabs.length}</span>
         </Button>
         <Button
@@ -461,11 +476,11 @@ export function BrowserChrome({
           onClick={onRestoreClosedTab}
           disabled={!hasClosedTabs}
         >
-          Reopen Closed
+          {t('browser.tab.reopenClosed')}
         </Button>
       </div>
       {tabSwitcherOpen && (
-        <div className="absolute right-3 top-12 z-30 w-[360px] rounded-2xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] p-3 shadow-[0_24px_64px_rgba(2,6,23,0.48)]">
+        <div className="absolute right-3 top-12 z-30 w-[360px] rounded-2xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] p-3 shadow-[var(--workspace-shadow-overlay)]">
           <div className="flex items-center gap-2">
             <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
@@ -503,11 +518,11 @@ export function BrowserChrome({
                     setTabSwitcherOpen(false)
                   }
                 }}
-                placeholder="Search tabs, urls, routes"
+                placeholder={t('browser.tab.searchPlaceholder')}
                 className="h-9 pl-9 text-sm"
               />
             </div>
-            <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => setTabSwitcherOpen(false)} aria-label="Close tabs overview">
+            <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => setTabSwitcherOpen(false)} aria-label={t('browser.tab.closeOverview')}>
               <X className="h-4 w-4" />
             </Button>
           </div>
@@ -551,7 +566,7 @@ export function BrowserChrome({
                       </div>
                       {tab.active && (
                         <span className="shrink-0 rounded-full bg-[var(--workspace-accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-accent-text)]">
-                          Active
+                          {t('browser.tab.active')}
                         </span>
                       )}
                     </button>
@@ -560,19 +575,19 @@ export function BrowserChrome({
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-[var(--workspace-border-soft)] px-4 py-8 text-center text-sm text-[var(--workspace-text-muted)]">
-                No tabs match this search.
+                {t('browser.tab.noMatches')}
               </div>
             )}
           </div>
         </div>
       )}
       <div className="flex items-center gap-3 px-1 text-[10px] uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
-        <span>New Tab: Cmd/Ctrl+T</span>
-        <span>Overview: Cmd/Ctrl+Shift+O</span>
-        <span>Reopen: Cmd/Ctrl+Shift+T</span>
-        <span>Close: Cmd/Ctrl+W</span>
-        <span>Switch: Cmd/Ctrl+Shift+[ / ]</span>
-        <span>Drag: Reorder tabs</span>
+        <span>{t('browser.shortcut.newTab')}</span>
+        <span>{t('browser.shortcut.overview')}</span>
+        <span>{t('browser.shortcut.reopen')}</span>
+        <span>{t('browser.shortcut.close')}</span>
+        <span>{t('browser.shortcut.switch')}</span>
+        <span>{t('browser.shortcut.drag')}</span>
       </div>
 
       <div className="flex items-center gap-2">
@@ -581,14 +596,14 @@ export function BrowserChrome({
             'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]',
             routeBadgeClassName,
           )}
-          title={routeIndicator.detail}
+          title={localizedRouteIndicator.detail}
         >
-          {routeIndicator.scope === 'pending' ? (
+          {localizedRouteIndicator.scope === 'pending' ? (
             <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <Server className="h-3.5 w-3.5" />
           )}
-          <span>{routeIndicator.label}</span>
+          <span>{localizedRouteIndicator.label}</span>
         </div>
         {transportBadge && (
           <div
@@ -607,7 +622,7 @@ export function BrowserChrome({
           </div>
         )}
         {onClose && (
-          <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={onClose} aria-label="Close browser">
+          <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={onClose} aria-label={t('browser.action.close')}>
             <X className="h-4 w-4" />
           </Button>
         )}
@@ -615,13 +630,13 @@ export function BrowserChrome({
 
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1">
-          <Button type="button" size="icon" variant="outline" className="h-8 w-8" disabled={!canGoBack} onClick={onBack} aria-label="Go back">
+          <Button type="button" size="icon" variant="outline" className="h-8 w-8" disabled={!canGoBack} onClick={onBack} aria-label={t('browser.action.back')}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <Button type="button" size="icon" variant="outline" className="h-8 w-8" disabled={!canGoForward} onClick={onForward} aria-label="Go forward">
+          <Button type="button" size="icon" variant="outline" className="h-8 w-8" disabled={!canGoForward} onClick={onForward} aria-label={t('browser.action.forward')}>
             <ArrowRight className="h-4 w-4" />
           </Button>
-          <Button type="button" size="icon" variant="outline" className="h-8 w-8" onClick={onReload} aria-label="Reload browser">
+          <Button type="button" size="icon" variant="outline" className="h-8 w-8" onClick={onReload} aria-label={t('browser.action.reload')}>
             <RefreshCw className={cn('h-4 w-4', state.isLoading && 'animate-spin')} />
           </Button>
           {canRebuildTransport && onRebuildTransport && (
@@ -656,7 +671,7 @@ export function BrowserChrome({
                   onClick={() => onRouteModeChange(mode)}
                   aria-pressed={active}
                 >
-                  {mode === 'local' ? 'Local' : 'Server'}
+                  {mode === 'local' ? t('browser.route.local') : t('browser.route.server')}
                 </button>
               )
             })}
@@ -672,13 +687,13 @@ export function BrowserChrome({
               setValue(nextValue)
               onAddressInputChange(nextValue)
             }}
-            placeholder="Enter URL or preview address"
+            placeholder={t('browser.address.placeholder')}
             className="h-9 min-w-0 border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text)]"
-            aria-label="Browser address"
+            aria-label={t('browser.address.label')}
           />
           <Button type="submit" size="sm" className="h-9 shrink-0 gap-1.5">
             <Globe className="h-3.5 w-3.5" />
-            Go
+            {t('browser.action.go')}
           </Button>
         </form>
       </div>
@@ -688,7 +703,7 @@ export function BrowserChrome({
           {state.isLoading && (
             <span className="inline-flex items-center gap-1.5">
               <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-              Loading…
+              {t('browser.status.loading')}
             </span>
           )}
           {!state.isLoading && state.error && (
@@ -702,7 +717,11 @@ export function BrowserChrome({
           )}
           {!state.isLoading && !state.error && !state.currentUrl && state.source && (
             <span className="truncate text-[var(--workspace-text-subtle)]">
-              {state.source.kind === 'markdown' ? 'Markdown preview' : state.source.kind === 'html' ? 'HTML preview' : state.title || 'Ready'}
+              {state.source.kind === 'markdown'
+                ? t('browser.status.markdownPreview')
+                : state.source.kind === 'html'
+                  ? t('browser.status.htmlPreview')
+                  : state.title || t('browser.status.ready')}
             </span>
           )}
         </div>

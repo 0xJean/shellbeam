@@ -360,7 +360,7 @@ export function WorkspaceDesktopShell({
         {isOverview ? (
           <div className="relative h-full w-full">
             {showIntroPanel && (
-              <div className="absolute left-[8.5rem] top-8 z-10 hidden w-[24rem] rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-5 py-4 shadow-[0_20px_25px_-5px_rgba(0,0,0,0.5),0_10px_10px_-5px_rgba(0,0,0,0.4)] backdrop-blur-md md:block">
+              <div className="absolute left-[8.5rem] top-8 z-10 hidden w-[24rem] rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-5 py-4 shadow-[var(--workspace-shadow-overlay)] backdrop-blur-md md:block">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--workspace-text-subtle)]">{t('workspace.desktop.desktop')}</div>
@@ -370,8 +370,8 @@ export function WorkspaceDesktopShell({
                   <button
                     type="button"
                     onClick={() => setShowIntroPanel(false)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-white/8 hover:text-[var(--workspace-text-strong)]"
-                    aria-label="Close desktop intro"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]"
+                    aria-label={t('workspace.desktop.closeIntro')}
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -385,14 +385,14 @@ export function WorkspaceDesktopShell({
 
             {showWidgets && (
               <div className="absolute bottom-8 right-8 z-10 hidden w-[26rem] space-y-4 md:block">
-                <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-4 py-4 shadow-[0_20px_25px_-5px_rgba(0,0,0,0.5),0_10px_10px_-5px_rgba(0,0,0,0.4)] backdrop-blur-md">
+                <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-4 py-4 shadow-[var(--workspace-shadow-overlay)] backdrop-blur-md">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-subtle)]">{t('workspace.desktop.widgetStack')}</div>
                     <button
                       type="button"
                       onClick={() => setShowWidgets(false)}
-                      className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-white/8 hover:text-[var(--workspace-text-strong)]"
-                      aria-label="Close desktop widgets"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]"
+                      aria-label={t('workspace.desktop.closeWidgets')}
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
@@ -404,7 +404,7 @@ export function WorkspaceDesktopShell({
                   resolveAuthSecret={resolveAuthSecret}
                 />
                 </div>
-                <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] px-4 py-4 shadow-[0_20px_25px_-5px_rgba(0,0,0,0.4)]">
+                <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] px-4 py-4 shadow-[var(--workspace-shadow-card)]">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-subtle)]">{t('workspace.desktop.quickHint')}</div>
                   <div className="mt-3 text-sm font-medium text-[var(--workspace-text-strong)]">{t('workspace.desktop.doubleClickHint')}</div>
                   <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">{t('workspace.desktop.taskbarHint')}</div>
@@ -422,7 +422,7 @@ export function WorkspaceDesktopShell({
                   key={windowState.app}
                   data-testid={`workspace-desktop-window-${windowState.app}`}
                   className={cn(
-                    'absolute flex min-h-[20rem] min-w-[20rem] flex-col overflow-hidden rounded-xl border bg-[var(--workspace-surface-900)] shadow-[0_20px_25px_-5px_rgba(0,0,0,0.5),0_10px_10px_-5px_rgba(0,0,0,0.4)] backdrop-blur-md',
+                    'absolute flex min-h-[20rem] min-w-[20rem] flex-col overflow-hidden rounded-xl border bg-[var(--workspace-surface-900)] shadow-[var(--workspace-shadow-overlay)] backdrop-blur-md',
                     activeApp === windowState.app
                       ? 'border-[color:var(--workspace-border-glow)]'
                       : 'border-[color:var(--workspace-border-strong)]',
@@ -439,7 +439,7 @@ export function WorkspaceDesktopShell({
                     onPointerDown={(event) => beginDrag(windowState.app, event.clientX, event.clientY)}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[rgba(19,127,236,0.18)] text-[var(--workspace-primary-300)]">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]">
                         <LayoutGrid className="h-4 w-4" />
                       </div>
                       <div>
@@ -455,23 +455,25 @@ export function WorkspaceDesktopShell({
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-white/8 hover:text-[var(--workspace-text-strong)]"
-                          aria-label="Minimize window"
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]"
+                          aria-label={t('workspace.desktop.minimizeWindow')}
                         >
                           <Minus className="h-3.5 w-3.5" />
                         </button>
                         <button
                           type="button"
-                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-white/8 hover:text-[var(--workspace-text-strong)]"
-                          aria-label="Maximize window"
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]"
+                          aria-label={t('workspace.desktop.maximizeWindow')}
                         >
                           <Square className="h-3 w-3" />
                         </button>
                         <button
                           type="button"
                           onClick={() => closeWindow(windowState.app)}
-                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[rgba(239,68,68,0.12)] hover:text-[#fda4af]"
-                          aria-label={`Close ${t(APP_LABELS.find((app) => app.id === windowState.app)?.labelKey ?? 'workspace.app.overview')} window`}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-status-bad-bg)] hover:text-[var(--workspace-status-bad-text)]"
+                          aria-label={t('workspace.desktop.closeWindow', {
+                            app: t(APP_LABELS.find((app) => app.id === windowState.app)?.labelKey ?? 'workspace.app.overview'),
+                          })}
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
@@ -503,7 +505,7 @@ export function WorkspaceDesktopShell({
           <button
             type="button"
             onClick={() => onSelectApp('overview')}
-            className="flex items-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[linear-gradient(180deg,var(--workspace-primary-400),var(--workspace-primary-500))] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_26px_rgba(19,127,236,0.25)] hover:brightness-110"
+            className="flex items-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[linear-gradient(180deg,var(--workspace-primary-400),var(--workspace-primary-500))] px-4 py-2 text-sm font-semibold text-[var(--workspace-primary-foreground)] shadow-[0_10px_26px_var(--workspace-accent-muted)] hover:brightness-110"
           >
             <LayoutGrid className="h-4 w-4" />
             Start
@@ -521,10 +523,10 @@ export function WorkspaceDesktopShell({
                   className={cn(
                     'relative rounded-lg px-3 py-2 text-xs font-medium transition-colors',
                     isActive
-                      ? 'bg-[rgba(30,44,60,0.9)] text-[var(--workspace-text-strong)]'
+                      ? 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-strong)]'
                       : isOpen
-                        ? 'bg-[rgba(24,35,48,0.72)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]'
-                        : 'text-[var(--workspace-text-muted)] hover:bg-[rgba(24,35,48,0.72)] hover:text-[var(--workspace-text-strong)]',
+                        ? 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]'
+                        : 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]',
                   )}
                 >
                   {t(app.labelKey)}
@@ -541,7 +543,7 @@ export function WorkspaceDesktopShell({
         </div>
 
         <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]">
-          <div className="hidden items-center gap-1 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.72)] px-3 py-2 md:flex">
+          <div className="hidden items-center gap-1 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2 md:flex">
             <Search className="h-3.5 w-3.5" />
             <span>{t('workspace.desktop.search')}</span>
           </div>
@@ -549,7 +551,7 @@ export function WorkspaceDesktopShell({
             <Wifi className="h-4 w-4" />
             <Volume2 className="h-4 w-4" />
           </div>
-          <div className="flex flex-col items-end leading-none rounded-lg border border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.72)] px-3 py-1.5">
+          <div className="flex flex-col items-end leading-none rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-1.5">
             <span className="text-[11px] font-bold text-[var(--workspace-text-strong)]">
               <LiveClock />
             </span>

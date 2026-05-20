@@ -162,7 +162,7 @@ describe('workspace file system app', () => {
     await screen.findByRole('button', { name: /nginx/i })
     fireEvent.click(screen.getByRole('button', { name: /nginx/i }))
 
-    expect(screen.getByText('Loading directory…')).toBeInTheDocument()
+    expect(screen.getByText('Loading directory...')).toBeInTheDocument()
     expect(screen.queryByText('hosts')).not.toBeInTheDocument()
     expect(listDir).toHaveBeenCalledWith('/root/nginx')
 

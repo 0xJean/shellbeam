@@ -1,4 +1,5 @@
 import type { WorkspaceAppId } from '@/lib/workspace'
+import { useT } from '@/lib/i18n'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 
 interface WorkspaceEmptyAppProps {
@@ -6,12 +7,12 @@ interface WorkspaceEmptyAppProps {
 }
 
 export function WorkspaceEmptyApp({ app }: WorkspaceEmptyAppProps) {
-  const title = app === 'overview' ? 'Overview' : app.charAt(0).toUpperCase() + app.slice(1)
+  const { t } = useT()
 
   return (
     <WorkspaceEmptyState
-      title={title}
-      description="This workspace app is scaffolded and ready for the next implementation pass."
+      title={t(`workspace.app.${app}`)}
+      description={t('workspace.emptyApp.description')}
     />
   )
 }

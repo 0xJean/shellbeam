@@ -1,5 +1,6 @@
 import { SftpDualPane } from '@/components/sftp-dual-pane'
 import type { HostProfile } from '@/lib/hosts'
+import { useT } from '@/lib/i18n'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 
 interface WorkspaceFilesAppProps {
@@ -17,6 +18,7 @@ export function WorkspaceFilesApp({
   resolveAuthSecret,
   presentation = 'panel',
 }: WorkspaceFilesAppProps) {
+  const { t } = useT()
   const activeHostId = selectedHostId ?? (
     selectedHostAddress
       ? hosts.find((host) => host.address === selectedHostAddress)?.id ?? null
@@ -27,8 +29,8 @@ export function WorkspaceFilesApp({
   if (!activeHostId) {
     return (
       <WorkspaceEmptyState
-        title="Remote Files"
-        description="Connect a remote host to browse files here."
+        title={t('workspace.files.title')}
+        description={t('workspace.files.emptyDescription')}
       />
     )
   }
@@ -40,9 +42,9 @@ export function WorkspaceFilesApp({
     >
       {!isEmbedded && (
         <div className="rounded-[28px] border border-border/60 bg-card/80 px-6 py-5">
-          <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">Files</div>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight">Remote Files</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Browse remote paths visually, then drop back to the terminal when you need precision.</p>
+          <div className="text-xs font-medium uppercase tracking-[0.22em] text-[var(--workspace-accent-text)]">{t('workspace.files.eyebrow')}</div>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight">{t('workspace.files.title')}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{t('workspace.files.description')}</p>
         </div>
       )}
       <div

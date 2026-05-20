@@ -15,16 +15,16 @@ import {
 } from 'lucide-react'
 
 const APPS: Array<{ id: WorkspaceAppId; labelKey: string; icon: typeof LayoutGrid; accent: string; glow: string }> = [
-  { id: 'overview', labelKey: 'workspace.app.overview', icon: LayoutGrid, accent: 'from-[#55adff] via-[var(--workspace-primary-500)] to-[#0c4578] text-white', glow: 'shadow-[0_18px_34px_rgba(19,127,236,0.35)]' },
-  { id: 'assetInventory', labelKey: 'workspace.app.assetInventory', icon: Network, accent: 'from-[#7dd3fc] via-[#2563eb] to-[#0f172a] text-white', glow: 'shadow-[0_18px_34px_rgba(37,99,235,0.28)]' },
-  { id: 'fileTransfer', labelKey: 'workspace.app.fileTransfer', icon: FolderKanban, accent: 'from-[#7cbcff] via-[#2f8cf0] to-[#173755] text-white', glow: 'shadow-[0_18px_34px_rgba(52,123,196,0.28)]' },
-  { id: 'fileSystem', labelKey: 'workspace.app.fileSystem', icon: FolderTree, accent: 'from-[#8ad9b7] via-[#2ba37b] to-[#123f35] text-white', glow: 'shadow-[0_18px_34px_rgba(28,179,122,0.24)]' },
-  { id: 'processes', labelKey: 'workspace.app.processes', icon: ActivitySquare, accent: 'from-[#4ecf89] via-[#1a8e5a] to-[#103d31] text-white', glow: 'shadow-[0_18px_34px_rgba(34,197,94,0.22)]' },
-  { id: 'services', labelKey: 'workspace.app.services', icon: Files, accent: 'from-[#62b5ff] via-[#2563eb] to-[#172554] text-white', glow: 'shadow-[0_18px_34px_rgba(37,99,235,0.26)]' },
-  { id: 'toolManager', labelKey: 'workspace.app.toolManager', icon: Boxes, accent: 'from-[#73d7f7] via-[#0891b2] to-[#164e63] text-white', glow: 'shadow-[0_18px_34px_rgba(14,165,233,0.24)]' },
-  { id: 'logs', labelKey: 'workspace.app.logs', icon: ScrollText, accent: 'from-[#93c5fd] via-[#2563eb] to-[#111827] text-white', glow: 'shadow-[0_18px_34px_rgba(59,130,246,0.2)]' },
-  { id: 'browser', labelKey: 'workspace.app.browser', icon: Globe, accent: 'from-[#fbbf24] via-[#f59e0b] to-[#78350f] text-white', glow: 'shadow-[0_18px_34px_rgba(245,158,11,0.22)]' },
-  { id: 'terminal', labelKey: 'workspace.app.terminal', icon: SquareTerminal, accent: 'from-[#526579] via-[#1f2d3a] to-[#0c1117] text-white', glow: 'shadow-[0_18px_34px_rgba(15,23,42,0.3)]' },
+  { id: 'overview', labelKey: 'workspace.app.overview', icon: LayoutGrid, accent: 'from-[var(--workspace-primary-300)] via-[var(--workspace-primary-500)] to-[var(--workspace-accent-text)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-cpu-glow)]' },
+  { id: 'assetInventory', labelKey: 'workspace.app.assetInventory', icon: Network, accent: 'from-[var(--workspace-primary-300)] via-[var(--workspace-primary-500)] to-[var(--workspace-accent-text)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-network-glow)]' },
+  { id: 'fileTransfer', labelKey: 'workspace.app.fileTransfer', icon: FolderKanban, accent: 'from-[var(--workspace-primary-300)] via-[var(--workspace-primary-400)] to-[var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-network-glow)]' },
+  { id: 'fileSystem', labelKey: 'workspace.app.fileSystem', icon: FolderTree, accent: 'from-[var(--workspace-metric-memory-from)] via-[var(--workspace-status-good)] to-[var(--workspace-metric-memory-to)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-memory-glow)]' },
+  { id: 'processes', labelKey: 'workspace.app.processes', icon: ActivitySquare, accent: 'from-[var(--workspace-metric-memory-from)] via-[var(--workspace-status-good)] to-[var(--workspace-metric-memory-to)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-memory-glow)]' },
+  { id: 'services', labelKey: 'workspace.app.services', icon: Files, accent: 'from-[var(--workspace-primary-300)] via-[var(--workspace-primary-500)] to-[var(--workspace-accent-text)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-cpu-glow)]' },
+  { id: 'toolManager', labelKey: 'workspace.app.toolManager', icon: Boxes, accent: 'from-[var(--workspace-status-info)] via-[var(--workspace-primary-400)] to-[var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-network-glow)]' },
+  { id: 'logs', labelKey: 'workspace.app.logs', icon: ScrollText, accent: 'from-[var(--workspace-primary-300)] via-[var(--workspace-primary-500)] to-[var(--workspace-accent-text)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-cpu-glow)]' },
+  { id: 'browser', labelKey: 'workspace.app.browser', icon: Globe, accent: 'from-[var(--workspace-metric-disk-from)] via-[var(--workspace-status-warn)] to-[var(--workspace-metric-disk-to)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-disk-glow)]' },
+  { id: 'terminal', labelKey: 'workspace.app.terminal', icon: SquareTerminal, accent: 'from-[var(--workspace-text-muted)] via-[var(--workspace-text)] to-[var(--workspace-text-strong)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[var(--workspace-shadow-overlay)]' },
 ]
 
 interface WorkspaceAppGridProps {
@@ -91,9 +91,9 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
             className={cn(
               'flex items-center justify-center transition-all',
               variant === 'ios-grid'
-                ? 'h-[60px] w-[60px] rounded-[14px] shadow-md bg-gradient-to-br ring-1 ring-white/10 inset-0'
+                ? 'h-[60px] w-[60px] rounded-[14px] shadow-md bg-gradient-to-br ring-1 ring-[var(--workspace-border-soft)]'
                 : variant === 'ios-dock'
-                  ? 'h-[52px] w-[52px] rounded-[12px] shadow-sm bg-gradient-to-br ring-1 ring-white/10'
+                  ? 'h-[52px] w-[52px] rounded-[12px] shadow-sm bg-gradient-to-br ring-1 ring-[var(--workspace-border-soft)]'
                   : variant === 'mobile'
                     ? 'relative h-14 w-14 overflow-hidden rounded-[18px] shadow-lg'
                     : variant === 'desktop'
@@ -105,12 +105,12 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
             )}
           >
             {variant === 'mobile' && (
-              <div className="absolute inset-x-2 top-1 h-4 rounded-full bg-white/24 blur-sm" />
+              <div className="absolute inset-x-2 top-1 h-4 rounded-full bg-[var(--workspace-surface-950)] opacity-25 blur-sm" />
             )}
             <Icon
               className={cn(
-                variant === 'ios-grid' ? 'h-8 w-8 text-white drop-shadow-sm' :
-                variant === 'ios-dock' ? 'h-7 w-7 text-white drop-shadow-sm' :
+                variant === 'ios-grid' ? 'h-8 w-8 text-[var(--workspace-primary-foreground)] drop-shadow-sm' :
+                variant === 'ios-dock' ? 'h-7 w-7 text-[var(--workspace-primary-foreground)] drop-shadow-sm' :
                 variant === 'mobile' ? 'h-7 w-7' : 'h-6 w-6',
                 variant === 'desktop' ? 'text-[color:var(--workspace-primary-400)]' : '',
               )}
@@ -121,9 +121,9 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
               <div 
                 className={cn(
                   'font-semibold truncate w-full px-1', 
-                  variant === 'ios-grid' ? 'text-[11px] text-white drop-shadow-md tracking-wide' : 
-                  variant === 'mobile' ? 'text-[11px] text-slate-900' : 
-                  variant === 'desktop' ? 'text-[12px] leading-4 text-[var(--workspace-text-strong)] [text-shadow:0_1px_2px_rgba(15,23,42,0.55)]' : 'text-sm'
+                  variant === 'ios-grid' ? 'text-[11px] text-[var(--workspace-primary-foreground)] drop-shadow-md tracking-wide' : 
+                  variant === 'mobile' ? 'text-[11px] text-[var(--workspace-text-strong)]' : 
+                  variant === 'desktop' ? 'text-[12px] leading-4 text-[var(--workspace-text-strong)] [text-shadow:0_1px_2px_var(--workspace-elevated-ring)]' : 'text-sm'
                 )}
               >
                 {label}

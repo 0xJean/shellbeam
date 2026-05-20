@@ -6,11 +6,16 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        primary: '#137fec',
-        'background-light': '#f6f6f8',
-        'background-dark': '#101922',
+        primary: '#2563eb',
+        'background-light': 'var(--workspace-bg-950)',
+        'background-dark': '#070b10',
         workspace: {
-          shell: '#101922',
+          shell: 'var(--workspace-bg-950)',
+          content: 'var(--workspace-content-bg)',
+          nav: {
+            DEFAULT: 'var(--workspace-nav-foreground)',
+            active: 'var(--workspace-nav-active-text)',
+          },
         },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
@@ -52,9 +57,9 @@ const config: Config = {
         display: ['Inter', 'sans-serif'],
       },
       backgroundImage: {
-        'workspace-desktop-wallpaper': 'linear-gradient(180deg,#dbeafe 0%,#bfdbfe 40%,#93c5fd 100%)',
-        'workspace-desktop-overlay': 'radial-gradient(circle_at_top_left,rgba(255,255,255,0.55),transparent_22%),radial-gradient(circle_at_bottom_right,rgba(59,130,246,0.3),transparent_28%),linear-gradient(135deg,rgba(255,255,255,0.15),transparent_42%)',
-        'workspace-mobile-wallpaper': 'radial-gradient(circle_at_center,rgba(26,42,58,0.92)_0%,rgba(16,25,34,0.98)_68%),radial-gradient(circle_at_top_right,rgba(19,127,236,0.18),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(70,160,245,0.12),transparent_30%)',
+        'workspace-desktop-wallpaper': 'linear-gradient(180deg, var(--workspace-bg-950) 0%, var(--workspace-bg-900) 42%, var(--workspace-bg-850) 100%)',
+        'workspace-desktop-overlay': 'radial-gradient(circle at top left, var(--workspace-accent-muted), transparent 24%), radial-gradient(circle at bottom right, var(--workspace-surface-900), transparent 36%), linear-gradient(135deg, var(--workspace-surface-panel), transparent 45%)',
+        'workspace-mobile-wallpaper': 'radial-gradient(circle at center, var(--workspace-bg-850) 0%, var(--workspace-bg-950) 68%), radial-gradient(circle at top right, var(--workspace-accent-muted), transparent 28%), radial-gradient(circle at bottom left, var(--workspace-accent-soft), transparent 32%)',
       },
     },
   },

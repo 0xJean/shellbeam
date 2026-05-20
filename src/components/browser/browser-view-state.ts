@@ -4,13 +4,23 @@ import type { BrowserRouteMode } from '@/contexts/session-browser-state'
 
 export interface BrowserRouteIndicator {
   scope: 'local' | 'remote' | 'pending'
-  label: string
-  detail: string
+  labelKey: string
+  detailKey: string
 }
 
 export interface BrowserTabRouteIndicator {
   scope: 'local' | 'remote' | 'pending'
-  label: 'Local' | 'Server' | 'Pending'
+  labelKey: string
+  detailKey: string
+}
+
+export type LocalizedBrowserRouteIndicator = BrowserRouteIndicator & {
+  label: string
+  detail: string
+}
+
+export type LocalizedBrowserTabRouteIndicator = BrowserTabRouteIndicator & {
+  label: string
   detail: string
 }
 
@@ -49,35 +59,35 @@ export function getBrowserRouteIndicator(params: {
   } = params
 
   if (source && source.kind !== 'url') {
-    return { scope: 'local', label: 'Local', detail: 'Preview content is rendered locally' }
+    return { scope: 'local', labelKey: 'browser.route.local', detailKey: 'browser.route.previewLocal' }
   }
 
   if (effectiveRouteMode === 'local') {
     if (requestedRouteMode === 'remote' && !hasRemoteSession) {
-      return { scope: 'local', label: 'Local', detail: 'Server route unavailable for this session' }
+      return { scope: 'local', labelKey: 'browser.route.local', detailKey: 'browser.route.serverUnavailable' }
     }
     if (hasRemoteSession && requestedRouteMode === 'local') {
-      return { scope: 'local', label: 'Local', detail: 'Forced local route from this device' }
+      return { scope: 'local', labelKey: 'browser.route.local', detailKey: 'browser.route.forcedLocal' }
     }
-    return { scope: 'local', label: 'Local', detail: 'Requests originate from this device' }
+    return { scope: 'local', labelKey: 'browser.route.local', detailKey: 'browser.route.localOrigin' }
   }
 
   if (waitingForRemoteTransport) {
     if (source?.kind === 'url' && isLoopbackBrowserUrl(source.url)) {
-      return { scope: 'pending', label: 'Server', detail: 'Preparing remote port forward' }
+      return { scope: 'pending', labelKey: 'browser.route.server', detailKey: 'browser.route.preparingPortForward' }
     }
-    return { scope: 'pending', label: 'Server', detail: 'Preparing SSH proxy route' }
+    return { scope: 'pending', labelKey: 'browser.route.server', detailKey: 'browser.route.preparingProxy' }
   }
 
   if (source?.kind === 'url' && isLoopbackBrowserUrl(source.url) && resolvedUrl) {
-    return { scope: 'remote', label: 'Server', detail: 'Via remote port forward' }
+    return { scope: 'remote', labelKey: 'browser.route.server', detailKey: 'browser.route.viaPortForward' }
   }
 
   if (proxyUrl) {
-    return { scope: 'remote', label: 'Server', detail: 'Via server proxy' }
+    return { scope: 'remote', labelKey: 'browser.route.server', detailKey: 'browser.route.viaProxy' }
   }
 
-  return { scope: 'remote', label: 'Server', detail: 'Requests originate from the server' }
+  return { scope: 'remote', labelKey: 'browser.route.server', detailKey: 'browser.route.serverOrigin' }
 }
 
 export function getBrowserTabRouteIndicator(params: {
@@ -112,11 +122,11 @@ export function getBrowserTabRouteIndicator(params: {
 
   return {
     scope: indicator.scope,
-    label: indicator.scope === 'pending'
-      ? 'Pending'
+    labelKey: indicator.scope === 'pending'
+      ? 'browser.route.pending'
       : indicator.scope === 'remote'
-        ? 'Server'
-        : 'Local',
-    detail: indicator.detail,
+        ? 'browser.route.server'
+        : 'browser.route.local',
+    detailKey: indicator.detailKey,
   }
 }

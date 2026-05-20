@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { HostProfile } from '@/lib/hosts'
+import { t as translate, useT } from '@/lib/i18n'
 import { useHostNetworkMetadata, type HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import {
   fetchWorkspaceInventory,
@@ -36,7 +37,7 @@ import {
   ServerCog,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace/workspace-empty-state'
-import { WorkspacePanelHeader } from './workspace/workspace-panel-header'
+import { WorkspaceResourceOverviewHeader } from './workspace/workspace-resource-overview-header'
 import { WorkspaceServerList } from './workspace/workspace-server-list'
 
 interface ProjectDeploymentsPanelProps {
@@ -44,6 +45,9 @@ interface ProjectDeploymentsPanelProps {
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   onOpenTerminal?: (host: HostProfile) => void
+  preheader?: ReactNode
+  hideHeader?: boolean
+  hideHostList?: boolean
 }
 
 interface HostInventoryState {
@@ -55,6 +59,7 @@ interface HostInventoryState {
 
 type DeploymentStatus = 'running' | 'detected' | 'stale'
 type DeploymentViewStatus = DeploymentStatus | 'inaccessible'
+type TFunction = ReturnType<typeof useT>['t']
 
 interface ProjectDeploymentRow {
   id: string
@@ -73,19 +78,19 @@ function hostKey(host: HostProfile) {
   return getWorkspaceInventoryHostKey(host)
 }
 
-function formatPercent(value: number | null | undefined) {
-  return value == null ? 'n/a' : `${Math.round(value)}%`
+function formatPercent(value: number | null | undefined, t: TFunction) {
+  return value == null ? t('workspace.common.notAvailable') : `${Math.round(value)}%`
 }
 
-function formatAge(timestamp?: number) {
-  if (!timestamp) return '未扫描'
+function formatAge(timestamp: number | undefined, t: TFunction) {
+  if (!timestamp) return t('workspace.deployments.notScanned')
   const diff = Math.max(0, Date.now() - timestamp)
   const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes} 分钟前`
+  if (minutes < 1) return t('workspace.deployments.justNow')
+  if (minutes < 60) return t('workspace.deployments.minutesAgo', { count: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 48) return `${hours} 小时前`
-  return `${Math.floor(hours / 24)} 天前`
+  if (hours < 48) return t('workspace.deployments.hoursAgo', { count: hours })
+  return t('workspace.deployments.daysAgo', { count: Math.floor(hours / 24) })
 }
 
 function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'good' | 'warn' | 'bad' | 'info' }) {
@@ -97,7 +102,7 @@ function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'de
         tone === 'warn' && 'border-amber-500/30 bg-amber-500/10 text-amber-200',
         tone === 'bad' && 'border-red-500/30 bg-red-500/10 text-red-200',
         tone === 'info' && 'border-sky-500/30 bg-sky-500/10 text-sky-200',
-        tone === 'default' && 'border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.7)] text-[var(--workspace-text)]',
+        tone === 'default' && 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] text-[var(--workspace-text)]',
       )}
     >
       <span className="truncate">{children}</span>
@@ -105,11 +110,11 @@ function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'de
   )
 }
 
-function StatusBadge({ status }: { status: DeploymentViewStatus }) {
-  if (status === 'running') return <Badge tone="good">运行中</Badge>
-  if (status === 'stale') return <Badge tone="warn">缓存过期</Badge>
-  if (status === 'inaccessible') return <Badge tone="bad">无法访问</Badge>
-  return <Badge tone="info">已发现</Badge>
+function StatusBadge({ status, t }: { status: DeploymentViewStatus; t: TFunction }) {
+  if (status === 'running') return <Badge tone="good">{t('workspace.deployments.statusLabelRunning')}</Badge>
+  if (status === 'stale') return <Badge tone="warn">{t('workspace.deployments.statusLabelStale')}</Badge>
+  if (status === 'inaccessible') return <Badge tone="bad">{t('workspace.deployments.statusLabelInaccessible')}</Badge>
+  return <Badge tone="info">{t('workspace.deployments.statusLabelDetected')}</Badge>
 }
 
 function HostStatusIcon({ state }: { state?: HostInventoryState }) {
@@ -148,53 +153,57 @@ function projectNeedle(project: WorkspaceInventoryProject) {
   return normalizeSignal(project.name || project.path.split('/').filter(Boolean).at(-1) || project.kind)
 }
 
-export function getProjectDeploymentSignals(project: WorkspaceInventoryProject, inventory: WorkspaceInventory) {
+export function getProjectDeploymentSignals(project: WorkspaceInventoryProject, inventory: WorkspaceInventory, t?: TFunction) {
   const needle = projectNeedle(project)
   const pathParts = project.path.split('/').filter(Boolean).map(normalizeSignal)
   const aliases = new Set([needle, ...pathParts.slice(-2)])
   const signals: string[] = []
+  const tr = t ?? translate
 
   inventory.containers.forEach((container) => {
     const haystack = normalizeSignal(`${container.name} ${container.image} ${container.ports}`)
     if ([...aliases].some((alias) => alias && haystack.includes(alias))) {
-      signals.push(`Docker: ${container.name} · ${container.status || 'detected'}`)
+      signals.push(tr('workspace.deployments.signal.docker', {
+        container: container.name,
+        status: container.status || tr('workspace.deployments.signal.detected'),
+      }))
     }
   })
 
   inventory.pm2.forEach((process) => {
     const raw = normalizeSignal(process.raw)
     if ([...aliases].some((alias) => alias && raw.includes(alias))) {
-      signals.push(`PM2: ${process.raw}`)
+      signals.push(tr('workspace.deployments.signal.pm2', { raw: process.raw }))
     }
   })
 
   const activeReverseProxy = inventory.services.find((service) => (
     ['nginx', 'caddy', 'apache2', 'httpd'].includes(service.name) && service.active === 'active'
   ))
-  if (activeReverseProxy) signals.push(`${activeReverseProxy.name}: active`)
+  if (activeReverseProxy) signals.push(tr('workspace.deployments.signal.reverseProxy', { service: activeReverseProxy.name, status: tr('workspace.deployments.signal.running') }))
 
   return signals
 }
 
-function getProjectStatus(project: WorkspaceInventoryProject, inventory: WorkspaceInventory, updatedAt: number): DeploymentStatus {
+function getProjectStatus(project: WorkspaceInventoryProject, inventory: WorkspaceInventory, updatedAt: number, t?: TFunction): DeploymentStatus {
   if (Date.now() - updatedAt > STALE_AFTER_MS) return 'stale'
-  const signals = getProjectDeploymentSignals(project, inventory)
-  if (signals.some((signal) => /up|online|active/i.test(signal))) return 'running'
+  const signals = getProjectDeploymentSignals(project, inventory, t)
+  if (signals.some((signal) => /up|online|active|运行中|正在|已启动/i.test(signal))) return 'running'
   return 'detected'
 }
 
-export function buildProjectDeploymentRows(hosts: HostProfile[], cache: WorkspaceInventoryCache): ProjectDeploymentRow[] {
+export function buildProjectDeploymentRows(hosts: HostProfile[], cache: WorkspaceInventoryCache, t?: TFunction): ProjectDeploymentRow[] {
   return hosts.flatMap((host) => {
     const entry = cache[hostKey(host)]
     if (!entry?.inventory) return []
     return entry.inventory.projects.map((project) => {
-      const signals = getProjectDeploymentSignals(project, entry.inventory)
+      const signals = getProjectDeploymentSignals(project, entry.inventory, t)
       return {
         id: `${hostKey(host)}:${project.path}:${project.kind}`,
         host,
         inventory: entry.inventory,
         project,
-        status: getProjectStatus(project, entry.inventory, entry.updatedAt),
+        status: getProjectStatus(project, entry.inventory, entry.updatedAt, t),
         signals,
         updatedAt: entry.updatedAt,
       }
@@ -211,12 +220,16 @@ export function ProjectDeploymentsPanel({
   hosts,
   resolveAuthSecret,
   onOpenTerminal,
+  preheader,
+  hideHeader = false,
+  hideHostList = false,
 }: ProjectDeploymentsPanelProps) {
+  const { t } = useT()
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | DeploymentViewStatus>('all')
   const [selectedKey, setSelectedKey] = useState(() => {
     const selectedHost = selectedHostId ? hosts.find((host) => host.id === selectedHostId) : null
-    return selectedHost ? hostKey(selectedHost) : 'all'
+    return selectedHost ? hostKey(selectedHost) : hideHostList && hosts[0] ? hostKey(hosts[0]) : 'all'
   })
   const sharedStates = useWorkspaceInventoryStates()
   const [states, setStates] = useState<Record<string, HostInventoryState>>(() => {
@@ -236,7 +249,7 @@ export function ProjectDeploymentsPanel({
     }, {})
   }, [states])
 
-  const deploymentRows = useMemo(() => buildProjectDeploymentRows(hosts, cache), [cache, hosts])
+  const deploymentRows = useMemo(() => buildProjectDeploymentRows(hosts, cache, t), [cache, hosts, t])
   const deploymentViewRows = useMemo(() => {
     return deploymentRows.map((row) => ({
       ...row,
@@ -358,170 +371,198 @@ export function ProjectDeploymentsPanel({
   }, [hosts])
 
   useEffect(() => {
-    if (!selectedHostId || selectedKey !== 'all') return
-    const selectedHost = hosts.find((host) => host.id === selectedHostId)
-    if (selectedHost) setSelectedKey(hostKey(selectedHost))
-  }, [hosts, selectedHostId, selectedKey])
+    setSelectedKey((current) => {
+      const selectedHost = selectedHostId ? hosts.find((host) => host.id === selectedHostId) : null
+      const selectedHostKey = selectedHost ? hostKey(selectedHost) : null
+
+      if (hideHostList) return selectedHostKey ?? (hosts[0] ? hostKey(hosts[0]) : 'all')
+      if (selectedHostKey && current === 'all') return selectedHostKey
+      if (current !== 'all' && !hosts.some((host) => hostKey(host) === current)) return selectedHostKey ?? 'all'
+      return current
+    })
+  }, [hideHostList, hosts, selectedHostId])
+
+  const statusOptions = [
+    { key: 'all' as const, label: t('workspace.deployments.statusLabelAll') },
+    { key: 'running' as const, label: t('workspace.deployments.statusLabelRunning') },
+    { key: 'detected' as const, label: t('workspace.deployments.statusLabelDetected') },
+    { key: 'stale' as const, label: t('workspace.deployments.statusLabelStale') },
+    { key: 'inaccessible' as const, label: t('workspace.deployments.statusLabelInaccessible') },
+  ]
+  const deploymentSearchControl = (
+    <div className="relative min-w-0 flex-1">
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
+      <input
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder={t('workspace.deployments.searchPlaceholder')}
+        className="h-10 w-full rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 pr-3 text-sm text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
+      />
+    </div>
+  )
+  const scanDeploymentsButton = (
+    <button
+      type="button"
+      onClick={() => void scanHosts(selectedKey === 'all' ? hosts : hosts.filter((host) => hostKey(host) === selectedKey))}
+      disabled={scanningCount > 0}
+      className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-soft)] px-3 text-xs font-semibold text-[var(--workspace-accent-text)] transition-colors hover:bg-[var(--workspace-accent-muted)] disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {scanningCount > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+      {selectedKey === 'all' ? t('workspace.deployments.scanAll') : t('workspace.deployments.scanCurrent')}
+    </button>
+  )
+  const statusFilterControls = (
+    <div className="flex flex-wrap gap-2">
+      {statusOptions.map((status) => (
+        <button
+          key={status.key}
+          type="button"
+          onClick={() => setStatusFilter(status.key)}
+          className={cn(
+            'h-10 rounded-xl border px-3 text-xs font-semibold transition-colors',
+            statusFilter === status.key
+              ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]'
+              : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
+          )}
+        >
+          {status.label}
+        </button>
+      ))}
+    </div>
+  )
 
   if (hosts.length === 0) {
     return (
       <WorkspaceEmptyState
-        title="还没有可管理的 VPS"
-        description="先添加服务器。扫描一次后，部署项目面板会从本地快照快速恢复每台服务器的部署状态。"
+        title={t('workspace.deployments.emptyTitle')}
+        description={t('workspace.deployments.emptyDescription')}
       />
     )
   }
 
   return (
-    <div data-testid="project-deployments-panel" className="flex min-h-[34rem] min-w-0 flex-col text-[var(--workspace-text)]">
-      <WorkspacePanelHeader
-        className="border-b border-[color:var(--workspace-border-strong)]"
-        eyebrowClassName="text-[var(--workspace-text-subtle)]"
-        titleClassName="text-[var(--workspace-text-strong)]"
-        descriptionClassName="text-[var(--workspace-text-muted)]"
-        noteClassName="text-[var(--workspace-text-subtle)]"
-        eyebrow={<><GitBranch className="h-3.5 w-3.5" />Deployed Projects</>}
-        title="部署项目"
-        description="按服务器聚合疑似项目、Docker/PM2/systemd 信号和资源余量，用来快速确认部署项目位于哪台 VPS 上。"
-        note={loadingCache ? '正在读取本地快照...' : `已载入 ${scannedHostCount} 台 VPS 的本地快照`}
-        actions={
-          <button
-            type="button"
-            onClick={() => void scanHosts(selectedKey === 'all' ? hosts : hosts.filter((host) => hostKey(host) === selectedKey))}
-            disabled={scanningCount > 0}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[rgba(19,127,236,0.18)] px-4 text-sm font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[rgba(19,127,236,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {scanningCount > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            {selectedKey === 'all' ? '扫描全部 VPS' : '扫描当前 VPS'}
-          </button>
-        }
-        contentClassName="space-y-4"
-      >
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-            <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><ServerCog className="h-4 w-4" />已扫描主机</div>
-            <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{scannedHostCount}/{hosts.length}</div>
-          </div>
-          <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-            <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><FolderGit2 className="h-4 w-4" />疑似部署</div>
-            <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{deploymentRows.length}</div>
-          </div>
-          <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-            <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><Boxes className="h-4 w-4" />运行信号</div>
-            <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{runningCount}</div>
-          </div>
-          <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.46)] p-4">
-            <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]"><Database className="h-4 w-4" />活跃服务</div>
-            <div className="mt-2 text-2xl font-semibold text-[var(--workspace-text-strong)]">{activeServiceCount}</div>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索项目、路径、服务器、运行信号..."
-              className="h-10 w-full rounded-xl border border-[color:var(--workspace-border-soft)] bg-[rgba(8,15,22,0.72)] pl-9 pr-3 text-sm text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {(['all', 'running', 'detected', 'stale', 'inaccessible'] as const).map((status) => (
-              <button
-                key={status}
-                type="button"
-                onClick={() => setStatusFilter(status)}
-                className={cn(
-                  'h-10 rounded-xl border px-3 text-xs font-semibold transition-colors',
-                  statusFilter === status
-                    ? 'border-[color:var(--workspace-border-glow)] bg-[rgba(19,127,236,0.18)] text-[var(--workspace-text-strong)]'
-                    : 'border-[color:var(--workspace-border-soft)] bg-[rgba(24,35,48,0.62)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
-                )}
-              >
-                {status === 'all' ? '全部' : status === 'running' ? '运行中' : status === 'detected' ? '已发现' : status === 'stale' ? '缓存过期' : '无法访问'}
-              </button>
-            ))}
-          </div>
-        </div>
-      </WorkspacePanelHeader>
-
-      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(20rem,0.42fr)_minmax(0,1fr)]">
-        <WorkspaceServerList
-          hosts={hosts}
-          totalCount={hosts.length}
-          selectedKey={selectedKey}
-          getHostKey={hostKey}
-          onSelect={(key) => setSelectedKey(key)}
-          allOption={{
-            key: 'all',
-            title: '全部服务器',
-            subtitle: `${deploymentRows.length} 个疑似部署`,
-            badge: { label: hosts.length },
-          }}
-          renderStatusIcon={(host) => <HostStatusIcon state={states[hostKey(host)]} />}
-          getStatusBadge={(host) => {
-            const state = states[hostKey(host)]
-            if (state?.status === 'error') return { label: '无法访问', tone: 'bad' }
-            return undefined
-          }}
-          getPrimaryBadge={(host) => {
-            const state = states[hostKey(host)]
-            const rows = deploymentRows.filter((row) => hostKey(row.host) === hostKey(host))
-            if (state?.status === 'error') return undefined
-            return {
-              label: `${rows.length} 项目`,
-              tone: rows.some((row) => row.status === 'running') ? 'good' : rows.length > 0 ? 'info' : 'default',
-            }
-          }}
-          renderRegionLine={(host) => <HostNetworkLine network={networkByAddress[host.address]} />}
-          getSearchData={(host) => {
-            const key = hostKey(host)
-            const state = states[key]
-            const rows = deploymentRows.filter((row) => hostKey(row.host) === key)
-            const network = networkByAddress[host.address]
-            return {
-              network: [network?.scopeLabel, network?.versionLabel, network?.resolvedLocationLabel],
-              system: [state?.inventory?.resource.os, state?.inventory?.resource.kernel],
-              tools: getInstalledToolSearchValues(state?.inventory),
-              projects: rows.flatMap((row) => [
-                row.project.name,
-                row.project.kind,
-                row.project.path,
-                ...row.signals,
-              ]),
-            }
-          }}
-          getResourceMetrics={(host) => {
-            const state = states[hostKey(host)]
-            if (!state?.inventory) return undefined
-            return {
-              cpuPercent: state?.inventory?.resource.cpuPercent,
-              memoryPercent: state?.inventory?.resource.memoryPercent,
-              diskPercent: state?.inventory?.resource.diskPercent,
-              cpuDetail: state?.inventory?.resource.uptime,
-              memoryDetail: state?.inventory?.resource.memoryText,
-              diskDetail: state?.inventory?.resource.diskText,
-            }
-          }}
-          renderFooter={(host) => {
-            const state = states[hostKey(host)]
-            return (
-              <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[var(--workspace-text-subtle)]">
-                <span>{formatAge(state?.updatedAt)}</span>
-                {state?.status === 'error' ? <span className="truncate text-red-200">无法访问</span> : <span>{state?.inventory?.resource.os || '版本待扫描'}</span>}
-              </div>
-            )
-          }}
-          onRowDoubleClick={onOpenTerminal}
+    <div data-testid="project-deployments-panel" data-selected-host-key={selectedKey} className="flex min-h-[34rem] min-w-0 flex-col text-[var(--workspace-text)]">
+      {!hideHeader && (
+        <WorkspaceResourceOverviewHeader
+          preheader={preheader}
+          eyebrow={<><GitBranch className="h-3.5 w-3.5" />{t('workspace.deployments.eyebrow')}</>}
+          title={t('workspace.deployments.title')}
+          description={t('workspace.deployments.description')}
+          note={loadingCache ? t('workspace.deployments.loadingCache') : t('workspace.deployments.loadedCache', { count: scannedHostCount })}
+          actions={scanDeploymentsButton}
+          total={deploymentRows.length}
+          totalLabel={t('workspace.deployments.total')}
+          visibleCount={filteredRows.length}
+          visibleLabel={t('workspace.deployments.visible')}
+          search={deploymentSearchControl}
+          metrics={[
+            { key: 'hosts', icon: ServerCog, label: t('workspace.deployments.metricScannedHosts'), value: `${scannedHostCount}/${hosts.length}` },
+            { key: 'projects', icon: FolderGit2, label: t('workspace.deployments.metricProjects'), value: deploymentRows.length },
+            { key: 'signals', icon: Boxes, label: t('workspace.deployments.metricSignals'), value: runningCount },
+            { key: 'services', icon: Database, label: t('workspace.deployments.metricActiveServices'), value: activeServiceCount },
+          ]}
+          controls={statusFilterControls}
         />
+      )}
 
-        <section className="min-h-0 overflow-hidden rounded-xl border border-[color:var(--workspace-border-strong)] bg-[rgba(8,15,22,0.38)]">
-          <div className="grid grid-cols-[minmax(14rem,1.15fr)_minmax(10rem,0.8fr)_8rem_9rem] gap-3 border-b border-[color:var(--workspace-border-strong)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)]">
-            <span>项目</span>
-            <span>服务器</span>
-            <span>状态</span>
-            <span>资源</span>
+      {hideHeader && (
+        <div className="mb-4 flex flex-col gap-3 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-panel)] p-3">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            {deploymentSearchControl}
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">
+                {filteredRows.length} {t('workspace.deployments.visible')}
+              </span>
+              <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">
+                {scannedHostCount}/{hosts.length} {t('workspace.deployments.metricScannedHosts')}
+              </span>
+              {scanDeploymentsButton}
+            </div>
+          </div>
+          {statusFilterControls}
+        </div>
+      )}
+
+      <div className={cn('grid min-h-0 flex-1 gap-4', hideHostList ? 'xl:grid-cols-1' : 'xl:grid-cols-[minmax(20rem,0.42fr)_minmax(0,1fr)]')}>
+        {!hideHostList && (
+          <WorkspaceServerList
+            hosts={hosts}
+            totalCount={hosts.length}
+            selectedKey={selectedKey}
+            getHostKey={hostKey}
+            onSelect={(key) => setSelectedKey(key)}
+            allOption={{
+              key: 'all',
+              title: t('workspace.deployments.allServers'),
+              subtitle: t('workspace.deployments.deploymentsCount', { count: deploymentRows.length }),
+              badge: { label: hosts.length },
+            }}
+            renderStatusIcon={(host) => <HostStatusIcon state={states[hostKey(host)]} />}
+            getStatusBadge={(host) => {
+              const state = states[hostKey(host)]
+              if (state?.status === 'error') return { label: t('workspace.deployments.statusLabelInaccessible'), tone: 'bad' }
+              return undefined
+            }}
+            getPrimaryBadge={(host) => {
+              const state = states[hostKey(host)]
+              const rows = deploymentRows.filter((row) => hostKey(row.host) === hostKey(host))
+              if (state?.status === 'error') return undefined
+              return {
+                label: t('workspace.deployments.projectsCount', { count: rows.length }),
+                tone: rows.some((row) => row.status === 'running') ? 'good' : rows.length > 0 ? 'info' : 'default',
+              }
+            }}
+            renderRegionLine={(host) => <HostNetworkLine network={networkByAddress[host.address]} />}
+            getSearchData={(host) => {
+              const key = hostKey(host)
+              const state = states[key]
+              const rows = deploymentRows.filter((row) => hostKey(row.host) === key)
+              const network = networkByAddress[host.address]
+              return {
+                network: [network?.scopeLabel, network?.versionLabel, network?.resolvedLocationLabel],
+                system: [state?.inventory?.resource.os, state?.inventory?.resource.kernel],
+                tools: getInstalledToolSearchValues(state?.inventory),
+                projects: rows.flatMap((row) => [
+                  row.project.name,
+                  row.project.kind,
+                  row.project.path,
+                  ...row.signals,
+                ]),
+              }
+            }}
+            getResourceMetrics={(host) => {
+              const state = states[hostKey(host)]
+              if (!state?.inventory) return undefined
+              return {
+                cpuPercent: state?.inventory?.resource.cpuPercent,
+                memoryPercent: state?.inventory?.resource.memoryPercent,
+                diskPercent: state?.inventory?.resource.diskPercent,
+                cpuDetail: state?.inventory?.resource.uptime,
+                memoryDetail: state?.inventory?.resource.memoryText,
+                diskDetail: state?.inventory?.resource.diskText,
+              }
+            }}
+            renderFooter={(host) => {
+              const state = states[hostKey(host)]
+              return (
+                <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[var(--workspace-text-subtle)]">
+                  <span>{formatAge(state?.updatedAt, t)}</span>
+                  {state?.status === 'error'
+                    ? <span className="truncate text-red-200">{t('workspace.deployments.statusLabelInaccessible')}</span>
+                    : <span>{state?.inventory?.resource.os || t('workspace.deployments.versionPending')}</span>}
+                </div>
+              )
+            }}
+            onRowDoubleClick={onOpenTerminal}
+          />
+        )}
+
+        <section className="min-h-0 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]">
+          <div className="grid grid-cols-[minmax(14rem,1.15fr)_minmax(10rem,0.8fr)_8rem_9rem] gap-3 border-b border-[color:var(--workspace-border-soft)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)]">
+            <span>{t('workspace.deployments.projectColumn')}</span>
+            <span>{t('workspace.deployments.serverColumn')}</span>
+            <span>{t('workspace.deployments.statusColumn')}</span>
+            <span>{t('workspace.deployments.resourceColumn')}</span>
           </div>
           <div className="max-h-[58vh] overflow-auto">
             {filteredRows.map((row) => {
@@ -544,26 +585,26 @@ export function ProjectDeploymentsPanel({
                   <div className="mt-1 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{row.project.path}</div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {row.signals.slice(0, 3).map((signal) => <Badge key={signal} tone="default">{signal}</Badge>)}
-                    {row.signals.length === 0 && <span className="text-[11px] text-[var(--workspace-text-subtle)]">未匹配到进程信号</span>}
+                    {row.signals.length === 0 && <span className="text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.deployments.noProcessSignals')}</span>}
                   </div>
                 </div>
                 <div className="min-w-0 self-center">
                   <div className="flex min-w-0 items-center gap-2">
                     <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{row.host.name}</div>
-                    {rowHostState?.status === 'error' && <Badge tone="bad">无法访问</Badge>}
+                    {rowHostState?.status === 'error' && <Badge tone="bad">{t('workspace.deployments.statusLabelInaccessible')}</Badge>}
                   </div>
                   <div className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">{row.host.username}@{row.host.address}</div>
                   <HostNetworkLine network={rowNetwork} />
-                  {row.inventory.resource.os && <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">版本 {row.inventory.resource.os}</div>}
-                  <div className="mt-1 text-[11px] text-[var(--workspace-text-subtle)]">快照 {formatAge(row.updatedAt)}</div>
+                  {row.inventory.resource.os && <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.deployments.version', { version: row.inventory.resource.os })}</div>}
+                  <div className="mt-1 text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.deployments.snapshotAge', { age: formatAge(row.updatedAt, t) })}</div>
                 </div>
                 <div className="self-center">
-                  <StatusBadge status={row.displayStatus} />
+                  <StatusBadge status={row.displayStatus} t={t} />
                 </div>
                 <div className="self-center space-y-1 font-mono text-[11px] text-[var(--workspace-text)]">
-                  <div className="flex items-center gap-1.5"><Cpu className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />{formatPercent(row.inventory.resource.cpuPercent)}</div>
-                  <div className="flex items-center gap-1.5"><MemoryStick className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />{formatPercent(row.inventory.resource.memoryPercent)}</div>
-                  <div className="flex items-center gap-1.5"><HardDrive className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />{formatPercent(row.inventory.resource.diskPercent)}</div>
+                  <div className="flex items-center gap-1.5"><Cpu className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />{formatPercent(row.inventory.resource.cpuPercent, t)}</div>
+                  <div className="flex items-center gap-1.5"><MemoryStick className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />{formatPercent(row.inventory.resource.memoryPercent, t)}</div>
+                  <div className="flex items-center gap-1.5"><HardDrive className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />{formatPercent(row.inventory.resource.diskPercent, t)}</div>
                 </div>
                 </div>
               )
@@ -572,10 +613,10 @@ export function ProjectDeploymentsPanel({
               <div className="flex min-h-[20rem] items-center justify-center px-6 text-center">
                 <div>
                   <div className="text-sm font-semibold text-[var(--workspace-text-strong)]">
-                    {deploymentRows.length === 0 ? '还没有部署项目快照' : '没有匹配的部署项目'}
+                    {deploymentRows.length === 0 ? t('workspace.deployments.noSnapshotTitle') : t('workspace.deployments.noMatchTitle')}
                   </div>
                   <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">
-                    {deploymentRows.length === 0 ? '扫描 VPS 后会在本地记录项目路径、服务和运行信号。' : '调整搜索词、状态或服务器筛选。'}
+                    {deploymentRows.length === 0 ? t('workspace.deployments.noSnapshotDescription') : t('workspace.deployments.noMatchDescription')}
                   </div>
                   {deploymentRows.length === 0 && (
                     <button
@@ -585,7 +626,7 @@ export function ProjectDeploymentsPanel({
                       className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[rgba(19,127,236,0.18)] px-4 text-sm font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[rgba(19,127,236,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {scanningCount > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                      扫描全部 VPS
+                      {t('workspace.deployments.scanAll')}
                     </button>
                   )}
                 </div>

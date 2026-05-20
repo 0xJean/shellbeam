@@ -8,7 +8,7 @@ export type { SessionTab }
 export interface SessionBrowserTabMeta {
   tabCount: number
   routeScope: 'local' | 'remote' | 'pending'
-  routeLabel: 'Local' | 'Server' | 'Pending'
+  routeLabel: string
   detail: string
 }
 
@@ -49,15 +49,15 @@ export function PcSessionTabBar({
   const { t } = useT()
 
   return (
-    <div className="sticky top-0 z-50 hidden h-12 shrink-0 items-end gap-0 overflow-x-auto border-b border-border/50 bg-background/95 px-1 shadow-sm backdrop-blur-sm scrollbar-none md:flex md:h-10">
+    <div className="sticky top-0 z-50 hidden h-12 shrink-0 items-end gap-0 overflow-x-auto border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-1 shadow-[var(--workspace-shadow-card)] backdrop-blur-sm scrollbar-none md:flex md:h-10">
       <button
         type="button"
         onClick={onGoToDashboard}
-        className={cn(
-          'flex h-10 shrink-0 items-center gap-1.5 rounded-t-md px-3 text-xs font-medium transition-colors md:h-8',
-          isDashboard
-            ? 'bg-primary/10 text-primary'
-            : 'bg-transparent text-muted-foreground hover:text-foreground'
+          className={cn(
+            'flex h-10 shrink-0 items-center gap-1.5 rounded-t-md px-3 text-xs font-medium transition-colors md:h-8',
+            isDashboard
+            ? 'bg-[var(--workspace-nav-active-bg)] text-workspace-nav-active'
+            : 'bg-transparent text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]'
         )}
         title={t('tab.dashboard')}
       >
@@ -69,7 +69,7 @@ export function PcSessionTabBar({
         <button
           type="button"
           onClick={onOpenLocalTerminal}
-          className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-t-md px-2.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground md:h-8"
+          className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-t-md px-2.5 text-workspace-nav transition-colors hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)] md:h-8"
           title={t('tab.localTerminal')}
         >
           <SquareTerminal className="h-4 w-4" />
@@ -84,8 +84,8 @@ export function PcSessionTabBar({
             className={cn(
               'group flex h-10 shrink-0 items-center gap-1.5 rounded-t-md pl-3 pr-1 text-xs font-medium transition-colors md:h-8',
               isActive
-                ? 'bg-[#1a1b26] text-slate-200'
-                : 'bg-transparent text-muted-foreground hover:text-foreground'
+                ? 'bg-[var(--workspace-surface-950)] text-[var(--workspace-text-strong)]'
+                : 'bg-transparent text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]'
             )}
           >
             <button
@@ -96,9 +96,9 @@ export function PcSessionTabBar({
               {session.status === 'connecting' ? (
                 <RefreshCw className="h-3 w-3 animate-spin" />
               ) : (
-                <span className={cn(
+              <span className={cn(
                   'h-2 w-2 shrink-0 rounded-full',
-                  session.status === 'connected' ? 'bg-emerald-500' : session.status === 'error' ? 'bg-red-500' : 'bg-slate-600'
+                  session.status === 'connected' ? 'bg-[color:var(--workspace-status-good)]' : session.status === 'error' ? 'bg-[color:var(--workspace-status-bad)]' : 'bg-[color:var(--workspace-text-muted)]'
                 )} />
               )}
               <span className="max-w-[100px] truncate sm:max-w-[140px]">{session.hostName || session.hostAddress}</span>
@@ -106,7 +106,7 @@ export function PcSessionTabBar({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onCloseSession(session.sessionId) }}
-              className="flex h-6 w-6 items-center justify-center rounded opacity-100 transition-all hover:bg-muted sm:opacity-0 sm:group-hover:opacity-100"
+              className="flex h-6 w-6 items-center justify-center rounded opacity-100 transition-all hover:bg-[var(--workspace-surface-700)] sm:opacity-0 sm:group-hover:opacity-100"
               style={isActive ? { opacity: 1 } : undefined}
               title={t('tab.close')}
             >
@@ -116,12 +116,12 @@ export function PcSessionTabBar({
         )
       })}
 
-      <div className="ml-1 flex items-end gap-0.5 border-l border-border/30 pl-1">
+      <div className="ml-1 flex items-end gap-0.5 border-l border-[color:var(--workspace-border-soft)] pl-1">
         {onNewConnection && (
           <button
-            type="button"
-            onClick={onNewConnection}
-            className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-t-md px-2.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground md:h-8"
+          type="button"
+          onClick={onNewConnection}
+            className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-t-md px-2.5 text-workspace-nav transition-colors hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)] md:h-8"
             title={t('tab.newSsh')}
           >
             <Plus className="h-4 w-4" />
@@ -134,7 +134,7 @@ export function PcSessionTabBar({
             onClick={onToggleSplit}
             className={cn(
               'flex h-10 shrink-0 items-center justify-center rounded-t-md px-2.5 transition-colors md:h-8',
-              isSplit ? 'text-primary' : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+              isSplit ? 'text-workspace-nav-active' : 'text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]',
             )}
             title={isSplit ? t('tab.exitSplit') : t('tab.splitTerminal')}
           >

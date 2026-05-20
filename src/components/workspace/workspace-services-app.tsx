@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
+import { useT } from '@/lib/i18n'
 import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 
@@ -50,6 +51,7 @@ export function WorkspaceServicesApp({
   hosts,
   resolveAuthSecret,
 }: WorkspaceServicesAppProps) {
+  const { t } = useT()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [unsupported, setUnsupported] = useState(false)
@@ -69,7 +71,7 @@ export function WorkspaceServicesApp({
   )
 
   async function runRemoteCommand(command: string) {
-    if (!host) throw new Error('No host selected')
+    if (!host) throw new Error(t('workspace.services.noHostSelected'))
     return runWorkspaceRemoteCommand({
       host,
       resolveAuthSecret,
@@ -119,7 +121,7 @@ export function WorkspaceServicesApp({
         : `systemctl ${action} ${selectedService.name} && systemctl status ${selectedService.name} --no-pager`
       const result = await runRemoteCommand(command)
       const combined = [result.stdout, result.stderr].filter(Boolean).join('\n')
-      setActionOutput(combined || `${action} completed`)
+      setActionOutput(combined || t('workspace.services.actionCompleted', { action: t(`workspace.services.action.${action}`) }))
       await loadServices()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -136,8 +138,8 @@ export function WorkspaceServicesApp({
   if (!host) {
     return (
       <WorkspaceEmptyState
-        title="Services"
-        description="Connect a remote host to inspect service health here."
+        title={t('workspace.app.services')}
+        description={t('workspace.services.emptyDescription')}
       />
     )
   }
@@ -145,10 +147,10 @@ export function WorkspaceServicesApp({
   return (
     <div data-testid="workspace-services-app" className="space-y-4">
       <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
-        <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">Services</div>
-        <h2 className="mt-2 text-2xl font-semibold tracking-tight">Service Control</h2>
+        <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">{t('workspace.app.services')}</div>
+        <h2 className="mt-2 text-2xl font-semibold tracking-tight">{t('workspace.services.title')}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Inspect systemd service health, then run restart or status checks without leaving the workspace.
+          {t('workspace.services.description')}
         </p>
       </div>
 
@@ -159,14 +161,14 @@ export function WorkspaceServicesApp({
           onClick={() => void loadServices()}
           className="rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium hover:bg-muted/40"
         >
-          {loading ? 'Loading…' : 'Reload Services'}
+          {loading ? t('workspace.services.loading') : t('workspace.services.reload')}
         </button>
       </div>
 
       {unsupported ? (
         <WorkspaceEmptyState
-          title="Systemd Not Available"
-          description="Systemd services are not available on this host. Open the terminal to inspect init scripts or container-managed processes."
+          title={t('workspace.services.unsupportedTitle')}
+          description={t('workspace.services.unsupportedDescription')}
         />
       ) : error ? (
         <div className="rounded-2xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-300">
@@ -176,16 +178,16 @@ export function WorkspaceServicesApp({
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(20rem,0.8fr)]">
           <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
             <div className="grid grid-cols-[minmax(0,1.4fr)_100px_100px_100px] gap-3 border-b border-border/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              <div>Service</div>
-              <div>Load</div>
-              <div>Active</div>
-              <div>Sub</div>
+              <div>{t('workspace.services.column.service')}</div>
+              <div>{t('workspace.services.column.load')}</div>
+              <div>{t('workspace.services.column.active')}</div>
+              <div>{t('workspace.services.column.sub')}</div>
             </div>
             <div data-testid="workspace-services-list" className="max-h-[28rem] overflow-auto">
               {loading ? (
-                <div className="px-4 py-6 text-sm text-muted-foreground">Loading services…</div>
+                <div className="px-4 py-6 text-sm text-muted-foreground">{t('workspace.services.loadingServices')}</div>
               ) : rows.length === 0 ? (
-                <div className="px-4 py-6 text-sm text-muted-foreground">No systemd services found.</div>
+                <div className="px-4 py-6 text-sm text-muted-foreground">{t('workspace.services.emptyList')}</div>
               ) : (
                 rows.map((row) => {
                   const isSelected = row.name === selectedService?.name
@@ -200,7 +202,7 @@ export function WorkspaceServicesApp({
                     >
                       <div className="min-w-0">
                         <div className="truncate font-medium">{row.name}</div>
-                        <div className="truncate text-xs text-muted-foreground">{row.description || 'No description'}</div>
+                        <div className="truncate text-xs text-muted-foreground">{row.description || t('workspace.services.noDescription')}</div>
                       </div>
                       <div>{row.load}</div>
                       <div>
@@ -218,9 +220,9 @@ export function WorkspaceServicesApp({
 
           <div className="space-y-4 rounded-xl border border-border/60 bg-card p-5">
             <div>
-              <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Selected Service</div>
-              <div className="mt-2 text-xl font-semibold">{selectedService?.name ?? 'Choose a service'}</div>
-              <div className="mt-1 text-sm text-muted-foreground">{selectedService?.description || 'Use the list to inspect and operate on services.'}</div>
+              <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{t('workspace.services.selectedService')}</div>
+              <div className="mt-2 text-xl font-semibold">{selectedService?.name ?? t('workspace.services.chooseService')}</div>
+              <div className="mt-1 text-sm text-muted-foreground">{selectedService?.description || t('workspace.services.selectHint')}</div>
             </div>
 
             {selectedService && (
@@ -230,36 +232,36 @@ export function WorkspaceServicesApp({
                   onClick={() => void runServiceAction('status')}
                   className="rounded-2xl border border-border/60 px-4 py-3 text-left text-sm font-medium hover:bg-muted/40"
                 >
-                  {actionLoading === 'status' ? 'Running…' : `Status ${selectedService.name}`}
+                  {actionLoading === 'status' ? t('workspace.services.running') : t('workspace.services.actionLabel.status', { service: selectedService.name })}
                 </button>
                 <button
                   type="button"
                   onClick={() => void runServiceAction('restart')}
                   className="rounded-2xl border border-border/60 px-4 py-3 text-left text-sm font-medium hover:bg-muted/40"
                 >
-                  {actionLoading === 'restart' ? 'Running…' : `Restart ${selectedService.name}`}
+                  {actionLoading === 'restart' ? t('workspace.services.running') : t('workspace.services.actionLabel.restart', { service: selectedService.name })}
                 </button>
                 <button
                   type="button"
                   onClick={() => void runServiceAction('start')}
                   className="rounded-2xl border border-border/60 px-4 py-3 text-left text-sm font-medium hover:bg-muted/40"
                 >
-                  {actionLoading === 'start' ? 'Running…' : `Start ${selectedService.name}`}
+                  {actionLoading === 'start' ? t('workspace.services.running') : t('workspace.services.actionLabel.start', { service: selectedService.name })}
                 </button>
                 <button
                   type="button"
                   onClick={() => void runServiceAction('stop')}
                   className="rounded-2xl border border-border/60 px-4 py-3 text-left text-sm font-medium hover:bg-muted/40"
                 >
-                  {actionLoading === 'stop' ? 'Running…' : `Stop ${selectedService.name}`}
+                  {actionLoading === 'stop' ? t('workspace.services.running') : t('workspace.services.actionLabel.stop', { service: selectedService.name })}
                 </button>
               </div>
             )}
 
             <div className="rounded-2xl border border-border/60 bg-background/70 p-4">
-              <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Terminal Output</div>
-              <pre data-testid="workspace-services-output" className="mt-3 max-h-[20rem] overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-200">
-                {actionOutput || 'Choose a service action to inspect status output.'}
+              <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{t('workspace.services.terminalOutput')}</div>
+              <pre data-testid="workspace-services-output" className="mt-3 max-h-[20rem] overflow-auto whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text)]">
+                {actionOutput || t('workspace.services.outputHint')}
               </pre>
             </div>
           </div>

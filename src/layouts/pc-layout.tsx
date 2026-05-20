@@ -37,7 +37,7 @@ type BrowserSwitcherEntry = {
   title: string
   url: string
   routeScope: 'local' | 'remote' | 'pending'
-  routeLabel: 'Local' | 'Server' | 'Pending'
+  routeLabel: string
   routeDetail: string
   isActive: boolean
 }
@@ -140,6 +140,12 @@ export function PcLayout() {
   const vault = useVault()
   const hostsCtx = useHosts()
   const sessions = useSessions()
+  const getBrowserScopeLabel = useCallback((scope: BrowserOverviewScope) => {
+    if (scope === 'all') return t('workspace.common.all')
+    if (scope === 'remote') return t('browser.route.server')
+    if (scope === 'pending') return t('browser.route.pending')
+    return t('browser.route.local')
+  }, [t])
   const resolveVaultAuthSecret = vault.resolveAuthSecret
   const resolveWorkspaceAuthSecret = useCallback(async (host: HostProfile) => {
     return (
@@ -385,16 +391,21 @@ export function PcLayout() {
         proxyUrl: activeTab?.proxyUrl ?? browserState.proxyUrl,
       })
       if (!routeIndicator) return acc
+      const localizedRouteIndicator = {
+        ...routeIndicator,
+        label: t(routeIndicator.labelKey),
+        detail: t(routeIndicator.detailKey),
+      }
 
       acc[tab.sessionId] = {
         tabCount: totalTabs,
-        routeScope: routeIndicator.scope,
-        routeLabel: routeIndicator.label,
-        detail: routeIndicator.detail,
+        routeScope: localizedRouteIndicator.scope,
+        routeLabel: localizedRouteIndicator.label,
+        detail: localizedRouteIndicator.detail,
       }
       return acc
     }, {})
-  }, [sessions.browserBySession, sessions.interactiveSessions, sessions.pcSessionTabs])
+  }, [sessions.browserBySession, sessions.interactiveSessions, sessions.pcSessionTabs, t])
   const resumableBrowserSessions = useMemo(() => {
     return sessions.pcSessionTabs.flatMap((tab) => {
       const browserState = sessions.browserBySession[tab.sessionId]
@@ -407,12 +418,8 @@ export function PcLayout() {
       )
       const browserTabs = tabs
         .filter((item) => item.source || item.addressInput?.trim())
-        .map((item) => ({
-          id: item.id,
-          title: item.title || (item.source ? getBrowserSourceTitle(item.source) : item.addressInput || 'New Tab'),
-          url: item.currentUrl || (item.source?.kind === 'url' ? item.source.url : item.addressInput || ''),
-          isActive: item.id === browserState.activeTabId,
-          routeIndicator: getBrowserTabRouteIndicator({
+        .map((item) => {
+          const routeIndicator = getBrowserTabRouteIndicator({
             source: item.source,
             requestedRouteMode: browserState.routeMode ?? 'auto',
             effectiveRouteMode: resolveBrowserRouteMode(browserState.routeMode ?? 'auto', hasRemoteSession),
@@ -420,13 +427,26 @@ export function PcLayout() {
             isActiveTab: item.id === browserState.activeTabId,
             resolvedUrl: item.resolvedUrl,
             proxyUrl: item.proxyUrl,
-          }),
-        }))
+          })
+          return {
+            id: item.id,
+            title: item.title || (item.source ? getBrowserSourceTitle(item.source) : item.addressInput || t('browser.tab.newTitle')),
+            url: item.currentUrl || (item.source?.kind === 'url' ? item.source.url : item.addressInput || ''),
+            isActive: item.id === browserState.activeTabId,
+            routeIndicator: routeIndicator
+              ? {
+                  ...routeIndicator,
+                  label: t(routeIndicator.labelKey),
+                  detail: t(routeIndicator.detailKey),
+                }
+              : null,
+          }
+        })
       const hasUsefulTabs = tabs.some((item) => item.source || item.addressInput?.trim())
       const hasLegacyState = Boolean(browserState.source || browserState.addressInput?.trim())
       if (!hasUsefulTabs && !hasLegacyState) return []
 
-      const previewTitle = activeTab?.title || activeTab?.currentUrl || activeTab?.addressInput || browserState.title || browserState.currentUrl || browserState.addressInput || 'Resume browser'
+      const previewTitle = activeTab?.title || activeTab?.currentUrl || activeTab?.addressInput || browserState.title || browserState.currentUrl || browserState.addressInput || t('browser.resume.fallbackTitle')
       const activeUrl = activeTab?.currentUrl || (activeTab?.source?.kind === 'url' ? activeTab.source.url : '') || browserState.currentUrl || ''
       return [{
         sessionId: tab.sessionId,
@@ -438,7 +458,7 @@ export function PcLayout() {
         tabs: browserTabs,
       }]
     })
-  }, [sessions.browserBySession, sessions.interactiveSessions, sessions.pcSessionTabs])
+  }, [sessions.browserBySession, sessions.interactiveSessions, sessions.pcSessionTabs, t])
   const browserOverviewCounts = useMemo(() => {
     const counts: Record<BrowserOverviewScope, { sessions: number; tabs: number }> = {
       all: { sessions: resumableBrowserSessions.length, tabs: 0 },
@@ -510,8 +530,8 @@ export function PcLayout() {
       title: tab.title,
       url: tab.url,
       routeScope: tab.routeIndicator?.scope ?? 'local',
-      routeLabel: tab.routeIndicator?.label ?? 'Local',
-      routeDetail: tab.routeIndicator?.detail ?? 'Requests originate from this device',
+      routeLabel: tab.routeIndicator?.label ?? t('browser.route.local'),
+      routeDetail: tab.routeIndicator?.detail ?? t('browser.route.localOrigin'),
       isActive: tab.isActive,
     })))
     const recentRank = new Map(browserSwitcherRecentTabIds.map((id, index) => [id, index]))
@@ -527,7 +547,7 @@ export function PcLayout() {
       if (left.isActive !== right.isActive) return left.isActive ? -1 : 1
       return left.hostName.localeCompare(right.hostName) || left.title.localeCompare(right.title)
     })
-  }, [browserSwitcherRecentTabIds, resumableBrowserSessions])
+  }, [browserSwitcherRecentTabIds, resumableBrowserSessions, t])
   const filteredBrowserSwitcherEntries = useMemo(() => {
     const normalizedQuery = browserSwitcherQuery.trim().toLowerCase()
     if (!normalizedQuery) return browserSwitcherEntries
@@ -764,22 +784,26 @@ export function PcLayout() {
         <DialogContent className="md:max-w-md">
           <div className="space-y-4">
             <div className="space-y-2 text-center">
-              <div className="text-lg font-semibold text-foreground">Close Session?</div>
+              <div className="text-lg font-semibold text-foreground">{t('browser.sessionClose.title')}</div>
               <div className="text-sm text-muted-foreground">
                 {pendingCloseSession
-                  ? `${pendingCloseSession.hostName || pendingCloseSession.hostAddress} still has browser tabs. Closing this session will remove that browser context.`
+                  ? t('browser.sessionClose.description', {
+                      host: pendingCloseSession.hostName || pendingCloseSession.hostAddress,
+                    })
                   : ''}
               </div>
             </div>
             {pendingCloseSession && browserMetaBySession[pendingCloseSession.sessionId] && (
-              <div className="rounded-2xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-                <div className="font-medium text-foreground">{browserMetaBySession[pendingCloseSession.sessionId]!.tabCount} browser tab{browserMetaBySession[pendingCloseSession.sessionId]!.tabCount > 1 ? 's' : ''}</div>
+              <div className="rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-700)] px-4 py-3 text-sm text-[var(--workspace-text-muted)]">
+                <div className="font-medium text-[var(--workspace-text-strong)]">
+                  {t('browser.sessionClose.tabCount', { count: browserMetaBySession[pendingCloseSession.sessionId]!.tabCount })}
+                </div>
                 <div className="mt-1">{browserMetaBySession[pendingCloseSession.sessionId]!.detail}</div>
               </div>
             )}
             <div className="flex items-center gap-3">
               <Button variant="outline" className="flex-1" onClick={() => setPendingCloseSessionId(null)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button
                 className="flex-1"
@@ -788,7 +812,7 @@ export function PcLayout() {
                   setPendingCloseSessionId(null)
                 }}
               >
-                Close Session
+                {t('browser.sessionClose.confirm')}
               </Button>
             </div>
           </div>
@@ -830,9 +854,9 @@ export function PcLayout() {
             }}
           >
             <div className="space-y-1">
-              <div className="text-lg font-semibold text-foreground">Jump to Browser Tab</div>
+              <div className="text-lg font-semibold text-foreground">{t('browser.switcher.title')}</div>
               <div className="text-sm text-muted-foreground">
-                Search across all active browser tabs. Shortcut: Cmd/Ctrl + Shift + B
+                {t('browser.switcher.description')}
               </div>
             </div>
             <div className="relative">
@@ -841,8 +865,8 @@ export function PcLayout() {
                 ref={browserSwitcherInputRef}
                 value={browserSwitcherQuery}
                 onChange={(event) => setBrowserSwitcherQuery(event.target.value)}
-                placeholder="Search server, tab, url"
-                aria-label="Search browser switcher"
+                placeholder={t('browser.switcher.searchPlaceholder')}
+                aria-label={t('browser.switcher.searchLabel')}
                 className="h-11 rounded-2xl border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] pl-10 text-[var(--workspace-text)] placeholder:text-[var(--workspace-text-subtle)]"
               />
             </div>
@@ -863,7 +887,7 @@ export function PcLayout() {
                       type="button"
                       onClick={() => handleCommitBrowserSwitcherEntry(entry)}
                       className="flex min-w-0 flex-1 items-start gap-3 text-left"
-                      aria-label={`Switch to browser tab ${entry.title} on ${entry.hostName}`}
+                      aria-label={t('browser.switcher.switchToTab', { title: entry.title, host: entry.hostName })}
                     >
                       <div className={cn(
                         'mt-1 h-2.5 w-2.5 shrink-0 rounded-full',
@@ -878,7 +902,7 @@ export function PcLayout() {
                           <div className="truncate text-sm font-semibold text-[var(--workspace-text)]">{entry.title}</div>
                           {entry.isActive && (
                             <span className="shrink-0 rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
-                              Active
+                              {t('browser.tab.active')}
                             </span>
                           )}
                           <span className={cn(
@@ -909,8 +933,8 @@ export function PcLayout() {
                           handleCloseBrowserSwitcherTab(entry)
                         }}
                         className="flex h-8 w-8 items-center justify-center rounded-xl text-[var(--workspace-text-subtle)] transition-colors hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text)]"
-                        aria-label={`Close browser tab ${entry.title} on ${entry.hostName}`}
-                        title="Close tab"
+                        aria-label={t('browser.switcher.closeTab', { title: entry.title, host: entry.hostName })}
+                        title={t('browser.switcher.closeTabShort')}
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -921,8 +945,8 @@ export function PcLayout() {
                           handleClearBrowserSwitcherSession(entry.sessionId)
                         }}
                         className="flex h-8 w-8 items-center justify-center rounded-xl text-[var(--workspace-text-subtle)] transition-colors hover:bg-red-500/12 hover:text-red-200"
-                        aria-label={`Clear browser session for ${entry.hostName}`}
-                        title="Clear browser session"
+                        aria-label={t('browser.switcher.clearSession', { host: entry.hostName })}
+                        title={t('browser.switcher.clearSessionShort')}
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -931,8 +955,8 @@ export function PcLayout() {
                 ))
               ) : (
                 <div className="rounded-2xl border border-dashed border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/66 px-4 py-6 text-center">
-                  <div className="text-sm font-medium text-[var(--workspace-text)]">No browser tabs match this search</div>
-                  <div className="mt-1 text-xs text-[var(--workspace-text-subtle)]">Try a different server, page title, or URL.</div>
+                  <div className="text-sm font-medium text-[var(--workspace-text)]">{t('browser.switcher.noMatches')}</div>
+                  <div className="mt-1 text-xs text-[var(--workspace-text-subtle)]">{t('browser.switcher.noMatchesHint')}</div>
                 </div>
               )}
             </div>
@@ -981,7 +1005,8 @@ export function PcLayout() {
                     )}
                   >
                     {showConnectionPlaceholder ? (
-                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.08),_transparent_40%),linear-gradient(180deg,_rgba(2,6,23,0.98),_rgba(15,23,42,0.98))]">
+                      <div className="absolute inset-0 bg-workspace-desktop-wallpaper">
+                        <div className="pointer-events-none absolute inset-0 bg-workspace-desktop-overlay" />
                         <SessionConnectPlaceholder
                           hostName={tab.hostName}
                           hostAddress={tab.hostAddress}
@@ -1119,7 +1144,8 @@ export function PcLayout() {
                     className={cn('absolute inset-0', !isActive && 'pointer-events-none invisible')}
                   >
                     {showConnectionPlaceholder ? (
-                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.08),_transparent_40%),linear-gradient(180deg,_rgba(2,6,23,0.98),_rgba(15,23,42,0.98))]">
+                      <div className="absolute inset-0 bg-workspace-desktop-wallpaper">
+                        <div className="pointer-events-none absolute inset-0 bg-workspace-desktop-overlay" />
                         <SessionConnectPlaceholder
                           hostName={tab.hostName}
                           hostAddress={tab.hostAddress}
@@ -1225,7 +1251,7 @@ export function PcLayout() {
           )}
           {/* Mobile QuickConnect overlay */}
           {showQuickConnect && (
-            <div className="absolute inset-0 z-20 bg-background">
+            <div className="absolute inset-0 z-20 bg-[var(--workspace-surface-950)]">
               <QuickConnectPanel
                 hosts={hostsCtx.hosts}
                 onConnectHost={(hostId) => { setShowQuickConnect(false); void sessions.handleConnectHost(hostId) }}
@@ -1244,7 +1270,7 @@ export function PcLayout() {
             app.pcSidebarNav === 'terminal' && 'hidden',
           )}>
             <PcNavSidebar activeNav={app.pcSidebarNav} onNavChange={(nav) => { app.setPcSidebarNav(nav); setShowQuickConnect(false) }} />
-            <div className="mobile-safe-pb relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden" style={{ WebkitOverflowScrolling: 'touch' }}>
+            <div className="mobile-safe-pb relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-workspace-content" style={{ WebkitOverflowScrolling: 'touch' }}>
               {showQuickConnect ? (
                 <Suspense fallback={<DashboardSectionFallback />}>
                   <QuickConnectPanel
@@ -1257,24 +1283,29 @@ export function PcLayout() {
               <>
               {resumableBrowserSessions.length > 0 && (
                 <div className="p-6 pb-0">
-                  <section className="rounded-3xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)]/94 p-4 shadow-[0_20px_48px_rgba(15,23,42,0.18)]">
+                  <section className="rounded-3xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)]/94 p-4 shadow-[var(--workspace-shadow-overlay)]">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-subtle)]">Resume Browsers</div>
-                        <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">Jump back into active browser contexts without reopening the session workspace.</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-subtle)]">{t('browser.overview.title')}</div>
+                        <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">{t('browser.overview.description')}</div>
                       </div>
                       <div className="rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-1 text-[11px] font-semibold text-[var(--workspace-text-subtle)]">
-                        {filteredResumableBrowserSessions.length} sessions · {filteredBrowserOverviewTabCount} tabs
+                        {t('browser.overview.counts', {
+                          sessions: filteredResumableBrowserSessions.length,
+                          tabs: filteredBrowserOverviewTabCount,
+                        })}
                       </div>
                     </div>
                     <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                       <div className="flex flex-wrap gap-2">
                         {([
-                          ['all', 'All'],
-                          ['remote', 'Server'],
-                          ['local', 'Local'],
-                          ['pending', 'Pending'],
-                        ] as const).map(([scope, label]) => (
+                          'all',
+                          'remote',
+                          'local',
+                          'pending',
+                        ] as const).map((scope) => {
+                          const label = getBrowserScopeLabel(scope)
+                          return (
                           <button
                             key={scope}
                             type="button"
@@ -1285,19 +1316,20 @@ export function PcLayout() {
                                 ? 'border-[var(--workspace-accent-solid)]/45 bg-[var(--workspace-accent-soft)] text-[var(--workspace-text-strong)]'
                                 : 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/70 text-[var(--workspace-text-subtle)] hover:border-[var(--workspace-border-strong)] hover:text-[var(--workspace-text)]',
                             )}
-                            aria-label={`Filter browser overview: ${label}`}
+                            aria-label={t('browser.overview.filterScope', { label })}
                           >
                             {label} {browserOverviewCounts[scope].tabs}
                           </button>
-                        ))}
+                          )
+                        })}
                       </div>
                       <div className="relative w-full lg:max-w-sm">
                         <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
                         <Input
                           value={browserOverviewQuery}
                           onChange={(event) => setBrowserOverviewQuery(event.target.value)}
-                          placeholder="Search sessions, tabs, urls"
-                          aria-label="Search browser overview"
+                          placeholder={t('browser.overview.searchPlaceholder')}
+                          aria-label={t('browser.overview.searchLabel')}
                           className="h-10 rounded-2xl border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] pl-9 text-[var(--workspace-text)] placeholder:text-[var(--workspace-text-subtle)]"
                         />
                       </div>
@@ -1313,7 +1345,7 @@ export function PcLayout() {
                             type="button"
                             onClick={() => handleResumeBrowserSession(item.sessionId)}
                             className="group flex w-full items-start gap-3 rounded-2xl px-1 py-1 text-left transition-[background-color,transform] hover:bg-[var(--workspace-surface-900)]"
-                            aria-label={`Resume browser session ${item.hostName}`}
+                            aria-label={t('browser.overview.resumeSession', { host: item.hostName })}
                           >
                             <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-sky-500/12 text-sky-200">
                               <Globe className="h-4.5 w-4.5" />
@@ -1323,8 +1355,8 @@ export function PcLayout() {
                                 <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{item.hostName}</div>
                                 <span className="shrink-0 rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
                                   {item.visibleTabs.length === item.browserTabs
-                                    ? `${item.browserTabs} tab${item.browserTabs > 1 ? 's' : ''}`
-                                    : `${item.visibleTabs.length} of ${item.browserTabs}`}
+                                    ? t('browser.overview.tabCount', { count: item.browserTabs })
+                                    : t('browser.overview.visibleTabCount', { visible: item.visibleTabs.length, total: item.browserTabs })}
                                 </span>
                               </div>
                               <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{item.hostAddress}</div>
@@ -1338,8 +1370,8 @@ export function PcLayout() {
                           {item.visibleTabs.length > 0 && (
                             <div className="mt-3 space-y-2 border-t border-[var(--workspace-border-soft)] pt-3">
                               <div className="flex items-center justify-between gap-2 px-1">
-                                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-subtle)]">Open Tabs</div>
-                                <div className="text-[11px] text-[var(--workspace-text-subtle)]">Jump directly into a page</div>
+                                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-subtle)]">{t('browser.overview.openTabs')}</div>
+                                <div className="text-[11px] text-[var(--workspace-text-subtle)]">{t('browser.overview.openTabsHint')}</div>
                               </div>
                               {item.visibleTabs.slice(0, 4).map((tab) => (
                                 <button
@@ -1347,7 +1379,7 @@ export function PcLayout() {
                                   type="button"
                                   onClick={() => handleResumeBrowserTab(item.sessionId, tab.id)}
                                   className="flex w-full items-start gap-3 rounded-2xl border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]/72 px-3 py-2 text-left transition-[border-color,background-color] hover:border-[var(--workspace-accent-solid)]/40 hover:bg-[var(--workspace-surface-900)]"
-                                  aria-label={`Resume browser tab ${tab.title} on ${item.hostName}`}
+                                  aria-label={t('browser.overview.resumeTab', { title: tab.title, host: item.hostName })}
                                 >
                                   <div className={cn(
                                     'mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full',
@@ -1362,7 +1394,7 @@ export function PcLayout() {
                                       <div className="truncate text-sm font-medium text-[var(--workspace-text)]">{tab.title}</div>
                                       {tab.isActive && (
                                         <span className="shrink-0 rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
-                                          Active
+                                          {t('browser.tab.active')}
                                         </span>
                                       )}
                                       {tab.routeIndicator && (
@@ -1386,7 +1418,7 @@ export function PcLayout() {
                               ))}
                               {item.visibleTabs.length > 4 && (
                                 <div className="px-1 text-xs text-[var(--workspace-text-subtle)]">
-                                  +{item.visibleTabs.length - 4} more tab{item.visibleTabs.length - 4 > 1 ? 's' : ''} inside this browser
+                                  {t('browser.overview.moreTabs', { count: item.visibleTabs.length - 4 })}
                                 </div>
                               )}
                             </div>
@@ -1396,9 +1428,9 @@ export function PcLayout() {
                     </div>
                     ) : (
                       <div className="mt-4 rounded-2xl border border-dashed border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/66 px-4 py-6 text-center">
-                        <div className="text-sm font-medium text-[var(--workspace-text)]">No browser tabs match this filter</div>
+                        <div className="text-sm font-medium text-[var(--workspace-text)]">{t('browser.overview.noMatches')}</div>
                         <div className="mt-1 text-xs text-[var(--workspace-text-subtle)]">
-                          Try a different route scope or search term.
+                          {t('browser.overview.noMatchesHint')}
                         </div>
                       </div>
                     )}
@@ -1407,28 +1439,30 @@ export function PcLayout() {
               )}
               {app.pcSidebarNav === 'hosts' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
-                  <HostsDashboard
-                    hosts={hostsCtx.hosts}
-                    selectedHostId={hostsCtx.selectedHostId}
-                    loading={hostsCtx.loadingHosts}
-                    defaultUsername={hostsCtx.defaultUsername}
-                    onSelectHost={hostsCtx.setSelectedHostId}
-                    onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
-                    onCreateHost={hostsCtx.handleCreateHost}
-                    onUpdateHost={hostsCtx.handleUpdateHost}
-                    onDeleteHost={hostsCtx.handleDeleteHost}
-                    openAddForm={hostsCtx.pcOpenAddHost}
-                    onAddFormClose={() => hostsCtx.setPcOpenAddHost(false)}
-                    externalSearch={hostsCtx.pcTopBarSearch}
-                    onExternalSearchChange={hostsCtx.setPcTopBarSearch}
-                    onScanHosts={hostsCtx.handleScanHosts}
-                    onRefreshHosts={hostsCtx.refreshHosts}
-                    vaultKeys={vault.vaultKeys}
-                    vaultUnlocked={vault.vaultStatusState?.unlocked ?? false}
-                    onSaveToVault={hostsCtx.handleSaveToVault}
-                    onLoadVaultSecret={vault.handleRevealSecret}
-                    vaultName={vault.vaults.find((v) => v.id === vault.activeVaultId)?.name ?? 'Vault'}
-                  />
+                  <div className="h-full min-h-0 p-4 md:p-6">
+                    <HostsDashboard
+                      hosts={hostsCtx.hosts}
+                      selectedHostId={hostsCtx.selectedHostId}
+                      loading={hostsCtx.loadingHosts}
+                      defaultUsername={hostsCtx.defaultUsername}
+                      onSelectHost={hostsCtx.setSelectedHostId}
+                      onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
+                      onCreateHost={hostsCtx.handleCreateHost}
+                      onUpdateHost={hostsCtx.handleUpdateHost}
+                      onDeleteHost={hostsCtx.handleDeleteHost}
+                      openAddForm={hostsCtx.pcOpenAddHost}
+                      onAddFormClose={() => hostsCtx.setPcOpenAddHost(false)}
+                      externalSearch={hostsCtx.pcTopBarSearch}
+                      onExternalSearchChange={hostsCtx.setPcTopBarSearch}
+                      onScanHosts={hostsCtx.handleScanHosts}
+                      onRefreshHosts={hostsCtx.refreshHosts}
+                      vaultKeys={vault.vaultKeys}
+                      vaultUnlocked={vault.vaultStatusState?.unlocked ?? false}
+                      onSaveToVault={hostsCtx.handleSaveToVault}
+                      onLoadVaultSecret={vault.handleRevealSecret}
+                      vaultName={vault.vaults.find((v) => v.id === vault.activeVaultId)?.name ?? 'Vault'}
+                    />
+                  </div>
                 </Suspense>
               )}
               {app.pcSidebarNav === 'asset-inventory' && (

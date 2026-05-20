@@ -749,8 +749,8 @@ describe('pc layout', () => {
       await Promise.resolve()
     })
 
-    const resumeCard = await screen.findByRole('button', { name: 'Resume browser session Prod' })
-    expect(await screen.findByText('Resume Browsers')).toBeInTheDocument()
+    const resumeCard = await screen.findByRole('button', { name: 'browser.overview.resumeSession' })
+    expect(await screen.findByText('browser.overview.title')).toBeInTheDocument()
 
     fireEvent.click(resumeCard)
 
@@ -1028,7 +1028,11 @@ describe('pc layout', () => {
 
     render(<PcLayout />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Resume browser tab Docs on Prod' }))
+    const docsTabButton = screen
+      .getAllByRole('button', { name: 'browser.overview.resumeTab' })
+      .find((button) => button.textContent?.includes('Docs'))
+    expect(docsTabButton).toBeDefined()
+    fireEvent.click(docsTabButton!)
 
     expect(activateSessionBrowserTab).toHaveBeenCalledWith('session-1', 'tab-2')
     expect(setPcActiveSessionId).toHaveBeenCalledWith('session-1')
@@ -1105,19 +1109,23 @@ describe('pc layout', () => {
 
     render(<PcLayout />)
 
-    expect(screen.getByRole('button', { name: 'Resume browser tab Remote Docs on Prod' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Resume browser tab Local Notes on Prod' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'browser.overview.resumeTab' })).toHaveLength(2)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter browser overview: Local' }))
+    const localScopeButton = screen
+      .getAllByRole('button', { name: 'browser.overview.filterScope' })
+      .find((button) => button.textContent?.includes('browser.route.local'))
+    expect(localScopeButton).toBeDefined()
+    fireEvent.click(localScopeButton!)
 
-    expect(screen.queryByRole('button', { name: 'Resume browser tab Remote Docs on Prod' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Resume browser tab Local Notes on Prod' })).toBeInTheDocument()
+    const visibleTabButtons = screen.getAllByRole('button', { name: 'browser.overview.resumeTab' })
+    expect(visibleTabButtons).toHaveLength(1)
+    expect(visibleTabButtons[0]).toHaveTextContent('Local Notes')
 
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search browser overview' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'browser.overview.searchLabel' }), {
       target: { value: 'missing' },
     })
 
-    expect(screen.getByText('No browser tabs match this filter')).toBeInTheDocument()
+    expect(screen.getByText('browser.overview.noMatches')).toBeInTheDocument()
   })
 
   it('opens the global browser switcher and jumps to a tab from any page', () => {
@@ -1210,12 +1218,12 @@ describe('pc layout', () => {
 
     fireEvent.keyDown(window, { key: 'B', metaKey: true, shiftKey: true })
 
-    expect(screen.getByRole('textbox', { name: 'Search browser switcher' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'browser.switcher.searchLabel' })).toBeInTheDocument()
 
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search browser switcher' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'browser.switcher.searchLabel' }), {
       target: { value: 'Docs' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to browser tab Docs on Prod' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'browser.switcher.switchToTab' })[0]!)
 
     expect(activateSessionBrowserTab).toHaveBeenCalledWith('session-1', 'tab-2')
     expect(setPcActiveSessionId).toHaveBeenCalledWith('session-1')
@@ -1323,8 +1331,9 @@ describe('pc layout', () => {
 
     fireEvent.keyDown(window, { key: 'B', metaKey: true, shiftKey: true })
 
-    const switcherButtons = screen.getAllByRole('button', { name: /Switch to browser tab/i })
-    expect(switcherButtons[0]).toHaveAttribute('aria-label', 'Switch to browser tab Billing on Stage')
+    const switcherButtons = screen.getAllByRole('button', { name: 'browser.switcher.switchToTab' })
+    expect(switcherButtons[0]).toHaveAttribute('aria-label', 'browser.switcher.switchToTab')
+    expect(switcherButtons[0]).toHaveTextContent('Billing')
   })
 
   it('can close a browser tab directly from the global browser switcher', () => {
@@ -1409,7 +1418,7 @@ describe('pc layout', () => {
     render(<PcLayout />)
 
     fireEvent.keyDown(window, { key: 'B', metaKey: true, shiftKey: true })
-    fireEvent.click(screen.getByRole('button', { name: 'Close browser tab Docs on Prod' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'browser.switcher.closeTab' })[1]!)
 
     expect(closeSessionBrowserTab).toHaveBeenCalledWith('session-1', 'tab-2')
     expect(setOutput).toHaveBeenCalledWith('browser.feedback.tabClosed')
@@ -1482,7 +1491,7 @@ describe('pc layout', () => {
     render(<PcLayout />)
 
     fireEvent.keyDown(window, { key: 'B', metaKey: true, shiftKey: true })
-    fireEvent.click(screen.getByRole('button', { name: 'Clear browser session for Prod' }))
+    fireEvent.click(screen.getByRole('button', { name: 'browser.switcher.clearSession' }))
 
     expect(closeSessionBrowser).toHaveBeenCalledWith('session-1')
     expect(setSessionMode).toHaveBeenCalledWith('session-1', 'terminal')
@@ -1544,9 +1553,9 @@ describe('pc layout', () => {
     })
 
     expect(handleCloseSessionTab).not.toHaveBeenCalled()
-    expect(screen.getByText('Close Session?')).toBeInTheDocument()
+    expect(screen.getByText('browser.sessionClose.title')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close Session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'browser.sessionClose.confirm' }))
 
     expect(handleCloseSessionTab).toHaveBeenCalledWith('session-1')
   })
@@ -1783,7 +1792,7 @@ describe('pc layout', () => {
 
     expect(screen.getByTestId('dialog-root')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close Session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'browser.sessionClose.confirm' }))
 
     expect(handleCloseSessionTab).toHaveBeenCalledWith('session-1')
     expect(setPcActiveSessionId).toHaveBeenCalledWith('session-2')

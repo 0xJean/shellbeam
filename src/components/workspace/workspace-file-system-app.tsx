@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSessions } from '@/contexts/sessions-context'
 import { Button } from '@/components/ui/button'
 import type { HostProfile } from '@/lib/hosts'
+import { useT } from '@/lib/i18n'
 import { createRemoteFsClient } from '@/lib/remote-fs'
 import type { SftpEntry } from '@/lib/sftp'
 import { cn } from '@/lib/utils'
@@ -35,6 +36,8 @@ interface SidebarLocation {
   path: string
 }
 
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 function joinRemotePath(basePath: string, name: string) {
   if (basePath === '/') return `/${name}`
   return `${basePath}/${name}`
@@ -63,22 +66,23 @@ function formatFileSize(bytes: number | undefined) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
-function getFileKind(fileName: string) {
+function getFileKind(fileName: string, t: Translate) {
   const ext = fileName.split('.').pop()?.toLowerCase()
-  if (!ext || fileName === ext) return 'File'
+  if (!ext || fileName === ext) return t('workspace.fileSystem.kind.file')
   const kinds: Record<string, string> = {
-    sh: 'Shell Script', bash: 'Shell Script', zsh: 'Shell Script',
-    js: 'JavaScript', ts: 'TypeScript', jsx: 'JavaScript', tsx: 'TypeScript',
-    json: 'JSON', yaml: 'YAML', yml: 'YAML', toml: 'TOML', xml: 'XML',
-    md: 'Markdown', txt: 'Text', log: 'Log',
-    py: 'Python', rb: 'Ruby', go: 'Go', rs: 'Rust', java: 'Java',
-    c: 'C Source', cpp: 'C++ Source', cs: 'C# Source',
-    html: 'HTML', css: 'CSS', scss: 'SCSS',
-    png: 'Image', jpg: 'Image', jpeg: 'Image', gif: 'Image', svg: 'SVG',
-    zip: 'Archive', tar: 'Archive', gz: 'Archive', bz2: 'Archive',
-    conf: 'Config', cfg: 'Config', ini: 'Config', env: 'Env Config',
+    sh: 'workspace.fileSystem.kind.shellScript', bash: 'workspace.fileSystem.kind.shellScript', zsh: 'workspace.fileSystem.kind.shellScript',
+    js: 'workspace.fileSystem.kind.javascript', ts: 'workspace.fileSystem.kind.typescript', jsx: 'workspace.fileSystem.kind.javascript', tsx: 'workspace.fileSystem.kind.typescript',
+    json: 'workspace.fileSystem.kind.json', yaml: 'workspace.fileSystem.kind.yaml', yml: 'workspace.fileSystem.kind.yaml', toml: 'workspace.fileSystem.kind.toml', xml: 'workspace.fileSystem.kind.xml',
+    md: 'workspace.fileSystem.kind.markdown', txt: 'workspace.fileSystem.kind.text', log: 'workspace.fileSystem.kind.log',
+    py: 'workspace.fileSystem.kind.python', rb: 'workspace.fileSystem.kind.ruby', go: 'workspace.fileSystem.kind.go', rs: 'workspace.fileSystem.kind.rust', java: 'workspace.fileSystem.kind.java',
+    c: 'workspace.fileSystem.kind.cSource', cpp: 'workspace.fileSystem.kind.cppSource', cs: 'workspace.fileSystem.kind.csharpSource',
+    html: 'workspace.fileSystem.kind.html', css: 'workspace.fileSystem.kind.css', scss: 'workspace.fileSystem.kind.scss',
+    png: 'workspace.fileSystem.kind.image', jpg: 'workspace.fileSystem.kind.image', jpeg: 'workspace.fileSystem.kind.image', gif: 'workspace.fileSystem.kind.image', svg: 'workspace.fileSystem.kind.svg',
+    zip: 'workspace.fileSystem.kind.archive', tar: 'workspace.fileSystem.kind.archive', gz: 'workspace.fileSystem.kind.archive', bz2: 'workspace.fileSystem.kind.archive',
+    conf: 'workspace.fileSystem.kind.config', cfg: 'workspace.fileSystem.kind.config', ini: 'workspace.fileSystem.kind.config', env: 'workspace.fileSystem.kind.envConfig',
   }
-  return kinds[ext] ?? `${ext.toUpperCase()} File`
+  const kindKey = kinds[ext]
+  return kindKey ? t(kindKey) : t('workspace.fileSystem.kind.extensionFile', { ext: ext.toUpperCase() })
 }
 
 function breadcrumbSegments(path: string) {
@@ -105,6 +109,7 @@ export function WorkspaceFileSystemApp({
   resolveAuthSecret,
   presentation = 'panel',
 }: WorkspaceFileSystemAppProps) {
+  const { t } = useT()
   const activeHostId = selectedHostId ?? (
     selectedHostAddress
       ? hosts.find((host) => host.address === selectedHostAddress)?.id ?? null
@@ -131,6 +136,8 @@ export function WorkspaceFileSystemApp({
   const [isOpeningFile, setIsOpeningFile] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [activeSidebarLocationId, setActiveSidebarLocationId] = useState<string | null>(null)
+  const homeErrorMessage = t('workspace.fileSystem.error.home')
+  const directoryErrorMessage = t('workspace.fileSystem.error.directory')
 
   function navigateToPath(path: string, sidebarLocationId?: string) {
     setActiveSidebarLocationId(sidebarLocationId ?? null)
@@ -183,7 +190,7 @@ export function WorkspaceFileSystemApp({
         }
       } catch (loadError) {
         if (!isCancelled) {
-          setError(loadError instanceof Error ? loadError.message : 'Unable to resolve remote home directory')
+          setError(loadError instanceof Error ? loadError.message : homeErrorMessage)
         }
       } finally {
         if (!isCancelled) setIsLoadingHome(false)
@@ -195,7 +202,7 @@ export function WorkspaceFileSystemApp({
     return () => {
       isCancelled = true
     }
-  }, [remoteFs])
+  }, [homeErrorMessage, remoteFs])
 
   useEffect(() => {
     if (!remoteFs || !currentPath) {
@@ -221,7 +228,7 @@ export function WorkspaceFileSystemApp({
       } catch (loadError) {
         if (!isCancelled) {
           setEntries([])
-          setError(loadError instanceof Error ? loadError.message : 'Unable to load remote directory')
+          setError(loadError instanceof Error ? loadError.message : directoryErrorMessage)
         }
       } finally {
         if (!isCancelled) setIsLoadingEntries(false)
@@ -233,20 +240,20 @@ export function WorkspaceFileSystemApp({
     return () => {
       isCancelled = true
     }
-  }, [currentPath, remoteFs])
+  }, [currentPath, directoryErrorMessage, remoteFs])
 
   const isLoading = isLoadingHome || isLoadingEntries
   const selectedEntry = selectedPath ? entries.find((entry) => entry.path === selectedPath) ?? null : null
   const sidebarLocations = useMemo<SidebarLocation[]>(() => {
     if (!homePath) return []
-    const locations: SidebarLocation[] = [{ id: 'home', label: 'Home', path: homePath }]
+    const locations: SidebarLocation[] = [{ id: 'home', label: t('workspace.fileSystem.location.home'), path: homePath }]
     const parentPath = parentRemotePath(homePath)
     if (parentPath !== homePath) {
-      locations.push({ id: 'parent', label: 'Parent', path: parentPath })
+      locations.push({ id: 'parent', label: t('workspace.fileSystem.location.parent'), path: parentPath })
     }
-    locations.push({ id: 'root', label: 'Root', path: '/' })
+    locations.push({ id: 'root', label: t('workspace.fileSystem.location.root'), path: '/' })
     return locations
-  }, [homePath])
+  }, [homePath, t])
 
   async function refreshCurrentPath() {
     if (!remoteFs || !currentPath) return
@@ -258,7 +265,7 @@ export function WorkspaceFileSystemApp({
       setSelectedPath((prev) => (prev && nextEntries.some((entry) => entry.path === prev) ? prev : null))
     } catch (loadError) {
       setEntries([])
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load remote directory')
+      setError(loadError instanceof Error ? loadError.message : directoryErrorMessage)
     } finally {
       setIsLoadingEntries(false)
     }
@@ -266,37 +273,37 @@ export function WorkspaceFileSystemApp({
 
   async function handleCreateFile() {
     if (!remoteFs || !currentPath) return
-    const name = window.prompt('New file name')
+    const name = window.prompt(t('workspace.fileSystem.prompt.newFile'))
     if (!name?.trim()) return
     await remoteFs.createFile(joinRemotePath(currentPath, name.trim()))
-    setStatusMessage(`Created file: ${name.trim()}`)
+    setStatusMessage(t('workspace.fileSystem.status.createdFile', { name: name.trim() }))
     await refreshCurrentPath()
   }
 
   async function handleCreateDir() {
     if (!remoteFs || !currentPath) return
-    const name = window.prompt('New folder name')
+    const name = window.prompt(t('workspace.fileSystem.prompt.newFolder'))
     if (!name?.trim()) return
     await remoteFs.createDir(joinRemotePath(currentPath, name.trim()))
-    setStatusMessage(`Created folder: ${name.trim()}`)
+    setStatusMessage(t('workspace.fileSystem.status.createdFolder', { name: name.trim() }))
     await refreshCurrentPath()
   }
 
   async function handleRenameSelected() {
     if (!remoteFs || !selectedEntry || !currentPath) return
-    const nextName = window.prompt('Rename entry', selectedEntry.fileName)
+    const nextName = window.prompt(t('workspace.fileSystem.prompt.rename'), selectedEntry.fileName)
     if (!nextName?.trim() || nextName.trim() === selectedEntry.fileName) return
     await remoteFs.renamePath(selectedEntry.path, joinRemotePath(currentPath, nextName.trim()))
-    setStatusMessage(`Renamed to: ${nextName.trim()}`)
+    setStatusMessage(t('workspace.fileSystem.status.renamed', { name: nextName.trim() }))
     setSelectedPath(null)
     await refreshCurrentPath()
   }
 
   async function handleDeleteSelected() {
     if (!remoteFs || !selectedEntry) return
-    if (!window.confirm(`Delete ${selectedEntry.fileName}?`)) return
+    if (!window.confirm(t('workspace.fileSystem.confirm.delete', { name: selectedEntry.fileName }))) return
     await remoteFs.deletePath(selectedEntry.path)
-    setStatusMessage(`Deleted: ${selectedEntry.fileName}`)
+    setStatusMessage(t('workspace.fileSystem.status.deleted', { name: selectedEntry.fileName }))
     setSelectedPath(null)
     if (editorPath === selectedEntry.path) {
       setEditorPath(null)
@@ -325,7 +332,7 @@ export function WorkspaceFileSystemApp({
     setStatusMessage(null)
     try {
       await remoteFs.writeFile(editorPath, encodeBase64Utf8(editorContent))
-      setStatusMessage(`Saved: ${editorPath.split('/').pop()}`)
+      setStatusMessage(t('workspace.fileSystem.status.saved', { name: editorPath.split('/').pop() ?? editorPath }))
       await refreshCurrentPath()
     } finally {
       setIsSaving(false)
@@ -361,8 +368,8 @@ export function WorkspaceFileSystemApp({
   if (!activeHost) {
     return (
       <WorkspaceEmptyState
-        title="File System"
-        description="Connect a remote host to manage its filesystem here."
+        title={t('workspace.fileSystem.emptyTitle')}
+        description={t('workspace.fileSystem.emptyDescription')}
       />
     )
   }
@@ -373,13 +380,14 @@ export function WorkspaceFileSystemApp({
   const fileCount = entries.filter((e) => !e.isDir).length
 
   const canPreviewSelected = !!selectedEntry && !selectedEntry.isDir && /\.(md|markdown|html?)$/i.test(selectedEntry.fileName)
+  const folderSummary = t(folderCount === 1 ? 'workspace.fileSystem.count.folderOne' : 'workspace.fileSystem.count.folderMany', { count: folderCount })
+  const fileSummary = t(fileCount === 1 ? 'workspace.fileSystem.count.fileOne' : 'workspace.fileSystem.count.fileMany', { count: fileCount })
 
   const toolbarBtn = cn(
     'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
+    'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--workspace-border-glow)]',
     'disabled:pointer-events-none disabled:opacity-35',
-    isEmbedded
-      ? 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text)]'
-      : 'text-slate-400 hover:bg-slate-700 hover:text-slate-200',
+    'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]',
   )
 
   return (
@@ -388,10 +396,10 @@ export function WorkspaceFileSystemApp({
       className={isEmbedded ? 'flex h-full min-h-0 flex-col' : 'flex min-h-0 flex-col gap-4'}
     >
       {!isEmbedded && (
-        <div className="rounded-xl border border-slate-700 bg-slate-900/80 px-6 py-5 shadow-[0_20px_25px_-5px_rgba(0,0,0,0.5),0_10px_10px_-5px_rgba(0,0,0,0.4)]">
-          <div className="text-xs font-medium uppercase tracking-[0.22em] text-slate-500">File System</div>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-100">Remote File System</h2>
-          <p className="mt-1 text-sm text-slate-400">Browse and manage files on the remote host.</p>
+        <div className="rounded-xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-6 py-5 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-card)]">
+          <div className="text-xs font-medium uppercase tracking-[0.22em] text-[var(--workspace-accent-text)]">{t('workspace.fileSystem.eyebrow')}</div>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">{t('workspace.fileSystem.title')}</h2>
+          <p className="mt-1 text-sm text-[var(--workspace-text-muted)]">{t('workspace.fileSystem.description')}</p>
         </div>
       )}
 
@@ -400,22 +408,21 @@ export function WorkspaceFileSystemApp({
           'flex flex-col overflow-hidden',
           isEmbedded
             ? 'min-h-0 flex-1'
-            : 'min-h-[36rem] rounded-xl border border-slate-700 bg-[rgba(10,16,24,0.95)] text-slate-300 shadow-[0_20px_25px_-5px_rgba(0,0,0,0.5),0_10px_10px_-5px_rgba(0,0,0,0.4)]',
+            : 'min-h-[36rem] rounded-xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text)] shadow-[var(--workspace-shadow-card)]',
         )}
       >
         {/* Toolbar */}
         <div
           className={cn(
             'flex shrink-0 items-center gap-1 border-b px-2 py-1.5',
-            isEmbedded
-              ? 'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)]'
-              : 'border-slate-700 bg-slate-800/80',
+            'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)]',
           )}
         >
           {/* Navigation */}
           <button
             type="button"
-            title="Go Up"
+            title={t('workspace.fileSystem.action.goUp')}
+            aria-label={t('workspace.fileSystem.action.goUp')}
             disabled={!canGoUp || isLoading}
             onClick={() => currentPath && navigateToPath(parentRemotePath(currentPath))}
             className={toolbarBtn}
@@ -424,7 +431,8 @@ export function WorkspaceFileSystemApp({
           </button>
           <button
             type="button"
-            title="Refresh"
+            title={t('workspace.fileSystem.action.refresh')}
+            aria-label={t('workspace.fileSystem.action.refresh')}
             disabled={!currentPath || isLoading}
             onClick={() => void refreshCurrentPath()}
             className={toolbarBtn}
@@ -433,7 +441,7 @@ export function WorkspaceFileSystemApp({
           </button>
 
           {/* Divider */}
-          <div className={cn('mx-1 h-5 w-px shrink-0', isEmbedded ? 'bg-[var(--workspace-border-strong)]' : 'bg-slate-700')} />
+          <div className="mx-1 h-5 w-px shrink-0 bg-[var(--workspace-border-strong)]" />
 
           {/* Breadcrumb */}
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden text-sm">
@@ -442,22 +450,22 @@ export function WorkspaceFileSystemApp({
               onClick={() => navigateToPath('/')}
               className={cn(
                 'shrink-0 rounded px-1.5 py-0.5 text-xs transition-colors hover:underline',
-                isEmbedded ? 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text)]' : 'text-slate-500 hover:text-slate-300',
+                'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-accent-text)]',
               )}
             >
               /
             </button>
             {breadcrumbs.map((seg, i) => (
               <span key={seg.path} className="flex min-w-0 items-center gap-0.5">
-                <ChevronRight className={cn('h-3.5 w-3.5 shrink-0', isEmbedded ? 'text-[var(--workspace-text-subtle)]' : 'text-slate-600')} />
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-subtle)]" />
                 <button
                   type="button"
                   onClick={() => navigateToPath(seg.path)}
                   className={cn(
                     'truncate rounded px-1.5 py-0.5 text-xs transition-colors hover:underline',
                     i === breadcrumbs.length - 1
-                      ? isEmbedded ? 'font-medium text-[var(--workspace-text-strong)]' : 'font-medium text-slate-100'
-                      : isEmbedded ? 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text)]' : 'text-slate-500 hover:text-slate-300',
+                      ? 'font-medium text-[var(--workspace-text-strong)]'
+                      : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-accent-text)]',
                   )}
                 >
                   {seg.label}
@@ -465,19 +473,20 @@ export function WorkspaceFileSystemApp({
               </span>
             ))}
             {currentPath == null && (
-              <span className={cn('text-xs', isEmbedded ? 'text-[var(--workspace-text-muted)]' : 'text-slate-500')}>
-                Loading…
+              <span className="text-xs text-[var(--workspace-text-muted)]">
+                {t('workspace.fileSystem.loading')}
               </span>
             )}
           </div>
 
           {/* Divider */}
-          <div className={cn('mx-1 h-5 w-px shrink-0', isEmbedded ? 'bg-[var(--workspace-border-strong)]' : 'bg-slate-700')} />
+          <div className="mx-1 h-5 w-px shrink-0 bg-[var(--workspace-border-strong)]" />
 
           {/* Actions */}
           <button
             type="button"
-            title="New File"
+            title={t('workspace.fileSystem.action.newFile')}
+            aria-label={t('workspace.fileSystem.action.newFile')}
             disabled={!currentPath}
             onClick={() => void handleCreateFile()}
             className={toolbarBtn}
@@ -486,7 +495,8 @@ export function WorkspaceFileSystemApp({
           </button>
           <button
             type="button"
-            title="New Folder"
+            title={t('workspace.fileSystem.action.newFolder')}
+            aria-label={t('workspace.fileSystem.action.newFolder')}
             disabled={!currentPath}
             onClick={() => void handleCreateDir()}
             className={toolbarBtn}
@@ -495,7 +505,8 @@ export function WorkspaceFileSystemApp({
           </button>
           <button
             type="button"
-            title="Rename"
+            title={t('workspace.fileSystem.action.rename')}
+            aria-label={t('workspace.fileSystem.action.rename')}
             disabled={!selectedEntry}
             onClick={() => void handleRenameSelected()}
             className={toolbarBtn}
@@ -504,10 +515,11 @@ export function WorkspaceFileSystemApp({
           </button>
           <button
             type="button"
-            title="Delete"
+            title={t('workspace.fileSystem.action.delete')}
+            aria-label={t('workspace.fileSystem.action.delete')}
             disabled={!selectedEntry}
             onClick={() => void handleDeleteSelected()}
-            className={cn(toolbarBtn, 'hover:!bg-red-500/20 hover:!text-red-400')}
+            className={cn(toolbarBtn, 'hover:!bg-[var(--workspace-status-bad-bg)] hover:!text-[var(--workspace-status-bad-text)]')}
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -517,9 +529,9 @@ export function WorkspaceFileSystemApp({
             variant="outline"
             disabled={!canPreviewSelected}
             onClick={() => selectedEntry && void handlePreviewFile(selectedEntry)}
-            className="ml-2 h-7 border-[var(--workspace-border-soft)] bg-transparent px-2 text-xs text-[var(--workspace-text-muted)]"
+            className="ml-2 h-7 border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] px-2 text-xs text-[var(--workspace-text-muted)] hover:border-[var(--workspace-border-glow)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]"
           >
-            Preview
+            {t('workspace.fileSystem.action.preview')}
           </Button>
         </div>
 
@@ -529,18 +541,16 @@ export function WorkspaceFileSystemApp({
           <aside
             className={cn(
               'w-40 shrink-0 overflow-auto border-r px-2 py-3',
-              isEmbedded
-                ? 'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)]'
-                : 'border-slate-700 bg-slate-800/60',
+              'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)]',
             )}
           >
             <div
               className={cn(
                 'mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest',
-                isEmbedded ? 'text-[var(--workspace-text-subtle)]' : 'text-slate-600',
+                'text-[var(--workspace-text-subtle)]',
               )}
             >
-              Locations
+              {t('workspace.fileSystem.locations')}
             </div>
             <div className="space-y-0.5">
               {sidebarLocations.map((loc) => {
@@ -554,12 +564,8 @@ export function WorkspaceFileSystemApp({
                     className={cn(
                       'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
                       isActive
-                        ? isEmbedded
-                          ? 'bg-[color:var(--workspace-primary-500)]/20 text-[color:var(--workspace-primary-400)] font-medium'
-                          : 'bg-primary/20 text-primary font-medium'
-                        : isEmbedded
-                          ? 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text)]'
-                          : 'text-slate-400 hover:bg-slate-700/60 hover:text-slate-200',
+                        ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)] font-medium ring-1 ring-[var(--workspace-border-glow)]'
+                        : 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]',
                     )}
                   >
                     <SidebarLocationIcon id={loc.id} />
@@ -574,21 +580,19 @@ export function WorkspaceFileSystemApp({
           <section
             className={cn(
               'min-w-0 flex-1 overflow-auto',
-              isEmbedded ? 'bg-[var(--workspace-surface-900)]' : 'bg-[rgba(8,14,22,0.9)]',
+              'bg-[var(--workspace-surface-900)]',
             )}
           >
             {/* Column headers */}
             <div
               className={cn(
                 'sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_6rem_7rem] border-b px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider',
-                isEmbedded
-                  ? 'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)]'
-                  : 'border-slate-700/80 bg-[rgba(8,14,22,0.95)] text-slate-500',
+                'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)]',
               )}
             >
-              <div>Name</div>
-              <div className="text-right">Size</div>
-              <div className="text-right">Kind</div>
+              <div>{t('workspace.fileSystem.column.name')}</div>
+              <div className="text-right">{t('workspace.fileSystem.column.size')}</div>
+              <div className="text-right">{t('workspace.fileSystem.column.kind')}</div>
             </div>
 
             {/* Notifications */}
@@ -596,22 +600,20 @@ export function WorkspaceFileSystemApp({
               <div
                 className={cn(
                   'mx-3 mt-3 rounded-lg px-3 py-2 text-xs',
-                  isEmbedded
-                    ? 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]'
-                    : 'bg-slate-800 text-slate-400',
+                  'border border-[var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[var(--workspace-status-good-text)]',
                 )}
               >
                 {statusMessage}
               </div>
             )}
             {error && (
-              <div className="mx-3 mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+              <div className="mx-3 mt-3 rounded-lg border border-[var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[var(--workspace-status-bad-text)]">
                 {error}
               </div>
             )}
             {isLoading && (
-              <div className={cn('px-3 py-6 text-sm', isEmbedded ? 'text-[var(--workspace-text-muted)]' : 'text-slate-500')}>
-                {isLoadingHome ? 'Loading home directory…' : 'Loading directory…'}
+              <div className="px-3 py-6 text-sm text-[var(--workspace-text-muted)]">
+                {isLoadingHome ? t('workspace.fileSystem.loadingHome') : t('workspace.fileSystem.loadingDirectory')}
               </div>
             )}
 
@@ -639,12 +641,8 @@ export function WorkspaceFileSystemApp({
                         className={cn(
                           'grid w-full grid-cols-[minmax(0,1fr)_6rem_7rem] items-center px-3 py-1.5 text-left text-sm transition-colors',
                           isSelected
-                            ? isEmbedded
-                              ? 'bg-[color:var(--workspace-primary-500)]/20 text-[var(--workspace-text-strong)]'
-                              : 'bg-primary/20 text-white'
-                            : isEmbedded
-                              ? 'hover:bg-[var(--workspace-surface-700)]'
-                              : 'hover:bg-slate-800/70',
+                            ? 'bg-[var(--workspace-surface-row-selected)] text-[var(--workspace-text-strong)] ring-1 ring-inset ring-[var(--workspace-border-glow)]'
+                            : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-text-strong)]',
                         )}
                       >
                         <div className="flex min-w-0 items-center gap-2">
@@ -652,14 +650,14 @@ export function WorkspaceFileSystemApp({
                             <Folder
                               className={cn(
                                 'h-4 w-4 shrink-0',
-                                isEmbedded ? 'text-[color:var(--workspace-primary-400)]' : 'text-primary',
+                                'text-[var(--workspace-accent-text)]',
                               )}
                             />
                           ) : (
                             <File
                               className={cn(
                                 'h-4 w-4 shrink-0',
-                                isEmbedded ? 'text-[var(--workspace-text-subtle)]' : 'text-slate-500',
+                                'text-[var(--workspace-text-subtle)]',
                               )}
                             />
                           )}
@@ -668,7 +666,7 @@ export function WorkspaceFileSystemApp({
                         <div
                           className={cn(
                             'text-right text-xs',
-                            isEmbedded ? 'text-[var(--workspace-text-muted)]' : 'text-slate-500',
+                            'text-[var(--workspace-text-muted)]',
                           )}
                         >
                           {entry.isDir ? '—' : formatFileSize(entry.size)}
@@ -676,18 +674,18 @@ export function WorkspaceFileSystemApp({
                         <div
                           className={cn(
                             'text-right text-xs',
-                            isEmbedded ? 'text-[var(--workspace-text-muted)]' : 'text-slate-500',
+                            'text-[var(--workspace-text-muted)]',
                           )}
                         >
-                          {entry.isDir ? 'Folder' : getFileKind(entry.fileName)}
+                          {entry.isDir ? t('workspace.fileSystem.kind.folder') : getFileKind(entry.fileName, t)}
                         </div>
                       </button>
                     )
                   })}
                 </div>
               ) : (
-                <div className={cn('px-3 py-8 text-sm', isEmbedded ? 'text-[var(--workspace-text-muted)]' : 'text-slate-500')}>
-                  This directory is empty.
+                <div className="px-3 py-8 text-sm text-[var(--workspace-text-muted)]">
+                  {t('workspace.fileSystem.emptyDirectory')}
                 </div>
               )
             )}
@@ -697,9 +695,7 @@ export function WorkspaceFileSystemApp({
           <aside
             className={cn(
               'w-60 shrink-0 overflow-auto border-l px-4 py-4',
-              isEmbedded
-                ? 'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)]'
-                : 'border-slate-700 bg-slate-800/60',
+              'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)]',
             )}
           >
             {/* File info */}
@@ -710,14 +706,14 @@ export function WorkspaceFileSystemApp({
                     <Folder
                       className={cn(
                         'h-14 w-14',
-                        isEmbedded ? 'text-[color:var(--workspace-primary-400)]' : 'text-primary',
+                        'text-[var(--workspace-accent-text)]',
                       )}
                     />
                   ) : (
                     <File
                       className={cn(
                         'h-14 w-14',
-                        isEmbedded ? 'text-[var(--workspace-text-subtle)]' : 'text-slate-500',
+                        'text-[var(--workspace-text-subtle)]',
                       )}
                     />
                   )}
@@ -725,7 +721,7 @@ export function WorkspaceFileSystemApp({
                 <div
                   className={cn(
                     'truncate text-center text-sm font-semibold',
-                    isEmbedded ? 'text-[var(--workspace-text-strong)]' : 'text-slate-100',
+                    'text-[var(--workspace-text-strong)]',
                   )}
                 >
                   {selectedEntry.fileName}
@@ -733,24 +729,22 @@ export function WorkspaceFileSystemApp({
                 <div
                   className={cn(
                     'mt-3 space-y-1.5 rounded-lg border px-3 py-2.5 text-xs',
-                    isEmbedded
-                      ? 'border-[var(--workspace-border-soft)] text-[var(--workspace-text-muted)]'
-                      : 'border-slate-700/60 text-slate-400',
+                    'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-panel)] text-[var(--workspace-text-muted)]',
                   )}
                 >
                   <div className="flex justify-between gap-2">
-                    <span className={isEmbedded ? 'text-[var(--workspace-text-subtle)]' : 'text-slate-500'}>Kind</span>
-                    <span className="text-right">{selectedEntry.isDir ? 'Folder' : getFileKind(selectedEntry.fileName)}</span>
+                    <span className="text-[var(--workspace-text-subtle)]">{t('workspace.fileSystem.column.kind')}</span>
+                    <span className="text-right">{selectedEntry.isDir ? t('workspace.fileSystem.kind.folder') : getFileKind(selectedEntry.fileName, t)}</span>
                   </div>
                   {!selectedEntry.isDir && (
                     <div className="flex justify-between gap-2">
-                      <span className={isEmbedded ? 'text-[var(--workspace-text-subtle)]' : 'text-slate-500'}>Size</span>
+                      <span className="text-[var(--workspace-text-subtle)]">{t('workspace.fileSystem.column.size')}</span>
                       <span>{formatFileSize(selectedEntry.size)}</span>
                     </div>
                   )}
                   <div className="pt-0.5">
-                    <span className={cn('block text-[10px]', isEmbedded ? 'text-[var(--workspace-text-subtle)]' : 'text-slate-500')}>
-                      Path
+                    <span className="block text-[10px] text-[var(--workspace-text-subtle)]">
+                      {t('workspace.fileSystem.path')}
                     </span>
                     <span className="mt-0.5 block break-all text-[10px]">{selectedEntry.path}</span>
                   </div>
@@ -759,10 +753,10 @@ export function WorkspaceFileSystemApp({
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="mt-3 w-full"
+                      className="mt-3 w-full border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-border-glow)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]"
                       onClick={() => void handlePreviewFile(selectedEntry)}
                     >
-                      Preview in Browser
+                      {t('workspace.fileSystem.previewInBrowser')}
                     </Button>
                   )}
                 </div>
@@ -771,12 +765,10 @@ export function WorkspaceFileSystemApp({
               <div
                 className={cn(
                   'rounded-lg border border-dashed px-3 py-8 text-center text-xs',
-                  isEmbedded
-                    ? 'border-[var(--workspace-border-soft)] text-[var(--workspace-text-subtle)]'
-                    : 'border-slate-700 text-slate-600',
+                  'border-[var(--workspace-border-soft)] text-[var(--workspace-text-subtle)]',
                 )}
               >
-                Select a file or folder to inspect
+                {t('workspace.fileSystem.selectPrompt')}
               </div>
             )}
 
@@ -784,46 +776,42 @@ export function WorkspaceFileSystemApp({
             <div
               className={cn(
                 'mb-2 mt-5 text-[10px] font-semibold uppercase tracking-widest',
-                isEmbedded ? 'text-[var(--workspace-text-subtle)]' : 'text-slate-600',
+                'text-[var(--workspace-text-subtle)]',
               )}
             >
-              Editor
+              {t('workspace.fileSystem.editor')}
             </div>
             {editorPath ? (
               <div className="space-y-2">
                 <div
                   className={cn(
                     'truncate text-xs',
-                    isEmbedded ? 'text-[var(--workspace-text-muted)]' : 'text-slate-400',
+                    'text-[var(--workspace-text-muted)]',
                   )}
                 >
                   {editorPath.split('/').pop()}
                 </div>
                 <textarea
-                  aria-label="Remote File Editor"
+                  aria-label={t('workspace.fileSystem.editorLabel')}
                   value={editorContent}
                   onChange={(e) => setEditorContent(e.target.value)}
                   className={cn(
                     'min-h-[14rem] w-full rounded-lg border px-3 py-2 font-mono text-xs outline-none focus:ring-1',
-                    isEmbedded
-                      ? 'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text)] focus:ring-[color:var(--workspace-primary-500)]'
-                      : 'border-slate-700 bg-slate-900 text-slate-300 focus:ring-primary',
+                    'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-input)] text-[var(--workspace-text)] focus:ring-[color:var(--workspace-primary-500)]',
                   )}
                 />
                 <Button size="sm" className="w-full" onClick={() => void handleSaveFile()} disabled={isSaving}>
-                  {isSaving ? 'Saving…' : 'Save File'}
+                  {isSaving ? t('workspace.fileSystem.saving') : t('workspace.fileSystem.saveFile')}
                 </Button>
               </div>
             ) : (
               <div
                 className={cn(
                   'rounded-lg border border-dashed px-3 py-8 text-center text-xs',
-                  isEmbedded
-                    ? 'border-[var(--workspace-border-soft)] text-[var(--workspace-text-subtle)]'
-                    : 'border-slate-700 text-slate-600',
+                  'border-[var(--workspace-border-soft)] text-[var(--workspace-text-subtle)]',
                 )}
               >
-                {isOpeningFile ? 'Opening file…' : 'Double-click a file to edit it'}
+                {isOpeningFile ? t('workspace.fileSystem.openingFile') : t('workspace.fileSystem.doubleClickToEdit')}
               </div>
             )}
           </aside>
@@ -833,15 +821,13 @@ export function WorkspaceFileSystemApp({
         <div
           className={cn(
             'flex shrink-0 items-center justify-between border-t px-4 py-1 text-[11px]',
-            isEmbedded
-              ? 'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] text-[var(--workspace-text-subtle)]'
-              : 'border-slate-700 bg-slate-800/60 text-slate-500',
+            'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] text-[var(--workspace-text-subtle)]',
           )}
         >
           <span>
             {isLoading
-              ? 'Loading…'
-              : `${folderCount} folder${folderCount !== 1 ? 's' : ''}, ${fileCount} file${fileCount !== 1 ? 's' : ''}`}
+              ? t('workspace.fileSystem.loading')
+              : t('workspace.fileSystem.statusSummary', { folders: folderSummary, files: fileSummary })}
           </span>
           <span>{activeHost.name} · {activeHost.address}</span>
         </div>

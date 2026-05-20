@@ -18,6 +18,23 @@ const hosts = [
 ]
 
 describe('workspace server list', () => {
+  it('keeps the host list body as a flexible scroll container', () => {
+    const { container } = render(
+      <WorkspaceServerList
+        hosts={hosts}
+        selectedKey="host-1"
+        getHostKey={(host) => host.id}
+        onSelect={vi.fn()}
+      />,
+    )
+
+    const aside = container.querySelector('aside')
+    expect(aside).toHaveClass('flex', 'h-full', 'min-h-0', 'flex-col', 'overflow-hidden')
+
+    const scrollArea = aside?.children[1] as HTMLElement | undefined
+    expect(scrollArea).toHaveClass('min-h-0', 'flex-1', 'overflow-auto', 'p-3', 'pb-4')
+  })
+
   it('renders resource metrics inside server asset rows', () => {
     render(
       <WorkspaceServerList

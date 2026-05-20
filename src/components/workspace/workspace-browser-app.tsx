@@ -1,4 +1,5 @@
 import { Suspense, lazy } from 'react'
+import { useT } from '@/lib/i18n'
 
 const BrowserView = lazy(async () => {
   const module = await import('@/components/browser/browser-view')
@@ -22,10 +23,12 @@ export function WorkspaceBrowserApp({ sessionId, visible = true, onCloseRequest 
 }
 
 function BrowserAppFallback() {
+  const { t } = useT()
+
   return (
     <div className="flex h-full min-h-0 items-center justify-center bg-[var(--workspace-surface-950)]">
       <div className="rounded-2xl border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-4 py-3 text-sm text-[var(--workspace-text-muted)]">
-        Loading browser...
+        {t('browser.loading')}
       </div>
     </div>
   )

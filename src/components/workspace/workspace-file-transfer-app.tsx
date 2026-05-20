@@ -1,5 +1,6 @@
 import { Suspense, lazy } from 'react'
 import type { HostProfile } from '@/lib/hosts'
+import { useT } from '@/lib/i18n'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 
 const SftpDualPane = lazy(async () => {
@@ -22,6 +23,7 @@ export function WorkspaceFileTransferApp({
   resolveAuthSecret,
   presentation = 'panel',
 }: WorkspaceFileTransferAppProps) {
+  const { t } = useT()
   const activeHostId = selectedHostId ?? (
     selectedHostAddress
       ? hosts.find((host) => host.address === selectedHostAddress)?.id ?? null
@@ -32,8 +34,8 @@ export function WorkspaceFileTransferApp({
   if (!activeHostId) {
     return (
       <WorkspaceEmptyState
-        title="File Transfer"
-        description="Connect a remote host to transfer files here."
+        title={t('workspace.app.fileTransfer')}
+        description={t('workspace.fileTransfer.emptyDescription')}
       />
     )
   }
@@ -47,9 +49,9 @@ export function WorkspaceFileTransferApp({
     >
       {!isEmbedded && (
         <div className="rounded-[28px] border border-border/60 bg-card/80 px-6 py-5">
-          <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">File Transfer</div>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight">Remote File Transfer</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Move files between your machine and the server without changing the existing SFTP workflow.</p>
+          <div className="text-xs font-medium uppercase tracking-[0.22em] text-[var(--workspace-accent-text)]">{t('workspace.app.fileTransfer')}</div>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight">{t('workspace.fileTransfer.title')}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{t('workspace.fileTransfer.description')}</p>
         </div>
       )}
       <div
@@ -59,7 +61,7 @@ export function WorkspaceFileTransferApp({
             : 'relative min-h-[30rem] overflow-hidden rounded-[28px] border border-border/60 bg-card/70 p-3'
         }
       >
-        <Suspense fallback={<FileTransferPaneFallback className={paneClassName} />}>
+        <Suspense fallback={<FileTransferPaneFallback className={paneClassName} label={t('workspace.fileTransfer.loading')} />}>
           <SftpDualPane
             className={paneClassName}
             hosts={hosts}
@@ -72,11 +74,11 @@ export function WorkspaceFileTransferApp({
   )
 }
 
-function FileTransferPaneFallback({ className }: { className: string }) {
+function FileTransferPaneFallback({ className, label }: { className: string; label: string }) {
   return (
     <div className={`${className} flex items-center justify-center`}>
       <div className="rounded-2xl border border-border/60 bg-card/80 px-4 py-3 text-sm text-muted-foreground">
-        Loading file transfer…
+        {label}
       </div>
     </div>
   )

@@ -112,7 +112,7 @@ describe('session terminal view', () => {
 
     expect(screen.getByRole('button', { name: 'workspace.mode.terminal' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'workspace.mode.workspace' })).toBeInTheDocument()
-    expect(screen.queryByTitle('Open browser')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('terminal.openBrowser')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /ai/i })).toBeInTheDocument()
     expect(screen.getByTitle('rightSidebar.terminal')).toBeInTheDocument()
   })
@@ -141,7 +141,7 @@ describe('session terminal view', () => {
       chunkEmitterRef.current['session-4']?.([{ data: 'Preview at localhost:3000/dashboard\n' } as never])
     })
 
-    fireEvent.click(screen.getByTitle('Open latest detected link in browser'))
+    fireEvent.click(screen.getByTitle('terminal.openLatestLink'))
     expect(openLink).toHaveBeenCalledWith('http://localhost:3000/dashboard')
   })
 
@@ -169,7 +169,7 @@ describe('session terminal view', () => {
       chunkEmitterRef.current['session-5']?.([{ data: 'Service at 192.168.1.20:8080/app\n' } as never])
     })
 
-    fireEvent.click(screen.getByTitle('Open latest detected link in browser'))
+    fireEvent.click(screen.getByTitle('terminal.openLatestLink'))
     expect(openLink).toHaveBeenCalledWith('http://192.168.1.20:8080/app')
   })
 
@@ -197,7 +197,7 @@ describe('session terminal view', () => {
       chunkEmitterRef.current['session-6']?.([{ data: 'Dev UI on preview-host.local:5173\n' } as never])
     })
 
-    fireEvent.click(screen.getByTitle('Open latest detected link in browser'))
+    fireEvent.click(screen.getByTitle('terminal.openLatestLink'))
     expect(openLink).toHaveBeenCalledWith('http://preview-host.local:5173')
   })
   it('shows an open-link action when a terminal url is detected', () => {
@@ -224,7 +224,7 @@ describe('session terminal view', () => {
       chunkEmitterRef.current['session-2']?.([{ data: 'Visit https://example.com/docs for help\n' } as never])
     })
 
-    fireEvent.click(screen.getByTitle('Open latest detected link in browser'))
+    fireEvent.click(screen.getByTitle('terminal.openLatestLink'))
     expect(openLink).toHaveBeenCalledWith('https://example.com/docs')
   })
 })

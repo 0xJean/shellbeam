@@ -13,16 +13,10 @@ import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
-import { WorkspacePanelHeader } from './workspace/workspace-panel-header'
+import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
 type SortMode = 'az' | 'za' | 'newest' | 'oldest'
 const SORT_KEY = 'shellbeam.hostSortMode'
-
-function computeGroupTabs(hosts: HostProfile[]) {
-  const groups = new Set(hosts.map((h) => h.group).filter(Boolean))
-  DEFAULT_GROUPS.forEach((g) => groups.add(g))
-  return ['All', ...Array.from(groups)]
-}
 
 interface HostsDashboardProps {
   hosts: HostProfile[]
@@ -58,7 +52,6 @@ export function HostsDashboard({
   const effectiveSearch = externalSearch ?? internalSearch
   const setEffectiveSearch = onExternalSearchChange ?? setInternalSearch
   const [groupFilter, setGroupFilter] = useState('All')
-  const allGroups = useMemo(() => computeGroupTabs(hosts), [hosts])
   const [showAddForm, setShowAddForm] = useState(openAddForm)
   useEffect(() => { setShowAddForm((prev) => (openAddForm ? true : prev)) }, [openAddForm])
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
@@ -157,25 +150,45 @@ export function HostsDashboard({
     })
     return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
   }, [hosts])
+  const resourceGroups = useMemo<WorkspaceResourceGroup[]>(() => (
+    allGroupCounts.map(([group, count], index) => ({
+      key: group,
+      label: t(`group.${group}`) !== `group.${group}` ? t(`group.${group}`) : group,
+      count,
+      colorClassName: groupColors[index % groupColors.length],
+    }))
+  ), [allGroupCounts, t])
 
   return (
-    <div className="flex w-full flex-col overflow-x-hidden">
-      <StatsRow hostsTotal={hosts.length} onlineCount={onlineCount} groupCounts={allGroupCounts} />
-
-      <WorkspacePanelHeader
+    <div className="flex w-full flex-col overflow-x-hidden text-[var(--workspace-text)]">
+      <WorkspaceResourceOverviewHeader
         title={t('hosts.title')}
         description={t('hosts.subtitle')}
+        total={hosts.length}
+        totalLabel={t('hosts.totalHosts')}
+        totalMeta={onlineCount > 0 && (
+          <span className="flex items-center gap-1.5 rounded-full bg-[var(--workspace-status-good-bg)] px-2.5 py-1 text-xs font-medium text-[color:var(--workspace-status-good-text)]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--workspace-status-good)]" />
+            {t('hosts.online', { n: onlineCount })}
+          </span>
+        )}
+        visibleCount={filteredHosts.length}
+        visibleLabel={t('hosts.totalHosts')}
+        groups={resourceGroups}
+        selectedGroup={groupFilter}
+        allGroupLabel={t('hosts.all')}
+        onGroupSelect={setGroupFilter}
         actions={
           <>
             <div className="relative">
               <button type="button" onClick={() => { setTagFilterOpen((v) => !v); setSortOpen(false) }}
                 className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
-                  tagFilter.size > 0 ? 'border-primary/50 bg-primary/5 text-primary' : 'text-muted-foreground hover:text-foreground')}>
+                  tagFilter.size > 0 ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-text-strong)]' : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
                 <Tag className="h-3.5 w-3.5" />
                 {tagFilter.size > 0 ? (
                   <>
                     <span className="hidden sm:inline">{tagFilter.size} {t('hosts.tagsSelected')}</span>
-                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary/20 sm:hidden"><span className="text-[10px]">{tagFilter.size}</span></span>
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[var(--workspace-accent-muted)] sm:hidden"><span className="text-[10px] text-[var(--workspace-text-strong)]">{tagFilter.size}</span></span>
                   </>
                 ) : (
                   <span className="hidden sm:inline">{t('hosts.filterByTag')}</span>
@@ -185,25 +198,25 @@ export function HostsDashboard({
               {tagFilterOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setTagFilterOpen(false)} />
-                  <div className="absolute right-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-xl border border-border bg-popover shadow-xl">
+                  <div className="absolute right-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-xl">
                     {tagFilter.size > 0 && (
                       <button type="button" onClick={() => { setTagFilter(new Set()); setTagFilterOpen(false) }}
-                        className="flex w-full items-center gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                        className="flex w-full items-center gap-2 border-b border-[color:var(--workspace-border-soft)] px-3 py-2 text-xs text-[var(--workspace-text-muted)] transition-colors hover:text-[var(--workspace-text-strong)]">
                         <X className="h-3 w-3" />{t('hosts.clearTags')}
                       </button>
                     )}
                     <div className="max-h-60 overflow-y-auto p-1">
                       {allExistingTags.length === 0 ? (
-                        <p className="px-3 py-3 text-center text-xs text-muted-foreground">{t('hosts.noTags')}</p>
+                        <p className="px-3 py-3 text-center text-xs text-[var(--workspace-text-muted)]">{t('hosts.noTags')}</p>
                       ) : allExistingTags.map((tg) => {
                         const active = tagFilter.has(tg)
                         return (
                           <button key={tg} type="button"
                             onClick={() => setTagFilter((prev) => { const next = new Set(prev); if (active) next.delete(tg); else next.add(tg); return next })}
                             className={cn('flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
-                              active ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted')}>
+                              active ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]')}>
                             <span className={cn('flex h-4 w-4 items-center justify-center rounded border text-[10px]',
-                              active ? 'border-primary bg-primary text-white' : 'border-border')}>
+                              active ? 'border-[color:var(--workspace-accent-solid)] bg-[color:var(--workspace-primary-500)] text-[color:var(--workspace-primary-foreground)]' : 'border-[color:var(--workspace-border-soft)]')}>
                               {active && '✓'}
                             </span>
                             <span className="flex-1 text-left truncate">{tg}</span>
@@ -217,7 +230,7 @@ export function HostsDashboard({
             </div>
             <div className="relative">
               <button type="button" onClick={() => { setSortOpen((v) => !v); setTagFilterOpen(false) }}
-                className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+                className="flex items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 py-1.5 text-xs font-medium text-[var(--workspace-text-muted)] transition-colors hover:text-[var(--workspace-text-strong)]">
                 {sortMode === 'az' && <ArrowDownAZ className="h-3.5 w-3.5" />}
                 {sortMode === 'za' && <ArrowUpZA className="h-3.5 w-3.5" />}
                 {sortMode === 'newest' && <CalendarArrowDown className="h-3.5 w-3.5" />}
@@ -228,49 +241,38 @@ export function HostsDashboard({
               {sortOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setSortOpen(false)} />
-                  <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-xl">
+                  <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1 shadow-xl">
                     {([['az', ArrowDownAZ], ['za', ArrowUpZA], ['newest', CalendarArrowDown], ['oldest', CalendarArrowUp]] as const).map(([mode, Icon]) => (
                       <button key={mode} type="button" onClick={() => handleSortChange(mode)}
                         className={cn('flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
-                          sortMode === mode ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted')}>
+                          sortMode === mode ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]')}>
                         <Icon className="h-4 w-4" />
                         <span className="flex-1 text-left">{t(`hosts.sort.${mode}`)}</span>
-                        {sortMode === mode && <span className="text-primary">✓</span>}
+                        {sortMode === mode && <span className="text-[color:var(--workspace-accent-solid)]">✓</span>}
                       </button>
                     ))}
                   </div>
                 </>
               )}
             </div>
-            <div className="flex rounded-lg border p-0.5">
-              <button type="button" onClick={() => setViewMode('grid')} className={cn('rounded-md p-1.5 transition-colors', viewMode === 'grid' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')} title={t('hosts.gridView')}>
+            <div className="flex rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-0.5">
+              <button type="button" onClick={() => setViewMode('grid')} className={cn('rounded-md p-1.5 transition-colors', viewMode === 'grid' ? 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')} title={t('hosts.gridView')}>
                 <LayoutGrid className="h-4 w-4" />
               </button>
-              <button type="button" onClick={() => setViewMode('list')} className={cn('rounded-md p-1.5 transition-colors', viewMode === 'list' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')} title={t('hosts.listView')}>
+              <button type="button" onClick={() => setViewMode('list')} className={cn('rounded-md p-1.5 transition-colors', viewMode === 'list' ? 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')} title={t('hosts.listView')}>
                 <List className="h-4 w-4" />
               </button>
             </div>
           </>
         }
-        contentClassName="space-y-4"
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          {externalSearch === undefined && (
-            <div className="relative flex-1 max-w-xs">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={effectiveSearch} onChange={(e) => setEffectiveSearch(e.target.value)} placeholder={t('hosts.search')} className="h-9 pl-9 text-sm" />
-            </div>
-          )}
-          <div className="flex flex-wrap gap-1 rounded-lg bg-muted/50 p-0.5">
-            {allGroups.map((g) => {
-              const label = g === 'All' ? t('hosts.all') : (t(`group.${g}`) !== `group.${g}` ? t(`group.${g}`) : g)
-              return (
-                <button key={g} type="button" onClick={() => setGroupFilter(g)} className={cn('rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors sm:px-3', groupFilter === g ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
-                  {label}
-                </button>
-              )
-            })}
+        search={externalSearch === undefined && (
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
+            <Input value={effectiveSearch} onChange={(e) => setEffectiveSearch(e.target.value)} placeholder={t('hosts.search')} className="h-10 border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 text-sm text-[var(--workspace-text-strong)] placeholder:text-[var(--workspace-text-subtle)]" />
           </div>
+        )}
+        controls={
+          <>
           <div className="flex-1" />
           {onScanHosts && filteredHosts.length > 0 && (
             <Button size="sm" variant="outline" onClick={() => void handleCheckAllStatus()} disabled={checkingStatus} className="h-9 gap-1.5 text-xs">
@@ -281,16 +283,17 @@ export function HostsDashboard({
           <button
             type="button"
             onClick={() => setShowSshImport(true)}
-            className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium transition-colors hover:bg-muted"
+            className="flex items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2 text-xs font-medium text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"
           >
             <FileDown className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">{t('hosts.importSsh')}</span>
           </button>
-          <Button size="sm" onClick={() => setShowAddForm(!showAddForm)} className="h-9 gap-1.5 text-xs">
+          <Button size="sm" onClick={() => setShowAddForm(!showAddForm)} className="h-9 gap-1.5 text-xs bg-[color:var(--workspace-primary-500)] text-[color:var(--workspace-primary-foreground)] hover:bg-[color:var(--workspace-primary-400)]">
             <Plus className="h-3.5 w-3.5" /> {t('hosts.newConnection')}
           </Button>
-        </div>
-
+          </>
+        }
+      >
           <HostCreateDialog
             open={showAddForm}
             defaultUsername={defaultUsername}
@@ -322,22 +325,22 @@ export function HostsDashboard({
         <PullToRefresh onRefresh={onRefreshHosts ?? (async () => {})} className="pb-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-16">
-                <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground/40" />
-                <p className="mt-3 text-sm text-muted-foreground">{t('hosts.loading')}</p>
+                <RefreshCw className="h-8 w-8 animate-spin text-[var(--workspace-text-subtle)]" />
+                <p className="mt-3 text-sm text-[var(--workspace-text-muted)]">{t('hosts.loading')}</p>
               </div>
             ) : filteredHosts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center">
-                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/50">
-                  <Server className="h-8 w-8 text-muted-foreground/40" />
+                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--workspace-surface-700)]">
+                  <Server className="h-8 w-8 text-[var(--workspace-text-subtle)]" />
                 </div>
-                <p className="text-sm font-medium text-foreground">
+                <p className="text-sm font-medium text-[var(--workspace-text-strong)]">
                   {effectiveSearch.trim() || groupFilter !== 'All' ? t('hosts.noMatch') : t('hosts.noHosts')}
                 </p>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-xs text-[var(--workspace-text-muted)]">
                   {effectiveSearch.trim() || groupFilter !== 'All' ? t('hosts.noMatchHint') : t('hosts.noHostsHint')}
                 </p>
                 {!effectiveSearch.trim() && groupFilter === 'All' && (
-                  <Button className="mt-5 gap-1.5" onClick={() => setShowAddForm(true)}><Plus className="h-4 w-4" /> {t('hosts.addHost')}</Button>
+                  <Button className="mt-5 gap-1.5 bg-[color:var(--workspace-primary-500)] text-[color:var(--workspace-primary-foreground)] hover:bg-[color:var(--workspace-primary-400)]" onClick={() => setShowAddForm(true)}><Plus className="h-4 w-4" /> {t('hosts.addHost')}</Button>
                 )}
               </div>
             ) : viewMode === 'grid' ? (
@@ -360,9 +363,9 @@ export function HostsDashboard({
                 {groupedHosts.map(([grp, groupHosts]) => (
                   <div key={grp}>
                     <div className="mb-2 flex items-center gap-2">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t(`group.${grp}`) !== `group.${grp}` ? t(`group.${grp}`) : grp}</p>
-                      <span className="text-[10px] text-muted-foreground/50">{groupHosts.length}</span>
-                      <div className="flex-1 border-t border-border/30" />
+                      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--workspace-text-muted)]">{t(`group.${grp}`) !== `group.${grp}` ? t(`group.${grp}`) : grp}</p>
+                      <span className="text-[10px] text-[var(--workspace-text-subtle)]">{groupHosts.length}</span>
+                      <div className="flex-1 border-t border-[color:var(--workspace-border-soft)]" />
                     </div>
                     <div className="space-y-1">
                       {groupHosts.map((host) => (
@@ -383,7 +386,7 @@ export function HostsDashboard({
               </div>
             )}
         </PullToRefresh>
-      </WorkspacePanelHeader>
+      </WorkspaceResourceOverviewHeader>
 
         {showSshImport && (
           <SshImportDialog
@@ -395,46 +398,13 @@ export function HostsDashboard({
   )
 }
 
-const groupColors = ['bg-primary', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-violet-500', 'bg-rose-500', 'bg-cyan-500', 'bg-orange-500']
-
-function StatsRow({ hostsTotal, onlineCount, groupCounts }: { hostsTotal: number; onlineCount: number; groupCounts: [string, number][] }) {
-  const { t } = useT()
-  const groupLabel = (g: string) => t(`group.${g}`) !== `group.${g}` ? t(`group.${g}`) : g
-  if (hostsTotal === 0) return null
-  return (
-    <div className="shrink-0 px-4 pt-6 pb-2 md:px-6">
-      <div className="flex items-center gap-4">
-        <div className="flex items-baseline gap-2">
-          <span className="text-3xl font-bold tracking-tight">{hostsTotal}</span>
-          <span className="text-sm text-muted-foreground">{t('hosts.totalHosts')}</span>
-        </div>
-        {onlineCount > 0 && (
-          <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-500">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            {t('hosts.online', { n: onlineCount })}
-          </span>
-        )}
-      </div>
-      {groupCounts.length > 0 && (
-        <div className="mt-3 space-y-2">
-          <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
-            {groupCounts.map(([g, count], i) => (
-              <div key={g} className={cn('h-full transition-all', groupColors[i % groupColors.length])}
-                style={{ width: `${(count / hostsTotal) * 100}%` }}
-                title={`${groupLabel(g)}: ${count}`} />
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
-            {groupCounts.map(([g, count], i) => (
-              <div key={g} className="flex items-center gap-1.5">
-                <span className={cn('h-2 w-2 rounded-full', groupColors[i % groupColors.length])} />
-                <span className="text-xs text-muted-foreground">{groupLabel(g)}</span>
-                <span className="text-xs font-semibold">{count}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
+const groupColors = [
+  'bg-[color:var(--workspace-primary-500)]',
+  'bg-[color:var(--workspace-status-good)]',
+  'bg-[color:var(--workspace-status-info)]',
+  'bg-[color:var(--workspace-status-warn)]',
+  'bg-[color:var(--workspace-group-staging)]',
+  'bg-[color:var(--workspace-status-bad)]',
+  'bg-[color:var(--workspace-metric-network-from)]',
+  'bg-[color:var(--workspace-group-default)]',
+]
