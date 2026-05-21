@@ -1,3 +1,5 @@
+import { invoke } from '@tauri-apps/api/core'
+
 export type HostAddressType = 'ipv4' | 'ipv6' | 'domain' | 'unknown'
 export type HostAddressScope = 'public' | 'private' | 'loopback' | 'linkLocal' | 'carrierNat' | 'reserved' | 'multicast' | 'domain' | 'unknown'
 
@@ -176,6 +178,15 @@ function readLocationCache(): Record<string, PublicIpLocation> {
   }
 }
 
+function isPublicIpLocation(value: unknown): value is PublicIpLocation {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Partial<PublicIpLocation>
+  return typeof record.ip === 'string'
+    && typeof record.locationLabel === 'string'
+    && typeof record.provider === 'string'
+    && typeof record.updatedAt === 'number'
+}
+
 function writeLocationCache(cache: Record<string, PublicIpLocation>) {
   if (typeof localStorage === 'undefined') return
   try {
@@ -185,10 +196,53 @@ function writeLocationCache(cache: Record<string, PublicIpLocation>) {
   }
 }
 
+async function invokeIpLocationCommand<T>(command: string, args?: Record<string, unknown>) {
+  try {
+    return await invoke<T>(command, args)
+  } catch {
+    return null
+  }
+}
+
+function isFreshPublicIpLocation(location: PublicIpLocation) {
+  return Date.now() - location.updatedAt <= IP_GEO_CACHE_TTL_MS
+}
+
 export function getCachedPublicIpLocation(ip: string): PublicIpLocation | null {
   const cached = readLocationCache()[ip]
-  if (!cached || Date.now() - cached.updatedAt > IP_GEO_CACHE_TTL_MS) return null
+  if (!isPublicIpLocation(cached) || !isFreshPublicIpLocation(cached)) return null
   return cached
+}
+
+export async function loadPublicIpLocationPersistedCache(ips: string[]): Promise<Record<string, PublicIpLocation>> {
+  const uniqueIps = Array.from(new Set(ips.map((ip) => ip.trim()).filter(Boolean)))
+  const localCache = readLocationCache()
+  const cache = uniqueIps.reduce<Record<string, PublicIpLocation>>((next, ip) => {
+    const local = localCache[ip]
+    if (isPublicIpLocation(local) && isFreshPublicIpLocation(local)) next[ip] = local
+    return next
+  }, {})
+
+  const snapshots = await invokeIpLocationCommand<unknown[]>('list_public_ip_locations', { ips: uniqueIps })
+  if (!snapshots) return cache
+
+  snapshots.forEach((snapshot) => {
+    if (!isPublicIpLocation(snapshot) || !isFreshPublicIpLocation(snapshot)) return
+    cache[snapshot.ip] = snapshot
+    localCache[snapshot.ip] = snapshot
+  })
+  writeLocationCache(localCache)
+
+  return cache
+}
+
+export async function savePublicIpLocationCacheEntry(location: PublicIpLocation) {
+  const localCache = readLocationCache()
+  localCache[location.ip] = location
+  writeLocationCache(localCache)
+
+  await invokeIpLocationCommand<void>('upsert_public_ip_location', { payload: location })
+  return location
 }
 
 function compactLocation(parts: Array<string | null | undefined>) {
@@ -236,8 +290,5 @@ export async function lookupPublicIpLocation(ip: string): Promise<PublicIpLocati
     provider: 'ipapi.co',
     updatedAt: Date.now(),
   }
-  const cache = readLocationCache()
-  cache[ip] = location
-  writeLocationCache(cache)
-  return location
+  return savePublicIpLocationCacheEntry(location)
 }

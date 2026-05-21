@@ -695,16 +695,17 @@ export function WorkspaceAssetInventoryApp({
     setView('tools')
   }
 
-  async function scanHosts(targetHosts: HostProfile[]) {
+  async function scanHosts(targetHosts: HostProfile[], options: { force?: boolean } = {}) {
     const runId = ++scanRunIdRef.current
-    await scanWorkspaceInventoryHosts({
+    const result = await scanWorkspaceInventoryHosts({
       hosts: targetHosts,
       resolveAuthSecret,
       concurrency: SCAN_CONCURRENCY,
       currentStates: states,
       isCurrent: () => scanRunIdRef.current === runId,
+      refreshIntervalMs: options.force ? 0 : undefined,
     })
-    if (scanRunIdRef.current === runId) {
+    if (scanRunIdRef.current === runId && result.scannedHosts.length > 0) {
       setLastScanAt(Date.now())
     }
   }
@@ -791,7 +792,7 @@ export function WorkspaceAssetInventoryApp({
           serviceCount={serviceCount}
           projectCount={projectCount}
           errorCount={errorCount}
-          onScan={() => void scanHosts(hostRows.length > 0 ? hostRows : hosts)}
+          onScan={() => void scanHosts(hostRows.length > 0 ? hostRows : hosts, { force: true })}
           scanning={scanningCount > 0}
           scanLabel={hostRows.length > 0 && hostRows.length !== hosts.length ? t('workspace.asset.scanFiltered') : t('workspace.asset.scanAll')}
           lastScanAt={lastScanAt}
@@ -916,7 +917,7 @@ export function WorkspaceAssetInventoryApp({
                   <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
                     <button
                       type="button"
-                      onClick={() => void scanHosts([selectedHost])}
+                      onClick={() => void scanHosts([selectedHost], { force: true })}
                       disabled={selectedState?.status === 'scanning'}
                       className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-xs font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:cursor-not-allowed disabled:opacity-60"
                     >

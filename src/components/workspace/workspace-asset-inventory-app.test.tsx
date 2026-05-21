@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearWorkspaceInventoryCache, parseWorkspaceInventory, saveWorkspaceInventoryCacheEntry } from '@/lib/workspace-inventory'
+import { clearWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { WorkspaceAssetInventoryApp } from './workspace-asset-inventory-app'
 
 const runSshCommand = vi.fn()
@@ -75,6 +76,7 @@ describe('workspace asset inventory app', () => {
     localStorage.setItem('shellbeam.locale', 'zh-CN')
     runSshCommand.mockReset()
     clearWorkspaceInventoryCache()
+    clearWorkspaceInventoryStates()
     runSshCommand.mockImplementation(({ host }: { host: string }) => Promise.resolve({
       stdout: inventoryOutput(host),
       stderr: '',
@@ -390,11 +392,7 @@ describe('workspace asset inventory app', () => {
     expect(screen.getAllByText('无法访问').length).toBeGreaterThan(0)
   })
 
-  it('hydrates previous scan results from cache before the background scan finishes', async () => {
-    const scanController: { resolve?: (value: unknown) => void } = {}
-    runSshCommand.mockImplementation(() => new Promise((resolve) => {
-      scanController.resolve = resolve
-    }))
+  it('uses fresh cached scan results without starting another background scan', async () => {
     await saveWorkspaceInventoryCacheEntry(hosts[0], parseWorkspaceInventory(`
 __SB_HOSTNAME=cached-vps
 __SB_CPU=42
@@ -415,19 +413,34 @@ __SB_PROJECT=/srv/cached-app|node|cached-app|2026-05-15 09:00
     expect(screen.getAllByText('Redis').length).toBeGreaterThan(0)
     expect(screen.getByText('/srv/cached-app')).toBeInTheDocument()
     expect(screen.getByText(/已先显示 1 台 VPS 的本地缓存/)).toBeInTheDocument()
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+    expect(runSshCommand).not.toHaveBeenCalled()
+  })
+
+  it('forces a fresh scan when the user clicks scan with a fresh cache', async () => {
+    await saveWorkspaceInventoryCacheEntry(hosts[0], parseWorkspaceInventory(`
+__SB_HOSTNAME=cached-vps
+__SB_CPU=42
+__SB_MEMORY=55|550M/1000M
+__SB_DISK=66|33G/50G
+__SB_PROJECT=/srv/cached-app|node|cached-app|2026-05-15 09:00
+`))
+
+    render(
+      <WorkspaceAssetInventoryApp
+        selectedHostId="host-1"
+        hosts={[hosts[0]]}
+        resolveAuthSecret={async () => 'secret'}
+      />,
+    )
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+    expect(runSshCommand).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '扫描全部' }))
+
     await waitFor(() => {
       expect(runSshCommand).toHaveBeenCalledTimes(1)
-    })
-
-    scanController.resolve?.({
-      stdout: inventoryOutput('fresh-vps'),
-      stderr: '',
-      exitCode: 0,
-      durationMs: 20,
-    })
-
-    await waitFor(() => {
-      expect(screen.getByText('Nginx')).toBeInTheDocument()
     })
   })
 })

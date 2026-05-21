@@ -12,6 +12,11 @@ import {
   type WorkspaceInventory,
 } from '@/lib/workspace-inventory'
 import {
+  loadWorkspaceToolStatuses,
+  saveWorkspaceToolStatus,
+  type WorkspaceToolStatus,
+} from '@/lib/workspace-tool-status'
+import {
   createReadyWorkspaceInventoryStates,
   mergeWorkspaceInventoryStates,
   selectWorkspaceInventoryStatesForHosts,
@@ -106,14 +111,7 @@ export type ToolAction =
   | 'status'
   | 'logs'
 
-export interface ToolStatus {
-  installed: boolean | null
-  path?: string
-  version?: string
-  serviceActive?: string
-  serviceEnabled?: string
-  checkedAt?: string
-}
+export type ToolStatus = WorkspaceToolStatus
 
 interface WorkspaceToolManagerAppProps {
   selectedHostId?: string | null
@@ -467,6 +465,7 @@ function parseMarker(output: string, marker: string) {
 export function parseToolStatus(output: string): ToolStatus {
   const installedMarker = parseMarker(output, '__SB_INSTALLED')
   const installed = installedMarker === '1' ? true : installedMarker === '0' ? false : null
+  const checkedAtMs = Date.now()
 
   return {
     installed,
@@ -474,7 +473,8 @@ export function parseToolStatus(output: string): ToolStatus {
     version: parseMarker(output, '__SB_VERSION') || undefined,
     serviceActive: parseMarker(output, '__SB_SERVICE_ACTIVE') || undefined,
     serviceEnabled: parseMarker(output, '__SB_SERVICE_ENABLED') || undefined,
-    checkedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    checkedAt: new Date(checkedAtMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    checkedAtMs,
   }
 }
 
@@ -648,6 +648,7 @@ export function WorkspaceToolManagerApp({
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedToolId, setSelectedToolId] = useState(TOOL_CATALOG[0].id)
   const [statuses, setStatuses] = useState<Record<string, ToolStatus>>({})
+  const [toolStatusesLoaded, setToolStatusesLoaded] = useState(false)
   const [running, setRunning] = useState<{ toolId: string; action: ToolAction } | null>(null)
   const [output, setOutput] = useState('')
   const [error, setError] = useState('')
@@ -712,10 +713,12 @@ export function WorkspaceToolManagerApp({
       const displayOutput = combined || t('workspace.tools.actionCompleted', { action: t(`workspace.tools.action.${action}`) })
 
       if (displayOutput.includes('__SB_INSTALLED=')) {
+        const parsedStatus = parseToolStatus(displayOutput)
         setStatuses((current) => ({
           ...current,
-          [tool.id]: parseToolStatus(displayOutput),
+          [tool.id]: parsedStatus,
         }))
+        void saveWorkspaceToolStatus(host, tool, parsedStatus)
       }
 
       if (!options.silent) {
@@ -742,11 +745,24 @@ export function WorkspaceToolManagerApp({
   }
 
   useEffect(() => {
+    setToolStatusesLoaded(false)
     setStatuses({})
     setOutput('')
     setError('')
     setDetailOpen(false)
   }, [host?.id])
+
+  useEffect(() => {
+    let cancelled = false
+    void loadWorkspaceToolStatuses(host).then((persistedStatuses) => {
+      if (cancelled) return
+      setStatuses(persistedStatuses)
+      setToolStatusesLoaded(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [host])
 
   useEffect(() => {
     setManagedHostId((current) => {
@@ -798,10 +814,10 @@ export function WorkspaceToolManagerApp({
   }, [selectedToolId, visibleTools])
 
   useEffect(() => {
-    if (!host || statuses[selectedTool.id]?.checkedAt) return
+    if (!host || !toolStatusesLoaded || statuses[selectedTool.id]?.checkedAt) return
     void runToolAction('check', selectedTool, { silent: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [host?.id, selectedTool.id])
+  }, [host?.id, selectedTool.id, toolStatusesLoaded])
 
   if (!host) {
     return (

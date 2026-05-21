@@ -43,7 +43,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 1420,
+    port: 1421,
     strictPort: true,
     host: '0.0.0.0', // listen on IPv4 so iOS device can reach dev server via LAN IP
   },

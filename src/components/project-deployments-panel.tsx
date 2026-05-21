@@ -308,7 +308,7 @@ export function ProjectDeploymentsPanel({
     })
   }, [deploymentViewRows, networkByAddress, query, selectedKey, statusFilter])
 
-  async function scanHosts(targetHosts: HostProfile[]) {
+  async function scanHosts(targetHosts: HostProfile[], options: { force?: boolean } = {}) {
     const runId = runIdRef.current + 1
     runIdRef.current = runId
     await scanWorkspaceInventoryHosts({
@@ -317,6 +317,7 @@ export function ProjectDeploymentsPanel({
       concurrency: SCAN_CONCURRENCY,
       currentStates: states,
       isCurrent: () => runIdRef.current === runId,
+      refreshIntervalMs: options.force ? 0 : undefined,
     })
   }
 
@@ -376,7 +377,7 @@ export function ProjectDeploymentsPanel({
   const scanDeploymentsButton = (
     <button
       type="button"
-      onClick={() => void scanHosts(selectedKey === 'all' ? hosts : hosts.filter((host) => hostKey(host) === selectedKey))}
+      onClick={() => void scanHosts(selectedKey === 'all' ? hosts : hosts.filter((host) => hostKey(host) === selectedKey), { force: true })}
       disabled={scanningCount > 0}
       className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-soft)] px-3 text-xs font-semibold text-[var(--workspace-accent-text)] transition-colors hover:bg-[var(--workspace-accent-muted)] disabled:cursor-not-allowed disabled:opacity-60"
     >
@@ -606,7 +607,7 @@ export function ProjectDeploymentsPanel({
                   {deploymentRows.length === 0 && (
                     <button
                       type="button"
-                      onClick={() => void scanHosts(hosts)}
+                      onClick={() => void scanHosts(hosts, { force: true })}
                       disabled={scanningCount > 0}
                       className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[rgba(19,127,236,0.18)] px-4 text-sm font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[rgba(19,127,236,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
                     >

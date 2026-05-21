@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { HostProfile } from './hosts'
-import type { WorkspaceInventory } from './workspace-inventory'
+import type { WorkspaceInventory, WorkspaceInventoryHostStateSnapshot } from './workspace-inventory'
 import { getWorkspaceInventoryHostKey } from './workspace-inventory'
 
 export interface WorkspaceInventoryHostState {
@@ -140,6 +140,32 @@ export function createReadyWorkspaceInventoryStates(cache: Record<string, { inve
       return next
     }
     next[key] = { status: 'ready', inventory: entry.inventory, updatedAt: entry.updatedAt }
+    return next
+  }, {})
+}
+
+export function createPersistedWorkspaceInventoryStates(
+  persistedStates: Record<string, WorkspaceInventoryHostStateSnapshot>,
+  cache: Record<string, { inventory: WorkspaceInventory; updatedAt: number }> = {},
+  current = states,
+) {
+  return Object.entries(persistedStates).reduce<Record<string, WorkspaceInventoryHostState>>((next, [key, persisted]) => {
+    const existing = current[key]
+    if (existing?.status === 'scanning' && existing.scanId) {
+      next[key] = existing
+      return next
+    }
+    if ((existing?.updatedAt ?? 0) > persisted.updatedAt) {
+      next[key] = existing
+      return next
+    }
+
+    const inventory = existing?.inventory ?? cache[key]?.inventory
+    if (persisted.status === 'ready') {
+      next[key] = { status: 'ready', inventory, updatedAt: persisted.updatedAt }
+    } else {
+      next[key] = { status: 'error', inventory, updatedAt: persisted.updatedAt, error: persisted.error }
+    }
     return next
   }, {})
 }

@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { type HostProfile, type HostProfileDraft, createHost, updateHost, deleteHost, listHosts } from '@/lib/hosts'
 import { vaultSetSecret } from '@/lib/vault'
-import { loadWorkspaceInventoryPersistedCache } from '@/lib/workspace-inventory'
-import { createReadyWorkspaceInventoryStates, mergeWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { loadWorkspaceInventoryHostStateSnapshots, loadWorkspaceInventoryPersistedCache } from '@/lib/workspace-inventory'
+import { createPersistedWorkspaceInventoryStates, createReadyWorkspaceInventoryStates, mergeWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { scanWorkspaceInventoryHosts } from '@/lib/workspace-inventory-scan'
 import { useVault } from './vault-context'
 
@@ -77,9 +77,15 @@ export function HostsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
-    void loadWorkspaceInventoryPersistedCache(hosts).then((cache) => {
+    void Promise.all([
+      loadWorkspaceInventoryPersistedCache(hosts),
+      loadWorkspaceInventoryHostStateSnapshots(hosts),
+    ]).then(([cache, persistedStates]) => {
       if (cancelled) return
-      mergeWorkspaceInventoryStates(createReadyWorkspaceInventoryStates(cache))
+      mergeWorkspaceInventoryStates({
+        ...createReadyWorkspaceInventoryStates(cache),
+        ...createPersistedWorkspaceInventoryStates(persistedStates, cache),
+      })
     })
     return () => {
       cancelled = true
@@ -140,6 +146,7 @@ export function HostsProvider({ children }: { children: ReactNode }) {
           inputMode: 'vault',
         })
       ) ?? '',
+      refreshIntervalMs: 0,
     })
   }, [resolveAuthSecret])
 

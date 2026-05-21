@@ -1,13 +1,22 @@
 import type { HostProfile } from './hosts'
-import { fetchWorkspaceInventory, getWorkspaceInventoryHostKey, saveWorkspaceInventoryCacheEntry } from './workspace-inventory'
+import {
+  fetchWorkspaceInventory,
+  getWorkspaceInventoryHostKey,
+  loadWorkspaceInventoryPersistedCache,
+  saveWorkspaceInventoryHostStateSnapshot,
+  saveWorkspaceInventoryCacheEntry,
+} from './workspace-inventory'
 import {
   createWorkspaceInventoryScanId,
   createWorkspaceInventoryScanningStates,
+  createReadyWorkspaceInventoryStates,
   getWorkspaceInventoryStates,
   mergeWorkspaceInventoryStates,
   restoreWorkspaceInventoryStatesFromScan,
   type WorkspaceInventoryHostState,
 } from './workspace-inventory-state'
+
+export const WORKSPACE_INVENTORY_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
 interface WorkspaceInventoryScanOptions {
   hosts: HostProfile[]
@@ -15,6 +24,32 @@ interface WorkspaceInventoryScanOptions {
   concurrency?: number
   isCurrent?: () => boolean
   currentStates?: Record<string, WorkspaceInventoryHostState>
+  refreshIntervalMs?: number
+  now?: number
+}
+
+export interface WorkspaceInventoryScanResult {
+  scannedHosts: HostProfile[]
+  skippedHosts: HostProfile[]
+}
+
+function getStateRefreshTime(state: WorkspaceInventoryHostState | undefined) {
+  return state?.updatedAt ?? state?.inventory?.scannedAt ?? 0
+}
+
+function shouldRefreshWorkspaceInventoryHost(
+  host: HostProfile,
+  states: Record<string, WorkspaceInventoryHostState>,
+  refreshIntervalMs: number,
+  now: number,
+) {
+  const state = states[getWorkspaceInventoryHostKey(host)]
+  if (!state) return true
+  if (state.status === 'scanning') return false
+  const refreshedAt = getStateRefreshTime(state)
+  if (refreshedAt <= 0) return true
+  if ((host.updatedAt || host.createdAt || 0) > refreshedAt) return true
+  return now - refreshedAt >= refreshIntervalMs
 }
 
 export async function scanWorkspaceInventoryHosts({
@@ -23,17 +58,33 @@ export async function scanWorkspaceInventoryHosts({
   concurrency = 3,
   isCurrent = () => true,
   currentStates = getWorkspaceInventoryStates(),
-}: WorkspaceInventoryScanOptions) {
-  if (hosts.length === 0 || !isCurrent()) return
+  refreshIntervalMs = WORKSPACE_INVENTORY_REFRESH_INTERVAL_MS,
+  now = Date.now(),
+}: WorkspaceInventoryScanOptions): Promise<WorkspaceInventoryScanResult> {
+  if (hosts.length === 0 || !isCurrent()) return { scannedHosts: [], skippedHosts: [] }
 
-  const pending = hosts.slice()
+  const cache = await loadWorkspaceInventoryPersistedCache(hosts)
+  if (!isCurrent()) return { scannedHosts: [], skippedHosts: hosts }
+
+  const statesBeforeCacheMerge = { ...currentStates, ...getWorkspaceInventoryStates() }
+  mergeWorkspaceInventoryStates(createReadyWorkspaceInventoryStates(cache, statesBeforeCacheMerge))
+
+  const latestStates = { ...statesBeforeCacheMerge, ...getWorkspaceInventoryStates() }
+  const targetHosts = refreshIntervalMs <= 0
+    ? hosts
+    : hosts.filter((host) => shouldRefreshWorkspaceInventoryHost(host, latestStates, refreshIntervalMs, now))
+  const skippedHosts = hosts.filter((host) => !targetHosts.includes(host))
+
+  if (targetHosts.length === 0) return { scannedHosts: [], skippedHosts }
+
+  const pending = targetHosts.slice()
   const scanId = createWorkspaceInventoryScanId()
-  const previousStates = hosts.reduce<Record<string, WorkspaceInventoryHostState | undefined>>((next, host) => {
+  const previousStates = targetHosts.reduce<Record<string, WorkspaceInventoryHostState | undefined>>((next, host) => {
     const key = getWorkspaceInventoryHostKey(host)
-    next[key] = currentStates[key]
+    next[key] = latestStates[key]
     return next
   }, {})
-  const scanningStates = createWorkspaceInventoryScanningStates(hosts, scanId, currentStates)
+  const scanningStates = createWorkspaceInventoryScanningStates(targetHosts, scanId, latestStates)
 
   mergeWorkspaceInventoryStates(scanningStates)
 
@@ -48,6 +99,7 @@ export async function scanWorkspaceInventoryHosts({
         if (!isCurrent()) return
         const cacheEntry = await saveWorkspaceInventoryCacheEntry(host, inventory)
         if (!isCurrent()) return
+        void saveWorkspaceInventoryHostStateSnapshot(host, 'ready', cacheEntry.updatedAt)
         const nextState: WorkspaceInventoryHostState = {
           status: 'ready',
           inventory: cacheEntry.inventory,
@@ -58,10 +110,12 @@ export async function scanWorkspaceInventoryHosts({
         if (!isCurrent()) return
         const message = error instanceof Error ? error.message : String(error)
         const previousState = getWorkspaceInventoryStates()[key]
+        const updatedAt = Date.now()
+        void saveWorkspaceInventoryHostStateSnapshot(host, 'error', updatedAt, message)
         const nextState: WorkspaceInventoryHostState = {
           status: 'error',
           inventory: previousState?.inventory,
-          updatedAt: previousState?.updatedAt,
+          updatedAt,
           error: message,
         }
         mergeWorkspaceInventoryStates({ [key]: nextState })
@@ -70,10 +124,12 @@ export async function scanWorkspaceInventoryHosts({
   }
 
   try {
-    await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, hosts.length)) }, () => worker()))
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, targetHosts.length)) }, () => worker()))
   } finally {
     if (!isCurrent()) {
       restoreWorkspaceInventoryStatesFromScan(scanId, previousStates)
     }
   }
+
+  return { scannedHosts: targetHosts, skippedHosts }
 }

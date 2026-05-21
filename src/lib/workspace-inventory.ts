@@ -76,6 +76,24 @@ export interface WorkspaceInventorySnapshot {
   updatedAt: number
 }
 
+export interface WorkspaceInventoryHostStateSnapshot {
+  hostKey: string
+  hostId: string
+  hostName: string
+  hostAddress: string
+  username: string
+  port: number
+  hostGroup: string
+  tags: string[]
+  authType: string
+  jumpHost?: string
+  jumpPort?: number
+  jumpUser?: string
+  status: 'ready' | 'error'
+  error?: string
+  updatedAt: number
+}
+
 const WORKSPACE_INVENTORY_CACHE_KEY = 'shellbeam.workspaceInventoryCache.v1'
 const memoryInventoryCache: WorkspaceInventoryCache = {}
 
@@ -442,6 +460,47 @@ function isWorkspaceInventorySnapshot(value: unknown): value is WorkspaceInvento
     && typeof record.updatedAt === 'number'
 }
 
+function isWorkspaceInventoryHostStateSnapshot(value: unknown): value is WorkspaceInventoryHostStateSnapshot {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Partial<WorkspaceInventoryHostStateSnapshot>
+  return typeof record.hostKey === 'string'
+    && typeof record.hostId === 'string'
+    && typeof record.hostName === 'string'
+    && typeof record.hostAddress === 'string'
+    && typeof record.username === 'string'
+    && typeof record.port === 'number'
+    && typeof record.hostGroup === 'string'
+    && Array.isArray(record.tags)
+    && typeof record.authType === 'string'
+    && (record.status === 'ready' || record.status === 'error')
+    && typeof record.updatedAt === 'number'
+}
+
+function toWorkspaceInventoryHostStateSnapshot(
+  host: HostProfile,
+  status: WorkspaceInventoryHostStateSnapshot['status'],
+  updatedAt: number,
+  error?: string,
+): WorkspaceInventoryHostStateSnapshot {
+  return {
+    hostKey: getWorkspaceInventoryHostKey(host),
+    hostId: host.id,
+    hostName: host.name,
+    hostAddress: host.address,
+    username: host.username,
+    port: host.port || 22,
+    hostGroup: host.group || 'Custom',
+    tags: host.tags ?? [],
+    authType: host.authType,
+    jumpHost: host.jumpHost,
+    jumpPort: host.jumpPort,
+    jumpUser: host.jumpUser,
+    status,
+    error,
+    updatedAt,
+  }
+}
+
 export function loadWorkspaceInventoryCache(hosts: HostProfile[]): WorkspaceInventoryCache {
   const localCache = readLocalInventoryCache()
   const validKeys = new Set(hosts.map(getWorkspaceInventoryHostKey))
@@ -459,6 +518,30 @@ export function loadWorkspaceInventoryCache(hosts: HostProfile[]): WorkspaceInve
   Object.assign(memoryInventoryCache, nextCache)
 
   return nextCache
+}
+
+export async function loadWorkspaceInventoryHostStateSnapshots(hosts: HostProfile[]) {
+  const snapshots = await invokeWorkspaceInventoryCommand<unknown[]>('list_workspace_inventory_host_states')
+  if (!snapshots) return {}
+
+  const hostByKey = new Map(hosts.map((host) => [getWorkspaceInventoryHostKey(host), host]))
+  return snapshots.reduce<Record<string, WorkspaceInventoryHostStateSnapshot>>((states, snapshot) => {
+    if (!isWorkspaceInventoryHostStateSnapshot(snapshot)) return states
+    if (!hostByKey.has(snapshot.hostKey)) return states
+    states[snapshot.hostKey] = snapshot
+    return states
+  }, {})
+}
+
+export async function saveWorkspaceInventoryHostStateSnapshot(
+  host: HostProfile,
+  status: WorkspaceInventoryHostStateSnapshot['status'],
+  updatedAt = Date.now(),
+  error?: string,
+) {
+  const payload = toWorkspaceInventoryHostStateSnapshot(host, status, updatedAt, error)
+  await invokeWorkspaceInventoryCommand<void>('upsert_workspace_inventory_host_state', { payload })
+  return payload
 }
 
 export async function loadWorkspaceInventoryPersistedCache(hosts: HostProfile[]): Promise<WorkspaceInventoryCache> {
