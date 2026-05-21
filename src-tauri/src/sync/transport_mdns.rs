@@ -50,6 +50,7 @@ fn native_device_name() -> String {
                 }
             }
         }
+        return "ShellBeam-iOS".to_string();
     }
     #[cfg(target_os = "android")]
     {

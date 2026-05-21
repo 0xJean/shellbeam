@@ -9,10 +9,12 @@ use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(not(mobile))]
 use tauri::webview::{PageLoadEvent, WebviewBuilder, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, Runtime};
+#[cfg(not(mobile))]
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, Webview, WebviewUrl,
-    WebviewWindow, WindowEvent,
+    Emitter, LogicalPosition, LogicalSize, Webview, WebviewUrl, WebviewWindow, WindowEvent,
 };
 use uuid::Uuid;
 
@@ -233,14 +235,17 @@ pub struct BrowserHttpProxyRequest {
     pub accept_host_key: Option<bool>,
 }
 
+#[cfg(not(mobile))]
 fn browser_window<R: Runtime>(app: &AppHandle<R>, browser_id: &str) -> Option<WebviewWindow<R>> {
     app.get_webview_window(&browser_window_label(browser_id))
 }
 
+#[cfg(not(mobile))]
 fn browser_webview<R: Runtime>(app: &AppHandle<R>, browser_id: &str) -> Option<Webview<R>> {
     app.get_webview(&browser_window_label(browser_id))
 }
 
+#[cfg(not(mobile))]
 fn emit_browser_state<R: Runtime>(
     app: &AppHandle<R>,
     payload: BrowserStatePayload,
@@ -249,6 +254,7 @@ fn emit_browser_state<R: Runtime>(
         .map_err(|error| error.to_string())
 }
 
+#[cfg(not(mobile))]
 fn emit_browser_window_closed<R: Runtime>(
     app: &AppHandle<R>,
     payload: BrowserWindowClosedPayload,
@@ -326,15 +332,18 @@ fn wkwebview_can_go_back<R: Runtime>(webview: &Webview<R>) -> Result<bool, Strin
         .map_err(|_| "Browser navigation state mutex poisoned".to_string())
 }
 
-#[cfg(not(any(
-    target_os = "macos",
-    windows,
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
-)))]
+#[cfg(all(
+    not(mobile),
+    not(any(
+        target_os = "macos",
+        windows,
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))
+))]
 fn wkwebview_can_go_back<R: Runtime>(_webview: &Webview<R>) -> Result<bool, String> {
     Ok(false)
 }
@@ -408,15 +417,18 @@ fn wkwebview_can_go_forward<R: Runtime>(webview: &Webview<R>) -> Result<bool, St
         .map_err(|_| "Browser navigation state mutex poisoned".to_string())
 }
 
-#[cfg(not(any(
-    target_os = "macos",
-    windows,
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
-)))]
+#[cfg(all(
+    not(mobile),
+    not(any(
+        target_os = "macos",
+        windows,
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))
+))]
 fn wkwebview_can_go_forward<R: Runtime>(_webview: &Webview<R>) -> Result<bool, String> {
     Ok(false)
 }
@@ -462,15 +474,18 @@ fn wkwebview_go_back<R: Runtime>(webview: &Webview<R>) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-#[cfg(not(any(
-    target_os = "macos",
-    windows,
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
-)))]
+#[cfg(all(
+    not(mobile),
+    not(any(
+        target_os = "macos",
+        windows,
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))
+))]
 fn wkwebview_go_back<R: Runtime>(_webview: &Webview<R>) -> Result<(), String> {
     Ok(())
 }
@@ -516,19 +531,23 @@ fn wkwebview_go_forward<R: Runtime>(webview: &Webview<R>) -> Result<(), String> 
         .map_err(|error| error.to_string())
 }
 
-#[cfg(not(any(
-    target_os = "macos",
-    windows,
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
-)))]
+#[cfg(all(
+    not(mobile),
+    not(any(
+        target_os = "macos",
+        windows,
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))
+))]
 fn wkwebview_go_forward<R: Runtime>(_webview: &Webview<R>) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(mobile))]
 fn emit_navigation_capabilities<R: Runtime>(
     app: &AppHandle<R>,
     webview: &Webview<R>,
@@ -550,6 +569,7 @@ fn emit_navigation_capabilities<R: Runtime>(
     .map_err(|error| error.to_string())
 }
 
+#[cfg(not(mobile))]
 fn build_embedded_browser<R: Runtime>(
     app: &AppHandle<R>,
     request: &OpenBrowserWindowRequest,
@@ -656,6 +676,7 @@ fn build_embedded_browser<R: Runtime>(
     Ok(webview)
 }
 
+#[cfg(not(mobile))]
 fn build_browser_window<R: Runtime>(
     app: &AppHandle<R>,
     request: &OpenBrowserWindowRequest,
@@ -852,6 +873,7 @@ mod tests {
 }
 
 #[tauri::command]
+#[cfg(not(mobile))]
 pub async fn open_embedded_browser<R: Runtime>(
     app: AppHandle<R>,
     request: OpenBrowserWindowRequest,
@@ -903,6 +925,16 @@ pub async fn open_embedded_browser<R: Runtime>(
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+pub async fn open_embedded_browser<R: Runtime>(
+    _app: AppHandle<R>,
+    _request: OpenBrowserWindowRequest,
+) -> Result<(), String> {
+    Err("Embedded browser is not supported on mobile builds".to_string())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 pub async fn open_browser_window<R: Runtime>(
     app: AppHandle<R>,
     request: OpenBrowserWindowRequest,
@@ -933,6 +965,16 @@ pub async fn open_browser_window<R: Runtime>(
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+pub async fn open_browser_window<R: Runtime>(
+    _app: AppHandle<R>,
+    _request: OpenBrowserWindowRequest,
+) -> Result<(), String> {
+    Err("Browser windows are not supported on mobile builds".to_string())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 pub async fn update_browser_bounds<R: Runtime>(
     app: AppHandle<R>,
     browser_id: String,
@@ -960,6 +1002,17 @@ pub async fn update_browser_bounds<R: Runtime>(
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+pub async fn update_browser_bounds<R: Runtime>(
+    _app: AppHandle<R>,
+    _browser_id: String,
+    _bounds: serde_json::Value,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 pub async fn show_browser_webview<R: Runtime>(
     app: AppHandle<R>,
     browser_id: String,
@@ -972,6 +1025,16 @@ pub async fn show_browser_webview<R: Runtime>(
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+pub async fn show_browser_webview<R: Runtime>(
+    _app: AppHandle<R>,
+    _browser_id: String,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 pub async fn hide_browser_webview<R: Runtime>(
     app: AppHandle<R>,
     browser_id: String,
@@ -984,6 +1047,16 @@ pub async fn hide_browser_webview<R: Runtime>(
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+pub async fn hide_browser_webview<R: Runtime>(
+    _app: AppHandle<R>,
+    _browser_id: String,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 pub async fn close_browser_window<R: Runtime>(
     app: AppHandle<R>,
     browser_id: String,
@@ -1029,6 +1102,19 @@ pub async fn close_browser_window<R: Runtime>(
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+pub async fn close_browser_window<R: Runtime>(
+    _app: AppHandle<R>,
+    browser_id: String,
+    _session_id: String,
+) -> Result<(), String> {
+    clear_browser_proxy_config(&browser_id);
+    clear_browser_page_load_state(&browser_id);
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 pub async fn load_browser_source<R: Runtime>(
     app: AppHandle<R>,
     request: LoadBrowserSourceRequest,
@@ -1143,6 +1229,16 @@ pub async fn load_browser_source<R: Runtime>(
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+pub async fn load_browser_source<R: Runtime>(
+    _app: AppHandle<R>,
+    _request: LoadBrowserSourceRequest,
+) -> Result<(), String> {
+    Err("Browser source loading is not supported on mobile builds".to_string())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 pub async fn reload_browser_window<R: Runtime>(
     app: AppHandle<R>,
     request: BrowserActionRequest,
@@ -1168,6 +1264,16 @@ pub async fn reload_browser_window<R: Runtime>(
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+pub async fn reload_browser_window<R: Runtime>(
+    _app: AppHandle<R>,
+    _request: BrowserActionRequest,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 pub async fn go_back_browser_window<R: Runtime>(
     app: AppHandle<R>,
     request: BrowserActionRequest,
@@ -1191,6 +1297,16 @@ pub async fn go_back_browser_window<R: Runtime>(
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+pub async fn go_back_browser_window<R: Runtime>(
+    _app: AppHandle<R>,
+    _request: BrowserActionRequest,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 pub async fn go_forward_browser_window<R: Runtime>(
     app: AppHandle<R>,
     request: BrowserActionRequest,
@@ -1210,6 +1326,15 @@ pub async fn go_forward_browser_window<R: Runtime>(
         wkwebview_go_forward(&webview)?;
         emit_navigation_capabilities(&app, &webview, request.browser_id, request.session_id)?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(mobile)]
+pub async fn go_forward_browser_window<R: Runtime>(
+    _app: AppHandle<R>,
+    _request: BrowserActionRequest,
+) -> Result<(), String> {
     Ok(())
 }
 
