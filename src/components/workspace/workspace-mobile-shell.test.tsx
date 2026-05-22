@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceMobileShell } from './workspace-mobile-shell'
 
 vi.mock('./workspace-file-transfer-app', () => ({
@@ -22,12 +22,20 @@ vi.mock('./workspace-tool-manager-app', () => ({
   WorkspaceToolManagerApp: () => <div data-testid="workspace-tool-manager-app">tool manager app</div>,
 }))
 
+const workspaceAssetInventorySpy = vi.fn()
 vi.mock('./workspace-asset-inventory-app', () => ({
-  WorkspaceAssetInventoryApp: () => <div data-testid="workspace-asset-inventory-app">asset inventory app</div>,
+  WorkspaceAssetInventoryApp: (props: { presentation?: string }) => {
+    workspaceAssetInventorySpy(props)
+    return <div data-testid="workspace-asset-inventory-app">asset inventory app</div>
+  },
 }))
 
 describe('workspace mobile shell', () => {
   const sessionId = 'session-1'
+  beforeEach(() => {
+    workspaceAssetInventorySpy.mockReset()
+  })
+
   it('renders file apps inside a full-height mobile app frame', () => {
     render(
       <WorkspaceMobileShell
@@ -178,6 +186,7 @@ describe('workspace mobile shell', () => {
 
     expect(screen.getByTestId('workspace-mobile-app-frame')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-asset-inventory-app')).toBeInTheDocument()
+    expect(workspaceAssetInventorySpy).toHaveBeenCalledWith(expect.objectContaining({ presentation: 'mobile' }))
   })
 
   it('renders the overview dock with the shared workspace mobile material language', () => {

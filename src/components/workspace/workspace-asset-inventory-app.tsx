@@ -60,6 +60,7 @@ interface WorkspaceAssetInventoryAppProps {
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   initialView?: 'assets' | 'tools' | 'deployments'
+  presentation?: 'panel' | 'mobile'
   onOpenTerminal?: (host: HostProfile) => void
   onOpenProviderConsole?: (url: string, host: HostProfile) => void
   onEditHost?: (host: HostProfile) => void
@@ -588,6 +589,7 @@ export function WorkspaceAssetInventoryApp({
   hosts,
   resolveAuthSecret,
   initialView = 'assets',
+  presentation = 'panel',
   onOpenTerminal,
   onOpenProviderConsole,
   onEditHost,
@@ -689,6 +691,7 @@ export function WorkspaceAssetInventoryApp({
   const serviceCount = readyStates.reduce((total, state) => total + (state.inventory?.services.filter((service) => service.active === 'active').length ?? 0), 0)
   const cachedCount = Object.values(states).filter((state) => state.inventory).length
   const selectedNetwork = selectedHost ? networkByAddress[selectedHost.address] : undefined
+  const isMobile = presentation === 'mobile'
 
   function openToolManagerForSelectedHost() {
     if (selectedHost) setManagedToolHostId(selectedHost.id)
@@ -772,7 +775,13 @@ export function WorkspaceAssetInventoryApp({
   }
 
   return (
-    <div data-testid="workspace-asset-inventory-app" className="flex h-full min-h-[34rem] min-w-0 flex-col overflow-hidden text-[var(--workspace-text)]">
+    <div
+      data-testid="workspace-asset-inventory-app"
+      className={cn(
+        'flex min-w-0 flex-col text-[var(--workspace-text)]',
+        isMobile ? 'min-h-0 gap-4 overflow-visible' : 'h-full min-h-[34rem] overflow-hidden',
+      )}
+    >
       <AssetInventoryHeader
           tabs={headerTabs}
           activeTab={view}
@@ -801,7 +810,10 @@ export function WorkspaceAssetInventoryApp({
           headerExtraAction={headerExtraAction}
         />
 
-      <div className="grid min-h-0 flex-1 gap-4 pt-4 xl:grid-cols-[minmax(20rem,0.68fr)_minmax(0,1.42fr)]">
+      <div className={cn(
+        'grid min-w-0 gap-4',
+        isMobile ? 'pt-0' : 'min-h-0 flex-1 pt-4 xl:grid-cols-[minmax(20rem,0.68fr)_minmax(0,1.42fr)]',
+      )}>
         <WorkspaceServerList
           hosts={hostRows}
           totalCount={hosts.length}
@@ -856,12 +868,14 @@ export function WorkspaceAssetInventoryApp({
             )
           }}
           onRowDoubleClick={onOpenTerminal}
+          presentation={isMobile ? 'mobile' : 'panel'}
         />
 
         <div
           className={cn(
-            'min-h-0 overflow-auto',
-            view === 'assets' && 'rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-4 shadow-[var(--workspace-shadow-card)]',
+            'min-w-0',
+            isMobile ? 'overflow-visible' : 'min-h-0 overflow-auto',
+            view === 'assets' && !isMobile && 'rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-4 shadow-[var(--workspace-shadow-card)]',
           )}
         >
           {view === 'tools' ? (
@@ -886,9 +900,12 @@ export function WorkspaceAssetInventoryApp({
           ) : !selectedHost ? (
             <WorkspaceEmptyState title={t('workspace.asset.noSelectedTitle')} description={t('workspace.asset.noSelectedDescription')} />
           ) : (
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4 shadow-[var(--workspace-shadow-card)]">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className={cn('space-y-4', isMobile && 'pb-2')}>
+              <div className={cn(
+                'rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]',
+                isMobile ? 'p-3' : 'p-4',
+              )}>
+                <div className={cn('flex flex-col gap-4', !isMobile && 'lg:flex-row lg:items-start lg:justify-between')}>
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-start gap-3">
                       <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
@@ -972,7 +989,7 @@ export function WorkspaceAssetInventoryApp({
 
               {selectedInventory ? (
                 <>
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className={cn('grid gap-3', isMobile ? 'grid-cols-1' : 'md:grid-cols-3')}>
                     <ResourceMeter icon={Cpu} label={t('workspace.common.cpu')} value={selectedInventory.resource.cpuPercent} detail={selectedInventory.resource.uptime} />
                     <ResourceMeter icon={MemoryStick} label={t('workspace.common.memory')} value={selectedInventory.resource.memoryPercent} detail={selectedInventory.resource.memoryText} />
                     <ResourceMeter icon={HardDrive} label={t('workspace.common.disk')} value={selectedInventory.resource.diskPercent} detail={selectedInventory.resource.diskText} />
@@ -994,7 +1011,7 @@ export function WorkspaceAssetInventoryApp({
                         </button>
                     }
                   >
-                    <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
+                    <div className={cn('grid gap-2', isMobile ? 'grid-cols-1' : 'md:grid-cols-2 2xl:grid-cols-3')}>
                       {selectedInventory.tools.map((tool) => {
                         const serviceName = getInventoryToolServiceName(tool.id)
                         const service = serviceName
@@ -1022,7 +1039,7 @@ export function WorkspaceAssetInventoryApp({
                     title={t('workspace.asset.projectDirectories')}
                     meta={filteredProjects.length}
                   >
-                    <div className="grid gap-2 xl:grid-cols-2">
+                    <div className={cn('grid gap-2', isMobile ? 'grid-cols-1' : 'xl:grid-cols-2')}>
                       {filteredProjects.map(({ project, signals }) => {
                         const isRunning = signals.some(isRunningSignal)
                         return (

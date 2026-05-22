@@ -1488,7 +1488,7 @@ export function PcLayout() {
               <>
               {app.pcSidebarNav === 'hosts' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
-                  <div className="h-full min-h-0 p-4 md:p-6">
+                  <div className="min-h-full p-4 md:p-6">
                     <HostsDashboard
                       hosts={hostsCtx.hosts}
                       selectedHostId={hostsCtx.selectedHostId}

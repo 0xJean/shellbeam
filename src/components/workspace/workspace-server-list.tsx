@@ -55,6 +55,7 @@ interface WorkspaceServerListProps {
   renderFooter?: (host: HostProfile) => ReactNode
   getSearchData?: (host: HostProfile) => WorkspaceServerSearchData
   itemTestIdPrefix?: string
+  presentation?: 'panel' | 'mobile'
 }
 
 function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: ServerBadgeTone }) {
@@ -263,11 +264,13 @@ export function WorkspaceServerList({
   renderFooter,
   getSearchData,
   itemTestIdPrefix,
+  presentation = 'panel',
 }: WorkspaceServerListProps) {
   const { t } = useT()
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const emptyStateText = emptyText ?? t('workspace.serverIndex.noMatch')
+  const isMobile = presentation === 'mobile'
   const visibleHosts = useMemo(() => {
     if (!normalizedQuery) return hosts
     return hosts.filter((host) => workspaceServerMatchesSearch(host, normalizedQuery, getSearchData?.(host), t))
@@ -275,7 +278,13 @@ export function WorkspaceServerList({
   const usesResourceSummary = Boolean(getResourceMetrics)
 
   return (
-    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]">
+    <aside
+      data-testid="workspace-server-list"
+      className={cn(
+      'flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]',
+      !isMobile && 'h-full min-h-0',
+      )}
+    >
       <div className="border-b border-[color:var(--workspace-border-soft)] px-4 py-3">
         <div className="text-sm font-semibold text-[var(--workspace-text-strong)]">{t('workspace.serverIndex.title')}</div>
         <div className="mt-1 text-xs text-[var(--workspace-text-muted)]">{t('workspace.serverIndex.matched', { visible: visibleHosts.length, total: totalCount })}</div>
@@ -289,7 +298,7 @@ export function WorkspaceServerList({
           />
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-3 pb-4">
+      <div className={cn(isMobile ? 'p-3 pb-4' : 'min-h-0 flex-1 overflow-auto p-3 pb-4')}>
         {allOption && !normalizedQuery && (
           <button
             type="button"

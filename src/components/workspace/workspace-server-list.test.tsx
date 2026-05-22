@@ -35,6 +35,25 @@ describe('workspace server list', () => {
     expect(scrollArea).toHaveClass('min-h-0', 'flex-1', 'overflow-auto', 'p-3', 'pb-4')
   })
 
+  it('lets the mobile host list expand with the page instead of locking an inner scroll region', () => {
+    const { container } = render(
+      <WorkspaceServerList
+        hosts={hosts}
+        selectedKey="host-1"
+        getHostKey={(host) => host.id}
+        onSelect={vi.fn()}
+        presentation="mobile"
+      />,
+    )
+
+    const aside = container.querySelector('aside')
+    expect(aside).not.toHaveClass('h-full')
+
+    const scrollArea = aside?.children[1] as HTMLElement | undefined
+    expect(scrollArea).toHaveClass('p-3', 'pb-4')
+    expect(scrollArea).not.toHaveClass('overflow-auto')
+  })
+
   it('renders resource metrics inside server asset rows', () => {
     render(
       <WorkspaceServerList

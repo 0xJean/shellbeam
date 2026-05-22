@@ -443,4 +443,23 @@ __SB_PROJECT=/srv/cached-app|node|cached-app|2026-05-15 09:00
       expect(runSshCommand).toHaveBeenCalledTimes(1)
     })
   })
+
+  it('renders the mobile presentation without a locked inner scroll layout', async () => {
+    const { container } = render(
+      <WorkspaceAssetInventoryApp
+        selectedHostId="host-1"
+        hosts={hosts}
+        resolveAuthSecret={async () => 'secret'}
+        presentation="mobile"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(runSshCommand).toHaveBeenCalled()
+    })
+
+    expect(screen.getByTestId('workspace-asset-inventory-app')).toHaveClass('min-h-0', 'gap-4', 'overflow-visible')
+    expect(screen.getByTestId('workspace-server-list')).not.toHaveClass('h-full')
+    expect(container.querySelector('[data-testid="workspace-server-list"]')).toBeInTheDocument()
+  })
 })

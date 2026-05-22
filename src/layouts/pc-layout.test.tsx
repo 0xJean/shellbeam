@@ -10,7 +10,7 @@ vi.mock('@/components/activity-log-panel', () => ({ ActivityLogPanel: () => <div
 vi.mock('@/components/backup-restore-panel', () => ({ BackupRestorePanel: () => <div /> }))
 vi.mock('@/components/host-key-confirm-dialog', () => ({ HostKeyConfirmDialog: () => <div /> }))
 vi.mock('@/components/hosts-dashboard', () => ({
-  HostsDashboard: ({ headerExtraAction }: { headerExtraAction?: React.ReactNode }) => <div>{headerExtraAction}</div>,
+  HostsDashboard: ({ headerExtraAction }: { headerExtraAction?: React.ReactNode }) => <div data-testid="hosts-dashboard">{headerExtraAction}</div>,
 }))
 vi.mock('@/components/keychain-tab', () => ({ KeychainTab: () => <div /> }))
 vi.mock('@/components/known-hosts-panel', () => ({ KnownHostsPanel: () => <div /> }))
@@ -261,6 +261,34 @@ describe('pc layout', () => {
       retrySessionConnection: vi.fn(),
     }
     useSessions.mockReturnValue(defaultSessionsValue)
+  })
+
+  it('lets the mobile hosts page scroll clear of the bottom navigation', async () => {
+    useApp.mockReturnValue({
+      setOutput: vi.fn(),
+      pcSidebarNav: 'hosts',
+      setPcSidebarNav: vi.fn(),
+      terminalPrefs: {},
+      updateTerminalPrefs: vi.fn(),
+      setCommand: vi.fn(),
+    })
+    useSessions.mockReturnValue({
+      ...defaultSessionsValue,
+      pcSessionTabs: [],
+      pcActiveSessionId: null,
+      workspaceBySession: {},
+    })
+
+    render(<PcLayout />)
+
+    const hostsDashboard = await screen.findByTestId('hosts-dashboard')
+    const hostsPage = hostsDashboard.parentElement
+    const scrollContainer = hostsPage?.parentElement
+
+    expect(scrollContainer).toHaveClass('mobile-safe-pb')
+    expect(hostsPage).toHaveClass('min-h-full')
+    expect(hostsPage).not.toHaveClass('h-full')
+    expect(hostsPage).not.toHaveClass('min-h-0')
   })
 
   it('renders the VPS asset inventory from the top-level sidebar route', () => {
