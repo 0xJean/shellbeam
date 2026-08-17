@@ -6,5 +6,6 @@ pub mod discovery_ios;
 pub mod history;
 pub mod hosts;
 pub mod snippets;
+pub mod server_monitor;
 pub mod ssh_config;
 pub mod workspace_inventory;

@@ -1,17 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
+import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
+import { useServerMonitorStates } from '@/lib/server-monitor-state'
+import type { ServerMonitorSnapshot, ServerMonitorStatus } from '@/lib/server-monitor'
 import { t } from '@/lib/i18n'
-import {
-  DEFAULT_WORKSPACE_METRICS,
-  fetchWorkspaceMetrics,
-  resolveWorkspaceMetricsHost,
-  type WorkspaceMetrics,
-} from '@/lib/workspace-metrics'
 
 interface WorkspaceStatusCardsProps {
   hostAddress: string
   selectedHostId?: string | null
   hosts?: HostProfile[]
+  /** Kept for call-site compatibility. Sampling is owned by the app-level runtime. */
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
 }
 
@@ -20,148 +17,120 @@ const STATUS_CARDS = [
   { key: 'memory', labelKey: 'workspace.status.memory', accent: 'from-[var(--workspace-metric-memory-from)] to-[var(--workspace-metric-memory-to)]', glow: 'bg-[var(--workspace-metric-memory-glow)]' },
   { key: 'disk', labelKey: 'workspace.status.disk', accent: 'from-[var(--workspace-metric-disk-from)] to-[var(--workspace-metric-disk-to)]', glow: 'bg-[var(--workspace-metric-disk-glow)]' },
   { key: 'network', labelKey: 'workspace.status.network', accent: 'from-[var(--workspace-metric-network-from)] to-[var(--workspace-metric-network-to)]', glow: 'bg-[var(--workspace-metric-network-glow)]' },
-]
+] as const
 
-function normalizePercent(value: string) {
-  const numeric = Number.parseFloat(value)
-  if (Number.isNaN(numeric)) return null
-  return Math.max(0, Math.min(100, numeric))
+function formatBytesPerSecond(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return null
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
+  let next = Math.max(0, value)
+  let index = 0
+  while (next >= 1024 && index < units.length - 1) {
+    next /= 1024
+    index += 1
+  }
+  return `${next >= 10 || index === 0 ? Math.round(next) : next.toFixed(1)} ${units[index]}`
 }
 
-export function WorkspaceStatusCards({
-  hostAddress,
-  selectedHostId = null,
-  hosts = [],
-  resolveAuthSecret,
-}: WorkspaceStatusCardsProps) {
-  const [metrics, setMetrics] = useState<WorkspaceMetrics>(DEFAULT_WORKSPACE_METRICS)
-  const [loading, setLoading] = useState(false)
-  const [unreachable, setUnreachable] = useState(false)
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null)
+function statusLabel(status: ServerMonitorStatus | undefined) {
+  if (status === 'online') return t('workspace.monitor.status.online')
+  if (status === 'stale') return t('workspace.monitor.status.stale')
+  if (status === 'offline') return t('workspace.monitor.status.offline')
+  if (status === 'paused') return t('workspace.monitor.status.paused')
+  return t('workspace.monitor.status.checking')
+}
 
-  const host = useMemo(
-    () => resolveWorkspaceMetricsHost(hosts, { selectedHostId, hostAddress }),
-    [hosts, selectedHostId, hostAddress],
-  )
+function statusTone(status: ServerMonitorStatus | undefined) {
+  if (status === 'online') return 'online'
+  if (status === 'stale') return 'stale'
+  if (status === 'offline') return 'offline'
+  if (status === 'paused') return 'paused'
+  return 'checking'
+}
 
-  useEffect(() => {
-    if (!host || !resolveAuthSecret) {
-      setMetrics(DEFAULT_WORKSPACE_METRICS)
-      setUpdatedAt(null)
-      setUnreachable(false)
-      setLoading(false)
-      return
-    }
+function getCardValue(key: (typeof STATUS_CARDS)[number]['key'], snapshot: ServerMonitorSnapshot | null) {
+  if (!snapshot) return { value: null, percent: null }
+  if (key === 'cpu') return { value: snapshot.cpuPercent === null ? null : `${Math.round(snapshot.cpuPercent)}%`, percent: snapshot.cpuPercent }
+  if (key === 'memory') return { value: snapshot.memoryPercent === null ? null : `${Math.round(snapshot.memoryPercent)}%`, percent: snapshot.memoryPercent }
+  if (key === 'disk') return { value: snapshot.diskPercent === null ? null : `${Math.round(snapshot.diskPercent)}%`, percent: snapshot.diskPercent }
+  const rx = formatBytesPerSecond(snapshot.networkRxBytesPerSec)
+  const tx = formatBytesPerSecond(snapshot.networkTxBytesPerSec)
+  if (!rx && !tx) return { value: null, percent: null }
+  return { value: `↓ ${rx ?? '--'} · ↑ ${tx ?? '--'}`, percent: null }
+}
 
-    const currentHost = host
-    const currentResolveAuthSecret = resolveAuthSecret
-    let cancelled = false
-
-    async function loadMetrics() {
-      setLoading(true)
-
-      try {
-        const nextMetrics = await fetchWorkspaceMetrics({
-          host: currentHost,
-          resolveAuthSecret: currentResolveAuthSecret,
-        })
-        if (!cancelled) {
-          setMetrics(nextMetrics)
-          setUpdatedAt(Date.now())
-          setUnreachable(false)
-        }
-      } catch {
-        if (!cancelled) {
-          setMetrics(DEFAULT_WORKSPACE_METRICS)
-          setUpdatedAt(null)
-          setUnreachable(true)
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    void loadMetrics()
-    const intervalId = window.setInterval(() => {
-      void loadMetrics()
-    }, 15000)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(intervalId)
-    }
-  }, [host, resolveAuthSecret])
+export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
+  const { hostAddress, selectedHostId = null, hosts = [] } = props
+  const monitorStates = useServerMonitorStates()
+  const host = resolveWorkspaceMetricsHost(hosts, { selectedHostId, hostAddress })
+  const monitor = host ? monitorStates[host.id || `${host.username}@${host.address}:${host.port || 22}`] : undefined
+  const latest = monitor?.latest
+  const snapshot = latest?.snapshot ?? null
+  const status = latest?.status
 
   return (
     <div
       data-testid="workspace-status-grid"
       className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3"
     >
-      {STATUS_CARDS.map((card) => (
-        (() => {
-          const value = metrics[card.key as keyof WorkspaceMetrics]
-          const percent = card.key === 'network' ? null : normalizePercent(value)
-          const primaryValue = value
-            ? (card.key === 'network' ? value : `${value}%`)
-            : unreachable
-              ? t('workspace.statusValue.unreachable')
-              : updatedAt
-                ? t('workspace.statusValue.unavailable')
-                : t('workspace.statusValue.notConnected')
-          const connectionLabel = unreachable
-            ? t('workspace.statusValue.unreachable')
-            : updatedAt
-              ? t('workspace.statusValue.live')
-              : t('workspace.statusValue.notConnected')
+      {STATUS_CARDS.map((card) => {
+        const metric = getCardValue(card.key, snapshot)
+        const primaryValue = metric.value
+          ?? (latest ? t('workspace.statusValue.unavailable') : t('workspace.statusValue.notConnected'))
+        const label = latest ? statusLabel(status) : t('workspace.statusValue.notConnected')
+        const tone = latest ? statusTone(status) : 'idle'
+        const sampledAt = snapshot?.sampledAt ?? latest?.lastSuccessAt ?? null
 
-          return (
-            <div
-              key={card.labelKey}
-              data-testid="workspace-status-card"
-              data-status={unreachable ? 'unreachable' : updatedAt ? 'live' : 'idle'}
-              className={`min-w-0 overflow-hidden rounded-xl border bg-[var(--workspace-surface-900)] p-4 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-card)] ${
-                unreachable ? 'border-[color:var(--workspace-status-bad-border)]' : 'border-[color:var(--workspace-border-soft)]'
-              }`}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--workspace-text-subtle)]">{t(card.labelKey)}</div>
-                  <div className="mt-1 text-xs text-[var(--workspace-text-muted)]">
-                    {card.key === 'network'
-                      ? t('workspace.statusHint.network')
-                      : t('workspace.statusHint.percent')}
-                  </div>
-                </div>
-                <div className={`flex h-9 w-9 items-center justify-center rounded-full border border-[color:var(--workspace-border-soft)] ${card.glow}`}>
-                  <div className={`h-2.5 w-2.5 rounded-full bg-gradient-to-br ${card.accent} ${loading ? 'animate-pulse' : ''}`} />
-                </div>
-              </div>
-              <div className="mt-4 flex min-w-0 items-end justify-between gap-3">
-                <div className="min-w-0 text-[clamp(1.5rem,3vw,1.875rem)] font-semibold leading-none tracking-tight text-[var(--workspace-text-strong)]">
-                  <div className="truncate">{primaryValue}</div>
-                </div>
-                <div className="min-w-0 max-w-[42%] text-right text-[11px] text-[var(--workspace-text-muted)]">
-                  <div className="truncate">{hostAddress}</div>
-                  <div>{connectionLabel}</div>
+        return (
+          <div
+            key={card.labelKey}
+            data-testid="workspace-status-card"
+            data-status={tone}
+            className={`min-w-0 overflow-hidden rounded-xl border bg-[var(--workspace-surface-900)] p-4 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-card)] ${
+              tone === 'offline'
+                ? 'border-[color:var(--workspace-status-bad-border)]'
+                : tone === 'stale' || tone === 'paused'
+                  ? 'border-[color:var(--workspace-status-warn-border)]'
+                  : 'border-[color:var(--workspace-border-soft)]'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--workspace-text-subtle)]">{t(card.labelKey)}</div>
+                <div className="mt-1 text-xs text-[var(--workspace-text-muted)]">
+                  {card.key === 'network'
+                    ? t('workspace.statusHint.network')
+                    : t('workspace.statusHint.percent')}
                 </div>
               </div>
-              <div
-                data-testid="workspace-status-meter"
-                className="mt-4 h-1.5 overflow-hidden rounded-full bg-[var(--workspace-surface-950)]"
-              >
-                <div
-                  className={`h-full rounded-full bg-gradient-to-r ${card.accent} transition-[width] duration-500`}
-                  style={{ width: `${percent ?? (value ? 72 : 18)}%` }}
-                />
-              </div>
-              <div className="mt-3 flex items-center justify-between gap-3 text-xs text-[var(--workspace-text-subtle)]">
-                <span>{unreachable ? t('workspace.statusValue.unreachable') : loading ? t('workspace.statusValue.live') : t('workspace.desktop.ready')}</span>
-                <span>{updatedAt ? new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}</span>
+              <div className={`flex h-9 w-9 items-center justify-center rounded-full border border-[color:var(--workspace-border-soft)] ${card.glow}`}>
+                <div className={`h-2.5 w-2.5 rounded-full bg-gradient-to-br ${card.accent} ${tone === 'checking' ? 'animate-pulse' : ''}`} />
               </div>
             </div>
-          )
-        })()
-      ))}
+            <div className="mt-4 flex min-w-0 items-end justify-between gap-3">
+              <div className="min-w-0 text-[clamp(1.5rem,3vw,1.875rem)] font-semibold leading-none tracking-tight text-[var(--workspace-text-strong)]">
+                <div className="truncate">{primaryValue}</div>
+              </div>
+              <div className="min-w-0 max-w-[42%] text-right text-[11px] text-[var(--workspace-text-muted)]">
+                <div className="truncate">{hostAddress}</div>
+                <div>{label}</div>
+              </div>
+            </div>
+            <div
+              data-testid="workspace-status-meter"
+              className="mt-4 h-1.5 overflow-hidden rounded-full bg-[var(--workspace-surface-950)]"
+            >
+              <div
+                className={`h-full rounded-full bg-gradient-to-r ${card.accent} transition-[width] duration-500`}
+                style={{ width: `${metric.percent ?? (metric.value ? 72 : 18)}%` }}
+              />
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3 text-xs text-[var(--workspace-text-subtle)]">
+              <span>{latest ? label : t('workspace.statusValue.notConnected')}</span>
+              <span>{sampledAt ? new Date(sampledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}</span>
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

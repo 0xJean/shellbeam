@@ -135,6 +135,30 @@ fn open_hosts_db(app: &tauri::AppHandle) -> Result<Connection, String> {
           updated_at INTEGER NOT NULL,
           PRIMARY KEY (host_key, tool_id)
         );
+        CREATE TABLE IF NOT EXISTS server_monitor_latest (
+          host_key TEXT PRIMARY KEY NOT NULL,
+          host_id TEXT NOT NULL,
+          host_name TEXT NOT NULL,
+          host_address TEXT NOT NULL,
+          username TEXT NOT NULL,
+          port INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          snapshot_json TEXT,
+          last_attempt_at INTEGER NOT NULL,
+          last_success_at INTEGER,
+          error TEXT,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_server_monitor_latest_updated_at
+          ON server_monitor_latest(updated_at DESC);
+        CREATE TABLE IF NOT EXISTS server_monitor_history (
+          host_key TEXT NOT NULL,
+          sampled_at INTEGER NOT NULL,
+          snapshot_json TEXT NOT NULL,
+          PRIMARY KEY (host_key, sampled_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_server_monitor_history_host_sampled_at
+          ON server_monitor_history(host_key, sampled_at DESC);
         "#,
     )
     .map_err(|err| format!("Initialize hosts db failed: {err}"))?;
@@ -238,6 +262,16 @@ fn delete_host_inventory_data(app: &tauri::AppHandle, host: &HostProfile) -> Res
         params![host_inventory_key(host)],
     )
     .map_err(|err| format!("Delete host tool statuses failed: {err}"))?;
+    conn.execute(
+        "DELETE FROM server_monitor_latest WHERE host_key = ?1",
+        params![host_inventory_key(host)],
+    )
+    .map_err(|err| format!("Delete host monitor latest failed: {err}"))?;
+    conn.execute(
+        "DELETE FROM server_monitor_history WHERE host_key = ?1",
+        params![host_inventory_key(host)],
+    )
+    .map_err(|err| format!("Delete host monitor history failed: {err}"))?;
     Ok(())
 }
 

@@ -323,7 +323,7 @@ export function WorkspaceServerList({
             const key = getHostKey(host)
             const statusBadge = getStatusBadge?.(host)
             const primaryBadge = getPrimaryBadge?.(host)
-            const visibleStatusBadge = statusBadge?.tone === 'bad' ? statusBadge : undefined
+            const visibleStatusBadge = statusBadge
             const isInaccessible = visibleStatusBadge?.tone === 'bad'
             const metrics = getResourceMetrics?.(host)
             const metricsContent = renderMetrics?.(host) ?? (!isInaccessible && metrics ? <ServerResourceMetrics metrics={metrics} t={t} /> : null)

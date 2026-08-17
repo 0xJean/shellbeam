@@ -1,12 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { getServerMonitorHostKey } from '@/lib/server-monitor'
+import { clearServerMonitorStates, mergeServerMonitorStates } from '@/lib/server-monitor-state'
 import { WorkspaceStatusCards } from './workspace-status-cards'
-
-const runSshCommand = vi.fn()
-
-vi.mock('@/lib/sessions', () => ({
-  runSshCommand: (payload: unknown) => runSshCommand(payload),
-}))
 
 const host = {
   id: 'host-1',
@@ -21,129 +17,133 @@ const host = {
   updatedAt: 0,
 }
 
+const snapshot = {
+  hostname: 'prod-api',
+  os: 'Ubuntu 24.04 LTS',
+  kernel: 'Linux 6.8',
+  uptimeSeconds: 86400,
+  cpuPercent: 23,
+  load1: 0.5,
+  load5: 0.4,
+  load15: 0.3,
+  memoryUsedBytes: 640,
+  memoryTotalBytes: 1000,
+  memoryPercent: 61,
+  diskUsedBytes: 740,
+  diskTotalBytes: 1000,
+  diskPercent: 74,
+  networkRxBytesPerSec: 18.4 * 1024 * 1024,
+  networkTxBytesPerSec: 4 * 1024 * 1024,
+  latencyMs: 14,
+  sampledAt: Date.now(),
+}
+
 describe('workspace status cards', () => {
   beforeEach(() => {
-    runSshCommand.mockReset()
+    clearServerMonitorStates()
   })
 
-  it('shows real telemetry values from the connected host', async () => {
-    runSshCommand.mockResolvedValue({
-      stdout: 'cpu:23\nmemory:61\ndisk:74\nnetwork:18.4 MB/s',
-      stderr: '',
-      exitCode: 0,
-      durationMs: 14,
+  it('shows live telemetry values from the shared monitor state', () => {
+    mergeServerMonitorStates({
+      [getServerMonitorHostKey(host)]: {
+        latest: {
+          hostKey: getServerMonitorHostKey(host),
+          hostId: host.id,
+          hostName: host.name,
+          hostAddress: host.address,
+          username: host.username,
+          port: host.port,
+          status: 'online',
+          snapshot,
+          lastAttemptAt: snapshot.sampledAt,
+          lastSuccessAt: snapshot.sampledAt,
+          updatedAt: snapshot.sampledAt,
+        },
+        history: [],
+      },
     })
 
-    render(
-      <WorkspaceStatusCards
-        hostAddress="10.0.0.15"
-        selectedHostId="host-1"
-        hosts={[host]}
-        resolveAuthSecret={async () => 'secret'}
-      />,
-    )
+    render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={host.id} hosts={[host]} />)
 
-    await waitFor(() => {
-      expect(screen.getByText('23%')).toBeInTheDocument()
-    })
+    expect(screen.getByText('23%')).toBeInTheDocument()
     expect(screen.getByText('61%')).toBeInTheDocument()
     expect(screen.getByText('74%')).toBeInTheDocument()
-    expect(screen.getByText('18.4 MB/s')).toBeInTheDocument()
+    expect(screen.getByText(/↓ 18 MB\/s/)).toBeInTheDocument()
+    expect(screen.getAllByText('Online').length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'online')
   })
 
-  it('falls back gracefully when no host is selected', async () => {
-    render(
-      <WorkspaceStatusCards
-        hostAddress="10.0.0.15"
-        selectedHostId={null}
-        hosts={[host]}
-        resolveAuthSecret={async () => 'secret'}
-      />,
-    )
+  it('falls back gracefully when no host is selected', () => {
+    render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={null} hosts={[host]} />)
 
-    await waitFor(() => {
-      expect(screen.getAllByText('Not connected').length).toBeGreaterThan(0)
-    })
+    expect(screen.getAllByText('Not connected').length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'idle')
   })
 
-  it('loads telemetry by matching the current host address when host id is unavailable', async () => {
-    runSshCommand.mockResolvedValue({
-      stdout: 'cpu:31\nmemory:48\ndisk:52\nnetwork:12.1 KB/s',
-      stderr: '',
-      exitCode: 0,
-      durationMs: 11,
+  it('matches the current host address when host id is unavailable', () => {
+    mergeServerMonitorStates({
+      [getServerMonitorHostKey(host)]: {
+        latest: {
+          hostKey: getServerMonitorHostKey(host),
+          hostId: host.id,
+          hostName: host.name,
+          hostAddress: host.address,
+          username: host.username,
+          port: host.port,
+          status: 'stale',
+          snapshot: { ...snapshot, cpuPercent: 31 },
+          lastAttemptAt: snapshot.sampledAt,
+          lastSuccessAt: snapshot.sampledAt,
+          updatedAt: snapshot.sampledAt,
+        },
+        history: [],
+      },
     })
 
-    render(
-      <WorkspaceStatusCards
-        hostAddress="10.0.0.15"
-        selectedHostId={null}
-        hosts={[host]}
-        resolveAuthSecret={async () => 'secret'}
-      />,
-    )
+    render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={null} hosts={[host]} />)
 
-    await waitFor(() => {
-      expect(screen.getByText('31%')).toBeInTheDocument()
-    })
+    expect(screen.getByText('31%')).toBeInTheDocument()
+    expect(screen.getAllByText('Data stale').length).toBeGreaterThan(0)
   })
 
-  it('marks telemetry as unreachable when the host cannot be accessed', async () => {
-    runSshCommand.mockResolvedValue({
-      stdout: '',
-      stderr: 'TCP connect failed: timed out',
-      exitCode: -1,
-      durationMs: 15000,
-      errorType: 'network',
-      errorCode: 'network_error',
-      errorSource: 'ssh',
-      retryable: true,
+  it('shows offline status without launching another SSH request', () => {
+    mergeServerMonitorStates({
+      [getServerMonitorHostKey(host)]: {
+        latest: {
+          hostKey: getServerMonitorHostKey(host),
+          hostId: host.id,
+          hostName: host.name,
+          hostAddress: host.address,
+          username: host.username,
+          port: host.port,
+          status: 'offline',
+          snapshot: null,
+          lastAttemptAt: Date.now(),
+          lastSuccessAt: null,
+          error: 'TCP connect failed: timed out',
+          updatedAt: Date.now(),
+        },
+        history: [],
+      },
     })
 
-    render(
-      <WorkspaceStatusCards
-        hostAddress="10.0.0.15"
-        selectedHostId="host-1"
-        hosts={[host]}
-        resolveAuthSecret={async () => 'secret'}
-      />,
-    )
+    render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={host.id} hosts={[host]} />)
 
-    await waitFor(() => {
-      expect(screen.getAllByText('Unreachable').length).toBeGreaterThan(0)
-    })
-    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'unreachable')
+    expect(screen.getAllByText('Offline').length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'offline')
   })
 
-  it('uses a container-adaptive grid so four cards reflow inside narrow widgets', async () => {
-    render(
-      <WorkspaceStatusCards
-        hostAddress="10.0.0.15"
-        selectedHostId="host-1"
-        hosts={[host]}
-        resolveAuthSecret={async () => 'secret'}
-      />,
-    )
+  it('uses a container-adaptive grid so four cards reflow inside narrow widgets', () => {
+    render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={host.id} hosts={[host]} />)
 
-    await waitFor(() => {
-      expect(screen.getByTestId('workspace-status-grid')).toHaveClass('grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]')
-    })
+    expect(screen.getByTestId('workspace-status-grid')).toHaveClass('grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]')
     expect(screen.getAllByTestId('workspace-status-card')).toHaveLength(4)
   })
 
-  it('uses the darker workspace monitor card styling from the visual language spec', async () => {
-    render(
-      <WorkspaceStatusCards
-        hostAddress="10.0.0.15"
-        selectedHostId="host-1"
-        hosts={[host]}
-        resolveAuthSecret={async () => 'secret'}
-      />,
-    )
+  it('uses the darker workspace monitor card styling from the visual language spec', () => {
+    render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={host.id} hosts={[host]} />)
 
-    await waitFor(() => {
-      expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveClass('bg-[var(--workspace-surface-900)]')
-    })
+    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveClass('bg-[var(--workspace-surface-900)]')
     expect(screen.getAllByTestId('workspace-status-meter')[0]).toHaveClass('bg-[var(--workspace-surface-950)]')
   })
 })

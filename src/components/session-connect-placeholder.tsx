@@ -80,9 +80,6 @@ export function SessionConnectPlaceholder({
                 <h2 className="mt-2 text-xl font-semibold text-foreground">
                   {t('terminalConnect.failedTitle', { host: hostName || hostAddress })}
                 </h2>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  {t('terminalConnect.failedSubtitle')}
-                </p>
               </div>
             </div>
 

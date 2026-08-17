@@ -3,6 +3,7 @@ import { AppProvider, useApp } from '@/contexts/app-context'
 import { HostsProvider, useHosts } from '@/contexts/hosts-context'
 import { SessionsProvider } from '@/contexts/sessions-context'
 import { VaultProvider } from '@/contexts/vault-context'
+import { ServerMonitorRuntime } from '@/components/server-monitor-runtime'
 import { PcLayout } from '@/layouts/pc-layout'
 import { listCommandHistory } from '@/lib/history'
 import { I18nProvider } from '@/lib/i18n'
@@ -67,6 +68,7 @@ function AppInnerWithVault() {
   return (
     <VaultProvider setOutput={setOutput}>
       <HostsProvider>
+        <ServerMonitorRuntime />
         <SessionsProvider setOutput={setOutput}>
           <AppInner />
         </SessionsProvider>

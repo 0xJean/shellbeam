@@ -20,8 +20,17 @@ import {
   useWorkspaceInventoryStates,
 } from '@/lib/workspace-inventory-state'
 import { scanWorkspaceInventoryHosts } from '@/lib/workspace-inventory-scan'
+import {
+  getServerMonitorHostKey,
+  type ServerMonitorHistoryPoint,
+  type ServerMonitorLatest,
+  type ServerMonitorSnapshot,
+  type ServerMonitorStatus,
+} from '@/lib/server-monitor'
+import { useServerMonitorStates } from '@/lib/server-monitor-state'
 import { cn } from '@/lib/utils'
 import {
+  Activity,
   AlertTriangle,
   Boxes,
   Check,
@@ -33,6 +42,7 @@ import {
   ExternalLink,
   FileDown,
   FolderGit2,
+  Gauge,
   GitBranch,
   HardDrive,
   Loader2,
@@ -44,7 +54,9 @@ import {
   RefreshCw,
   Search,
   SquareTerminal,
+  Timer,
   Tags,
+  Wifi,
   Wrench,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace-empty-state'
@@ -278,6 +290,239 @@ function getResourcePressure(state: HostInventoryState | undefined) {
     resource?.cpuPercent ?? 0,
     resource?.memoryPercent ?? 0,
     resource?.diskPercent ?? 0,
+  )
+}
+
+function formatBytes(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return null
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let next = Math.max(0, value)
+  let index = 0
+  while (next >= 1024 && index < units.length - 1) {
+    next /= 1024
+    index += 1
+  }
+  return `${next >= 10 || index === 0 ? Math.round(next) : next.toFixed(1)} ${units[index]}`
+}
+
+function formatBytesPair(used: number | null, total: number | null) {
+  const usedText = formatBytes(used)
+  const totalText = formatBytes(total)
+  if (!usedText && !totalText) return undefined
+  return `${usedText ?? '--'} / ${totalText ?? '--'}`
+}
+
+function formatBytesPerSecond(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return null
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
+  let next = Math.max(0, value)
+  let index = 0
+  while (next >= 1024 && index < units.length - 1) {
+    next /= 1024
+    index += 1
+  }
+  return `${next >= 10 || index === 0 ? Math.round(next) : next.toFixed(1)} ${units[index]}`
+}
+
+function formatUptime(seconds: number | null, t: TFunction) {
+  if (seconds === null || !Number.isFinite(seconds)) return t('workspace.monitor.notAvailable')
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return t('workspace.monitor.uptime.days', { days, hours })
+  if (hours > 0) return t('workspace.monitor.uptime.hours', { hours, minutes })
+  return t('workspace.monitor.uptime.minutes', { minutes })
+}
+
+function monitorStatusLabel(status: ServerMonitorStatus | undefined, t: TFunction) {
+  if (status === 'online') return t('workspace.monitor.status.online')
+  if (status === 'stale') return t('workspace.monitor.status.stale')
+  if (status === 'offline') return t('workspace.monitor.status.offline')
+  if (status === 'paused') return t('workspace.monitor.status.paused')
+  return t('workspace.monitor.status.checking')
+}
+
+function monitorStatusTone(status: ServerMonitorStatus | undefined): 'good' | 'warn' | 'bad' | 'info' {
+  if (status === 'online') return 'good'
+  if (status === 'stale' || status === 'paused') return 'warn'
+  if (status === 'offline') return 'bad'
+  return 'info'
+}
+
+function getMonitorResourcePressure(snapshot: ServerMonitorSnapshot | null | undefined) {
+  return Math.max(
+    snapshot?.cpuPercent ?? 0,
+    snapshot?.memoryPercent ?? 0,
+    snapshot?.diskPercent ?? 0,
+  )
+}
+
+function getDisplayMetric(
+  inventory: WorkspaceInventory | undefined,
+  snapshot: ServerMonitorSnapshot | null | undefined,
+  t: TFunction,
+) {
+  return {
+    cpuPercent: snapshot?.cpuPercent ?? inventory?.resource.cpuPercent ?? null,
+    memoryPercent: snapshot?.memoryPercent ?? inventory?.resource.memoryPercent ?? null,
+    diskPercent: snapshot?.diskPercent ?? inventory?.resource.diskPercent ?? null,
+    cpuDetail: snapshot ? formatUptime(snapshot.uptimeSeconds, t) : inventory?.resource.uptime,
+    memoryDetail: snapshot
+      ? formatBytesPair(snapshot.memoryUsedBytes, snapshot.memoryTotalBytes)
+      : inventory?.resource.memoryText,
+    diskDetail: snapshot
+      ? formatBytesPair(snapshot.diskUsedBytes, snapshot.diskTotalBytes)
+      : inventory?.resource.diskText,
+  }
+}
+
+function formatTrendValue(value: number | null, unit: string) {
+  if (value === null || !Number.isFinite(value)) return '--'
+  if (unit === '%') return `${Math.round(value)}%`
+  return formatBytesPerSecond(value) ?? '--'
+}
+
+function MonitorTrendChart({
+  title,
+  history,
+  series,
+  unit,
+  emptyText,
+}: {
+  title: string
+  history: ServerMonitorHistoryPoint[]
+  series: Array<{ label: string; color: string; getValue: (snapshot: ServerMonitorSnapshot) => number | null }>
+  unit: '%' | 'rate'
+  emptyText: string
+}) {
+  const width = 360
+  const height = 116
+  const paddingX = 10
+  const paddingY = 12
+  const values = series.flatMap((entry) => history.map((point) => entry.getValue(point.snapshot)).filter((value): value is number => value !== null && Number.isFinite(value)))
+  const hasValues = values.length > 0
+  const minValue = unit === '%' ? 0 : (hasValues ? Math.min(0, ...values) : 0)
+  const maxValue = unit === '%' ? 100 : (hasValues ? Math.max(1, ...values) : 1)
+  const xForIndex = (index: number) => history.length <= 1
+    ? width / 2
+    : paddingX + (index / (history.length - 1)) * (width - paddingX * 2)
+  const yForValue = (value: number) => paddingY + (1 - (value - minValue) / Math.max(1, maxValue - minValue)) * (height - paddingY * 2)
+
+  return (
+    <div className="min-w-0 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-[var(--workspace-text-strong)]">{title}</div>
+        {hasValues && (
+          <div className="flex flex-wrap justify-end gap-2 text-[10px] text-[var(--workspace-text-muted)]">
+            {series.map((entry) => <span key={entry.label} className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: entry.color }} />{entry.label}</span>)}
+          </div>
+        )}
+      </div>
+      {hasValues ? (
+        <>
+          <svg viewBox={`0 0 ${width} ${height}`} className="mt-2 h-28 w-full" role="img" aria-label={title}>
+            <line x1={paddingX} x2={width - paddingX} y1={paddingY} y2={paddingY} stroke="var(--workspace-border-soft)" strokeDasharray="3 4" />
+            <line x1={paddingX} x2={width - paddingX} y1={height / 2} y2={height / 2} stroke="var(--workspace-border-soft)" strokeDasharray="3 4" />
+            <line x1={paddingX} x2={width - paddingX} y1={height - paddingY} y2={height - paddingY} stroke="var(--workspace-border-soft)" strokeDasharray="3 4" />
+            {series.map((entry) => {
+              const points = history
+                .map((point, index) => {
+                  const value = entry.getValue(point.snapshot)
+                  return value === null || !Number.isFinite(value) ? null : `${xForIndex(index)},${yForValue(value)}`
+                })
+                .filter(Boolean)
+                .join(' ')
+              return <polyline key={entry.label} fill="none" stroke={entry.color} strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" points={points} />
+            })}
+          </svg>
+          <div className="flex items-center justify-between text-[10px] text-[var(--workspace-text-subtle)]">
+            <span>{new Date(history[0]?.sampledAt ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            <span>{new Date(history.at(-1)?.sampledAt ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          </div>
+        </>
+      ) : (
+        <div className="flex h-28 items-center justify-center text-center text-xs text-[var(--workspace-text-muted)]">{emptyText}</div>
+      )}
+      {hasValues && (
+        <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-[var(--workspace-text-subtle)]">
+          {series.map((entry) => {
+            const value = [...history].reverse().map((point) => entry.getValue(point.snapshot)).find((item): item is number => item !== null && Number.isFinite(item)) ?? null
+            return <span key={entry.label}>{entry.label}: {formatTrendValue(value, unit)}</span>
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MonitorOverview({
+  latest,
+  history,
+  t,
+}: {
+  latest: ServerMonitorLatest
+  history: ServerMonitorHistoryPoint[]
+  t: TFunction
+}) {
+  const snapshot = latest.snapshot
+  return (
+    <AssetDetailSection
+      icon={Activity}
+      title={t('workspace.monitor.title')}
+      meta={t('workspace.monitor.retention')}
+    >
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] px-3 py-2.5">
+          <div className="flex items-center gap-2 text-[11px] text-[var(--workspace-text-muted)]"><Gauge className="h-3.5 w-3.5" />{t('workspace.monitor.load')}</div>
+          <div className="mt-1 font-mono text-sm text-[var(--workspace-text-strong)]">{snapshot?.load1 ?? '--'} / {snapshot?.load5 ?? '--'} / {snapshot?.load15 ?? '--'}</div>
+        </div>
+        <div className="rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] px-3 py-2.5">
+          <div className="flex items-center gap-2 text-[11px] text-[var(--workspace-text-muted)]"><Timer className="h-3.5 w-3.5" />{t('workspace.monitor.uptime')}</div>
+          <div className="mt-1 text-sm text-[var(--workspace-text-strong)]">{formatUptime(snapshot?.uptimeSeconds ?? null, t)}</div>
+        </div>
+        <div className="rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] px-3 py-2.5">
+          <div className="flex items-center gap-2 text-[11px] text-[var(--workspace-text-muted)]"><Wifi className="h-3.5 w-3.5" />{t('workspace.monitor.network')}</div>
+          <div className="mt-1 text-sm text-[var(--workspace-text-strong)]">↓ {formatBytesPerSecond(snapshot?.networkRxBytesPerSec ?? null) ?? '--'} · ↑ {formatBytesPerSecond(snapshot?.networkTxBytesPerSec ?? null) ?? '--'}</div>
+        </div>
+        <div className="rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] px-3 py-2.5">
+          <div className="flex items-center gap-2 text-[11px] text-[var(--workspace-text-muted)]"><Clock className="h-3.5 w-3.5" />{t('workspace.monitor.latency')}</div>
+          <div className="mt-1 text-sm text-[var(--workspace-text-strong)]">{snapshot?.latencyMs === null || snapshot?.latencyMs === undefined ? '--' : `${Math.round(snapshot.latencyMs)} ms`}</div>
+        </div>
+      </div>
+      <div className="mt-3 grid min-w-0 gap-3 xl:grid-cols-2">
+        <MonitorTrendChart
+          title={t('workspace.monitor.trend.cpu')}
+          history={history}
+          unit="%"
+          emptyText={t('workspace.monitor.historyEmpty')}
+          series={[{ label: t('workspace.common.cpu'), color: 'var(--workspace-primary-400)', getValue: (entry) => entry.cpuPercent }]}
+        />
+        <MonitorTrendChart
+          title={t('workspace.monitor.trend.memory')}
+          history={history}
+          unit="%"
+          emptyText={t('workspace.monitor.historyEmpty')}
+          series={[{ label: t('workspace.common.memory'), color: '#38bdf8', getValue: (entry) => entry.memoryPercent }]}
+        />
+        <MonitorTrendChart
+          title={t('workspace.monitor.trend.disk')}
+          history={history}
+          unit="%"
+          emptyText={t('workspace.monitor.historyEmpty')}
+          series={[{ label: t('workspace.common.disk'), color: '#f59e0b', getValue: (entry) => entry.diskPercent }]}
+        />
+        <MonitorTrendChart
+          title={t('workspace.monitor.trend.network')}
+          history={history}
+          unit="rate"
+          emptyText={t('workspace.monitor.historyEmpty')}
+          series={[
+            { label: t('workspace.monitor.receive'), color: '#34d399', getValue: (entry) => entry.networkRxBytesPerSec },
+            { label: t('workspace.monitor.transmit'), color: '#fb7185', getValue: (entry) => entry.networkTxBytesPerSec },
+          ]}
+        />
+      </div>
+    </AssetDetailSection>
   )
 }
 
@@ -611,6 +856,7 @@ export function WorkspaceAssetInventoryApp({
   const [tagFilter, setTagFilter] = useState<Set<string>>(() => new Set())
   const [sortMode, setSortMode] = useState<AssetSortMode>('recent')
   const sharedStates = useWorkspaceInventoryStates()
+  const monitorStates = useServerMonitorStates()
   const [states, setStates] = useState<Record<string, HostInventoryState>>(() => {
     const shared = selectWorkspaceInventoryStatesForHosts(hosts)
     return Object.entries(loadWorkspaceInventoryCache(hosts)).reduce<Record<string, HostInventoryState>>((next, [key, entry]) => {
@@ -646,10 +892,11 @@ export function WorkspaceAssetInventoryApp({
       if (tagFilter.size > 0 && !host.tags?.some((tag) => tagFilter.has(tag))) return false
       const state = states[hostKey(host)]
       const inventory = state?.inventory
+      const monitor = monitorStates[getServerMonitorHostKey(host)]
       const network = networkByAddress[host.address]
       const searchData: WorkspaceServerSearchData = {
         network: [network?.scopeLabel, network?.versionLabel, network?.resolvedLocationLabel],
-        system: [inventory?.resource.os, inventory?.resource.kernel],
+        system: [inventory?.resource.os, inventory?.resource.kernel, monitor?.latest?.snapshot?.os, monitor?.latest?.snapshot?.kernel],
         tools: getInstalledToolSearchValues(inventory),
         projects: [
           ...getProjectSearchValues(inventory),
@@ -662,20 +909,27 @@ export function WorkspaceAssetInventoryApp({
 
     return filtered.sort((a, b) => {
       if (sortMode === 'name') return a.name.localeCompare(b.name)
-      if (sortMode === 'resource') return getResourcePressure(states[hostKey(b)]) - getResourcePressure(states[hostKey(a)])
+      if (sortMode === 'resource') {
+        const resourcePressure = (host: HostProfile) => Math.max(
+          getResourcePressure(states[hostKey(host)]),
+          getMonitorResourcePressure(monitorStates[getServerMonitorHostKey(host)]?.latest?.snapshot),
+        )
+        return resourcePressure(b) - resourcePressure(a)
+      }
       if (sortMode === 'status') {
         const score = (host: HostProfile) => {
           const status = states[hostKey(host)]?.status
-          if (status === 'error') return 0
-          if (status === 'scanning') return 1
-          if (status === 'idle') return 2
+          const monitorStatus = monitorStates[getServerMonitorHostKey(host)]?.latest?.status
+          if (monitorStatus === 'offline' || status === 'error') return 0
+          if (monitorStatus === 'stale' || monitorStatus === 'paused' || status === 'scanning') return 1
+          if (monitorStatus === 'checking' || status === 'idle') return 2
           return 3
         }
         return score(a) - score(b)
       }
       return (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)
     })
-  }, [groupFilter, hosts, networkByAddress, query, sortMode, states, tagFilter])
+  }, [groupFilter, hosts, monitorStates, networkByAddress, query, sortMode, states, tagFilter])
 
   const selectedHost = useMemo(() => {
     return hostRows.find((host) => hostKey(host) === selectedKey) ?? hostRows[0] ?? hosts.find((host) => hostKey(host) === selectedKey) ?? hosts[0]
@@ -683,10 +937,14 @@ export function WorkspaceAssetInventoryApp({
 
   const selectedState = selectedHost ? states[hostKey(selectedHost)] : undefined
   const selectedInventory = selectedState?.inventory
+  const selectedMonitor = selectedHost ? monitorStates[getServerMonitorHostKey(selectedHost)] : undefined
+  const selectedMonitorSnapshot = selectedMonitor?.latest?.snapshot ?? null
+  const selectedDisplayMetrics = getDisplayMetric(selectedInventory, selectedMonitorSnapshot, t)
   const selectedConsoleLink = selectedHost ? getServerConsoleLink(selectedHost) : null
   const readyStates = Object.values(states).filter((state) => state.status === 'ready')
   const scanningCount = Object.values(states).filter((state) => state.status === 'scanning').length
   const errorCount = Object.values(states).filter((state) => state.status === 'error').length
+    + Object.values(monitorStates).filter((state) => state.latest?.status === 'offline').length
   const projectCount = readyStates.reduce((total, state) => total + (state.inventory?.projects.length ?? 0), 0)
   const serviceCount = readyStates.reduce((total, state) => total + (state.inventory?.services.filter((service) => service.active === 'active').length ?? 0), 0)
   const cachedCount = Object.values(states).filter((state) => state.inventory).length
@@ -824,8 +1082,13 @@ export function WorkspaceAssetInventoryApp({
           renderStatusIcon={(host) => <HostStatusDot state={states[hostKey(host)] ?? { status: 'idle' }} />}
           getStatusBadge={(host) => {
             const state = states[hostKey(host)] ?? { status: 'idle' as const }
+            const monitor = monitorStates[getServerMonitorHostKey(host)]?.latest
+            if (monitor) {
+              return { label: monitorStatusLabel(monitor.status, t), tone: monitorStatusTone(monitor.status) }
+            }
             if (state.status === 'error') return { label: t('workspace.asset.inaccessible'), tone: 'bad' }
-            return undefined
+            if (state.status === 'scanning') return { label: t('workspace.monitor.status.checking'), tone: 'info' }
+            return { label: t('workspace.monitor.status.checking'), tone: 'info' }
           }}
           getPrimaryBadge={(host) => {
             const state = states[hostKey(host)] ?? { status: 'idle' as const }
@@ -836,34 +1099,40 @@ export function WorkspaceAssetInventoryApp({
             const network = networkByAddress[host.address]
             return network ? <HostRegionLine network={network} /> : null
           }}
-          getSystemLabel={(host) => states[hostKey(host)]?.inventory?.resource.os}
+          getSystemLabel={(host) => {
+            const monitor = monitorStates[getServerMonitorHostKey(host)]?.latest?.snapshot
+            return monitor?.os || states[hostKey(host)]?.inventory?.resource.os
+          }}
           getSearchData={(host) => {
             const inventory = states[hostKey(host)]?.inventory
+            const monitor = monitorStates[getServerMonitorHostKey(host)]?.latest?.snapshot
             const network = networkByAddress[host.address]
             return {
               network: [network?.scopeLabel, network?.versionLabel, network?.resolvedLocationLabel],
-              system: [inventory?.resource.os, inventory?.resource.kernel],
+              system: [inventory?.resource.os, inventory?.resource.kernel, monitor?.os, monitor?.kernel],
               tools: getInstalledToolSearchValues(inventory),
               projects: getProjectSearchValues(inventory),
             }
           }}
           getResourceMetrics={(host) => {
             const inventory = states[hostKey(host)]?.inventory
-            if (!inventory) return undefined
-            return {
-              cpuPercent: inventory?.resource.cpuPercent,
-              memoryPercent: inventory?.resource.memoryPercent,
-              diskPercent: inventory?.resource.diskPercent,
-              cpuDetail: inventory?.resource.uptime,
-              memoryDetail: inventory?.resource.memoryText,
-              diskDetail: inventory?.resource.diskText,
-            }
+            const monitor = monitorStates[getServerMonitorHostKey(host)]?.latest?.snapshot
+            const metrics = getDisplayMetric(inventory, monitor, t)
+            if (
+              metrics.cpuPercent === null
+              && metrics.memoryPercent === null
+              && metrics.diskPercent === null
+            ) return undefined
+            return metrics
           }}
           renderFooter={(host) => {
             const inventory = states[hostKey(host)]?.inventory
+            const monitor = monitorStates[getServerMonitorHostKey(host)]?.latest
+            const source = monitor?.snapshot ? t('workspace.monitor.source.live') : inventory ? t('workspace.monitor.source.inventory') : t('workspace.monitor.source.pending')
             return (
               <div className="mt-2 text-[11px] text-[var(--workspace-text-subtle)]">
-                {inventory?.resource.os ? t('workspace.asset.version', { version: inventory.resource.os }) : t('workspace.asset.versionPending')}
+                <div>{monitor?.snapshot?.os || inventory?.resource.os ? t('workspace.asset.version', { version: monitor?.snapshot?.os || inventory?.resource.os || '' }) : t('workspace.asset.versionPending')}</div>
+                <div>{source}{monitor?.lastSuccessAt ? ` · ${new Date(monitor.lastSuccessAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</div>
               </div>
             )
           }}
@@ -909,7 +1178,7 @@ export function WorkspaceAssetInventoryApp({
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-start gap-3">
                       <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
-                        <WorkspaceOsIcon os={selectedInventory?.resource.os} className="h-5 w-5" />
+                        <WorkspaceOsIcon os={selectedMonitorSnapshot?.os || selectedInventory?.resource.os} className="h-5 w-5" />
                       </span>
                       <div className="min-w-0">
                         <div className="truncate text-xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">{selectedHost.name}</div>
@@ -920,6 +1189,11 @@ export function WorkspaceAssetInventoryApp({
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Badge>{groupLabel(selectedHost.group || 'Custom', t)}</Badge>
+                      {selectedMonitor?.latest && (
+                        <Badge tone={monitorStatusTone(selectedMonitor.latest.status)}>
+                          {monitorStatusLabel(selectedMonitor.latest.status, t)}
+                        </Badge>
+                      )}
                       {selectedState?.status === 'error' && <Badge tone="bad">{getHostScanLabel(selectedState, t)}</Badge>}
                       {selectedNetwork && (
                         <Badge>
@@ -927,8 +1201,11 @@ export function WorkspaceAssetInventoryApp({
                         </Badge>
                       )}
                       {(selectedHost.tags ?? []).map((tag) => <Badge key={tag}>{tag}</Badge>)}
-                      <Badge><HostSystemMeta resource={selectedInventory?.resource} fallbackKey="workspace.asset.versionPending" /></Badge>
-                      {selectedInventory?.resource.kernel && <Badge>{selectedInventory.resource.kernel}</Badge>}
+                      <Badge>
+                        {selectedMonitorSnapshot?.os
+                          || <HostSystemMeta resource={selectedInventory?.resource} fallbackKey="workspace.asset.versionPending" />}
+                      </Badge>
+                      {(selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel) && <Badge>{selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel}</Badge>}
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
@@ -987,14 +1264,45 @@ export function WorkspaceAssetInventoryApp({
                 </div>
               )}
 
-              {selectedInventory ? (
+              {selectedMonitor?.latest?.error && selectedMonitor.latest.status !== 'online' && (
+                <div className={cn(
+                  'rounded-xl border px-4 py-3 text-sm',
+                  selectedMonitor.latest.status === 'offline'
+                    ? 'border-[var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] text-[var(--workspace-status-bad-text)]'
+                    : 'border-[var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[var(--workspace-status-warn-text)]',
+                )}>
+                  {selectedMonitor.latest.error}
+                </div>
+              )}
+
+              {selectedInventory || selectedMonitor?.latest ? (
                 <>
                   <div className={cn('grid gap-3', isMobile ? 'grid-cols-1' : 'md:grid-cols-3')}>
-                    <ResourceMeter icon={Cpu} label={t('workspace.common.cpu')} value={selectedInventory.resource.cpuPercent} detail={selectedInventory.resource.uptime} />
-                    <ResourceMeter icon={MemoryStick} label={t('workspace.common.memory')} value={selectedInventory.resource.memoryPercent} detail={selectedInventory.resource.memoryText} />
-                    <ResourceMeter icon={HardDrive} label={t('workspace.common.disk')} value={selectedInventory.resource.diskPercent} detail={selectedInventory.resource.diskText} />
+                    <ResourceMeter icon={Cpu} label={t('workspace.common.cpu')} value={selectedDisplayMetrics.cpuPercent} detail={selectedDisplayMetrics.cpuDetail} />
+                    <ResourceMeter icon={MemoryStick} label={t('workspace.common.memory')} value={selectedDisplayMetrics.memoryPercent} detail={selectedDisplayMetrics.memoryDetail} />
+                    <ResourceMeter icon={HardDrive} label={t('workspace.common.disk')} value={selectedDisplayMetrics.diskPercent} detail={selectedDisplayMetrics.diskDetail} />
                   </div>
 
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--workspace-text-muted)]">
+                    <span>{t('workspace.monitor.sourceLabel')}</span>
+                    <Badge tone={selectedMonitorSnapshot ? 'good' : 'default'}>
+                      {selectedMonitorSnapshot ? t('workspace.monitor.source.live') : t('workspace.monitor.source.inventory')}
+                    </Badge>
+                    {selectedMonitor?.latest?.lastSuccessAt && (
+                      <span>{t('workspace.monitor.sampledAt', { time: new Date(selectedMonitor.latest.lastSuccessAt).toLocaleString() })}</span>
+                    )}
+                  </div>
+
+                  {selectedMonitor?.latest && (
+                    <MonitorOverview
+                      latest={selectedMonitor.latest}
+                      history={selectedMonitor.history}
+                      t={t}
+                    />
+                  )}
+
+                  {selectedInventory ? (
+                    <>
                   <AssetDetailSection
                     icon={Boxes}
                     title={t('workspace.asset.components')}
@@ -1033,8 +1341,14 @@ export function WorkspaceAssetInventoryApp({
                       {componentStatusCount === 0 && <div className="text-sm text-[var(--workspace-text-muted)]">{t('workspace.asset.noComponents')}</div>}
                     </div>
                   </AssetDetailSection>
+                    </>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-panel)] px-4 py-5 text-sm text-[var(--workspace-text-muted)]">
+                      {t('workspace.monitor.inventoryPending')}
+                    </div>
+                  )}
 
-                  <AssetDetailSection
+                  {selectedInventory && <AssetDetailSection
                     icon={FolderGit2}
                     title={t('workspace.asset.projectDirectories')}
                     meta={filteredProjects.length}
@@ -1072,7 +1386,7 @@ export function WorkspaceAssetInventoryApp({
                       })}
                       {filteredProjects.length === 0 && <div className="text-sm text-[var(--workspace-text-muted)]">{t('workspace.asset.noProjects')}</div>}
                     </div>
-                  </AssetDetailSection>
+                  </AssetDetailSection>}
                 </>
               ) : (
                 <div className="flex min-h-[18rem] items-center justify-center rounded-xl border border-dashed border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-panel)] px-6 text-center text-sm text-[var(--workspace-text-muted)]">
