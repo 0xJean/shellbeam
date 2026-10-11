@@ -98,7 +98,7 @@
 
 ### 预编译安装包
 
-从 [GitHub Releases](https://github.com/zorojean/shellbeam/releases) 页面下载对应平台的安装包：
+从 [GitHub Releases](https://github.com/0xJean/shellbeam/releases) 页面下载对应平台的安装包：
 
 | 平台 | 格式 |
 |------|------|

@@ -93,7 +93,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run tauri build
+        run: |
+          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            export APPLE_SIGNING_IDENTITY="-"
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          fi
+          npm run tauri build
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -116,7 +121,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
             librsvg2-dev \
             patchelf \
             libssl-dev \
@@ -336,6 +340,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -351,9 +357,16 @@ jobs:
         run: |
           TESTFLIGHT_URL="${DISPATCH_TESTFLIGHT_URL:-$TESTFLIGHT_PUBLIC_LINK}"
           {
+            NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+            if [ -f "$NOTES" ]; then
+              cat "$NOTES"
+              echo ""
+            fi
             echo "## Downloads"
             echo ""
-            echo "- macOS, Windows, Linux, and Android builds are attached below as GitHub release assets."
+            echo "- Available platform builds are attached below as GitHub release assets."
+            echo "- CI macOS builds use ad-hoc signing unless Developer ID signing is configured. Only assets explicitly marked notarized have completed Apple notarization."
+            echo "- Android assets marked unsigned require signing before installation."
             if [ -n "$TESTFLIGHT_URL" ]; then
               echo "- iOS is distributed through TestFlight: $TESTFLIGHT_URL"
             else

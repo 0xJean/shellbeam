@@ -98,7 +98,7 @@
 
 ### Pre-built Binaries
 
-Download the latest release for your platform from the [GitHub Releases](https://github.com/zorojean/shellbeam/releases) page:
+Download the latest release for your platform from the [GitHub Releases](https://github.com/0xJean/shellbeam/releases) page:
 
 | Platform | Format |
 |----------|--------|
