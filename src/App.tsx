@@ -1,4 +1,5 @@
-import { WelcomePage, useWelcomePage } from '@/components/welcome-page'
+import { WelcomePage } from '@/components/welcome-page'
+import { useWelcomePage } from '@/hooks/use-welcome-page'
 import { AppProvider, useApp } from '@/contexts/app-context'
 import { HostsProvider, useHosts } from '@/contexts/hosts-context'
 import { SessionsProvider } from '@/contexts/sessions-context'
@@ -30,7 +31,10 @@ function AppInner() {
   }, [])
 
   if (welcome.show) {
-    return <WelcomePage onDismiss={welcome.dismiss} />
+    return <WelcomePage onDismiss={welcome.dismiss} onOpenGuide={() => {
+      app.setPcSidebarNav('guide')
+      welcome.dismiss()
+    }} />
   }
 
   return (

@@ -1,4 +1,5 @@
 import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
+import { InteractiveTour } from '@/components/interactive-tour'
 import { getBrowserTabRouteIndicator } from '@/components/browser/browser-view-state'
 import { MobileSessionHeader } from '@/components/mobile-session-header'
 import { MobileBottomNav, PcNavSidebar } from '@/components/pc-nav-sidebar'
@@ -25,6 +26,7 @@ import { getHostInventoryResource, resolveHostForDisplay } from '@/components/ho
 import type { HostProfile } from '@/lib/hosts'
 import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { TOUR_ROUTES, type InteractiveTourId, type TourOutcome } from '@/lib/interactive-tour'
 import { cn } from '@/lib/utils'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { Globe, MoveRight, PanelTopOpen, Search, Trash2, X } from 'lucide-react'
@@ -99,6 +101,10 @@ const BackupRestorePanel = lazy(async () => {
 const SettingsPanel = lazy(async () => {
   const module = await import('@/components/settings-panel')
   return { default: module.SettingsPanel }
+})
+const UserGuide = lazy(async () => {
+  const module = await import('@/components/user-guide')
+  return { default: module.UserGuide }
 })
 
 function readStoredBrowserSwitcherRecents() {
@@ -195,6 +201,8 @@ export function PcLayout() {
   const [browserSwitcherActiveIndex, setBrowserSwitcherActiveIndex] = useState(0)
   const [browserSwitcherRecentTabIds, setBrowserSwitcherRecentTabIds] = useState<string[]>(() => readStoredBrowserSwitcherRecents())
   const [assetCreateHostOpen, setAssetCreateHostOpen] = useState(false)
+  const [tour, setTour] = useState<{ id: InteractiveTourId; vaultId: string } | null>(null)
+  const [tourOutcome, setTourOutcome] = useState<TourOutcome | null>(null)
   const [assetEditingHost, setAssetEditingHost] = useState<HostProfile | null>(null)
   const [assetSshImportOpen, setAssetSshImportOpen] = useState(false)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(() => {
@@ -763,6 +771,18 @@ export function PcLayout() {
 
   return (
     <div className="flex h-full flex-col">
+      {tour && (
+        <InteractiveTour id={tour.id}
+          valid={app.pcSidebarNav === TOUR_ROUTES[tour.id] && vault.activeVaultId === tour.vaultId && !sessions.pcActiveSessionId && !showQuickConnect}
+          setHostFormOpen={setAssetCreateHostOpen}
+          onFinish={(outcome) => { setTour(null); setTourOutcome(outcome) }} />
+      )}
+      {tourOutcome && (
+        <div role="status" className="absolute right-3 top-12 z-40 flex max-w-[calc(100%-24px)] items-start gap-3 rounded-xl border bg-card p-3 text-xs text-card-foreground shadow-lg md:max-w-md">
+          <p className="leading-5">{t(`tour.outcome.${tourOutcome}`)}</p>
+          <button type="button" aria-label={t('tour.dismiss')} onClick={() => setTourOutcome(null)}><X className="h-4 w-4" /></button>
+        </div>
+      )}
       <HostKeyConfirmDialog
         info={sessions.pendingHostKey}
         onAccept={sessions.acceptPendingHostKey}
@@ -1486,6 +1506,20 @@ export function PcLayout() {
                 </Suspense>
               ) : (
               <>
+              {app.pcSidebarNav === 'guide' && (
+                <Suspense fallback={<DashboardSectionFallback />}>
+                  <UserGuide onStartTour={(id) => {
+                    setTourOutcome(null)
+                    setShowQuickConnect(false)
+                    app.setPcSidebarNav(TOUR_ROUTES[id])
+                    setTour({ id, vaultId: vault.activeVaultId })
+                  }} onNavigate={(destination) => {
+                    setShowQuickConnect(false)
+                    app.setPcSidebarNav(destination === 'add-host' ? 'hosts' : destination)
+                    if (destination === 'add-host') hostsCtx.setPcOpenAddHost(true)
+                  }} />
+                </Suspense>
+              )}
               {app.pcSidebarNav === 'hosts' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
                   <div className="min-h-full p-4 md:p-6">
@@ -1664,6 +1698,7 @@ export function PcLayout() {
               {app.pcSidebarNav === 'settings' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
                   <SettingsPanel
+                    onOpenGuide={() => app.setPcSidebarNav('guide')}
                     vaultAutoLockMinutes={vault.vaultAutoLockMinutes}
                     reconnectSettings={sessions.reconnectSettings}
                     defaultUsername={hostsCtx.defaultUsername}

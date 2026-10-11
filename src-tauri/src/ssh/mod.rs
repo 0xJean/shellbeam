@@ -149,6 +149,7 @@ pub fn connect_and_authenticate_with_progress(
     tcp.set_write_timeout(Some(Duration::from_secs(15))).ok();
 
     let mut session = Session::new().map_err(|err| format!("Create SSH session failed: {err}"))?;
+    session.set_timeout(15_000);
     session.set_tcp_stream(tcp);
     if let Some(cb) = progress.as_mut() {
         cb("secure_session");

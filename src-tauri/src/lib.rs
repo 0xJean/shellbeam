@@ -5,6 +5,7 @@ mod browser;
 mod data;
 mod error;
 mod keys;
+mod mcp;
 mod net;
 mod ssh;
 mod storage;
@@ -20,6 +21,10 @@ pub(crate) use vault::meta as vaults_meta;
 use ssh::interactive::InteractiveSessionState;
 use ssh::SshSessionPool;
 use vault::secrets::VaultState;
+
+pub fn run_mcp_stdio(endpoint_path: &str, client_id: &str) -> Result<(), String> {
+    mcp::bridge::run_stdio(endpoint_path, client_id)
+}
 
 #[cfg(target_os = "macos")]
 fn set_macos_dock_icon() {
@@ -65,7 +70,12 @@ pub fn run() {
         .manage(InteractiveSessionState::default())
         .manage(VaultState::default())
         .manage(SshSessionPool::default())
+        .manage(mcp::McpState::default())
         .invoke_handler(tauri::generate_handler![
+            mcp::mcp_status,
+            mcp::mcp_set_enabled,
+            mcp::mcp_create_client,
+            mcp::mcp_revoke_client,
             vault::meta::list_vaults,
             vault::meta::create_vault,
             vault::meta::update_vault,
@@ -192,6 +202,9 @@ pub fn run() {
             browser::stop_browser_socks_proxy,
         ])
         .setup(|app| {
+            if let Err(error) = mcp::initialize(app.handle()) {
+                log::error!("MCP initialization failed: {error}");
+            }
             #[cfg(target_os = "macos")]
             set_macos_dock_icon();
 

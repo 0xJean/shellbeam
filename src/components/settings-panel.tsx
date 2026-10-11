@@ -1,4 +1,5 @@
 import { TerminalThemeGrid } from '@/components/terminal-widgets'
+import { McpSettingsSection } from '@/components/mcp-settings-section'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -22,7 +23,7 @@ import {
 import { LOCALE_OPTIONS, useT } from '@/lib/i18n'
 import type { TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
-import { AlertTriangle, Eye, EyeOff, Fingerprint, Monitor, Moon, Settings, Sparkles, Sun } from 'lucide-react'
+import { AlertTriangle, BookOpen, Eye, EyeOff, Fingerprint, Monitor, Moon, Settings, Sparkles, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 interface ReconnectSettings {
@@ -32,6 +33,7 @@ interface ReconnectSettings {
 }
 
 interface SettingsPanelProps {
+  onOpenGuide?: () => void
   vaultAutoLockMinutes: number
   reconnectSettings: ReconnectSettings
   defaultUsername: string
@@ -47,6 +49,7 @@ interface SettingsPanelProps {
 }
 
 export function SettingsPanel({
+  onOpenGuide,
   vaultAutoLockMinutes,
   reconnectSettings,
   defaultUsername,
@@ -71,6 +74,16 @@ export function SettingsPanel({
         <p className="mt-1 text-sm text-muted-foreground">{t('settings.desc')}</p>
       </div>
       <div className="space-y-4 px-6 pb-6">
+        {onOpenGuide && (
+          <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4">
+            <div>
+              <h3 className="flex items-center gap-2 font-semibold"><BookOpen className="h-4 w-4" />{t('guide.title')}</h3>
+              <p className="mt-1 text-xs text-muted-foreground">{t('guide.settingsHint')}</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={onOpenGuide}>{t('guide.open')}</Button>
+          </section>
+        )}
+        <McpSettingsSection />
         <section className="rounded-lg border p-4">
           <h3 className="mb-2 font-semibold">{t('settings.language')}</h3>
           <div className="flex items-center justify-between">

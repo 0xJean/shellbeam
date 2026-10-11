@@ -87,6 +87,15 @@ pub struct VaultState {
     unlocked_keys: Mutex<std::collections::HashMap<String, [u8; VAULT_KEY_SIZE]>>,
 }
 
+impl VaultState {
+    pub(crate) fn is_unlocked(&self, vault_id: &str) -> bool {
+        self.unlocked_keys
+            .lock()
+            .map(|keys| keys.contains_key(vault_id))
+            .unwrap_or(false)
+    }
+}
+
 fn derive_vault_key(master_password: &str, salt: &[u8]) -> [u8; VAULT_KEY_SIZE] {
     let mut key = [0u8; VAULT_KEY_SIZE];
     pbkdf2_hmac::<Sha256>(
@@ -196,7 +205,7 @@ fn ensure_vault_id(vault_id: Option<&str>) -> String {
 }
 
 fn read_unlocked_vault_key(
-    state: &tauri::State<'_, VaultState>,
+    state: &VaultState,
     vault_id: &str,
 ) -> Result<[u8; VAULT_KEY_SIZE], String> {
     let guard = state
@@ -408,9 +417,18 @@ pub fn vault_get_secret(
     payload: VaultSecretKeyRequest,
 ) -> Result<Option<String>, String> {
     let vid = ensure_vault_id(payload.vault_id.as_deref());
-    let key = read_unlocked_vault_key(&state, &vid)
+    get_secret_value(&app, &state, &vid, &payload.key)
+}
+
+pub(crate) fn get_secret_value(
+    app: &tauri::AppHandle,
+    state: &VaultState,
+    vid: &str,
+    secret_ref: &str,
+) -> Result<Option<String>, String> {
+    let key = read_unlocked_vault_key(state, vid)
         .map_err(|err| standard_error_from_raw("vault", "get secret", err))?;
-    let vault = load_vault_file(&app, Some(&vid))
+    let vault = load_vault_file(app, Some(vid))
         .map_err(|err| standard_error_from_raw("vault", "get secret", err))?
         .ok_or_else(|| {
             standard_error_payload(
@@ -421,7 +439,7 @@ pub fn vault_get_secret(
                 None,
             )
         })?;
-    let Some(record) = vault.secrets.get(payload.key.trim()) else {
+    let Some(record) = vault.secrets.get(secret_ref.trim()) else {
         return Ok(None);
     };
     let plain = decrypt_vault_value(&key, &record.nonce_b64, &record.ciphertext_b64)

@@ -106,6 +106,7 @@ fn unique_file_suffix() -> String {
 /// Remove all files inside the app data directory (but keep the directory itself).
 #[tauri::command]
 pub fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
+    crate::mcp::prepare_reset(&app)?;
     let app_data_dir = app
         .path()
         .app_data_dir()
@@ -118,6 +119,10 @@ pub fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
     {
         let entry = entry.map_err(|err| format!("Read dir entry failed: {err}"))?;
         let path = entry.path();
+        // Keep the empty process-ownership lock, not user data, while this app is alive.
+        if crate::mcp::is_runtime_lock_file(&entry.file_name()) {
+            continue;
+        }
         if path.is_dir() {
             fs::remove_dir_all(&path).map_err(|err| format!("Remove dir failed: {err}"))?;
         } else {

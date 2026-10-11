@@ -1,12 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Terminal, FolderSync, Network, Sparkles, Shield,
-  Code2, RefreshCw, ArrowRight, ChevronRight,
+  Code2, RefreshCw, ArrowRight, ChevronRight, Activity, Cable,
 } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 import logoUrl from '@/assets/logo.png'
-
-const WELCOME_KEY = 'shellbeam.welcomeSeen'
 
 const FEATURES = [
   { icon: Terminal, titleKey: 'welcome.sshTerminal', descKey: 'welcome.sshTerminalDesc', color: '#3b82f6' },
@@ -16,27 +14,18 @@ const FEATURES = [
   { icon: Shield, titleKey: 'welcome.encryptedVault', descKey: 'welcome.encryptedVaultDesc', color: '#ef4444' },
   { icon: Code2, titleKey: 'welcome.snippets', descKey: 'welcome.snippetsDesc', color: '#06b6d4' },
   { icon: RefreshCw, titleKey: 'welcome.crossDeviceSync', descKey: 'welcome.crossDeviceSyncDesc', color: '#ec4899' },
+  { icon: Activity, titleKey: 'welcome.monitor', descKey: 'welcome.monitorDesc', color: '#10b981' },
+  { icon: Cable, titleKey: 'welcome.mcp', descKey: 'welcome.mcpDesc', color: '#06b6d4' },
 ] as const
 
-export function useWelcomePage() {
-  const [show, setShow] = useState(false)
-  useEffect(() => {
-    if (!localStorage.getItem(WELCOME_KEY)) setShow(true)
-  }, [])
-  const dismiss = useCallback(() => {
-    localStorage.setItem(WELCOME_KEY, '1')
-    setShow(false)
-  }, [])
-  return { show, dismiss }
-}
-
-export function WelcomePage({ onDismiss }: { onDismiss: () => void }) {
+export function WelcomePage({ onDismiss, onOpenGuide }: { onDismiss: () => void; onOpenGuide: () => void }) {
   const { t } = useT()
   const [step, setStep] = useState(0)
   const [entered, setEntered] = useState(false)
 
   useEffect(() => {
-    requestAnimationFrame(() => setEntered(true))
+    const frame = requestAnimationFrame(() => setEntered(true))
+    return () => cancelAnimationFrame(frame)
   }, [])
 
   useEffect(() => {
@@ -53,9 +42,9 @@ export function WelcomePage({ onDismiss }: { onDismiss: () => void }) {
         {Array.from({ length: 40 }).map((_, i) => (
           <div key={i} className="welcome-particle absolute rounded-full bg-blue-400/60"
             style={{
-              width: `${1.5 + Math.random() * 2}px`, height: `${1.5 + Math.random() * 2}px`,
-              left: `${Math.random() * 100}%`, top: `${Math.random() * 100}%`,
-              animationDelay: `${Math.random() * 6}s`, animationDuration: `${4 + Math.random() * 4}s`,
+              width: `${1.5 + i % 3}px`, height: `${1.5 + i % 3}px`,
+              left: `${(i * 37) % 100}%`, top: `${(i * 61) % 100}%`,
+              animationDelay: `${i % 6}s`, animationDuration: `${4 + i % 4}s`,
             }} />
         ))}
         <div className="welcome-beam absolute left-1/2 top-[18%] h-[2px] w-0 -translate-x-1/2 bg-gradient-to-r from-transparent via-blue-400/80 to-transparent"
@@ -103,20 +92,24 @@ export function WelcomePage({ onDismiss }: { onDismiss: () => void }) {
         </div>
 
         {/* CTA */}
-        <div className={`flex flex-col items-center gap-3 pb-2 transition-all duration-700 delay-700 ${step >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'}`}>
-          <button type="button" onClick={onDismiss}
+        <div className={`flex shrink-0 flex-col items-center gap-3 pb-2 transition-all duration-700 delay-700 ${step >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'}`}>
+          <button type="button" onClick={onOpenGuide}
             className="welcome-cta group flex items-center gap-2.5 rounded-full bg-primary px-7 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 transition-all hover:shadow-blue-500/40">
-            {t('welcome.getStarted')}
+            {t('guide.start')}
             <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
           </button>
+          <button type="button" onClick={onDismiss} className="text-xs text-white/60 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">{t('guide.skip')}</button>
           <div className="flex items-center gap-1 text-[11px] text-white/25">
             <ChevronRight className="h-3 w-3" />
-            <span>{t('welcome.addFirstHost')}</span>
+            <span>{t('guide.reopenHint')}</span>
           </div>
         </div>
       </div>
 
       <style>{`
+        @media (prefers-reduced-motion: reduce) {
+          .welcome-particle, .welcome-beam, .welcome-card, .welcome-cta, .welcome-logo-glow::after { animation: none !important; }
+        }
         .welcome-grid {
           background-image:
             linear-gradient(rgba(19,91,236,0.15) 1px, transparent 1px),

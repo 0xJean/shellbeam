@@ -51,6 +51,13 @@
 - Supports OpenAI, Anthropic, OpenRouter, Ollama, and custom endpoints
 - Keyboard shortcut: `⌘+I` / `Ctrl+I`
 
+### Local Agent Access (MCP)
+
+- Scoped server inventory, load history, and on-demand Linux capacity checks
+- Optional generic SSH commands and SFTP file access; the agent owns deployment decisions
+- Disabled by default, per-client host permissions, internal vault credentials, and access audit
+- Configure in **Settings > Agent Access (MCP)**; see the [MCP guide](docs/mcp.md) for setup and v1 limits
+
 ### Encrypted Vault
 
 - AES-256-GCM encrypted storage for passwords and private keys
@@ -81,6 +88,8 @@
 - **Backup & Restore** — export / import all data as encrypted ZIP
 - **Themes** — multiple terminal color schemes (Hacker Green, Dracula, Solarized, etc.)
 - **Welcome Page** — animated onboarding for first-time users
+- **User Guide** — eight bilingual chapters covering Vault, first connection, monitoring, everyday tools, MCP, backup, and troubleshooting. Reading progress stays on this device; reopen from the sidebar, Settings, or More on mobile. Reading the guide does not enable permissions or complete setup automatically.
+- **Interactive Walkthroughs** — optional Driver.js tours in User Guide highlight the real add-host form, monitoring, and MCP settings. Exit with Escape or the close button and replay anytime. Tours never save hosts, open terminals, or grant permissions; unavailable sections are omitted rather than populated with mock data. The existing reading guide stays available.
 - **Mobile-Ready** — responsive layout with virtual keyboard toolbar
 
 ---

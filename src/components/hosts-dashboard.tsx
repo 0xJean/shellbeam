@@ -415,7 +415,7 @@ export function HostsDashboard({
             <FileDown className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">{t('hosts.importSsh')}</span>
           </button>
-          <Button size="sm" onClick={() => setShowAddForm(!showAddForm)} className="h-9 gap-1.5 text-xs bg-[color:var(--workspace-primary-500)] text-[color:var(--workspace-primary-foreground)] hover:bg-[color:var(--workspace-primary-400)]">
+          <Button data-tour="host-create" size="sm" onClick={() => setShowAddForm(!showAddForm)} className="h-9 gap-1.5 text-xs bg-[color:var(--workspace-primary-500)] text-[color:var(--workspace-primary-foreground)] hover:bg-[color:var(--workspace-primary-400)]">
             <Plus className="h-3.5 w-3.5" /> {t('hosts.newConnection')}
           </Button>
           </>

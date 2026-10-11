@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -49,8 +49,8 @@ pub struct ServerMonitorHistoryQuery {
 
 fn open_server_monitor_db(app: &tauri::AppHandle) -> Result<Connection, String> {
     let path = data_file_path(app, SERVER_MONITOR_DB)?;
-    let conn = Connection::open(path)
-        .map_err(|err| format!("Open server monitor db failed: {err}"))?;
+    let conn =
+        Connection::open(path).map_err(|err| format!("Open server monitor db failed: {err}"))?;
 
     conn.execute_batch(
         r#"
@@ -219,9 +219,38 @@ pub fn save_server_monitor_result(
     payload: ServerMonitorResultPayload,
 ) -> Result<(), String> {
     let mut conn = open_server_monitor_db(&app)?;
+    persist_result(&mut conn, payload)
+}
+
+fn persist_result(
+    conn: &mut Connection,
+    payload: ServerMonitorResultPayload,
+) -> Result<(), String> {
     let tx = conn
         .transaction()
         .map_err(|err| format!("Begin server monitor transaction failed: {err}"))?;
+    let mut payload = payload;
+    // A scheduled request can fail after an on-demand MCP sample has succeeded.
+    // Keep the newer successful data while recording the newer failure attempt.
+    let previous: Option<(Option<String>, Option<i64>)> = tx.query_row(
+        "SELECT snapshot_json,last_success_at FROM server_monitor_latest WHERE host_key=?1 AND host_address=?2 AND username=?3 AND port=?4",
+        params![payload.latest.host_key,payload.latest.host_address,payload.latest.username,payload.latest.port],
+        |row| Ok((row.get(0)?,row.get(1)?)),
+    ).optional().map_err(|err| format!("Read previous monitor sample failed: {err}"))?;
+    if let Some((snapshot, Some(success_at))) = previous {
+        if success_at > payload.latest.last_success_at.unwrap_or(i64::MIN) {
+            payload.latest.snapshot = snapshot
+                .map(|raw| serde_json::from_str(&raw))
+                .transpose()
+                .map_err(|err| format!("Read previous monitor snapshot failed: {err}"))?;
+            payload.latest.last_success_at = Some(success_at);
+            if payload.latest.status == "offline"
+                && payload.latest.updated_at.saturating_sub(success_at) <= 300_000
+            {
+                payload.latest.status = "stale".into();
+            }
+        }
+    }
     let snapshot_json = payload
         .latest
         .snapshot
@@ -248,6 +277,7 @@ pub fn save_server_monitor_result(
           last_success_at = excluded.last_success_at,
           error = excluded.error,
           updated_at = excluded.updated_at
+        WHERE excluded.updated_at >= server_monitor_latest.updated_at
         "#,
         params![
             payload.latest.host_key,
@@ -293,11 +323,85 @@ pub fn save_server_monitor_result(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn late_sampler_cannot_replace_newer_mcp_metrics_and_history_is_idempotent() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE server_monitor_latest (
+            host_key TEXT PRIMARY KEY,host_id TEXT,host_name TEXT,host_address TEXT,
+            username TEXT,port INTEGER,status TEXT,snapshot_json TEXT,last_attempt_at INTEGER,
+            last_success_at INTEGER,error TEXT,updated_at INTEGER);
+            CREATE TABLE server_monitor_history (host_key TEXT,sampled_at INTEGER,snapshot_json TEXT,
+            PRIMARY KEY(host_key,sampled_at));").unwrap();
+        let payload = |time, cpu| ServerMonitorResultPayload {
+            latest: ServerMonitorLatest {
+                host_key: "h".into(),
+                host_id: "h".into(),
+                host_name: "dev".into(),
+                host_address: "192.0.2.1".into(),
+                username: "deploy".into(),
+                port: 22,
+                status: "online".into(),
+                snapshot: Some(json!({"cpuPercent":cpu})),
+                last_attempt_at: time,
+                last_success_at: Some(time),
+                error: None,
+                updated_at: time,
+            },
+            history: Some(ServerMonitorHistoryPoint {
+                host_key: "h".into(),
+                sampled_at: time,
+                snapshot: json!({"cpuPercent":cpu}),
+            }),
+        };
+        persist_result(&mut conn, payload(200, 20)).unwrap();
+        persist_result(&mut conn, payload(100, 10)).unwrap();
+        persist_result(&mut conn, payload(100, 10)).unwrap();
+        let (time, raw): (i64, String) = conn
+            .query_row(
+                "SELECT updated_at,snapshot_json FROM server_monitor_latest",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(time, 200);
+        assert_eq!(
+            serde_json::from_str::<Value>(&raw).unwrap()["cpuPercent"],
+            20
+        );
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM server_monitor_history", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 2);
+        let mut failure = payload(300, 10);
+        failure.latest.last_success_at = Some(100);
+        failure.latest.status = "offline".into();
+        failure.history = None;
+        persist_result(&mut conn, failure).unwrap();
+        let (status, success, raw): (String, i64, String) = conn
+            .query_row(
+                "SELECT status,last_success_at,snapshot_json FROM server_monitor_latest",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "stale");
+        assert_eq!(success, 200);
+        assert_eq!(
+            serde_json::from_str::<Value>(&raw).unwrap()["cpuPercent"],
+            20
+        );
+    }
+}
+
 #[tauri::command]
-pub fn delete_server_monitor_data(
-    app: tauri::AppHandle,
-    host_key: String,
-) -> Result<(), String> {
+pub fn delete_server_monitor_data(app: tauri::AppHandle, host_key: String) -> Result<(), String> {
     let mut conn = open_server_monitor_db(&app)?;
     let tx = conn
         .transaction()

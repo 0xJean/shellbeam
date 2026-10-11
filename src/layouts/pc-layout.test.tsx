@@ -7,6 +7,8 @@ vi.mock('@/lib/i18n', () => ({
 }))
 
 vi.mock('@/components/activity-log-panel', () => ({ ActivityLogPanel: () => <div /> }))
+const interactiveTourSpy = vi.fn()
+vi.mock('@/components/interactive-tour', () => ({ InteractiveTour: (props: unknown) => { interactiveTourSpy(props); return null } }))
 vi.mock('@/components/backup-restore-panel', () => ({ BackupRestorePanel: () => <div /> }))
 vi.mock('@/components/host-key-confirm-dialog', () => ({ HostKeyConfirmDialog: () => <div /> }))
 vi.mock('@/components/hosts-dashboard', () => ({
@@ -33,7 +35,7 @@ vi.mock('@/components/session-connect-placeholder', () => ({
     <button data-testid="session-connect-placeholder" data-status={status} data-error-message={errorMessage ?? ''} onClick={onRetry} />
   ),
 }))
-vi.mock('@/components/settings-panel', () => ({ SettingsPanel: () => <div /> }))
+vi.mock('@/components/settings-panel', () => ({ SettingsPanel: ({ onOpenGuide }: { onOpenGuide?: () => void }) => <button onClick={onOpenGuide}>Open guide</button> }))
 vi.mock('@/components/sftp-dual-pane', () => ({ SftpDualPane: () => <div /> }))
 vi.mock('@/components/snippet-panel', () => ({ SnippetPanel: () => <div /> }))
 vi.mock('@/components/ssh-import-dialog', () => ({ SshImportDialog: () => <div data-testid="ssh-import-dialog" /> }))
@@ -261,6 +263,50 @@ describe('pc layout', () => {
       retrySessionConnection: vi.fn(),
     }
     useSessions.mockReturnValue(defaultSessionsValue)
+  })
+
+  it('opens the guide from settings', async () => {
+    const app = { ...useApp(), pcSidebarNav: 'settings' }
+    useApp.mockReturnValue(app)
+    useSessions.mockReturnValue({ ...defaultSessionsValue, pcActiveSessionId: null })
+    render(<PcLayout />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open guide' }))
+    expect(app.setPcSidebarNav).toHaveBeenCalledWith('guide')
+  })
+
+  it.each([['hosts', 'hosts'], ['monitor', 'asset-inventory'], ['mcp', 'settings']])('routes the %s walkthrough without connecting a session', async (id, route) => {
+    const app = { ...useApp(), pcSidebarNav: 'guide' }
+    useApp.mockReturnValue(app)
+    useSessions.mockReturnValue({ ...defaultSessionsValue, pcActiveSessionId: null })
+    const view = render(<PcLayout />)
+    fireEvent.click(await screen.findByRole('button', { name: `tour.launch.${id}` }))
+    expect(app.setPcSidebarNav).toHaveBeenLastCalledWith(route)
+    useApp.mockReturnValue({ ...app, pcSidebarNav: route })
+    view.rerender(<PcLayout />)
+    expect(interactiveTourSpy).toHaveBeenLastCalledWith(expect.objectContaining({ id, valid: true }))
+    expect(defaultSessionsValue.handleConnectHost).not.toHaveBeenCalled()
+    expect(defaultSessionsValue.sendRaw).not.toHaveBeenCalled()
+    expect(defaultSessionsValue.handleCloseSessionTab).not.toHaveBeenCalled()
+    useVault.mockReturnValue({ ...useVault(), activeVaultId: 'another-vault' })
+    view.rerender(<PcLayout />)
+    expect(interactiveTourSpy).toHaveBeenLastCalledWith(expect.objectContaining({ valid: false }))
+  })
+
+  it('routes guide actions to the host form and monitoring without connecting or running commands', async () => {
+    const app = { ...useApp(), pcSidebarNav: 'guide' }
+    useApp.mockReturnValue(app)
+    useSessions.mockReturnValue({ ...defaultSessionsValue, pcActiveSessionId: null })
+    render(<PcLayout />)
+    fireEvent.click(await screen.findByRole('button', { name: 'guide.hosts.title' }))
+    fireEvent.click(screen.getByRole('button', { name: 'guide.addHost' }))
+    expect(app.setPcSidebarNav).toHaveBeenLastCalledWith('hosts')
+    expect(useHosts().setPcOpenAddHost).toHaveBeenCalledWith(true)
+    fireEvent.click(screen.getByRole('button', { name: 'guide.monitor.title' }))
+    fireEvent.click(screen.getByRole('button', { name: 'guide.openAssets' }))
+    expect(app.setPcSidebarNav).toHaveBeenLastCalledWith('asset-inventory')
+    expect(defaultSessionsValue.handleConnectHost).not.toHaveBeenCalled()
+    expect(defaultSessionsValue.sendRaw).not.toHaveBeenCalled()
+    expect(defaultSessionsValue.handleCloseSessionTab).not.toHaveBeenCalled()
   })
 
   it('lets the mobile hosts page scroll clear of the bottom navigation', async () => {

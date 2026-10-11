@@ -1001,10 +1001,12 @@ export function WorkspaceAssetInventoryApp({
 
   if (hosts.length === 0) {
     return (
-      <WorkspaceEmptyState
-        title={t('workspace.asset.emptyTitle')}
-        description={t('workspace.asset.emptyDescription')}
-      />
+      <div data-tour="monitor-page">
+        <WorkspaceEmptyState
+          title={t('workspace.asset.emptyTitle')}
+          description={t('workspace.asset.emptyDescription')}
+        />
+      </div>
     )
   }
 
@@ -1035,6 +1037,7 @@ export function WorkspaceAssetInventoryApp({
   return (
     <div
       data-testid="workspace-asset-inventory-app"
+      data-tour="monitor-page"
       className={cn(
         'flex min-w-0 flex-col text-[var(--workspace-text)]',
         isMobile ? 'min-h-0 gap-4 overflow-visible' : 'h-full min-h-[34rem] overflow-hidden',
@@ -1187,7 +1190,7 @@ export function WorkspaceAssetInventoryApp({
                         </div>
                       </div>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div data-tour="monitor-status" className="mt-3 flex flex-wrap gap-2">
                       <Badge>{groupLabel(selectedHost.group || 'Custom', t)}</Badge>
                       {selectedMonitor?.latest && (
                         <Badge tone={monitorStatusTone(selectedMonitor.latest.status)}>
@@ -1277,13 +1280,13 @@ export function WorkspaceAssetInventoryApp({
 
               {selectedInventory || selectedMonitor?.latest ? (
                 <>
-                  <div className={cn('grid gap-3', isMobile ? 'grid-cols-1' : 'md:grid-cols-3')}>
+                  <div data-tour="monitor-resources" className={cn('grid gap-3', isMobile ? 'grid-cols-1' : 'md:grid-cols-3')}>
                     <ResourceMeter icon={Cpu} label={t('workspace.common.cpu')} value={selectedDisplayMetrics.cpuPercent} detail={selectedDisplayMetrics.cpuDetail} />
                     <ResourceMeter icon={MemoryStick} label={t('workspace.common.memory')} value={selectedDisplayMetrics.memoryPercent} detail={selectedDisplayMetrics.memoryDetail} />
                     <ResourceMeter icon={HardDrive} label={t('workspace.common.disk')} value={selectedDisplayMetrics.diskPercent} detail={selectedDisplayMetrics.diskDetail} />
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--workspace-text-muted)]">
+                  <div data-tour="monitor-source" className="flex flex-wrap items-center gap-2 text-xs text-[var(--workspace-text-muted)]">
                     <span>{t('workspace.monitor.sourceLabel')}</span>
                     <Badge tone={selectedMonitorSnapshot ? 'good' : 'default'}>
                       {selectedMonitorSnapshot ? t('workspace.monitor.source.live') : t('workspace.monitor.source.inventory')}
@@ -1294,11 +1297,13 @@ export function WorkspaceAssetInventoryApp({
                   </div>
 
                   {selectedMonitor?.latest && (
-                    <MonitorOverview
-                      latest={selectedMonitor.latest}
-                      history={selectedMonitor.history}
-                      t={t}
-                    />
+                    <div data-tour="monitor-trends">
+                      <MonitorOverview
+                        latest={selectedMonitor.latest}
+                        history={selectedMonitor.history}
+                        t={t}
+                      />
+                    </div>
                   )}
 
                   {selectedInventory ? (

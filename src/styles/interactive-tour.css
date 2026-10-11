@@ -1,0 +1,27 @@
+.driver-popover.shellbeam-tour-popover {
+  --driver-popover-font-family: inherit;
+  min-width: 0;
+  width: min(340px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 100px);
+  overflow-y: auto;
+  border: 1px solid var(--workspace-border-soft);
+  border-radius: 14px;
+  background: var(--workspace-surface-900);
+  color: var(--workspace-text-strong);
+  box-shadow: var(--workspace-shadow-overlay);
+  padding: 20px;
+  font-family: inherit;
+}
+.shellbeam-tour-popover .driver-popover-title { padding-right: 18px; font-size: 15px; line-height: 1.5; }
+.shellbeam-tour-popover .driver-popover-description { margin-top: 8px; color: var(--workspace-text-muted); font-size: 13px; line-height: 1.7; }
+.shellbeam-tour-popover .driver-popover-footer { gap: 8px; flex-wrap: wrap; }
+.shellbeam-tour-popover .driver-popover-progress-text { color: var(--workspace-text-muted); font-size: 12px; }
+.shellbeam-tour-popover .driver-popover-footer-btn { border-color: var(--workspace-border-soft); border-radius: 8px; padding: 8px 10px; color: var(--workspace-text-strong); background: var(--workspace-surface-800); text-shadow: none; }
+.shellbeam-tour-popover .driver-popover-next-btn { background: var(--workspace-primary-500); color: var(--workspace-primary-foreground); }
+.shellbeam-tour-popover .driver-popover-close-btn { top: 8px; right: 8px; color: var(--workspace-text-muted); }
+.shellbeam-tour-popover button:focus-visible { outline: 2px solid var(--workspace-primary-500); outline-offset: 2px; }
+.shellbeam-tour-popover .driver-popover-footer-btn:hover { background: var(--workspace-nav-hover-bg); color: var(--workspace-text-strong); }
+.shellbeam-tour-popover .driver-popover-arrow { display: none; }
+.shellbeam-tour-active .driver-overlay { z-index: 10000; }
+.driver-active .shellbeam-tour-loading, .driver-active .shellbeam-tour-loading * { pointer-events: auto; }

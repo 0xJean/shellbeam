@@ -131,7 +131,7 @@ export function HostForm({
   }
 
   return (
-    <Card className="w-full max-w-xl md:max-w-xl max-md:max-w-none max-md:border-0 max-md:rounded-none max-md:shadow-none">
+    <Card data-tour={!initial ? 'host-form' : undefined} className="w-full max-w-xl md:max-w-xl max-md:max-w-none max-md:border-0 max-md:rounded-none max-md:shadow-none">
       <CardContent className="space-y-5 p-5">
         {/* Title */}
         <div className="flex items-center justify-between">
@@ -144,7 +144,7 @@ export function HostForm({
         )}
 
         {/* Connection: Address + Port */}
-        <div className="space-y-1.5">
+        <div data-tour="host-address" className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">{t('hostForm.address')}</label>
           <div className="flex gap-2">
             <div className="relative min-w-0 flex-1">
@@ -164,7 +164,7 @@ export function HostForm({
         </div>
 
         {/* Username + Label on same row */}
-        <div className="grid grid-cols-2 gap-3">
+        <div data-tour="host-identity" className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">{t('hostForm.username')}</label>
             <div className="relative">
@@ -271,7 +271,7 @@ export function HostForm({
         <div className="border-t border-border" />
 
         {/* Auth type toggle */}
-        <div className="space-y-3">
+        <div data-tour="host-auth" className="space-y-3">
           <label className="text-xs font-medium text-muted-foreground">{t('hostForm.credentials')}</label>
           <div className="flex rounded-lg border border-border p-0.5">
             <button type="button" onClick={() => setAuthType('password')}
@@ -336,7 +336,7 @@ export function HostForm({
         </div>
 
         {/* Action buttons at bottom */}
-        <div className="flex justify-end gap-2 pt-1">
+        <div data-tour="host-save" className="flex justify-end gap-2 pt-1">
           <Button variant="outline" size="sm" onClick={onCancel}>{t('hostForm.cancel')}</Button>
           <Button size="sm" onClick={handleSubmit} disabled={submitting}>
             {submitting ? t('hostForm.saving') : t('hostForm.save')}

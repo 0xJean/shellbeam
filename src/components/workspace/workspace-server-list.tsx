@@ -280,6 +280,7 @@ export function WorkspaceServerList({
   return (
     <aside
       data-testid="workspace-server-list"
+      data-tour="monitor-servers"
       className={cn(
       'flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]',
       !isMobile && 'h-full min-h-0',

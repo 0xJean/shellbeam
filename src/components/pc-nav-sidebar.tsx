@@ -12,6 +12,7 @@ import {
   Clock,
   Network,
   SquareTerminal,
+  BookOpen,
 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
@@ -31,6 +32,7 @@ export type SidebarNavId =
   | 'backup'
   | 'settings'
   | 'terminal'
+  | 'guide'
 
 interface NavItem {
   id: SidebarNavId
@@ -50,6 +52,7 @@ const NAV_ITEMS: NavItem[] = [
 ]
 
 const SYSTEM_ITEMS: NavItem[] = [
+  { id: 'guide', labelKey: 'guide.title', icon: <BookOpen className="h-4 w-4" /> },
   { id: 'sync', labelKey: 'nav.sync', icon: <RefreshCw className="h-4 w-4" /> },
   { id: 'backup', labelKey: 'nav.backup', icon: <Archive className="h-4 w-4" /> },
   { id: 'settings', labelKey: 'nav.settings', icon: <Settings className="h-4 w-4" /> },
