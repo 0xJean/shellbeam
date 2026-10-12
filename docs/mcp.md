@@ -13,12 +13,63 @@ environment installation, automatic rollback, or a remote agent/daemon.
 3. In the intended vault, choose a client name and individual servers. Cached
    information is the default; separately opt into refresh, command execution,
    file reading and file writing. New hosts are never included automatically.
-4. Generate the configuration and merge its `mcpServers.shellbeam` entry into
+4. Choose Codex (TOML), Claude Desktop (JSON), or another stdio client (JSON).
+   Generate the configuration and merge only its ShellBeam entry into
    your local MCP client's configuration. Keep the token secret. It is shown
    once; only its SHA-256 hash is stored by ShellBeam. Revoke and recreate the
    client if the configuration is lost or the application moves.
 5. Unlock the selected vault before remote operations. Trust an SSH host key in
    ShellBeam before using MCP on that server. Unknown and changed keys fail closed.
+
+### Codex desktop / CLI
+
+Use the Codex tab in ShellBeam to generate `[mcp_servers.shellbeam]` and its
+environment section. Merge these into `~/.codex/config.toml` (or the configured
+`CODEX_HOME` directory). Replace an existing ShellBeam section rather than adding
+a duplicate. Do not overwrite unrelated settings or other MCP servers.
+Alternatively enter the generated command, arguments and environment variable in
+desktop Settings > MCP servers > Add server > STDIO, then restart/reload the client.
+This connects Codex to ShellBeam; it does not embed Codex inside the AI command bar.
+
+### Claude Desktop
+
+Select Claude Desktop to obtain JSON with `mcpServers.shellbeam`. Open Claude
+Desktop Settings > Developer > Edit Config and merge that entry into
+`claude_desktop_config.json`, preserving other servers and top-level settings.
+Fully quit and reopen Claude Desktop. No Node.js bridge, global package or server
+installation is needed: the installed ShellBeam binary implements stdio itself.
+This is not a remote web connector; it requires the local desktop application.
+
+Each desktop client should receive a separate authorization so it can be audited
+and revoked independently. Changing the format tab only reformats the current
+one-time configuration; it does not issue a token or change permissions.
+ShellBeam never edits external client configuration files automatically.
+
+### Verification and troubleshooting
+
+With the generated configuration still visible and MCP enabled, click **Check
+local bridge**. It authenticates against the local IPC listener and requests
+initialization and `tools/list`. It never connects to SSH, runs a command,
+starts an external agent or invokes a model. Success does **not** prove that
+Codex or Claude Desktop has loaded the configuration or can launch the stdio binary.
+
+To verify the actual client, ask it to call `list_servers`, then read cached
+inventory/metrics without refreshing or writing. Confirm that only selected
+servers appear. The recent audit shows accepted tool requests; the local bridge
+diagnostic does not create one and cannot be mistaken for external client activity.
+If the client cannot connect, check its configuration syntax and executable path,
+restart it, keep ShellBeam running, enable MCP, and confirm the grant is not revoked.
+After discarding a configuration, revoke/recreate it if you need the token again.
+Do not paste tokens into chats, issue reports, logs or source control.
+
+Local transport does not imply offline inference. The external client may send
+authorized server metadata and outputs to its cloud model provider. ShellBeam
+does not read desktop login credentials or convert subscriptions into API keys.
+Models for those clients are selected in the clients themselves, independently
+of ShellBeam's AI Assistant settings.
+
+Official references: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp),
+[local MCP client setup](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
 
 The generated command invokes the same installed executable with
 `--mcp-stdio <endpoint-file> <client-id>`. This invocation does not launch a GUI.

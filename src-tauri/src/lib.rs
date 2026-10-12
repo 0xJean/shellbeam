@@ -76,6 +76,7 @@ pub fn run() {
             mcp::mcp_set_enabled,
             mcp::mcp_create_client,
             mcp::mcp_revoke_client,
+            mcp::mcp_test_connection,
             vault::meta::list_vaults,
             vault::meta::create_vault,
             vault::meta::update_vault,

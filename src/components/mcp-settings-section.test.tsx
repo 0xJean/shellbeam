@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import { invoke } from '@tauri-apps/api/core'
@@ -20,7 +20,7 @@ describe('MCP settings', () => {
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === 'mcp_status') return { enabled: false, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
       if (command === 'list_hosts') return [host]
-      if (command === 'mcp_create_client') return { client, configuration: { mcpServers: { shellbeam: { command: '/Applications/ShellBeam.app/app', env: { SHELLBEAM_MCP_TOKEN: 'one-time-token' } } } } }
+      if (command === 'mcp_create_client') return { client, configuration: { mcpServers: { shellbeam: { command: '/Applications/ShellBeam.app/app', args: ['--mcp-stdio', '/tmp/endpoint.json', client.id], env: { SHELLBEAM_MCP_TOKEN: 'one-time-token' } } } } }
       return undefined
     })
   })
@@ -78,5 +78,78 @@ describe('MCP settings', () => {
     expect(keys.length).toBeGreaterThan(20)
     expect(keys.sort()).toEqual(Object.keys(zhCN).filter((key) => key.startsWith('mcp.')).sort())
     for (const key of keys) expect(zhCN[key]).toBeTruthy()
+  })
+
+  async function generate() {
+    await screen.findByText('Dev Server')
+    fireEvent.change(screen.getByLabelText('Client name'), { target: { value: 'Agent A' } })
+    fireEvent.click(screen.getByLabelText(/Dev Server/))
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize and generate configuration' }))
+    return await screen.findByLabelText('MCP client configuration') as HTMLTextAreaElement
+  }
+
+  it('switches between Codex TOML and Claude JSON without issuing a new authorization', async () => {
+    render(<McpSettingsSection />)
+    const configuration = await generate()
+    expect(configuration.value).toContain('[mcp_servers.shellbeam]')
+    fireEvent.click(screen.getByRole('button', { name: 'Claude Desktop' }))
+    expect(JSON.parse(configuration.value).mcpServers.shellbeam.env.SHELLBEAM_MCP_TOKEN).toBe('one-time-token')
+    expect(screen.getByText(/Settings > Developer > Edit Config/)).toBeInTheDocument()
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'mcp_create_client')).toHaveLength(1)
+    expect(Object.values(localStorage).join('')).not.toContain('one-time-token')
+  })
+
+  it('does not test a bridge while MCP is disabled', async () => {
+    render(<McpSettingsSection />)
+    await generate()
+    expect(screen.getByRole('button', { name: 'Check local bridge' })).toBeDisabled()
+    expect(invoke).not.toHaveBeenCalledWith('mcp_test_connection', expect.anything())
+  })
+
+  it('checks only the generated authorization and describes the limited scope of success', async () => {
+    const original = vi.mocked(invoke).getMockImplementation()!
+    vi.mocked(invoke).mockImplementation(async (command, args, options) => {
+      if (command === 'mcp_status') return { enabled: true, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
+      if (command === 'mcp_test_connection') return { toolCount: 3 }
+      return original(command, args, options)
+    })
+    render(<McpSettingsSection />)
+    await generate()
+    fireEvent.click(screen.getByRole('button', { name: 'Check local bridge' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('3 authorized tools')
+    expect(screen.getByRole('status')).toHaveTextContent('Complete the desktop client verification')
+    expect(invoke).toHaveBeenCalledWith('mcp_test_connection', { clientId: 'client-a', token: 'one-time-token' })
+    expect(invoke).not.toHaveBeenCalledWith('ssh_exec', expect.anything())
+  })
+
+  it('shows actionable connection failure without echoing token-bearing errors', async () => {
+    const original = vi.mocked(invoke).getMockImplementation()!
+    vi.mocked(invoke).mockImplementation(async (command, args, options) => {
+      if (command === 'mcp_status') return { enabled: true, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
+      if (command === 'mcp_test_connection') throw new Error('private token reflected')
+      return original(command, args, options)
+    })
+    render(<McpSettingsSection />)
+    await generate()
+    fireEvent.click(screen.getByRole('button', { name: 'Check local bridge' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Local bridge check failed')
+    expect(screen.getByRole('status')).not.toHaveTextContent('private token')
+  })
+
+  it('discards pending check results when the one-time configuration is hidden', async () => {
+    let resolve!: (result: { toolCount: number }) => void
+    const original = vi.mocked(invoke).getMockImplementation()!
+    vi.mocked(invoke).mockImplementation(async (command, args, options) => {
+      if (command === 'mcp_status') return { enabled: true, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
+      if (command === 'mcp_test_connection') return new Promise((done) => { resolve = done })
+      return original(command, args, options)
+    })
+    render(<McpSettingsSection />)
+    await generate()
+    fireEvent.click(screen.getByRole('button', { name: 'Check local bridge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hide and discard configuration' }))
+    await act(async () => { resolve({ toolCount: 3 }) })
+    expect(screen.queryByLabelText('MCP client configuration')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })

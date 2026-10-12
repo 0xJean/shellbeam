@@ -275,6 +275,35 @@ pub fn mcp_create_client(
 }
 
 #[tauri::command]
+pub async fn mcp_test_connection(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    client_id: String,
+    token: String,
+) -> Result<Value, String> {
+    require_settings_webview(&webview)?;
+    require_ready(&app)?;
+    if cfg!(mobile) {
+        return Err("MCP_DESKTOP_ONLY".into());
+    }
+    if client_id.len() > 100 || token.len() != 64 {
+        return Err("MCP_AUTHENTICATION_FAILED".into());
+    }
+    {
+        let state = app.state::<McpState>();
+        let settings = state.settings.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
+        policy::authenticate(&settings, &client_id, &token)?;
+    }
+    let endpoint = data_file_path(&app, "mcp_endpoint.json")?;
+    let count = tauri::async_runtime::spawn_blocking(move || {
+        bridge::test_connection(&endpoint.to_string_lossy(), &client_id, &token)
+    })
+    .await
+    .map_err(|_| "MCP_CHECK_FAILED")??;
+    Ok(json!({"toolCount":count}))
+}
+
+#[tauri::command]
 pub fn mcp_revoke_client(
     app: tauri::AppHandle,
     webview: tauri::Webview,

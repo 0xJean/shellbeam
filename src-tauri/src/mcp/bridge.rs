@@ -162,6 +162,58 @@ fn forward(
     read_frame(&mut stream)
 }
 
+/// Tests the authenticated local transport, never a remote host or an external client's settings.
+pub(super) fn test_connection(
+    endpoint_path: &str,
+    client_id: &str,
+    token: &str,
+) -> Result<usize, String> {
+    let initialized = forward(
+        endpoint_path,
+        client_id,
+        token,
+        &json!({
+            "jsonrpc":"2.0", "id":1, "method":"initialize",
+            "params":{"protocolVersion":protocol::VERSION,"capabilities":{},
+            "clientInfo":{"name":"shellbeam-local-check","version":env!("CARGO_PKG_VERSION")}}
+        }),
+    )?;
+    check_diagnostic_response(&initialized, 1)?;
+    if initialized["result"]["serverInfo"]["name"] != "shellbeam" {
+        return Err("MCP_INVALID_HANDSHAKE".into());
+    }
+    let tools = forward(
+        endpoint_path,
+        client_id,
+        token,
+        &json!({
+            "jsonrpc":"2.0", "id":2, "method":"tools/list"
+        }),
+    )?;
+    check_diagnostic_response(&tools, 2)?;
+    tools["result"]["tools"]
+        .as_array()
+        .map(Vec::len)
+        .ok_or("MCP_INVALID_TOOL_LIST".into())
+}
+
+fn check_diagnostic_response(response: &Value, id: u64) -> Result<(), String> {
+    if let Some(error) = response.get("error") {
+        // Report only known diagnostics, never arbitrary transport response contents.
+        return Err(match error["message"].as_str().unwrap_or("") {
+            "MCP_DISABLED" => "MCP_DISABLED",
+            "CLIENT_REVOKED" | "UNAUTHORIZED" => "MCP_AUTHENTICATION_FAILED",
+            "MCP_INSTANCE_EXPIRED" => "MCP_INSTANCE_EXPIRED",
+            _ => "MCP_CONNECTION_REJECTED",
+        }
+        .into());
+    }
+    if response["jsonrpc"] != "2.0" || response["id"] != id || !response["result"].is_object() {
+        return Err("MCP_INVALID_RESPONSE".into());
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 struct Lifecycle {
     initialized: bool,
@@ -246,6 +298,63 @@ pub fn run_stdio(endpoint_path: &str, client_id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_diagnostic_only_initializes_and_lists_tools() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let endpoint = Endpoint {
+            port: listener.local_addr().unwrap().port(),
+            instance: "test-instance".into(),
+        };
+        let path =
+            std::env::temp_dir().join(format!("shellbeam-mcp-test-{}.json", uuid::Uuid::new_v4()));
+        std::fs::write(&path, serde_json::to_vec(&endpoint).unwrap()).unwrap();
+        let server = std::thread::spawn(move || {
+            let mut methods = Vec::new();
+            for id in 1..=2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let envelope = read_frame(&mut stream).unwrap();
+                assert_eq!(envelope["instance"], "test-instance");
+                assert_eq!(envelope["clientId"], "test-client");
+                assert_eq!(envelope["token"], "test-token");
+                let request = &envelope["request"];
+                protocol::validate_request(request).unwrap();
+                methods.push(request["method"].as_str().unwrap().to_string());
+                let result = if id == 1 {
+                    json!({"serverInfo":{"name":"shellbeam"}})
+                } else {
+                    json!({"tools":[{"name":"list_servers"}]})
+                };
+                write_frame(&mut stream, &protocol::response(json!(id), result)).unwrap();
+            }
+            methods
+        });
+        let result = test_connection(&path.to_string_lossy(), "test-client", "test-token");
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(result.unwrap(), 1);
+        assert_eq!(server.join().unwrap(), ["initialize", "tools/list"]);
+    }
+
+    #[test]
+    fn diagnostic_responses_require_matching_ids_and_hide_untrusted_errors() {
+        assert!(check_diagnostic_response(&json!({"jsonrpc":"2.0","id":1,"result":{}}), 1).is_ok());
+        assert!(
+            check_diagnostic_response(&json!({"jsonrpc":"2.0","id":2,"result":{}}), 1).is_err()
+        );
+        assert!(
+            check_diagnostic_response(&json!({"jsonrpc":"2.0","id":1,"result":null}), 1).is_err()
+        );
+        assert_eq!(
+            check_diagnostic_response(&json!({"error":{"message":"secret token"}}), 1).unwrap_err(),
+            "MCP_CONNECTION_REJECTED"
+        );
+        assert_eq!(
+            check_diagnostic_response(&json!({"error":{"message":"MCP_DISABLED"}}), 1).unwrap_err(),
+            "MCP_DISABLED"
+        );
+    }
     #[test]
     fn framing_rejects_oversized_messages_before_allocation() {
         let mut oversized = std::io::Cursor::new(((MAX_FRAME + 1) as u32).to_be_bytes());

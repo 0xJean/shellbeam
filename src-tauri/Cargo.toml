@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.3"
+version = "0.1.4"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -51,6 +51,7 @@ if-addrs = { version = "0.15", features = ["link-local"] }
 openssl-sys = { version = "0.9", features = ["vendored"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+ssh2 = { version = "0.9", features = ["openssl-on-win32"] }
 webview2-com-sys = "0.38"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]

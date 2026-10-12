@@ -289,7 +289,7 @@ fn wkwebview_can_go_back<R: Runtime>(webview: &Webview<R>) -> Result<bool, Strin
     target_os = "openbsd"
 ))]
 fn wkwebview_can_go_back<R: Runtime>(webview: &Webview<R>) -> Result<bool, String> {
-    use webkit2gtk::prelude::WebViewExt;
+    use webkit2gtk::WebViewExt;
     let value = Arc::new(Mutex::new(false));
     let value_ref = value.clone();
     webview
@@ -317,7 +317,7 @@ fn wkwebview_can_go_back<R: Runtime>(webview: &Webview<R>) -> Result<bool, Strin
                 .CoreWebView2()
                 .map_err(|error| error.to_string())
                 .unwrap();
-            let mut raw = windows_core::BOOL(0);
+            let mut raw = Default::default();
             core.CanGoBack(&mut raw)
                 .map_err(|error| error.to_string())
                 .unwrap();
@@ -374,7 +374,7 @@ fn wkwebview_can_go_forward<R: Runtime>(webview: &Webview<R>) -> Result<bool, St
     target_os = "openbsd"
 ))]
 fn wkwebview_can_go_forward<R: Runtime>(webview: &Webview<R>) -> Result<bool, String> {
-    use webkit2gtk::prelude::WebViewExt;
+    use webkit2gtk::WebViewExt;
     let value = Arc::new(Mutex::new(false));
     let value_ref = value.clone();
     webview
@@ -402,7 +402,7 @@ fn wkwebview_can_go_forward<R: Runtime>(webview: &Webview<R>) -> Result<bool, St
                 .CoreWebView2()
                 .map_err(|error| error.to_string())
                 .unwrap();
-            let mut raw = windows_core::BOOL(0);
+            let mut raw = Default::default();
             core.CanGoForward(&mut raw)
                 .map_err(|error| error.to_string())
                 .unwrap();
@@ -451,7 +451,7 @@ fn wkwebview_go_back<R: Runtime>(webview: &Webview<R>) -> Result<(), String> {
     target_os = "openbsd"
 ))]
 fn wkwebview_go_back<R: Runtime>(webview: &Webview<R>) -> Result<(), String> {
-    use webkit2gtk::prelude::WebViewExt;
+    use webkit2gtk::WebViewExt;
     webview
         .with_webview(move |native| {
             native.inner().go_back();
@@ -508,7 +508,7 @@ fn wkwebview_go_forward<R: Runtime>(webview: &Webview<R>) -> Result<(), String> 
     target_os = "openbsd"
 ))]
 fn wkwebview_go_forward<R: Runtime>(webview: &Webview<R>) -> Result<(), String> {
-    use webkit2gtk::prelude::WebViewExt;
+    use webkit2gtk::WebViewExt;
     webview
         .with_webview(move |native| {
             native.inner().go_forward();

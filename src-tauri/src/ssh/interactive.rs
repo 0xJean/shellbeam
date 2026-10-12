@@ -972,10 +972,7 @@ fn open_local_pty(
     unsafe {
         cmd.pre_exec(move || {
             libc::setsid();
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            libc::ioctl(slave_copy, libc::TIOCSCTTY as libc::c_ulong, 0);
-            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-            libc::ioctl(slave_copy, libc::TIOCSCTTY as libc::c_int, 0);
+            libc::ioctl(slave_copy, libc::TIOCSCTTY as _, 0);
             libc::dup2(slave_copy, 0);
             libc::dup2(slave_copy, 1);
             libc::dup2(slave_copy, 2);
@@ -1009,6 +1006,7 @@ fn open_local_pty(
 }
 
 #[tauri::command]
+#[cfg(unix)]
 pub fn create_local_terminal(
     app: tauri::AppHandle,
     state: tauri::State<'_, InteractiveSessionState>,
@@ -1028,12 +1026,6 @@ pub fn create_local_terminal(
     emit_progress(&app, &session_id, "spawn_shell");
     #[cfg(unix)]
     let (reader, writer, child_pid) = open_local_pty(&shell, payload.cols, payload.rows)?;
-    #[cfg(not(unix))]
-    return Err(standard_error_from_raw(
-        "interactive",
-        "local terminal",
-        "Not supported on this platform",
-    ));
 
     emit_progress(&app, &session_id, "allocate_pty");
     let (output, seq_counter, status) = new_shared_state();
@@ -1072,13 +1064,8 @@ pub fn create_local_terminal(
                         ws_xpixel: 0,
                         ws_ypixel: 0,
                     };
-                    #[cfg(any(target_os = "macos", target_os = "ios"))]
                     unsafe {
-                        libc::ioctl(fd, libc::TIOCSWINSZ as libc::c_ulong, &ws);
-                    }
-                    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-                    unsafe {
-                        libc::ioctl(fd, libc::TIOCSWINSZ as libc::c_int, &ws);
+                        libc::ioctl(fd, libc::TIOCSWINSZ as _, &ws);
                     }
                 }
                 SessionCommand::Close => {
@@ -1148,4 +1135,19 @@ pub fn create_local_terminal(
         .map_err(|_| standard_error_from_raw("interactive", "create", "Lock poisoned"))?
         .insert(session_id, record);
     Ok(info)
+}
+
+#[tauri::command]
+#[cfg(not(unix))]
+pub fn create_local_terminal(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, InteractiveSessionState>,
+    payload: LocalTerminalRequest,
+) -> Result<InteractiveSessionInfo, String> {
+    let _ = (app, state, payload);
+    Err(standard_error_from_raw(
+        "interactive",
+        "local terminal",
+        "Local terminals are not supported on this platform; SSH terminals are available",
+    ))
 }

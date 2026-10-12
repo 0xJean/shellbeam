@@ -12,7 +12,7 @@ try {
     join(root, 'node_modules/@tauri-apps/cli/tauri.js'),
     'icon', join(root, 'app-icon.png'),
     '--output', output,
-    '--ios-color', '#071321',
+    '--ios-color', '#070B10',
   ], { cwd: root, stdio: 'inherit' })
 
   for (const entry of readdirSync(output, { withFileTypes: true })) {

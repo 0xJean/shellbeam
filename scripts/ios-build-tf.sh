@@ -91,12 +91,16 @@ echo ""
 
 # ── Step 3: Upload to App Store Connect ──
 echo "🚀 [3/3] Uploading to App Store Connect..."
-UPLOAD_OUTPUT=$(xcrun altool --upload-app \
+if ! UPLOAD_OUTPUT=$(xcrun altool --upload-app \
   --type ios \
   --file "$IPA_PATH" \
   --username "$APPLE_ID" \
   --password "$APPLE_PASSWORD" \
-  --team-id "$TEAM" 2>&1) || true
+  --team-id "$TEAM" 2>&1); then
+  echo "$UPLOAD_OUTPUT"
+  echo "Upload failed; no TestFlight distribution has been confirmed."
+  exit 1
+fi
 
 echo "$UPLOAD_OUTPUT"
 

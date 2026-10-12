@@ -1,5 +1,6 @@
 import { TerminalThemeGrid } from '@/components/terminal-widgets'
 import { McpSettingsSection } from '@/components/mcp-settings-section'
+import { AIModelPicker } from '@/components/ai-model-picker'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -9,6 +10,7 @@ import {
     AI_PROVIDERS,
     loadAISettings,
     saveAISettings,
+    switchAIProvider,
     type AISettings,
 } from '@/lib/ai'
 import {
@@ -337,7 +339,7 @@ function BiometricToggle() {
   )
 }
 
-function AISettingsSection() {
+export function AISettingsSection() {
   const [settings, setSettings] = useState<AISettings>(loadAISettings)
   const [showKey, setShowKey] = useState(false)
   const { t } = useT()
@@ -358,11 +360,7 @@ function AISettingsSection() {
           <div className="mt-1.5 flex flex-wrap gap-2">
             {AI_PROVIDERS.map((p) => (
               <button key={p.id} type="button"
-                onClick={() => setSettings((s) => ({
-                  ...s,
-                  provider: p.id,
-                  model: p.id === s.provider ? s.model : p.defaultModel,
-                }))}
+                onClick={() => { setShowKey(false); setSettings((s) => switchAIProvider(s, p.id)) }}
                 className={cn(
                   'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
                   settings.provider === p.id
@@ -381,13 +379,15 @@ function AISettingsSection() {
             <span className="text-sm text-muted-foreground">{t('settings.apiKey')}</span>
             <div className="relative mt-1">
               <Input
+                aria-label={t('settings.apiKey')}
                 type={showKey ? 'text' : 'password'}
                 value={settings.apiKey}
                 onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))}
-                placeholder={`Enter your ${providerDef?.name ?? ''} API key`}
+                placeholder={t('settings.apiKeyPlaceholder', { provider: providerDef?.name ?? '' })}
                 className="pr-10"
               />
               <button type="button" onClick={() => setShowKey((v) => !v)}
+                aria-label={t(showKey ? 'settings.hideApiKey' : 'settings.showApiKey')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                 {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -399,40 +399,23 @@ function AISettingsSection() {
           <div>
             <span className="text-sm text-muted-foreground">{t('settings.baseUrl')}</span>
             <Input
+              aria-label={t('settings.baseUrl')}
               value={settings.customBaseUrl}
-              onChange={(e) => setSettings((s) => ({ ...s, customBaseUrl: e.target.value }))}
+              onChange={(e) => setSettings((s) => ({ ...s, customBaseUrl: e.target.value, apiKey: '' }))}
               placeholder="https://your-llm-endpoint.com/v1"
               className="mt-1"
             />
           </div>
         )}
 
-        <div>
-          <span className="text-sm text-muted-foreground">{t('settings.model')}</span>
-          {isCustom || isOllama ? (
-            <Input
-              value={isCustom ? settings.customModel : settings.model}
-              onChange={(e) => isCustom
-                ? setSettings((s) => ({ ...s, customModel: e.target.value }))
-                : setSettings((s) => ({ ...s, model: e.target.value }))
-              }
-              placeholder={isOllama ? 'e.g. llama3, qwen2, mistral...' : 'model-name'}
-              className="mt-1 w-full max-w-xs"
-            />
-          ) : (
-            <Select
-              value={settings.model}
-              onChange={(v) => setSettings((s) => ({ ...s, model: v }))}
-              className="mt-1 max-w-xs"
-              options={(providerDef?.models ?? []).map((m) => ({ value: m, label: m }))}
-            />
-          )}
-        </div>
+        <AIModelPicker key={JSON.stringify([settings.provider, settings.apiKey, settings.customBaseUrl])}
+          settings={settings} onChange={(model) => setSettings((s) => isCustom ? { ...s, customModel: model } : { ...s, model })} />
         {isCustom && (
           <div>
             <span className="text-sm text-muted-foreground">{t('settings.apiKeyOptional')}</span>
             <div className="relative mt-1">
               <Input
+                aria-label={t('settings.apiKeyOptional')}
                 type={showKey ? 'text' : 'password'}
                 value={settings.apiKey}
                 onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))}
@@ -440,6 +423,7 @@ function AISettingsSection() {
                 className="pr-10"
               />
               <button type="button" onClick={() => setShowKey((v) => !v)}
+                aria-label={t(showKey ? 'settings.hideApiKey' : 'settings.showApiKey')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                 {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>

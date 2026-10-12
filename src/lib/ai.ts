@@ -15,7 +15,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     id: 'openai',
     name: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
-    models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+    models: ['gpt-4o-mini', 'gpt-4o'],
     defaultModel: 'gpt-4o-mini',
   },
   {
@@ -58,6 +58,21 @@ export interface AISettings {
   model: string
   customBaseUrl: string
   customModel: string
+  providerProfiles?: Partial<Record<AIProviderId, { apiKey: string; model: string }>>
+}
+
+export function switchAIProvider(settings: AISettings, provider: AIProviderId): AISettings {
+  if (provider === settings.provider) return settings
+  const providerProfiles = {
+    ...settings.providerProfiles,
+    [settings.provider]: { apiKey: settings.apiKey, model: settings.model },
+  }
+  const profile = providerProfiles[provider]
+  return {
+    ...settings, provider, providerProfiles,
+    apiKey: profile?.apiKey ?? '',
+    model: profile?.model ?? AI_PROVIDERS.find((entry) => entry.id === provider)?.defaultModel ?? '',
+  }
 }
 
 export const DEFAULT_AI_SETTINGS: AISettings = {
@@ -94,7 +109,7 @@ function getResolvedConfig(settings: AISettings) {
   const model = settings.provider === 'custom'
     ? settings.customModel
     : settings.model || providerDef?.defaultModel || ''
-  return { baseUrl, model, apiKey: settings.apiKey }
+  return { baseUrl, model, apiKey: settings.provider === 'ollama' ? '' : settings.apiKey }
 }
 
 const SYSTEM_PROMPT = `You are a Linux/macOS command-line expert integrated into an SSH terminal client called ShellBeam. Generate shell commands based on the user's natural language description.
@@ -142,7 +157,7 @@ export async function streamAICommand(
     if (settings.provider === 'anthropic') {
       await streamAnthropic(baseUrl, apiKey, model, messages, callbacks, signal)
     } else {
-      await streamOpenAICompatible(baseUrl, apiKey, model, messages, callbacks, signal)
+      await streamOpenAICompatible(baseUrl, apiKey, model, messages, callbacks, signal, settings.provider === 'openai')
     }
   } catch (err) {
     if (signal?.aborted) return
@@ -157,6 +172,7 @@ async function streamOpenAICompatible(
   messages: { role: string; content: string }[],
   callbacks: AIStreamCallbacks,
   signal?: AbortSignal,
+  isOpenAI = false,
 ) {
   const url = baseUrl.endsWith('/v1')
     ? `${baseUrl}/chat/completions`
@@ -174,7 +190,7 @@ async function streamOpenAICompatible(
   const res = await fetch(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model, messages, stream: true, max_tokens: 1024 }),
+    body: JSON.stringify({ model, messages, stream: true, ...(isOpenAI ? { max_completion_tokens: 1024 } : { max_tokens: 1024 }) }),
     signal,
   })
 

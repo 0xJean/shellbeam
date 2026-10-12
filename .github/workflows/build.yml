@@ -180,7 +180,7 @@ jobs:
           java-version: 17
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
 
@@ -380,7 +380,7 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          draft: false
+          draft: true
           generate_release_notes: true
           body_path: release-notes.md
           fail_on_unmatched_files: false
