@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
+import { runConfirmedOperation, type OperationJob } from '@/lib/operation-job'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 
 const PROCESS_COMMAND = 'ps -eo pid=,comm=,%cpu=,%mem=,state= --sort=-%cpu | head -n 24'
@@ -38,6 +39,14 @@ function parseProcesses(output: string): ProcessRow[] {
     .filter((row) => row.pid && row.command)
 }
 
+function isSafePid(pid: string) {
+  return /^[1-9][0-9]{0,8}$/.test(pid)
+}
+
+function operationOutput(job: OperationJob) {
+  return `job=${job.jobId} audit=${job.auditId} status=${job.status}`
+}
+
 export function WorkspaceProcessesApp({
   selectedHostId = null,
   hostAddress = null,
@@ -50,6 +59,8 @@ export function WorkspaceProcessesApp({
   const [search, setSearch] = useState('')
   const [rows, setRows] = useState<ProcessRow[]>([])
   const [handoffCommand, setHandoffCommand] = useState(PROCESS_COMMAND)
+  const [terminatingPid, setTerminatingPid] = useState<string | null>(null)
+  const [actionOutput, setActionOutput] = useState('')
 
   const host = useMemo(
     () => resolveWorkspaceHost(hosts, { selectedHostId, hostAddress }),
@@ -82,6 +93,45 @@ export function WorkspaceProcessesApp({
       setRows([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function terminateProcess(row: ProcessRow) {
+    if (!host || !isSafePid(row.pid)) {
+      setError(t('workspace.processes.invalidPid'))
+      return
+    }
+
+    setTerminatingPid(row.pid)
+    setError('')
+    try {
+      const execution = await runConfirmedOperation({
+        host,
+        action: 'process.terminate',
+        target: `${row.pid} (${row.command})`,
+        risk: 'high',
+        paramsSummary: `kill -TERM -- ${row.pid}`,
+        confirmMessage: t('workspace.operation.confirm', {
+          action: t('workspace.processes.terminate'),
+          target: `${row.command} (PID ${row.pid})`,
+        }),
+        execute: () => runWorkspaceRemoteCommand({
+          host,
+          resolveAuthSecret,
+          command: `kill -TERM -- ${row.pid}`,
+        }),
+        getResult: (result) => result,
+      })
+      if (!execution) {
+        setActionOutput(t('workspace.operation.cancelled'))
+        return
+      }
+      setActionOutput(operationOutput(execution.job))
+      await loadProcesses()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setTerminatingPid(null)
     }
   }
 
@@ -149,12 +199,13 @@ export function WorkspaceProcessesApp({
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
-          <div className="grid grid-cols-[96px_minmax(0,1.4fr)_100px_100px_96px] gap-3 border-b border-border/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          <div className="grid grid-cols-[96px_minmax(0,1.4fr)_100px_100px_96px_96px] gap-3 border-b border-border/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             <div>{t('workspace.processes.column.pid')}</div>
             <div>{t('workspace.processes.column.command')}</div>
             <div>{t('workspace.common.cpu')}</div>
             <div>{t('workspace.common.memory')}</div>
             <div>{t('workspace.processes.column.state')}</div>
+            <div>{t('workspace.processes.column.action')}</div>
           </div>
           <div data-testid="workspace-processes-list" className="max-h-[26rem] overflow-auto">
             {loading ? (
@@ -165,17 +216,30 @@ export function WorkspaceProcessesApp({
               filteredRows.map((row) => (
                 <div
                   key={`${row.pid}-${row.command}`}
-                  className="grid grid-cols-[96px_minmax(0,1.4fr)_100px_100px_96px] gap-3 border-b border-border/40 px-4 py-3 text-sm last:border-b-0"
+                  className="grid grid-cols-[96px_minmax(0,1.4fr)_100px_100px_96px_96px] gap-3 border-b border-border/40 px-4 py-3 text-sm last:border-b-0"
                 >
                   <div className="font-medium">{row.pid}</div>
                   <div className="truncate">{row.command}</div>
                   <div>{row.cpu}%</div>
                   <div>{row.memory}%</div>
                   <div>{row.state}</div>
+                  <button
+                    type="button"
+                    disabled={terminatingPid !== null}
+                    onClick={() => void terminateProcess(row)}
+                    className="rounded-lg border border-red-500/30 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {terminatingPid === row.pid ? t('workspace.processes.terminating') : t('workspace.processes.terminate')}
+                  </button>
                 </div>
               ))
             )}
           </div>
+        </div>
+      )}
+      {actionOutput && (
+        <div className="rounded-xl border border-border/60 bg-card px-4 py-3 text-xs text-muted-foreground" data-testid="workspace-processes-output">
+          {actionOutput}
         </div>
       )}
     </div>

@@ -12,6 +12,7 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import { listActivityLog, type ActivityEntry } from '@/lib/activity-log'
+import { listOperationAudit } from '@/lib/operation-job'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
@@ -23,6 +24,7 @@ const EVENT_ICONS: Record<string, { Icon: typeof Plug; color: string }> = {
   reconnect: { Icon: RefreshCw, color: 'text-amber-400' },
   auth_fail: { Icon: AlertTriangle, color: 'text-red-500' },
   local_terminal: { Icon: Terminal, color: 'text-blue-400' },
+  operation: { Icon: Server, color: 'text-violet-400' },
 }
 
 function formatRelative(ts: number): string {
@@ -69,9 +71,23 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
 
   const refresh = useCallback(() => {
     setLoading(true)
-    listActivityLog()
-      .then((res) => setEntries(res.reverse()))
-      .catch(() => {})
+    Promise.allSettled([listActivityLog(), listOperationAudit(100)])
+      .then(([activityResult, auditResult]) => {
+        const activity = activityResult.status === 'fulfilled' ? activityResult.value : []
+        const audit = auditResult.status === 'fulfilled' ? auditResult.value : []
+        const operationEntries: ActivityEntry[] = audit.map((entry) => ({
+          id: entry.auditId,
+          event: 'operation',
+          hostId: entry.hostId ?? undefined,
+          hostName: entry.hostName || entry.hostAddress || 'Unknown host',
+          hostAddress: entry.hostAddress || '',
+          username: undefined,
+          authType: undefined,
+          detail: `${entry.action} ${entry.target} · ${entry.status} · audit ${entry.auditId}`,
+          createdAt: entry.createdAt,
+        }))
+        setEntries([...activity, ...operationEntries].sort((a, b) => b.createdAt - a.createdAt))
+      })
       .finally(() => setLoading(false))
   }, [])
 

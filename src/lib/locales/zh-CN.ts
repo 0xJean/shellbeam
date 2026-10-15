@@ -739,8 +739,12 @@ const zhCN: Record<string, string> = {
   'workspace.processes.column.pid': 'PID',
   'workspace.processes.column.command': '命令',
   'workspace.processes.column.state': '状态',
+  'workspace.processes.column.action': '操作',
   'workspace.processes.loadingList': '正在加载进程列表...',
   'workspace.processes.emptyList': '没有匹配的进程。',
+  'workspace.processes.terminate': '终止',
+  'workspace.processes.terminating': '终止中...',
+  'workspace.processes.invalidPid': '选中的进程 PID 无效。',
 
   // Workspace logs
   'workspace.logs.emptyDescription': '连接远程主机后，可在这里查看日志。',
@@ -876,6 +880,9 @@ const zhCN: Record<string, string> = {
   'workspace.services.action.stop': '停止',
   'workspace.services.actionCompleted': '{action}完成',
   'workspace.services.noHostSelected': '未选择主机',
+  'workspace.services.invalidService': '选中的服务名称无效。',
+  'workspace.operation.confirm': '确认对 {target} 执行“{action}”吗？该远程操作会记录到审计日志。',
+  'workspace.operation.cancelled': '操作已在执行前取消。',
 
   // Workspace tool manager
   'workspace.tools.emptyTitle': '工具管理',
@@ -1534,6 +1541,7 @@ const zhCN: Record<string, string> = {
   'activity.event.reconnect': '已重连',
   'activity.event.auth_fail': '认证失败',
   'activity.event.local_terminal': '本地终端',
+  'activity.event.operation': '运维操作',
 
   // Right Sidebar
   'rightSidebar.terminal': '终端',

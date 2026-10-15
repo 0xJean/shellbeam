@@ -128,6 +128,11 @@ pub fn run() {
             data::history::list_command_history,
             data::activity_log::append_activity,
             data::activity_log::list_activity_log,
+            data::operation_jobs::operation_job_create,
+            data::operation_jobs::operation_job_update,
+            data::operation_jobs::operation_job_get,
+            data::operation_jobs::operation_job_list,
+            data::operation_jobs::operation_audit_list,
             data::ssh_config::parse_ssh_config,
             sync::commands::get_system_hostname,
             sync::commands::sync_get_bootstrap,
@@ -203,6 +208,9 @@ pub fn run() {
             browser::stop_browser_socks_proxy,
         ])
         .setup(|app| {
+            if let Err(error) = data::operation_jobs::recover(app.handle()) {
+                log::error!("Operation job recovery failed: {error}");
+            }
             if let Err(error) = mcp::initialize(app.handle()) {
                 log::error!("MCP initialization failed: {error}");
             }

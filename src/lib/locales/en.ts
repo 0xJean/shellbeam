@@ -739,8 +739,12 @@ const en: Record<string, string> = {
   'workspace.processes.column.pid': 'PID',
   'workspace.processes.column.command': 'Command',
   'workspace.processes.column.state': 'State',
+  'workspace.processes.column.action': 'Action',
   'workspace.processes.loadingList': 'Loading process list...',
   'workspace.processes.emptyList': 'No matching processes found.',
+  'workspace.processes.terminate': 'Terminate',
+  'workspace.processes.terminating': 'Terminating...',
+  'workspace.processes.invalidPid': 'The selected process ID is invalid.',
 
   // Workspace logs
   'workspace.logs.emptyDescription': 'Connect a remote host to inspect logs here.',
@@ -876,6 +880,9 @@ const en: Record<string, string> = {
   'workspace.services.action.stop': 'stop',
   'workspace.services.actionCompleted': '{action} completed',
   'workspace.services.noHostSelected': 'No host selected',
+  'workspace.services.invalidService': 'The selected service name is invalid.',
+  'workspace.operation.confirm': 'Confirm {action} for {target}? This remote operation will be recorded in the audit log.',
+  'workspace.operation.cancelled': 'Operation cancelled before execution.',
 
   // Workspace tool manager
   'workspace.tools.emptyTitle': 'Tool Manager',
@@ -1534,6 +1541,7 @@ const en: Record<string, string> = {
   'activity.event.reconnect': 'Reconnected',
   'activity.event.auth_fail': 'Auth failed',
   'activity.event.local_terminal': 'Local terminal',
+  'activity.event.operation': 'Operations',
 
   // Right Sidebar
   'rightSidebar.terminal': 'Terminal',

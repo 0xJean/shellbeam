@@ -5,6 +5,7 @@ import { useHostNetworkMetadata, type HostNetworkDisplay } from '@/hooks/use-hos
 import { HostRegionMeta } from '@/components/host-display-meta'
 import { cn } from '@/lib/utils'
 import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
+import { runConfirmedOperation } from '@/lib/operation-job'
 import {
   getWorkspaceInventoryHostKey,
   loadWorkspaceInventoryCache,
@@ -695,7 +696,8 @@ export function WorkspaceToolManagerApp({
 
   async function runToolAction(action: ToolAction, tool = selectedTool, options: { silent?: boolean } = {}) {
     if (!host) return
-    if ((action === 'uninstall' || action === 'stop' || action === 'restart' || action === 'disable') && !options.silent) {
+    const serviceMutation = Boolean(tool.service) && ['start', 'stop', 'restart', 'enable', 'disable'].includes(action)
+    if ((action === 'uninstall' || (['stop', 'restart', 'disable'].includes(action) && !serviceMutation)) && !options.silent) {
       const confirmed = window.confirm(t('workspace.tools.confirmAction', { action: t(`workspace.tools.action.${action}`), name: tool.name }))
       if (!confirmed) return
     }
@@ -708,9 +710,36 @@ export function WorkspaceToolManagerApp({
 
     try {
       const command = buildToolActionCommand(tool, action, t)
-      const result = await runRemoteCommand(command)
+      let operationJobId: string | undefined
+      let operationAuditId: string | undefined
+      let result
+      if (serviceMutation && !options.silent) {
+        const execution = await runConfirmedOperation({
+          host,
+          action: `service.${action}`,
+          target: tool.service ?? tool.name,
+          risk: action === 'start' || action === 'enable' ? 'low' : 'high',
+          paramsSummary: `systemctl ${action} ${tool.service ?? tool.name}`,
+          confirmMessage: t('workspace.operation.confirm', {
+            action: t(`workspace.tools.action.${action}`),
+            target: tool.service ?? tool.name,
+          }),
+          execute: () => runRemoteCommand(command),
+          getResult: (remoteResult) => remoteResult,
+        })
+        if (!execution) {
+          setOutput(t('workspace.operation.cancelled'))
+          return
+        }
+        operationJobId = execution.job.jobId
+        operationAuditId = execution.job.auditId
+        result = execution.value
+      } else {
+        result = await runRemoteCommand(command)
+      }
       const combined = [result.stdout, result.stderr ? `[stderr]\n${result.stderr}` : ''].filter(Boolean).join('\n')
-      const displayOutput = combined || t('workspace.tools.actionCompleted', { action: t(`workspace.tools.action.${action}`) })
+      const operationSummary = operationJobId ? `job=${operationJobId} audit=${operationAuditId} status=${result.exitCode === 0 ? 'completed' : 'failed'}\n\n` : ''
+      const displayOutput = `${operationSummary}${combined || t('workspace.tools.actionCompleted', { action: t(`workspace.tools.action.${action}`) })}`
 
       if (displayOutput.includes('__SB_INSTALLED=')) {
         const parsedStatus = parseToolStatus(displayOutput)
