@@ -35,10 +35,12 @@
 - Upload, download, rename, delete, create directories
 - Permission editing (`chmod`)
 - Batch operations on multiple files
+- ProxyJump routing through a bastion host (private-key authentication)
 
 ### Port Forwarding
 
 - Local and remote SSH tunnels
+- ProxyJump routing through the configured host jump server
 - One-click start / stop with real-time status
 - Persistent rules saved per vault
 

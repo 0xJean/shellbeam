@@ -10,6 +10,9 @@ export interface SftpRequest {
   password?: string
   privateKey?: string
   passphrase?: string
+  jumpHost?: string
+  jumpPort?: number
+  jumpUser?: string
   remotePath: string
   transferId?: string
 }
@@ -152,6 +155,9 @@ export interface SftpChmodRequest {
   password?: string
   privateKey?: string
   passphrase?: string
+  jumpHost?: string
+  jumpPort?: number
+  jumpUser?: string
   remotePath: string
   mode: number
 }

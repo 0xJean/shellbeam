@@ -95,4 +95,22 @@ describe('host list item', () => {
     expect(document.querySelector('[data-os-icon="ubuntu"]')).toBeTruthy()
     expect(screen.queryByText('Ub')).not.toBeInTheDocument()
   })
+
+  it('shows the configured jump host in list metadata', () => {
+    render(
+      <HostListItem
+        index={1}
+        host={{ ...host, jumpHost: 'bastion.example.com', jumpPort: 2200, jumpUser: 'jump' }}
+        isSelected={false}
+        status="online"
+        onSelect={vi.fn()}
+        onConnect={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    expect(document.querySelector('[data-host-jump-pill]')).toBeTruthy()
+    expect(screen.getByText(/bastion\.example\.com:2200/)).toBeInTheDocument()
+  })
 })

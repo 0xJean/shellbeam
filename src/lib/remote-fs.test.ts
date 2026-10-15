@@ -75,4 +75,29 @@ describe('remote fs helpers', () => {
     expect(sftpCreateFile).toHaveBeenCalledWith(expect.objectContaining({ remotePath: '/tmp/new.conf', password: 'secret' }))
     expect(sftpWriteFile).toHaveBeenCalledWith(expect.objectContaining({ remotePath: '/tmp/new.conf', contentB64: 'Y29uZmln', password: 'secret' }))
   })
+
+  it('passes jump host settings through SFTP auth payloads', async () => {
+    const jumpHost: HostProfile = {
+      ...passwordHost,
+      id: 'host-jump',
+      address: '10.0.0.25',
+      authType: 'privateKey',
+      jumpHost: 'bastion.example.com',
+      jumpPort: 2200,
+      jumpUser: 'bastion',
+    }
+    const client = createRemoteFsClient(jumpHost, async () => 'PRIVATE KEY')
+
+    await client.listDir('/srv')
+
+    expect(sftpListDir).toHaveBeenCalledWith(expect.objectContaining({
+      host: '10.0.0.25',
+      authType: 'privateKey',
+      privateKey: 'PRIVATE KEY',
+      jumpHost: 'bastion.example.com',
+      jumpPort: 2200,
+      jumpUser: 'bastion',
+      remotePath: '/srv',
+    }))
+  })
 })

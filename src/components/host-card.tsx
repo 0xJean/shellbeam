@@ -6,7 +6,7 @@ import { useT } from '@/lib/i18n'
 import { getResourceUsageFillClassName, getResourceUsageTextClassName } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
-import { AlertTriangle, Clock, Cpu, HardDrive, KeyRound, Laptop, LockKeyhole, MemoryStick, Pencil, RefreshCw, Server, Tag, Terminal, Trash2, User } from 'lucide-react'
+import { AlertTriangle, Clock, Cpu, HardDrive, KeyRound, Laptop, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, Tag, Terminal, Trash2, User } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
@@ -51,6 +51,13 @@ function getDisplayGroupLabel(group: string | undefined, t: TFn) {
   return translated !== `group.${group}` ? translated : group
 }
 
+function formatJumpHost(host: HostProfile) {
+  if (!host.jumpHost?.trim()) return ''
+  const user = host.jumpUser?.trim() ? `${host.jumpUser.trim()}@` : ''
+  const port = host.jumpPort ? `:${host.jumpPort}` : ''
+  return `${user}${host.jumpHost.trim()}${port}`
+}
+
 interface HostGridCardProps {
   host: HostProfile
   isSelected: boolean
@@ -69,6 +76,7 @@ export function HostGridCard({ host, isSelected, status, resource, network, onCo
   const sc = statusConfig(status, t)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const groupLabel = getDisplayGroupLabel(host.group, t)
+  const jumpHost = formatJumpHost(host)
 
   return (
     <>
@@ -124,7 +132,7 @@ export function HostGridCard({ host, isSelected, status, resource, network, onCo
                 : <><LockKeyhole className="h-3 w-3" /><span>{t('hostCard.password')}</span></>}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {sc ? (
               <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold', sc.bg, sc.text)}>
                 <span className={cn('h-1.5 w-1.5 rounded-full', sc.dot)} />{sc.label}
@@ -136,6 +144,15 @@ export function HostGridCard({ host, isSelected, status, resource, network, onCo
             ) : null}
             {host.group && (
               <span className="rounded-full bg-[var(--workspace-surface-700)] px-2 py-0.5 text-[10px] font-medium text-[var(--workspace-text-muted)]">{groupLabel}</span>
+            )}
+            {jumpHost && (
+              <span
+                className="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--workspace-accent-subtle)] px-2 py-0.5 text-[10px] font-medium text-[var(--workspace-accent-text)]"
+                title={`${t('hosts.jumpHost')}: ${jumpHost}`}
+              >
+                <Route className="h-2.5 w-2.5 shrink-0" />
+                <span className="truncate">{t('hosts.jumpHost')}: {jumpHost}</span>
+              </span>
             )}
           </div>
           {network && (
@@ -303,8 +320,9 @@ function HostResourceSummary({ resource, t }: { resource?: WorkspaceInventoryRes
 function HostGroupTagsMeta({ host, t }: { host: HostProfile; t: TFn }) {
   const groupLabel = getDisplayGroupLabel(host.group, t)
   const tags = host.tags ?? []
+  const jumpHost = formatJumpHost(host)
 
-  if (!groupLabel && tags.length === 0) return null
+  if (!groupLabel && tags.length === 0 && !jumpHost) return null
 
   return (
     <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
@@ -331,6 +349,16 @@ function HostGroupTagsMeta({ host, t }: { host: HostProfile; t: TFn }) {
       {tags.length > 3 && (
         <span className="inline-flex items-center rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-1 text-[10px] font-medium text-[var(--workspace-text-subtle)]">
           +{tags.length - 3}
+        </span>
+      )}
+      {jumpHost && (
+        <span
+          data-host-jump-pill
+          className="inline-flex max-w-full items-center gap-1 rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-accent-subtle)] px-2 py-1 text-[10px] font-medium text-[var(--workspace-accent-text)]"
+          title={`${t('hosts.jumpHost')}: ${jumpHost}`}
+        >
+          <Route className="h-3 w-3 shrink-0" />
+          <span className="truncate">{t('hosts.jumpHost')}: {jumpHost}</span>
         </span>
       )}
     </div>

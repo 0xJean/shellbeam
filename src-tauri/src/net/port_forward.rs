@@ -34,6 +34,20 @@ fn write_temp_private_key(
     Ok(key_path)
 }
 
+fn format_jump_proxy(
+    jump_host: Option<&str>,
+    jump_port: Option<u16>,
+    jump_user: Option<&str>,
+    target_user: &str,
+) -> Option<String> {
+    let host = jump_host.map(str::trim).filter(|value| !value.is_empty())?;
+    let user = jump_user
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(target_user);
+    Some(format!("{user}@{host}:{}", jump_port.unwrap_or(22)))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PortForwardRule {
@@ -191,10 +205,17 @@ pub fn start_port_forward_tunnel(
     let host_addr = host.address.clone();
     let host_port = host.port;
     let username = host.username.clone();
+    let jump_proxy = format_jump_proxy(
+        host.jump_host.as_deref(),
+        host.jump_port,
+        host.jump_user.as_deref(),
+        &username,
+    );
     let rule_id_clone = rule_id.clone();
 
     thread::spawn(move || {
-        let child = match Command::new("ssh")
+        let mut command = Command::new("ssh");
+        command
             .arg("-N")
             .arg(ssh_flag)
             .arg(&spec)
@@ -205,7 +226,11 @@ pub fn start_port_forward_tunnel(
             .arg("-o")
             .arg("StrictHostKeyChecking=no")
             .arg("-o")
-            .arg("UserKnownHostsFile=/dev/null")
+            .arg("UserKnownHostsFile=/dev/null");
+        if let Some(jump_proxy) = jump_proxy.as_deref() {
+            command.arg("-J").arg(jump_proxy);
+        }
+        let child = match command
             .arg(format!("{}@{}", username, host_addr))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -255,6 +280,41 @@ pub fn stop_port_forward_tunnel(rule_id: String) -> Result<(), String> {
         Ok(())
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_jump_proxy;
+
+    #[test]
+    fn omits_empty_jump_host() {
+        assert_eq!(format_jump_proxy(Some("  "), None, None, "target"), None);
+        assert_eq!(
+            format_jump_proxy(None, Some(2200), Some("jump"), "target"),
+            None
+        );
+    }
+
+    #[test]
+    fn formats_jump_proxy_with_defaults() {
+        assert_eq!(
+            format_jump_proxy(Some(" bastion.example.com "), None, None, "target"),
+            Some("target@bastion.example.com:22".to_string())
+        );
+    }
+
+    #[test]
+    fn formats_jump_proxy_with_custom_user_and_port() {
+        assert_eq!(
+            format_jump_proxy(
+                Some("bastion.example.com"),
+                Some(2200),
+                Some("jump-user"),
+                "target"
+            ),
+            Some("jump-user@bastion.example.com:2200".to_string())
+        );
     }
 }
 

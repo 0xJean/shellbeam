@@ -230,6 +230,9 @@ export function HostsDashboard({
           h.name.toLowerCase().includes(q) ||
           h.address.toLowerCase().includes(q) ||
           (h.username && h.username.toLowerCase().includes(q)) ||
+          (h.jumpHost && h.jumpHost.toLowerCase().includes(q)) ||
+          (h.jumpUser && h.jumpUser.toLowerCase().includes(q)) ||
+          (h.jumpPort && String(h.jumpPort).includes(q)) ||
           (h.group && h.group.toLowerCase().includes(q)) ||
           (h.tags && h.tags.some((tag) => tag.toLowerCase().includes(q)))
       )
