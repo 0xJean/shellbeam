@@ -91,6 +91,23 @@ export interface UpdateOperationJobRequest {
   actor?: string
 }
 
+/** Filters shared by the host list and activity/audit views. Keep these
+ * aligned with the optional fields accepted by the Tauri command so callers
+ * can request a host-scoped slice without loading the entire local journal. */
+export interface OperationJobListQuery {
+  hostId?: string
+  status?: OperationJobStatus
+  action?: string
+  source?: OperationSource
+  limit?: number
+}
+
+export interface OperationAuditListQuery {
+  jobId?: string
+  hostId?: string
+  limit?: number
+}
+
 export async function createOperationJob(payload: CreateOperationJobRequest) {
   return invoke<OperationJob>('operation_job_create', { request: payload })
 }
@@ -103,12 +120,16 @@ export async function getOperationJob(jobId: string) {
   return invoke<OperationJob | null>('operation_job_get', { jobId })
 }
 
-export async function listOperationJobs(limit = 100) {
-  return invoke<OperationJob[]>('operation_job_list', { query: { limit } })
+export async function listOperationJobs(query: OperationJobListQuery | number = 100) {
+  return invoke<OperationJob[]>('operation_job_list', {
+    query: typeof query === 'number' ? { limit: query } : query,
+  })
 }
 
-export async function listOperationAudit(limit = 100) {
-  return invoke<OperationAuditEntry[]>('operation_audit_list', { query: { limit } })
+export async function listOperationAudit(query: OperationAuditListQuery | number = 100) {
+  return invoke<OperationAuditEntry[]>('operation_audit_list', {
+    query: typeof query === 'number' ? { limit: query } : query,
+  })
 }
 
 export function operationTransport(host: HostProfile): 'direct' | 'proxy-jump' {

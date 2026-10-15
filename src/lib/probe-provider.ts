@@ -170,6 +170,12 @@ function sectionList(request: ProbeRequest): ProbeSection[] {
   return sections
 }
 
+function healthFromObservations(observations: Array<ProbeObservation<unknown> | null>): ProbeHealthState {
+  const available = observations.filter((observation): observation is ProbeObservation<unknown> => Boolean(observation))
+  if (available.length === 0) return 'unknown'
+  return available.some((observation) => !observation.freshness.expired) ? 'online' : 'stale'
+}
+
 /**
  * The built-in provider. It is deliberately an adapter around the existing
  * read-only SSH collectors so current monitor and Workspace behaviour remains
@@ -240,7 +246,7 @@ export function createAgentlessSshProbeProvider(options: AgentlessProbeOptions =
         host,
         provider: ref,
         transport,
-        health: metrics || inventory ? 'online' : 'unknown',
+        health: healthFromObservations([metrics, inventory]),
         receivedAt,
         metrics,
         inventory,
@@ -270,7 +276,7 @@ export function createDelegatingProbeProvider(options: {
           host: getProbeHostIdentity(request.host),
           provider: options.ref,
           transport: getProbeTransport(request.host),
-          health: result.metrics || result.inventory ? 'online' : 'unknown',
+          health: healthFromObservations([result.metrics ?? null, result.inventory ?? null]),
           receivedAt,
           metrics: result.metrics ?? null,
           inventory: result.inventory ?? null,

@@ -99,6 +99,26 @@ describe('ProbeProvider contract', () => {
     ])
   })
 
+  it('reports stale when the only available observation has expired', async () => {
+    const provider = createAgentlessSshProbeProvider({
+      metricsTtlMs: 100,
+      dependencies: {
+        collectMetrics: async () => ({
+          hostname: 'prod', os: 'Linux', kernel: 'Linux 6.8', uptimeSeconds: 5,
+          cpuPercent: 10, load1: null, load5: null, load15: null,
+          memoryUsedBytes: null, memoryTotalBytes: null, memoryPercent: null,
+          diskUsedBytes: null, diskTotalBytes: null, diskPercent: null,
+          networkRxBytesPerSec: null, networkTxBytesPerSec: null, latencyMs: 20,
+          sampledAt: 0,
+        }),
+      },
+    })
+
+    const snapshot = await provider.probe({ ...request, now: 1_000, sections: ['metrics'] })
+    expect(snapshot.health).toBe('stale')
+    expect(snapshot.metrics?.freshness.expired).toBe(true)
+  })
+
   it('only invokes the requested collection section', async () => {
     let metricsCalls = 0
     let inventoryCalls = 0

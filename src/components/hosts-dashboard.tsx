@@ -1,4 +1,5 @@
-import { HostGridCard, HostListItem } from '@/components/host-card'
+import { HostGridCard, HostListItem, type HostOperationalSummary } from '@/components/host-card'
+import { HostListScrollArea } from '@/components/host-list-scroll-area'
 import { HostCreateDialog } from '@/components/host-create-dialog'
 import { HostEditorDialog } from '@/components/host-editor-dialog'
 import { PullToRefresh } from '@/components/pull-to-refresh'
@@ -9,17 +10,26 @@ import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
-import { getWorkspaceInventoryDisplayStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { getWorkspaceInventoryHealthStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
+import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
 type SortMode = 'az' | 'za' | 'newest' | 'oldest'
-type HostStatusFilter = 'all' | 'online' | 'checking' | 'offline'
+type HostStatusFilter = 'all' | 'online' | 'stale' | 'checking' | 'offline' | 'paused' | 'unknown' | 'jump-unavailable'
+type HostHealthStatus = Exclude<HostStatusFilter, 'all'>
 const SORT_KEY = 'shellbeam.hostSortMode'
 const SHOW_HOST_SUMMARY_STRIP = false
+
+function getHostHealthStatus(view: HostOpsView | undefined, fallback: HostHealthStatus, loading: boolean): HostHealthStatus {
+  if (view?.health.state === 'paused') return 'paused'
+  if (view?.health.state === 'jump-unavailable') return 'jump-unavailable'
+  if (view?.health.state === 'online' || view?.health.state === 'stale' || view?.health.state === 'offline' || view?.health.state === 'checking' || view?.health.state === 'unknown') return view.health.state
+  return loading && fallback === 'unknown' ? 'checking' : fallback
+}
 
 function HostSummaryStrip({
   totalHosts,
@@ -157,6 +167,32 @@ interface HostsDashboardProps {
   headerExtraAction?: ReactNode
 }
 
+function hostOpsToCardSummary(view?: HostOpsView): HostOperationalSummary | undefined {
+  if (!view) return undefined
+  const latestAudit = view.latestAudit
+  return {
+    serviceTotal: view.serviceSummary.total,
+    serviceActive: view.serviceSummary.active,
+    serviceFailed: view.serviceSummary.failed,
+    processTotal: view.processSummary.total,
+    processRunning: view.processSummary.pm2,
+    auditCount: view.operationSummary.total,
+    latestAudit: latestAudit
+      ? {
+          action: latestAudit.action,
+          target: latestAudit.target,
+          status: latestAudit.status,
+          createdAt: latestAudit.createdAt,
+          transport: latestAudit.transport,
+          provider: latestAudit.provider,
+        }
+      : undefined,
+    provider: view.health.provider === 'unknown' ? undefined : view.health.provider,
+    sampledAt: view.health.freshness.sampledAt ?? undefined,
+    transport: view.health.transport,
+  }
+}
+
 export function HostsDashboard({
   hosts, selectedHostId, loading, defaultUsername = 'root',
   onSelectHost, onConnectHost, onCreateHost, onUpdateHost, onDeleteHost,
@@ -183,6 +219,28 @@ export function HostsDashboard({
   const { t } = useT()
   const sharedStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
+  const [hostOpsViews, setHostOpsViews] = useState<Record<string, HostOpsView>>({})
+  const [hostOpsLoading, setHostOpsLoading] = useState(false)
+  const refreshHostOps = useCallback(async () => {
+    setHostOpsLoading(true)
+    try {
+      setHostOpsViews(await loadHostOpsViews(hosts, { auditLimit: 250 }))
+    } catch {
+      setHostOpsViews({})
+    } finally {
+      setHostOpsLoading(false)
+    }
+  }, [hosts])
+
+  useEffect(() => { void refreshHostOps() }, [refreshHostOps])
+
+
+
+  const operationalSummaryByHost = useMemo(() => {
+    const summaries = new Map<string, HostOperationalSummary | undefined>()
+    hosts.forEach((host) => summaries.set(host.id, hostOpsToCardSummary(hostOpsViews[host.id])))
+    return summaries
+  }, [hostOpsViews, hosts])
 
   function hostKey(host: HostProfile) {
     return getWorkspaceInventoryHostKey(host)
@@ -216,10 +274,18 @@ export function HostsDashboard({
     setCheckingStatus(true)
     try {
       await onScanHosts(filteredHosts)
+      await refreshHostOps()
     } finally {
       setCheckingStatus(false)
     }
   }
+
+  const handleRefreshAll = useCallback(async () => {
+    await Promise.allSettled([
+      onRefreshHosts?.(),
+      refreshHostOps(),
+    ])
+  }, [onRefreshHosts, refreshHostOps])
 
   const filteredHosts = useMemo(() => {
     const q = effectiveSearch.trim().toLowerCase()
@@ -244,7 +310,7 @@ export function HostsDashboard({
       filtered = filtered.filter((h) => h.tags?.some((tg) => tagFilter.has(tg)))
     }
     if (statusFilter !== 'all') {
-      filtered = filtered.filter((h) => (getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(h)]) ?? 'offline') === statusFilter)
+      filtered = filtered.filter((h) => getHostHealthStatus(hostOpsViews[h.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(h)]), hostOpsLoading) === statusFilter)
     }
     const sorted = [...filtered]
     switch (sortMode) {
@@ -254,13 +320,13 @@ export function HostsDashboard({
       case 'oldest': sorted.sort((a, b) => (a.updatedAt || a.createdAt) - (b.updatedAt || b.createdAt)); break
     }
     return sorted
-  }, [hosts, effectiveSearch, groupFilter, networkByAddress, sharedStates, statusFilter, tagFilter, sortMode])
+  }, [hosts, effectiveSearch, groupFilter, sharedStates, statusFilter, tagFilter, sortMode, hostOpsLoading, hostOpsViews])
 
   const statusCounts = useMemo(() => hosts.reduce<Record<Exclude<HostStatusFilter, 'all'>, number>>((counts, host) => {
-    const status = getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)]) ?? 'offline'
+    const status = getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)
     counts[status] += 1
     return counts
-  }, { online: 0, checking: 0, offline: 0 }), [hosts, sharedStates])
+  }, { online: 0, stale: 0, checking: 0, offline: 0, paused: 0, unknown: 0, 'jump-unavailable': 0 }), [hosts, sharedStates, hostOpsLoading, hostOpsViews])
 
   const allGroupCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -281,12 +347,16 @@ export function HostsDashboard({
   const statusFilterLabels: Record<HostStatusFilter, string> = {
     all: t('hosts.statusAll'),
     online: t('hosts.statusOnline'),
+    stale: t('hosts.statusStale'),
     checking: t('hosts.statusChecking'),
     offline: t('hosts.statusOffline'),
+    paused: t('hosts.statusPaused'),
+    unknown: t('hosts.statusUnknown'),
+    'jump-unavailable': t('hosts.statusJumpUnavailable'),
   }
 
   return (
-    <div className="flex w-full flex-col overflow-x-hidden text-[var(--workspace-text)]">
+    <div className="flex min-w-0 w-full flex-col text-[var(--workspace-text)]">
       {SHOW_HOST_SUMMARY_STRIP && (
         <HostSummaryStrip
           totalHosts={hosts.length}
@@ -310,6 +380,16 @@ export function HostsDashboard({
         actions={
           <>
             {headerExtraAction}
+            <select
+              aria-label={t('hosts.statusFilter')}
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as HostStatusFilter)}
+              className="h-9 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 text-xs font-medium text-[var(--workspace-text-muted)] outline-none transition-colors hover:text-[var(--workspace-text-strong)] focus:border-[color:var(--workspace-border-glow)]"
+            >
+              {(Object.keys(statusFilterLabels) as HostStatusFilter[]).map((status) => (
+                <option key={status} value={status}>{statusFilterLabels[status]}</option>
+              ))}
+            </select>
             <div className="relative">
               <button type="button" onClick={() => { setTagFilterOpen((v) => !v); setSortOpen(false) }}
                 className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
@@ -452,7 +532,7 @@ export function HostsDashboard({
             onCancel={() => setEditingHost(null)}
           />
 
-        <PullToRefresh onRefresh={onRefreshHosts ?? (async () => {})} className="pb-6">
+        <PullToRefresh onRefresh={handleRefreshAll} className="min-w-0 overflow-visible pb-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-16">
                 <RefreshCw className="h-8 w-8 animate-spin text-[var(--workspace-text-subtle)]" />
@@ -480,8 +560,9 @@ export function HostsDashboard({
                     key={host.id}
                     host={host}
                     isSelected={selectedHostId === host.id}
-                    status={getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)])}
-                    resource={sharedStates[hostKey(host)]?.inventory?.resource}
+                    status={getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)}
+                    resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}
+                    operations={operationalSummaryByHost.get(host.id)}
                     network={networkByAddress[host.address]}
                     onConnect={handleConnect}
                     onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
@@ -491,7 +572,7 @@ export function HostsDashboard({
                 ))}
               </div>
             ) : (
-              <div className="overflow-hidden rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]">
+              <div className="min-w-0 rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]">
                 <div className="flex flex-col gap-2 border-b border-[color:var(--workspace-border-soft)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <div className="text-sm font-semibold text-[var(--workspace-text-strong)]">{t('hosts.activeHosts')}</div>
@@ -520,33 +601,37 @@ export function HostsDashboard({
                     )}
                   </div>
                 </div>
-                <div className="hidden border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)] xl:grid xl:grid-cols-[3.25rem_minmax(14rem,1.14fr)_minmax(12rem,0.92fr)_minmax(10rem,0.75fr)_7rem_minmax(15rem,1.02fr)_7rem_6.5rem] xl:items-center xl:gap-4">
-                  <span>{t('hosts.columnIndex')}</span>
-                  <span>{t('hosts.columnHost')}</span>
-                  <span>{t('hosts.columnLocation')}</span>
-                  <span>{t('hosts.columnIp')}</span>
-                  <span>{t('hosts.columnUpdated')}</span>
-                  <span>{t('hosts.columnResource')}</span>
-                  <span>{t('hosts.columnStatus')}</span>
-                  <span className="text-right">{t('hosts.columnActions')}</span>
-                </div>
-                <div className="space-y-2 p-3">
-                  {filteredHosts.map((host, index) => (
-                    <HostListItem
-                      key={host.id}
-                      index={index + 1}
-                      host={host}
-                      isSelected={selectedHostId === host.id}
-                      status={getWorkspaceInventoryDisplayStatus(sharedStates[hostKey(host)])}
-                      resource={sharedStates[hostKey(host)]?.inventory?.resource}
-                      network={networkByAddress[host.address]}
-                      onSelect={onSelectHost}
-                      onConnect={handleConnect}
-                      onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
-                      onDelete={(id) => void onDeleteHost(id)}
-                    />
-                  ))}
-                </div>
+                <HostListScrollArea>
+                    <div className="hidden border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)] xl:grid xl:grid-cols-[3.25rem_minmax(14rem,1.14fr)_minmax(12rem,0.92fr)_minmax(10rem,0.75fr)_7rem_minmax(15rem,1.02fr)_minmax(14rem,1fr)_7rem_6.5rem] xl:items-center xl:gap-4">
+                      <span>{t('hosts.columnIndex')}</span>
+                      <span>{t('hosts.columnHost')}</span>
+                      <span>{t('hosts.columnLocation')}</span>
+                      <span>{t('hosts.columnIp')}</span>
+                      <span>{t('hosts.columnUpdated')}</span>
+                      <span>{t('hosts.columnResource')}</span>
+                      <span>{t('hosts.columnOperations')}</span>
+                      <span>{t('hosts.columnStatus')}</span>
+                      <span className="text-right">{t('hosts.columnActions')}</span>
+                    </div>
+                    <div className="space-y-2 p-3">
+                      {filteredHosts.map((host, index) => (
+                        <HostListItem
+                          key={host.id}
+                          index={index + 1}
+                          host={host}
+                          isSelected={selectedHostId === host.id}
+                          status={getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)}
+                          resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}
+                          operations={operationalSummaryByHost.get(host.id)}
+                          network={networkByAddress[host.address]}
+                          onSelect={onSelectHost}
+                          onConnect={handleConnect}
+                          onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
+                          onDelete={(id) => void onDeleteHost(id)}
+                        />
+                      ))}
+                    </div>
+                </HostListScrollArea>
               </div>
             )}
         </PullToRefresh>

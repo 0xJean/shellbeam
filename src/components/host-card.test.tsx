@@ -113,4 +113,43 @@ describe('host list item', () => {
     expect(document.querySelector('[data-host-jump-pill]')).toBeTruthy()
     expect(screen.getByText(/bastion\.example\.com:2200/)).toBeInTheDocument()
   })
+
+  it('shows service, process and operation summaries for the ops view', () => {
+    render(
+      <HostListItem
+        index={1}
+        host={host}
+        isSelected={false}
+        status="stale"
+        operations={{
+          serviceTotal: 4,
+          serviceActive: 3,
+          serviceFailed: 1,
+          processTotal: 2,
+          processRunning: 2,
+          auditCount: 3,
+          latestAudit: {
+            action: 'service.restart',
+            target: 'nginx.service',
+            status: 'completed',
+            createdAt: 1000,
+            transport: 'direct',
+            provider: 'ssh-agentless',
+          },
+          provider: 'ssh-agentless',
+          sampledAt: 1000,
+          transport: 'direct',
+        }}
+        onSelect={vi.fn()}
+        onConnect={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByTestId('host-ops-summary')).toBeInTheDocument()
+    expect(screen.getByText('3/4')).toBeInTheDocument()
+    expect(screen.getByText('2/2')).toBeInTheDocument()
+    expect(screen.getByText(/service\.restart/)).toBeInTheDocument()
+  })
 })

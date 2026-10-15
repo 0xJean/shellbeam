@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { isUnknownOperationError, operationTransport, runConfirmedOperation, safeOperationTarget, summarizeRemoteResult } from './operation-job'
+import {
+  isUnknownOperationError,
+  listOperationAudit,
+  listOperationJobs,
+  operationTransport,
+  runConfirmedOperation,
+  safeOperationTarget,
+  summarizeRemoteResult,
+} from './operation-job'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
@@ -57,5 +65,19 @@ describe('operation jobs', () => {
     expect(execute).not.toHaveBeenCalled()
     expect(invoke).toHaveBeenNthCalledWith(1, 'operation_job_create', expect.objectContaining({ request: expect.objectContaining({ action: 'service.stop', confirmationRequired: true }) }))
     expect(invoke).toHaveBeenNthCalledWith(2, 'operation_job_update', expect.objectContaining({ request: expect.objectContaining({ status: 'cancelled', confirmationStatus: 'rejected' }) }))
+  })
+
+  it('passes host-scoped job and audit filters through to the local store', async () => {
+    invoke.mockResolvedValueOnce([]).mockResolvedValueOnce([])
+
+    await listOperationJobs({ hostId: 'host-1', status: 'failed', source: 'workspace', limit: 12 })
+    await listOperationAudit({ hostId: 'host-1', limit: 8 })
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'operation_job_list', {
+      query: { hostId: 'host-1', status: 'failed', source: 'workspace', limit: 12 },
+    })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'operation_audit_list', {
+      query: { hostId: 'host-1', limit: 8 },
+    })
   })
 })

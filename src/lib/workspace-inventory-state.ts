@@ -11,7 +11,28 @@ export interface WorkspaceInventoryHostState {
   scanId?: number
 }
 
-export type WorkspaceInventoryDisplayStatus = 'online' | 'offline' | 'checking'
+export type WorkspaceInventoryDisplayStatus = 'online' | 'stale' | 'offline' | 'checking' | 'unknown'
+
+/**
+ * A host can still have a successful inventory snapshot while the data is no
+ * longer fresh enough to call it healthy. Keep that distinction in the host
+ * list so an old cached result does not look like a live connection.
+ */
+export function getWorkspaceInventoryHealthStatus(
+  state?: WorkspaceInventoryHostState,
+  now = Date.now(),
+  staleAfterMs = 5 * 60 * 1000,
+): WorkspaceInventoryDisplayStatus {
+  if (!state) return 'unknown'
+  if (state.status === 'scanning') return 'checking'
+  if (state.status === 'error') return 'offline'
+  if (state.status !== 'ready' && state.status !== 'idle') return 'unknown'
+  if (!state.inventory) return 'unknown'
+  // Older in-memory callers did not attach an updatedAt value. Preserve the
+  // previous ready-with-inventory semantics until a timestamp is available.
+  if (!state.updatedAt) return 'online'
+  return now - state.updatedAt > staleAfterMs ? 'stale' : 'online'
+}
 
 export interface WorkspaceInventoryScanRollback {
   restore: Record<string, WorkspaceInventoryHostState>
@@ -176,8 +197,5 @@ export function useWorkspaceInventoryStates() {
 
 export function getWorkspaceInventoryDisplayStatus(state?: WorkspaceInventoryHostState): WorkspaceInventoryDisplayStatus | undefined {
   if (!state) return undefined
-  if (state.status === 'scanning') return 'checking'
-  if (state.status === 'error') return 'offline'
-  if (state.status === 'ready' || (state.status === 'idle' && state.inventory)) return 'online'
-  return undefined
+  return getWorkspaceInventoryHealthStatus(state)
 }
