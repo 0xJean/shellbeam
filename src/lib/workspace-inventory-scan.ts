@@ -1,6 +1,5 @@
 import type { HostProfile } from './hosts'
 import {
-  fetchWorkspaceInventory,
   getWorkspaceInventoryHostKey,
   loadWorkspaceInventoryPersistedCache,
   saveWorkspaceInventoryHostStateSnapshot,
@@ -15,8 +14,11 @@ import {
   restoreWorkspaceInventoryStatesFromScan,
   type WorkspaceInventoryHostState,
 } from './workspace-inventory-state'
+import { createAgentlessSshProbeProvider } from './probe-provider'
 
 export const WORKSPACE_INVENTORY_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+
+const workspaceInventoryProbeProvider = createAgentlessSshProbeProvider()
 
 interface WorkspaceInventoryScanOptions {
   hosts: HostProfile[]
@@ -95,7 +97,15 @@ export async function scanWorkspaceInventoryHosts({
 
       const key = getWorkspaceInventoryHostKey(host)
       try {
-        const inventory = await fetchWorkspaceInventory({ host, resolveAuthSecret })
+        const probe = await workspaceInventoryProbeProvider.probe({
+          host,
+          resolveAuthSecret,
+          sections: ['inventory'],
+        })
+        if (!probe.inventory) {
+          throw new Error(probe.errors[0]?.message || 'workspace inventory returned no usable data')
+        }
+        const inventory = probe.inventory.data
         if (!isCurrent()) return
         const cacheEntry = await saveWorkspaceInventoryCacheEntry(host, inventory)
         if (!isCurrent()) return

@@ -4,25 +4,155 @@ use crate::vault::secrets::{get_secret_value, VaultState};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Map, Value};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use tauri::Manager;
+use uuid::Uuid;
 
 const OUTPUT_LIMIT: usize = 256 * 1024;
 const PROBE: &str = include_str!("probe.sh");
+
+/// A short-lived local forwarding process used to route libssh2 through a
+/// configured single-hop ProxyJump. The SSH session below talks to the local
+/// endpoint, while this process keeps the target route alive for the lifetime
+/// of the MCP operation.
+struct JumpTunnel {
+    child: Child,
+    key_path: std::path::PathBuf,
+}
+
+impl Drop for JumpTunnel {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_file(&self.key_path);
+    }
+}
+
+struct Connection {
+    session: ssh2::Session,
+    // Keep the forwarding process alive until the libssh2 session is dropped.
+    _jump_tunnel: Option<JumpTunnel>,
+}
+
+fn has_jump_host(host: &HostProfile) -> bool {
+    host.jump_host
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn start_jump_tunnel(host: &HostProfile, private_key: &str) -> Result<(JumpTunnel, u16), String> {
+    if !has_jump_host(host) {
+        return Err("Jump host is not configured".into());
+    }
+    if host.auth_type != "privateKey" {
+        return Err(
+            "MCP ProxyJump currently requires privateKey authentication for the target and jump host"
+                .into(),
+        );
+    }
+    if private_key.trim().is_empty() {
+        return Err("MCP ProxyJump requires a private key".into());
+    }
+    let jump_host = host.jump_host.as_deref().unwrap_or_default().trim();
+    let local_port = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("Failed to reserve MCP ProxyJump port: {error}"))?
+        .local_addr()
+        .map_err(|error| format!("Failed to read MCP ProxyJump port: {error}"))?
+        .port();
+    let key_path = std::env::temp_dir().join(format!("shellbeam-mcp-jump-{}.key", Uuid::new_v4()));
+    std::fs::write(&key_path, private_key)
+        .map_err(|error| format!("Failed to write temporary MCP ProxyJump key: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) =
+            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+        {
+            let _ = std::fs::remove_file(&key_path);
+            return Err(format!(
+                "Failed to protect temporary MCP ProxyJump key: {error}"
+            ));
+        }
+    }
+
+    let jump_user = host
+        .jump_user
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&host.username);
+    let forward = format!("127.0.0.1:{local_port}:{}:{}", host.address, host.port);
+    let destination = format!("{}@{}", host.username, host.address);
+    let mut command = Command::new("ssh");
+    command
+        .arg("-N")
+        .arg("-L")
+        .arg(&forward)
+        .arg("-p")
+        .arg(host.port.to_string())
+        .arg("-i")
+        .arg(&key_path)
+        .arg("-J")
+        .arg(format!(
+            "{jump_user}@{jump_host}:{}",
+            host.jump_port.unwrap_or(22)
+        ))
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ExitOnForwardFailure=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=10")
+        // Host keys are verified by libssh2 against ShellBeam's known_hosts
+        // store after the local tunnel is established. OpenSSH must not write
+        // to the user's global known_hosts as a side effect of an MCP call.
+        .arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg("-o")
+        .arg("UserKnownHostsFile=/dev/null")
+        .arg(destination)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    let mut child = command.spawn().map_err(|error| {
+        let _ = std::fs::remove_file(&key_path);
+        format!("Failed to start system ssh for MCP ProxyJump: {error}")
+    })?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("Failed to inspect MCP ProxyJump process: {error}"))?
+        {
+            let _ = std::fs::remove_file(&key_path);
+            return Err(format!(
+                "System ssh ProxyJump exited before becoming ready ({status})"
+            ));
+        }
+        if TcpStream::connect(("127.0.0.1", local_port)).is_ok() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(&key_path);
+            return Err("Timed out waiting for MCP ProxyJump tunnel".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok((JumpTunnel { child, key_path }, local_port))
+}
 
 fn connect(
     app: &tauri::AppHandle,
     client: &Client,
     host: &HostProfile,
-) -> Result<(ssh2::Session, String), String> {
-    if host
-        .jump_host
-        .as_deref()
-        .is_some_and(|s| !s.trim().is_empty())
-    {
-        return Err("JUMP_HOST_UNSUPPORTED: MCP v1 does not bypass a configured jump host".into());
-    }
+) -> Result<(Connection, String), String> {
     let vault = app.state::<VaultState>();
     if !vault.is_unlocked(&client.vault_id) {
         return Err("VAULT_LOCKED: unlock this vault in ShellBeam".into());
@@ -37,23 +167,61 @@ fn connect(
     .ok_or("MISSING_CREDENTIAL")?;
     let secret =
         get_secret_value(app, &vault, &client.vault_id, secret_ref)?.ok_or("MISSING_CREDENTIAL")?;
-    let session = crate::ssh::connect_and_authenticate(
-        &host.address,
-        host.port,
-        &host.username,
-        &host.auth_type,
-        (host.auth_type == "password").then_some(secret.as_str()),
-        (host.auth_type == "privateKey").then_some(secret.as_str()),
-        None,
-        Some(app),
-        false,
-    )?;
+    let (jump_tunnel, connect_host, connect_port) = if has_jump_host(host) {
+        let (tunnel, local_port) = start_jump_tunnel(host, &secret)?;
+        (Some(tunnel), "127.0.0.1".to_string(), local_port)
+    } else {
+        (None, host.address.clone(), host.port)
+    };
+    // The target is verified against its configured identity before
+    // authentication, even when the TCP socket is a local ProxyJump endpoint.
+    let session = if jump_tunnel.is_some() {
+        let tcp = TcpStream::connect_timeout(
+            &(connect_host.clone(), connect_port)
+                .to_socket_addrs()
+                .map_err(|error| format!("MCP ProxyJump DNS resolve failed: {error}"))?
+                .next()
+                .ok_or("MCP ProxyJump DNS resolve returned no addresses")?,
+            Duration::from_secs(10),
+        )
+        .map_err(|error| format!("MCP ProxyJump TCP connect failed: {error}"))?;
+        crate::ssh::authenticate_tcp_stream(
+            tcp,
+            &host.address,
+            host.port,
+            &host.username,
+            &host.auth_type,
+            (host.auth_type == "password").then_some(secret.as_str()),
+            (host.auth_type == "privateKey").then_some(secret.as_str()),
+            None,
+            Some(app),
+            false,
+        )?
+    } else {
+        crate::ssh::connect_and_authenticate(
+            &connect_host,
+            connect_port,
+            &host.username,
+            &host.auth_type,
+            (host.auth_type == "password").then_some(secret.as_str()),
+            (host.auth_type == "privateKey").then_some(secret.as_str()),
+            None,
+            Some(app),
+            false,
+        )?
+    };
     // A lock/revocation during the handshake must not permit starting an operation.
     super::recheck(app, client, host)?;
     if !vault.is_unlocked(&client.vault_id) {
         return Err("VAULT_LOCKED".into());
     }
-    Ok((session, secret))
+    Ok((
+        Connection {
+            session,
+            _jump_tunnel: jump_tunnel,
+        },
+        secret,
+    ))
 }
 
 fn quote(value: &str) -> String {
@@ -255,7 +423,8 @@ pub fn run(
         }
     }
     let started_at = Instant::now();
-    let (session, secret) = connect(app, client, host)?;
+    let (connection, secret) = connect(app, client, host)?;
+    let session = &connection.session;
     let result = match tool {
         "run_command" => command(
             &session,
@@ -279,6 +448,36 @@ pub fn run(
         .map(|mut value| {
             if tool == "refresh_server_info" {
                 value["latencyMs"] = json!(started_at.elapsed().as_millis() as u64);
+                // Keep MCP probe responses aligned with the shared
+                // ProbeProvider contract while retaining the legacy flattened
+                // capacity/inventory fields for existing clients.
+                value["schemaVersion"] = json!(1);
+                let mut host_identity = json!({
+                    "hostId": host.id,
+                    "address": host.address,
+                    "port": host.port,
+                    "username": host.username,
+                });
+                if let Some(address) = host
+                    .jump_host
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                {
+                    host_identity["jump"] = json!({
+                        "address": address,
+                        "port": host.jump_port.unwrap_or(22),
+                        "username": host.jump_user.as_deref().filter(|value| !value.trim().is_empty()).unwrap_or(&host.username),
+                    });
+                }
+                value["host"] = host_identity;
+                value["provider"] = json!({
+                    "kind": "ssh-agentless",
+                    "id": "ssh-agentless",
+                    "capabilities": ["metrics", "inventory"],
+                });
+                value["transport"] = json!(if has_jump_host(host) { "proxy-jump" } else { "direct" });
+                value["health"] = json!("online");
+                value["receivedAt"] = json!(crate::storage::now_unix_ms());
             }
             redact(value, &secret)
         })
@@ -474,6 +673,44 @@ pub(super) fn monitor_snapshot(probe: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn host_with_jump(auth_type: &str) -> HostProfile {
+        HostProfile {
+            id: "host".into(),
+            name: "host".into(),
+            address: "target.example.com".into(),
+            port: 22,
+            username: "target".into(),
+            group: String::new(),
+            auth_type: auth_type.into(),
+            secret_key_ref: None,
+            password_key_ref: None,
+            private_key_ref: Some("private-key".into()),
+            tags: Vec::new(),
+            jump_host: Some("jump.example.com".into()),
+            jump_port: Some(2200),
+            jump_user: Some("bastion".into()),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn proxy_jump_requires_private_key_authentication() {
+        let host = host_with_jump("password");
+        let result = start_jump_tunnel(&host, "password");
+        assert_eq!(
+            result.err().as_deref(),
+            Some("MCP ProxyJump currently requires privateKey authentication for the target and jump host")
+        );
+    }
+
+    #[test]
+    fn proxy_jump_accepts_single_hop_private_key_configuration() {
+        let host = host_with_jump("privateKey");
+        assert!(has_jump_host(&host));
+    }
+
     #[test]
     fn probe_is_bounded_partial_and_numeric() {
         assert!(parse_probe("").is_err());

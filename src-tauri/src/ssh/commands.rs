@@ -1,6 +1,9 @@
 use std::io::Read;
 use std::net::{TcpStream, ToSocketAddrs};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use std::{fs, path::PathBuf};
+use uuid::Uuid;
 
 use ssh2::Session;
 
@@ -9,6 +12,293 @@ use super::{
     TCP_CONNECT_TIMEOUT_SECS,
 };
 use crate::history::append_history;
+
+fn has_jump_host(jump_host: Option<&str>) -> bool {
+    jump_host
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn write_proxy_jump_key(private_key: &str) -> Result<PathBuf, String> {
+    let key_path =
+        std::env::temp_dir().join(format!("shellbeam-ssh-command-{}.key", Uuid::new_v4()));
+    fs::write(&key_path, private_key)
+        .map_err(|err| format!("Failed to write temporary SSH key: {err}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(err) = fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600)) {
+            let _ = fs::remove_file(&key_path);
+            return Err(format!("Failed to protect temporary SSH key: {err}"));
+        }
+    }
+    Ok(key_path)
+}
+
+fn run_proxy_jump_command(payload: &SshRequest, started_at: Instant) -> CommandRunResult {
+    if payload.auth_type != "privateKey" {
+        return failed_result(
+            started_at,
+            "SSH commands over a jump host currently require private key authentication"
+                .to_string(),
+            "validation",
+            "validation_error",
+            "client",
+            false,
+        );
+    }
+    let private_key = match payload
+        .private_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+    {
+        Some(value) => value,
+        None => {
+            return failed_result(
+                started_at,
+                "Private key is required for jump-host SSH commands".to_string(),
+                "validation",
+                "validation_error",
+                "client",
+                false,
+            )
+        }
+    };
+    let jump_host = match payload
+        .jump_host
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value,
+        None => {
+            return failed_result(
+                started_at,
+                "Jump host is not configured".to_string(),
+                "validation",
+                "validation_error",
+                "client",
+                false,
+            )
+        }
+    };
+    let key_path = match write_proxy_jump_key(private_key) {
+        Ok(path) => path,
+        Err(message) => {
+            return failed_result(
+                started_at,
+                message,
+                "internal",
+                "key_write_failed",
+                "client",
+                true,
+            )
+        }
+    };
+    let jump_user = payload
+        .jump_user
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&payload.username);
+    let mut command = Command::new("ssh");
+    command
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=10")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg("-o")
+        .arg("UserKnownHostsFile=/dev/null")
+        .arg("-p")
+        .arg(payload.port.to_string())
+        .arg("-i")
+        .arg(&key_path)
+        .arg("-J")
+        .arg(format!(
+            "{jump_user}@{jump_host}:{}",
+            payload.jump_port.unwrap_or(22)
+        ))
+        .arg(format!("{}@{}", payload.username, payload.host))
+        .arg(&payload.command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = command.output();
+    let _ = fs::remove_file(&key_path);
+    let output = match output {
+        Ok(output) => output,
+        Err(err) => {
+            return failed_result(
+                started_at,
+                format!("Failed to start SSH ProxyJump command: {err}"),
+                "network",
+                "ssh_process_failed",
+                "ssh",
+                true,
+            )
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let exit_code = output.status.code().unwrap_or(-1);
+    CommandRunResult {
+        stdout,
+        stderr,
+        exit_code,
+        duration_ms: started_at.elapsed().as_millis(),
+        error_type: if exit_code == 0 {
+            None
+        } else {
+            Some("command".to_string())
+        },
+        error_code: if exit_code == 0 {
+            None
+        } else {
+            Some("remote_command_failed".to_string())
+        },
+        error_source: if exit_code == 0 {
+            None
+        } else {
+            Some("remote".to_string())
+        },
+        retryable: if exit_code == 0 { None } else { Some(false) },
+    }
+}
+
+fn test_proxy_jump_connection(payload: &SshRequest, started_at: Instant) -> ConnectionTestResult {
+    if payload.auth_type != "privateKey" {
+        return failed_connection_test(
+            started_at,
+            "SSH connections over a jump host currently require private key authentication"
+                .to_string(),
+            "validation",
+            "validation_error",
+            "client",
+            false,
+        );
+    }
+    let private_key = match payload
+        .private_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+    {
+        Some(value) => value,
+        None => {
+            return failed_connection_test(
+                started_at,
+                "Private key is required for jump-host SSH connections".to_string(),
+                "validation",
+                "validation_error",
+                "client",
+                false,
+            )
+        }
+    };
+    let jump_host = match payload
+        .jump_host
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value,
+        None => {
+            return failed_connection_test(
+                started_at,
+                "Jump host is not configured".to_string(),
+                "validation",
+                "validation_error",
+                "client",
+                false,
+            )
+        }
+    };
+    let key_path = match write_proxy_jump_key(private_key) {
+        Ok(path) => path,
+        Err(message) => {
+            return failed_connection_test(
+                started_at,
+                message,
+                "internal",
+                "key_write_failed",
+                "client",
+                true,
+            )
+        }
+    };
+    let jump_user = payload
+        .jump_user
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&payload.username);
+    let mut command = Command::new("ssh");
+    command
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=10")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg("-o")
+        .arg("UserKnownHostsFile=/dev/null")
+        .arg("-p")
+        .arg(payload.port.to_string())
+        .arg("-i")
+        .arg(&key_path)
+        .arg("-J")
+        .arg(format!(
+            "{jump_user}@{jump_host}:{}",
+            payload.jump_port.unwrap_or(22)
+        ))
+        .arg(format!("{}@{}", payload.username, payload.host))
+        .arg("true")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let output = command.output();
+    let _ = fs::remove_file(&key_path);
+    let output = match output {
+        Ok(output) => output,
+        Err(err) => {
+            return failed_connection_test(
+                started_at,
+                format!("Failed to start SSH ProxyJump connection: {err}"),
+                "network",
+                "ssh_process_failed",
+                "ssh",
+                true,
+            )
+        }
+    };
+    if output.status.success() {
+        ConnectionTestResult {
+            connected: true,
+            duration_ms: started_at.elapsed().as_millis(),
+            error_type: None,
+            message: None,
+            error_code: None,
+            error_source: None,
+            retryable: None,
+        }
+    } else {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        failed_connection_test(
+            started_at,
+            if message.is_empty() {
+                "SSH ProxyJump connection failed".to_string()
+            } else {
+                message
+            },
+            "network",
+            "connection_failed",
+            "ssh",
+            true,
+        )
+    }
+}
 
 fn failed_connection_test(
     started_at: Instant,
@@ -38,6 +328,9 @@ pub async fn test_ssh_connection(payload: SshRequest) -> Result<ConnectionTestRe
 
 fn test_ssh_connection_sync(payload: SshRequest) -> ConnectionTestResult {
     let started_at = Instant::now();
+    if has_jump_host(payload.jump_host.as_deref()) {
+        return test_proxy_jump_connection(&payload, started_at);
+    }
     let address = format!("{}:{}", payload.host, payload.port);
     let addr = match address.to_socket_addrs().and_then(|mut a| {
         a.next()
@@ -198,6 +491,36 @@ pub async fn run_ssh_command(
 
 pub(crate) fn run_ssh_command_sync(app: tauri::AppHandle, payload: SshRequest) -> CommandRunResult {
     let started_at = Instant::now();
+    if payload.command.trim().is_empty() {
+        let result = failed_result(
+            started_at,
+            "command is required".to_string(),
+            "validation",
+            "validation_error",
+            "client",
+            false,
+        );
+        let _ = append_history(&app, &payload, &result);
+        return result;
+    }
+    if has_jump_host(payload.jump_host.as_deref()) {
+        let mut result = run_proxy_jump_command(&payload, started_at);
+        if let Err(err) = append_history(&app, &payload, &result) {
+            let append_message = format!("Persist history failed: {err}");
+            if result.stderr.is_empty() {
+                result.stderr = append_message;
+            } else {
+                result.stderr = format!("{}\n{append_message}", result.stderr);
+            }
+            if result.error_type.is_none() {
+                result.error_type = Some("internal".to_string());
+                result.error_code = Some("history_persist_failed".to_string());
+                result.error_source = Some("storage".to_string());
+                result.retryable = Some(true);
+            }
+        }
+        return result;
+    }
     let mut result = (|| {
         if payload.command.trim().is_empty() {
             return failed_result(

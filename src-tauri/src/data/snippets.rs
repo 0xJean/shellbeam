@@ -182,6 +182,9 @@ pub async fn run_snippet_command(
             password: payload.password,
             private_key: payload.private_key,
             passphrase: payload.passphrase,
+            jump_host: None,
+            jump_port: None,
+            jump_user: None,
             command: snippet.command,
         };
         let result = run_ssh_command_sync(app.clone(), request);

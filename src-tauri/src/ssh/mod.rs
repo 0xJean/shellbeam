@@ -39,6 +39,9 @@ pub struct SshRequest {
     pub password: Option<String>,
     pub private_key: Option<String>,
     pub passphrase: Option<String>,
+    pub jump_host: Option<String>,
+    pub jump_port: Option<u16>,
+    pub jump_user: Option<String>,
     pub command: String,
 }
 
@@ -162,11 +165,50 @@ pub fn connect_and_authenticate_with_progress(
         if let Some(cb) = progress.as_mut() {
             cb("verify_host");
         }
-        verify_or_accept_host_key(&session, app, host, port, accept_host_key)?;
+        verify_host_key(&session, app, host, port, accept_host_key)?;
     }
 
     if let Some(cb) = progress.as_mut() {
         cb("authenticate");
+    }
+    authenticate_session(
+        &mut session,
+        username,
+        auth_type,
+        password,
+        private_key,
+        passphrase,
+    )?;
+    Ok(session)
+}
+
+/// Authenticate an SSH session over an already-connected TCP stream. This is
+/// used by ProxyJump consumers: the socket is local, but host-key verification
+/// must still use the destination host identity before credentials are sent.
+pub(crate) fn authenticate_tcp_stream(
+    tcp: TcpStream,
+    host: &str,
+    port: u16,
+    username: &str,
+    auth_type: &str,
+    password: Option<&str>,
+    private_key: Option<&str>,
+    passphrase: Option<&str>,
+    app: Option<&tauri::AppHandle>,
+    accept_host_key: bool,
+) -> Result<Session, String> {
+    tcp.set_nodelay(true).ok();
+    tcp.set_read_timeout(Some(Duration::from_secs(15))).ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(15))).ok();
+
+    let mut session = Session::new().map_err(|err| format!("Create SSH session failed: {err}"))?;
+    session.set_timeout(15_000);
+    session.set_tcp_stream(tcp);
+    session
+        .handshake()
+        .map_err(|err| format_ssh_handshake_error(&err.to_string()))?;
+    if let Some(app) = app {
+        verify_host_key(&session, app, host, port, accept_host_key)?;
     }
     authenticate_session(
         &mut session,
@@ -227,7 +269,7 @@ pub fn connect_authenticated_ssh_session(
     )
 }
 
-fn verify_or_accept_host_key(
+pub(crate) fn verify_host_key(
     session: &Session,
     app: &tauri::AppHandle,
     host: &str,
