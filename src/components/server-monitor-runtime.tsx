@@ -10,7 +10,7 @@ import { pruneServerMonitorStates } from '@/lib/server-monitor-state'
 
 export function ServerMonitorRuntime() {
   const { hosts } = useHosts()
-  const { resolveAuthSecret } = useVault()
+  const { activeVaultId, resolveAuthSecret } = useVault()
   const scanGenerationRef = useRef(0)
   const scanInFlightRef = useRef(false)
   const lastScanStartedAtRef = useRef(0)
@@ -37,6 +37,7 @@ export function ServerMonitorRuntime() {
     try {
       await scanServerMonitorHosts({
         hosts,
+        vaultId: activeVaultId ?? undefined,
         resolveAuthSecret: resolveMonitorAuthSecret,
         isCurrent: () => scanGenerationRef.current === generation,
       })
@@ -46,7 +47,7 @@ export function ServerMonitorRuntime() {
     } finally {
       scanInFlightRef.current = false
     }
-  }, [hosts, resolveMonitorAuthSecret])
+  }, [activeVaultId, hosts, resolveMonitorAuthSecret])
 
   useEffect(() => {
     let cancelled = false

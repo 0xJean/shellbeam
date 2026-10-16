@@ -6,7 +6,7 @@ mod store;
 
 use crate::data::{
     hosts::{load_hosts, HostProfile},
-    komari, komari_persistence, operation_jobs, server_monitor, shellbeam_agent,
+    komari, komari_persistence, operation_jobs, probe_persistence, server_monitor, shellbeam_agent,
     workspace_inventory,
 };
 use crate::storage::{data_file_path, now_unix_ms, read_json_or_default, write_json};
@@ -583,6 +583,36 @@ fn komari_probe_state(
             })
         })
         .collect::<Vec<_>>();
+    let probe_snapshots = probe_persistence::list_probe_snapshots(
+        app.clone(),
+        Some(probe_persistence::ProbeSnapshotQuery {
+            vault_id: Some(client.vault_id.clone()),
+            provider_kind: None,
+            provider_id: None,
+            host_id: Some(host.id.clone()),
+        }),
+    )?
+    .into_iter()
+    .map(|record| {
+        let snapshot = record.snapshot;
+        json!({
+            "vaultId": record.vault_id,
+            "providerKind": record.provider_kind,
+            "providerId": record.provider_id,
+            "hostId": record.host_id,
+            "sampledAt": record.sampled_at,
+            "receivedAt": record.received_at,
+            "expiresAt": record.expires_at,
+            "expired": now_unix_ms() > record.expires_at,
+            "health": snapshot.get("health").cloned().unwrap_or(Value::Null),
+            "provider": snapshot.get("provider").cloned().unwrap_or(Value::Null),
+            "transport": snapshot.get("transport").cloned().unwrap_or(Value::Null),
+            "metrics": snapshot.get("metrics").cloned().unwrap_or(Value::Null),
+            "inventory": snapshot.get("inventory").cloned().unwrap_or(Value::Null),
+            "errors": snapshot.get("errors").cloned().unwrap_or(Value::Null),
+        })
+    })
+    .collect::<Vec<_>>();
     let mappings = komari_persistence::list_komari_mappings(app.clone(), None)?
         .into_iter()
         .filter(|mapping| {
@@ -646,6 +676,7 @@ fn komari_probe_state(
             }))
             .collect::<Vec<_>>(),
         "snapshots": snapshots,
+        "probeSnapshots": probe_snapshots,
         "mappings": mappings,
         "sync": sync,
         "probe": {

@@ -19,13 +19,13 @@ import { runKomariAlertAction, type KomariAlertAction } from '@/lib/komari-alert
 import type { KomariAlertRecord } from '@/lib/komari-alerts'
 import { listShellbeamAgents } from '@/lib/shellbeam-agent'
 import { listKomariIntegrations } from '@/lib/komari-config'
-import { loadKomariPersistence, persistKomariSync } from '@/lib/komari-persistence'
+import { loadKomariPersistence, persistKomariAlertState, persistKomariSync } from '@/lib/komari-persistence'
 import { readKomariAlertState } from '@/lib/komari-persistence'
 import { dispatchAndPersistKomariAlertNotifications } from '@/lib/komari-alert-notifications'
 import { loadNotificationPolicy } from '@/lib/notification-policy'
 import { runBatchDockerOperation, runBatchOperation, runBatchServiceOperation, type BatchOperationResult } from '@/lib/multi-host-operations'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
-import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, syncKomariIntegration } from '@/lib/komari-sync'
+import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, reconcileKomariProbeAlerts, syncKomariIntegration } from '@/lib/komari-sync'
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
@@ -303,13 +303,28 @@ export function HostsDashboard({
               const lastSyncedAt = cached.lastSyncedAt
               const ttlMs = cached.syncState?.ttlMs ?? DEFAULT_KOMARI_SYNC_TTL_MS
               if (!forceKomari && isKomariSyncFresh(lastSyncedAt, Date.now(), ttlMs)) {
-                return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlertState, alertAudit: [] }
+                const cachedAlerts = reconcileKomariProbeAlerts({
+                  integrationId: integration.id,
+                  snapshots: cachedSnapshots,
+                  alertState: cachedAlertState,
+                  now: Date.now(),
+                })
+                if (cachedAlerts.alertAudit.length > 0) {
+                  await persistKomariAlertState({
+                    integrationId: integration.id,
+                    state: cachedAlerts.alertState,
+                    lastSyncedAt: lastSyncedAt ?? undefined,
+                    ttlMs,
+                  }).catch(() => undefined)
+                }
+                return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlerts.alertState, alertAudit: cachedAlerts.alertAudit }
               }
 
               const apiKey = await onLoadVaultSecret(integration.credentialRef)
               if (!apiKey) return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlertState, alertAudit: [] }
               const result = await syncKomariIntegration({
                 integrationId: integration.id,
+                vaultId: activeVaultId ?? undefined,
                 config: { endpoint: integration.endpoint, token: apiKey },
                 hosts,
                 lastSyncedAt,

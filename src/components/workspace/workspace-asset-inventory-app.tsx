@@ -1036,6 +1036,7 @@ export function WorkspaceAssetInventoryApp({
     const runId = ++scanRunIdRef.current
     const result = await scanWorkspaceInventoryHosts({
       hosts: targetHosts,
+      vaultId: activeVaultId,
       resolveAuthSecret,
       concurrency: SCAN_CONCURRENCY,
       currentStates: states,
@@ -1244,6 +1245,7 @@ export function WorkspaceAssetInventoryApp({
             />
           ) : view === 'deployments' ? (
             <ProjectDeploymentsPanel
+              activeVaultId={activeVaultId}
               agentDeployments={agentDeployments}
               selectedHostId={selectedHost?.id ?? selectedHostId}
               hosts={hosts}

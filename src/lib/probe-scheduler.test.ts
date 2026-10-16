@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { HostProfile } from './hosts'
 import { createProbeObservation, type ProbeProvider, type ProbeSnapshot } from './probe-provider'
-import { ProbeProviderRegistry } from './probe-scheduler'
+import { ProbeProviderRegistry, refreshProbeSnapshotFreshness } from './probe-scheduler'
+import type { PersistedProbeSnapshotRecord } from './probe-persistence'
 
 const host = (id: string): HostProfile => ({
   id,
@@ -117,5 +118,126 @@ describe('ProbeProviderRegistry', () => {
     registry.clear('one')
     await registry.probe(request)
     expect(item.probe).toHaveBeenCalledTimes(2)
+  })
+
+  it('hydrates durable observations, refreshes expiry and recovers stale data on failure', async () => {
+    const item = provider('durable-agent', async () => {
+      throw new Error('network unavailable')
+    })
+    const persisted = snapshot(item, host('durable-host'), 100)
+    const record: PersistedProbeSnapshotRecord = {
+      vaultId: 'vault-a',
+      providerKind: item.ref.kind,
+      providerId: item.ref.id,
+      hostId: 'durable-host',
+      snapshot: persisted,
+      sampledAt: 100,
+      receivedAt: 100,
+      expiresAt: 200,
+      updatedAt: 100,
+    }
+    const store = {
+      list: vi.fn(async () => [record]),
+      save: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+    }
+    const registry = new ProbeProviderRegistry(1, store).register(item)
+    const result = await registry.probe({
+      host: host('durable-host'),
+      resolveAuthSecret: async () => '',
+      providerId: item.ref.id,
+      vaultId: 'vault-a',
+      sections: ['metrics'],
+      now: 500,
+    })
+    expect(result.recovered).toBe(true)
+    expect(result.snapshot.health).toBe('stale')
+    expect(result.snapshot.metrics?.freshness.expired).toBe(true)
+    expect(result.snapshot.errors.at(-1)).toMatchObject({ code: 'stale-cache-fallback' })
+    expect(store.list).toHaveBeenCalledTimes(1)
+    expect(store.save).not.toHaveBeenCalled()
+  })
+
+  it('persists a successful observation and removes host records when cleared', async () => {
+    const item = provider('persist-agent', async (request) => snapshot(item, request.host, request.now ?? 0))
+    const store = {
+      list: vi.fn(async () => []),
+      save: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+    }
+    const registry = new ProbeProviderRegistry(1, store).register(item)
+    await registry.probe({ host: host('persist-host'), resolveAuthSecret: async () => '', providerId: item.ref.id, sections: ['metrics'], vaultId: 'vault-1', now: 100 })
+    // Save is intentionally fire-and-forget so a local database hiccup cannot
+    // turn a healthy remote observation into a failed monitor scan.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.save).toHaveBeenCalledTimes(1)
+    await registry.clearScoped('vault-1', 'persist-host')
+    expect(store.remove).toHaveBeenCalledWith({ vaultId: 'vault-1', hostId: 'persist-host' })
+  })
+
+  it('recovers when a provider returns an unknown envelope instead of throwing', async () => {
+    let failed = false
+    const item = provider('unknown-agent', async (request) => {
+      if (failed) {
+        return {
+          ...snapshot(item, request.host, request.now ?? 0, 'unknown'),
+          metrics: null,
+          errors: [{ section: 'metrics', code: 'offline', message: 'agent unavailable' }],
+        }
+      }
+      failed = true
+      return snapshot(item, request.host, request.now ?? 0, 'online')
+    })
+    const store = { list: vi.fn(async () => []), save: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) }
+    const registry = new ProbeProviderRegistry(1, store).register(item)
+    const request = { host: host('unknown-host'), resolveAuthSecret: async () => '', providerId: item.ref.id, vaultId: 'vault-a', sections: ['metrics'] as const, now: 100 }
+    await registry.probe(request)
+    const result = await registry.probe({ ...request, force: true, now: 200 })
+    expect(result.recovered).toBe(true)
+    expect(result.snapshot.health).toBe('stale')
+    expect(result.snapshot.errors.at(-1)).toMatchObject({ code: 'stale-cache-fallback' })
+  })
+
+  it('merges a persisted section when a multi-section probe partially fails', async () => {
+    const item = provider('partial-agent', async (request) => ({
+      ...snapshot(item, request.host, request.now ?? 0, 'online'),
+      inventory: null,
+      errors: [{ section: 'inventory', code: 'unsupported', message: 'inventory unavailable' }],
+    }))
+    const fallback = snapshot(item, host('partial-host'), 100)
+    fallback.inventory = {
+      data: {} as never,
+      source: item.ref,
+      freshness: { sampledAt: 100, receivedAt: 100, ttlMs: 1_000, expiresAt: 1_000, expired: false },
+      confidence: 'partial',
+    }
+    const store = {
+      list: vi.fn(async () => [{ vaultId: 'vault-a', providerKind: item.ref.kind, providerId: item.ref.id, hostId: 'partial-host', snapshot: fallback, sampledAt: 100, receivedAt: 100, expiresAt: 1_000, updatedAt: 100 }]),
+      save: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+    }
+    const registry = new ProbeProviderRegistry(1, store).register(item)
+    const result = await registry.probe({ host: host('partial-host'), resolveAuthSecret: async () => '', providerId: item.ref.id, vaultId: 'vault-a', sections: ['metrics', 'inventory'], force: true, now: 200 })
+    expect(result.recovered).toBe(true)
+    expect(result.snapshot.metrics).not.toBeNull()
+    expect(result.snapshot.inventory).not.toBeNull()
+    expect(result.snapshot.health).toBe('stale')
+  })
+
+  it('recomputes expired metadata without trusting the persisted flag', () => {
+    const item = snapshot({ ref: { kind: 'shellbeam-agent', id: 'x', capabilities: ['metrics'] } } as ProbeProvider, host('h'), 100)
+    item.metrics!.freshness.expired = true
+    expect(refreshProbeSnapshotFreshness(item, 150).metrics?.freshness.expired).toBe(false)
+    expect(refreshProbeSnapshotFreshness(item, 1_200).metrics?.freshness.expired).toBe(true)
+  })
+
+  it('does not read or write durable rows without a vault scope', async () => {
+    const item = provider('scoped-agent', async (request) => snapshot(item, request.host, request.now ?? 0))
+    const store = { list: vi.fn(async () => []), save: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) }
+    const registry = new ProbeProviderRegistry(1, store).register(item)
+    await registry.probe({ host: host('scope-host'), resolveAuthSecret: async () => '', providerId: item.ref.id, sections: ['metrics'], now: 100 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.list).not.toHaveBeenCalled()
+    expect(store.save).not.toHaveBeenCalled()
   })
 })

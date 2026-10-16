@@ -8,6 +8,7 @@ pub mod hosts;
 pub mod komari;
 pub mod komari_persistence;
 pub mod operation_jobs;
+pub mod probe_persistence;
 pub mod server_monitor;
 pub mod shellbeam_agent;
 pub mod snippets;

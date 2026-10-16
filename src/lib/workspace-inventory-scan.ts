@@ -22,6 +22,7 @@ const probeRegistry = getProbeProviderRegistry()
 
 interface WorkspaceInventoryScanOptions {
   hosts: HostProfile[]
+  vaultId?: string
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   concurrency?: number
   isCurrent?: () => boolean
@@ -56,6 +57,7 @@ function shouldRefreshWorkspaceInventoryHost(
 
 export async function scanWorkspaceInventoryHosts({
   hosts,
+  vaultId,
   resolveAuthSecret,
   concurrency = 3,
   isCurrent = () => true,
@@ -99,6 +101,7 @@ export async function scanWorkspaceInventoryHosts({
       try {
         const scheduled = await probeRegistry.probe({
           host,
+          vaultId,
           resolveAuthSecret,
           sections: ['inventory'],
           providerId: 'ssh-agentless',
@@ -108,11 +111,32 @@ export async function scanWorkspaceInventoryHosts({
           force: true,
         })
         const probe = scheduled.snapshot
-        if (!probe.inventory) {
+        if (!probe.inventory || (scheduled.recovered && !vaultId)) {
           throw new Error(probe.errors[0]?.message || 'workspace inventory returned no usable data')
         }
         const inventory = probe.inventory.data
         if (!isCurrent()) return
+        const recovered = Boolean(scheduled.recovered)
+          || String(probe.health) === 'stale'
+          || probe.inventory.freshness.expired
+        if (recovered) {
+          // Do not write a stale fallback through saveWorkspaceInventoryCacheEntry:
+          // that helper stamps Date.now(), which would make expired inventory
+          // appear fresh after a failed probe. Keep the previous cache when it
+          // exists; otherwise retain the provider's original sampled time.
+          const previousState = getWorkspaceInventoryStates()[key] ?? previousStates[key]
+          const updatedAt = previousState?.updatedAt ?? probe.inventory.freshness.sampledAt
+          const error = probe.errors[0]?.message || 'Probe returned stale inventory'
+          void saveWorkspaceInventoryHostStateSnapshot(host, 'ready', updatedAt, error)
+          const nextState: WorkspaceInventoryHostState = {
+            status: 'ready',
+            inventory: previousState?.inventory ?? inventory,
+            updatedAt,
+            error,
+          }
+          mergeWorkspaceInventoryStates({ [key]: nextState })
+          continue
+        }
         const cacheEntry = await saveWorkspaceInventoryCacheEntry(host, inventory)
         if (!isCurrent()) return
         void saveWorkspaceInventoryHostStateSnapshot(host, 'ready', cacheEntry.updatedAt)

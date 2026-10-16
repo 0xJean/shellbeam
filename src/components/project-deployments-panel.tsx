@@ -44,6 +44,7 @@ import { WorkspaceResourceOverviewHeader } from './workspace/workspace-resource-
 import { WorkspaceServerList } from './workspace/workspace-server-list'
 
 interface ProjectDeploymentsPanelProps {
+  activeVaultId?: string
   agentDeployments?: McpDeploymentRecord[]
   selectedHostId?: string | null
   hosts: HostProfile[]
@@ -259,6 +260,7 @@ export function buildProjectDeploymentRows(hosts: HostProfile[], cache: Workspac
 }
 
 export function ProjectDeploymentsPanel({
+  activeVaultId,
   agentDeployments = [],
   selectedHostId = null,
   hosts,
@@ -363,6 +365,7 @@ export function ProjectDeploymentsPanel({
     runIdRef.current = runId
     await scanWorkspaceInventoryHosts({
       hosts: targetHosts,
+      vaultId: activeVaultId,
       resolveAuthSecret,
       concurrency: SCAN_CONCURRENCY,
       currentStates: states,

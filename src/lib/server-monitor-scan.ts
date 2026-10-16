@@ -25,6 +25,7 @@ const probeRegistry = getProbeProviderRegistry()
 
 interface ScanOptions {
   hosts: HostProfile[]
+  vaultId?: string
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   concurrency?: number
   isCurrent?: () => boolean
@@ -100,6 +101,7 @@ export async function loadPersistedServerMonitorStates(
 
 export async function scanServerMonitorHosts({
   hosts,
+  vaultId,
   resolveAuthSecret,
   concurrency = SERVER_MONITOR_CONCURRENCY,
   isCurrent = () => true,
@@ -139,6 +141,7 @@ export async function scanServerMonitorHosts({
       try {
         const scheduled = await probeRegistry.probe({
           host,
+          vaultId,
           resolveAuthSecret,
           sections: ['metrics'],
           providerId: 'ssh-agentless',
@@ -147,15 +150,27 @@ export async function scanServerMonitorHosts({
           force: true,
         })
         const probe = scheduled.snapshot
-        if (!probe.metrics) {
+        if (!probe.metrics || (scheduled.recovered && !vaultId)) {
           throw new Error(probe.errors[0]?.message || 'server monitor returned no usable Linux metrics')
         }
         const snapshot = probe.metrics.data
         if (!isCurrent()) return
 
-        const latest = createServerMonitorLatest(host, 'online', attemptAt, previous?.latest, {
+        // A durable fallback is useful for continuity, but it is not a new
+        // successful sample. Keep its sampledAt/lastSuccessAt and surface the
+        // provider error so the host card can show stale data explicitly.
+        const recovered = Boolean(scheduled.recovered)
+          || String(probe.health) === 'stale'
+          || probe.metrics.freshness.expired
+        const status = recovered ? 'stale' : 'online'
+        const lastSuccessAt = Math.max(
+          snapshot.sampledAt,
+          previous?.latest?.lastSuccessAt ?? 0,
+        ) || snapshot.sampledAt
+        const latest = createServerMonitorLatest(host, status, attemptAt, previous?.latest, {
           snapshot,
-          lastSuccessAt: snapshot.sampledAt,
+          lastSuccessAt,
+          ...(recovered && probe.errors[0]?.message ? { error: probe.errors[0].message } : {}),
         })
         const historyPoint: ServerMonitorHistoryPoint = {
           hostKey: key,
@@ -163,14 +178,19 @@ export async function scanServerMonitorHosts({
           snapshot,
         }
         try {
-          await saveServerMonitorResult(buildLatestPayload(latest, historyPoint))
+          // Stale fallback data must not create a fresh history point. The
+          // latest row remains durable, while the previous history remains the
+          // source of truth until a real sample succeeds.
+          await saveServerMonitorResult(buildLatestPayload(latest, recovered ? undefined : historyPoint))
         } catch (persistError) {
           latest.error = `Saved in memory; local history failed: ${errorMessage(persistError)}`
         }
         mergeServerMonitorStates({
           [key]: {
             latest,
-            history: mergeHistory(historyForState(previous), historyPoint),
+            history: recovered
+              ? historyForState(previous)
+              : mergeHistory(historyForState(previous), historyPoint),
           },
         })
         scannedHosts.push(host)

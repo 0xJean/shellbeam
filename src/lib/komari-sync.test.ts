@@ -35,6 +35,37 @@ describe('Komari sync orchestration', () => {
     expect(result.alertState?.alerts.map((alert) => alert.integrationId)).toEqual(['komari-prod', 'komari-prod'])
   })
 
+  it('reconciles a Probe collection error and resolves it on the next healthy sync', async () => {
+    let metricFailure = true
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/admin/client/list')) {
+        return new Response(JSON.stringify([{ uuid: 'node-1', name: 'prod', ipv4: '10.0.0.1' }]), { status: 200 })
+      }
+      if (url.includes('/api/admin/notification/')) return new Response('[]', { status: 200 })
+      if (metricFailure) return new Response('temporarily unavailable', { status: 503 })
+      return new Response(JSON.stringify([{ time: 1_710_000_000, cpu: 33 }]), { status: 200 })
+    })
+
+    const failed = await syncKomariIntegration({
+      integrationId: 'komari-prod-recovery', config: { endpoint: 'https://komari.example' }, hosts: [host], now: 2_000, fetchImpl,
+    })
+    expect(failed.alertState?.alerts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'probe-error:metrics', status: 'active' }),
+    ]))
+    const failedAudit = failed.alertAudit.map((entry) => entry.event)
+    expect(failedAudit).toContain('opened')
+
+    metricFailure = false
+    const recovered = await syncKomariIntegration({
+      integrationId: 'komari-prod-recovery', config: { endpoint: 'https://komari.example' }, hosts: [host], now: 3_000, fetchImpl,
+      alertState: failed.alertState,
+    })
+    expect(recovered.snapshots[0]?.health).toBe('online')
+    expect(recovered.alertState?.alerts.find((alert) => alert.kind === 'probe-error:metrics')?.status).toBe('resolved')
+    expect(recovered.alertAudit.map((entry) => entry.event)).toContain('resolved')
+  })
+
   it('skips a fresh persisted sync and allows an explicit refresh', async () => {
     expect(isKomariSyncFresh(1_000, 1_500, 1_000)).toBe(true)
     expect(isKomariSyncFresh(1_000, 2_000, 1_000)).toBe(false)

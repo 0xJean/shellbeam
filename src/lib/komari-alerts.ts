@@ -1,4 +1,5 @@
 import type { KomariAlertSummary } from './komari'
+import type { ProbeSnapshot } from './probe-provider'
 
 /** The local lifecycle deliberately stays smaller than a notification system.
  * Komari remains the source of truth for whether a rule is firing; ShellBeam
@@ -94,6 +95,11 @@ export interface ReconcileKomariAlertsOptions {
   /** Keep Komari's aggregate counts alongside local lifecycle counters. */
   baseSummary?: KomariAlertSummary | null
 }
+
+/** Stable lifecycle kinds emitted for a Komari-linked Probe observation.  The
+ * section suffix on `probe-error:*` is part of the fingerprint so a metrics
+ * collector failure cannot hide an independent inventory failure. */
+export type KomariProbeAlertKind = 'probe-offline' | 'probe-stale' | 'probe-unknown' | `probe-error:${string}`
 
 function required(value: string | null | undefined, field: string): string {
   const normalized = value?.trim() ?? ''
@@ -223,6 +229,65 @@ export function komariAlertObservationsFromSummary(
       updatedAt,
     }))
     .filter((observation) => observation.count !== null)
+}
+
+/**
+ * Turn a ProbeProvider result into local Komari lifecycle observations.  This
+ * deliberately emits zero-valued recovery observations for every known kind:
+ * the next healthy sample can resolve a prior alert even when the provider's
+ * error list is empty.  It never treats a missing section as healthy data;
+ * freshness and explicit provider errors remain separate lifecycle signals.
+ */
+export function komariAlertObservationsFromProbeSnapshot(
+  snapshot: Pick<ProbeSnapshot, 'provider' | 'host' | 'health' | 'receivedAt' | 'metrics' | 'inventory' | 'errors'>,
+  scope: KomariAlertScope,
+  now = Date.now(),
+): KomariAlertObservation[] {
+  const integrationId = required(scope.integrationId, 'integration id')
+  const nodeId = snapshot.provider.nodeId?.trim() || scope.nodeId?.trim() || null
+  const hostId = snapshot.host.hostId?.trim() || scope.hostId?.trim() || null
+  const updatedAt = boundedTime(snapshot.receivedAt, now)
+  const observations: KomariAlertObservation[] = []
+  const add = (
+    kind: KomariProbeAlertKind,
+    count: number,
+    title: string,
+    severity: KomariAlertSeverity,
+  ) => observations.push({
+    integrationId,
+    nodeId,
+    hostId,
+    kind,
+    count,
+    active: count > 0 ? 1 : 0,
+    title,
+    severity,
+    updatedAt,
+  })
+
+  const metricExpired = Boolean(snapshot.metrics && (snapshot.metrics.freshness.expired || now > snapshot.metrics.freshness.expiresAt))
+  const inventoryExpired = Boolean(snapshot.inventory && (snapshot.inventory.freshness.expired || now > snapshot.inventory.freshness.expiresAt))
+  const stale = snapshot.health === 'stale' || metricExpired || inventoryExpired
+  const offline = snapshot.health === 'offline'
+  const unknown = snapshot.health === 'unknown'
+  add('probe-offline', offline ? 1 : 0, 'Komari Probe offline', 'critical')
+  add('probe-stale', stale && !offline ? 1 : 0, 'Komari Probe data is stale', 'warning')
+  add('probe-unknown', unknown ? 1 : 0, 'Komari Probe health is unknown', 'warning')
+
+  const errorSections = new Set(snapshot.errors.map((error) => error.section))
+  // Emit recovery rows for the known sections as well as current errors. This
+  // keeps a transient error from becoming a permanently open local alert.
+  for (const section of new Set(['provider', 'metrics', 'inventory', ...errorSections])) {
+    const kind = `probe-error:${section}` as KomariProbeAlertKind
+    const error = snapshot.errors.find((candidate) => candidate.section === section)
+    add(
+      kind,
+      error ? 1 : 0,
+      error ? `Komari Probe ${section} error: ${safeText(error.message, 'collection failed')}` : `Komari Probe ${section} recovered`,
+      section === 'provider' ? 'critical' : 'warning',
+    )
+  }
+  return observations
 }
 
 /** Merge a sync result into the local lifecycle. Duplicate observations in a

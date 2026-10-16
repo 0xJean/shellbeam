@@ -196,9 +196,11 @@ The process-wide provider registry used by the frontend collectors applies one
 bounded concurrency budget and coalesces overlapping requests for the same
 provider, host and sections. Fresh observations are reused until their TTL
 expires, while an explicitly due monitor or Komari sync can force a new sample
-without creating duplicate in-flight SSH or HTTP work. Provider fallback only
-accepts an `online` or `stale` snapshot as a successful result and preserves an
-`unknown` result with its error metadata when every provider is unavailable.
+without creating duplicate in-flight SSH or HTTP work. Durable observations
+are scoped to the active Vault and hydrated after a restart. When a fresh probe
+fails, the registry returns the last observation as `stale` with an explicit
+`stale-cache-fallback` error; provider fallback still tries later providers for
+an `online` result before returning that stale recovery.
 
 MCP `refresh_server_info` keeps the legacy flattened fields for compatibility,
 and adds the canonical `metrics` and `inventory` observations. The envelope
