@@ -107,6 +107,7 @@ export interface OperationAuditListQuery {
   jobId?: string
   hostId?: string
   vaultId?: string
+  source?: OperationSource
   limit?: number
 }
 

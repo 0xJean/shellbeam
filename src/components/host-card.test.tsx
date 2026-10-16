@@ -128,6 +128,8 @@ describe('host list item', () => {
           processTotal: 2,
           processRunning: 2,
           auditCount: 3,
+          auditActive: 1,
+          auditUnknown: 2,
           latestAudit: {
             action: 'service.restart',
             target: 'nginx.service',
@@ -135,6 +137,8 @@ describe('host list item', () => {
             createdAt: 1000,
             transport: 'direct',
             provider: 'ssh-agentless',
+            auditId: 'audit-1',
+            source: 'mcp',
           },
           provider: 'ssh-agentless',
           sampledAt: 1000,
@@ -151,5 +155,7 @@ describe('host list item', () => {
     expect(screen.getByText('3/4')).toBeInTheDocument()
     expect(screen.getByText('2/2')).toBeInTheDocument()
     expect(screen.getByText(/service\.restart/)).toBeInTheDocument()
+    expect(screen.getByText(/audit-1/)).toBeInTheDocument()
+    expect(screen.getByText(/Unknown: 2/)).toBeInTheDocument()
   })
 })

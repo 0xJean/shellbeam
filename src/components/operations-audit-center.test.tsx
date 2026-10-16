@@ -102,4 +102,17 @@ describe('OperationsAuditCenter', () => {
     renderCenter()
     await waitFor(() => expect(screen.getByTestId('operations-error')).toHaveTextContent('journal unavailable'))
   })
+
+  it('restores MCP unknown jobs from the durable journal with reconciliation guidance', async () => {
+    const mcpJob = { ...baseJob, source: 'mcp' as const, provider: 'mcp-remote', status: 'unknown' as const, auditId: 'mcp-audit', jobId: 'mcp-job' }
+    listOperationJobs.mockResolvedValue([mcpJob])
+    listOperationAudit.mockResolvedValue([{ ...audit, source: 'mcp' as const, jobId: 'mcp-job', auditId: 'mcp-audit' }])
+
+    renderCenter({ source: 'mcp' })
+
+    await waitFor(() => expect(screen.getByTestId('operations-mcp-recovery')).toBeInTheDocument())
+    expect(screen.getByTestId('operations-restored')).toBeInTheDocument()
+    expect(screen.getByText('Remote outcome is unknown; reconcile the host before retrying.')).toBeInTheDocument()
+    expect(listOperationJobs).toHaveBeenCalledWith({ source: 'mcp', limit: 100 })
+  })
 })

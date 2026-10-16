@@ -120,6 +120,7 @@ pub struct OperationAuditListQuery {
     pub job_id: Option<String>,
     pub host_id: Option<String>,
     pub vault_id: Option<String>,
+    pub source: Option<String>,
     pub limit: Option<u32>,
 }
 
@@ -788,12 +789,13 @@ pub fn operation_audit_list(
                  SELECT 1 FROM operation_jobs jobs
                  WHERE jobs.job_id=operation_audit.job_id AND jobs.vault_id=?3
                ))
-             ORDER BY at DESC LIMIT ?4",
+               AND (?4 IS NULL OR source=?4)
+             ORDER BY at DESC LIMIT ?5",
         )
         .map_err(|e| format!("Prepare operation audit query failed: {e}"))?;
     let rows = statement
         .query_map(
-            params![query.job_id, query.host_id, query.vault_id, limit],
+            params![query.job_id, query.host_id, query.vault_id, query.source, limit],
             audit_from_row,
         )
         .map_err(|e| format!("Query operation audit failed: {e}"))?;

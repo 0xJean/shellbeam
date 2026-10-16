@@ -4,6 +4,7 @@ import { useT } from '@/lib/i18n'
 import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { runConfirmedOperation, type OperationJob } from '@/lib/operation-job'
 import { WorkspaceEmptyState } from './workspace-empty-state'
+import { WorkspaceOperationRecoveryNotice } from './workspace-operation-recovery-notice'
 
 const PROCESS_COMMAND = 'ps -eo pid=,comm=,%cpu=,%mem=,state= --sort=-%cpu | head -n 24'
 const PROCESS_HANDOFFS = [
@@ -158,6 +159,8 @@ export function WorkspaceProcessesApp({
           {t('workspace.processes.description')}
         </p>
       </div>
+
+      <WorkspaceOperationRecoveryNotice host={host} />
 
       <div className="grid gap-3 md:grid-cols-3">
         {PROCESS_HANDOFFS.map((item) => (

@@ -642,6 +642,7 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                     job_id: None,
                     host_id: Some(host.id.clone()),
                     vault_id: Some(client.vault_id.clone()),
+                    source: None,
                     limit: Some(limit),
                 }),
             )?

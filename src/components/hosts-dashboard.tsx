@@ -202,6 +202,9 @@ function hostOpsToCardSummary(
       alertUnsupported: alertSummary.unsupported === true,
     } : {}),
     auditCount: view.operationSummary.total,
+    auditActive: view.operationSummary.active,
+    auditFailed: view.operationSummary.failed,
+    auditUnknown: view.operationSummary.unknown,
     latestAudit: latestAudit
       ? {
           action: latestAudit.action,
@@ -210,6 +213,9 @@ function hostOpsToCardSummary(
           createdAt: latestAudit.createdAt,
           transport: latestAudit.transport,
           provider: latestAudit.provider,
+          auditId: latestAudit.auditId,
+          jobId: latestAudit.jobId,
+          source: latestAudit.source,
         }
       : undefined,
     provider: view.health.provider === 'unknown' ? undefined : view.health.provider,

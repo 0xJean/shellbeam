@@ -33,6 +33,10 @@ export interface OperationsAuditCenterProps {
    * silently repeat a remote write. The caller should show confirmation and
    * create a new OperationJob linked to the original job. */
   onRetry?: (job: OperationJob) => void | Promise<void>
+  /** Restrict this view to a provider/source, such as MCP remote jobs. */
+  source?: OperationJob['source']
+  /** Restrict the journal to the active Vault when the surface is scoped. */
+  vaultId?: string
   className?: string
 }
 
@@ -111,7 +115,7 @@ function GroupSummary({ group }: { group: RequestGroup }) {
   )
 }
 
-export function OperationsAuditCenter({ hostId, limit = 100, onRetry, className }: OperationsAuditCenterProps) {
+export function OperationsAuditCenter({ hostId, limit = 100, onRetry, source, vaultId, className }: OperationsAuditCenterProps) {
   const { t, locale } = useT()
   const [view, setView] = useState<OperationsAuditView>('operations')
   const [status, setStatus] = useState<OperationStatusFilter>('all')
@@ -120,31 +124,52 @@ export function OperationsAuditCenter({ hostId, limit = 100, onRetry, className 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [retryingJobId, setRetryingJobId] = useState<string | null>(null)
+  const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null)
+  const [restored, setRestored] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const query = hostId ? { hostId, limit } : { limit }
+      const query = { ...(hostId ? { hostId } : {}), ...(vaultId ? { vaultId } : {}), ...(source ? { source } : {}), limit }
       const [nextJobs, nextAudits] = await Promise.all([
         listOperationJobs(query),
-        listOperationAudit(hostId ? { hostId, limit } : { limit }),
+        listOperationAudit({ ...(hostId ? { hostId } : {}), ...(vaultId ? { vaultId } : {}), ...(source ? { source } : {}), limit }),
       ])
-      setJobs(nextJobs)
-      setAudits(nextAudits)
+      const safeJobs = Array.isArray(nextJobs) ? nextJobs : []
+      const safeAudits = Array.isArray(nextAudits) ? nextAudits : []
+      setJobs(source ? safeJobs.filter((job) => job.source === source) : safeJobs)
+      setAudits(source ? safeAudits.filter((audit) => audit.source === source) : safeAudits)
+      setLastRefreshAt(Date.now())
+      setRestored(true)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setLoading(false)
     }
-  }, [hostId, limit])
+  }, [hostId, limit, source, vaultId])
 
   useEffect(() => { void refresh() }, [refresh])
+
+  // MCP workers can finish while the Settings or Activity surface is in the
+  // background. Re-read the durable journal when the app becomes visible so a
+  // later session observes the canonical status instead of stale in-memory
+  // output. The short interval also covers a long-running remote operation.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') void refresh() }
+    document.addEventListener('visibilitychange', onVisible)
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh() }, 15_000)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.clearInterval(timer)
+    }
+  }, [refresh])
 
   const filteredJobs = useMemo(() => status === 'all' ? jobs : jobs.filter((job) => job.status === status), [jobs, status])
   const groups = useMemo(() => groupJobs(filteredJobs), [filteredJobs])
   const jobsById = useMemo(() => new Map(jobs.map((job) => [job.jobId, job])), [jobs])
   const filteredAudits = useMemo(() => status === 'all' ? audits : audits.filter((audit) => audit.status === status), [audits, status])
+  const unknownMcpJobs = useMemo(() => jobs.filter((job) => job.source === 'mcp' && job.status === 'unknown'), [jobs])
 
   async function retry(job: OperationJob) {
     if (!onRetry || retryingJobId) return
@@ -186,6 +211,8 @@ export function OperationsAuditCenter({ hostId, limit = 100, onRetry, className 
       </div>
 
       {error && <div role="alert" data-testid="operations-error" className="mx-6 mt-4 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-700 dark:text-red-300"><XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{error}</div>}
+      {restored && lastRefreshAt && <div data-testid="operations-restored" className="mx-6 mt-3 flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground"><span>{t('operations.restored')}</span><span>{formatTime(lastRefreshAt, locale)}</span></div>}
+      {unknownMcpJobs.length > 0 && <div data-testid="operations-mcp-recovery" className="mx-6 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 flex-1">{t('operations.mcpUnknown', { count: unknownMcpJobs.length })}</span><button type="button" onClick={() => setStatus('unknown')} className="rounded border border-amber-500/40 px-2 py-1 text-[10px] font-medium hover:bg-amber-500/10">{t('operations.filter.unknown')}</button></div>}
       {loading && jobs.length === 0 && audits.length === 0 && <div className="px-6 py-8 text-center text-sm text-muted-foreground">{t('common.loading')}</div>}
 
       {view === 'operations' && !loading && groups.length === 0 && <div data-testid="operations-empty" className="px-6 py-12 text-center"><FileClock className="mx-auto h-10 w-10 text-muted-foreground/20" /><p className="mt-3 text-sm text-muted-foreground">{t('operations.empty')}</p></div>}
@@ -221,8 +248,11 @@ export function OperationsAuditCenter({ hostId, limit = 100, onRetry, className 
                       <span className="min-w-0 flex-1 truncate">{job.hostName || job.hostAddress || t('operations.unknownHost')}</span>
                       <span className="text-[11px] text-muted-foreground">{formatTime(job.updatedAt || job.queuedAt, locale)}</span>
                       <span className="font-mono text-[10px] text-muted-foreground">job={job.jobId}</span>
+                      <span className="font-mono text-[10px] text-muted-foreground">audit={job.auditId}</span>
+                      <span className="text-[10px] text-muted-foreground">{job.source} · {job.provider} · {job.transport}</span>
                       {canRetry && <button type="button" data-testid="operation-retry" onClick={() => void retry(job)} disabled={retryingJobId !== null} className="inline-flex items-center gap-1 rounded border border-border/60 px-2 py-1 text-[10px] text-foreground hover:bg-muted disabled:opacity-50">{retryingJobId === job.jobId ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}{t('operations.retry')}</button>}
                       {job.errorSummary && <span className="basis-full truncate text-[11px] text-muted-foreground">{job.errorSummary}</span>}
+                      {job.status === 'unknown' && <span className="basis-full text-[11px] text-amber-700 dark:text-amber-300">{t('operations.reconcileBeforeRetry')}</span>}
                     </div>
                   )
                 })}
@@ -247,6 +277,7 @@ export function OperationsAuditCenter({ hostId, limit = 100, onRetry, className 
                   <span>{entry.hostName || entry.hostAddress || t('operations.unknownHost')}</span>
                   <span>{formatTime(entry.createdAt, locale)}</span>
                   <span className="font-mono">audit={entry.auditId}</span>
+                  <span>{entry.source} · {entry.provider} · {entry.transport}</span>
                   {job?.requestId && <span className="font-mono">{t('operations.requestId', { id: job.requestId })}</span>}
                 </div>
                 {(entry.errorSummary || entry.resultSummary) && <p className="mt-1 truncate text-[11px] text-muted-foreground">{entry.errorSummary ?? entry.resultSummary}</p>}

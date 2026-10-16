@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { useVault } from '@/contexts/vault-context'
 import { listHosts, type HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import OperationsAuditCenter from '@/components/operations-audit-center'
 import {
   createMcpClient, DEFAULT_MCP_PERMISSIONS, getMcpStatus, revokeMcpClient, setMcpEnabled,
   formatMcpConfiguration, testMcpConnection,
@@ -224,6 +225,7 @@ export function McpSettingsSection() {
               </div>
             </details>
           )}
+          <OperationsAuditCenter source="mcp" vaultId={activeVaultId} limit={100} className="-mx-3 border-t pt-3" />
         </div>
       )}
     </section>

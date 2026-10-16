@@ -58,6 +58,16 @@ fn initialize(db: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn recovered_mcp_status(operation_status: Option<&str>) -> &'static str {
+    match operation_status {
+        Some("completed") => "completed",
+        Some("failed") => "failed",
+        Some("cancelled") => "cancelled",
+        Some("unknown") | Some("queued") | Some("running") | None => "unknown",
+        Some(_) => "unknown",
+    }
+}
+
 pub fn recover(app: &tauri::AppHandle) -> Result<(), String> {
     let db = open(app)?;
     let mut statement = db
@@ -71,44 +81,51 @@ pub fn recover(app: &tauri::AppHandle) -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     drop(statement);
-    db.execute(
-        "UPDATE mcp_jobs SET status='unknown', updated_at=?1 WHERE status='running'",
-        [now_unix_ms()],
-    )
-    .map_err(|e| e.to_string())?;
-    drop(db);
-    for (_, operation_job_id) in jobs {
-        let Some(operation_job_id) = operation_job_id else {
-            continue;
-        };
-        let job = match operation_jobs::operation_job_get(app.clone(), operation_job_id.clone()) {
-            Ok(job) => job,
-            Err(error) => {
-                log::error!("MCP OperationJob recovery lookup failed: {error}");
-                continue;
+
+    for (mcp_job_id, operation_job_id) in jobs {
+        let operation_job = operation_job_id.as_deref().and_then(|id| {
+            match operation_jobs::operation_job_get(app.clone(), id.to_string()) {
+                Ok(job) => job,
+                Err(error) => {
+                    log::error!("MCP OperationJob recovery lookup failed: {error}");
+                    None
+                }
             }
-        };
-        if job.is_some_and(|job| matches!(job.status.as_str(), "queued" | "running")) {
-            if let Err(error) = operation_jobs::operation_job_update(
-                app.clone(),
-                operation_jobs::UpdateOperationJobRequest {
-                    job_id: operation_job_id,
-                    status: "unknown".to_string(),
-                    confirmation_status: None,
-                    confirmed_by: None,
-                    result_summary: Some(
-                        "MCP worker interrupted; reconcile remote state before retrying".into(),
-                    ),
-                    error_code: Some("mcp_app_restarted".into()),
-                    error_summary: Some(
-                        "The app restarted before the MCP operation completed".into(),
-                    ),
-                    actor: Some("system".into()),
-                },
-            ) {
-                log::error!("MCP OperationJob recovery update failed: {error}");
+        });
+
+        let status = recovered_mcp_status(operation_job.as_ref().map(|job| job.status.as_str()));
+        if operation_job
+            .as_ref()
+            .is_some_and(|job| matches!(job.status.as_str(), "queued" | "running"))
+        {
+            if let Some(operation_job_id) = operation_job_id {
+                if let Err(error) = operation_jobs::operation_job_update(
+                    app.clone(),
+                    operation_jobs::UpdateOperationJobRequest {
+                        job_id: operation_job_id,
+                        status: "unknown".to_string(),
+                        confirmation_status: None,
+                        confirmed_by: None,
+                        result_summary: Some(
+                            "MCP worker interrupted; reconcile remote state before retrying".into(),
+                        ),
+                        error_code: Some("mcp_app_restarted".into()),
+                        error_summary: Some(
+                            "The app restarted before the MCP operation completed".into(),
+                        ),
+                        actor: Some("system".into()),
+                    },
+                ) {
+                    log::error!("MCP OperationJob recovery update failed: {error}");
+                }
             }
         }
+
+        db.execute(
+            "UPDATE mcp_jobs SET status=?1, updated_at=?2 WHERE id=?3",
+            params![status, now_unix_ms(), mcp_job_id],
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -259,6 +276,16 @@ pub fn list_audit(app: &tauri::AppHandle) -> Result<Vec<Value>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovered_mcp_status_prefers_terminal_operation_outcomes() {
+        assert_eq!(recovered_mcp_status(Some("completed")), "completed");
+        assert_eq!(recovered_mcp_status(Some("failed")), "failed");
+        assert_eq!(recovered_mcp_status(Some("cancelled")), "cancelled");
+        assert_eq!(recovered_mcp_status(Some("unknown")), "unknown");
+        assert_eq!(recovered_mcp_status(Some("running")), "unknown");
+        assert_eq!(recovered_mcp_status(None), "unknown");
+    }
     #[test]
     fn only_one_application_can_own_mcp_and_recover_jobs() {
         let path = std::env::temp_dir().join(format!(

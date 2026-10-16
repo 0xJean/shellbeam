@@ -51,7 +51,10 @@ export interface HostOperationalSummary {
   alertActive?: number | null
   alertUnsupported?: boolean
   auditCount: number
-  latestAudit?: Pick<OperationAuditEntry, 'action' | 'target' | 'status' | 'createdAt' | 'transport' | 'provider'>
+  auditActive?: number
+  auditFailed?: number
+  auditUnknown?: number
+  latestAudit?: Pick<OperationAuditEntry, 'action' | 'target' | 'status' | 'createdAt' | 'transport' | 'provider'> & Partial<Pick<OperationAuditEntry, 'auditId' | 'jobId' | 'source'>>
   provider?: string
   sampledAt?: number
   transport: 'direct' | 'proxy-jump'
@@ -393,6 +396,15 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
           <span className="shrink-0 font-mono">({summary.auditCount})</span>
         </span>
       </div>
+      {(summary.auditActive || summary.auditFailed || summary.auditUnknown) ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[10px]">
+          {summary.auditActive ? <span className="text-[color:var(--workspace-status-info-text)]">{t('hosts.opsAuditActive')}: {summary.auditActive}</span> : null}
+          {summary.auditFailed ? <span className="text-[color:var(--workspace-status-bad-text)]">{t('hosts.opsAuditFailed')}: {summary.auditFailed}</span> : null}
+          {summary.auditUnknown ? <span className="font-medium text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsAuditUnknown')}: {summary.auditUnknown}</span> : null}
+        </div>
+      ) : null}
+      {latest?.auditId && <div className="truncate font-mono text-[10px] text-[var(--workspace-text-subtle)]" title={latest.auditId}>{latest.source} · job={latest.jobId} · audit={latest.auditId}</div>}
+      {latest?.status === 'unknown' && <div className="flex items-center gap-1 text-[color:var(--workspace-status-warn-text)]"><AlertTriangle className="h-3 w-3 shrink-0" />{t('hosts.opsRecoveryRequired')}</div>}
       {(summary.alertTotal !== undefined || summary.alertUnsupported || summary.alertActive != null) && (
         <div className="flex min-w-0 items-center gap-2">
           <span className="inline-flex min-w-0 items-center gap-1" title={t('hosts.opsAlerts')}>
