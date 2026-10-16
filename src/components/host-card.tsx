@@ -7,10 +7,12 @@ import { getResourceUsageFillClassName, getResourceUsageTextClassName } from '@/
 import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import type { OperationAuditEntry } from '@/lib/operation-job'
+import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import { AlertTriangle, Activity, Bot, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
+import { KomariProbeOpsView } from './komari-probe-ops-view'
 
 type TFn = (key: string, params?: Record<string, string | number>) => string
 
@@ -57,6 +59,9 @@ export interface HostOperationalSummary {
   agentHealth?: string
   agentVersion?: string | null
   agentHeartbeatAt?: number | null
+  komariProbe?: KomariProbeLink | null
+  onKomariProbeAction?: (action: 'check-probe' | 'install-probe', link: KomariProbeLink) => Promise<void> | void
+  komariProbeBusy?: boolean
 }
 
 export function groupIconConfig(group: string) {
@@ -195,7 +200,7 @@ export function HostGridCard({ host, isSelected, status, resource, operations, n
             className="text-xs text-[var(--workspace-text-muted)]"
             iconClassName="h-3.5 w-3.5"
           />
-          <HostOperationalMeta summary={operations} t={t} />
+          <HostOperationalMeta host={host} summary={operations} t={t} />
           <div className="flex items-center gap-1 overflow-hidden">
             {host.tags && host.tags.length > 0 ? (
               <>
@@ -352,7 +357,7 @@ function formatSummaryAge(ts: number | undefined, t: TFn) {
   return formatRelativeTime(ts, t)
 }
 
-function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary; t: TFn }) {
+function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?: HostOperationalSummary; t: TFn }) {
   if (!summary) return null
 
   const latest = summary.latestAudit
@@ -420,6 +425,14 @@ function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary;
         <span className="shrink-0">{transportLabel}</span>
         <span className="ml-auto shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
       </div>
+      {summary.komariProbe && (
+        <KomariProbeOpsView
+          host={host}
+          link={summary.komariProbe}
+          onAction={summary.onKomariProbeAction}
+          busy={summary.komariProbeBusy}
+        />
+      )}
     </div>
   )
 }
