@@ -9,6 +9,7 @@ pub mod komari;
 pub mod komari_persistence;
 pub mod operation_jobs;
 pub mod server_monitor;
+pub mod shellbeam_agent;
 pub mod snippets;
 pub mod ssh_config;
 pub mod workspace_inventory;

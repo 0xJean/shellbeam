@@ -18,6 +18,8 @@ import { listOperationAudit, type OperationAuditEntry } from './operation-job'
 import { operationTransport } from './operation-job'
 import type { ProbeSnapshot } from './probe-provider'
 import type { KomariAlertSummary } from './komari'
+import type { ShellbeamAgentRecord } from './shellbeam-agent'
+import { listShellbeamAgents } from './shellbeam-agent'
 
 export type OperationTransport = ReturnType<typeof operationTransport>
 
@@ -80,6 +82,7 @@ export interface HostOpsHealth {
   fallbackProvider?: HostOpsProvider
   fallbackReason?: string
   alertSummary?: KomariAlertSummary | null
+  agent?: Pick<ShellbeamAgentRecord, 'status' | 'health' | 'version' | 'capabilities' | 'lastHeartbeatAt' | 'lastCheckedAt'> | null
 }
 
 export interface HostOpsView {
@@ -104,6 +107,7 @@ export interface BuildHostOpsViewsInput {
   inventoryStates?: Record<string, WorkspaceInventoryHostStateSnapshot>
   audits?: OperationAuditEntry[]
   komariSnapshots?: ProbeSnapshot[]
+  shellbeamAgents?: ShellbeamAgentRecord[]
   now?: number
   staleAfterMs?: number
 }
@@ -198,6 +202,7 @@ function providerFor(
   inventory: WorkspaceInventory | null,
   state: WorkspaceInventoryHostStateSnapshot | undefined,
   audits: OperationAuditEntry[],
+  shellbeamAgent?: ShellbeamAgentRecord,
 ): HostOpsProvider {
   // Persisted monitor/inventory records currently come from the built-in
   // ProbeProvider. Keep this mapping in one place so Komari can be added
@@ -207,6 +212,7 @@ function providerFor(
   if (auditedProvider === 'ssh-agentless' || auditedProvider === 'komari' || auditedProvider === 'shellbeam-agent') {
     return auditedProvider
   }
+  if (shellbeamAgent) return 'shellbeam-agent'
   return 'unknown'
 }
 
@@ -249,16 +255,19 @@ export function buildHostOpsViews({
   inventoryStates = {},
   audits = [],
   komariSnapshots = [],
+  shellbeamAgents = [],
   now = Date.now(),
   staleAfterMs = 5 * 60 * 1000,
 }: BuildHostOpsViewsInput): Record<string, HostOpsView> {
   const monitorByKey = new Map(monitorLatest.map((entry) => [entry.hostKey, entry]))
   const komariByHostId = new Map(komariSnapshots.map((snapshot) => [snapshot.host.hostId, snapshot]))
+  const agentByHostId = new Map(shellbeamAgents.map((record) => [record.hostId, record]))
 
   return hosts.reduce<Record<string, HostOpsView>>((result, host) => {
     const hostKey = getServerMonitorHostKey(host)
     const sshMonitor = monitorByKey.get(hostKey)
     const komariSnapshot = komariByHostId.get(host.id)
+    const shellbeamAgent = agentByHostId.get(host.id)
     const komariMonitor = komariMonitorForHost(host, komariSnapshot)
     const komariFresh = Boolean(komariSnapshot?.metrics && !komariSnapshot.metrics.freshness.expired)
     const monitor = komariMonitor && (komariFresh || !sshMonitor?.snapshot) ? komariMonitor : sshMonitor
@@ -278,7 +287,7 @@ export function buildHostOpsViews({
     const hostAudits = allHostAudits.slice(0, 10)
     const selectedProvider: HostOpsProvider = monitor === komariMonitor && komariMonitor
       ? 'komari'
-      : providerFor(sshMonitor, inventory, state, allHostAudits)
+      : providerFor(sshMonitor, inventory, state, allHostAudits, shellbeamAgent)
     const freshnessValue = freshness(monitor, inventory, inventoryUpdatedAt, state, now, staleAfterMs)
     const monitorError = monitor?.error?.trim()
     const stateError = state?.error?.trim()
@@ -288,7 +297,7 @@ export function buildHostOpsViews({
       route,
       health: {
         state: healthState(monitor, state, freshnessValue),
-        provider: selectedProvider === 'unknown' ? providerFor(monitor, inventory, state, allHostAudits) : selectedProvider,
+        provider: selectedProvider === 'unknown' ? providerFor(monitor, inventory, state, allHostAudits, shellbeamAgent) : selectedProvider,
         transport: route.transport,
         freshness: freshnessValue,
         error: monitorError || stateError || undefined,
@@ -296,6 +305,7 @@ export function buildHostOpsViews({
         ...(komariSnapshot?.alerts
           ? { alertSummary: komariSnapshot.alerts }
           : {}),
+        ...(shellbeamAgent ? { agent: shellbeamAgent } : {}),
         ...(selectedProvider === 'komari' && sshMonitor?.snapshot
           ? { fallbackProvider: 'ssh-agentless' as const, fallbackReason: 'Komari metrics selected; SSH data retained as fallback.' }
           : selectedProvider === 'ssh-agentless' && komariSnapshot?.metrics
@@ -319,14 +329,15 @@ export function buildHostOpsViews({
 /** Load all persisted sources used by the host operations view in parallel. */
 export async function loadHostOpsViews(
   hosts: HostProfile[],
-  options: { auditLimit?: number; staleAfterMs?: number; now?: number; komariSnapshots?: ProbeSnapshot[] } = {},
+  options: { auditLimit?: number; staleAfterMs?: number; now?: number; komariSnapshots?: ProbeSnapshot[]; shellbeamAgents?: ShellbeamAgentRecord[]; vaultId?: string } = {},
 ) {
   if (hosts.length === 0) return {}
-  const [monitorLatest, inventoryCache, inventoryStates, audits] = await Promise.all([
+  const [monitorLatest, inventoryCache, inventoryStates, audits, persistedAgents] = await Promise.all([
     listServerMonitorLatest(),
     loadWorkspaceInventoryPersistedCache(hosts),
     loadWorkspaceInventoryHostStateSnapshots(hosts),
     listOperationAudit(options.auditLimit ?? 200),
+    options.shellbeamAgents ? Promise.resolve(options.shellbeamAgents) : listShellbeamAgents({ vaultId: options.vaultId }),
   ])
   return buildHostOpsViews({
     hosts,
@@ -335,6 +346,7 @@ export async function loadHostOpsViews(
     inventoryStates,
     audits,
     komariSnapshots: options.komariSnapshots,
+    shellbeamAgents: persistedAgents,
     now: options.now,
     staleAfterMs: options.staleAfterMs,
   })

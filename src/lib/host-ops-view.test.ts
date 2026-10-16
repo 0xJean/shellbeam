@@ -6,6 +6,7 @@ import type { OperationAuditEntry } from './operation-job'
 import type { WorkspaceInventoryCache } from './workspace-inventory'
 import { createProbeObservation } from './probe-provider'
 import type { ProbeSnapshot } from './probe-provider'
+import type { ShellbeamAgentRecord } from './shellbeam-agent'
 
 const host: HostProfile = {
   id: 'host-1',
@@ -143,6 +144,19 @@ describe('buildHostOpsViews', () => {
       now: 1100,
     })
     expect(views['host-1'].health.state).toBe('jump-unavailable')
+  })
+
+  it('surfaces persisted ShellBeam Probe lifecycle without claiming SSH health', () => {
+    const agent: ShellbeamAgentRecord = {
+      vaultId: 'vault-1', hostId: host.id, agentId: 'node-1', providerKind: 'shellbeam-agent', source: 'shellbeam-agent',
+      status: 'installed', health: 'online', version: '0.1.0', capabilities: ['heartbeat'], heartbeatTtlMs: 300_000,
+      lastHeartbeatAt: 1_050, lastCheckedAt: 1_100, updatedAt: 1_100, transport: 'proxy-jump',
+    }
+    const view = buildHostOpsViews({ hosts: [host], shellbeamAgents: [agent], now: 1_100 })['host-1']
+
+    expect(view.health.provider).toBe('shellbeam-agent')
+    expect(view.health.state).toBe('unknown')
+    expect(view.health.agent).toMatchObject({ status: 'installed', version: '0.1.0', lastHeartbeatAt: 1_050 })
   })
 
   it('prefers fresh Komari metrics and exposes SSH as the fallback source', () => {

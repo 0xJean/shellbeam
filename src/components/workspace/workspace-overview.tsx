@@ -13,6 +13,7 @@ import { WorkspaceStatusCards } from './workspace-status-cards'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
 interface WorkspaceOverviewProps {
+  activeVaultId?: string
   hostName: string
   hostAddress: string
   hostId?: string | null
@@ -25,6 +26,7 @@ interface WorkspaceOverviewProps {
 }
 
 export function WorkspaceOverview({
+  activeVaultId,
   hostName,
   hostAddress,
   hostId = null,
@@ -58,6 +60,7 @@ export function WorkspaceOverview({
       </div>
 
       <WorkspaceStatusCards
+        activeVaultId={activeVaultId}
         hostAddress={hostAddress}
         selectedHostId={hostId}
         hosts={hosts}

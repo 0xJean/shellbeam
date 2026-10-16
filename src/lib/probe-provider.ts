@@ -20,7 +20,7 @@ import {
 export const PROBE_PROVIDER_SCHEMA_VERSION = 1
 
 export type ProbeProviderKind = 'ssh-agentless' | 'komari' | 'shellbeam-agent'
-export type ProbeCapability = 'metrics' | 'inventory'
+export type ProbeCapability = 'metrics' | 'inventory' | 'heartbeat' | 'services' | 'processes' | 'logs'
 export type ProbeSection = ProbeCapability
 export type ProbeTransport = 'direct' | 'proxy-jump'
 export type ProbeHealthState = 'online' | 'stale' | 'offline' | 'paused' | 'unsupported' | 'unknown'
@@ -69,6 +69,15 @@ export interface ProbeError {
   code?: string
 }
 
+export interface ProbeAgentLifecycle {
+  status: string
+  version?: string | null
+  nodeId?: string | null
+  capabilities: string[]
+  lastHeartbeat?: number | null
+  checkedAt?: number | null
+}
+
 export interface ProbeSnapshot {
   schemaVersion: number
   host: ProbeHostIdentity
@@ -81,6 +90,8 @@ export interface ProbeSnapshot {
   errors: ProbeError[]
   /** Optional provider-level alert summary associated with this observation. */
   alerts?: KomariAlertSummary | null
+  /** Optional lifecycle metadata; it does not prove SSH reachability. */
+  agent?: ProbeAgentLifecycle | null
 }
 
 export interface ProbeRequest {

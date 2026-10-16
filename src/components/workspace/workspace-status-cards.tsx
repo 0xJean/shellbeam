@@ -3,8 +3,10 @@ import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
 import { useServerMonitorStates } from '@/lib/server-monitor-state'
 import type { ServerMonitorSnapshot, ServerMonitorStatus } from '@/lib/server-monitor'
 import { t } from '@/lib/i18n'
+import { ShellbeamAgentPanel } from './shellbeam-agent-panel'
 
 interface WorkspaceStatusCardsProps {
+  activeVaultId?: string
   hostAddress: string
   selectedHostId?: string | null
   hosts?: HostProfile[]
@@ -68,11 +70,12 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
   const status = latest?.status
 
   return (
-    <div
-      data-testid="workspace-status-grid"
-      className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3"
-    >
-      {STATUS_CARDS.map((card) => {
+    <>
+      <div
+        data-testid="workspace-status-grid"
+        className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3"
+      >
+        {STATUS_CARDS.map((card) => {
         const metric = getCardValue(card.key, snapshot)
         const primaryValue = metric.value
           ?? (latest ? t('workspace.statusValue.unavailable') : t('workspace.statusValue.notConnected'))
@@ -130,7 +133,11 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
             </div>
           </div>
         )
-      })}
-    </div>
+        })}
+      </div>
+      <div className="mt-4">
+        <ShellbeamAgentPanel host={host ?? null} vaultId={props.activeVaultId} resolveAuthSecret={props.resolveAuthSecret} />
+      </div>
+    </>
   )
 }

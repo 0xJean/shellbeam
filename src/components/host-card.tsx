@@ -7,7 +7,7 @@ import { getResourceUsageFillClassName, getResourceUsageTextClassName } from '@/
 import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import type { OperationAuditEntry } from '@/lib/operation-job'
-import { AlertTriangle, Activity, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench } from 'lucide-react'
+import { AlertTriangle, Activity, Bot, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
@@ -53,6 +53,10 @@ export interface HostOperationalSummary {
   provider?: string
   sampledAt?: number
   transport: 'direct' | 'proxy-jump'
+  agentStatus?: string
+  agentHealth?: string
+  agentVersion?: string | null
+  agentHeartbeatAt?: number | null
 }
 
 export function groupIconConfig(group: string) {
@@ -357,6 +361,10 @@ function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary;
     : t('hosts.opsNoAudit')
   const transportLabel = summary.transport === 'proxy-jump' ? t('hosts.opsProxyJump') : t('hosts.opsDirect')
   const formatCount = (value: number | null) => value == null ? '—' : String(value)
+  const lifecycleStatuses = ['not-installed', 'installing', 'installed', 'upgrading', 'uninstalling', 'offline', 'unsupported', 'unknown', 'failed', 'retired']
+  const lifecycleStatus = lifecycleStatuses.includes(summary.agentStatus ?? '') ? summary.agentStatus : 'unknown'
+  const healthStatuses = ['online', 'offline', 'stale', 'unsupported', 'unknown']
+  const agentHealth = healthStatuses.includes(summary.agentHealth ?? '') ? summary.agentHealth : 'unknown'
 
   return (
     <div data-testid="host-ops-summary" data-host-ops-summary className="mt-2 space-y-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 text-[10px] text-[var(--workspace-text-muted)]">
@@ -390,6 +398,18 @@ function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary;
             </strong>
             {summary.alertActive != null && <span className="text-[color:var(--workspace-status-bad-text)]">· {summary.alertActive} {t('hosts.opsActive')}</span>}
           </span>
+        </div>
+      )}
+      {summary.agentStatus && (
+        <div className="flex min-w-0 items-center gap-2" title={t('workspace.agentProbe.description')}>
+          <Bot className="h-3 w-3 shrink-0 text-[var(--workspace-accent-text)]" />
+          <span className="shrink-0">{t('workspace.agentProbe.title')}</span>
+          <strong className="truncate font-medium text-[var(--workspace-text-strong)]">
+            {t(`workspace.agentProbe.lifecycle.${lifecycleStatus}`)}
+          </strong>
+          {summary.agentHealth && <span className="shrink-0 text-[var(--workspace-text-subtle)]">· {t(`workspace.agentProbe.${agentHealth === 'online' ? 'online' : agentHealth === 'offline' ? 'offline' : 'unknown'}`)}</span>}
+          {summary.agentVersion && <span className="shrink-0 font-mono">v{summary.agentVersion}</span>}
+          {summary.agentHeartbeatAt && <span className="ml-auto shrink-0">{formatSummaryAge(summary.agentHeartbeatAt, t)}</span>}
         </div>
       )}
       <div className="flex min-w-0 items-center gap-2 text-[var(--workspace-text-subtle)]">

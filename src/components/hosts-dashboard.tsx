@@ -200,6 +200,12 @@ function hostOpsToCardSummary(view?: HostOpsView): HostOperationalSummary | unde
     provider: view.health.provider === 'unknown' ? undefined : view.health.provider,
     sampledAt: view.health.freshness.sampledAt ?? undefined,
     transport: view.health.transport,
+    ...(view.health.agent ? {
+      agentStatus: view.health.agent.status,
+      agentHealth: view.health.agent.health,
+      agentVersion: view.health.agent.version,
+      agentHeartbeatAt: view.health.agent.lastHeartbeatAt,
+    } : {}),
   }
 }
 
@@ -279,7 +285,7 @@ export function HostsDashboard({
           .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof syncKomariIntegration>>['snapshots']> => result.status === 'fulfilled')
           .flatMap((result) => result.value)
       }
-      setHostOpsViews(await loadHostOpsViews(hosts, { auditLimit: 250, komariSnapshots }))
+      setHostOpsViews(await loadHostOpsViews(hosts, { auditLimit: 250, komariSnapshots, vaultId: activeVaultId }))
     } catch {
       setHostOpsViews({})
     } finally {

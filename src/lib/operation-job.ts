@@ -166,6 +166,9 @@ export interface RunConfirmedOperationOptions<T> {
   execute: () => Promise<T>
   getResult?: (value: T) => Pick<CommandRunResult, 'exitCode' | 'durationMs'>
   onJob?: (job: OperationJob) => void
+  provider?: string
+  transport?: string
+  source?: OperationSource
 }
 
 /**
@@ -183,19 +186,22 @@ export async function runConfirmedOperation<T>({
   execute,
   getResult,
   onJob,
+  provider,
+  transport,
+  source,
 }: RunConfirmedOperationOptions<T>): Promise<{ value: T; job: OperationJob } | null> {
   const job = await createOperationJob({
     hostId: host.id,
     hostName: host.name,
     hostAddress: host.address,
     username: host.username,
-    source: 'workspace',
+    source: source ?? 'workspace',
     actor: 'local-user',
     action,
     target: safeOperationTarget(target),
     risk,
-    provider: 'ssh-agentless',
-    transport: operationTransport(host),
+    provider: provider ?? 'ssh-agentless',
+    transport: transport ?? operationTransport(host),
     paramsSummary: paramsSummary ? safeOperationTarget(paramsSummary) : undefined,
     confirmationRequired: true,
   })
