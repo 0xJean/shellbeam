@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const OPERATION_DB: &str = "operation_jobs.sqlite3";
+const HOST_DB: &str = "workspace_inventory.sqlite3";
 const MAX_SUMMARY_LEN: usize = 256;
 const MAX_ROWS: i64 = 5_000;
 const MAX_AUDIT_ROWS: i64 = 10_000;
@@ -127,6 +128,26 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
         .map_err(|e| format!("Open operation jobs db failed: {e}"))?;
     initialize(&db)?;
     Ok(db)
+}
+
+/// Older Workspace callers did not send a vault id with an operation request.
+/// Recover it only when the host id maps to exactly one vault; an ambiguous
+/// host remains unscoped so MCP never guesses across vault boundaries.
+fn infer_vault_id(app: &tauri::AppHandle, host_id: Option<&str>) -> Option<String> {
+    let host_id = host_id?.trim();
+    if host_id.is_empty() {
+        return None;
+    }
+    let path = data_file_path(app, HOST_DB).ok()?;
+    let db = Connection::open(path).ok()?;
+    let mut statement = db
+        .prepare("SELECT DISTINCT vault_id FROM workspace_hosts WHERE id=?1 LIMIT 2")
+        .ok()?;
+    let rows = statement
+        .query_map([host_id], |row| row.get::<_, String>(0))
+        .ok()?;
+    let vaults = rows.filter_map(Result::ok).collect::<Vec<_>>();
+    (vaults.len() == 1).then(|| vaults[0].clone())
 }
 
 fn initialize(db: &Connection) -> Result<(), String> {
@@ -436,6 +457,10 @@ pub fn operation_job_create(
     let action = sanitize_summary(Some(&request.action)).unwrap_or_else(|| "operation".to_string());
     let target = sanitize_summary(Some(&request.target)).unwrap_or_else(|| "target".to_string());
     let params_summary = sanitize_summary(request.params_summary.as_deref());
+    let vault_id = request
+        .vault_id
+        .clone()
+        .or_else(|| infer_vault_id(&app, request.host_id.as_deref()));
     let confirmation_status = if request.confirmation_required {
         "pending"
     } else {
@@ -451,7 +476,7 @@ pub fn operation_job_create(
             job_id,
             queued_audit_id,
             request.host_id,
-            request.vault_id,
+            vault_id,
             request.host_name,
             request.host_address,
             request.username,
