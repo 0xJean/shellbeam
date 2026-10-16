@@ -11,7 +11,7 @@ import {
 import { mapKomariNodesToHosts, type KomariMappingResult } from './komari-mapping'
 import { createKomariProbeProvider } from './komari-probe-provider'
 import type { ProbeSnapshot } from './probe-provider'
-import { getProbeProviderRegistry } from './probe-scheduler'
+import { getProbeProviderRegistry, refreshProbeSnapshotFreshness } from './probe-scheduler'
 import {
   komariAlertObservationsFromSummary,
   komariAlertObservationsFromProbeSnapshot,
@@ -89,16 +89,25 @@ export function reconcileKomariProbeAlerts(options: {
   actor?: string
 }): { alertState: KomariAlertState; alertAudit: KomariAlertAuditEntry[] } {
   const now = options.now ?? Date.now()
-  const observations = options.snapshots.flatMap((snapshot) => komariAlertObservationsFromProbeSnapshot(
+  const snapshots = options.snapshots.map((snapshot) => refreshProbeSnapshotFreshness(snapshot, now))
+  const observations = snapshots.flatMap((snapshot) => komariAlertObservationsFromProbeSnapshot(
     snapshot,
     { integrationId: options.integrationId },
     now,
   ))
+  // Komari attaches its aggregate notification summary to every provider
+  // snapshot. Reconcile one copy when hydrating a cache so a zero-valued
+  // summary can automatically resolve a load/offline alert after a restart;
+  // duplicate host-scoped rows would otherwise inflate the lifecycle.
+  const aggregateSummary = snapshots.find((snapshot) => snapshot.alerts !== null && snapshot.alerts !== undefined)?.alerts
+  if (aggregateSummary) {
+    observations.push(...komariAlertObservationsFromSummary(aggregateSummary, { integrationId: options.integrationId }))
+  }
   const reconciled = reconcileKomariAlerts(options.alertState?.alerts ?? [], observations, {
     now,
     actor: options.actor ?? 'probe-recovery',
     complete: false,
-    baseSummary: options.alertState?.summary ?? null,
+    baseSummary: aggregateSummary ?? options.alertState?.summary ?? null,
   })
   return {
     alertState: {

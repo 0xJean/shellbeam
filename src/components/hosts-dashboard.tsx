@@ -299,9 +299,9 @@ export function HostsDashboard({
       }> = []
       if (activeVaultId && onLoadVaultSecret) {
         const integrations = await listKomariIntegrations(activeVaultId).catch(() => [])
+        const enabledIntegrations = integrations.filter((integration) => integration.enabled)
         const syncResults = await Promise.allSettled(
-          integrations
-            .filter((integration) => integration.enabled)
+          enabledIntegrations
             .map(async (integration) => {
               const cached = await loadKomariPersistence(integration.id).catch(() => ({ snapshots: [], mappings: [], syncState: null, lastSyncedAt: null }))
               const cachedSnapshots = cached.snapshots.map((entry) => entry.snapshot)
@@ -360,9 +360,24 @@ export function HostsDashboard({
               }
             }),
         )
-        komariSnapshots = syncResults
-          .filter((result): result is PromiseFulfilledResult<(typeof komariRecords)[number]> => result.status === 'fulfilled')
-          .map((result) => { komariRecords.push(result.value); return result.value.snapshots })
+        // A failed remote sync must not discard the last durable Komari
+        // mapping, snapshot, or alert lifecycle. Rehydrate that integration
+        // by index so another session still sees its host card state while
+        // the next scheduled refresh retries the endpoint.
+        const recoveredRecords = await Promise.all(syncResults.map(async (result, index) => {
+          if (result.status === 'fulfilled') return result.value
+          const integration = enabledIntegrations[index]
+          const cached = await loadKomariPersistence(integration.id).catch(() => ({ snapshots: [], mappings: [], syncState: null, lastSyncedAt: null }))
+          return {
+            integrationId: integration.id,
+            snapshots: cached.snapshots.map((entry) => entry.snapshot),
+            mappings: cached.mappings,
+            alertState: readKomariAlertState(cached.syncState),
+            alertAudit: [],
+          }
+        }))
+        komariSnapshots = recoveredRecords
+          .map((record) => { komariRecords.push(record); return record.snapshots })
           .flat()
       }
       // Deliver only audit rows produced by this sync. TTL cache hits and
@@ -409,9 +424,21 @@ export function HostsDashboard({
       } else {
         setKomariProbeLinks([])
       }
-    } catch {
-      setHostOpsViews({})
-      setKomariProbeLinks([])
+    } catch (error) {
+      // A remote sync can fail while the durable ProbeProvider, Komari and
+      // OperationJob rows remain available locally. Keep the last rendered
+      // view visible and make one persistence-only read so a refresh failure
+      // in another session never blanks the host list.
+      console.warn('Host operations refresh failed; retaining persisted view', error)
+      try {
+        const persistedViews = await loadHostOpsViews(hosts, {
+          auditLimit: 250,
+          vaultId: activeVaultId,
+        })
+        if (Object.keys(persistedViews).length > 0) setHostOpsViews(persistedViews)
+      } catch (fallbackError) {
+        console.warn('Persisted host operations refresh failed', fallbackError)
+      }
     } finally {
       setHostOpsLoading(false)
     }
@@ -520,12 +547,23 @@ export function HostsDashboard({
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
     const refreshWhenVisible = () => {
+      // Returning to the foreground is the cross-session boundary: another
+      // window may have acknowledged an alert or completed a job while this
+      // one was suspended, so bypass the Komari TTL and re-read persistence.
+      if (document.visibilityState === 'visible') void refreshHostOps(true)
+    }
+    const refreshFromPeerSession = () => { void refreshHostOps(true) }
+    const refreshOnInterval = () => {
+      // Keep the periodic persistence/audit refresh cheap; visibility changes
+      // are the explicit point where a remote Komari sync should bypass TTL.
       if (document.visibilityState === 'visible') void refreshHostOps()
     }
     document.addEventListener('visibilitychange', refreshWhenVisible)
-    const timer = window.setInterval(refreshWhenVisible, 15_000)
+    window.addEventListener('shellbeam:host-ops-refresh', refreshFromPeerSession)
+    const timer = window.setInterval(refreshOnInterval, 15_000)
     return () => {
       document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.removeEventListener('shellbeam:host-ops-refresh', refreshFromPeerSession)
       window.clearInterval(timer)
     }
   }, [refreshHostOps])

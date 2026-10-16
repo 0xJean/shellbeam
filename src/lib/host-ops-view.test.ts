@@ -295,4 +295,29 @@ describe('buildHostOpsViews', () => {
     })
     expect(view.health.state).toBe('stale')
   })
+
+  it('recomputes persisted probe expiry when a host view is rebuilt after restart', () => {
+    const persisted: ProbeSnapshot = {
+      schemaVersion: 1,
+      host: { hostId: host.id, address: host.address, port: host.port, username: host.username },
+      provider: { kind: 'komari', id: 'komari-prod', nodeId: 'node-1', capabilities: ['metrics'] },
+      transport: 'proxy-jump',
+      health: 'online',
+      receivedAt: 1_100,
+      metrics: createProbeObservation({
+        data: monitor.snapshot!,
+        source: { kind: 'komari', id: 'komari-prod', nodeId: 'node-1', capabilities: ['metrics'] },
+        sampledAt: 1_000,
+        receivedAt: 1_100,
+        ttlMs: 500,
+      }),
+      inventory: null,
+      errors: [],
+      alerts: null,
+    }
+    const view = buildHostOpsViews({ hosts: [host], komariSnapshots: [persisted], now: 2_000 })['host-1']
+
+    expect(view.health.probe).toMatchObject({ state: 'stale', persisted: false })
+    expect(view.health.state).toBe('stale')
+  })
 })

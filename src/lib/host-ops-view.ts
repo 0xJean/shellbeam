@@ -384,14 +384,19 @@ export function buildHostOpsViews({
   now = Date.now(),
   staleAfterMs = 5 * 60 * 1000,
 }: BuildHostOpsViewsInput): Record<string, HostOpsView> {
+  // Persisted freshness flags are point-in-time values. Recompute them while
+  // rebuilding the host list so reopening the dashboard in another session
+  // cannot present an expired Komari observation as fresh.
+  const refreshedKomariSnapshots = komariSnapshots.map((snapshot) => refreshProbeSnapshotFreshness(snapshot, now))
+  const refreshedProbeSnapshots = probeSnapshots.map((snapshot) => refreshProbeSnapshotFreshness(snapshot, now))
   const monitorByKey = new Map(monitorLatest.map((entry) => [entry.hostKey, entry]))
-  const allProbeSnapshots = [...komariSnapshots, ...probeSnapshots].reduce<ProbeSnapshot[]>((rows, snapshot) => {
+  const allProbeSnapshots = [...refreshedKomariSnapshots, ...refreshedProbeSnapshots].reduce<ProbeSnapshot[]>((rows, snapshot) => {
     const index = rows.findIndex((current) => snapshotKey(current) === snapshotKey(snapshot))
     if (index < 0) rows.push(snapshot)
     else rows[index] = freshestSnapshot(rows[index], snapshot)
     return rows
   }, [])
-  const komariByHostId = new Map(komariSnapshots.map((snapshot) => [snapshot.host.hostId, snapshot]))
+  const komariByHostId = new Map(refreshedKomariSnapshots.map((snapshot) => [snapshot.host.hostId, snapshot]))
   const probeByHostId = new Map<string, ProbeSnapshot>()
   for (const snapshot of allProbeSnapshots) probeByHostId.set(snapshot.host.hostId, freshestSnapshot(probeByHostId.get(snapshot.host.hostId), snapshot))
   const agentByHostId = new Map(shellbeamAgents.map((record) => [record.hostId, record]))
@@ -438,7 +443,7 @@ export function buildHostOpsViews({
       health: {
         state: healthState(monitor, state, freshnessValue, selectedProbeSnapshot),
         provider: selectedProvider === 'unknown' ? providerFor(monitor, inventory, state, allHostAudits, shellbeamAgent, selectedProbeSnapshot) : selectedProvider,
-        probe: probeStatus(selectedProbeSnapshot, probeSnapshots.some((snapshot) => snapshotKey(snapshot) === (selectedProbeSnapshot ? snapshotKey(selectedProbeSnapshot) : ''))),
+        probe: probeStatus(selectedProbeSnapshot, refreshedProbeSnapshots.some((snapshot) => snapshotKey(snapshot) === (selectedProbeSnapshot ? snapshotKey(selectedProbeSnapshot) : ''))),
         transport: route.transport,
         freshness: freshnessValue,
         error: monitorError || stateError || undefined,

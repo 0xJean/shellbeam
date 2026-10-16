@@ -16,6 +16,10 @@ import {
 } from './probe-persistence'
 
 export const DEFAULT_PROBE_SCHEDULER_CONCURRENCY = 3
+/** Additional attempts made before returning a stale durable observation. */
+export const DEFAULT_PROBE_RECOVERY_MAX_RETRIES = 2
+export const DEFAULT_PROBE_RECOVERY_RETRY_DELAY_MS = 150
+export const MAX_PROBE_RECOVERY_RETRY_DELAY_MS = 2_000
 
 export interface ProbeScheduleRequest extends ProbeRequest {
   /** Vault scope for durable cache records. Requests without it remain
@@ -25,6 +29,18 @@ export interface ProbeScheduleRequest extends ProbeRequest {
   providerId?: string
   /** Bypass the observation TTL while still deduplicating concurrent work. */
   force?: boolean
+  /** Number of attempts after the initial provider collection. */
+  maxRetries?: number
+  /** Initial delay between recovery attempts. Exponential backoff is applied. */
+  retryDelayMs?: number
+}
+
+export interface ProbeRetryStatus {
+  /** Number of retries actually attempted; the initial call is not counted. */
+  attempts: number
+  /** Whether the provider was still failing after the retry budget. */
+  exhausted: boolean
+  error?: string
 }
 
 export interface ProbeScheduleResult {
@@ -33,6 +49,7 @@ export interface ProbeScheduleResult {
   deduplicated: boolean
   /** True when a stale durable observation was returned after collection failed. */
   recovered?: boolean
+  retry?: ProbeRetryStatus
 }
 
 export interface ProbeSnapshotPersistence {
@@ -52,6 +69,7 @@ interface Waiter {
 interface ProbeWorkResult {
   snapshot: ProbeSnapshot
   recovered: boolean
+  retry?: ProbeRetryStatus
 }
 
 function providerKey(provider: ProbeProvider) {
@@ -78,21 +96,58 @@ function probeCollectionFailed(snapshot: ProbeSnapshot, fallback: ProbeSnapshot,
   ))
 }
 
+function probeNeedsRetry(snapshot: ProbeSnapshot, sections: ProbeSection[]) {
+  if (snapshot.errors.length === 0) return false
+  return sections.some((section) => (
+    (section === 'metrics' || section === 'inventory') && snapshot[section] === null
+  ))
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function retryDelayMs(request: ProbeScheduleRequest, attempt: number) {
+  const configured = request.retryDelayMs ?? DEFAULT_PROBE_RECOVERY_RETRY_DELAY_MS
+  const base = Number.isFinite(configured) ? Math.max(0, configured) : DEFAULT_PROBE_RECOVERY_RETRY_DELAY_MS
+  return Math.min(MAX_PROBE_RECOVERY_RETRY_DELAY_MS, base * (2 ** Math.max(0, attempt - 1)))
+}
+
+function maxRetries(request: ProbeScheduleRequest) {
+  const configured = request.maxRetries ?? DEFAULT_PROBE_RECOVERY_MAX_RETRIES
+  return Math.max(0, Math.min(5, Number.isFinite(configured) ? Math.floor(configured) : DEFAULT_PROBE_RECOVERY_MAX_RETRIES))
+}
+
+function retryError(attempts: number, error: unknown) {
+  const suffix = error ? `: ${errorMessage(error)}` : ''
+  return {
+    section: 'provider' as const,
+    code: 'recovery-retry-exhausted',
+    message: `Probe recovery failed after ${attempts} retr${attempts === 1 ? 'y' : 'ies'}${suffix}`,
+  }
+}
+
 function mergeRecoveredProbeSnapshot(
   current: ProbeSnapshot,
   fallback: ProbeSnapshot,
   sections: ProbeSection[],
   error: unknown,
   now: number,
+  retry?: ProbeRetryStatus,
 ) {
   const recovered = markProbeSnapshotRecovered(fallback, error, now)
+  const retryMarker = retry?.exhausted ? retryError(retry.attempts, retry.error) : null
   return {
     ...recovered,
     ...current,
     metrics: sections.includes('metrics') ? (current.metrics ?? recovered.metrics) : current.metrics,
     inventory: sections.includes('inventory') ? (current.inventory ?? recovered.inventory) : current.inventory,
     // Preserve the provider error while retaining the stale-cache marker.
-    errors: [...current.errors, ...recovered.errors.filter((entry) => entry.code === 'stale-cache-fallback')],
+    errors: [
+      ...current.errors,
+      ...(retryMarker ? [retryMarker] : []),
+      ...recovered.errors.filter((entry) => entry.code === 'stale-cache-fallback'),
+    ],
     health: 'stale' as const,
   }
 }
@@ -268,24 +323,69 @@ export class ProbeProviderRegistry {
     const existing = this.inFlight.get(key)
     if (existing) {
       const result = await existing
-      return { snapshot: result.snapshot, cached: false, deduplicated: true, recovered: result.recovered }
+      return { snapshot: result.snapshot, cached: false, deduplicated: true, recovered: result.recovered, retry: result.retry }
     }
     const providerRequest: ProbeRequest = { ...request, sections }
     const work = (async () => {
       await this.acquire()
       try {
-        const snapshot = await provider.probe(providerRequest)
+        const retryBudget = maxRetries(request)
+        let snapshot: ProbeSnapshot | undefined
+        let lastError: unknown
+        let attempts = 0
+        let failed = false
+        for (let attempt = 0; attempt <= retryBudget; attempt += 1) {
+          try {
+            snapshot = await provider.probe(providerRequest)
+            failed = probeNeedsRetry(snapshot, sections)
+            if (!failed) break
+            lastError = snapshot.errors.find((entry) => entry.section === 'provider' || sections.includes(entry.section as ProbeSection))?.message
+          } catch (error) {
+            lastError = error
+            failed = true
+          }
+          if (attempt >= retryBudget) break
+          attempts += 1
+          const delay = retryDelayMs(request, attempts)
+          if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay))
+        }
+        if (!snapshot) throw lastError ?? new Error('probe_provider_failed')
+        const retry = attempts > 0 || failed
+          ? { attempts, exhausted: failed, ...(lastError ? { error: errorMessage(lastError) } : {}) }
+          : undefined
         const fallback = this.cache.get(key)
         if (fallback && probeCollectionFailed(snapshot, fallback.snapshot, sections)) {
-          return { snapshot: mergeRecoveredProbeSnapshot(snapshot, fallback.snapshot, sections, snapshot.errors[0]?.message ?? 'provider returned no observation', now), recovered: true }
+          return {
+            snapshot: mergeRecoveredProbeSnapshot(snapshot, fallback.snapshot, sections, snapshot.errors[0]?.message ?? lastError ?? 'provider returned no observation', now, retry),
+            recovered: true,
+            retry,
+          }
+        }
+        if (retry?.exhausted) {
+          snapshot = {
+            ...snapshot,
+            errors: [...snapshot.errors, retryError(retry.attempts, retry.error)],
+          }
         }
         this.cache.set(key, { snapshot })
-        if (vaultId) void this.persistence.save(snapshot, vaultId, now).catch(() => undefined)
-        return { snapshot, recovered: false }
+        // A failed envelope must not replace the durable recovery candidate.
+        if (vaultId && !retry?.exhausted) void this.persistence.save(snapshot, vaultId, now).catch(() => undefined)
+        return { snapshot, recovered: false, retry }
       } catch (error) {
         const fallback = this.cache.get(key)
         if (!fallback) throw error
-        return { snapshot: markProbeSnapshotRecovered(fallback.snapshot, error, now), recovered: true }
+        const retry = { attempts: maxRetries(request), exhausted: true, error: errorMessage(error) }
+        const recovered = markProbeSnapshotRecovered(fallback.snapshot, error, now)
+        const errors = [...recovered.errors]
+        const staleIndex = errors.findIndex((entry) => entry.code === 'stale-cache-fallback')
+        const marker = retryError(retry.attempts, retry.error)
+        if (staleIndex >= 0) errors.splice(staleIndex, 0, marker)
+        else errors.push(marker)
+        return {
+          snapshot: { ...recovered, errors },
+          recovered: true,
+          retry,
+        }
       } finally {
         this.release()
       }
@@ -293,7 +393,7 @@ export class ProbeProviderRegistry {
     this.inFlight.set(key, work)
     try {
       const result = await work
-      return { snapshot: result.snapshot, cached: false, deduplicated: false, recovered: result.recovered }
+      return { snapshot: result.snapshot, cached: false, deduplicated: false, recovered: result.recovered, retry: result.retry }
     } finally {
       if (this.inFlight.get(key) === work) this.inFlight.delete(key)
     }

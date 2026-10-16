@@ -184,6 +184,9 @@ export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHo
           alertId: alert.alertId,
         })
     if (!result) return
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('shellbeam:host-ops-refresh'))
+    }
     try {
       const notificationResult = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, result.state, {
         policy: loadNotificationPolicy(),

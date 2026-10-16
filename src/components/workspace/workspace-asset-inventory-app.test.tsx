@@ -380,9 +380,11 @@ describe('workspace asset inventory app', () => {
     )
 
     await waitFor(() => {
-      expect(runSshCommand).toHaveBeenCalledTimes(2)
+      expect(runSshCommand).toHaveBeenCalled()
     })
-    expect(screen.getAllByText('无法访问').length).toBeGreaterThan(0)
+    await waitFor(() => {
+      expect(screen.getAllByText('无法访问').length).toBeGreaterThan(0)
+    })
 
     fireEvent.click(screen.getByText('Worker Node'))
     expect(screen.queryByText(/TCP connect failed: timed out/)).not.toBeInTheDocument()

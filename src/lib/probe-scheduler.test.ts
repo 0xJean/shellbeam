@@ -83,6 +83,62 @@ describe('ProbeProviderRegistry', () => {
     expect(calls).toBe(1)
   })
 
+  it('retries a transient provider failure with a bounded budget', async () => {
+    let calls = 0
+    const item = provider('retry-agent', async (request) => {
+      calls += 1
+      if (calls < 3) throw new Error('temporary network failure')
+      return snapshot(item, request.host, request.now ?? 0)
+    })
+    const registry = new ProbeProviderRegistry(1).register(item)
+    const result = await registry.probe({
+      host: host('retry-host'),
+      resolveAuthSecret: async () => '',
+      providerId: item.ref.id,
+      sections: ['metrics'],
+      maxRetries: 2,
+      retryDelayMs: 0,
+      now: 100,
+    })
+    expect(calls).toBe(3)
+    expect(result.snapshot.health).toBe('online')
+    expect(result.retry).toEqual({ attempts: 2, exhausted: false, error: 'temporary network failure' })
+  })
+
+  it('returns stale recovery and records retry exhaustion after bounded failures', async () => {
+    let calls = 0
+    const item = provider('retry-fallback-agent', async () => {
+      calls += 1
+      throw new Error('agent remains offline')
+    })
+    const persisted = snapshot(item, host('retry-fallback-host'), 100)
+    const store = {
+      list: vi.fn(async () => [{
+        vaultId: 'vault-retry', providerKind: item.ref.kind, providerId: item.ref.id,
+        hostId: 'retry-fallback-host', snapshot: persisted, sampledAt: 100, receivedAt: 100,
+        expiresAt: 200, updatedAt: 100,
+      }]),
+      save: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+    }
+    const registry = new ProbeProviderRegistry(1, store).register(item)
+    const result = await registry.probe({
+      host: host('retry-fallback-host'),
+      resolveAuthSecret: async () => '',
+      providerId: item.ref.id,
+      vaultId: 'vault-retry',
+      sections: ['metrics'],
+      maxRetries: 2,
+      retryDelayMs: 0,
+      now: 500,
+    })
+    expect(calls).toBe(3)
+    expect(result.recovered).toBe(true)
+    expect(result.retry).toMatchObject({ attempts: 2, exhausted: true })
+    expect(result.snapshot.errors).toContainEqual(expect.objectContaining({ code: 'recovery-retry-exhausted' }))
+    expect(store.save).not.toHaveBeenCalled()
+  })
+
   it('enforces a shared concurrency limit across hosts', async () => {
     let active = 0
     let maximum = 0
