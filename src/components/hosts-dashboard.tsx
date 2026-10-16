@@ -18,12 +18,15 @@ import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import { loadKomariPersistence, persistKomariSync } from '@/lib/komari-persistence'
 import { readKomariAlertState } from '@/lib/komari-persistence'
+import { runBatchDockerOperation, runBatchOperation, runBatchServiceOperation, type BatchOperationResult } from '@/lib/multi-host-operations'
+import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, syncKomariIntegration } from '@/lib/komari-sync'
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
 import { KomariProbeMappingNotice } from './komari-probe-ops-view'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
+import MultiHostOperationsPanel, { type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
 type SortMode = 'az' | 'za' | 'newest' | 'oldest'
@@ -374,6 +377,81 @@ export function HostsDashboard({
 
   useEffect(() => { void refreshHostOps() }, [activeVaultId, refreshHostOps])
 
+  const handleMultiHostOperation = useCallback(async (request: MultiHostOperationRequest): Promise<MultiHostOperationResult> => {
+    const selectedHosts = request.hostIds
+      .map((hostId) => hosts.find((host) => host.id === hostId))
+      .filter((host): host is HostProfile => Boolean(host))
+    if (selectedHosts.length === 0) throw new Error('No selected hosts are available')
+
+    const operationLabel = request.operation === 'docker.restart'
+      ? t('multiHost.operations.dockerRestart')
+      : request.operation === 'service.restart'
+        ? t('multiHost.operations.serviceRestart')
+        : t('multiHost.operations.healthCheck')
+    const confirmMessage = t('multiHost.confirm', {
+      operation: operationLabel,
+      target: request.target ?? t('multiHost.operations.healthCheck'),
+      count: selectedHosts.length,
+      hosts: selectedHosts.map((host) => host.name).join(', '),
+    })
+    let batch: BatchOperationResult<unknown>
+    if (request.operation === 'docker.restart') {
+      if (!request.target) throw new Error('A Docker container name is required')
+      batch = await runBatchDockerOperation({
+        hosts: selectedHosts,
+        containerName: request.target,
+        dockerAction: 'restart',
+        resolveAuthSecret: resolveKomariHostSecret,
+        confirmMessage,
+        confirm: () => request.confirmationRequired ? window.confirm(confirmMessage) : true,
+      })
+    } else if (request.operation === 'service.restart') {
+      if (!request.target) throw new Error('A systemd service name is required')
+      batch = await runBatchServiceOperation({
+        hosts: selectedHosts,
+        serviceName: request.target,
+        serviceAction: 'restart',
+        resolveAuthSecret: resolveKomariHostSecret,
+        confirmMessage,
+        confirm: () => request.confirmationRequired ? window.confirm(confirmMessage) : true,
+      })
+    } else if (request.operation === 'health-check') {
+      batch = await runBatchOperation({
+        hosts: selectedHosts,
+        action: 'health.refresh',
+        target: 'remote-health',
+        risk: 'read-only',
+        confirmMessage,
+        confirm: () => true,
+        execute: (host) => runWorkspaceRemoteCommand({
+          host,
+          resolveAuthSecret: resolveKomariHostSecret,
+          command: "printf '__SHELLBEAM_HEALTH=ok\n'; uptime -p 2>/dev/null || true",
+        }),
+        getResult: (value) => value,
+      })
+    } else {
+      throw new Error('Unsupported multi-host operation')
+    }
+
+    await refreshHostOps(true)
+    return {
+      operation: request.operation,
+      status: batch.status,
+      results: batch.outcomes.map((outcome) => ({
+        hostId: outcome.host.id,
+        status: outcome.status,
+        jobId: outcome.job?.jobId ?? null,
+        auditId: outcome.job?.auditId ?? null,
+        transport: outcome.transport,
+        resultSummary: outcome.resultSummary ?? outcome.job?.resultSummary ?? null,
+        errorSummary: outcome.errorSummary ?? outcome.job?.errorSummary ?? null,
+      })),
+      startedAt: batch.startedAt,
+      finishedAt: batch.finishedAt,
+    }
+  }, [hosts, refreshHostOps, resolveKomariHostSecret, t])
+
 
   const operationalSummaryByHost = useMemo(() => {
     const summaries = new Map<string, HostOperationalSummary | undefined>()
@@ -647,6 +725,7 @@ export function HostsDashboard({
           </>
         }
       >
+          <MultiHostOperationsPanel hosts={filteredHosts} onRunOperation={handleMultiHostOperation} />
           <KomariAlertsDashboardPanel activeVaultId={activeVaultId} onOpenHost={onSelectHost} />
           <KomariProbeMappingNotice links={komariProbeLinks} />
           <HostCreateDialog
