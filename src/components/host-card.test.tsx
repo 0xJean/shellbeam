@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { HostListItem } from './host-card'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
-import type { KomariAlertRecord } from '@/lib/komari-alerts'
+import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
 
 const host = {
   id: 'host-1',
@@ -201,6 +201,16 @@ describe('host list item', () => {
       confirmationStatus: 'not_required',
       createdAt: 2_000,
     }
+    const alertAudit: KomariAlertAuditEntry = {
+      auditId: 'alert-audit-ack',
+      alertId: 'alert-ack',
+      fingerprint: 'komari-prod|node-1|host-1|load',
+      event: 'acknowledged',
+      status: 'acknowledged',
+      actor: 'mcp-client:test',
+      operationJobId: 'job-ack',
+      at: 2_000,
+    }
 
     render(
       <HostListItem
@@ -217,6 +227,7 @@ describe('host list item', () => {
           auditCount: 1,
           latestAudit: audit,
           audits: [audit],
+          komariAlertAudits: [alertAudit],
           provider: 'komari',
           sampledAt: 1_000,
           transport: 'direct',
@@ -233,6 +244,8 @@ describe('host list item', () => {
     expect(screen.getByText('Acknowledged: 1')).toBeInTheDocument()
     expect(screen.getByText('Closed: 1')).toBeInTheDocument()
     expect(screen.getByText('job job-ack · completed')).toBeInTheDocument()
+    expect(screen.getByTestId('host-ops-alert-audit')).toHaveTextContent('Acknowledged')
+    expect(screen.getByTestId('host-ops-alert-audit')).toHaveTextContent('mcp-client:test')
   })
 
   it('runs acknowledge and close actions from the host ops alert context', async () => {

@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
-import type { KomariAlertRecord } from '@/lib/komari-alerts'
+import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
 import { AlertTriangle, Activity, Bot, Check, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
@@ -56,6 +56,10 @@ export interface HostOperationalSummary {
   alertLinkedJobId?: string | null
   /** Lifecycle rows owned by the local Komari journal for this host. */
   komariAlerts?: KomariAlertRecord[]
+  /** Host-scoped lifecycle audit rows loaded from the durable Komari journal.
+   * These are separate from OperationAuditEntry because they also include
+   * provider recovery and acknowledgement events from another session. */
+  komariAlertAudits?: KomariAlertAuditEntry[]
   /** Acknowledge or close one of the host's persisted Komari alerts. */
   onKomariAlertAction?: (action: 'acknowledge' | 'close', alert: KomariAlertRecord) => Promise<void> | void
   /** Alert id currently being persisted; keeps retries scoped to one row. */
@@ -68,6 +72,9 @@ export interface HostOperationalSummary {
   latestAudit?: Pick<OperationAuditEntry, 'action' | 'target' | 'status' | 'createdAt' | 'transport' | 'provider'> & Partial<Pick<OperationAuditEntry, 'auditId' | 'jobId' | 'source'>>
   audits?: OperationAuditEntry[]
   provider?: string
+  probeProviderId?: string
+  probeState?: 'fresh' | 'stale' | 'recovered' | 'error' | 'unknown'
+  probeError?: string
   sampledAt?: number
   transport: 'direct' | 'proxy-jump'
   agentStatus?: string
@@ -398,6 +405,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
   const actionableAlerts = (summary.komariAlerts ?? []).filter((alert) => (
     alert.status === 'active' || alert.status === 'acknowledged' || alert.status === 'resolved'
   ))
+  const latestAlertAudit = [...(summary.komariAlertAudits ?? [])].sort((left, right) => right.at - left.at)[0]
 
   async function runAlertAction(action: 'acknowledge' | 'close', alert: KomariAlertRecord) {
     if (!operations.onKomariAlertAction || operations.komariAlertBusy) return
@@ -435,6 +443,12 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
       ) : null}
       {latest?.auditId && <div className="truncate font-mono text-[10px] text-[var(--workspace-text-subtle)]" title={latest.auditId}>{latest.source} · job={latest.jobId} · audit={latest.auditId}</div>}
       {latest?.status === 'unknown' && <div className="flex items-center gap-1 text-[color:var(--workspace-status-warn-text)]"><AlertTriangle className="h-3 w-3 shrink-0" />{t('hosts.opsRecoveryRequired')}</div>}
+      {latestAlertAudit && (
+        <div data-testid="host-ops-alert-audit" className="truncate text-[10px] text-[var(--workspace-text-subtle)]" title={`${latestAlertAudit.auditId} · ${latestAlertAudit.actor}`}>
+          {t('hosts.alert.auditLatest', { event: t(`komariAlerts.event.${latestAlertAudit.event}`), actor: latestAlertAudit.actor })}
+          {latestAlertAudit.operationJobId ? ` · job=${latestAlertAudit.operationJobId}` : ''}
+        </div>
+      )}
       {actionableAlerts.length > 0 && (
         <div data-testid="host-ops-alert-actions" className="space-y-1.5 border-t border-[color:var(--workspace-border-soft)] pt-1.5">
           {actionableAlerts.slice(0, 3).map((alert) => {
@@ -501,6 +515,20 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
           {summary.agentHealth && <span className="shrink-0 text-[var(--workspace-text-subtle)]">· {t(`workspace.agentProbe.${agentHealth === 'online' ? 'online' : agentHealth === 'offline' ? 'offline' : 'unknown'}`)}</span>}
           {summary.agentVersion && <span className="shrink-0 font-mono">v{summary.agentVersion}</span>}
           {summary.agentHeartbeatAt && <span className="ml-auto shrink-0">{formatSummaryAge(summary.agentHeartbeatAt, t)}</span>}
+        </div>
+      )}
+      {summary.probeState && (
+        <div className={cn(
+          'flex min-w-0 items-center gap-1.5',
+          summary.probeState === 'fresh' ? 'text-[color:var(--workspace-status-good-text)]' :
+            summary.probeState === 'error' ? 'text-[color:var(--workspace-status-bad-text)]' :
+              'text-[color:var(--workspace-status-warn-text)]',
+        )} title={summary.probeError || t('hosts.opsProbeState')}>
+          <ShieldCheck className="h-3 w-3 shrink-0" />
+          <span className="shrink-0">{t('hosts.opsProbeState')}</span>
+          <strong className="truncate font-medium">{t(`hosts.opsProbe.${summary.probeState}`)}</strong>
+          {summary.probeProviderId && <span className="truncate font-mono text-[var(--workspace-text-subtle)]">· {summary.probeProviderId}</span>}
+          {summary.probeError && <span className="truncate text-[var(--workspace-text-subtle)]" title={summary.probeError}>· {summary.probeError}</span>}
         </div>
       )}
       <div className="flex min-w-0 items-center gap-2 text-[var(--workspace-text-subtle)]">

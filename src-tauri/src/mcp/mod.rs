@@ -545,6 +545,34 @@ fn latest(app: &tauri::AppHandle, host: &HostProfile) -> Result<Value, String> {
     serde_json::to_value(result).map_err(|e| e.to_string())
 }
 
+/// Classify a persisted ProbeProvider row for consumers which cannot run a
+/// fresh probe (for example an MCP client after a desktop restart). The
+/// durable row is still useful as a recovery candidate, but it must never be
+/// presented as a current healthy observation after its TTL has elapsed.
+fn probe_recovery_state(snapshot: &Value, expired: bool) -> &'static str {
+    match snapshot.get("health").and_then(Value::as_str) {
+        Some("offline") => "offline",
+        Some("unknown") => "unknown",
+        Some("stale") => "stale",
+        Some("online") if !expired => "fresh",
+        _ if expired => "stale",
+        _ => "unknown",
+    }
+}
+
+fn linked_operation_job_ids(alerts: &[Value], audit: &[Value]) -> HashSet<String> {
+    let mut ids = audit
+        .iter()
+        .filter_map(|event| event["operationJobId"].as_str().map(str::to_owned))
+        .collect::<HashSet<_>>();
+    ids.extend(
+        alerts
+            .iter()
+            .filter_map(|alert| alert["relatedOperationJobId"].as_str().map(str::to_owned)),
+    );
+    ids
+}
+
 /// Return the persisted Komari and ShellBeam Probe state for one authorized
 /// host. The query is read-only and scoped through the client's Vault, so MCP
 /// can inspect cached observations even when the Komari endpoint is offline.
@@ -566,6 +594,8 @@ fn komari_probe_state(
         })
         .map(|record| {
             let snapshot = record.snapshot;
+            let expired = now_unix_ms() > record.expires_at;
+            let recovery_state = probe_recovery_state(&snapshot, expired);
             json!({
                 "integrationId": record.integration_id,
                 "nodeId": record.node_id,
@@ -573,7 +603,9 @@ fn komari_probe_state(
                 "sampledAt": record.sampled_at,
                 "receivedAt": record.received_at,
                 "expiresAt": record.expires_at,
-                "expired": now_unix_ms() > record.expires_at,
+                "expired": expired,
+                "recoveryState": recovery_state,
+                "recoveryAvailable": recovery_state == "stale" || recovery_state == "unknown",
                 "health": snapshot.get("health").cloned().unwrap_or(Value::Null),
                 "provider": snapshot.get("provider").cloned().unwrap_or(Value::Null),
                 "transport": snapshot.get("transport").cloned().unwrap_or(Value::Null),
@@ -1145,10 +1177,40 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
             audit.sort_by_key(|event| std::cmp::Reverse(event["at"].as_i64().unwrap_or(0)));
             alerts.truncate(200);
             audit.truncate(500);
+            // Alert acknowledgement/closure is a local OperationJob. Join
+            // the durable job and audit rows back into this response so a
+            // fresh MCP session can render the complete lifecycle without
+            // relying on in-memory command results.
+            let linked_job_ids = linked_operation_job_ids(&alerts, &audit);
+            let mut operation_jobs = operation_jobs::operation_job_list(
+                app.clone(),
+                Some(operation_jobs::OperationJobListQuery {
+                    host_id: Some(host.id.clone()),
+                    vault_id: Some(client.vault_id.clone()),
+                    status: None,
+                    action: None,
+                    source: None,
+                    limit: Some(500),
+                }),
+            )?;
+            operation_jobs.retain(|job| linked_job_ids.contains(&job.job_id));
+            let mut operation_audits = operation_jobs::operation_audit_list(
+                app.clone(),
+                Some(operation_jobs::OperationAuditListQuery {
+                    job_id: None,
+                    host_id: Some(host.id.clone()),
+                    vault_id: Some(client.vault_id.clone()),
+                    source: None,
+                    limit: Some(500),
+                }),
+            )?;
+            operation_audits.retain(|entry| linked_job_ids.contains(&entry.job_id));
             Ok(json!({
                 "server": public_host(host, client),
                 "alerts": alerts,
                 "audit": audit,
+                "operationJobs": operation_jobs,
+                "operationAudits": operation_audits,
                 "sync": sync,
                 "observedAt": now_unix_ms(),
                 "notice": "Alert records are local lifecycle metadata. Acknowledgement and closure do not change Komari remotely; use a linked Probe/SSH OperationJob to diagnose or recover the host.",
@@ -1863,6 +1925,48 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(alert_ids, vec!["host-alert", "node-alert"]);
         assert_eq!(scoped["audit"].as_array().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn persisted_probe_rows_expose_recovery_state_after_restart() {
+        assert_eq!(
+            probe_recovery_state(&json!({"health":"online"}), false),
+            "fresh"
+        );
+        assert_eq!(
+            probe_recovery_state(&json!({"health":"online"}), true),
+            "stale"
+        );
+        assert_eq!(
+            probe_recovery_state(&json!({"health":"stale"}), false),
+            "stale"
+        );
+        assert_eq!(
+            probe_recovery_state(&json!({"health":"offline"}), false),
+            "offline"
+        );
+        assert_eq!(
+            probe_recovery_state(&json!({"health":"unknown"}), false),
+            "unknown"
+        );
+        assert_eq!(probe_recovery_state(&json!({}), false), "unknown");
+    }
+
+    #[test]
+    fn alert_response_joins_operation_ids_from_lifecycle_and_audit_rows() {
+        let ids = linked_operation_job_ids(
+            &[
+                json!({"alertId":"a1","relatedOperationJobId":"job-from-alert"}),
+                json!({"alertId":"a2","relatedOperationJobId":null}),
+            ],
+            &[
+                json!({"alertId":"a1","operationJobId":"job-from-audit"}),
+                json!({"alertId":"a3","operationJobId":null}),
+            ],
+        );
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("job-from-alert"));
+        assert!(ids.contains("job-from-audit"));
     }
 
     fn host_with_jump(auth_type: &str) -> HostProfile {

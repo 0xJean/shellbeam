@@ -265,4 +265,34 @@ describe('buildHostOpsViews', () => {
       ['alert-2', 'closed', 'job-alert-2'],
     ])
   })
+
+  it('surfaces a persisted Probe recovery marker across sessions', () => {
+    const recovered: ProbeSnapshot = {
+      schemaVersion: 1,
+      host: { hostId: host.id, address: host.address, port: host.port, username: host.username },
+      provider: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics'] },
+      transport: 'proxy-jump',
+      health: 'stale',
+      receivedAt: 1_500,
+      metrics: createProbeObservation({
+        data: monitor.snapshot!,
+        source: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics'] },
+        sampledAt: 1_000,
+        receivedAt: 1_500,
+        ttlMs: 100,
+      }),
+      inventory: null,
+      errors: [{ section: 'provider', code: 'stale-cache-fallback', message: 'fresh probe unavailable' }],
+      alerts: null,
+    }
+    const view = buildHostOpsViews({ hosts: [host], probeSnapshots: [recovered], now: 2_000 })['host-1']
+    expect(view.health.probe).toMatchObject({
+      state: 'recovered',
+      providerKind: 'ssh-agentless',
+      persisted: true,
+      sampledAt: 1_000,
+      receivedAt: 1_500,
+    })
+    expect(view.health.state).toBe('stale')
+  })
 })

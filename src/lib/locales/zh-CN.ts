@@ -692,6 +692,12 @@ const zhCN: Record<string, string> = {
   'hosts.opsRecoveryRequired': '远端状态未知，重试前请先检查',
   'hosts.opsNoAudit': '暂无运维操作',
   'hosts.opsNoProvider': '暂无探测数据',
+  'hosts.opsProbeState': '探针状态',
+  'hosts.opsProbe.fresh': '最新',
+  'hosts.opsProbe.stale': '已过期',
+  'hosts.opsProbe.recovered': '已从缓存恢复',
+  'hosts.opsProbe.error': '错误',
+  'hosts.opsProbe.unknown': '未知',
   'hosts.opsNoSample': '暂无采样',
   'hosts.opsFailed': '失败',
   'hosts.opsDirect': '直连',
@@ -711,6 +717,7 @@ const zhCN: Record<string, string> = {
   'hosts.alert.openTerminal': '打开终端排查',
   'hosts.alert.linkedOperation': '运维任务 {jobId}',
   'hosts.alert.audit': '告警生命周期审计',
+  'hosts.alert.auditLatest': '最近告警事件：{event} · {actor}',
 
   // Host form
   'hostForm.editHost': '编辑主机',

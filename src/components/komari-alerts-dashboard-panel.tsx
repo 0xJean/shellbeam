@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { listKomariIntegrations } from '@/lib/komari-config'
+import type { HostProfile } from '@/lib/hosts'
+import { useT } from '@/lib/i18n'
 import { loadNotificationPolicy } from '@/lib/notification-policy'
 import type { NotificationDispatchState } from '@/lib/notification-dispatch'
 import {
@@ -12,6 +14,7 @@ import {
 } from '@/lib/komari-persistence'
 import {
   persistKomariAlertAction,
+  runKomariAlertAction,
   type KomariAlertAction,
 } from '@/lib/komari-alert-actions'
 import {
@@ -72,6 +75,10 @@ function mergeNotificationStates(entries: AlertEntry[]): NotificationDispatchSta
 
 export interface KomariAlertsDashboardPanelProps {
   activeVaultId?: string
+  /** Host profiles let host-scoped acknowledgement/close actions use the
+   * same confirmed OperationJob bridge as the inline host card. Aggregate
+   * alerts without a host continue through the local journal only. */
+  hosts?: HostProfile[]
   onOpenHost?: (hostId: string) => void
   onOpenOperation?: (operationJobId: string) => void
 }
@@ -80,7 +87,8 @@ export interface KomariAlertsDashboardPanelProps {
  * the local notification policy, and delegates acknowledgement/close to the
  * same durable helper used by other alert surfaces. It never fetches Komari
  * credentials or mutates Komari's remote alert state. */
-export function KomariAlertsDashboardPanel({ activeVaultId, onOpenHost, onOpenOperation }: KomariAlertsDashboardPanelProps) {
+export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHost, onOpenOperation }: KomariAlertsDashboardPanelProps) {
+  const { t } = useT()
   const [entries, setEntries] = useState<AlertEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -154,11 +162,28 @@ export function KomariAlertsDashboardPanel({ activeVaultId, onOpenHost, onOpenOp
   const handleAction = useCallback(async (action: KomariAlertAction, alert: KomariAlertRecord) => {
     const entry = entries.find((candidate) => candidate.state.alerts.some((item) => item.alertId === alert.alertId))
     if (!entry) throw new Error('Komari alert integration was not found')
-    const result = await persistKomariAlertAction(action, {
-      integrationId: entry.integrationId,
-      state: entry.state,
-      alertId: alert.alertId,
-    })
+    const persisted = await loadKomariPersistence(entry.integrationId)
+    const host = alert.hostId ? hosts.find((candidate) => candidate.id === alert.hostId) : undefined
+    const result = host
+      ? (await runKomariAlertAction(action, {
+          integrationId: entry.integrationId,
+          state: entry.state,
+          alertId: alert.alertId,
+          host,
+          vaultId: activeVaultId,
+          lastSyncedAt: persisted.lastSyncedAt ?? undefined,
+          ttlMs: persisted.syncState?.ttlMs,
+          confirmMessage: t(
+            action === 'acknowledge' ? 'hosts.alert.confirmAcknowledge' : 'hosts.alert.confirmClose',
+            { host: host.name, alert: alert.title },
+          ),
+        }))
+      : await persistKomariAlertAction(action, {
+          integrationId: entry.integrationId,
+          state: entry.state,
+          alertId: alert.alertId,
+        })
+    if (!result) return
     try {
       const notificationResult = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, result.state, {
         policy: loadNotificationPolicy(),
@@ -172,7 +197,7 @@ export function KomariAlertsDashboardPanel({ activeVaultId, onOpenHost, onOpenOp
     } catch {
       setEntries((current) => current.map((candidate) => candidate.integrationId === entry.integrationId ? { ...candidate, state: result.state } : candidate))
     }
-  }, [entries])
+  }, [activeVaultId, entries, hosts, t])
 
   if (!activeVaultId && !state && !loading) return null
   return (

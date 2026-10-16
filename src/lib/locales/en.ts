@@ -692,6 +692,12 @@ const en: Record<string, string> = {
   'hosts.opsRecoveryRequired': 'Remote state needs verification before retrying',
   'hosts.opsNoAudit': 'No recent operation',
   'hosts.opsNoProvider': 'No probe data',
+  'hosts.opsProbeState': 'Probe state',
+  'hosts.opsProbe.fresh': 'Fresh',
+  'hosts.opsProbe.stale': 'Stale',
+  'hosts.opsProbe.recovered': 'Recovered from cache',
+  'hosts.opsProbe.error': 'Error',
+  'hosts.opsProbe.unknown': 'Unknown',
   'hosts.opsNoSample': 'No sample',
   'hosts.opsFailed': 'failed',
   'hosts.opsDirect': 'Direct',
@@ -711,6 +717,7 @@ const en: Record<string, string> = {
   'hosts.alert.openTerminal': 'Open Terminal to investigate',
   'hosts.alert.linkedOperation': 'Operation {jobId}',
   'hosts.alert.audit': 'Alert lifecycle audit',
+  'hosts.alert.auditLatest': 'Latest alert event: {event} · {actor}',
 
   // Host form
   'hostForm.editHost': 'Edit Host',

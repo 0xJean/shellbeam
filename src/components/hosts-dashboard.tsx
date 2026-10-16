@@ -214,6 +214,7 @@ function hostOpsToCardSummary(
       alertLinkedJobId: alertLifecycle.latestOperationJobId,
     } : {}),
     komariAlerts: view.komariAlerts,
+    komariAlertAudits: view.komariAlertAudits,
     onKomariAlertAction,
     komariAlertBusy,
     auditCount: view.operationSummary.total,
@@ -235,6 +236,11 @@ function hostOpsToCardSummary(
       : undefined,
     audits: view.audits,
     provider: view.health.provider === 'unknown' ? undefined : view.health.provider,
+    ...(view.health.probe ? {
+      probeProviderId: view.health.probe.providerId,
+      probeState: view.health.probe.state,
+      probeError: view.health.probe.error,
+    } : {}),
     sampledAt: view.health.freshness.sampledAt ?? undefined,
     transport: view.health.transport,
     ...(view.health.agent ? {
@@ -908,7 +914,7 @@ export function HostsDashboard({
         }
       >
           <MultiHostOperationsPanel hosts={filteredHosts} onRunOperation={handleMultiHostOperation} />
-          <KomariAlertsDashboardPanel activeVaultId={activeVaultId} onOpenHost={onSelectHost} />
+          <KomariAlertsDashboardPanel activeVaultId={activeVaultId} hosts={hosts} onOpenHost={onSelectHost} />
           <KomariProbeMappingNotice links={komariProbeLinks} />
           <HostCreateDialog
             open={showAddForm}
