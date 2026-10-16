@@ -130,6 +130,24 @@ export function KomariAlertsDashboardPanel({ activeVaultId, onOpenHost, onOpenOp
 
   useEffect(() => { void reload() }, [reload])
 
+  // Alert lifecycle rows are persisted in the local Komari sync journal, so
+  // another window/session may acknowledge, close or resolve an alert while
+  // this dashboard is mounted. Re-read that journal when the app returns to
+  // the foreground and during a long open session; this keeps the summary and
+  // notification delivery ledger aligned without polling the Komari API.
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void reload()
+    }
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    const timer = window.setInterval(refreshWhenVisible, 15_000)
+    return () => {
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.clearInterval(timer)
+    }
+  }, [reload])
+
   const state = useMemo(() => mergeAlertEntries(entries), [entries])
   const notificationSummary = useMemo(() => mergeNotificationSummaries(entries), [entries])
   const notificationState = useMemo(() => mergeNotificationStates(entries), [entries])

@@ -6,7 +6,8 @@ mod store;
 
 use crate::data::{
     hosts::{load_hosts, HostProfile},
-    operation_jobs, server_monitor, workspace_inventory,
+    komari, komari_persistence, operation_jobs, server_monitor, shellbeam_agent,
+    workspace_inventory,
 };
 use crate::storage::{data_file_path, now_unix_ms, read_json_or_default, write_json};
 use crate::vault::secrets::VaultState;
@@ -493,6 +494,246 @@ fn latest(app: &tauri::AppHandle, host: &HostProfile) -> Result<Value, String> {
     serde_json::to_value(result).map_err(|e| e.to_string())
 }
 
+/// Return the persisted Komari and ShellBeam Probe state for one authorized
+/// host. The query is read-only and scoped through the client's Vault, so MCP
+/// can inspect cached observations even when the Komari endpoint is offline.
+fn komari_probe_state(
+    app: &tauri::AppHandle,
+    client: &Client,
+    host: &HostProfile,
+) -> Result<Value, String> {
+    let integrations = komari::list_komari_integrations(app.clone(), client.vault_id.clone())?;
+    let integration_ids = integrations
+        .iter()
+        .filter(|integration| integration.enabled)
+        .map(|integration| integration.id.clone())
+        .collect::<HashSet<_>>();
+    let snapshots = komari_persistence::list_komari_snapshots(app.clone(), None)?
+        .into_iter()
+        .filter(|snapshot| {
+            snapshot.host_id == host.id && integration_ids.contains(&snapshot.integration_id)
+        })
+        .map(|record| {
+            let snapshot = record.snapshot;
+            json!({
+                "integrationId": record.integration_id,
+                "nodeId": record.node_id,
+                "hostId": record.host_id,
+                "sampledAt": record.sampled_at,
+                "receivedAt": record.received_at,
+                "expiresAt": record.expires_at,
+                "expired": now_unix_ms() > record.expires_at,
+                "health": snapshot.get("health").cloned().unwrap_or(Value::Null),
+                "provider": snapshot.get("provider").cloned().unwrap_or(Value::Null),
+                "transport": snapshot.get("transport").cloned().unwrap_or(Value::Null),
+                "metrics": snapshot.get("metrics").cloned().unwrap_or(Value::Null),
+                "alerts": snapshot.get("alerts").cloned().unwrap_or(Value::Null),
+                "errors": snapshot.get("errors").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mappings = komari_persistence::list_komari_mappings(app.clone(), None)?
+        .into_iter()
+        .filter(|mapping| {
+            mapping.host_id == host.id && integration_ids.contains(&mapping.integration_id)
+        })
+        .map(|mapping| {
+            json!({
+                "integrationId": mapping.integration_id,
+                "hostId": mapping.host_id,
+                "nodeId": mapping.node_id,
+                "source": mapping.source,
+                "confidence": mapping.confidence,
+                "updatedAt": mapping.updated_at,
+            })
+        })
+        .collect::<Vec<_>>();
+    let mapped_nodes = mappings
+        .iter()
+        .filter_map(|mapping| mapping["nodeId"].as_str().map(str::to_owned))
+        .collect::<HashSet<_>>();
+    let mut sync = Vec::new();
+    for integration in integrations.iter().filter(|integration| integration.enabled) {
+        let Some(state) =
+            komari_persistence::get_komari_sync_state(app.clone(), integration.id.clone())?
+        else {
+            continue;
+        };
+        let stale = now_unix_ms().saturating_sub(state.last_synced_at) > state.ttl_ms.max(0);
+        let alert_state = state
+            .alert_summary
+            .map(|summary| scoped_komari_alert_state(summary, &host.id, &mapped_nodes))
+            .unwrap_or(Value::Null);
+        sync.push(json!({
+            "integrationId": state.integration_id,
+            "lastSyncedAt": state.last_synced_at,
+            "ttlMs": state.ttl_ms,
+            "updatedAt": state.updated_at,
+            "stale": stale,
+            "alertState": alert_state,
+        }));
+    }
+    let probe = store::read_probe(app, &client.vault_id, &host.id, &policy::identity(host))?
+        .unwrap_or(Value::Null);
+    let agents = shellbeam_agent::list_shellbeam_agents(
+        app.clone(),
+        Some(client.vault_id.clone()),
+        Some(host.id.clone()),
+    )?;
+    Ok(json!({
+        "integrations": integrations
+            .iter()
+            .filter(|integration| integration.enabled)
+            .map(|integration| json!({
+                "id": integration.id,
+                "name": integration.name,
+                "enabled": integration.enabled,
+                "updatedAt": integration.updated_at,
+            }))
+            .collect::<Vec<_>>(),
+        "snapshots": snapshots,
+        "mappings": mappings,
+        "sync": sync,
+        "probe": {
+            "latestMcpProbe": probe,
+            "shellbeamAgents": agents,
+        },
+        "observedAt": now_unix_ms(),
+    }))
+}
+
+fn scoped_komari_alert_state(
+    summary: Value,
+    host_id: &str,
+    mapped_nodes: &HashSet<String>,
+) -> Value {
+    let Some(mut object) = summary.as_object().cloned() else {
+        return Value::Null;
+    };
+    let alerts = object
+        .remove("alerts")
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default();
+    let alerts = alerts
+        .into_iter()
+        .filter(|alert| {
+            alert["hostId"].as_str() == Some(host_id)
+                || alert["nodeId"]
+                    .as_str()
+                    .is_some_and(|node_id| mapped_nodes.contains(node_id))
+        })
+        .collect::<Vec<_>>();
+    let alert_ids = alerts
+        .iter()
+        .filter_map(|alert| alert["alertId"].as_str().map(str::to_owned))
+        .collect::<HashSet<_>>();
+    let audit = object
+        .remove("audit")
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|event| {
+            event["alertId"]
+                .as_str()
+                .is_some_and(|alert_id| alert_ids.contains(alert_id))
+        })
+        .collect::<Vec<_>>();
+    object.insert("alerts".into(), Value::Array(alerts));
+    object.insert("audit".into(), Value::Array(audit));
+    Value::Object(object)
+}
+
+/// Link a confirmed MCP OperationJob to a local Komari alert audit row. The
+/// provider remains the source of truth for recovery; this only records the
+/// diagnostic/remediation job and is idempotent for repeated requestIds.
+fn link_komari_alert_operation(
+    app: &tauri::AppHandle,
+    client: &Client,
+    host: &HostProfile,
+    alert_id: &str,
+    operation_job_id: &str,
+) -> Result<bool, String> {
+    let alert_id = alert_id.trim();
+    let operation_job_id = operation_job_id.trim();
+    if alert_id.is_empty() || operation_job_id.is_empty() {
+        return Ok(false);
+    }
+    let now = now_unix_ms();
+    let integrations = komari::list_komari_integrations(app.clone(), client.vault_id.clone())?;
+    for integration in integrations.into_iter().filter(|integration| integration.enabled) {
+        let mapped_nodes = komari_persistence::list_komari_mappings(app.clone(), None)?
+            .into_iter()
+            .filter(|mapping| {
+                mapping.integration_id == integration.id && mapping.host_id == host.id
+            })
+            .map(|mapping| mapping.node_id)
+            .collect::<HashSet<_>>();
+        let Some(state) =
+            komari_persistence::get_komari_sync_state(app.clone(), integration.id.clone())?
+        else {
+            continue;
+        };
+        let Some(mut summary) = state.alert_summary else {
+            continue;
+        };
+        let Some(summary_object) = summary.as_object_mut() else {
+            continue;
+        };
+        let Some(alerts) = summary_object
+            .get_mut("alerts")
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        let Some(alert) = alerts.iter_mut().find(|alert| {
+            alert["alertId"] == alert_id
+                && (alert["hostId"] == host.id
+                    || alert["nodeId"]
+                        .as_str()
+                        .is_some_and(|node_id| mapped_nodes.contains(node_id)))
+        }) else {
+            continue;
+        };
+        if alert["relatedOperationJobId"] == operation_job_id {
+            return Ok(true);
+        }
+        alert["relatedOperationJobId"] = json!(operation_job_id);
+        let event = json!({
+            "auditId": format!("komari-link-{}", uuid::Uuid::new_v4()),
+            "alertId": alert_id,
+            "fingerprint": alert["fingerprint"].clone(),
+            "event": "operation-linked",
+            "status": alert["status"].clone(),
+            "actor": format!("mcp-client:{}", client.id),
+            "operationJobId": operation_job_id,
+            "at": now,
+        });
+        let audit = summary_object
+            .entry("audit")
+            .or_insert_with(|| json!([]))
+            .as_array_mut();
+        if let Some(audit) = audit {
+            audit.push(event);
+            if audit.len() > 1_000 {
+                let drain = audit.len() - 1_000;
+                audit.drain(0..drain);
+            }
+        }
+        komari_persistence::upsert_komari_sync_state(
+            app.clone(),
+            komari_persistence::KomariSyncStatePayload {
+                integration_id: state.integration_id,
+                last_synced_at: state.last_synced_at,
+                ttl_ms: state.ttl_ms,
+                alert_summary: Some(summary),
+                updated_at: Some(now),
+            },
+        )?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Result<Value, String> {
     let hosts = load_hosts(app, Some(&client.vault_id))?;
     if tool == "get_command_result" {
@@ -581,6 +822,9 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
             } else {
                 Value::Null
             };
+            if client.authorize_host(host).is_ok() {
+                item["probeState"] = komari_probe_state(app, client, host)?;
+            }
             items.push(item);
         }
         return Ok(
@@ -605,9 +849,57 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
             Ok(
                 json!({"server":public_host(host,client),"inventory":cached,"vaultUnlocked":vault_unlocked,
                 "latestProbe":store::read_probe(app,&client.vault_id,&host.id,&policy::identity(host))?,
+                "probeState":komari_probe_state(app, client, host)?,
                 "completeness":"partial","untrustedContent":true,
                 "notice":"Discovered projects are not verified deployments. Empty lists can mean missing permissions or unsupported tools. Check updatedAt/sample timestamps; cached observations can be stale."}),
             )
+        }
+        "get_server_probe_state" => Ok(json!({
+            "server": public_host(host, client),
+            "probeState": komari_probe_state(app, client, host)?,
+            "vaultUnlocked": vault_unlocked,
+            "notice": "Komari and ShellBeam Probe observations are cached provider data. Check source, freshness and mapping status before starting a remote operation.",
+        })),
+        "get_server_alerts" => {
+            let state = komari_probe_state(app, client, host)?;
+            let sync = state["sync"].as_array().cloned().unwrap_or_default();
+            let mut alerts = Vec::new();
+            let mut audit = Vec::new();
+            for entry in &sync {
+                let integration_id = entry["integrationId"].clone();
+                if let Some(alert_state) = entry["alertState"].as_object() {
+                    if let Some(items) = alert_state.get("alerts").and_then(Value::as_array) {
+                        alerts.extend(items.iter().map(|alert| {
+                            let mut item = alert.clone();
+                            if let Some(object) = item.as_object_mut() {
+                                object.insert("integrationId".into(), integration_id.clone());
+                            }
+                            item
+                        }));
+                    }
+                    if let Some(items) = alert_state.get("audit").and_then(Value::as_array) {
+                        audit.extend(items.iter().map(|event| {
+                            let mut item = event.clone();
+                            if let Some(object) = item.as_object_mut() {
+                                object.insert("integrationId".into(), integration_id.clone());
+                            }
+                            item
+                        }));
+                    }
+                }
+            }
+            alerts.sort_by_key(|alert| std::cmp::Reverse(alert["lastSeenAt"].as_i64().unwrap_or(0)));
+            audit.sort_by_key(|event| std::cmp::Reverse(event["at"].as_i64().unwrap_or(0)));
+            alerts.truncate(200);
+            audit.truncate(500);
+            Ok(json!({
+                "server": public_host(host, client),
+                "alerts": alerts,
+                "audit": audit,
+                "sync": sync,
+                "observedAt": now_unix_ms(),
+                "notice": "Alert records are local lifecycle metadata. Acknowledgement and closure do not change Komari remotely; use a linked Probe/SSH OperationJob to diagnose or recover the host.",
+            }))
         }
         "get_server_operations" => {
             let status = args["status"].as_str().map(str::to_owned);
@@ -788,6 +1080,19 @@ fn submit(
             request_id: Some(request_id.to_string()),
         },
     )?;
+    if tool == "refresh_server_info" {
+        if let Some(alert_id) = args["alertId"].as_str() {
+            match link_komari_alert_operation(app, client, host, alert_id, &operation_job.job_id) {
+                Ok(true) => {}
+                Ok(false) => log::warn!(
+                    "MCP alert link target was not found: integration scope={}, alert_id={}",
+                    client.vault_id,
+                    alert_id
+                ),
+                Err(error) => log::error!("MCP Komari alert link persistence failed: {error}"),
+            }
+        }
+    }
     if let Err(error) = store::audit(app, &client.id, Some(&host.id), tool, "starting") {
         log::error!("MCP access audit persistence failed: {error}");
         let _ = operation_jobs::operation_job_update(
@@ -975,6 +1280,38 @@ fn submit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn komari_alert_state_is_scoped_to_authorized_host_and_mapped_nodes() {
+        let summary = json!({
+            "schemaVersion": 1,
+            "alerts": [
+                {"alertId":"host-alert","hostId":"host-1","status":"active"},
+                {"alertId":"node-alert","nodeId":"node-1","status":"active"},
+                {"alertId":"other-alert","hostId":"host-2","status":"active"},
+                {"alertId":"aggregate","status":"active"}
+            ],
+            "audit": [
+                {"auditId":"a1","alertId":"host-alert"},
+                {"auditId":"a2","alertId":"node-alert"},
+                {"auditId":"a3","alertId":"other-alert"}
+            ],
+            "summary": {"open": 2}
+        });
+        let scoped = scoped_komari_alert_state(
+            summary,
+            "host-1",
+            &HashSet::from(["node-1".to_string()]),
+        );
+        let alert_ids = scoped["alerts"]
+            .as_array()
+            .expect("alerts")
+            .iter()
+            .filter_map(|alert| alert["alertId"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(alert_ids, vec!["host-alert", "node-alert"]);
+        assert_eq!(scoped["audit"].as_array().map(Vec::len), Some(2));
+    }
 
     fn host_with_jump(auth_type: &str) -> HostProfile {
         HostProfile {

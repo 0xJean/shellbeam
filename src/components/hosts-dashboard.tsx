@@ -285,11 +285,11 @@ export function HostsDashboard({
               const lastSyncedAt = cached.lastSyncedAt
               const ttlMs = cached.syncState?.ttlMs ?? DEFAULT_KOMARI_SYNC_TTL_MS
               if (!forceKomari && isKomariSyncFresh(lastSyncedAt, Date.now(), ttlMs)) {
-                return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: null, alertAudit: [] }
+                return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlertState, alertAudit: [] }
               }
 
               const apiKey = await onLoadVaultSecret(integration.credentialRef)
-              if (!apiKey) return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: null, alertAudit: [] }
+              if (!apiKey) return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlertState, alertAudit: [] }
               const result = await syncKomariIntegration({
                 integrationId: integration.id,
                 config: { endpoint: integration.endpoint, token: apiKey },
@@ -316,7 +316,7 @@ export function HostsDashboard({
                 integrationId: integration.id,
                 snapshots: result.skipped ? cachedSnapshots : result.snapshots,
                 mappings: result.skipped ? cached.mappings : result.mapping.mappings,
-                alertState: result.skipped ? null : result.alertState,
+                alertState: result.skipped ? cachedAlertState : result.alertState,
                 alertAudit: result.skipped ? [] : result.alertAudit,
               }
             }),
@@ -350,7 +350,8 @@ export function HostsDashboard({
           }
         }))
       }
-      setHostOpsViews(await loadHostOpsViews(hosts, { auditLimit: 250, komariSnapshots, vaultId: activeVaultId }))
+      const views = await loadHostOpsViews(hosts, { auditLimit: 250, komariSnapshots, vaultId: activeVaultId })
+      setHostOpsViews(views)
       if (komariRecords.length > 0) {
         const agents = await listShellbeamAgents({ vaultId: activeVaultId }).catch(() => [])
         setKomariProbeLinks(komariRecords.flatMap((record) => buildKomariProbeLinks({
@@ -359,6 +360,7 @@ export function HostsDashboard({
           mappings: record.mappings,
           snapshots: record.snapshots,
           shellbeamAgents: agents,
+          alertState: record.alertState,
         })))
       } else {
         setKomariProbeLinks([])
@@ -397,6 +399,12 @@ export function HostsDashboard({
           resolveAuthSecret: resolveKomariHostSecret,
         })
       } else {
+        // Link the confirmed Probe OperationJob to the newest active lifecycle row.
+        const alert = link.alertState?.alerts
+          .filter((candidate) => (candidate.status === 'active' || candidate.status === 'acknowledged')
+            && candidate.integrationId === link.integrationId
+            && (candidate.nodeId === link.nodeId || candidate.hostId === host.id))
+          .sort((left, right) => right.lastSeenAt - left.lastSeenAt)[0]
         await runKomariLinkedProbeOperation({
           integrationId: link.integrationId,
           nodeId: link.nodeId,
@@ -405,6 +413,13 @@ export function HostsDashboard({
           resolveAuthSecret: resolveKomariHostSecret,
           action: 'install',
           vaultId: activeVaultId,
+          alertState: link.alertState,
+          alertId: alert?.alertId,
+          onAlertState: (state) => {
+            setKomariProbeLinks((current) => current.map((candidate) => candidate.integrationId === link.integrationId && candidate.nodeId === link.nodeId
+              ? { ...candidate, alertState: state }
+              : candidate))
+          },
         })
       }
       await refreshHostOps(true)

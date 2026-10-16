@@ -93,6 +93,8 @@ const en: Record<string, string> = {
   'workspace.komariProbe.title': 'Komari / Probe',
   'workspace.komariProbe.komari': 'Komari',
   'workspace.komariProbe.sourceHint': 'Komari is a read-only observation source; it does not prove SSH success.',
+  'workspace.komariProbe.alertsOpen': '{count} open alert(s)',
+  'workspace.komariProbe.operationLinked': 'job {id}',
   'workspace.komariProbe.sampledAt': 'Latest Komari sample',
   'workspace.komariProbe.never': 'No sample',
   'workspace.komariProbe.justNow': 'Just now',

@@ -67,6 +67,9 @@ export function KomariProbeOpsView({ host, link, onAction, busy = false }: Komar
     ? link.recommendedAction
     : null
   const alertSummary = link.komari.alerts
+  const openAlerts = link.alertState?.alerts.filter((alert) => (alert.status === 'active' || alert.status === 'acknowledged')
+    && (alert.nodeId === link.nodeId || alert.hostId === host.id)) ?? []
+  const linkedOperation = openAlerts.find((alert) => alert.relatedOperationJobId)?.relatedOperationJobId
   const probeHealth = link.probe.health ?? 'unknown'
 
   return (
@@ -95,6 +98,13 @@ export function KomariProbeOpsView({ host, link, onAction, busy = false }: Komar
           <span className={cn('inline-flex shrink-0 items-center gap-1', (alertSummary.active ?? 0) > 0 && 'text-[color:var(--workspace-status-bad-text)]')} title={t('hosts.opsAlerts')}>
             <AlertTriangle className="h-3 w-3" />
             <span>{alertSummary.active}/{alertSummary.total}</span>
+          </span>
+        )}
+        {openAlerts.length > 0 && (
+          <span className="inline-flex min-w-0 items-center gap-1 text-[color:var(--workspace-status-warn-text)]" title={t('workspace.komariProbe.sourceHint')}>
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            <span className="truncate">{t('workspace.komariProbe.alertsOpen', { count: openAlerts.length })}</span>
+            {linkedOperation && <span className="shrink-0 font-mono">{t('workspace.komariProbe.operationLinked', { id: linkedOperation })}</span>}
           </span>
         )}
       </div>

@@ -93,6 +93,8 @@ const zhCN: Record<string, string> = {
   'workspace.komariProbe.title': 'Komari / 探针',
   'workspace.komariProbe.komari': 'Komari',
   'workspace.komariProbe.sourceHint': 'Komari 是只读观测来源，不代表 SSH 操作已成功。',
+  'workspace.komariProbe.alertsOpen': '{count} 个待处理告警',
+  'workspace.komariProbe.operationLinked': '任务 {id}',
   'workspace.komariProbe.sampledAt': '最近 Komari 采样',
   'workspace.komariProbe.never': '暂无采样',
   'workspace.komariProbe.justNow': '刚刚',

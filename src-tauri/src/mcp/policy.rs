@@ -84,6 +84,8 @@ impl Client {
         match tool {
             "list_servers"
             | "get_server_inventory"
+            | "get_server_probe_state"
+            | "get_server_alerts"
             | "get_server_metrics"
             | "get_server_operations"
             | "get_command_result" => true,

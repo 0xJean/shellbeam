@@ -187,3 +187,18 @@ deployment and automatic environment setup are not implemented. Password and
 unencrypted private-key authentication reuse the existing vault. Cached
 information remains readable by authorized clients while a vault is locked; new
 remote operations require that vault unlocked.
+
+## Komari and Probe operations
+
+`get_server_probe_state` returns the cached Komari mappings, provider snapshots,
+sync TTL/freshness, ShellBeam Probe lifecycle and the latest MCP probe for one
+authorized host. `get_server_alerts` returns the bounded Komari alert lifecycle
+and audit rows, including any linked OperationJob id. These tools read local
+cache only and do not contact Komari or start SSH work.
+
+`refresh_server_info` accepts an optional `alertId`. When supplied, the newly
+created OperationJob is recorded as an `operation-linked` event on the matching
+local Komari alert. The link is diagnostic context only: a successful SSH or
+Probe operation does not resolve the alert. A later Komari sync remains the
+source of truth for recovery, and an unknown operation must be reconciled before
+retrying.

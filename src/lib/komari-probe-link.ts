@@ -9,6 +9,8 @@ import {
   type ShellbeamAgentRecord,
 } from './shellbeam-agent'
 import type { ProbeSnapshot } from './probe-provider'
+import { persistKomariAlertOperationLink } from './komari-alert-actions'
+import type { KomariAlertState } from './komari-alerts'
 
 /** Mapping status is kept separate from probe/Komari health so a missing
  * integration never looks like a remote host outage. */
@@ -22,6 +24,9 @@ export interface KomariProbeLink {
   hostId: string | null
   mapping: KomariHostMapping | null
   status: KomariProbeLinkStatus
+  /** The persisted lifecycle rows for this integration. A caller may use the
+   * host/node fields to choose one alert before linking a confirmed operation. */
+  alertState: KomariAlertState | null
   /** Read-only Komari state associated with this node. */
   komari: {
     state: KomariProbeDataState
@@ -114,6 +119,21 @@ function probeLifecycleState(record: ShellbeamAgentRecord | null): KomariProbeLi
   return record?.status ?? 'not-recorded'
 }
 
+/** Keep each host card bounded to its own lifecycle rows. The persisted state
+ * may contain hundreds of alerts for an integration, but a Probe link only
+ * needs rows that can be attached to this mapped node/host. */
+function scopedAlertState(state: KomariAlertState | null | undefined, nodeId: string, hostId: string | null): KomariAlertState | null {
+  if (!state) return null
+  const alerts = state.alerts.filter((alert) => alert.nodeId === nodeId || (hostId !== null && alert.hostId === hostId))
+  if (alerts.length === state.alerts.length && state.audit.length <= 1_000) return state
+  const alertIds = new Set(alerts.map((alert) => alert.alertId))
+  return {
+    ...state,
+    alerts,
+    audit: state.audit.filter((entry) => alertIds.has(entry.alertId)).slice(-1_000),
+  }
+}
+
 function recommendedAction(options: {
   status: KomariProbeLinkStatus
   komariState: KomariProbeDataState
@@ -138,6 +158,7 @@ export function buildKomariProbeLinks(options: {
   mappings: MappingWithIntegration[]
   snapshots?: ProbeSnapshot[]
   shellbeamAgents?: ShellbeamAgentRecord[]
+  alertState?: KomariAlertState | null
   now?: number
 }): KomariProbeLink[] {
   const integrationId = required(options.integrationId, 'integration')
@@ -170,6 +191,7 @@ export function buildKomariProbeLinks(options: {
       hostId,
       mapping,
       status,
+      alertState: scopedAlertState(options.alertState, nodeId, hostId),
       komari: {
         state,
         sampledAt: snapshot?.metrics?.freshness.sampledAt ?? snapshot?.inventory?.freshness.sampledAt ?? null,
@@ -249,7 +271,13 @@ export async function runKomariLinkedProbeOperation(options: {
   version?: string
   confirmMessage?: string
   onRecord?: (record: ShellbeamAgentRecord) => void
-}): Promise<{ target: KomariProbeTarget; result: ShellbeamAgentOperationResult | null }> {
+  /** Optional alert lifecycle context. When supplied, a confirmed operation
+   * is linked to the alert's durable audit row after the OperationJob exists. */
+  alertState?: KomariAlertState | null
+  alertId?: string
+  alertActor?: string
+  onAlertState?: (state: KomariAlertState) => void
+}): Promise<{ target: KomariProbeTarget; result: ShellbeamAgentOperationResult | null; alertState?: KomariAlertState }> {
   const target = resolveKomariProbeTarget(options)
   const result = await runShellbeamAgentOperation({
     host: target.host,
@@ -261,5 +289,14 @@ export async function runKomariLinkedProbeOperation(options: {
     confirmMessage: options.confirmMessage ?? `Confirm ${options.action} for the ShellBeam Probe linked to Komari node ${target.nodeId}?`,
     onRecord: options.onRecord,
   })
-  return { target, result }
+  if (!result?.job?.jobId || !options.alertState || !options.alertId) return { target, result }
+  const linked = await persistKomariAlertOperationLink({
+    integrationId: options.integrationId,
+    state: options.alertState,
+    alertId: options.alertId,
+    operationJobId: result.job.jobId,
+    actor: options.alertActor ?? 'local-user',
+  })
+  options.onAlertState?.(linked.state)
+  return { target, result, alertState: linked.state }
 }
