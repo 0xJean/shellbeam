@@ -256,5 +256,13 @@ describe('buildHostOpsViews', () => {
     expect(view.health.alertLifecycle).toEqual({
       total: 2, open: 1, active: 0, acknowledged: 1, resolved: 0, closed: 1, latestOperationJobId: 'job-alert-1',
     })
+    expect(view.komariAlerts.map((alert) => [alert.alertId, alert.status, alert.relatedOperationJobId])).toEqual([
+      ['alert-1', 'acknowledged', 'job-alert-1'],
+      ['alert-2', 'closed', 'job-alert-2'],
+    ])
+    expect(view.komariAlertAudits.map((entry) => [entry.alertId, entry.event, entry.operationJobId])).toEqual([
+      ['alert-1', 'acknowledged', 'job-alert-1'],
+      ['alert-2', 'closed', 'job-alert-2'],
+    ])
   })
 })

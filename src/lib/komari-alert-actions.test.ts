@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { KomariAlertState } from './komari-alerts'
-import { persistKomariAlertAction, persistKomariAlertOperationLink } from './komari-alert-actions'
+import { persistKomariAlertAction, persistKomariAlertOperationLink, runKomariAlertAction } from './komari-alert-actions'
+
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 
 vi.mock('./komari-persistence', () => ({
   persistKomariAlertState: vi.fn().mockResolvedValue(undefined),
@@ -34,7 +37,57 @@ const state: KomariAlertState = {
   summary: { load: 1, offline: 0, total: 1, active: 1, open: 1, acknowledged: 0, resolved: 0, closed: 0, deduplicated: 0, localUpdatedAt: 2, updatedAt: 2 },
 }
 
+const host = {
+  id: 'h',
+  name: 'Host',
+  address: '10.0.0.2',
+  port: 22,
+  username: 'root',
+  authType: 'password' as const,
+  group: 'Default',
+  tags: [],
+  createdAt: 0,
+  updatedAt: 0,
+}
+
 describe('persistKomariAlertAction', () => {
+  it('runs a host-card action through a durable OperationJob', async () => {
+    invoke
+      .mockResolvedValueOnce({ jobId: 'job-card', auditId: 'audit-card', status: 'queued' })
+      .mockResolvedValueOnce({ jobId: 'job-card', auditId: 'audit-card', status: 'running' })
+      .mockResolvedValueOnce({ jobId: 'job-card', auditId: 'audit-card', status: 'completed' })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const result = await runKomariAlertAction('acknowledge', {
+      integrationId: 'i',
+      state,
+      alertId: 'a1',
+      host,
+      vaultId: 'vault-1',
+      actor: 'alice',
+      now: 10,
+    })
+
+    expect(result).not.toBeNull()
+    expect(result!.alert).toMatchObject({ status: 'acknowledged', relatedOperationJobId: 'job-card' })
+    expect(result!.state.audit.map((entry) => entry.operationJobId)).toEqual(['job-card', 'job-card'])
+    expect(result!.job).toMatchObject({ jobId: 'job-card', status: 'completed' })
+    expect(invoke).toHaveBeenNthCalledWith(1, 'operation_job_create', expect.objectContaining({
+      request: expect.objectContaining({
+        hostId: 'h',
+        vaultId: 'vault-1',
+        source: 'monitor',
+        action: 'komari.alert.acknowledge',
+        provider: 'komari-local',
+        transport: 'local',
+        confirmationRequired: true,
+        actor: 'alice',
+      }),
+    }))
+    expect(invoke).toHaveBeenNthCalledWith(2, 'operation_job_update', expect.objectContaining({ request: expect.objectContaining({ status: 'running' }) }))
+    expect(invoke).toHaveBeenNthCalledWith(3, 'operation_job_update', expect.objectContaining({ request: expect.objectContaining({ status: 'completed' }) }))
+  })
+
   it('updates the lifecycle and persists the audit entry', async () => {
     const result = await persistKomariAlertAction('acknowledge', { integrationId: 'i', state, alertId: 'a1', actor: 'alice', now: 3 })
     expect(result.alert).toMatchObject({ status: 'acknowledged', acknowledgedBy: 'alice' })

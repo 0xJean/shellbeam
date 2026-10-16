@@ -7,6 +7,11 @@ import {
   type KomariAlertState,
 } from './komari-alerts'
 import { persistKomariAlertState } from './komari-persistence'
+import type { HostProfile } from './hosts'
+import {
+  runConfirmedOperation,
+  type OperationJob,
+} from './operation-job'
 
 export type KomariAlertAction = 'acknowledge' | 'close'
 
@@ -34,6 +39,20 @@ export interface PersistKomariAlertActionOptions {
 export interface PersistKomariAlertActionResult {
   state: KomariAlertState
   alert: KomariAlertRecord
+}
+
+export interface RunKomariAlertActionOptions extends PersistKomariAlertActionOptions {
+  /** Host context is required so the local journal can be filtered from the
+   * host operations view and from the MCP audit surface. */
+  host: HostProfile
+  vaultId?: string
+  requestId?: string
+  provider?: string
+  confirmMessage?: string
+}
+
+export interface RunKomariAlertActionResult extends PersistKomariAlertActionResult {
+  job: OperationJob
 }
 
 /** Persist the relationship between a Komari lifecycle row and the
@@ -81,8 +100,10 @@ export async function persistKomariAlertAction(
 ): Promise<PersistKomariAlertActionResult> {
   const alert = options.state.alerts.find((candidate) => candidate.alertId === options.alertId)
   if (!alert) throw new Error('Komari alert was not found')
-  // Retries after a lost response must not append another lifecycle audit row
-  // once the requested transition has already been applied.
+  // A retry after a lost MCP/UI response must not append another lifecycle
+  // event when the requested transition already happened. Keep this guard in
+  // the persistence boundary (rather than only in the panel) so repeated
+  // requests from another session remain audit-idempotent as well.
   if ((action === 'acknowledge' && alert.status !== 'active')
     || (action === 'close' && alert.status === 'closed')) {
     return { state: options.state, alert }
@@ -108,4 +129,66 @@ export async function persistKomariAlertAction(
     updatedAt: now,
   })
   return { state, alert: result.alert }
+}
+
+/**
+ * Execute an acknowledgement/close from a host operations surface.
+ *
+ * These actions only mutate ShellBeam's local Komari lifecycle, but they are
+ * still operational decisions and must be durable in the same OperationJob
+ * journal used by MCP. The job is created before mutating the alert, linked to
+ * the alert audit, and always moved to a terminal state when the local write
+ * succeeds or fails.
+ */
+export async function runKomariAlertAction(
+  action: KomariAlertAction,
+  options: RunKomariAlertActionOptions,
+): Promise<RunKomariAlertActionResult | null> {
+  const alert = options.state.alerts.find((candidate) => candidate.alertId === options.alertId)
+  if (!alert) throw new Error('Komari alert was not found')
+
+  const operationAction = `komari.alert.${action}`
+  const requestId = options.requestId?.trim() || undefined
+  let operationJobId: string | undefined
+  const execution = await runConfirmedOperation({
+    host: options.host,
+    vaultId: options.vaultId,
+    actor: options.actor,
+    requestId,
+    source: 'monitor',
+    action: operationAction,
+    target: `komari-alert:${options.alertId}`,
+    risk: 'low',
+    provider: options.provider ?? 'komari-local',
+    transport: 'local',
+    paramsSummary: `integrationId=${options.integrationId}; alertId=${options.alertId}; action=${action}`,
+    confirmMessage: options.confirmMessage ?? `Confirm ${action} for Komari alert ${options.alertId}?`,
+    onJob: (nextJob) => { operationJobId = nextJob.jobId },
+    execute: async () => {
+      if (!operationJobId) throw new Error('Operation job id was not created')
+      // Link first so both the lifecycle event and the alert record carry the
+      // canonical OperationJob id, including idempotent/retried transitions.
+      const linked = await persistKomariAlertOperationLink({
+        integrationId: options.integrationId,
+        state: options.state,
+        alertId: options.alertId,
+        operationJobId,
+        actor: options.actor,
+        now: options.now,
+        ttlMs: options.ttlMs,
+        lastSyncedAt: options.lastSyncedAt,
+      })
+      return persistKomariAlertAction(action, {
+        ...options,
+        state: linked.state,
+      })
+    },
+    getResult: () => ({
+      exitCode: 0,
+      durationMs: 0,
+      resultSummary: `alertId=${options.alertId}; action=${action}; local-only=true`,
+    }),
+  })
+  if (!execution) return null
+  return { ...execution.value, job: execution.job }
 }

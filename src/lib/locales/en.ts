@@ -706,6 +706,8 @@ const en: Record<string, string> = {
   'hosts.alert.closed': 'Closed',
   'hosts.alert.acknowledge': 'Acknowledge alert',
   'hosts.alert.close': 'Close alert',
+  'hosts.alert.confirmAcknowledge': 'Acknowledge "{alert}" on {host}?',
+  'hosts.alert.confirmClose': 'Close "{alert}" on {host}?',
   'hosts.alert.openTerminal': 'Open Terminal to investigate',
   'hosts.alert.linkedOperation': 'Operation {jobId}',
   'hosts.alert.audit': 'Alert lifecycle audit',

@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils'
 import { getWorkspaceInventoryHealthStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { buildKomariProbeLinks, checkKomariLinkedProbe, runKomariLinkedProbeOperation, type KomariProbeLink } from '@/lib/komari-probe-link'
+import { runKomariAlertAction, type KomariAlertAction } from '@/lib/komari-alert-actions'
+import type { KomariAlertRecord } from '@/lib/komari-alerts'
 import { listShellbeamAgents } from '@/lib/shellbeam-agent'
 import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
 import { listKomariIntegrations } from '@/lib/komari-config'
@@ -186,6 +188,8 @@ function hostOpsToCardSummary(
   komariProbe?: KomariProbeLink,
   onKomariProbeAction?: HostOperationalSummary['onKomariProbeAction'],
   komariProbeBusy = false,
+  onKomariAlertAction?: HostOperationalSummary['onKomariAlertAction'],
+  komariAlertBusy?: string | null,
 ): HostOperationalSummary | undefined {
   if (!view) return undefined
   const latestAudit = view.latestAudit
@@ -208,6 +212,9 @@ function hostOpsToCardSummary(
       alertOpen: alertLifecycle.open,
       alertLinkedJobId: alertLifecycle.latestOperationJobId,
     } : {}),
+    komariAlerts: view.komariAlerts,
+    onKomariAlertAction,
+    komariAlertBusy,
     auditCount: view.operationSummary.total,
     auditActive: view.operationSummary.active,
     auditFailed: view.operationSummary.failed,
@@ -269,6 +276,7 @@ export function HostsDashboard({
   const [hostOpsViews, setHostOpsViews] = useState<Record<string, HostOpsView>>({})
   const [komariProbeLinks, setKomariProbeLinks] = useState<KomariProbeLink[]>([])
   const [komariProbeActionKey, setKomariProbeActionKey] = useState<string | null>(null)
+  const [komariAlertActionKey, setKomariAlertActionKey] = useState<string | null>(null)
   const [hostOpsLoading, setHostOpsLoading] = useState(false)
   const refreshHostOps = useCallback(async (forceKomari = false) => {
     setHostOpsLoading(true)
@@ -443,6 +451,36 @@ export function HostsDashboard({
     }
   }, [activeVaultId, hosts, refreshHostOps, resolveKomariHostSecret])
 
+  const handleKomariAlertAction = useCallback(async (host: HostProfile, action: KomariAlertAction, alert: KomariAlertRecord) => {
+    const key = `${action}:${alert.alertId}`
+    setKomariAlertActionKey(key)
+    try {
+      const persisted = await loadKomariPersistence(alert.integrationId)
+      const state = readKomariAlertState(persisted.syncState)
+      if (!state) throw new Error('Komari alert state is unavailable; refresh the host first')
+      await runKomariAlertAction(action, {
+        host,
+        integrationId: alert.integrationId,
+        state,
+        alertId: alert.alertId,
+        vaultId: activeVaultId,
+        lastSyncedAt: persisted.lastSyncedAt ?? undefined,
+        ttlMs: persisted.syncState?.ttlMs,
+        confirmMessage: t(
+          action === 'acknowledge' ? 'hosts.alert.confirmAcknowledge' : 'hosts.alert.confirmClose',
+          { host: host.name, alert: alert.title },
+        ),
+      })
+    } catch (error) {
+      console.error('Komari alert operation failed', error)
+    } finally {
+      await refreshHostOps(true).catch((error) => {
+        console.error('Komari host operations refresh failed', error)
+      })
+      setKomariAlertActionKey(null)
+    }
+  }, [activeVaultId, refreshHostOps, t])
+
   useEffect(() => { void refreshHostOps() }, [activeVaultId, refreshHostOps])
 
   // MCP acknowledgement/close actions update the persisted Komari journal in
@@ -543,10 +581,20 @@ export function HostsDashboard({
     hosts.forEach((host) => {
       const link = komariProbeLinks.find((candidate) => candidate.hostId === host.id)
       const busy = link ? komariProbeActionKey === `${link.integrationId}:${link.nodeId}:${link.recommendedAction}` : false
-      summaries.set(host.id, hostOpsToCardSummary(hostOpsViews[host.id], link, handleKomariProbeAction, busy))
+      const alertBusy = komariAlertActionKey
+        ? komariAlertActionKey.slice(komariAlertActionKey.indexOf(':') + 1)
+        : null
+      summaries.set(host.id, hostOpsToCardSummary(
+        hostOpsViews[host.id],
+        link,
+        handleKomariProbeAction,
+        busy,
+        (action, alert) => handleKomariAlertAction(host, action, alert),
+        alertBusy,
+      ))
     })
     return summaries
-  }, [handleKomariProbeAction, hostOpsViews, hosts, komariProbeActionKey, komariProbeLinks])
+  }, [handleKomariAlertAction, handleKomariProbeAction, hostOpsViews, hosts, komariAlertActionKey, komariProbeActionKey, komariProbeLinks])
 
   function hostKey(host: HostProfile) {
     return getWorkspaceInventoryHostKey(host)

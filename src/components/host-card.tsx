@@ -8,7 +8,8 @@ import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
-import { AlertTriangle, Activity, Bot, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench } from 'lucide-react'
+import type { KomariAlertRecord } from '@/lib/komari-alerts'
+import { AlertTriangle, Activity, Bot, Check, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
@@ -53,6 +54,12 @@ export interface HostOperationalSummary {
   alertAcknowledged?: number | null
   alertClosed?: number | null
   alertLinkedJobId?: string | null
+  /** Lifecycle rows owned by the local Komari journal for this host. */
+  komariAlerts?: KomariAlertRecord[]
+  /** Acknowledge or close one of the host's persisted Komari alerts. */
+  onKomariAlertAction?: (action: 'acknowledge' | 'close', alert: KomariAlertRecord) => Promise<void> | void
+  /** Alert id currently being persisted; keeps retries scoped to one row. */
+  komariAlertBusy?: string | null
   alertUnsupported?: boolean
   auditCount: number
   auditActive?: number
@@ -378,6 +385,14 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
   const lifecycleStatus = lifecycleStatuses.includes(summary.agentStatus ?? '') ? summary.agentStatus : 'unknown'
   const healthStatuses = ['online', 'offline', 'stale', 'unsupported', 'unknown']
   const agentHealth = healthStatuses.includes(summary.agentHealth ?? '') ? summary.agentHealth : 'unknown'
+  const actionableAlerts = (summary.komariAlerts ?? []).filter((alert) => (
+    alert.status === 'active' || alert.status === 'acknowledged' || alert.status === 'resolved'
+  ))
+
+  async function runAlertAction(action: 'acknowledge' | 'close', alert: KomariAlertRecord) {
+    if (!summary.onKomariAlertAction || summary.komariAlertBusy) return
+    await summary.onKomariAlertAction(action, alert)
+  }
 
   return (
     <div data-testid="host-ops-summary" data-host-ops-summary className="mt-2 space-y-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 text-[10px] text-[var(--workspace-text-muted)]">
@@ -410,6 +425,46 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
       ) : null}
       {latest?.auditId && <div className="truncate font-mono text-[10px] text-[var(--workspace-text-subtle)]" title={latest.auditId}>{latest.source} · job={latest.jobId} · audit={latest.auditId}</div>}
       {latest?.status === 'unknown' && <div className="flex items-center gap-1 text-[color:var(--workspace-status-warn-text)]"><AlertTriangle className="h-3 w-3 shrink-0" />{t('hosts.opsRecoveryRequired')}</div>}
+      {actionableAlerts.length > 0 && (
+        <div data-testid="host-ops-alert-actions" className="space-y-1.5 border-t border-[color:var(--workspace-border-soft)] pt-1.5">
+          {actionableAlerts.slice(0, 3).map((alert) => {
+            const busy = summary.komariAlertBusy === alert.alertId
+            const canAcknowledge = alert.status === 'active' && !!summary.onKomariAlertAction
+            const canClose = !!summary.onKomariAlertAction
+            return (
+              <div key={alert.alertId} className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 flex-1 truncate" title={alert.title}>
+                  <span className="font-medium text-[var(--workspace-text-strong)]">{alert.title}</span>
+                  <span className="ml-1 text-[var(--workspace-text-subtle)]">· {t(`komariAlerts.status.${alert.status}`)}</span>
+                </span>
+                {canAcknowledge && (
+                  <button
+                    type="button"
+                    data-testid={`komari-host-alert-ack-${alert.alertId}`}
+                    disabled={busy || !!summary.komariAlertBusy}
+                    onClick={(event) => { event.stopPropagation(); void runAlertAction('acknowledge', alert) }}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--workspace-border-soft)] px-1.5 py-1 text-[10px] font-medium text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />{busy ? '…' : t('komariAlerts.acknowledge')}
+                  </button>
+                )}
+                {canClose && (
+                  <button
+                    type="button"
+                    data-testid={`komari-host-alert-close-${alert.alertId}`}
+                    disabled={busy || !!summary.komariAlertBusy}
+                    onClick={(event) => { event.stopPropagation(); void runAlertAction('close', alert) }}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--workspace-border-soft)] px-1.5 py-1 text-[10px] font-medium text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] disabled:opacity-50"
+                  >
+                    <X className="h-3 w-3" />{busy ? '…' : t('komariAlerts.close')}
+                  </button>
+                )}
+              </div>
+            )
+          })}
+          {actionableAlerts.length > 3 && <span className="block text-[10px] text-[var(--workspace-text-subtle)]">+{actionableAlerts.length - 3}</span>}
+        </div>
+      )}
       {(summary.alertTotal !== undefined || summary.alertUnsupported || summary.alertActive != null || summary.alertOpen != null || summary.alertAcknowledged != null || summary.alertClosed != null || summary.alertLinkedJobId != null) && (
         <div className="flex min-w-0 items-center gap-2">
           <span className="inline-flex min-w-0 items-center gap-1" title={t('hosts.opsAlerts')}>

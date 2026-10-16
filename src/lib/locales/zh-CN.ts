@@ -706,6 +706,8 @@ const zhCN: Record<string, string> = {
   'hosts.alert.closed': '已关闭',
   'hosts.alert.acknowledge': '确认告警',
   'hosts.alert.close': '关闭告警',
+  'hosts.alert.confirmAcknowledge': '确认在 {host} 上处理“{alert}”吗？',
+  'hosts.alert.confirmClose': '确认在 {host} 上关闭“{alert}”吗？',
   'hosts.alert.openTerminal': '打开终端排查',
   'hosts.alert.linkedOperation': '运维任务 {jobId}',
   'hosts.alert.audit': '告警生命周期审计',

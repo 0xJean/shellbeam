@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { HostListItem } from './host-card'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
+import type { KomariAlertRecord } from '@/lib/komari-alerts'
 
 const host = {
   id: 'host-1',
@@ -232,5 +233,73 @@ describe('host list item', () => {
     expect(screen.getByText('Acknowledged: 1')).toBeInTheDocument()
     expect(screen.getByText('Closed: 1')).toBeInTheDocument()
     expect(screen.getByText('job job-ack · completed')).toBeInTheDocument()
+  })
+
+  it('runs acknowledge and close actions from the host ops alert context', async () => {
+    const activeAlert: KomariAlertRecord = {
+      schemaVersion: 1,
+      source: 'komari',
+      alertId: 'alert-active-card',
+      fingerprint: 'komari-prod|node-1|host-1|offline',
+      integrationId: 'komari-prod',
+      nodeId: 'node-1',
+      hostId: host.id,
+      kind: 'offline',
+      title: 'Offline host',
+      severity: 'critical',
+      count: 1,
+      status: 'active',
+      firstSeenAt: 1_000,
+      lastSeenAt: 1_000,
+      acknowledgedAt: null,
+      acknowledgedBy: null,
+      resolvedAt: null,
+      closedAt: null,
+      relatedOperationJobId: null,
+      deduplicatedCount: 0,
+    }
+    const acknowledgedAlert: KomariAlertRecord = {
+      ...activeAlert,
+      alertId: 'alert-ack-card',
+      fingerprint: 'komari-prod|node-1|host-1|load',
+      kind: 'load',
+      title: 'Load alert',
+      severity: 'warning',
+      status: 'acknowledged',
+      acknowledgedAt: 1_100,
+      acknowledgedBy: 'mcp-client:test',
+      relatedOperationJobId: 'job-ack-card',
+    }
+    const onKomariAlertAction = vi.fn()
+
+    render(
+      <HostListItem
+        index={1}
+        host={host}
+        isSelected={false}
+        status="online"
+        operations={{
+          serviceTotal: null,
+          serviceActive: null,
+          serviceFailed: null,
+          processTotal: null,
+          processRunning: null,
+          auditCount: 0,
+          transport: 'direct',
+          komariAlerts: [activeAlert, acknowledgedAlert],
+          onKomariAlertAction,
+        }}
+        onSelect={vi.fn()}
+        onConnect={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId('komari-host-alert-ack-alert-active-card'))
+    await waitFor(() => expect(onKomariAlertAction).toHaveBeenCalledWith('acknowledge', activeAlert))
+
+    fireEvent.click(screen.getByTestId('komari-host-alert-close-alert-ack-card'))
+    await waitFor(() => expect(onKomariAlertAction).toHaveBeenCalledWith('close', acknowledgedAlert))
   })
 })

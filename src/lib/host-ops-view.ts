@@ -18,7 +18,7 @@ import { listOperationAudit, type OperationAuditEntry } from './operation-job'
 import { operationTransport } from './operation-job'
 import type { ProbeSnapshot } from './probe-provider'
 import type { KomariAlertSummary } from './komari'
-import type { KomariAlertState } from './komari-alerts'
+import type { KomariAlertAuditEntry, KomariAlertRecord, KomariAlertState } from './komari-alerts'
 import type { ShellbeamAgentRecord } from './shellbeam-agent'
 import { listShellbeamAgents } from './shellbeam-agent'
 
@@ -114,6 +114,9 @@ export interface HostOpsView {
   operationSummary: HostOpsOperationSummary
   audits: OperationAuditEntry[]
   latestAudit: OperationAuditEntry | null
+  /** Host-scoped lifecycle rows used by the inline Komari alert actions. */
+  komariAlerts: KomariAlertRecord[]
+  komariAlertAudits: KomariAlertAuditEntry[]
 }
 
 export interface BuildHostOpsViewsInput {
@@ -253,32 +256,42 @@ function komariMonitorForHost(host: HostProfile, snapshot: ProbeSnapshot | undef
   }
 }
 
-function komariAlertLifecycleForHost(
+function komariAlertStateForHost(
   host: HostProfile,
   snapshots: ProbeSnapshot[],
   states: KomariAlertState[],
-): HostOpsAlertLifecycleSummary | null {
+): { summary: HostOpsAlertLifecycleSummary; alerts: KomariAlertRecord[]; audits: KomariAlertAuditEntry[] } | null {
   const providerNodes = snapshots
     .filter((snapshot) => snapshot.host.hostId === host.id)
-    .filter((snapshot): snapshot is ProbeSnapshot & { provider: ProbeSnapshot['provider'] & { nodeId: string } } => Boolean(snapshot.provider.nodeId))
-    .map((snapshot) => ({ integrationId: snapshot.provider.id, nodeId: snapshot.provider.nodeId }))
+    .map((snapshot) => snapshot.provider.nodeId
+      ? { integrationId: snapshot.provider.id, nodeId: snapshot.provider.nodeId }
+      : null)
+    .filter((value): value is { integrationId: string; nodeId: string } => value !== null)
   const alerts = states
     .flatMap((state) => state.alerts)
     .filter((alert) => alert.hostId === host.id || providerNodes.some((provider) => provider.integrationId === alert.integrationId && provider.nodeId === alert.nodeId))
   if (alerts.length === 0) return null
   const alertIds = new Set(alerts.map((alert) => alert.alertId))
+  const audits = states
+    .flatMap((state) => state.audit)
+    .filter((entry) => alertIds.has(entry.alertId))
+    .sort((left, right) => right.at - left.at)
   const latestOperationJobId = states
     .flatMap((state) => state.audit)
     .filter((entry) => alertIds.has(entry.alertId) && entry.operationJobId)
     .sort((left, right) => right.at - left.at)[0]?.operationJobId ?? null
   return {
-    total: alerts.length,
-    open: alerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length,
-    active: alerts.filter((alert) => alert.status === 'active').length,
-    acknowledged: alerts.filter((alert) => alert.status === 'acknowledged').length,
-    resolved: alerts.filter((alert) => alert.status === 'resolved').length,
-    closed: alerts.filter((alert) => alert.status === 'closed').length,
-    latestOperationJobId,
+    summary: {
+      total: alerts.length,
+      open: alerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length,
+      active: alerts.filter((alert) => alert.status === 'active').length,
+      acknowledged: alerts.filter((alert) => alert.status === 'acknowledged').length,
+      resolved: alerts.filter((alert) => alert.status === 'resolved').length,
+      closed: alerts.filter((alert) => alert.status === 'closed').length,
+      latestOperationJobId,
+    },
+    alerts: [...alerts].sort((left, right) => right.lastSeenAt - left.lastSeenAt),
+    audits,
   }
 }
 
@@ -338,7 +351,7 @@ export function buildHostOpsViews({
     const freshnessValue = freshness(monitor, inventory, inventoryUpdatedAt, state, now, staleAfterMs)
     const monitorError = monitor?.error?.trim()
     const stateError = state?.error?.trim()
-    const alertLifecycle = komariAlertLifecycleForHost(host, komariSnapshots, komariAlertStates)
+    const alertState = komariAlertStateForHost(host, komariSnapshots, komariAlertStates)
     const view: HostOpsView = {
       host,
       hostKey,
@@ -353,7 +366,7 @@ export function buildHostOpsViews({
         ...(komariSnapshot?.alerts
           ? { alertSummary: komariSnapshot.alerts }
           : {}),
-        ...(alertLifecycle ? { alertLifecycle } : {}),
+        ...(alertState ? { alertLifecycle: alertState.summary } : {}),
         ...(shellbeamAgent ? { agent: shellbeamAgent } : {}),
         ...(selectedProvider === 'komari' && sshMonitor?.snapshot
           ? { fallbackProvider: 'ssh-agentless' as const, fallbackReason: 'Komari metrics selected; SSH data retained as fallback.' }
@@ -369,6 +382,8 @@ export function buildHostOpsViews({
       operationSummary: operationSummary(hostAudits),
       audits: hostAudits,
       latestAudit: hostAudits[0] ?? null,
+      komariAlerts: alertState?.alerts ?? [],
+      komariAlertAudits: alertState?.audits ?? [],
     }
     result[host.id] = view
     return result

@@ -43,6 +43,7 @@ export interface OperationAuditEntry {
   auditId: string
   jobId: string
   hostId?: string | null
+  vaultId?: string | null
   hostName?: string | null
   hostAddress?: string | null
   source: OperationSource
@@ -161,6 +162,9 @@ export function safeOperationTarget(target: string, maxLength = 160) {
 
 export interface RunConfirmedOperationOptions<T> {
   host: HostProfile
+  /** Optional vault scope for host ids that can exist in more than one vault. */
+  vaultId?: string
+  actor?: string
   action: string
   target: string
   risk: OperationRisk
@@ -176,6 +180,7 @@ export interface RunConfirmedOperationOptions<T> {
   provider?: string
   transport?: string
   source?: OperationSource
+  requestId?: string
 }
 
 /**
@@ -185,6 +190,8 @@ export interface RunConfirmedOperationOptions<T> {
  */
 export async function runConfirmedOperation<T>({
   host,
+  vaultId,
+  actor,
   action,
   target,
   risk,
@@ -196,14 +203,16 @@ export async function runConfirmedOperation<T>({
   provider,
   transport,
   source,
+  requestId,
 }: RunConfirmedOperationOptions<T>): Promise<{ value: T; job: OperationJob } | null> {
   const job = await createOperationJob({
     hostId: host.id,
+    vaultId,
     hostName: host.name,
     hostAddress: host.address,
     username: host.username,
     source: source ?? 'workspace',
-    actor: 'local-user',
+    actor: actor ?? 'local-user',
     action,
     target: safeOperationTarget(target),
     risk,
@@ -211,6 +220,7 @@ export async function runConfirmedOperation<T>({
     transport: transport ?? operationTransport(host),
     paramsSummary: paramsSummary ? safeOperationTarget(paramsSummary) : undefined,
     confirmationRequired: true,
+    requestId,
   })
   onJob?.(job)
 
@@ -221,6 +231,7 @@ export async function runConfirmedOperation<T>({
       confirmationStatus: 'rejected',
       errorCode: 'confirmation_rejected',
       errorSummary: 'Operation was cancelled before execution',
+      actor: actor ?? 'local-user',
     })
     onJob?.(cancelled)
     return null
@@ -230,7 +241,8 @@ export async function runConfirmedOperation<T>({
     jobId: job.jobId,
     status: 'running',
     confirmationStatus: 'confirmed',
-    confirmedBy: 'local-user',
+    confirmedBy: actor ?? 'local-user',
+    actor: actor ?? 'local-user',
   })
   onJob?.(running)
 
@@ -240,6 +252,7 @@ export async function runConfirmedOperation<T>({
     const completed = await updateOperationJob({
       jobId: job.jobId,
       status: result && result.exitCode !== 0 ? 'failed' : 'completed',
+      actor: actor ?? 'local-user',
       resultSummary: result?.resultSummary ?? (result ? summarizeRemoteResult(result) : 'completed'),
       ...(result && result.exitCode !== 0 ? {
         errorCode: result.errorCode ?? `exit_${result.exitCode}`,
@@ -255,6 +268,7 @@ export async function runConfirmedOperation<T>({
       status: unknown ? 'unknown' : 'failed',
       errorCode: unknown ? 'remote_state_unknown' : 'operation_failed',
       errorSummary: safeOperationTarget(error instanceof Error ? error.message : String(error), 240),
+      actor: actor ?? 'local-user',
     })
     onJob?.(failed)
     throw error
