@@ -591,7 +591,7 @@ export function HostListItem({ index, host, isSelected, status, resource, operat
 
         <HostResourceSummary resource={resource} t={t} />
 
-        <HostOperationalMeta summary={operations} t={t} />
+        <HostOperationalMeta host={host} summary={operations} t={t} />
 
         <div className="flex items-center">
           <HostStatusPill status={status} sc={sc} t={t} />
