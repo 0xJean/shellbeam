@@ -29,6 +29,24 @@ export interface KomariMetricRecord {
   [key: string]: unknown
 }
 
+/** A read-only summary of the alert rules/events exposed by Komari. */
+export interface KomariAlertSummary {
+  /** Number of load/threshold notifications returned by Komari. */
+  load: number | null
+  /** Number of offline notifications returned by Komari. */
+  offline: number | null
+  /** Sum of the available notification counts. */
+  total: number | null
+  /** Whether the endpoint returned an active event count. */
+  active: number | null
+  /** Time at which this summary was read. */
+  updatedAt: number
+  /** True when the server does not expose the notification API to this token. */
+  unsupported?: boolean
+  /** A safe, user-facing failure code when one or more endpoints failed. */
+  errorCode?: string
+}
+
 export interface KomariConnectionConfig {
   endpoint: string
   token?: string
@@ -234,6 +252,92 @@ export async function getKomariRecentRecords(
   const record = asRecord(unwrapped)
   if (record) return [record as KomariMetricRecord]
   return []
+}
+
+function countKomariNotifications(value: unknown): number | null {
+  if (Array.isArray(value)) return value.length
+  const record = asRecord(value)
+  if (!record) return null
+
+  for (const key of ['total', 'count', 'length', 'active', 'notifications', 'rules', 'items', 'data']) {
+    const candidate = record[key]
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) return Math.max(0, candidate)
+    if (Array.isArray(candidate)) return candidate.length
+    const nested = asRecord(candidate)
+    if (nested) {
+      const nestedCount = countKomariNotifications(nested)
+      if (nestedCount !== null) return nestedCount
+    }
+  }
+  return null
+}
+
+function activeKomariNotifications(value: unknown): number | null {
+  if (Array.isArray(value)) {
+    const states = value
+      .map((item) => asRecord(item)?.status ?? asRecord(item)?.state)
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.toLowerCase())
+    if (states.length === 0) return null
+    return states.filter((state) => ['active', 'firing', 'triggered', 'open', 'pending'].includes(state)).length
+  }
+  const record = asRecord(value)
+  if (!record) return null
+  for (const key of ['active', 'active_count', 'activeCount', 'firing']) {
+    const candidate = record[key]
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) return Math.max(0, candidate)
+    if (Array.isArray(candidate)) return activeKomariNotifications(candidate)
+  }
+  for (const key of ['notifications', 'rules', 'items', 'data']) {
+    const candidate = record[key]
+    const nested = activeKomariNotifications(candidate)
+    if (nested !== null) return nested
+  }
+  return null
+}
+
+/**
+ * Read the two notification collections supported by Komari's admin API.
+ * Notification payloads changed shape between Komari releases, so this
+ * adapter intentionally returns counts and keeps the raw event details out of
+ * the local state and audit records.
+ */
+export async function getKomariAlertSummary(
+  config: KomariConnectionConfig,
+  fetchImpl?: KomariFetch,
+  now = Date.now(),
+): Promise<KomariAlertSummary> {
+  const [loadResult, offlineResult] = await Promise.allSettled([
+    requestKomari<unknown>(config, { path: '/api/admin/notification/load/' }, fetchImpl),
+    requestKomari<unknown>(config, { path: '/api/admin/notification/offline' }, fetchImpl),
+  ])
+  const load = loadResult.status === 'fulfilled' ? countKomariNotifications(loadResult.value) : null
+  const offline = offlineResult.status === 'fulfilled' ? countKomariNotifications(offlineResult.value) : null
+  const activeValues = [
+    loadResult.status === 'fulfilled' ? activeKomariNotifications(loadResult.value) : null,
+    offlineResult.status === 'fulfilled' ? activeKomariNotifications(offlineResult.value) : null,
+  ].filter((value): value is number => value !== null)
+  const failures = [loadResult, offlineResult]
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+  const unsupported = failures.length === 2 && failures.every((result) => {
+    const reason = result.reason as { code?: unknown }
+    return typeof reason.code === 'string' && ['permission', 'endpoint-version'].includes(reason.code)
+  })
+  const firstError = failures[0]?.reason
+  const errorCode = firstError instanceof KomariApiError ? firstError.code : undefined
+  const total = load === null && offline === null ? null : (load ?? 0) + (offline ?? 0)
+  return {
+    load,
+    offline,
+    total,
+    // Older notification endpoints expose only rule collections. Preserve
+    // active as unknown unless a payload explicitly includes it or event
+    // statuses that can be classified safely.
+    active: activeValues.length > 0 ? activeValues.reduce((sum, value) => sum + value, 0) : null,
+    updatedAt: now,
+    ...(unsupported ? { unsupported: true } : {}),
+    ...(errorCode ? { errorCode } : {}),
+  }
 }
 
 /** Create the small read-only client consumed by the Komari ProbeProvider. */

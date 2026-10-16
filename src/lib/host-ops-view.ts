@@ -17,6 +17,7 @@ import {
 import { listOperationAudit, type OperationAuditEntry } from './operation-job'
 import { operationTransport } from './operation-job'
 import type { ProbeSnapshot } from './probe-provider'
+import type { KomariAlertSummary } from './komari'
 
 export type OperationTransport = ReturnType<typeof operationTransport>
 
@@ -78,6 +79,7 @@ export interface HostOpsHealth {
   lastSuccessAt?: number | null
   fallbackProvider?: HostOpsProvider
   fallbackReason?: string
+  alertSummary?: KomariAlertSummary | null
 }
 
 export interface HostOpsView {
@@ -291,6 +293,9 @@ export function buildHostOpsViews({
         freshness: freshnessValue,
         error: monitorError || stateError || undefined,
         lastSuccessAt: monitor?.lastSuccessAt ?? null,
+        ...(komariSnapshot?.alerts
+          ? { alertSummary: komariSnapshot.alerts }
+          : {}),
         ...(selectedProvider === 'komari' && sshMonitor?.snapshot
           ? { fallbackProvider: 'ssh-agentless' as const, fallbackReason: 'Komari metrics selected; SSH data retained as fallback.' }
           : selectedProvider === 'ssh-agentless' && komariSnapshot?.metrics

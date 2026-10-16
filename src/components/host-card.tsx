@@ -45,6 +45,9 @@ export interface HostOperationalSummary {
   serviceFailed: number | null
   processTotal: number | null
   processRunning: number | null
+  alertTotal?: number | null
+  alertActive?: number | null
+  alertUnsupported?: boolean
   auditCount: number
   latestAudit?: Pick<OperationAuditEntry, 'action' | 'target' | 'status' | 'createdAt' | 'transport' | 'provider'>
   provider?: string
@@ -377,6 +380,18 @@ function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary;
           <span className="shrink-0 font-mono">({summary.auditCount})</span>
         </span>
       </div>
+      {(summary.alertTotal !== undefined || summary.alertUnsupported || summary.alertActive != null) && (
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="inline-flex min-w-0 items-center gap-1" title={t('hosts.opsAlerts')}>
+            <AlertTriangle className="h-3 w-3 shrink-0 text-[color:var(--workspace-status-warn-text)]" />
+            <span>{t('hosts.opsAlertsShort')}</span>
+            <strong className="font-mono text-[var(--workspace-text-strong)]">
+              {summary.alertUnsupported ? t('hosts.opsUnsupported') : formatCount(summary.alertTotal ?? null)}
+            </strong>
+            {summary.alertActive != null && <span className="text-[color:var(--workspace-status-bad-text)]">· {summary.alertActive} {t('hosts.opsActive')}</span>}
+          </span>
+        </div>
+      )}
       <div className="flex min-w-0 items-center gap-2 text-[var(--workspace-text-subtle)]">
         <span className="inline-flex min-w-0 items-center gap-1 truncate" title={summary.provider || t('hosts.opsNoProvider')}>
           <ShieldCheck className="h-3 w-3 shrink-0" />

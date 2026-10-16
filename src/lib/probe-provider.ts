@@ -1,4 +1,5 @@
 import type { HostProfile } from './hosts'
+import type { KomariAlertSummary } from './komari'
 import {
   fetchServerMonitorSnapshot,
   type ServerMonitorSnapshot,
@@ -78,6 +79,8 @@ export interface ProbeSnapshot {
   metrics: ProbeObservation<ServerMonitorSnapshot> | null
   inventory: ProbeObservation<WorkspaceInventory> | null
   errors: ProbeError[]
+  /** Optional provider-level alert summary associated with this observation. */
+  alerts?: KomariAlertSummary | null
 }
 
 export interface ProbeRequest {

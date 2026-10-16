@@ -162,10 +162,12 @@ describe('buildHostOpsViews', () => {
       }),
       inventory: null,
       errors: [],
+      alerts: { load: 2, offline: 1, total: 3, active: 1, updatedAt: 1100 },
     }
     const view = buildHostOpsViews({ hosts: [host], monitorLatest: [monitor], komariSnapshots: [komariSnapshot], now: 1100 })['host-1']
     expect(view.metrics?.cpuPercent).toBe(77)
     expect(view.health.provider).toBe('komari')
     expect(view.health.fallbackProvider).toBe('ssh-agentless')
+    expect(view.health.alertSummary).toMatchObject({ total: 3, active: 1 })
   })
 })

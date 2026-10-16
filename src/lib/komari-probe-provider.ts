@@ -10,6 +10,7 @@ import {
 } from './probe-provider'
 import {
   komariRecordToServerMonitorSnapshot,
+  type KomariAlertSummary,
   type KomariClient,
   type KomariMetricRecord,
 } from './komari'
@@ -24,6 +25,7 @@ export interface KomariProbeProviderOptions {
   nodeForHost: (host: HostProfile) => KomariClient | null
   id?: string
   metricsTtlMs?: number
+  alertSummary?: KomariAlertSummary | null
 }
 
 export const DEFAULT_KOMARI_METRICS_TTL_MS = 2 * 60 * 1000
@@ -59,6 +61,7 @@ export function createKomariProbeProvider(options: KomariProbeProviderOptions): 
         receivedAt,
         metrics: null,
         inventory: null,
+        ...(options.alertSummary ? { alerts: options.alertSummary } : {}),
       } satisfies Omit<ProbeSnapshot, 'health' | 'errors'>
       if (request.sections && !request.sections.includes('metrics')) {
         return { ...base, health: 'unknown', errors: [] }

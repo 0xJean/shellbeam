@@ -14,7 +14,8 @@ import { getWorkspaceInventoryHealthStatus, useWorkspaceInventoryStates } from '
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
 import { listKomariIntegrations } from '@/lib/komari-config'
-import { syncKomariIntegration } from '@/lib/komari-sync'
+import { loadKomariPersistence, persistKomariSync } from '@/lib/komari-persistence'
+import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, syncKomariIntegration } from '@/lib/komari-sync'
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
@@ -173,12 +174,18 @@ interface HostsDashboardProps {
 function hostOpsToCardSummary(view?: HostOpsView): HostOperationalSummary | undefined {
   if (!view) return undefined
   const latestAudit = view.latestAudit
+  const alertSummary = view.health.alertSummary
   return {
     serviceTotal: view.serviceSummary.total,
     serviceActive: view.serviceSummary.active,
     serviceFailed: view.serviceSummary.failed,
     processTotal: view.processSummary.total,
     processRunning: view.processSummary.pm2,
+    ...(alertSummary ? {
+      alertTotal: alertSummary.total,
+      alertActive: alertSummary.active,
+      alertUnsupported: alertSummary.unsupported === true,
+    } : {}),
     auditCount: view.operationSummary.total,
     latestAudit: latestAudit
       ? {
@@ -225,7 +232,7 @@ export function HostsDashboard({
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
   const [hostOpsViews, setHostOpsViews] = useState<Record<string, HostOpsView>>({})
   const [hostOpsLoading, setHostOpsLoading] = useState(false)
-  const refreshHostOps = useCallback(async () => {
+  const refreshHostOps = useCallback(async (forceKomari = false) => {
     setHostOpsLoading(true)
     try {
       let komariSnapshots = undefined
@@ -235,18 +242,42 @@ export function HostsDashboard({
           integrations
             .filter((integration) => integration.enabled)
             .map(async (integration) => {
+              const cached = await loadKomariPersistence(integration.id).catch(() => ({ snapshots: [], mappings: [], syncState: null, lastSyncedAt: null }))
+              const cachedSnapshots = cached.snapshots.map((entry) => entry.snapshot)
+              const lastSyncedAt = cached.lastSyncedAt
+              const ttlMs = cached.syncState?.ttlMs ?? DEFAULT_KOMARI_SYNC_TTL_MS
+              if (!forceKomari && isKomariSyncFresh(lastSyncedAt, Date.now(), ttlMs)) {
+                return cachedSnapshots
+              }
+
               const apiKey = await onLoadVaultSecret(integration.credentialRef)
-              if (!apiKey) return null
-              return syncKomariIntegration({
+              if (!apiKey) return cachedSnapshots
+              const result = await syncKomariIntegration({
                 integrationId: integration.id,
                 config: { endpoint: integration.endpoint, token: apiKey },
                 hosts,
+                lastSyncedAt,
+                ttlMs,
+                force: forceKomari,
               })
+              if (!result.skipped) {
+                await persistKomariSync({
+                  integrationId: integration.id,
+                  // Keep the last successful metric row when a later probe
+                  // only returns an error or an empty Komari record.
+                  snapshots: result.snapshots.filter((snapshot) => snapshot.metrics !== null),
+                  mappings: result.mapping.mappings,
+                  updatedAt: result.syncedAt,
+                  ttlMs,
+                  alertSummary: result.alerts,
+                }).catch(() => undefined)
+              }
+              return result.skipped ? cachedSnapshots : result.snapshots
             }),
         )
         komariSnapshots = syncResults
-          .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof syncKomariIntegration>>> => result.status === 'fulfilled' && result.value !== null)
-          .flatMap((result) => result.value.snapshots)
+          .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof syncKomariIntegration>>['snapshots']> => result.status === 'fulfilled')
+          .flatMap((result) => result.value)
       }
       setHostOpsViews(await loadHostOpsViews(hosts, { auditLimit: 250, komariSnapshots }))
     } catch {
@@ -307,7 +338,7 @@ export function HostsDashboard({
   const handleRefreshAll = useCallback(async () => {
     await Promise.allSettled([
       onRefreshHosts?.(),
-      refreshHostOps(),
+      refreshHostOps(true),
     ])
   }, [onRefreshHosts, refreshHostOps])
 

@@ -6,6 +6,7 @@ pub mod discovery_ios;
 pub mod history;
 pub mod hosts;
 pub mod komari;
+pub mod komari_persistence;
 pub mod operation_jobs;
 pub mod server_monitor;
 pub mod snippets;

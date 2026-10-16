@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   KomariApiError,
   getKomariRecentRecords,
+  getKomariAlertSummary,
   komariRecordToServerMonitorSnapshot,
   listKomariClients,
   normalizeKomariEndpoint,
@@ -70,6 +71,32 @@ describe('Komari API adapter', () => {
     const records = await getKomariRecentRecords({ endpoint: 'https://komari.example' }, 'node/a', fetchImpl)
     expect(records).toEqual([{ time: 1710000000, cpu: 12 }])
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://komari.example/api/recent/node%2Fa')
+  })
+
+  it('summarizes load and offline notifications without retaining event payloads', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/admin/notification/load/')) {
+        return response({ data: [{ id: 'load-1' }, { id: 'load-2' }] })
+      }
+      return response({ total: 3, items: [{ id: 'offline-1' }, { id: 'offline-2' }, { id: 'offline-3' }] })
+    })
+    await expect(getKomariAlertSummary({ endpoint: 'https://komari.example' }, fetchImpl, 2000))
+      .resolves.toEqual({ load: 2, offline: 3, total: 5, active: null, updatedAt: 2000 })
+  })
+
+  it('keeps an active alert count when the server includes one', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => (
+      response(String(input).endsWith('/load/') ? { active: 2, total: 4 } : { activeCount: 1, total: 2 })
+    ))
+    await expect(getKomariAlertSummary({ endpoint: 'https://komari.example' }, fetchImpl, 2000))
+      .resolves.toMatchObject({ load: 4, offline: 2, total: 6, active: 3 })
+  })
+
+  it('marks alert summaries unsupported when both notification endpoints are unavailable', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => response({ message: 'forbidden' }, { status: 403 }))
+    await expect(getKomariAlertSummary({ endpoint: 'https://komari.example' }, fetchImpl, 2000))
+      .resolves.toMatchObject({ load: null, offline: null, total: null, unsupported: true, errorCode: 'permission' })
   })
 
   it('converts a partial record without manufacturing missing values', () => {
