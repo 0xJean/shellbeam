@@ -16,6 +16,7 @@ import {
 } from './workspace-inventory'
 import { listOperationAudit, type OperationAuditEntry } from './operation-job'
 import { operationTransport } from './operation-job'
+import type { ProbeSnapshot } from './probe-provider'
 
 export type OperationTransport = ReturnType<typeof operationTransport>
 
@@ -75,6 +76,8 @@ export interface HostOpsHealth {
   freshness: HostOpsFreshness
   error?: string
   lastSuccessAt?: number | null
+  fallbackProvider?: HostOpsProvider
+  fallbackReason?: string
 }
 
 export interface HostOpsView {
@@ -98,6 +101,7 @@ export interface BuildHostOpsViewsInput {
   inventoryCache?: WorkspaceInventoryCache
   inventoryStates?: Record<string, WorkspaceInventoryHostStateSnapshot>
   audits?: OperationAuditEntry[]
+  komariSnapshots?: ProbeSnapshot[]
   now?: number
   staleAfterMs?: number
 }
@@ -204,6 +208,26 @@ function providerFor(
   return 'unknown'
 }
 
+function komariMonitorForHost(host: HostProfile, snapshot: ProbeSnapshot | undefined): ServerMonitorLatest | undefined {
+  const observation = snapshot?.metrics
+  if (!observation || (snapshot.health !== 'online' && snapshot.health !== 'stale')) return undefined
+  const status: ServerMonitorStatus = snapshot.health
+  return {
+    hostKey: getServerMonitorHostKey(host),
+    hostId: host.id,
+    hostName: host.name,
+    hostAddress: host.address,
+    username: host.username,
+    port: host.port,
+    status,
+    snapshot: observation.data,
+    lastAttemptAt: snapshot.receivedAt,
+    lastSuccessAt: observation.freshness.sampledAt,
+    error: snapshot.errors[0]?.message,
+    updatedAt: snapshot.receivedAt,
+  }
+}
+
 function operationSummary(audits: OperationAuditEntry[]): HostOpsOperationSummary {
   return {
     total: audits.length,
@@ -222,14 +246,20 @@ export function buildHostOpsViews({
   inventoryCache = {},
   inventoryStates = {},
   audits = [],
+  komariSnapshots = [],
   now = Date.now(),
   staleAfterMs = 5 * 60 * 1000,
 }: BuildHostOpsViewsInput): Record<string, HostOpsView> {
   const monitorByKey = new Map(monitorLatest.map((entry) => [entry.hostKey, entry]))
+  const komariByHostId = new Map(komariSnapshots.map((snapshot) => [snapshot.host.hostId, snapshot]))
 
   return hosts.reduce<Record<string, HostOpsView>>((result, host) => {
     const hostKey = getServerMonitorHostKey(host)
-    const monitor = monitorByKey.get(hostKey)
+    const sshMonitor = monitorByKey.get(hostKey)
+    const komariSnapshot = komariByHostId.get(host.id)
+    const komariMonitor = komariMonitorForHost(host, komariSnapshot)
+    const komariFresh = Boolean(komariSnapshot?.metrics && !komariSnapshot.metrics.freshness.expired)
+    const monitor = komariMonitor && (komariFresh || !sshMonitor?.snapshot) ? komariMonitor : sshMonitor
     const inventoryEntry = inventoryCache[hostKey]
     const inventory = inventoryEntry?.inventory ?? null
     const inventoryUpdatedAt = inventoryEntry?.updatedAt ?? null
@@ -244,6 +274,9 @@ export function buildHostOpsViews({
       .filter((audit) => audit.hostId === host.id || (!audit.hostId && audit.hostAddress === host.address))
       .sort((a, b) => b.createdAt - a.createdAt)
     const hostAudits = allHostAudits.slice(0, 10)
+    const selectedProvider: HostOpsProvider = monitor === komariMonitor && komariMonitor
+      ? 'komari'
+      : providerFor(sshMonitor, inventory, state, allHostAudits)
     const freshnessValue = freshness(monitor, inventory, inventoryUpdatedAt, state, now, staleAfterMs)
     const monitorError = monitor?.error?.trim()
     const stateError = state?.error?.trim()
@@ -253,11 +286,16 @@ export function buildHostOpsViews({
       route,
       health: {
         state: healthState(monitor, state, freshnessValue),
-        provider: providerFor(monitor, inventory, state, allHostAudits),
+        provider: selectedProvider === 'unknown' ? providerFor(monitor, inventory, state, allHostAudits) : selectedProvider,
         transport: route.transport,
         freshness: freshnessValue,
         error: monitorError || stateError || undefined,
         lastSuccessAt: monitor?.lastSuccessAt ?? null,
+        ...(selectedProvider === 'komari' && sshMonitor?.snapshot
+          ? { fallbackProvider: 'ssh-agentless' as const, fallbackReason: 'Komari metrics selected; SSH data retained as fallback.' }
+          : selectedProvider === 'ssh-agentless' && komariSnapshot?.metrics
+            ? { fallbackProvider: 'komari' as const, fallbackReason: 'Komari metrics were unavailable or stale; SSH data selected.' }
+            : {}),
       },
       resource: inventory?.resource ?? null,
       metrics: monitor?.snapshot ?? null,
@@ -276,7 +314,7 @@ export function buildHostOpsViews({
 /** Load all persisted sources used by the host operations view in parallel. */
 export async function loadHostOpsViews(
   hosts: HostProfile[],
-  options: { auditLimit?: number; staleAfterMs?: number; now?: number } = {},
+  options: { auditLimit?: number; staleAfterMs?: number; now?: number; komariSnapshots?: ProbeSnapshot[] } = {},
 ) {
   if (hosts.length === 0) return {}
   const [monitorLatest, inventoryCache, inventoryStates, audits] = await Promise.all([
@@ -291,6 +329,7 @@ export async function loadHostOpsViews(
     inventoryCache,
     inventoryStates,
     audits,
+    komariSnapshots: options.komariSnapshots,
     now: options.now,
     staleAfterMs: options.staleAfterMs,
   })

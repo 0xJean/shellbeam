@@ -1524,6 +1524,7 @@ export function PcLayout() {
                 <Suspense fallback={<DashboardSectionFallback />}>
                   <div className="min-h-full p-4 md:p-6">
                     <HostsDashboard
+                      activeVaultId={vault.activeVaultId}
                       hosts={hostsCtx.hosts}
                       selectedHostId={hostsCtx.selectedHostId}
                       loading={hostsCtx.loadingHosts}

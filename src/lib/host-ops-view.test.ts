@@ -4,6 +4,8 @@ import { buildHostOpsViews } from './host-ops-view'
 import type { ServerMonitorLatest } from './server-monitor'
 import type { OperationAuditEntry } from './operation-job'
 import type { WorkspaceInventoryCache } from './workspace-inventory'
+import { createProbeObservation } from './probe-provider'
+import type { ProbeSnapshot } from './probe-provider'
 
 const host: HostProfile = {
   id: 'host-1',
@@ -141,5 +143,29 @@ describe('buildHostOpsViews', () => {
       now: 1100,
     })
     expect(views['host-1'].health.state).toBe('jump-unavailable')
+  })
+
+  it('prefers fresh Komari metrics and exposes SSH as the fallback source', () => {
+    const komariSnapshot: ProbeSnapshot = {
+      schemaVersion: 1,
+      host: { hostId: host.id, address: host.address, port: host.port, username: host.username, jump: { address: 'bastion.internal', port: 2200, username: 'jump' } },
+      provider: { kind: 'komari', id: 'komari-prod', nodeId: 'node-1', endpoint: 'https://komari.example', capabilities: ['metrics'] },
+      transport: 'proxy-jump',
+      health: 'online',
+      receivedAt: 1100,
+      metrics: createProbeObservation({
+        data: { ...monitor.snapshot!, cpuPercent: 77, sampledAt: 1050 },
+        source: { kind: 'komari', id: 'komari-prod', nodeId: 'node-1', endpoint: 'https://komari.example', capabilities: ['metrics'] },
+        sampledAt: 1050,
+        receivedAt: 1100,
+        ttlMs: 5000,
+      }),
+      inventory: null,
+      errors: [],
+    }
+    const view = buildHostOpsViews({ hosts: [host], monitorLatest: [monitor], komariSnapshots: [komariSnapshot], now: 1100 })['host-1']
+    expect(view.metrics?.cpuPercent).toBe(77)
+    expect(view.health.provider).toBe('komari')
+    expect(view.health.fallbackProvider).toBe('ssh-agentless')
   })
 })

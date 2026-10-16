@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils'
 import { getWorkspaceInventoryHealthStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
+import { listKomariIntegrations } from '@/lib/komari-config'
+import { syncKomariIntegration } from '@/lib/komari-sync'
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
@@ -144,6 +146,7 @@ function HostSummaryStrip({
 }
 
 interface HostsDashboardProps {
+  activeVaultId?: string
   hosts: HostProfile[]
   selectedHostId: string | null
   loading: boolean
@@ -194,6 +197,7 @@ function hostOpsToCardSummary(view?: HostOpsView): HostOperationalSummary | unde
 }
 
 export function HostsDashboard({
+  activeVaultId,
   hosts, selectedHostId, loading, defaultUsername = 'root',
   onSelectHost, onConnectHost, onCreateHost, onUpdateHost, onDeleteHost,
   openAddForm = false, onAddFormClose,
@@ -224,15 +228,35 @@ export function HostsDashboard({
   const refreshHostOps = useCallback(async () => {
     setHostOpsLoading(true)
     try {
-      setHostOpsViews(await loadHostOpsViews(hosts, { auditLimit: 250 }))
+      let komariSnapshots = undefined
+      if (activeVaultId && onLoadVaultSecret) {
+        const integrations = await listKomariIntegrations(activeVaultId).catch(() => [])
+        const syncResults = await Promise.allSettled(
+          integrations
+            .filter((integration) => integration.enabled)
+            .map(async (integration) => {
+              const apiKey = await onLoadVaultSecret(integration.credentialRef)
+              if (!apiKey) return null
+              return syncKomariIntegration({
+                integrationId: integration.id,
+                config: { endpoint: integration.endpoint, token: apiKey },
+                hosts,
+              })
+            }),
+        )
+        komariSnapshots = syncResults
+          .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof syncKomariIntegration>>> => result.status === 'fulfilled' && result.value !== null)
+          .flatMap((result) => result.value.snapshots)
+      }
+      setHostOpsViews(await loadHostOpsViews(hosts, { auditLimit: 250, komariSnapshots }))
     } catch {
       setHostOpsViews({})
     } finally {
       setHostOpsLoading(false)
     }
-  }, [hosts])
+  }, [activeVaultId, hosts, onLoadVaultSecret])
 
-  useEffect(() => { void refreshHostOps() }, [refreshHostOps])
+  useEffect(() => { void refreshHostOps() }, [activeVaultId, refreshHostOps])
 
 
 

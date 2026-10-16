@@ -1,5 +1,6 @@
 import { TerminalThemeGrid } from '@/components/terminal-widgets'
 import { McpSettingsSection } from '@/components/mcp-settings-section'
+import { KomariSettingsSection } from '@/components/komari-settings-section'
 import { AIModelPicker } from '@/components/ai-model-picker'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
@@ -86,6 +87,7 @@ export function SettingsPanel({
           </section>
         )}
         <McpSettingsSection />
+        <KomariSettingsSection />
         <section className="rounded-lg border p-4">
           <h3 className="mb-2 font-semibold">{t('settings.language')}</h3>
           <div className="flex items-center justify-between">
