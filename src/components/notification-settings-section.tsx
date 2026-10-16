@@ -12,6 +12,8 @@ import {
 } from '@/lib/notification-policy'
 import { Bell, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
+import NotificationDeliverySummary from './notification-delivery-summary'
+import { loadNotificationDeliveryState } from '@/lib/notification-delivery-state'
 
 const CHANNELS: NotificationChannel[] = ['local', 'webhook', 'system']
 const SEVERITIES: NotificationSeverity[] = ['info', 'warning', 'critical']
@@ -19,6 +21,7 @@ const SEVERITIES: NotificationSeverity[] = ['info', 'warning', 'critical']
 export function NotificationSettingsSection() {
   const { t } = useT()
   const [policy, setPolicy] = useState<NotificationPolicy>(loadNotificationPolicy)
+  const [deliveryState] = useState(loadNotificationDeliveryState)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
 
@@ -104,6 +107,8 @@ export function NotificationSettingsSection() {
           <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
           <span>{t('settings.notifications.storageNote')}</span>
         </div>
+
+        <NotificationDeliverySummary state={deliveryState} compact />
 
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" size="sm" onClick={save}>{t('settings.notifications.save')}</Button>

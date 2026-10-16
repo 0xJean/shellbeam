@@ -124,6 +124,7 @@ export async function syncKomariIntegration(options: {
   const alerts = options.includeAlerts === false
     ? null
     : await getKomariAlertSummary(options.config, options.fetchImpl, syncedAt)
+  let alertAudit: KomariAlertAuditEntry[] = []
   const alertState = alerts
     ? (() => {
         const reconciled = reconcileKomariAlerts(
@@ -139,6 +140,7 @@ export async function syncKomariIntegration(options: {
             baseSummary: alerts,
           },
         )
+        alertAudit = reconciled.audit
         return {
           schemaVersion: 1 as const,
           alerts: reconciled.alerts,
@@ -176,7 +178,7 @@ export async function syncKomariIntegration(options: {
     mapping,
     alerts,
     alertState,
-    alertAudit: alertState ? alertState.audit : [],
+    alertAudit,
     snapshots: snapshots.filter((snapshot): snapshot is ProbeSnapshot => snapshot !== null),
   }
 }

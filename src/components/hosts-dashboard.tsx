@@ -18,6 +18,8 @@ import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import { loadKomariPersistence, persistKomariSync } from '@/lib/komari-persistence'
 import { readKomariAlertState } from '@/lib/komari-persistence'
+import { dispatchAndPersistKomariAlertNotifications } from '@/lib/komari-alert-notifications'
+import { loadNotificationPolicy } from '@/lib/notification-policy'
 import { runBatchDockerOperation, runBatchOperation, runBatchServiceOperation, type BatchOperationResult } from '@/lib/multi-host-operations'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, syncKomariIntegration } from '@/lib/komari-sync'
@@ -258,7 +260,13 @@ export function HostsDashboard({
     setHostOpsLoading(true)
     try {
       let komariSnapshots = undefined
-      const komariRecords: Array<{ integrationId: string; snapshots: Awaited<ReturnType<typeof syncKomariIntegration>>['snapshots']; mappings: Awaited<ReturnType<typeof syncKomariIntegration>>['mapping']['mappings'] }> = []
+      const komariRecords: Array<{
+        integrationId: string
+        snapshots: Awaited<ReturnType<typeof syncKomariIntegration>>['snapshots']
+        mappings: Awaited<ReturnType<typeof syncKomariIntegration>>['mapping']['mappings']
+        alertState: Awaited<ReturnType<typeof syncKomariIntegration>>['alertState']
+        alertAudit: Awaited<ReturnType<typeof syncKomariIntegration>>['alertAudit']
+      }> = []
       if (activeVaultId && onLoadVaultSecret) {
         const integrations = await listKomariIntegrations(activeVaultId).catch(() => [])
         const syncResults = await Promise.allSettled(
@@ -271,11 +279,11 @@ export function HostsDashboard({
               const lastSyncedAt = cached.lastSyncedAt
               const ttlMs = cached.syncState?.ttlMs ?? DEFAULT_KOMARI_SYNC_TTL_MS
               if (!forceKomari && isKomariSyncFresh(lastSyncedAt, Date.now(), ttlMs)) {
-                return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings }
+                return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: null, alertAudit: [] }
               }
 
               const apiKey = await onLoadVaultSecret(integration.credentialRef)
-              if (!apiKey) return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings }
+              if (!apiKey) return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: null, alertAudit: [] }
               const result = await syncKomariIntegration({
                 integrationId: integration.id,
                 config: { endpoint: integration.endpoint, token: apiKey },
@@ -302,6 +310,8 @@ export function HostsDashboard({
                 integrationId: integration.id,
                 snapshots: result.skipped ? cachedSnapshots : result.snapshots,
                 mappings: result.skipped ? cached.mappings : result.mapping.mappings,
+                alertState: result.skipped ? null : result.alertState,
+                alertAudit: result.skipped ? [] : result.alertAudit,
               }
             }),
         )
@@ -309,6 +319,30 @@ export function HostsDashboard({
           .filter((result): result is PromiseFulfilledResult<(typeof komariRecords)[number]> => result.status === 'fulfilled')
           .map((result) => { komariRecords.push(result.value); return result.value.snapshots })
           .flat()
+      }
+      // Deliver only audit rows produced by this sync. TTL cache hits and
+      // missing credentials deliberately return an empty audit list, so a
+      // refresh cannot replay historical lifecycle events.
+      if (komariRecords.length > 0) {
+        const notificationPolicy = loadNotificationPolicy()
+        await Promise.all(komariRecords.map(async (record) => {
+          if (!record.alertState || record.alertAudit.length === 0) return
+          try {
+            await dispatchAndPersistKomariAlertNotifications(record.integrationId, record.alertState, {
+              policy: notificationPolicy,
+              audit: record.alertAudit,
+              onLocal: async (payload) => {
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('shellbeam:notification', { detail: payload }))
+                }
+              },
+            })
+          } catch (error) {
+            // A notification sink is optional; a delivery failure must not
+            // hide fresh host health data or the persisted Komari audit.
+            console.warn('Komari alert notification delivery failed', error)
+          }
+        }))
       }
       setHostOpsViews(await loadHostOpsViews(hosts, { auditLimit: 250, komariSnapshots, vaultId: activeVaultId }))
       if (komariRecords.length > 0) {

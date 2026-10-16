@@ -165,6 +165,14 @@ const zhCN: Record<string, string> = {
   'settings.notifications.webhookHelp': '请使用不包含内嵌凭据的 HTTPS 地址。ShellBeam 只发送脱敏后的事件元数据。',
   'settings.notifications.redactionNote': '发送前会限制内容大小，并清理 token、密码、私钥、Cookie 和授权头。',
   'settings.notifications.storageNote': '本地只保存策略元数据，不持久化 Provider 原始内容或发送正文。',
+
+  // 通知投递
+  'settings.notifications.deliveryTitle': '最近通知投递',
+  'settings.notifications.deliveryDescription': '这里只显示已脱敏的投递元数据，不会保存告警内容或凭据。',
+  'settings.notifications.deliveryCount': '已投递 {count} 次',
+  'settings.notifications.recentCount': '最近 24 小时投递 {count} 次',
+  'settings.notifications.lastDelivered': '最近投递：{time}',
+  'settings.notifications.deliveryBreakdown': '{skipped} 次跳过 · {failed} 次失败',
   'settings.notifications.save': '保存通知策略',
   'settings.notifications.reset': '重置',
   'settings.notifications.saved': '通知策略已保存',

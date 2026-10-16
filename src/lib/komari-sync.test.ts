@@ -77,6 +77,41 @@ describe('Komari sync orchestration', () => {
     expect(result.alertState?.summary.load).toBeNull()
   })
 
+  it('returns only lifecycle audit rows produced by the current reconciliation', async () => {
+    const previous = {
+      schemaVersion: 1 as const,
+      alerts: [{
+        schemaVersion: 1 as const, source: 'komari' as const, alertId: 'komari-alert-load', fingerprint: 'komari-prod|||load',
+        integrationId: 'komari-prod', nodeId: null, hostId: null, kind: 'load', title: 'load', severity: 'warning' as const,
+        count: 0, status: 'resolved' as const, firstSeenAt: 1_000, lastSeenAt: 1_000, acknowledgedAt: null, acknowledgedBy: null,
+        resolvedAt: 1_000, closedAt: null, relatedOperationJobId: null, deduplicatedCount: 0,
+      }],
+      audit: [{
+        auditId: 'old-open', alertId: 'komari-alert-load', fingerprint: 'komari-prod|||load',
+        event: 'opened' as const, status: 'active' as const, actor: 'komari-sync', operationJobId: null, at: 1_000,
+      }],
+      summary: { load: 0, offline: 0, total: 0, active: 0, updatedAt: 1_000, open: 0, acknowledged: 0, resolved: 1, closed: 0, deduplicated: 0, localUpdatedAt: 1_000 },
+    }
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/admin/client/list')) return new Response(JSON.stringify([]), { status: 200 })
+      if (url.endsWith('/api/admin/notification/load/')) return new Response(JSON.stringify({ total: 1 }), { status: 200 })
+      if (url.endsWith('/api/admin/notification/offline')) return new Response(JSON.stringify({ total: 0 }), { status: 200 })
+      return new Response('[]', { status: 200 })
+    })
+    const result = await syncKomariIntegration({
+      integrationId: 'komari-prod',
+      config: { endpoint: 'https://komari.example' },
+      hosts: [],
+      now: 2_000,
+      fetchImpl,
+      alertState: previous,
+    })
+    expect(result.alertAudit.map((entry) => entry.event)).toEqual(['reopened'])
+    expect(result.alertAudit).not.toContainEqual(expect.objectContaining({ auditId: 'old-open' }))
+    expect(result.alertState?.audit.map((entry) => entry.auditId)).toEqual(['old-open', result.alertAudit[0]?.auditId])
+  })
+
   it('caps concurrent recent-metric requests while preserving all snapshots', async () => {
     const hosts = Array.from({ length: DEFAULT_KOMARI_SYNC_CONCURRENCY + 2 }, (_, index) => ({
       ...host,

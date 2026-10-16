@@ -1,0 +1,278 @@
+import {
+  dispatchNotification,
+  type NotificationDispatchOptions,
+  type NotificationDispatchResult,
+  type NotificationDispatchState,
+  type NotificationDeliveryRecord,
+} from './notification-dispatch'
+import { normalizeNotificationPolicy, type NotificationEvent, type NotificationPolicy, type NotificationPolicyInput } from './notification-policy'
+import type {
+  KomariAlertAuditEntry,
+  KomariAlertAuditEvent,
+  KomariAlertRecord,
+  KomariAlertState,
+} from './komari-alerts'
+
+/** Lifecycle events that represent a user-visible state transition. Repeated
+ * provider observations (`updated`/`deduplicated`) are intentionally omitted
+ * from delivery to keep a noisy integration from becoming a notification
+ * stream. */
+export const KOMARI_NOTIFICATION_EVENTS: readonly KomariAlertAuditEvent[] = [
+  'opened',
+  'reopened',
+  'resolved',
+  'acknowledged',
+  'closed',
+]
+
+export interface KomariAlertNotificationOptions extends Omit<NotificationDispatchOptions, 'policy' | 'state' | 'now'> {
+  policy?: NotificationPolicy | NotificationPolicyInput
+  state?: NotificationDispatchState
+  now?: number
+  /** Audit rows to deliver. Defaults to all rows in `state.audit`. */
+  audit?: readonly KomariAlertAuditEntry[]
+  /** Bound work performed by one sync; older rows are retained for audit but
+   * never replayed as notifications. */
+  maxEvents?: number
+  /** Override the default lifecycle allow-list for a specialised caller. */
+  eventTypes?: readonly KomariAlertAuditEvent[]
+}
+
+export interface KomariAlertNotificationSummary {
+  considered: number
+  delivered: number
+  skipped: number
+  failed: number
+  omitted: number
+  lastDeliveredAt: number | null
+}
+
+export interface KomariAlertNotificationResult {
+  events: NotificationDispatchResult[]
+  state: NotificationDispatchState
+  summary: KomariAlertNotificationSummary
+}
+
+const DEFAULT_MAX_EVENTS = 64
+const MAX_EVENTS = 256
+const MAX_TEXT_LENGTH = 240
+
+export const KOMARI_NOTIFICATION_STATE_STORAGE_PREFIX = 'shellbeam.komariNotificationState.v1'
+const MAX_STORED_DELIVERIES = 1_000
+
+function storageKey(integrationId: string) {
+  const normalized = safeText(integrationId, 'default').toLowerCase().replace(/[^a-z0-9._:-]+/g, '_').slice(0, 160) || 'default'
+  return `${KOMARI_NOTIFICATION_STATE_STORAGE_PREFIX}:${normalized}`
+}
+
+function normalizeDeliveryState(value: unknown): NotificationDispatchState {
+  const raw = value && typeof value === 'object' ? value as { deliveries?: unknown } : {}
+  const deliveries = Array.isArray(raw.deliveries) ? raw.deliveries : []
+  return {
+    deliveries: deliveries.flatMap((item): NotificationDeliveryRecord[] => {
+      if (!item || typeof item !== 'object') return []
+      const row = item as Partial<NotificationDeliveryRecord>
+      if (typeof row.key !== 'string' || typeof row.fingerprint !== 'string' || typeof row.eventKey !== 'string') return []
+      if (row.channel !== 'local' && row.channel !== 'webhook' && row.channel !== 'system') return []
+      if (!Number.isFinite(row.deliveredAt)) return []
+      return [{
+        key: safeText(row.key, '').slice(0, 600),
+        fingerprint: safeText(row.fingerprint, '').slice(0, 512),
+        eventKey: safeText(row.eventKey, '').slice(0, 1024),
+        eventId: typeof row.eventId === 'string' ? safeText(row.eventId, '').slice(0, 240) || null : null,
+        status: typeof row.status === 'string' ? safeText(row.status, '').slice(0, 96) || null : null,
+        channel: row.channel,
+        deliveredAt: Number(row.deliveredAt),
+      }]
+    }).filter((row) => row.key && row.fingerprint && row.eventKey).slice(-MAX_STORED_DELIVERIES),
+  }
+}
+
+/** Load only bounded delivery metadata. Notification payloads and webhook
+ * credentials are never persisted here. */
+export function loadKomariAlertNotificationState(integrationId: string): NotificationDispatchState {
+  if (typeof localStorage === 'undefined') return { deliveries: [] }
+  try {
+    return normalizeDeliveryState(JSON.parse(localStorage.getItem(storageKey(integrationId)) || 'null'))
+  } catch {
+    return { deliveries: [] }
+  }
+}
+
+export function saveKomariAlertNotificationState(integrationId: string, state: NotificationDispatchState): NotificationDispatchState {
+  const normalized = normalizeDeliveryState(state)
+  if (typeof localStorage !== 'undefined') {
+    try { localStorage.setItem(storageKey(integrationId), JSON.stringify(normalized)) } catch { /* storage is optional */ }
+  }
+  return normalized
+}
+
+function safeText(value: unknown, fallback = '') {
+  if (typeof value !== 'string') return fallback
+  return [...value]
+    .map((character) => {
+      const code = character.charCodeAt(0)
+      return code < 0x20 || code === 0x7f ? ' ' : character
+    })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_TEXT_LENGTH)
+}
+
+function recordForAudit(state: KomariAlertState, audit: KomariAlertAuditEntry) {
+  return state.alerts.find((record) => record.alertId === audit.alertId)
+}
+
+function lifecycleMessage(event: KomariAlertAuditEvent, record: KomariAlertRecord) {
+  const title = safeText(record.title, `${record.kind} alert`)
+  switch (event) {
+    case 'opened': return `${title} opened`
+    case 'reopened': return `${title} reopened`
+    case 'resolved': return `${title} recovered`
+    case 'acknowledged': return `${title} acknowledged`
+    case 'closed': return `${title} closed`
+    case 'updated': return `${title} updated`
+    case 'deduplicated': return `${title} repeated observation`
+    case 'operation-linked': return `${title} linked to an operation`
+    default: return title
+  }
+}
+
+/** Convert one local Komari lifecycle row into a safe dispatcher event. The
+ * dispatcher performs the final redaction before any sink receives it. */
+export function komariAlertNotificationEvent(
+  record: KomariAlertRecord,
+  audit: KomariAlertAuditEntry,
+): NotificationEvent {
+  const event = audit.event
+  const title = safeText(record.title, `${record.kind} alert`)
+  return {
+    eventId: safeText(audit.auditId, `${record.alertId}:${event}:${audit.at}`),
+    source: 'komari',
+    kind: `alert.${event}`,
+    severity: record.severity,
+    title,
+    message: lifecycleMessage(event, record),
+    fingerprint: record.fingerprint,
+    hostId: safeText(record.hostId) || undefined,
+    integrationId: safeText(record.integrationId) || undefined,
+    status: audit.status,
+    occurredAt: audit.at,
+    metadata: {
+      alertId: safeText(record.alertId),
+      auditId: safeText(audit.auditId),
+      alertKind: safeText(record.kind),
+      lifecycle: event,
+      count: record.count,
+      relatedOperationJobId: safeText(record.relatedOperationJobId) || undefined,
+    },
+  }
+}
+
+function boundedMaxEvents(value: number | undefined) {
+  if (!Number.isFinite(value)) return DEFAULT_MAX_EVENTS
+  return Math.max(1, Math.min(MAX_EVENTS, Math.floor(value as number)))
+}
+
+function uniqueAuditRows(rows: readonly KomariAlertAuditEntry[]) {
+  const seen = new Set<string>()
+  return rows.filter((row) => {
+    const key = safeText(row.auditId)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+/** Dispatch newly reconciled Komari lifecycle rows through the shared local,
+ * webhook and system notification policy. A caller can pass only the audit
+ * rows produced by the current sync; when omitted, the newest bounded rows
+ * from the lifecycle state are used. */
+export async function dispatchKomariAlertNotifications(
+  state: KomariAlertState,
+  options: KomariAlertNotificationOptions = {},
+): Promise<KomariAlertNotificationResult> {
+  const maxEvents = boundedMaxEvents(options.maxEvents)
+  const eventTypes = new Set(options.eventTypes ?? KOMARI_NOTIFICATION_EVENTS)
+  const sourceRows = options.audit ?? state.audit
+  const candidateRows = uniqueAuditRows(sourceRows)
+  const boundedRows = candidateRows.slice(-maxEvents)
+  const omitted = Math.max(0, candidateRows.length - boundedRows.length)
+  let dispatchState = options.state
+  const events: NotificationDispatchResult[] = []
+  let delivered = 0
+  let skipped = 0
+  let alreadyDelivered = 0
+  let failed = 0
+  let lastDeliveredAt: number | null = null
+
+  const policy = normalizeNotificationPolicy(options.policy)
+  for (const audit of boundedRows) {
+    if (!eventTypes.has(audit.event)) continue
+    const record = recordForAudit(state, audit)
+    if (!record) {
+      skipped += 1
+      continue
+    }
+    const event = komariAlertNotificationEvent(record, audit)
+    const deliveredChannels = new Set((dispatchState?.deliveries ?? [])
+      .filter((delivery) => delivery.eventId === event.eventId)
+      .map((delivery) => delivery.channel))
+    // Audit ids are immutable lifecycle facts. Once every currently enabled
+    // channel has accepted one, do not replay an old row after its cooldown
+    // expires when a caller passes the persisted full audit history.
+    if (policy.channels.every((channel) => deliveredChannels.has(channel))) {
+      alreadyDelivered += 1
+      continue
+    }
+    const result = await dispatchNotification(
+      event,
+      {
+        ...options,
+        state: dispatchState,
+        now: options.now ?? audit.at,
+      },
+    )
+    dispatchState = result.state
+    events.push(result)
+    for (const delivery of result.deliveries) {
+      if (delivery.status === 'delivered') {
+        delivered += 1
+        if (delivery.deliveredAt !== undefined) lastDeliveredAt = Math.max(lastDeliveredAt ?? 0, delivery.deliveredAt)
+      } else if (delivery.status === 'failed') {
+        failed += 1
+      } else {
+        skipped += 1
+      }
+    }
+  }
+
+  return {
+    events,
+    state: dispatchState ?? { deliveries: [] },
+    summary: {
+      considered: boundedRows.filter((audit) => eventTypes.has(audit.event)).length,
+      delivered,
+      skipped: skipped + alreadyDelivered,
+      failed,
+      omitted,
+      lastDeliveredAt,
+    },
+  }
+}
+
+
+/** Dispatch lifecycle rows and persist only the bounded delivery ledger. */
+export async function dispatchAndPersistKomariAlertNotifications(
+  integrationId: string,
+  state: KomariAlertState,
+  options: KomariAlertNotificationOptions = {},
+): Promise<KomariAlertNotificationResult> {
+  const result = await dispatchKomariAlertNotifications(state, {
+    ...options,
+    state: options.state ?? loadKomariAlertNotificationState(integrationId),
+  })
+  saveKomariAlertNotificationState(integrationId, result.state)
+  return result
+}

@@ -165,6 +165,14 @@ const en: Record<string, string> = {
   'settings.notifications.webhookHelp': 'Use an HTTPS endpoint without embedded credentials. ShellBeam sends only redacted event metadata.',
   'settings.notifications.redactionNote': 'Payloads are bounded and redact tokens, passwords, private keys, cookies, and authorization headers before delivery.',
   'settings.notifications.storageNote': 'Only policy metadata is stored locally. Provider payloads and delivery bodies are not persisted.',
+
+  // Notification delivery
+  'settings.notifications.deliveryTitle': 'Recent notification delivery',
+  'settings.notifications.deliveryDescription': 'Shows redacted delivery metadata only; alert payloads and credentials are never stored.',
+  'settings.notifications.deliveryCount': '{count} delivered',
+  'settings.notifications.recentCount': '{count} delivered in the last 24 hours',
+  'settings.notifications.lastDelivered': 'Last delivery: {time}',
+  'settings.notifications.deliveryBreakdown': '{skipped} skipped · {failed} failed',
   'settings.notifications.save': 'Save notification policy',
   'settings.notifications.reset': 'Reset',
   'settings.notifications.saved': 'Notification policy saved',

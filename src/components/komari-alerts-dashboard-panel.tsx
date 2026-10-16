@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { listKomariIntegrations } from '@/lib/komari-config'
+import { loadNotificationPolicy } from '@/lib/notification-policy'
+import type { NotificationDispatchState } from '@/lib/notification-dispatch'
+import {
+  dispatchAndPersistKomariAlertNotifications,
+  type KomariAlertNotificationSummary,
+} from '@/lib/komari-alert-notifications'
 import {
   loadKomariPersistence,
   readKomariAlertState,
@@ -15,10 +21,13 @@ import {
 } from '@/lib/komari-alerts'
 import type { KomariAlertSummary } from '@/lib/komari'
 import KomariAlertPanel from './komari-alert-panel'
+import NotificationDeliverySummary, { type NotificationDispatchSummary } from './notification-delivery-summary'
 
 interface AlertEntry {
   integrationId: string
   state: KomariAlertState
+  notificationState?: NotificationDispatchState
+  notificationSummary?: KomariAlertNotificationSummary
 }
 
 function sumNullable(values: Array<number | null | undefined>): number | null {
@@ -43,15 +52,34 @@ function mergeAlertEntries(entries: AlertEntry[]): KomariAlertState | null {
   return { schemaVersion: 1, alerts, audit, summary }
 }
 
+function mergeNotificationSummaries(entries: AlertEntry[]): NotificationDispatchSummary | null {
+  const summaries = entries.map((entry) => entry.notificationSummary).filter((summary): summary is KomariAlertNotificationSummary => summary !== undefined)
+  if (summaries.length === 0) return null
+  return {
+    considered: summaries.reduce((sum, summary) => sum + summary.considered, 0),
+    delivered: summaries.reduce((sum, summary) => sum + summary.delivered, 0),
+    skipped: summaries.reduce((sum, summary) => sum + summary.skipped + summary.omitted, 0),
+    failed: summaries.reduce((sum, summary) => sum + summary.failed, 0),
+    lastDeliveredAt: summaries.reduce<number | null>((latest, summary) => summary.lastDeliveredAt === null ? latest : Math.max(latest ?? 0, summary.lastDeliveredAt), null),
+  }
+}
+
+function mergeNotificationStates(entries: AlertEntry[]): NotificationDispatchState | null {
+  const states = entries.map((entry) => entry.notificationState).filter((state): state is NotificationDispatchState => state !== undefined)
+  if (states.length === 0) return null
+  return { deliveries: states.flatMap((state) => state.deliveries).sort((left, right) => left.deliveredAt - right.deliveredAt).slice(-1_000) }
+}
+
 export interface KomariAlertsDashboardPanelProps {
   activeVaultId?: string
   onOpenHost?: (hostId: string) => void
   onOpenOperation?: (operationJobId: string) => void
 }
 
-/** Loads persisted lifecycle rows and delegates acknowledgement/close to the
- * same durable helper used by other alert surfaces. It intentionally does not
- * fetch Komari credentials or mutate remote notifications. */
+/** Loads persisted lifecycle rows, routes newly observed transitions through
+ * the local notification policy, and delegates acknowledgement/close to the
+ * same durable helper used by other alert surfaces. It never fetches Komari
+ * credentials or mutates Komari's remote alert state. */
 export function KomariAlertsDashboardPanel({ activeVaultId, onOpenHost, onOpenOperation }: KomariAlertsDashboardPanelProps) {
   const [entries, setEntries] = useState<AlertEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -71,7 +99,28 @@ export function KomariAlertsDashboardPanel({ activeVaultId, onOpenHost, onOpenOp
         const state = readKomariAlertState(persisted.syncState)
         return state ? { integrationId: integration.id, state } : null
       }))
-      setEntries(loaded.filter((entry): entry is AlertEntry => entry !== null))
+      const nextEntries = loaded.filter((entry): entry is AlertEntry => entry !== null)
+      const notificationPolicy = loadNotificationPolicy()
+      const notifiedEntries = await Promise.all(nextEntries.map(async (entry) => {
+        try {
+          const result = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, entry.state, {
+            policy: notificationPolicy,
+            // The persisted lifecycle includes audit history. Only rows from
+            // the most recent sync/action are eligible here; older rows remain
+            // visible in the audit panel but must not replay notifications.
+            audit: entry.state.audit.filter((audit) => audit.at >= entry.state.summary.localUpdatedAt),
+            // The in-app alert panel is the local sink. Delivery state stores
+            // metadata only, while the panel remains the payload surface.
+            onLocal: async () => undefined,
+          })
+          return { ...entry, notificationState: result.state, notificationSummary: result.summary }
+        } catch {
+          // Notification delivery must never hide a healthy persisted alert
+          // lifecycle when an optional sink is unavailable.
+          return entry
+        }
+      }))
+      setEntries(notifiedEntries)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -82,6 +131,8 @@ export function KomariAlertsDashboardPanel({ activeVaultId, onOpenHost, onOpenOp
   useEffect(() => { void reload() }, [reload])
 
   const state = useMemo(() => mergeAlertEntries(entries), [entries])
+  const notificationSummary = useMemo(() => mergeNotificationSummaries(entries), [entries])
+  const notificationState = useMemo(() => mergeNotificationStates(entries), [entries])
   const handleAction = useCallback(async (action: KomariAlertAction, alert: KomariAlertRecord) => {
     const entry = entries.find((candidate) => candidate.state.alerts.some((item) => item.alertId === alert.alertId))
     if (!entry) throw new Error('Komari alert integration was not found')
@@ -90,22 +141,37 @@ export function KomariAlertsDashboardPanel({ activeVaultId, onOpenHost, onOpenOp
       state: entry.state,
       alertId: alert.alertId,
     })
-    setEntries((current) => current.map((candidate) => candidate.integrationId === entry.integrationId ? { ...candidate, state: result.state } : candidate))
+    try {
+      const notificationResult = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, result.state, {
+        policy: loadNotificationPolicy(),
+        audit: result.state.audit.slice(-1),
+        state: entry.notificationState,
+        onLocal: async () => undefined,
+      })
+      setEntries((current) => current.map((candidate) => candidate.integrationId === entry.integrationId
+        ? { ...candidate, state: result.state, notificationState: notificationResult.state, notificationSummary: notificationResult.summary }
+        : candidate))
+    } catch {
+      setEntries((current) => current.map((candidate) => candidate.integrationId === entry.integrationId ? { ...candidate, state: result.state } : candidate))
+    }
   }, [entries])
 
   if (!activeVaultId && !state && !loading) return null
   return (
-    <KomariAlertPanel
-      state={state}
-      loading={loading}
-      error={error}
-      onAcknowledge={(alert) => handleAction('acknowledge', alert)}
-      onClose={(alert) => handleAction('close', alert)}
-      onOpenHost={onOpenHost}
-      onOpenOperation={onOpenOperation}
-      compact
-      className="mb-4"
-    />
+    <>
+      {notificationSummary && <NotificationDeliverySummary summary={notificationSummary} state={notificationState} compact className="mb-3" />}
+      <KomariAlertPanel
+        state={state}
+        loading={loading}
+        error={error}
+        onAcknowledge={(alert) => handleAction('acknowledge', alert)}
+        onClose={(alert) => handleAction('close', alert)}
+        onOpenHost={onOpenHost}
+        onOpenOperation={onOpenOperation}
+        compact
+        className="mb-4"
+      />
+    </>
   )
 }
 
