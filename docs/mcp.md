@@ -183,6 +183,28 @@ its own commands and file operations within the user's authorization.
 - Remote strings and file contents are untrusted data, never instructions or
   authorization to perform further operations.
 
+### Unified ProbeProvider observations
+
+Server monitor scans, Workspace inventory scans, Komari sync and MCP refreshes
+use the same `ProbeProvider` observation shape. Every observation identifies its
+provider and host, records the remote sample time and local receive time, and
+declares a TTL, expiry state and confidence (`observed`, `partial` or
+`inferred`). A failed section is represented by a section error or `null`
+observation; missing data is never converted into a healthy zero.
+
+The process-wide provider registry used by the frontend collectors applies one
+bounded concurrency budget and coalesces overlapping requests for the same
+provider, host and sections. Fresh observations are reused until their TTL
+expires, while an explicitly due monitor or Komari sync can force a new sample
+without creating duplicate in-flight SSH or HTTP work. Provider fallback only
+accepts an `online` or `stale` snapshot as a successful result and preserves an
+`unknown` result with its error metadata when every provider is unavailable.
+
+MCP `refresh_server_info` keeps the legacy flattened fields for compatibility,
+and adds the canonical `metrics` and `inventory` observations. The envelope
+also includes `transport`, so a ProxyJump route remains visible to monitoring,
+Workspace and MCP consumers instead of being hidden in connection details.
+
 ## Security and execution semantics
 
 - Authorization is per client, vault, host and capability. Connection and

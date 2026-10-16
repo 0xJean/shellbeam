@@ -450,34 +450,11 @@ pub fn run(
                 value["latencyMs"] = json!(started_at.elapsed().as_millis() as u64);
                 // Keep MCP probe responses aligned with the shared
                 // ProbeProvider contract while retaining the legacy flattened
-                // capacity/inventory fields for existing clients.
-                value["schemaVersion"] = json!(1);
-                let mut host_identity = json!({
-                    "hostId": host.id,
-                    "address": host.address,
-                    "port": host.port,
-                    "username": host.username,
-                });
-                if let Some(address) = host
-                    .jump_host
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                {
-                    host_identity["jump"] = json!({
-                        "address": address,
-                        "port": host.jump_port.unwrap_or(22),
-                        "username": host.jump_user.as_deref().filter(|value| !value.trim().is_empty()).unwrap_or(&host.username),
-                    });
-                }
-                value["host"] = host_identity;
-                value["provider"] = json!({
-                    "kind": "ssh-agentless",
-                    "id": "ssh-agentless",
-                    "capabilities": ["metrics", "inventory"],
-                });
-                value["transport"] = json!(if has_jump_host(host) { "proxy-jump" } else { "direct" });
-                value["health"] = json!("online");
-                value["receivedAt"] = json!(crate::storage::now_unix_ms());
+                // capacity/inventory fields for existing clients. The
+                // observation wrappers are intentionally additive so older
+                // clients can continue reading `capacity`, `filesystems`,
+                // and `projects` without a migration.
+                attach_probe_contract(&mut value, host);
             }
             redact(value, &secret)
         })
@@ -670,6 +647,252 @@ pub(super) fn monitor_snapshot(probe: &Value) -> Value {
         "latencyMs":probe["latencyMs"],"sampledAt":probe["sampledAt"]})
 }
 
+const METRICS_TTL_MS: i64 = 2 * 60 * 1_000;
+const INVENTORY_TTL_MS: i64 = 10 * 60 * 1_000;
+
+fn probe_host_identity(host: &HostProfile) -> Value {
+    let mut identity = json!({
+        "hostId": host.id,
+        "address": host.address,
+        "port": host.port,
+        "username": host.username,
+    });
+    if let Some(address) = host
+        .jump_host
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        identity["jump"] = json!({
+            "address": address,
+            "port": host.jump_port.unwrap_or(22),
+            "username": host.jump_user.as_deref().filter(|value| !value.trim().is_empty()).unwrap_or(&host.username),
+        });
+    }
+    identity
+}
+
+fn probe_provider_ref() -> Value {
+    json!({
+        "kind": "ssh-agentless",
+        "id": "ssh-agentless",
+        "capabilities": ["metrics", "inventory"],
+    })
+}
+
+fn probe_observation(
+    data: Value,
+    source: &Value,
+    sampled_at: i64,
+    received_at: i64,
+    ttl_ms: i64,
+    confidence: &str,
+) -> Value {
+    json!({
+        "data": data,
+        "source": source,
+        "freshness": {
+            "sampledAt": sampled_at,
+            "receivedAt": received_at,
+            "ttlMs": ttl_ms,
+            "expiresAt": sampled_at.saturating_add(ttl_ms),
+            "expired": received_at > sampled_at.saturating_add(ttl_ms),
+        },
+        "confidence": confidence,
+    })
+}
+
+fn inventory_snapshot(probe: &Value, sampled_at: i64) -> Value {
+    let capacity = &probe["capacity"];
+    let used = capacity["memoryTotalBytes"]
+        .as_u64()
+        .zip(capacity["memoryAvailableBytes"].as_u64())
+        .map(|(total, available)| total.saturating_sub(available));
+    let root = probe["filesystems"]
+        .as_array()
+        .and_then(|disks| disks.iter().find(|disk| disk["mount"] == "/"));
+    let number_text = |value: &Value| {
+        value
+            .as_u64()
+            .map(|value| value.to_string())
+            .or_else(|| {
+                value
+                    .as_f64()
+                    .filter(|value| value.is_finite())
+                    .map(|value| {
+                        if value.fract() == 0.0 {
+                            format!("{value:.0}")
+                        } else {
+                            format!("{value:.2}")
+                        }
+                    })
+            })
+            .unwrap_or_default()
+    };
+    let tools = probe["tools"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|tool| {
+            let name = tool["name"].as_str()?.to_string();
+            Some(json!({
+                "id": name,
+                "name": name,
+                "category": "system",
+                "binary": tool["name"].clone(),
+                "path": tool["path"].clone(),
+                "version": tool.get("version").cloned().unwrap_or(Value::Null),
+            }))
+        })
+        .collect::<Vec<_>>();
+    let services = probe["services"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|service| {
+            let name = service.as_str()?.to_string();
+            Some(json!({"name": name, "active": "unknown", "enabled": "unknown"}))
+        })
+        .collect::<Vec<_>>();
+    let containers = probe["containers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|container| {
+            let field = |name: &str, legacy_name: &str| {
+                container
+                    .get(name)
+                    .filter(|value| !value.is_null())
+                    .cloned()
+                    .or_else(|| {
+                        container
+                            .get(legacy_name)
+                            .filter(|value| !value.is_null())
+                            .cloned()
+                    })
+                    .unwrap_or(Value::Null)
+            };
+            json!({
+                "name": field("name", "Names"),
+                "image": field("image", "Image"),
+                "status": field("status", "Status"),
+                "ports": field("ports", "Ports"),
+            })
+        })
+        .collect::<Vec<_>>();
+    let projects = probe["projects"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|project| {
+            let path = project["manifestPath"].as_str()?.to_string();
+            let name = Path::new(&path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or(&path)
+                .to_string();
+            Some(json!({
+                "path": path,
+                "kind": "detected",
+                "name": name,
+                "modifiedAt": "",
+            }))
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "resource": {
+            "hostname": capacity["hostname"].as_str().unwrap_or_default(),
+            "os": capacity["os"].as_str().unwrap_or_default(),
+            "kernel": capacity["kernel"].as_str().unwrap_or_default(),
+            "uptime": if capacity["uptimeSeconds"].is_number() { format!("{}s", number_text(&capacity["uptimeSeconds"])) } else { String::new() },
+            "cpuPercent": capacity["cpuPercent"],
+            "memoryPercent": used.zip(capacity["memoryTotalBytes"].as_u64()).and_then(|(used, total)| (total > 0).then_some(100.0 * used as f64 / total as f64)),
+            "memoryText": format!("{}/{}", used.map(|value| value.to_string()).unwrap_or_default(), number_text(&capacity["memoryTotalBytes"])),
+            "diskPercent": root.map(|disk| disk["usedPercent"].clone()).unwrap_or(Value::Null),
+            "diskText": root.map(|disk| format!("{}/{}", number_text(&disk["used"]), number_text(&disk["total"]))).unwrap_or_default(),
+            "network": format!("{}/{}", number_text(&capacity["networkRxBytesPerSec"]), number_text(&capacity["networkTxBytesPerSec"])),
+        },
+        "tools": tools,
+        "services": services,
+        "containers": containers,
+        "pm2": [],
+        "projects": projects,
+        "scannedAt": sampled_at,
+    })
+}
+
+fn has_capacity_data(probe: &Value) -> bool {
+    let Some(capacity) = probe["capacity"].as_object() else {
+        return false;
+    };
+    [
+        "hostname",
+        "os",
+        "kernel",
+        "uptimeSeconds",
+        "cpuPercent",
+        "load",
+        "memoryTotalBytes",
+        "memoryAvailableBytes",
+        "networkRxBytesPerSec",
+        "networkTxBytesPerSec",
+    ]
+    .iter()
+    .any(|key| capacity.get(*key).is_some_and(|value| !value.is_null()))
+}
+
+/// Add the canonical ProbeProvider envelope to a legacy MCP probe response.
+/// The legacy fields intentionally remain untouched because MCP clients may
+/// still depend on them. Freshness is measured from the remote sample marker,
+/// while `receivedAt` records when ShellBeam accepted the result.
+fn attach_probe_contract(value: &mut Value, host: &HostProfile) {
+    let received_at = crate::storage::now_unix_ms();
+    let sampled_at = value["sampledAt"].as_i64().unwrap_or(received_at);
+    let provider = probe_provider_ref();
+    let metrics = monitor_snapshot(value);
+    let inventory = inventory_snapshot(value, sampled_at);
+    let confidence = if value["completeness"] == "partial" {
+        "partial"
+    } else {
+        "observed"
+    };
+    let health = if has_capacity_data(value) {
+        "online"
+    } else {
+        "unknown"
+    };
+    value["schemaVersion"] = json!(1);
+    value["host"] = probe_host_identity(host);
+    value["provider"] = provider.clone();
+    value["transport"] = json!(if has_jump_host(host) {
+        "proxy-jump"
+    } else {
+        "direct"
+    });
+    value["health"] = json!(health);
+    value["receivedAt"] = json!(received_at);
+    value["metrics"] = probe_observation(
+        metrics,
+        &provider,
+        sampled_at,
+        received_at,
+        METRICS_TTL_MS,
+        confidence,
+    );
+    value["inventory"] = probe_observation(
+        inventory,
+        &provider,
+        sampled_at,
+        received_at,
+        INVENTORY_TTL_MS,
+        "partial",
+    );
+    value["errors"] = json!([]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,5 +973,52 @@ mod tests {
         assert!(snapshot["diskPercent"].is_null());
         assert!(snapshot["load1"].is_null());
         assert!(snapshot["networkRxBytesPerSec"].is_null());
+    }
+
+    #[test]
+    fn probe_contract_emits_canonical_observations_without_removing_legacy_fields() {
+        let mut probe = parse_probe(
+            "__SB_MCP_BEGIN\n__SB_MCP_HOSTNAME=node-1\n__SB_MCP_OS=Linux\n__SB_MCP_UPTIME=42\n__SB_MCP_CPU=25\n__SB_MCP_NETWORK=0 0\n__SB_MCP_MEM=MemTotal: 2048\n__SB_MCP_MEM=MemAvailable: 1024\n__SB_MCP_DISK=/dev/sda 100 20 75 20% /\n__SB_MCP_TOOL=systemctl /usr/bin/systemctl\n__SB_MCP_SERVICE=sshd\n__SB_MCP_PROJECT=/srv/app/package.json\n__SB_MCP_END\n",
+        )
+        .unwrap();
+        let legacy_capacity = probe["capacity"].clone();
+        attach_probe_contract(&mut probe, &host_with_jump("privateKey"));
+
+        assert_eq!(probe["schemaVersion"], 1);
+        assert_eq!(probe["transport"], "proxy-jump");
+        assert_eq!(probe["provider"]["kind"], "ssh-agentless");
+        assert_eq!(probe["host"]["jump"]["address"], "jump.example.com");
+        assert_eq!(probe["health"], "online");
+        assert_eq!(probe["capacity"], legacy_capacity);
+        assert_eq!(probe["metrics"]["data"]["cpuPercent"], 25.0);
+        assert_eq!(probe["metrics"]["confidence"], "partial");
+        assert_eq!(probe["metrics"]["freshness"]["ttlMs"], METRICS_TTL_MS);
+        assert_eq!(probe["inventory"]["data"]["resource"]["uptime"], "42s");
+        assert_eq!(probe["inventory"]["data"]["resource"]["network"], "0/0");
+        assert_eq!(probe["inventory"]["data"]["resource"]["hostname"], "node-1");
+        assert_eq!(probe["inventory"]["data"]["services"][0]["name"], "sshd");
+        assert_eq!(
+            probe["inventory"]["data"]["projects"][0]["path"],
+            "/srv/app/package.json"
+        );
+        assert_eq!(probe["errors"], json!([]));
+    }
+
+    #[test]
+    fn probe_contract_marks_empty_observation_unknown() {
+        let mut probe = parse_probe("__SB_MCP_BEGIN\n__SB_MCP_END\n").unwrap();
+        attach_probe_contract(&mut probe, &host_with_jump("privateKey"));
+        assert_eq!(probe["health"], "unknown");
+        assert!(probe["metrics"]["data"]["cpuPercent"].is_null());
+        assert_eq!(probe["inventory"]["confidence"], "partial");
+        assert!(!probe["metrics"]["freshness"]["expiresAt"].is_null());
+    }
+
+    #[test]
+    fn architecture_only_probe_does_not_claim_online_health() {
+        let mut probe =
+            parse_probe("__SB_MCP_BEGIN\n__SB_MCP_ARCH=x86_64\n__SB_MCP_END\n").unwrap();
+        attach_probe_contract(&mut probe, &host_with_jump("privateKey"));
+        assert_eq!(probe["health"], "unknown");
     }
 }

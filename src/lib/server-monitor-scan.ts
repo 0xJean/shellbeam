@@ -15,13 +15,13 @@ import {
   pruneServerMonitorStates,
   type ServerMonitorHostState,
 } from './server-monitor-state'
-import { createAgentlessSshProbeProvider } from './probe-provider'
+import { getProbeProviderRegistry } from './probe-scheduler'
 
 export const SERVER_MONITOR_INTERVAL_MS = 60 * 1000
 export const SERVER_MONITOR_HISTORY_MS = 24 * 60 * 60 * 1000
 export const SERVER_MONITOR_CONCURRENCY = 3
 
-const serverMonitorProbeProvider = createAgentlessSshProbeProvider()
+const probeRegistry = getProbeProviderRegistry()
 
 interface ScanOptions {
   hosts: HostProfile[]
@@ -137,11 +137,16 @@ export async function scanServerMonitorHosts({
       const attemptAt = Date.now()
 
       try {
-        const probe = await serverMonitorProbeProvider.probe({
+        const scheduled = await probeRegistry.probe({
           host,
           resolveAuthSecret,
           sections: ['metrics'],
+          providerId: 'ssh-agentless',
+          // Monitor cadence is the source of truth for its 60-second history;
+          // the registry still coalesces overlapping scans for this host.
+          force: true,
         })
+        const probe = scheduled.snapshot
         if (!probe.metrics) {
           throw new Error(probe.errors[0]?.message || 'server monitor returned no usable Linux metrics')
         }

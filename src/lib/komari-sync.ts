@@ -11,6 +11,7 @@ import {
 import { mapKomariNodesToHosts, type KomariMappingResult } from './komari-mapping'
 import { createKomariProbeProvider } from './komari-probe-provider'
 import type { ProbeSnapshot } from './probe-provider'
+import { getProbeProviderRegistry } from './probe-scheduler'
 import {
   komariAlertObservationsFromSummary,
   reconcileKomariAlerts,
@@ -157,18 +158,25 @@ export async function syncKomariIntegration(options: {
     metricsTtlMs: ttlMs,
     alertSummary: alerts,
   })
+  const probeRegistry = getProbeProviderRegistry().register(provider)
   const snapshots = await mapWithConcurrency(
     mapping.mappings,
     options.maxConcurrency ?? DEFAULT_KOMARI_SYNC_CONCURRENCY,
     async (item) => {
       const host = options.hosts.find((candidate) => candidate.id === item.hostId)
       if (!host) return null
-      return provider.probe({
+      const scheduled = await probeRegistry.probe({
         host,
         resolveAuthSecret: async () => '',
         sections: ['metrics'],
+        providerId: provider.ref.id,
+        // Komari sync has its own persisted TTL. Force a fresh provider read
+        // when a sync is explicitly due while the registry still coalesces
+        // overlapping calls for the same integration and host.
+        force: true,
         now: syncedAt,
       })
+      return scheduled.snapshot
     },
   )
   return {

@@ -66,6 +66,29 @@ type DeploymentStatus = 'running' | 'detected' | 'stale'
 type DeploymentViewStatus = DeploymentStatus | 'inaccessible'
 type TFunction = ReturnType<typeof useT>['t']
 
+/**
+ * Agent supplied deployment records are metadata, not proof that ShellBeam
+ * performed or recently checked a deployment. Keep verification freshness
+ * explicit in the operations view so a registered project cannot look like a
+ * live inventory result.
+ */
+export type AgentDeploymentVerification = 'verified' | 'stale' | 'unverified'
+
+const AGENT_DEPLOYMENT_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000
+
+export function getAgentDeploymentVerification(
+  deployment: Pick<McpDeploymentRecord, 'lastVerifiedAt'>,
+  now = Date.now(),
+  ttlMs = AGENT_DEPLOYMENT_VERIFICATION_TTL_MS,
+): AgentDeploymentVerification {
+  const verifiedAt = deployment.lastVerifiedAt
+  if (!verifiedAt || !Number.isFinite(verifiedAt) || verifiedAt <= 0) return 'unverified'
+  // A clock-skewed future timestamp must not be presented as a successful
+  // verification; keep the record explicitly unverified until a later check.
+  if (verifiedAt > now + 5 * 60 * 1000) return 'unverified'
+  return now - verifiedAt > ttlMs ? 'stale' : 'verified'
+}
+
 interface ProjectDeploymentRow {
   id: string
   host: HostProfile
@@ -678,8 +701,17 @@ export function ProjectDeploymentsPanel({
           <div className="mt-3 space-y-2">
             {filteredAgentDeployments.map((deployment) => {
               const host = hosts.find((item) => item.id === deployment.hostId)
+              const verification = getAgentDeploymentVerification(deployment)
+              const verificationLabel = verification === 'verified'
+                ? t('workspace.agentDeployments.verifiedAt', { time: new Date(deployment.lastVerifiedAt ?? 0).toLocaleString() })
+                : verification === 'stale'
+                  ? t('workspace.agentDeployments.verificationStale')
+                  : t('workspace.agentDeployments.notVerified')
+              const sourceLabel = deployment.source?.repository
+                ? `${deployment.source.repository}${deployment.source.ref ? `#${deployment.source.ref}` : ''}`
+                : deployment.source?.artifact || null
               return (
-                <div key={`${deployment.clientId}:${deployment.deploymentId}`} className="grid gap-3 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] p-3 md:grid-cols-[minmax(0,1.4fr)_minmax(10rem,0.8fr)_auto] md:items-center">
+                <div key={`${deployment.clientId}:${deployment.deploymentId}`} data-testid="agent-deployment-row" className="grid gap-3 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] p-3 md:grid-cols-[minmax(0,1.4fr)_minmax(12rem,0.9fr)_auto] md:items-center">
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
                       <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{deployment.name || deployment.projectKind}</div>
@@ -687,9 +719,18 @@ export function ProjectDeploymentsPanel({
                     </div>
                     <div className="mt-1 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{deployment.deploymentPath}</div>
                     <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{host?.name || host?.address || deployment.hostId}{deployment.agentName ? ` · ${t('workspace.agentDeployments.agent', { name: deployment.agentName })}` : ''}</div>
+                    {sourceLabel && <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]" title={sourceLabel}>{t('workspace.agentDeployments.source')}: {sourceLabel}</div>}
+                    {(deployment.dependencies?.length || deployment.components?.length || deployment.notes) ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-[var(--workspace-text-subtle)]">
+                        {deployment.dependencies?.length ? <span className="rounded border border-[color:var(--workspace-border-soft)] px-1.5 py-0.5">{t('workspace.agentDeployments.dependencies', { count: deployment.dependencies.length })}</span> : null}
+                        {deployment.components?.length ? <span className="rounded border border-[color:var(--workspace-border-soft)] px-1.5 py-0.5">{t('workspace.agentDeployments.components', { count: deployment.components.length })}</span> : null}
+                        {deployment.notes && <span className="max-w-full truncate" title={deployment.notes}>{deployment.notes}</span>}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     <Badge tone={deployment.status === 'deployed' ? 'good' : deployment.status === 'failed' ? 'bad' : 'warn'}>{t(`workspace.agentDeployments.status.${['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(deployment.status) ? deployment.status : 'unknown'}`)}</Badge>
+                    <Badge tone={verification === 'verified' ? 'good' : verification === 'stale' ? 'warn' : 'default'}>{verificationLabel}</Badge>
                     {deployment.runtime?.language && <Badge>{deployment.runtime.language}{deployment.runtime.version ? ` ${deployment.runtime.version}` : ''}</Badge>}
                     {deployment.runtime?.packageManager && <Badge>{deployment.runtime.packageManager}</Badge>}
                   </div>

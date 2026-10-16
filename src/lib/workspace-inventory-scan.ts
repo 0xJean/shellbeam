@@ -14,11 +14,11 @@ import {
   restoreWorkspaceInventoryStatesFromScan,
   type WorkspaceInventoryHostState,
 } from './workspace-inventory-state'
-import { createAgentlessSshProbeProvider } from './probe-provider'
+import { getProbeProviderRegistry } from './probe-scheduler'
 
 export const WORKSPACE_INVENTORY_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
-const workspaceInventoryProbeProvider = createAgentlessSshProbeProvider()
+const probeRegistry = getProbeProviderRegistry()
 
 interface WorkspaceInventoryScanOptions {
   hosts: HostProfile[]
@@ -97,11 +97,17 @@ export async function scanWorkspaceInventoryHosts({
 
       const key = getWorkspaceInventoryHostKey(host)
       try {
-        const probe = await workspaceInventoryProbeProvider.probe({
+        const scheduled = await probeRegistry.probe({
           host,
           resolveAuthSecret,
           sections: ['inventory'],
+          providerId: 'ssh-agentless',
+          // Workspace owns its persisted refresh interval. The shared
+          // registry still coalesces overlapping scans, but a scan that has
+          // been scheduled by Workspace must collect a new inventory.
+          force: true,
         })
+        const probe = scheduled.snapshot
         if (!probe.inventory) {
           throw new Error(probe.errors[0]?.message || 'workspace inventory returned no usable data')
         }
