@@ -374,6 +374,7 @@ function formatSummaryAge(ts: number | undefined, t: TFn) {
 
 function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?: HostOperationalSummary; t: TFn }) {
   if (!summary) return null
+  const operations = summary
 
   const latest = summary.latestAudit
   const latestLabel = latest
@@ -390,8 +391,8 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
   ))
 
   async function runAlertAction(action: 'acknowledge' | 'close', alert: KomariAlertRecord) {
-    if (!summary.onKomariAlertAction || summary.komariAlertBusy) return
-    await summary.onKomariAlertAction(action, alert)
+    if (!operations.onKomariAlertAction || operations.komariAlertBusy) return
+    await operations.onKomariAlertAction(action, alert)
   }
 
   return (
