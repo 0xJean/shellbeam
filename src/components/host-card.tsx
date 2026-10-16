@@ -49,12 +49,17 @@ export interface HostOperationalSummary {
   processRunning: number | null
   alertTotal?: number | null
   alertActive?: number | null
+  alertOpen?: number | null
+  alertAcknowledged?: number | null
+  alertClosed?: number | null
+  alertLinkedJobId?: string | null
   alertUnsupported?: boolean
   auditCount: number
   auditActive?: number
   auditFailed?: number
   auditUnknown?: number
   latestAudit?: Pick<OperationAuditEntry, 'action' | 'target' | 'status' | 'createdAt' | 'transport' | 'provider'> & Partial<Pick<OperationAuditEntry, 'auditId' | 'jobId' | 'source'>>
+  audits?: OperationAuditEntry[]
   provider?: string
   sampledAt?: number
   transport: 'direct' | 'proxy-jump'
@@ -405,7 +410,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
       ) : null}
       {latest?.auditId && <div className="truncate font-mono text-[10px] text-[var(--workspace-text-subtle)]" title={latest.auditId}>{latest.source} · job={latest.jobId} · audit={latest.auditId}</div>}
       {latest?.status === 'unknown' && <div className="flex items-center gap-1 text-[color:var(--workspace-status-warn-text)]"><AlertTriangle className="h-3 w-3 shrink-0" />{t('hosts.opsRecoveryRequired')}</div>}
-      {(summary.alertTotal !== undefined || summary.alertUnsupported || summary.alertActive != null) && (
+      {(summary.alertTotal !== undefined || summary.alertUnsupported || summary.alertActive != null || summary.alertOpen != null || summary.alertAcknowledged != null || summary.alertClosed != null || summary.alertLinkedJobId != null) && (
         <div className="flex min-w-0 items-center gap-2">
           <span className="inline-flex min-w-0 items-center gap-1" title={t('hosts.opsAlerts')}>
             <AlertTriangle className="h-3 w-3 shrink-0 text-[color:var(--workspace-status-warn-text)]" />
@@ -414,6 +419,10 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
               {summary.alertUnsupported ? t('hosts.opsUnsupported') : formatCount(summary.alertTotal ?? null)}
             </strong>
             {summary.alertActive != null && <span className="text-[color:var(--workspace-status-bad-text)]">· {summary.alertActive} {t('hosts.opsActive')}</span>}
+            {summary.alertOpen != null && summary.alertOpen !== summary.alertActive && <span className="text-[color:var(--workspace-status-warn-text)]">· {summary.alertOpen} {t('hosts.alert.active')}</span>}
+            {summary.alertAcknowledged ? <span className="text-[color:var(--workspace-status-warn-text)]">· {t('hosts.alert.acknowledged')}: {summary.alertAcknowledged}</span> : null}
+            {summary.alertClosed ? <span className="text-[color:var(--workspace-status-good-text)]">· {t('hosts.alert.closed')}: {summary.alertClosed}</span> : null}
+            {summary.alertLinkedJobId && <span className="shrink-0 font-mono">{t('hosts.alert.linkedOperation', { jobId: summary.alertLinkedJobId })}</span>}
           </span>
         </div>
       )}
@@ -441,6 +450,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
         <KomariProbeOpsView
           host={host}
           link={summary.komariProbe}
+          operationAudits={summary.audits}
           onAction={summary.onKomariProbeAction}
           busy={summary.komariProbeBusy}
         />

@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { HostListItem } from './host-card'
+import type { KomariProbeLink } from '@/lib/komari-probe-link'
+import type { OperationAuditEntry } from '@/lib/operation-job'
 
 const host = {
   id: 'host-1',
@@ -157,5 +159,78 @@ describe('host list item', () => {
     expect(screen.getByText(/service\.restart/)).toBeInTheDocument()
     expect(screen.getByText(/audit-1/)).toBeInTheDocument()
     expect(screen.getByText(/Unknown: 2/)).toBeInTheDocument()
+  })
+
+  it('surfaces MCP alert lifecycle and linked OperationJob outcome in the host ops row', () => {
+    const link = {
+      integrationId: 'komari-prod',
+      nodeId: 'node-1',
+      hostId: host.id,
+      mapping: { integrationId: 'komari-prod', hostId: host.id, nodeId: 'node-1', source: 'manual', confidence: 'explicit', updatedAt: 1 },
+      status: 'linked',
+      alertState: {
+        schemaVersion: 1,
+        alerts: [
+          { alertId: 'alert-active', nodeId: 'node-1', hostId: host.id, status: 'active', relatedOperationJobId: null },
+          { alertId: 'alert-ack', nodeId: 'node-1', hostId: host.id, status: 'acknowledged', relatedOperationJobId: 'job-ack' },
+          { alertId: 'alert-closed', nodeId: 'node-1', hostId: host.id, status: 'closed', relatedOperationJobId: null },
+        ],
+        audit: [{ alertId: 'alert-ack', operationJobId: 'job-ack', event: 'acknowledged', at: 2_000 }],
+        summary: {},
+      },
+      komari: { state: 'online', sampledAt: 1_000, receivedAt: 1_000, alerts: { load: 0, offline: 0, total: 3, active: 1, updatedAt: 1_000 }, snapshot: null },
+      probe: { state: 'installed', health: 'online', version: '1.0.0', lastHeartbeatAt: 1_000, record: { capabilities: [] } },
+      recommendedAction: 'none',
+    } as unknown as KomariProbeLink
+    const audit: OperationAuditEntry = {
+      auditId: 'audit-ack',
+      jobId: 'job-ack',
+      hostId: host.id,
+      hostName: host.name,
+      hostAddress: host.address,
+      source: 'mcp',
+      actor: 'mcp-client:test',
+      action: 'mcp.acknowledge_server_alert',
+      target: 'alert-ack',
+      risk: 'low',
+      provider: 'komari-alert',
+      transport: 'local',
+      event: 'updated',
+      status: 'completed',
+      confirmationStatus: 'not_required',
+      createdAt: 2_000,
+    }
+
+    render(
+      <HostListItem
+        index={1}
+        host={host}
+        isSelected={false}
+        status="online"
+        operations={{
+          serviceTotal: null,
+          serviceActive: null,
+          serviceFailed: null,
+          processTotal: null,
+          processRunning: null,
+          auditCount: 1,
+          latestAudit: audit,
+          audits: [audit],
+          provider: 'komari',
+          sampledAt: 1_000,
+          transport: 'direct',
+          komariProbe: link,
+        }}
+        onSelect={vi.fn()}
+        onConnect={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('2 open alert(s)')).toBeInTheDocument()
+    expect(screen.getByText('Acknowledged: 1')).toBeInTheDocument()
+    expect(screen.getByText('Closed: 1')).toBeInTheDocument()
+    expect(screen.getByText('job job-ack · completed')).toBeInTheDocument()
   })
 })

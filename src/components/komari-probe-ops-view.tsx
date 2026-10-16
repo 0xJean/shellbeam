@@ -1,5 +1,6 @@
 import type { HostProfile } from '@/lib/hosts'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
+import type { OperationAuditEntry } from '@/lib/operation-job'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AlertTriangle, Bot, CheckCircle2, Clock3, Route, ShieldAlert, Wrench } from 'lucide-react'
@@ -9,6 +10,10 @@ type TFn = (key: string, params?: Record<string, string | number>) => string
 export interface KomariProbeOpsViewProps {
   host: HostProfile
   link: KomariProbeLink
+  /** Host-scoped OperationJob audit rows. MCP alert actions are local jobs;
+   * passing these rows lets the host card show their durable outcome next to
+   * the Komari lifecycle instead of only displaying a dangling job id. */
+  operationAudits?: OperationAuditEntry[]
   /** Actions are deliberately injected by the host dashboard. The card never
    * talks to Komari or executes SSH itself; callers must use the safe bridge. */
   onAction?: (action: Extract<KomariProbeLink['recommendedAction'], 'check-probe' | 'install-probe'>, link: KomariProbeLink) => Promise<void> | void
@@ -61,15 +66,28 @@ function routeLabel(host: HostProfile, t: TFn) {
  * offline Komari node is not mistaken for an SSH failure. Remote actions are
  * delegated to the caller's confirmed OperationJob bridge.
  */
-export function KomariProbeOpsView({ host, link, onAction, busy = false }: KomariProbeOpsViewProps) {
+export function KomariProbeOpsView({ host, link, operationAudits = [], onAction, busy = false }: KomariProbeOpsViewProps) {
   const { t } = useT()
   const action = link.recommendedAction === 'check-probe' || link.recommendedAction === 'install-probe'
     ? link.recommendedAction
     : null
   const alertSummary = link.komari.alerts
-  const openAlerts = link.alertState?.alerts.filter((alert) => (alert.status === 'active' || alert.status === 'acknowledged')
+  const scopedAlerts = link.alertState?.alerts.filter((alert) => alert.nodeId === link.nodeId || alert.hostId === host.id) ?? []
+  const openAlerts = scopedAlerts.filter((alert) => (alert.status === 'active' || alert.status === 'acknowledged')
     && (alert.nodeId === link.nodeId || alert.hostId === host.id)) ?? []
-  const linkedOperation = openAlerts.find((alert) => alert.relatedOperationJobId)?.relatedOperationJobId
+  const acknowledgedAlerts = scopedAlerts.filter((alert) => alert.status === 'acknowledged')
+  const closedAlerts = scopedAlerts.filter((alert) => alert.status === 'closed')
+  const alertIds = new Set(scopedAlerts.map((alert) => alert.alertId))
+  const latestAlertAudit = [...(link.alertState?.audit ?? [])]
+    .filter((entry) => alertIds.has(entry.alertId) && entry.operationJobId)
+    .sort((left, right) => right.at - left.at)[0]
+  const linkedAlert = [...scopedAlerts]
+    .filter((alert) => alert.relatedOperationJobId)
+    .sort((left, right) => right.lastSeenAt - left.lastSeenAt)[0]
+  const linkedOperation = latestAlertAudit?.operationJobId ?? linkedAlert?.relatedOperationJobId ?? null
+  const linkedOperationAudit = linkedOperation
+    ? operationAudits.find((entry) => entry.jobId === linkedOperation) ?? null
+    : null
   const probeHealth = link.probe.health ?? 'unknown'
 
   return (
@@ -100,11 +118,13 @@ export function KomariProbeOpsView({ host, link, onAction, busy = false }: Komar
             <span>{alertSummary.active}/{alertSummary.total}</span>
           </span>
         )}
-        {openAlerts.length > 0 && (
-          <span className="inline-flex min-w-0 items-center gap-1 text-[color:var(--workspace-status-warn-text)]" title={t('workspace.komariProbe.sourceHint')}>
+        {scopedAlerts.length > 0 && (
+          <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5 text-[color:var(--workspace-status-warn-text)]" title={t('hosts.alert.audit')}>
             <AlertTriangle className="h-3 w-3 shrink-0" />
-            <span className="truncate">{t('workspace.komariProbe.alertsOpen', { count: openAlerts.length })}</span>
-            {linkedOperation && <span className="shrink-0 font-mono">{t('workspace.komariProbe.operationLinked', { id: linkedOperation })}</span>}
+            {openAlerts.length > 0 && <span className="truncate">{t('workspace.komariProbe.alertsOpen', { count: openAlerts.length })}</span>}
+            {acknowledgedAlerts.length > 0 && <span className="shrink-0">{t('hosts.alert.acknowledged')}: {acknowledgedAlerts.length}</span>}
+            {closedAlerts.length > 0 && <span className="shrink-0 text-[color:var(--workspace-status-good-text)]">{t('hosts.alert.closed')}: {closedAlerts.length}</span>}
+            {linkedOperation && <span className="shrink-0 font-mono">{t('workspace.komariProbe.operationLinked', { id: linkedOperation })}{linkedOperationAudit ? ` · ${linkedOperationAudit.status}` : ''}</span>}
           </span>
         )}
       </div>

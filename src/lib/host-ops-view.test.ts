@@ -7,6 +7,7 @@ import type { WorkspaceInventoryCache } from './workspace-inventory'
 import { createProbeObservation } from './probe-provider'
 import type { ProbeSnapshot } from './probe-provider'
 import type { ShellbeamAgentRecord } from './shellbeam-agent'
+import type { KomariAlertState } from './komari-alerts'
 
 const host: HostProfile = {
   id: 'host-1',
@@ -183,5 +184,77 @@ describe('buildHostOpsViews', () => {
     expect(view.health.provider).toBe('komari')
     expect(view.health.fallbackProvider).toBe('ssh-agentless')
     expect(view.health.alertSummary).toMatchObject({ total: 3, active: 1 })
+  })
+
+  it('joins persisted Komari lifecycle and MCP operation links into the host view', () => {
+    const alertState: KomariAlertState = {
+      schemaVersion: 1,
+      alerts: [
+        {
+          schemaVersion: 1,
+          source: 'komari',
+          alertId: 'alert-1',
+          fingerprint: 'komari-prod|node-1|host-1|load',
+          integrationId: 'komari-prod',
+          nodeId: 'node-1',
+          hostId: host.id,
+          kind: 'load',
+          title: 'Load',
+          severity: 'warning',
+          count: 1,
+          status: 'acknowledged',
+          firstSeenAt: 1_000,
+          lastSeenAt: 1_100,
+          acknowledgedAt: 1_101,
+          acknowledgedBy: 'mcp-client:test',
+          resolvedAt: null,
+          closedAt: null,
+          relatedOperationJobId: 'job-alert-1',
+          deduplicatedCount: 0,
+        },
+        {
+          schemaVersion: 1,
+          source: 'komari',
+          alertId: 'alert-2',
+          fingerprint: 'komari-prod|node-1|host-1|offline',
+          integrationId: 'komari-prod',
+          nodeId: 'node-1',
+          hostId: host.id,
+          kind: 'offline',
+          title: 'Offline',
+          severity: 'critical',
+          count: 1,
+          status: 'closed',
+          firstSeenAt: 900,
+          lastSeenAt: 1_050,
+          acknowledgedAt: null,
+          acknowledgedBy: null,
+          resolvedAt: null,
+          closedAt: 1_060,
+          relatedOperationJobId: 'job-alert-2',
+          deduplicatedCount: 0,
+        },
+      ],
+      audit: [
+        { auditId: 'audit-1', alertId: 'alert-1', fingerprint: 'f1', event: 'acknowledged', status: 'acknowledged', actor: 'mcp-client:test', operationJobId: 'job-alert-1', at: 1_101 },
+        { auditId: 'audit-2', alertId: 'alert-2', fingerprint: 'f2', event: 'closed', status: 'closed', actor: 'mcp-client:test', operationJobId: 'job-alert-2', at: 1_060 },
+      ],
+      summary: { load: 1, offline: 1, total: 2, active: 2, updatedAt: 1_100, open: 1, acknowledged: 1, resolved: 0, closed: 1, deduplicated: 0, localUpdatedAt: 1_101 },
+    }
+    const view = buildHostOpsViews({
+      hosts: [host],
+      komariSnapshots: [{
+        schemaVersion: 1,
+        host: { hostId: host.id, address: host.address, port: host.port, username: host.username },
+        provider: { kind: 'komari', id: 'komari-prod', nodeId: 'node-1', endpoint: 'https://komari.example', capabilities: ['metrics'] },
+        transport: 'proxy-jump', health: 'online', receivedAt: 1_100, metrics: null, inventory: null, errors: [], alerts: null,
+      }],
+      komariAlertStates: [alertState],
+      now: 1_100,
+    })['host-1']
+
+    expect(view.health.alertLifecycle).toEqual({
+      total: 2, open: 1, active: 0, acknowledged: 1, resolved: 0, closed: 1, latestOperationJobId: 'job-alert-1',
+    })
   })
 })

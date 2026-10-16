@@ -190,6 +190,7 @@ function hostOpsToCardSummary(
   if (!view) return undefined
   const latestAudit = view.latestAudit
   const alertSummary = view.health.alertSummary
+  const alertLifecycle = view.health.alertLifecycle
   return {
     serviceTotal: view.serviceSummary.total,
     serviceActive: view.serviceSummary.active,
@@ -200,6 +201,12 @@ function hostOpsToCardSummary(
       alertTotal: alertSummary.total,
       alertActive: alertSummary.active,
       alertUnsupported: alertSummary.unsupported === true,
+    } : {}),
+    ...(alertLifecycle ? {
+      alertAcknowledged: alertLifecycle.acknowledged,
+      alertClosed: alertLifecycle.closed,
+      alertOpen: alertLifecycle.open,
+      alertLinkedJobId: alertLifecycle.latestOperationJobId,
     } : {}),
     auditCount: view.operationSummary.total,
     auditActive: view.operationSummary.active,
@@ -218,6 +225,7 @@ function hostOpsToCardSummary(
           source: latestAudit.source,
         }
       : undefined,
+    audits: view.audits,
     provider: view.health.provider === 'unknown' ? undefined : view.health.provider,
     sampledAt: view.health.freshness.sampledAt ?? undefined,
     transport: view.health.transport,
@@ -350,7 +358,12 @@ export function HostsDashboard({
           }
         }))
       }
-      const views = await loadHostOpsViews(hosts, { auditLimit: 250, komariSnapshots, vaultId: activeVaultId })
+      const views = await loadHostOpsViews(hosts, {
+        auditLimit: 250,
+        komariSnapshots,
+        komariAlertStates: komariRecords.map((record) => record.alertState).filter((state): state is NonNullable<typeof state> => state !== null),
+        vaultId: activeVaultId,
+      })
       setHostOpsViews(views)
       if (komariRecords.length > 0) {
         const agents = await listShellbeamAgents({ vaultId: activeVaultId }).catch(() => [])
@@ -431,6 +444,23 @@ export function HostsDashboard({
   }, [activeVaultId, hosts, refreshHostOps, resolveKomariHostSecret])
 
   useEffect(() => { void refreshHostOps() }, [activeVaultId, refreshHostOps])
+
+  // MCP acknowledgement/close actions update the persisted Komari journal in
+  // another session. Re-read the local cache when this view returns to the
+  // foreground and during a long open session so the host card reflects the
+  // same lifecycle and OperationJob audit without requiring a full reload.
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshHostOps()
+    }
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    const timer = window.setInterval(refreshWhenVisible, 15_000)
+    return () => {
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.clearInterval(timer)
+    }
+  }, [refreshHostOps])
 
   const handleMultiHostOperation = useCallback(async (request: MultiHostOperationRequest): Promise<MultiHostOperationResult> => {
     const selectedHosts = request.hostIds
