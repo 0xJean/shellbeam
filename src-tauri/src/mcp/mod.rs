@@ -406,6 +406,68 @@ fn public_host(host: &HostProfile, client: &Client) -> Value {
         "authorizationValid":client.authorize_host(host).is_ok()})
 }
 
+fn mcp_operation_risk(tool: &str) -> &'static str {
+    match tool {
+        "refresh_server_info" | "read_remote_file" => "read-only",
+        "write_remote_file" | "upload_file" | "run_command" => "high",
+        _ => "low",
+    }
+}
+
+fn mcp_operation_transport(host: &HostProfile) -> &'static str {
+    if host
+        .jump_host
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        "proxy-jump"
+    } else {
+        "direct"
+    }
+}
+
+fn mcp_operation_summary(output: &Value, tool: &str) -> Option<String> {
+    if output["status"] == "completed" {
+        let exit = output["exitCode"]
+            .as_i64()
+            .map(|value| format!("exit={value}"));
+        let duration = output["durationMs"]
+            .as_u64()
+            .map(|value| format!("durationMs={value}"));
+        let mut parts = vec![format!("tool={tool}"), "output=redacted".to_string()];
+        if let Some(exit) = exit {
+            parts.push(exit);
+        }
+        if let Some(duration) = duration {
+            parts.push(duration);
+        }
+        Some(parts.join("; "))
+    } else {
+        None
+    }
+}
+
+fn mcp_operation_error(output: &Value, tool: &str) -> (Option<String>, Option<String>) {
+    let status = output["status"].as_str().unwrap_or("unknown");
+    if status == "completed" {
+        return (None, None);
+    }
+    if status != "failed" {
+        return (
+            Some("mcp_remote_outcome_unknown".into()),
+            Some(format!(
+                "{tool}: remote outcome is unknown; reconcile before retrying"
+            )),
+        );
+    }
+    (
+        Some("mcp_remote_failed".into()),
+        Some(format!(
+            "{tool}: remote operation failed; inspect the bounded result"
+        )),
+    )
+}
+
 fn latest(app: &tauri::AppHandle, host: &HostProfile) -> Result<Value, String> {
     let now = now_unix_ms();
     let result = server_monitor::list_server_monitor_latest(app.clone())?
@@ -435,20 +497,68 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
     let hosts = load_hosts(app, Some(&client.vault_id))?;
     if tool == "get_command_result" {
         let id = args["jobId"].as_str().unwrap();
-        let metadata = store::job(app, &client.id, id)?;
+        let mut metadata = match store::job(app, &client.id, id) {
+            Ok(metadata) => metadata,
+            Err(error) if error == "JOB_NOT_FOUND" => {
+                let operation_job = operation_jobs::operation_job_get(app.clone(), id.to_string())?
+                    .ok_or("JOB_NOT_FOUND")?;
+                if operation_job.source != "mcp"
+                    || operation_job.actor != format!("mcp-client:{}", client.id)
+                    || operation_job.vault_id.as_deref() != Some(client.vault_id.as_str())
+                {
+                    return Err("JOB_NOT_FOUND".into());
+                }
+                let host_id = operation_job.host_id.clone().ok_or("JOB_NOT_FOUND")?;
+                let operation_job_json = serde_json::to_value(&operation_job)
+                    .map_err(|_| "OPERATION_JOB_SERIALIZATION_FAILED")?;
+                json!({
+                    "jobId": id,
+                    "hostId": host_id,
+                    "tool": operation_job.action.strip_prefix("mcp.").unwrap_or("remote"),
+                    "operationJobId": operation_job.job_id,
+                    "operationAuditId": operation_job.audit_id,
+                    "status": operation_job.status,
+                    "operationJob": operation_job_json,
+                    "outputAvailable": false,
+                    "notice": "The MCP result link was recovered from the canonical OperationJob. Remote output is unavailable; reconcile before retrying."
+                })
+            }
+            Err(error) => return Err(error),
+        };
         let host = hosts
             .iter()
             .find(|host| metadata["hostId"] == host.id)
             .ok_or("HOST_NOT_FOUND")?;
         client.authorize_host(host)?;
+        let operation_job = if let Some(operation_job_id) = metadata["operationJobId"].as_str() {
+            operation_jobs::operation_job_get(app.clone(), operation_job_id.to_string())?
+        } else {
+            None
+        };
+        if let Some(operation_job) = &operation_job {
+            // OperationJob is the canonical lifecycle record. The MCP row remains
+            // idempotency/result metadata and is intentionally reconciled here.
+            metadata["status"] = json!(operation_job.status);
+            metadata["operationAuditId"] = json!(operation_job.audit_id);
+            metadata["operationJob"] = serde_json::to_value(operation_job)
+                .map_err(|_| "OPERATION_JOB_SERIALIZATION_FAILED")?;
+        }
         let state = app.state::<McpState>();
         let mut jobs = state.jobs.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
         jobs.prune_outputs();
-        return Ok(jobs
+        let mut result = jobs
             .outputs
             .get(id)
             .map(|(_, result)| result.clone())
-            .unwrap_or(metadata));
+            .unwrap_or(metadata);
+        if let Some(operation_job) = operation_job {
+            result["status"] = json!(operation_job.status);
+            result["operationJobId"] = json!(operation_job.job_id);
+            result["operationAuditId"] = json!(operation_job.audit_id);
+            result["operationJob"] = serde_json::to_value(operation_job)
+                .map_err(|_| "OPERATION_JOB_SERIALIZATION_FAILED")?;
+        }
+        return Ok(result);
     }
     let vault_unlocked = app.state::<VaultState>().is_unlocked(&client.vault_id);
     if tool == "list_servers" {
@@ -606,7 +716,19 @@ fn submit(
                 "REQUEST_ID_CONFLICT: use a new requestId for a different operation".into(),
             );
         }
-        return Ok(json!({"jobId":id,"deduplicated":true}));
+        let mut response = json!({"jobId":id,"deduplicated":true});
+        if let Ok(metadata) = store::job(app, &client.id, &id) {
+            if let Some(operation_job_id) = metadata["operationJobId"].as_str() {
+                if let Some(operation_job) =
+                    operation_jobs::operation_job_get(app.clone(), operation_job_id.to_string())?
+                {
+                    response["operationJobId"] = json!(operation_job.job_id);
+                    response["operationAuditId"] = json!(operation_job.audit_id);
+                    response["status"] = json!(operation_job.status);
+                }
+            }
+        }
+        return Ok(response);
     }
     if !app.state::<VaultState>().is_unlocked(&client.vault_id) {
         return Err("VAULT_LOCKED: unlock in ShellBeam".into());
@@ -617,18 +739,136 @@ fn submit(
         remote::validate_path(path)?;
     }
     recheck(app, client, host)?;
+    let actor = format!("mcp-client:{}", client.id);
+    if let Some(operation_job) = operation_jobs::operation_job_find_by_request(
+        app.clone(),
+        &client.vault_id,
+        &host.id,
+        &actor,
+        &format!("mcp.{tool}"),
+        request_id,
+    )? {
+        let request_summary = format!("requestHash={hash}");
+        if operation_job.params_summary.as_deref() != Some(request_summary.as_str()) {
+            return Err(
+                "REQUEST_ID_CONFLICT: use a new requestId for a different operation".into(),
+            );
+        }
+        // If the app restarted after creating the canonical job but before the
+        // MCP idempotency row was linked, preserve the existing outcome rather
+        // than dispatching a second remote operation.
+        return Ok(json!({
+            "jobId": operation_job.job_id,
+            "operationJobId": operation_job.job_id,
+            "operationAuditId": operation_job.audit_id,
+            "status": operation_job.status,
+            "deduplicated": true,
+            "pollTool": "get_command_result"
+        }));
+    }
     let id = uuid::Uuid::new_v4().to_string();
-    store::audit(app, &client.id, Some(&host.id), tool, "starting")?;
-    store::create_job(app, &id, &client.id, &host.id, request_id, &hash, tool)?;
+    let operation_job = operation_jobs::operation_job_create(
+        app.clone(),
+        operation_jobs::CreateOperationJobRequest {
+            host_id: Some(host.id.clone()),
+            vault_id: Some(client.vault_id.clone()),
+            host_name: Some(host.name.clone()),
+            host_address: Some(host.address.clone()),
+            username: Some(host.username.clone()),
+            source: "mcp".into(),
+            actor: Some(actor.clone()),
+            action: format!("mcp.{tool}"),
+            target: format!("mcp:{tool}"),
+            risk: mcp_operation_risk(tool).into(),
+            provider: Some("mcp-remote".into()),
+            transport: Some(mcp_operation_transport(host).into()),
+            params_summary: Some(format!("requestHash={hash}")),
+            confirmation_required: false,
+            request_id: Some(request_id.to_string()),
+        },
+    )?;
+    if let Err(error) = store::audit(app, &client.id, Some(&host.id), tool, "starting") {
+        log::error!("MCP access audit persistence failed: {error}");
+        let _ = operation_jobs::operation_job_update(
+            app.clone(),
+            operation_jobs::UpdateOperationJobRequest {
+                job_id: operation_job.job_id,
+                status: "failed".into(),
+                confirmation_status: None,
+                confirmed_by: None,
+                result_summary: None,
+                error_code: Some("mcp_access_audit_failed".into()),
+                error_summary: Some("Could not persist the MCP access audit record".into()),
+                actor: Some(actor.clone()),
+            },
+        );
+        return Err("MCP_AUDIT_FAILED".into());
+    }
+    if let Err(error) = store::create_job(
+        app,
+        &id,
+        &client.id,
+        &host.id,
+        request_id,
+        &hash,
+        tool,
+        Some(&operation_job.job_id),
+    ) {
+        let _ = operation_jobs::operation_job_update(
+            app.clone(),
+            operation_jobs::UpdateOperationJobRequest {
+                job_id: operation_job.job_id.clone(),
+                status: "failed".into(),
+                confirmation_status: None,
+                confirmed_by: None,
+                result_summary: None,
+                error_code: Some("mcp_job_create_failed".into()),
+                error_summary: Some("Could not persist the MCP task record".into()),
+                actor: Some(format!("mcp-client:{}", client.id)),
+            },
+        );
+        return Err(error);
+    }
+    if let Err(error) = operation_jobs::operation_job_update(
+        app.clone(),
+        operation_jobs::UpdateOperationJobRequest {
+            job_id: operation_job.job_id.clone(),
+            status: "running".into(),
+            confirmation_status: None,
+            confirmed_by: None,
+            result_summary: None,
+            error_code: None,
+            error_summary: None,
+            actor: Some(actor.clone()),
+        },
+    ) {
+        let _ = store::finish(app, &id, "failed");
+        let _ = operation_jobs::operation_job_update(
+            app.clone(),
+            operation_jobs::UpdateOperationJobRequest {
+                job_id: operation_job.job_id.clone(),
+                status: "failed".into(),
+                confirmation_status: None,
+                confirmed_by: None,
+                result_summary: None,
+                error_code: Some("mcp_operation_start_failed".into()),
+                error_summary: Some("Could not mark the MCP task as running".into()),
+                actor: Some(actor.clone()),
+            },
+        );
+        return Err(error);
+    }
     jobs.active.insert(key.clone());
     jobs.prune_outputs();
     drop(jobs);
-    let (app, client, host, tool, job_id) = (
+    let (app, client, host, tool, job_id, operation_job_id, operation_audit_id) = (
         app.clone(),
         client.clone(),
         host.clone(),
         tool.to_string(),
         id.clone(),
+        operation_job.job_id.clone(),
+        operation_job.audit_id.clone(),
     );
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -682,11 +922,41 @@ fn submit(
             }
         }
         output["jobId"] = json!(job_id);
+        output["operationJobId"] = json!(operation_job_id);
+        output["operationAuditId"] = json!(operation_audit_id);
         output["hostId"] = json!(host.id);
         output["tool"] = json!(tool);
         output["outputAvailable"] = json!(true);
         output["untrustedContent"] = json!(true);
-        let status = output["status"].as_str().unwrap_or("unknown");
+        let status = match output["status"].as_str() {
+            Some("completed") => "completed",
+            Some("failed") => "failed",
+            Some("unknown") => "unknown",
+            _ => "unknown",
+        };
+        output["status"] = json!(status);
+        let (error_code, error_summary) = mcp_operation_error(&output, &tool);
+        let operation_update = operation_jobs::UpdateOperationJobRequest {
+            job_id: operation_job_id.clone(),
+            status: status.to_string(),
+            confirmation_status: None,
+            confirmed_by: None,
+            result_summary: mcp_operation_summary(&output, &tool),
+            error_code,
+            error_summary,
+            actor: Some(actor.clone()),
+        };
+        if let Err(error) =
+            operation_jobs::operation_job_update(app.clone(), operation_update.clone())
+        {
+            log::error!("MCP OperationJob persistence failed: {error}; retrying once");
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            if let Err(retry_error) =
+                operation_jobs::operation_job_update(app.clone(), operation_update)
+            {
+                log::error!("MCP OperationJob retry failed: {retry_error}");
+            }
+        }
         if let Err(error) = store::finish(&app, &job_id, status) {
             log::error!("MCP job persistence failed: {error}");
         }
@@ -777,5 +1047,60 @@ mod tests {
         jobs.prune_outputs();
         assert_eq!(jobs.outputs.len(), 50);
         assert!(!jobs.outputs.contains_key("old"));
+    }
+    #[test]
+    fn operation_audit_summary_is_bounded_and_excludes_remote_output() {
+        let output = json!({
+            "status": "completed",
+            "exitCode": 0,
+            "durationMs": 42,
+            "stdout": "token=secret-value",
+            "stderr": "private key at /tmp/private-key",
+            "command": "cat /etc/shadow"
+        });
+        let summary = mcp_operation_summary(&output, "run_command").expect("summary");
+        assert!(summary.contains("tool=run_command"));
+        assert!(summary.contains("output=redacted"));
+        assert!(summary.contains("exit=0"));
+        assert!(!summary.contains("secret-value"));
+        assert!(!summary.contains("private-key"));
+        assert!(!summary.contains("/etc/shadow"));
+    }
+
+
+    #[test]
+    fn operation_audit_error_does_not_persist_remote_error_details() {
+        let output = json!({
+            "status": "failed",
+            "error": "ssh command failed: password=secret at /srv/app/config"
+        });
+        let (code, summary) = mcp_operation_error(&output, "run_command");
+        assert_eq!(code.as_deref(), Some("mcp_remote_failed"));
+        let summary = summary.expect("error summary");
+        assert!(!summary.contains("secret"));
+        assert!(!summary.contains("/srv/app/config"));
+        assert!(!summary.contains("ssh command"));
+    }
+
+
+    #[test]
+    fn unsupported_remote_status_is_reconciled_as_unknown() {
+        let output =
+            json!({"status": "cancelled", "error": "worker returned an unsupported state"});
+        let (code, summary) = mcp_operation_error(&output, "run_command");
+        assert_eq!(code.as_deref(), Some("mcp_remote_outcome_unknown"));
+        assert!(summary
+            .expect("unknown summary")
+            .contains("reconcile before retrying"));
+    }
+
+
+    #[test]
+    fn proxy_jump_operations_are_labeled_and_read_risk_is_explicit() {
+        let host = host_with_jump("privateKey");
+        assert_eq!(mcp_operation_transport(&host), "proxy-jump");
+        assert_eq!(mcp_operation_risk("refresh_server_info"), "read-only");
+        assert_eq!(mcp_operation_risk("read_remote_file"), "read-only");
+        assert_eq!(mcp_operation_risk("run_command"), "high");
     }
 }

@@ -1,3 +1,4 @@
+use crate::data::operation_jobs;
 use crate::storage::{data_file_path, now_unix_ms};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
@@ -31,7 +32,7 @@ fn initialize(db: &Connection) -> Result<(), String> {
       CREATE TABLE IF NOT EXISTS mcp_jobs (
         id TEXT PRIMARY KEY, client_id TEXT NOT NULL, host_id TEXT NOT NULL,
         request_id TEXT NOT NULL, request_hash TEXT NOT NULL, tool TEXT NOT NULL,
-        status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        operation_job_id TEXT, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
         UNIQUE(client_id, request_id));
       CREATE TABLE IF NOT EXISTS mcp_audit (
         id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL,
@@ -40,16 +41,75 @@ fn initialize(db: &Connection) -> Result<(), String> {
         vault_id TEXT NOT NULL, host_id TEXT NOT NULL, identity TEXT NOT NULL,
         value_json TEXT NOT NULL, PRIMARY KEY(vault_id,host_id));",
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    let mut columns = db
+        .prepare("PRAGMA table_info(mcp_jobs)")
+        .map_err(|e| e.to_string())?;
+    let has_operation_job_id = columns
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .any(|column| column == "operation_job_id");
+    drop(columns);
+    if !has_operation_job_id {
+        db.execute("ALTER TABLE mcp_jobs ADD COLUMN operation_job_id TEXT", [])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 pub fn recover(app: &tauri::AppHandle) -> Result<(), String> {
-    open(app)?
-        .execute(
-            "UPDATE mcp_jobs SET status='unknown', updated_at=?1 WHERE status='running'",
-            [now_unix_ms()],
-        )
+    let db = open(app)?;
+    let mut statement = db
+        .prepare("SELECT id,operation_job_id FROM mcp_jobs WHERE status='running'")
         .map_err(|e| e.to_string())?;
+    let jobs = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(statement);
+    db.execute(
+        "UPDATE mcp_jobs SET status='unknown', updated_at=?1 WHERE status='running'",
+        [now_unix_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    drop(db);
+    for (_, operation_job_id) in jobs {
+        let Some(operation_job_id) = operation_job_id else {
+            continue;
+        };
+        let job = match operation_jobs::operation_job_get(app.clone(), operation_job_id.clone()) {
+            Ok(job) => job,
+            Err(error) => {
+                log::error!("MCP OperationJob recovery lookup failed: {error}");
+                continue;
+            }
+        };
+        if job.is_some_and(|job| matches!(job.status.as_str(), "queued" | "running")) {
+            if let Err(error) = operation_jobs::operation_job_update(
+                app.clone(),
+                operation_jobs::UpdateOperationJobRequest {
+                    job_id: operation_job_id,
+                    status: "unknown".to_string(),
+                    confirmation_status: None,
+                    confirmed_by: None,
+                    result_summary: Some(
+                        "MCP worker interrupted; reconcile remote state before retrying".into(),
+                    ),
+                    error_code: Some("mcp_app_restarted".into()),
+                    error_summary: Some(
+                        "The app restarted before the MCP operation completed".into(),
+                    ),
+                    actor: Some("system".into()),
+                },
+            ) {
+                log::error!("MCP OperationJob recovery update failed: {error}");
+            }
+        }
+    }
     Ok(())
 }
 
@@ -106,6 +166,7 @@ pub fn create_job(
     request: &str,
     hash: &str,
     tool: &str,
+    operation_job_id: Option<&str>,
 ) -> Result<(), String> {
     let db = open(app)?;
     let count: i64 = db
@@ -119,8 +180,19 @@ pub fn create_job(
         return Err("JOB_LIMIT_REACHED: revoke this client and authorize a new one".into());
     }
     db.execute(
-        "INSERT INTO mcp_jobs VALUES (?1,?2,?3,?4,?5,?6,'running',?7,?7)",
-        params![id, client, host, request, hash, tool, now_unix_ms()],
+        "INSERT INTO mcp_jobs
+         (id,client_id,host_id,request_id,request_hash,tool,operation_job_id,status,created_at,updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,'running',?8,?8)",
+        params![
+            id,
+            client,
+            host,
+            request,
+            hash,
+            tool,
+            operation_job_id,
+            now_unix_ms()
+        ],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -137,10 +209,11 @@ pub fn finish(app: &tauri::AppHandle, id: &str, status: &str) -> Result<(), Stri
 }
 
 pub fn job(app: &tauri::AppHandle, client: &str, id: &str) -> Result<Value, String> {
-    open(app)?.query_row("SELECT host_id,tool,status,created_at,updated_at FROM mcp_jobs WHERE id=?1 AND client_id=?2",
+    open(app)?.query_row("SELECT host_id,tool,operation_job_id,status,created_at,updated_at FROM mcp_jobs WHERE id=?1 AND client_id=?2",
         params![id, client], |row| Ok(json!({
             "jobId": id, "hostId": row.get::<_, String>(0)?, "tool": row.get::<_, String>(1)?,
-            "status": row.get::<_, String>(2)?, "createdAt": row.get::<_, i64>(3)?, "updatedAt": row.get::<_, i64>(4)?,
+            "operationJobId": row.get::<_, Option<String>>(2)?, "status": row.get::<_, String>(3)?,
+            "createdAt": row.get::<_, i64>(4)?, "updatedAt": row.get::<_, i64>(5)?,
             "outputAvailable": false,
             "notice": "Outputs are memory-only. After restart, verify remote state before retrying any operation."
         }))).optional().map_err(|e| e.to_string())?.ok_or_else(|| "JOB_NOT_FOUND".into())
@@ -204,18 +277,18 @@ mod tests {
         let db = Connection::open_in_memory().unwrap();
         initialize(&db).unwrap();
         db.execute(
-            "INSERT INTO mcp_jobs VALUES ('j','a','h','r','hash','run_command','running',0,0)",
+            "INSERT INTO mcp_jobs (id,client_id,host_id,request_id,request_hash,tool,status,created_at,updated_at) VALUES ('j','a','h','r','hash','run_command','running',0,0)",
             [],
         )
         .unwrap();
         assert!(db
             .execute(
-                "INSERT INTO mcp_jobs VALUES ('j2','a','h','r','hash','run_command','running',0,0)",
+                "INSERT INTO mcp_jobs (id,client_id,host_id,request_id,request_hash,tool,status,created_at,updated_at) VALUES ('j2','a','h','r','hash','run_command','running',0,0)",
                 []
             )
             .is_err());
         db.execute(
-            "INSERT INTO mcp_jobs VALUES ('j3','b','h','r','hash','run_command','running',0,0)",
+            "INSERT INTO mcp_jobs (id,client_id,host_id,request_id,request_hash,tool,status,created_at,updated_at) VALUES ('j3','b','h','r','hash','run_command','running',0,0)",
             [],
         )
         .unwrap();
@@ -232,5 +305,78 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 2);
+    }
+    #[test]
+    fn legacy_mcp_jobs_schema_is_migrated_with_operation_job_link() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE mcp_jobs (
+               id TEXT PRIMARY KEY, client_id TEXT NOT NULL, host_id TEXT NOT NULL,
+               request_id TEXT NOT NULL, request_hash TEXT NOT NULL, tool TEXT NOT NULL,
+               status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+               UNIQUE(client_id, request_id)
+             );",
+        )
+        .unwrap();
+        initialize(&db).unwrap();
+
+        let has_link: bool = db
+            .prepare("PRAGMA table_info(mcp_jobs)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|name| name == "operation_job_id");
+        assert!(has_link);
+
+        db.execute(
+            "INSERT INTO mcp_jobs
+             (id,client_id,host_id,request_id,request_hash,tool,status,created_at,updated_at)
+             VALUES ('legacy','client','host','request','hash','run_command','running',0,0)",
+            [],
+        )
+        .unwrap();
+        let link: Option<String> = db
+            .query_row(
+                "SELECT operation_job_id FROM mcp_jobs WHERE id='legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(link.is_none());
+    }
+
+
+    #[test]
+    fn mcp_job_link_is_stored_without_durable_command_or_output_columns() {
+        let db = Connection::open_in_memory().unwrap();
+        initialize(&db).unwrap();
+        db.execute(
+            "INSERT INTO mcp_jobs
+             (id,client_id,host_id,request_id,request_hash,tool,operation_job_id,status,created_at,updated_at)
+             VALUES ('job','client','host','request','hash','run_command','operation','running',0,0)",
+            [],
+        )
+        .unwrap();
+        let operation_job_id: String = db
+            .query_row(
+                "SELECT operation_job_id FROM mcp_jobs WHERE id='job'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(operation_job_id, "operation");
+
+        let columns = db
+            .prepare("PRAGMA table_info(mcp_audit)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        assert!(!columns.iter().any(|column| column == "command"));
+        assert!(!columns.iter().any(|column| column == "output"));
+        assert!(!columns.iter().any(|column| column == "stdout"));
+        assert!(!columns.iter().any(|column| column == "stderr"));
     }
 }

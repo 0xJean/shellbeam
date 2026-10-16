@@ -530,6 +530,8 @@ fn legal_transition(from: &str, to: &str) -> bool {
         (from, to),
         ("queued", "running")
             | ("queued", "cancelled")
+            | ("queued", "failed")
+            | ("queued", "unknown")
             | ("running", "completed")
             | ("running", "failed")
             | ("running", "unknown")
@@ -679,6 +681,32 @@ pub fn operation_job_get(
     .map_err(|e| format!("Read operation job failed: {e}"))
 }
 
+/// Find an existing operation by its MCP idempotency scope. This closes the
+/// small crash window between creating the canonical OperationJob and linking
+/// it from the MCP result table.
+pub fn operation_job_find_by_request(
+    app: tauri::AppHandle,
+    vault_id: &str,
+    host_id: &str,
+    actor: &str,
+    action: &str,
+    request_id: &str,
+) -> Result<Option<OperationJob>, String> {
+    let db = open(&app)?;
+    db.query_row(
+        &format!(
+            "SELECT {JOB_COLUMNS} FROM operation_jobs
+             WHERE vault_id=?1 AND host_id=?2 AND source='mcp' AND actor=?3
+               AND action=?4 AND request_id=?5
+             ORDER BY queued_at DESC LIMIT 1"
+        ),
+        params![vault_id, host_id, actor, action, request_id],
+        job_from_row,
+    )
+    .optional()
+    .map_err(|e| format!("Find operation job failed: {e}"))
+}
+
 #[tauri::command]
 pub fn operation_job_list(
     app: tauri::AppHandle,
@@ -826,5 +854,10 @@ mod tests {
         assert!(!legal_transition("unknown", "completed"));
         assert!(valid_status("cancelled"));
         assert!(!valid_status("pending"));
+    }
+    #[test]
+    fn queued_mcp_jobs_can_be_reconciled_as_unknown_after_restart() {
+        assert!(legal_transition("queued", "unknown"));
+        assert!(valid_status("unknown"));
     }
 }

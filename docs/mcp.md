@@ -165,6 +165,17 @@ its own commands and file operations within the user's authorization.
   disables the listener and removes MCP data with the rest of the application.
   Only the empty process-ownership lock database remains while the app is alive.
 
+### Remote task audit
+
+Every asynchronous MCP remote operation creates one linked `OperationJob` with
+source `mcp`, provider `mcp-remote`, the selected transport (`direct` or
+`proxy-jump`) and a bounded result or error summary. The MCP job table retains
+request idempotency and in-memory output metadata; `get_command_result` resolves
+its status from the linked OperationJob and returns the audit identifiers. A
+`unknown` result means the remote outcome cannot be proven after disconnect or
+restart, so the agent must reconcile remote state before retrying. Durable audit
+records never store commands, file contents, credentials or raw remote errors.
+
 ## v1 limits
 
 Desktop, local agents and Linux inventory only. A configured single-hop jump
