@@ -73,6 +73,7 @@ pub fn run() {
         .manage(mcp::McpState::default())
         .invoke_handler(tauri::generate_handler![
             mcp::mcp_status,
+            mcp::mcp_list_project_deployments,
             mcp::mcp_set_enabled,
             mcp::mcp_create_client,
             mcp::mcp_revoke_client,

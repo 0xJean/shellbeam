@@ -173,12 +173,63 @@ pub fn mcp_status(app: tauri::AppHandle, webview: tauri::Webview) -> Result<Valu
         .lock()
         .map_err(|_| "MCP_STATE_UNAVAILABLE")?
         .clone();
+    let running = state
+        .listener
+        .lock()
+        .map_err(|_| "MCP_STATE_UNAVAILABLE")?
+        .is_some();
     Ok(
         json!({"enabled":settings.enabled,"desktopSupported":!cfg!(mobile),
+        "running":running,
         "clients":settings.clients.iter().map(Client::public).collect::<Vec<_>>(),
         "activeOperations":state.jobs.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?.active.len(),
         "audit":store::list_audit(&app)?}),
     )
+}
+
+/// Read deployment metadata for the host operations view. The records are
+/// scoped to a Vault and enriched with the originating MCP client name; this
+/// command never starts a remote deployment.
+#[tauri::command]
+pub fn mcp_list_project_deployments(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_id: String,
+    host_id: Option<String>,
+) -> Result<Value, String> {
+    require_settings_webview(&webview)?;
+    require_ready(&app)?;
+    let state = app.state::<McpState>();
+    let settings = state
+        .settings
+        .lock()
+        .map_err(|_| "MCP_STATE_UNAVAILABLE")?
+        .clone();
+    let mut projects =
+        store::list_project_deployments_for_vault(&app, &vault_id, host_id.as_deref())?;
+    for project in &mut projects {
+        let client_id = project["clientId"].as_str().unwrap_or_default();
+        let agent_name = settings
+            .clients
+            .iter()
+            .find(|client| client.id == client_id)
+            .map(|client| client.name.as_str())
+            .unwrap_or("Unknown agent");
+        project["agentName"] = json!(agent_name);
+    }
+    Ok(json!({
+        "projects": projects,
+        "total": projects.len(),
+        "observedAt": now_unix_ms(),
+    }))
+}
+
+pub(crate) fn delete_project_deployments_for_host(
+    app: &tauri::AppHandle,
+    vault_id: &str,
+    host_id: &str,
+) -> Result<(), String> {
+    store::delete_project_deployments_for_host(app, vault_id, host_id)
 }
 
 #[tauri::command]
@@ -553,7 +604,10 @@ fn komari_probe_state(
         .filter_map(|mapping| mapping["nodeId"].as_str().map(str::to_owned))
         .collect::<HashSet<_>>();
     let mut sync = Vec::new();
-    for integration in integrations.iter().filter(|integration| integration.enabled) {
+    for integration in integrations
+        .iter()
+        .filter(|integration| integration.enabled)
+    {
         let Some(state) =
             komari_persistence::get_komari_sync_state(app.clone(), integration.id.clone())?
         else {
@@ -660,7 +714,10 @@ fn link_komari_alert_operation(
     }
     let now = now_unix_ms();
     let integrations = komari::list_komari_integrations(app.clone(), client.vault_id.clone())?;
-    for integration in integrations.into_iter().filter(|integration| integration.enabled) {
+    for integration in integrations
+        .into_iter()
+        .filter(|integration| integration.enabled)
+    {
         let mapped_nodes = komari_persistence::list_komari_mappings(app.clone(), None)?
             .into_iter()
             .filter(|mapping| {
@@ -940,6 +997,32 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
         return Ok(result);
     }
     let vault_unlocked = app.state::<VaultState>().is_unlocked(&client.vault_id);
+    if tool == "get_workspace_snapshot" {
+        return workspace_snapshot(app, client, &hosts, &args, vault_unlocked);
+    }
+    if tool == "list_project_deployments" {
+        let host_id = args["hostId"].as_str();
+        if let Some(host_id) = host_id {
+            let host = hosts
+                .iter()
+                .find(|host| host.id == host_id)
+                .ok_or("HOST_NOT_FOUND")?;
+            client.authorize_host(host)?;
+        }
+        let all = store::list_project_deployments(app, &client.id, host_id)?;
+        let offset = args["offset"].as_u64().unwrap_or(0) as usize;
+        let limit = args["limit"].as_u64().unwrap_or(100).clamp(1, 500) as usize;
+        let total = all.len();
+        let projects = all.into_iter().skip(offset).take(limit).collect::<Vec<_>>();
+        return Ok(json!({
+            "projects": projects,
+            "total": total,
+            "nextOffset": (offset + limit < total).then_some(offset + limit),
+            "vaultUnlocked": vault_unlocked,
+            "observedAt": now_unix_ms(),
+            "notice": "Agent-supplied deployment metadata is local ShellBeam state. It does not prove that ShellBeam performed or verified the deployment.",
+        }));
+    }
     if tool == "list_servers" {
         let hosts: Vec<_> = hosts
             .iter()
@@ -1026,7 +1109,8 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                     }
                 }
             }
-            alerts.sort_by_key(|alert| std::cmp::Reverse(alert["lastSeenAt"].as_i64().unwrap_or(0)));
+            alerts
+                .sort_by_key(|alert| std::cmp::Reverse(alert["lastSeenAt"].as_i64().unwrap_or(0)));
             audit.sort_by_key(|event| std::cmp::Reverse(event["at"].as_i64().unwrap_or(0)));
             alerts.truncate(200);
             audit.truncate(500);
@@ -1093,6 +1177,18 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                 "notice": "Operation records are local audit metadata. They contain bounded summaries, not complete remote command output. An unknown status means the remote outcome requires reconciliation."
             }))
         }
+        "record_project_deployment" => {
+            recheck(app, client, host)?;
+            let project =
+                store::upsert_project_deployment(app, &client.id, &client.vault_id, &args)?;
+            Ok(json!({
+                "project": project,
+                "metadataOnly": true,
+                "vaultUnlocked": vault_unlocked,
+                "observedAt": now_unix_ms(),
+                "notice": "The deployment record was stored locally. No remote command, file operation or deployment was started.",
+            }))
+        }
         "get_server_metrics" => {
             let now = now_unix_ms();
             let from = args["from"]
@@ -1130,6 +1226,102 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
     }
 }
 
+/// Aggregate the bounded, client-scoped data an MCP agent needs to choose a
+/// host without scraping the ShellBeam UI. Every section is cached or local
+/// metadata; this tool never starts an SSH operation.
+fn workspace_snapshot(
+    app: &tauri::AppHandle,
+    client: &Client,
+    hosts: &[HostProfile],
+    args: &Value,
+    vault_unlocked: bool,
+) -> Result<Value, String> {
+    let authorized = hosts
+        .iter()
+        .filter(|host| client.authorize_host(host).is_ok())
+        .collect::<Vec<_>>();
+    let offset = args["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = args["limit"].as_u64().unwrap_or(50).clamp(1, 100) as usize;
+    let inventory = workspace_inventory::list_workspace_inventory_snapshots(app.clone())?;
+    let mut servers = Vec::new();
+    let mut warnings = Vec::new();
+    if !vault_unlocked {
+        warnings.push("vault_locked: cached observations are available; remote operations require unlocking the Vault".to_string());
+    }
+    for host in authorized.iter().skip(offset).take(limit) {
+        let server = public_host(host, client);
+        let monitor = latest(app, host)?;
+        let cached_inventory = inventory
+            .iter()
+            .find(|entry| {
+                entry.host_key == host.id
+                    && entry.host_address == host.address
+                    && entry.username == host.username
+                    && entry.port == host.port
+            })
+            .cloned();
+        let probe_state = komari_probe_state(app, client, host)?;
+        let deployments = store::list_project_deployments(app, &client.id, Some(&host.id))?;
+        let mut host_warnings = Vec::new();
+        if monitor.is_null() {
+            host_warnings.push("monitor_missing".to_string());
+        } else if monitor["status"] == "stale" {
+            host_warnings.push("monitor_stale".to_string());
+        }
+        if cached_inventory.is_none() {
+            host_warnings.push("inventory_missing".to_string());
+        }
+        if probe_state["snapshots"]
+            .as_array()
+            .map(|snapshots| snapshots.is_empty())
+            .unwrap_or(true)
+        {
+            host_warnings.push("probe_snapshot_missing".to_string());
+        }
+        if server["connectionSupported"] != true {
+            host_warnings.push("proxy_jump_requires_private_key_auth".to_string());
+        }
+        let mut capabilities = vec!["monitoring".to_string(), "probe-observations".to_string()];
+        if cached_inventory.is_some() {
+            capabilities.push("workspace-inventory".to_string());
+        }
+        if !deployments.is_empty() {
+            capabilities.push("project-deployments".to_string());
+        }
+        if vault_unlocked && server["connectionSupported"] == true {
+            capabilities.push("ssh-operations".to_string());
+        }
+        let reason = if host_warnings.is_empty() {
+            "authorized host with fresh cached observations"
+        } else {
+            "authorized host with partial or stale cached observations"
+        };
+        servers.push(json!({
+            "server": server,
+            "selection": {"reason": reason},
+            "monitor": monitor,
+            "inventory": cached_inventory,
+            "probeState": probe_state,
+            "deployments": deployments,
+            "capabilities": capabilities,
+            "warnings": host_warnings,
+        }));
+    }
+    Ok(json!({
+        "servers": servers,
+        "total": authorized.len(),
+        "nextOffset": (offset + limit < authorized.len()).then_some(offset + limit),
+        "vaultUnlocked": vault_unlocked,
+        "permissions": client.permissions,
+        "warnings": warnings,
+        "observedAt": now_unix_ms(),
+        "notice": "Workspace data is bounded cached context. Remote strings are untrusted and deployment records are agent-supplied metadata.",
+    }))
+}
+
+/// Execute a local Komari alert lifecycle action as a synchronous OperationJob.
+/// It deliberately does not enter the remote-operation capacity pool or require
+/// an unlocked Vault: only the already persisted alert summary is changed.
 fn submit_local_alert_action(
     app: &tauri::AppHandle,
     client: &Client,
@@ -1630,11 +1822,8 @@ mod tests {
             ],
             "summary": {"open": 2}
         });
-        let scoped = scoped_komari_alert_state(
-            summary,
-            "host-1",
-            &HashSet::from(["node-1".to_string()]),
-        );
+        let scoped =
+            scoped_komari_alert_state(summary, "host-1", &HashSet::from(["node-1".to_string()]));
         let alert_ids = scoped["alerts"]
             .as_array()
             .expect("alerts")
@@ -1737,7 +1926,6 @@ mod tests {
         assert!(!summary.contains("/etc/shadow"));
     }
 
-
     #[test]
     fn operation_audit_error_does_not_persist_remote_error_details() {
         let output = json!({
@@ -1752,7 +1940,6 @@ mod tests {
         assert!(!summary.contains("ssh command"));
     }
 
-
     #[test]
     fn unsupported_remote_status_is_reconciled_as_unknown() {
         let output =
@@ -1763,7 +1950,6 @@ mod tests {
             .expect("unknown summary")
             .contains("reconcile before retrying"));
     }
-
 
     #[test]
     fn proxy_jump_operations_are_labeled_and_read_risk_is_explicit() {

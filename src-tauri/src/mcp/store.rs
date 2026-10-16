@@ -39,7 +39,16 @@ fn initialize(db: &Connection) -> Result<(), String> {
         host_id TEXT, tool TEXT NOT NULL, outcome TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS mcp_probes (
         vault_id TEXT NOT NULL, host_id TEXT NOT NULL, identity TEXT NOT NULL,
-        value_json TEXT NOT NULL, PRIMARY KEY(vault_id,host_id));",
+        value_json TEXT NOT NULL, PRIMARY KEY(vault_id,host_id));
+      CREATE TABLE IF NOT EXISTS mcp_project_deployments (
+        deployment_id TEXT NOT NULL, client_id TEXT NOT NULL, vault_id TEXT NOT NULL,
+        host_id TEXT NOT NULL, name TEXT NOT NULL, deployment_path TEXT NOT NULL,
+        project_kind TEXT NOT NULL, status TEXT NOT NULL, source_json TEXT NOT NULL,
+        dependencies_json TEXT NOT NULL, components_json TEXT NOT NULL, runtime_json TEXT NOT NULL,
+        notes TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        last_verified_at INTEGER, PRIMARY KEY(deployment_id, client_id));
+      CREATE INDEX IF NOT EXISTS idx_mcp_project_deployments_client_host
+        ON mcp_project_deployments(client_id,host_id,updated_at DESC);",
     )
     .map_err(|e| e.to_string())?;
     let mut columns = db
@@ -58,6 +67,218 @@ fn initialize(db: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn json_column(raw: String) -> Value {
+    serde_json::from_str(&raw).unwrap_or(Value::Null)
+}
+
+fn deployment_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    let source: String = row.get(8)?;
+    let dependencies: String = row.get(9)?;
+    let components: String = row.get(10)?;
+    let runtime: String = row.get(11)?;
+    Ok(json!({
+        "deploymentId": row.get::<_, String>(0)?,
+        "clientId": row.get::<_, String>(1)?,
+        "vaultId": row.get::<_, String>(2)?,
+        "hostId": row.get::<_, String>(3)?,
+        "name": row.get::<_, String>(4)?,
+        "deploymentPath": row.get::<_, String>(5)?,
+        "projectKind": row.get::<_, String>(6)?,
+        "status": row.get::<_, String>(7)?,
+        "source": json_column(source),
+        "dependencies": json_column(dependencies),
+        "components": json_column(components),
+        "runtime": json_column(runtime),
+        "notes": row.get::<_, String>(12)?,
+        "createdAt": row.get::<_, i64>(13)?,
+        "updatedAt": row.get::<_, i64>(14)?,
+        "lastVerifiedAt": row.get::<_, Option<i64>>(15)?,
+    }))
+}
+
+pub fn upsert_project_deployment(
+    app: &tauri::AppHandle,
+    client_id: &str,
+    vault_id: &str,
+    payload: &Value,
+) -> Result<Value, String> {
+    let db = open(app)?;
+    upsert_project_deployment_db(&db, client_id, vault_id, payload)
+}
+
+fn upsert_project_deployment_db(
+    db: &Connection,
+    client_id: &str,
+    vault_id: &str,
+    payload: &Value,
+) -> Result<Value, String> {
+    let deployment_id = payload["deploymentId"]
+        .as_str()
+        .ok_or("INVALID_DEPLOYMENT: deploymentId")?;
+    let host_id = payload["hostId"]
+        .as_str()
+        .ok_or("INVALID_DEPLOYMENT: hostId")?;
+    let now = now_unix_ms();
+    let created_at = db
+        .query_row(
+            "SELECT created_at FROM mcp_project_deployments WHERE deployment_id=?1 AND client_id=?2",
+            params![deployment_id, client_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or(now);
+    let text = |key: &str| payload[key].as_str().unwrap_or("");
+    let json_text = |key: &str| payload.get(key).cloned().unwrap_or(Value::Null).to_string();
+    db.execute(
+        "INSERT INTO mcp_project_deployments
+        (deployment_id,client_id,vault_id,host_id,name,deployment_path,project_kind,status,source_json,
+         dependencies_json,components_json,runtime_json,notes,created_at,updated_at,last_verified_at)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
+        ON CONFLICT(deployment_id,client_id) DO UPDATE SET
+          vault_id=excluded.vault_id,host_id=excluded.host_id,name=excluded.name,
+          deployment_path=excluded.deployment_path,project_kind=excluded.project_kind,status=excluded.status,
+          source_json=excluded.source_json,dependencies_json=excluded.dependencies_json,
+          components_json=excluded.components_json,runtime_json=excluded.runtime_json,notes=excluded.notes,
+          updated_at=excluded.updated_at,last_verified_at=excluded.last_verified_at",
+        params![
+            deployment_id,
+            client_id,
+            vault_id,
+            host_id,
+            text("name"),
+            text("deploymentPath"),
+            text("projectKind"),
+            text("status"),
+            json_text("source"),
+            json_text("dependencies"),
+            json_text("components"),
+            json_text("runtime"),
+            text("notes"),
+            created_at,
+            now,
+            payload["lastVerifiedAt"].as_i64(),
+        ],
+    )
+    .map_err(|e| format!("Save project deployment failed: {e}"))?;
+    db.query_row(
+        "SELECT deployment_id,client_id,vault_id,host_id,name,deployment_path,project_kind,status,
+                source_json,dependencies_json,components_json,runtime_json,notes,created_at,updated_at,last_verified_at
+         FROM mcp_project_deployments WHERE deployment_id=?1 AND client_id=?2",
+        params![deployment_id, client_id],
+        deployment_row,
+    )
+    .map_err(|e| format!("Read project deployment failed: {e}"))
+}
+
+pub fn list_project_deployments(
+    app: &tauri::AppHandle,
+    client_id: &str,
+    host_id: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let db = open(app)?;
+    list_project_deployments_db(&db, client_id, host_id)
+}
+
+fn list_project_deployments_db(
+    db: &Connection,
+    client_id: &str,
+    host_id: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let mut deployments = Vec::new();
+    if let Some(host_id) = host_id {
+        let mut statement = db
+            .prepare(
+                "SELECT deployment_id,client_id,vault_id,host_id,name,deployment_path,project_kind,status,
+                        source_json,dependencies_json,components_json,runtime_json,notes,created_at,updated_at,last_verified_at
+                 FROM mcp_project_deployments WHERE client_id=?1 AND host_id=?2 ORDER BY updated_at DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = statement
+            .query_map(params![client_id, host_id], deployment_row)
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            deployments.push(row.map_err(|e| e.to_string())?);
+        }
+    } else {
+        let mut statement = db
+            .prepare(
+                "SELECT deployment_id,client_id,vault_id,host_id,name,deployment_path,project_kind,status,
+                        source_json,dependencies_json,components_json,runtime_json,notes,created_at,updated_at,last_verified_at
+                 FROM mcp_project_deployments WHERE client_id=?1 ORDER BY updated_at DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = statement
+            .query_map(params![client_id], deployment_row)
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            deployments.push(row.map_err(|e| e.to_string())?);
+        }
+    }
+    Ok(deployments)
+}
+
+pub fn list_project_deployments_for_vault(
+    app: &tauri::AppHandle,
+    vault_id: &str,
+    host_id: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let db = open(app)?;
+    list_project_deployments_for_vault_db(&db, vault_id, host_id)
+}
+
+fn list_project_deployments_for_vault_db(
+    db: &Connection,
+    vault_id: &str,
+    host_id: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let mut deployments = Vec::new();
+    let sql = if host_id.is_some() {
+        "SELECT deployment_id,client_id,vault_id,host_id,name,deployment_path,project_kind,status,
+                source_json,dependencies_json,components_json,runtime_json,notes,created_at,updated_at,last_verified_at
+         FROM mcp_project_deployments WHERE vault_id=?1 AND host_id=?2 ORDER BY updated_at DESC"
+    } else {
+        "SELECT deployment_id,client_id,vault_id,host_id,name,deployment_path,project_kind,status,
+                source_json,dependencies_json,components_json,runtime_json,notes,created_at,updated_at,last_verified_at
+         FROM mcp_project_deployments WHERE vault_id=?1 ORDER BY updated_at DESC"
+    };
+    let mut statement = db.prepare(sql).map_err(|e| e.to_string())?;
+    let rows = match host_id {
+        Some(host_id) => statement.query_map(params![vault_id, host_id], deployment_row),
+        None => statement.query_map(params![vault_id], deployment_row),
+    }
+    .map_err(|e| e.to_string())?;
+    for row in rows {
+        deployments.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(deployments)
+}
+
+pub fn delete_project_deployments_for_host(
+    app: &tauri::AppHandle,
+    vault_id: &str,
+    host_id: &str,
+) -> Result<(), String> {
+    delete_project_deployments_for_host_db(&open(app)?, vault_id, host_id)
+}
+
+fn delete_project_deployments_for_host_db(
+    db: &Connection,
+    vault_id: &str,
+    host_id: &str,
+) -> Result<(), String> {
+    db.execute(
+        "DELETE FROM mcp_project_deployments WHERE vault_id=?1 AND host_id=?2",
+        params![vault_id, host_id],
+    )
+    .map_err(|e| format!("Delete project deployments failed: {e}"))?;
+    Ok(())
+}
+
+/// Return the durable MCP result state that should be visible after a process
+/// restart. In-memory worker output is intentionally discarded, so the linked
+/// OperationJob is the source of truth whenever it exists. A queued/running
+/// job cannot be proven to have stopped and therefore becomes `unknown`.
 fn recovered_mcp_status(operation_status: Option<&str>) -> &'static str {
     match operation_status {
         Some("completed") => "completed",
@@ -87,6 +308,9 @@ pub fn recover(app: &tauri::AppHandle) -> Result<(), String> {
             match operation_jobs::operation_job_get(app.clone(), id.to_string()) {
                 Ok(job) => job,
                 Err(error) => {
+                    // A missing/corrupt canonical record must not prevent the
+                    // MCP store from recovering the rest of its jobs. The
+                    // result remains unknown and can be reconciled manually.
                     log::error!("MCP OperationJob recovery lookup failed: {error}");
                     None
                 }
@@ -94,11 +318,12 @@ pub fn recover(app: &tauri::AppHandle) -> Result<(), String> {
         });
 
         let status = recovered_mcp_status(operation_job.as_ref().map(|job| job.status.as_str()));
+        let operation_job_id_for_update = operation_job_id.clone();
         if operation_job
             .as_ref()
             .is_some_and(|job| matches!(job.status.as_str(), "queued" | "running"))
         {
-            if let Some(operation_job_id) = operation_job_id {
+            if let Some(operation_job_id) = operation_job_id_for_update {
                 if let Err(error) = operation_jobs::operation_job_update(
                     app.clone(),
                     operation_jobs::UpdateOperationJobRequest {
@@ -121,6 +346,10 @@ pub fn recover(app: &tauri::AppHandle) -> Result<(), String> {
             }
         }
 
+        // Keep the MCP idempotency/result row aligned with the canonical
+        // OperationJob. This matters when the previous process committed the
+        // OperationJob terminal state just before it stopped, leaving mcp_jobs
+        // at running. Subsequent sessions can then answer from either store.
         db.execute(
             "UPDATE mcp_jobs SET status=?1, updated_at=?2 WHERE id=?3",
             params![status, now_unix_ms(), mcp_job_id],
@@ -277,6 +506,150 @@ pub fn list_audit(app: &tauri::AppHandle) -> Result<Vec<Value>, String> {
 mod tests {
     use super::*;
 
+    fn deployment(id: &str, host: &str, name: &str) -> Value {
+        json!({
+            "deploymentId": id,
+            "hostId": host,
+            "name": name,
+            "deploymentPath": "/srv/api",
+            "projectKind": "node",
+            "status": "deployed",
+            "source": {"repository": "https://example.invalid/api", "ref": "main"},
+            "dependencies": [{"name": "node", "version": "22", "kind": "runtime"}],
+            "components": [{"name": "api", "type": "service", "version": "1.0.0"}],
+            "runtime": {"language": "node", "version": "22", "packageManager": "pnpm"},
+            "notes": "recorded by agent",
+            "lastVerifiedAt": 1234,
+        })
+    }
+
+    #[test]
+    fn deployment_records_upsert_without_losing_creation_time() {
+        let db = Connection::open_in_memory().unwrap();
+        initialize(&db).unwrap();
+
+        let first = upsert_project_deployment_db(
+            &db,
+            "client-a",
+            "vault-a",
+            &deployment("deploy-1", "host-a", "API"),
+        )
+        .unwrap();
+        let created_at = first["createdAt"].as_i64().unwrap();
+        assert_eq!(first["name"], "API");
+        assert_eq!(first["source"]["ref"], "main");
+        assert_eq!(first["dependencies"][0]["version"], "22");
+
+        let mut updated = deployment("deploy-1", "host-a", "API v2");
+        updated["status"] = json!("failed");
+        updated["lastVerifiedAt"] = json!(5678);
+        let second = upsert_project_deployment_db(&db, "client-a", "vault-a", &updated).unwrap();
+        assert_eq!(second["createdAt"], created_at);
+        assert!(second["updatedAt"].as_i64().unwrap() >= created_at);
+        assert_eq!(second["name"], "API v2");
+        assert_eq!(second["status"], "failed");
+        assert_eq!(second["lastVerifiedAt"], 5678);
+
+        let rows = list_project_deployments_db(&db, "client-a", None).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["deploymentId"], "deploy-1");
+    }
+
+    #[test]
+    fn deployment_records_are_scoped_by_client_vault_and_host() {
+        let db = Connection::open_in_memory().unwrap();
+        initialize(&db).unwrap();
+        upsert_project_deployment_db(
+            &db,
+            "client-a",
+            "vault-a",
+            &deployment("same-id", "host-a", "A"),
+        )
+        .unwrap();
+        upsert_project_deployment_db(
+            &db,
+            "client-b",
+            "vault-a",
+            &deployment("same-id", "host-a", "B"),
+        )
+        .unwrap();
+        upsert_project_deployment_db(
+            &db,
+            "client-c",
+            "vault-b",
+            &deployment("other-id", "host-a", "C"),
+        )
+        .unwrap();
+        upsert_project_deployment_db(
+            &db,
+            "client-a",
+            "vault-a",
+            &deployment("host-b-id", "host-b", "Other host"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            list_project_deployments_db(&db, "client-a", None)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            list_project_deployments_db(&db, "client-a", Some("host-a"))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            list_project_deployments_for_vault_db(&db, "vault-a", None)
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(
+            list_project_deployments_for_vault_db(&db, "vault-a", Some("host-a"))
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            list_project_deployments_for_vault_db(&db, "vault-b", None)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn deleting_a_host_removes_only_that_vault_scope() {
+        let db = Connection::open_in_memory().unwrap();
+        initialize(&db).unwrap();
+        upsert_project_deployment_db(&db, "client-a", "vault-a", &deployment("a", "host-a", "A"))
+            .unwrap();
+        upsert_project_deployment_db(&db, "client-b", "vault-b", &deployment("b", "host-a", "B"))
+            .unwrap();
+        upsert_project_deployment_db(&db, "client-c", "vault-a", &deployment("c", "host-b", "C"))
+            .unwrap();
+
+        delete_project_deployments_for_host_db(&db, "vault-a", "host-a").unwrap();
+        assert_eq!(
+            list_project_deployments_for_vault_db(&db, "vault-a", None)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            list_project_deployments_for_vault_db(&db, "vault-a", None).unwrap()[0]["hostId"],
+            "host-b"
+        );
+        assert_eq!(
+            list_project_deployments_for_vault_db(&db, "vault-b", None)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
     #[test]
     fn recovered_mcp_status_prefers_terminal_operation_outcomes() {
         assert_eq!(recovered_mcp_status(Some("completed")), "completed");
@@ -286,6 +659,7 @@ mod tests {
         assert_eq!(recovered_mcp_status(Some("running")), "unknown");
         assert_eq!(recovered_mcp_status(None), "unknown");
     }
+
     #[test]
     fn only_one_application_can_own_mcp_and_recover_jobs() {
         let path = std::env::temp_dir().join(format!(
@@ -304,18 +678,24 @@ mod tests {
         let db = Connection::open_in_memory().unwrap();
         initialize(&db).unwrap();
         db.execute(
-            "INSERT INTO mcp_jobs (id,client_id,host_id,request_id,request_hash,tool,status,created_at,updated_at) VALUES ('j','a','h','r','hash','run_command','running',0,0)",
+            "INSERT INTO mcp_jobs
+             (id,client_id,host_id,request_id,request_hash,tool,status,created_at,updated_at)
+             VALUES ('j','a','h','r','hash','run_command','running',0,0)",
             [],
         )
         .unwrap();
         assert!(db
             .execute(
-                "INSERT INTO mcp_jobs (id,client_id,host_id,request_id,request_hash,tool,status,created_at,updated_at) VALUES ('j2','a','h','r','hash','run_command','running',0,0)",
+                "INSERT INTO mcp_jobs
+                 (id,client_id,host_id,request_id,request_hash,tool,status,created_at,updated_at)
+                 VALUES ('j2','a','h','r','hash','run_command','running',0,0)",
                 []
             )
             .is_err());
         db.execute(
-            "INSERT INTO mcp_jobs (id,client_id,host_id,request_id,request_hash,tool,status,created_at,updated_at) VALUES ('j3','b','h','r','hash','run_command','running',0,0)",
+            "INSERT INTO mcp_jobs
+             (id,client_id,host_id,request_id,request_hash,tool,status,created_at,updated_at)
+             VALUES ('j3','b','h','r','hash','run_command','running',0,0)",
             [],
         )
         .unwrap();
@@ -333,6 +713,7 @@ mod tests {
             .unwrap();
         assert_eq!(count, 2);
     }
+
     #[test]
     fn legacy_mcp_jobs_schema_is_migrated_with_operation_job_link() {
         let db = Connection::open_in_memory().unwrap();
@@ -372,7 +753,6 @@ mod tests {
             .unwrap();
         assert!(link.is_none());
     }
-
 
     #[test]
     fn mcp_job_link_is_stored_without_durable_command_or_output_columns() {

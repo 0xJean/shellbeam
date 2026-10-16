@@ -102,6 +102,10 @@ pub struct OperationAudit {
     pub host_id: Option<String>,
     pub host_name: Option<String>,
     pub host_address: Option<String>,
+    /// Vault scope is returned with every audit row so consumers can keep
+    /// host history separated when the same host id is reused in another
+    /// vault. It is joined from the canonical OperationJob record.
+    pub vault_id: Option<String>,
     pub action: String,
     pub target: String,
     pub risk: String,
@@ -756,16 +760,17 @@ fn audit_from_row(row: &Row<'_>) -> rusqlite::Result<OperationAudit> {
         host_id: row.get(7)?,
         host_name: row.get(8)?,
         host_address: row.get(9)?,
-        action: row.get(10)?,
-        target: row.get(11)?,
-        risk: row.get(12)?,
-        provider: row.get(13)?,
-        transport: row.get(14)?,
-        params_summary: row.get(15)?,
-        result_summary: row.get(16)?,
-        error_code: row.get(17)?,
-        error_summary: row.get(18)?,
-        created_at: row.get(19)?,
+        vault_id: row.get(10)?,
+        action: row.get(11)?,
+        target: row.get(12)?,
+        risk: row.get(13)?,
+        provider: row.get(14)?,
+        transport: row.get(15)?,
+        params_summary: row.get(16)?,
+        result_summary: row.get(17)?,
+        error_code: row.get(18)?,
+        error_summary: row.get(19)?,
+        created_at: row.get(20)?,
     })
 }
 
@@ -779,23 +784,31 @@ pub fn operation_audit_list(
     let limit = bounded_limit(query.limit, 100, 500);
     let mut statement = db
         .prepare(
-            "SELECT audit_id,job_id,event,status,confirmation_status,source,actor,host_id,host_name,
-                    host_address,action,target,risk,provider,transport,params_summary,result_summary,
-                    error_code,error_summary,at
+            "SELECT operation_audit.audit_id,operation_audit.job_id,operation_audit.event,
+                    operation_audit.status,operation_audit.confirmation_status,operation_audit.source,
+                    operation_audit.actor,operation_audit.host_id,operation_audit.host_name,
+                    operation_audit.host_address,jobs.vault_id,operation_audit.action,
+                    operation_audit.target,operation_audit.risk,operation_audit.provider,
+                    operation_audit.transport,operation_audit.params_summary,operation_audit.result_summary,
+                    operation_audit.error_code,operation_audit.error_summary,operation_audit.at
              FROM operation_audit
-             WHERE (?1 IS NULL OR job_id=?1)
-               AND (?2 IS NULL OR host_id=?2)
-               AND (?3 IS NULL OR EXISTS (
-                 SELECT 1 FROM operation_jobs jobs
-                 WHERE jobs.job_id=operation_audit.job_id AND jobs.vault_id=?3
-               ))
-               AND (?4 IS NULL OR source=?4)
-             ORDER BY at DESC LIMIT ?5",
+             LEFT JOIN operation_jobs jobs ON jobs.job_id=operation_audit.job_id
+             WHERE (?1 IS NULL OR operation_audit.job_id=?1)
+               AND (?2 IS NULL OR operation_audit.host_id=?2)
+               AND (?3 IS NULL OR jobs.vault_id=?3)
+               AND (?4 IS NULL OR operation_audit.source=?4)
+             ORDER BY operation_audit.at DESC LIMIT ?5",
         )
         .map_err(|e| format!("Prepare operation audit query failed: {e}"))?;
     let rows = statement
         .query_map(
-            params![query.job_id, query.host_id, query.vault_id, query.source, limit],
+            params![
+                query.job_id,
+                query.host_id,
+                query.vault_id,
+                query.source,
+                limit
+            ],
             audit_from_row,
         )
         .map_err(|e| format!("Query operation audit failed: {e}"))?;
@@ -857,6 +870,7 @@ mod tests {
         assert!(valid_status("cancelled"));
         assert!(!valid_status("pending"));
     }
+
     #[test]
     fn queued_mcp_jobs_can_be_reconciled_as_unknown_after_restart() {
         assert!(legal_transition("queued", "unknown"));

@@ -112,13 +112,15 @@ interface HostGridCardProps {
   resource?: WorkspaceInventoryResource
   operations?: HostOperationalSummary
   network?: HostNetworkDisplay
+  agentDeploymentCount?: number
+  agentDeploymentStatus?: string
   onConnect: (id: string) => void
   onEdit: (id: string) => void
   onDelete: (id: string) => void
   onSelect: (id: string) => void
 }
 
-export function HostGridCard({ host, isSelected, status, resource, operations, network, onConnect, onEdit, onDelete }: HostGridCardProps) {
+export function HostGridCard({ host, isSelected, status, resource, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onEdit, onDelete }: HostGridCardProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
@@ -231,6 +233,11 @@ export function HostGridCard({ host, isSelected, status, resource, operations, n
               <span className="text-[10px] text-[var(--workspace-text-subtle)]">&nbsp;</span>
             )}
           </div>
+          {agentDeploymentCount > 0 && (
+            <div className="truncate text-[10px] font-medium text-[var(--workspace-status-info-text)]">
+              {t('workspace.agentDeployments.summary', { count: agentDeploymentCount })}{agentDeploymentStatus ? ` · ${t(`workspace.agentDeployments.status.${['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(agentDeploymentStatus) ? agentDeploymentStatus : 'unknown'}`)}` : ''}
+            </div>
+          )}
         </div>
 
         <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
@@ -262,6 +269,8 @@ interface HostListItemProps {
   resource?: WorkspaceInventoryResource
   operations?: HostOperationalSummary
   network?: HostNetworkDisplay
+  agentDeploymentCount?: number
+  agentDeploymentStatus?: string
   onSelect: (id: string) => void
   onConnect: (id: string) => void
   onEdit: (id: string) => void
@@ -515,12 +524,12 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
   )
 }
 
-function HostGroupTagsMeta({ host, t }: { host: HostProfile; t: TFn }) {
+function HostGroupTagsMeta({ host, t, agentDeploymentCount = 0, agentDeploymentStatus }: { host: HostProfile; t: TFn; agentDeploymentCount?: number; agentDeploymentStatus?: string }) {
   const groupLabel = getDisplayGroupLabel(host.group, t)
   const tags = host.tags ?? []
   const jumpHost = formatJumpHost(host)
 
-  if (!groupLabel && tags.length === 0 && !jumpHost) return null
+  if (!groupLabel && tags.length === 0 && agentDeploymentCount === 0 && !jumpHost) return null
 
   return (
     <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
@@ -559,6 +568,11 @@ function HostGroupTagsMeta({ host, t }: { host: HostProfile; t: TFn }) {
           <span className="truncate">{t('hosts.jumpHost')}: {jumpHost}</span>
         </span>
       )}
+      {agentDeploymentCount > 0 && (
+        <span className="inline-flex max-w-full items-center rounded-md border border-[color:var(--workspace-status-info-border)] bg-[var(--workspace-status-info-bg)] px-2 py-1 text-[10px] font-medium text-[var(--workspace-status-info-text)]" title={t('workspace.agentDeployments.summary', { count: agentDeploymentCount })}>
+          <span className="truncate">{t('workspace.agentDeployments.summary', { count: agentDeploymentCount })}{agentDeploymentStatus ? ` · ${t(`workspace.agentDeployments.status.${['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(agentDeploymentStatus) ? agentDeploymentStatus : 'unknown'}`)}` : ''}</span>
+        </span>
+      )}
     </div>
   )
 }
@@ -591,7 +605,7 @@ function getNetworkScopeLabel(network: HostNetworkDisplay | undefined, t: TFn) {
   return t('hosts.networkUnknown')
 }
 
-export function HostListItem({ index, host, isSelected, status, resource, operations, network, onSelect, onConnect, onEdit, onDelete }: HostListItemProps) {
+export function HostListItem({ index, host, isSelected, status, resource, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onEdit, onDelete }: HostListItemProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
@@ -639,7 +653,7 @@ export function HostListItem({ index, host, isSelected, status, resource, operat
             <p className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">
               {resource?.os || `${host.username || 'root'}@${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
             </p>
-            <HostGroupTagsMeta host={host} t={t} />
+            <HostGroupTagsMeta host={host} t={t} agentDeploymentCount={agentDeploymentCount} agentDeploymentStatus={agentDeploymentStatus} />
           </div>
         </div>
 

@@ -10,9 +10,13 @@ pub struct Permissions {
     pub read_files: bool,
     pub write_files: bool,
     pub refresh: bool,
-    /// Allow local Komari alert lifecycle mutations and their OperationJob audit.
+    /// Allow local Komari alert lifecycle mutations. This never grants a
+    /// remote Komari API call; it only updates ShellBeam's cached alert state
+    /// and creates an OperationJob audit row.
     #[serde(default)]
     pub manage_alerts: bool,
+    #[serde(default)]
+    pub record_deployments: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -86,6 +90,8 @@ impl Client {
     pub fn allows(&self, tool: &str) -> bool {
         match tool {
             "list_servers"
+            | "get_workspace_snapshot"
+            | "list_project_deployments"
             | "get_server_inventory"
             | "get_server_probe_state"
             | "get_server_alerts"
@@ -97,6 +103,7 @@ impl Client {
             "run_command" => self.permissions.execute,
             "read_remote_file" => self.permissions.read_files,
             "write_remote_file" | "upload_file" => self.permissions.write_files,
+            "record_project_deployment" => self.permissions.record_deployments,
             _ => false,
         }
     }
@@ -161,6 +168,7 @@ mod tests {
         let client = client();
         assert!(client.allows("list_servers"));
         assert!(client.allows("get_server_operations"));
+        assert!(client.allows("get_server_probe_state"));
         assert!(client.allows("get_server_alerts"));
         assert!(!client.allows("acknowledge_server_alert"));
         assert!(!client.allows("close_server_alert"));
@@ -205,23 +213,26 @@ mod tests {
     }
 
     #[test]
-    fn manage_alerts_is_local_lifecycle_capability() {
-        let mut client = client();
-        client.permissions.manage_alerts = true;
-        assert!(client.allows("acknowledge_server_alert"));
-        assert!(client.allows("close_server_alert"));
-        assert!(!client.allows("run_command"));
-    }
-
-    #[test]
     fn file_and_command_permissions_are_distinct() {
         let mut client = client();
+        assert!(!client.allows("record_project_deployment"));
+        client.permissions.record_deployments = true;
+        assert!(client.allows("record_project_deployment"));
         client.permissions.read_files = true;
         assert!(client.allows("read_remote_file"));
         assert!(!client.allows("run_command"));
         assert!(!client.allows("write_remote_file"));
         client.permissions.write_files = true;
         assert!(client.allows("upload_file"));
+        assert!(!client.allows("run_command"));
+    }
+
+    #[test]
+    fn manage_alerts_is_local_lifecycle_capability() {
+        let mut client = client();
+        client.permissions.manage_alerts = true;
+        assert!(client.allows("acknowledge_server_alert"));
+        assert!(client.allows("close_server_alert"));
         assert!(!client.allows("run_command"));
     }
 }

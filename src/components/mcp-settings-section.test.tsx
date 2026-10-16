@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'vault-a' }) }))
 
 const client = { id: 'client-a', name: 'Agent A', vaultId: 'vault-a', hosts: [{ id: 'h1', identity: 'hash' }],
-  permissions: { refresh: false, execute: false, readFiles: false, writeFiles: false, manageAlerts: false }, createdAt: 1 }
+  permissions: { refresh: false, execute: false, readFiles: false, writeFiles: false, recordDeployments: false, manageAlerts: false }, createdAt: 1 }
 const host = { id: 'h1', name: 'Dev Server', address: '192.0.2.10', username: 'deploy', port: 22 }
 
 describe('MCP settings', () => {
@@ -18,7 +18,7 @@ describe('MCP settings', () => {
     localStorage.setItem('shellbeam.locale', 'en')
     vi.mocked(invoke).mockReset()
     vi.mocked(invoke).mockImplementation(async (command) => {
-      if (command === 'mcp_status') return { enabled: false, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
+      if (command === 'mcp_status') return { enabled: false, running: false, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
       if (command === 'list_hosts') return [host]
       if (command === 'mcp_create_client') return { client, configuration: { mcpServers: { shellbeam: { command: '/Applications/ShellBeam.app/app', args: ['--mcp-stdio', '/tmp/endpoint.json', client.id], env: { SHELLBEAM_MCP_TOKEN: 'one-time-token' } } } } }
       return undefined
@@ -44,7 +44,7 @@ describe('MCP settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Authorize and generate configuration' }))
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('mcp_create_client', { payload: {
       name: 'Agent A', vaultId: 'vault-a', hostIds: ['h1'],
-      permissions: { refresh: false, execute: true, readFiles: false, writeFiles: false, manageAlerts: false },
+      permissions: { refresh: false, execute: true, readFiles: false, writeFiles: false, recordDeployments: false, manageAlerts: false },
     } }))
     expect((await screen.findByLabelText('MCP client configuration') as HTMLTextAreaElement).value).toContain('one-time-token')
     fireEvent.click(screen.getByRole('button', { name: 'Hide and discard configuration' }))
@@ -62,13 +62,13 @@ describe('MCP settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Authorize and generate configuration' }))
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('mcp_create_client', { payload: {
       name: 'Alert Agent', vaultId: 'vault-a', hostIds: ['h1'],
-      permissions: { refresh: false, execute: false, readFiles: false, writeFiles: false, manageAlerts: true },
+      permissions: { refresh: false, execute: false, readFiles: false, writeFiles: false, recordDeployments: false, manageAlerts: true },
     } }))
   })
 
   it('requires a second click before revocation', async () => {
     vi.mocked(invoke).mockImplementation(async (command) => command === 'mcp_status'
-      ? { enabled: true, desktopSupported: true, clients: [client], activeOperations: 1, audit: [] }
+      ? { enabled: true, running: true, desktopSupported: true, clients: [client], activeOperations: 1, audit: [] }
       : command === 'list_hosts' ? [host] : undefined)
     render(<McpSettingsSection />)
     fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }))
@@ -124,7 +124,7 @@ describe('MCP settings', () => {
   it('checks only the generated authorization and describes the limited scope of success', async () => {
     const original = vi.mocked(invoke).getMockImplementation()!
     vi.mocked(invoke).mockImplementation(async (command, args, options) => {
-      if (command === 'mcp_status') return { enabled: true, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
+      if (command === 'mcp_status') return { enabled: true, running: true, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
       if (command === 'mcp_test_connection') return { toolCount: 3 }
       return original(command, args, options)
     })
@@ -140,7 +140,7 @@ describe('MCP settings', () => {
   it('shows actionable connection failure without echoing token-bearing errors', async () => {
     const original = vi.mocked(invoke).getMockImplementation()!
     vi.mocked(invoke).mockImplementation(async (command, args, options) => {
-      if (command === 'mcp_status') return { enabled: true, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
+      if (command === 'mcp_status') return { enabled: true, running: true, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
       if (command === 'mcp_test_connection') throw new Error('private token reflected')
       return original(command, args, options)
     })
@@ -155,7 +155,7 @@ describe('MCP settings', () => {
     let resolve!: (result: { toolCount: number }) => void
     const original = vi.mocked(invoke).getMockImplementation()!
     vi.mocked(invoke).mockImplementation(async (command, args, options) => {
-      if (command === 'mcp_status') return { enabled: true, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
+      if (command === 'mcp_status') return { enabled: true, running: true, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
       if (command === 'mcp_test_connection') return new Promise((done) => { resolve = done })
       return original(command, args, options)
     })

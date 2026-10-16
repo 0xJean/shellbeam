@@ -138,8 +138,13 @@ fn forward(
     token: &str,
     request: &Value,
 ) -> Result<Value, String> {
-    let content = std::fs::read(endpoint_path)
-        .map_err(|_| "SHELLBEAM_UNAVAILABLE: open ShellBeam and enable MCP")?;
+    let content = std::fs::read(endpoint_path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "SHELLBEAM_NOT_RUNNING: open ShellBeam and enable MCP".to_string()
+        } else {
+            "SHELLBEAM_ENDPOINT_UNREADABLE: check ShellBeam MCP data".to_string()
+        }
+    })?;
     if content.len() > 4096 {
         return Err("INVALID_ENDPOINT_FILE".into());
     }
@@ -147,8 +152,15 @@ fn forward(
         serde_json::from_slice(&content).map_err(|_| "INVALID_ENDPOINT_FILE")?;
     // The discovery file can specify a port, never an arbitrary destination host.
     let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, endpoint.port);
-    let mut stream = TcpStream::connect_timeout(&address.into(), Duration::from_secs(3))
-        .map_err(|_| "SHELLBEAM_UNAVAILABLE: open ShellBeam and enable MCP")?;
+    let mut stream =
+        TcpStream::connect_timeout(&address.into(), Duration::from_secs(3)).map_err(|error| {
+            match error.kind() {
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut => {
+                    "SHELLBEAM_NOT_RUNNING: open ShellBeam and enable MCP".to_string()
+                }
+                _ => "SHELLBEAM_UNAVAILABLE: open ShellBeam and enable MCP".to_string(),
+            }
+        })?;
     stream
         .set_read_timeout(Some(Duration::from_secs(30)))
         .map_err(|e| e.to_string())?;
@@ -202,6 +214,7 @@ fn check_diagnostic_response(response: &Value, id: u64) -> Result<(), String> {
         // Report only known diagnostics, never arbitrary transport response contents.
         return Err(match error["message"].as_str().unwrap_or("") {
             "MCP_DISABLED" => "MCP_DISABLED",
+            message if message.starts_with("SHELLBEAM_NOT_RUNNING") => "SHELLBEAM_UNAVAILABLE",
             "CLIENT_REVOKED" | "UNAUTHORIZED" => "MCP_AUTHENTICATION_FAILED",
             "MCP_INSTANCE_EXPIRED" => "MCP_INSTANCE_EXPIRED",
             _ => "MCP_CONNECTION_REJECTED",

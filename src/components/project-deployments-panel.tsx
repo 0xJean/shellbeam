@@ -19,10 +19,12 @@ import {
 } from '@/lib/workspace-inventory-state'
 import { scanWorkspaceInventoryHosts } from '@/lib/workspace-inventory-scan'
 import { getResourceUsageTextClassName } from '@/lib/resource-usage'
+import type { McpDeploymentRecord } from '@/lib/mcp'
 import { cn } from '@/lib/utils'
 import {
   AlertTriangle,
   Boxes,
+  Bot,
   CheckCircle2,
   CircleDot,
   Cpu,
@@ -42,6 +44,7 @@ import { WorkspaceResourceOverviewHeader } from './workspace/workspace-resource-
 import { WorkspaceServerList } from './workspace/workspace-server-list'
 
 interface ProjectDeploymentsPanelProps {
+  agentDeployments?: McpDeploymentRecord[]
   selectedHostId?: string | null
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
@@ -233,6 +236,7 @@ export function buildProjectDeploymentRows(hosts: HostProfile[], cache: Workspac
 }
 
 export function ProjectDeploymentsPanel({
+  agentDeployments = [],
   selectedHostId = null,
   hosts,
   resolveAuthSecret,
@@ -307,6 +311,29 @@ export function ProjectDeploymentsPanel({
       ].join(' ').toLowerCase().includes(normalizedQuery)
     })
   }, [deploymentViewRows, networkByAddress, query, selectedKey, statusFilter])
+
+  const filteredAgentDeployments = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+    return agentDeployments.filter((deployment) => {
+      const host = hosts.find((item) => item.id === deployment.hostId)
+      if (!host) return false
+      if (selectedKey !== 'all' && hostKey(host) !== selectedKey) return false
+      if (!normalizedQuery) return true
+      return [
+        deployment.name,
+        deployment.deploymentPath,
+        deployment.projectKind,
+        deployment.status,
+        deployment.agentName,
+        deployment.notes,
+        deployment.runtime?.language,
+        deployment.runtime?.packageManager,
+        deployment.source?.repository,
+        host.name,
+        host.address,
+      ].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery)
+    })
+  }, [agentDeployments, hosts, query, selectedKey])
 
   async function scanHosts(targetHosts: HostProfile[], options: { force?: boolean } = {}) {
     const runId = runIdRef.current + 1
@@ -533,6 +560,18 @@ export function ProjectDeploymentsPanel({
         )}
 
         <section className="min-h-0 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-panel)] px-4 py-3">
+            <div className="flex min-w-0 items-start gap-2">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
+                <Search className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{t('workspace.assetDiscovery.title')}</div>
+                <div className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{t('workspace.assetDiscovery.description')}</div>
+              </div>
+            </div>
+            <Badge tone={filteredRows.length > 0 ? 'info' : 'default'}>{filteredRows.length}</Badge>
+          </div>
           <div className="grid grid-cols-[minmax(14rem,1.15fr)_minmax(10rem,0.8fr)_8rem_9rem] gap-3 border-b border-[color:var(--workspace-border-soft)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)]">
             <span>{t('workspace.deployments.projectColumn')}</span>
             <span>{t('workspace.deployments.serverColumn')}</span>
@@ -616,6 +655,51 @@ export function ProjectDeploymentsPanel({
                     </button>
                   )}
                 </div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section data-testid="agent-deployments-section" className="min-w-0 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-panel)] p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-2">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
+                <Bot className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{t('workspace.agentDeployments.title')}</div>
+                <div className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{t('workspace.agentDeployments.description')}</div>
+              </div>
+            </div>
+            <Badge tone={filteredAgentDeployments.length > 0 ? 'info' : 'default'}>
+              {t('workspace.agentDeployments.count', { count: filteredAgentDeployments.length })}
+            </Badge>
+          </div>
+          <div className="mt-3 space-y-2">
+            {filteredAgentDeployments.map((deployment) => {
+              const host = hosts.find((item) => item.id === deployment.hostId)
+              return (
+                <div key={`${deployment.clientId}:${deployment.deploymentId}`} className="grid gap-3 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] p-3 md:grid-cols-[minmax(0,1.4fr)_minmax(10rem,0.8fr)_auto] md:items-center">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{deployment.name || deployment.projectKind}</div>
+                      <Badge>{deployment.projectKind}</Badge>
+                    </div>
+                    <div className="mt-1 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{deployment.deploymentPath}</div>
+                    <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{host?.name || host?.address || deployment.hostId}{deployment.agentName ? ` · ${t('workspace.agentDeployments.agent', { name: deployment.agentName })}` : ''}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge tone={deployment.status === 'deployed' ? 'good' : deployment.status === 'failed' ? 'bad' : 'warn'}>{t(`workspace.agentDeployments.status.${['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(deployment.status) ? deployment.status : 'unknown'}`)}</Badge>
+                    {deployment.runtime?.language && <Badge>{deployment.runtime.language}{deployment.runtime.version ? ` ${deployment.runtime.version}` : ''}</Badge>}
+                    {deployment.runtime?.packageManager && <Badge>{deployment.runtime.packageManager}</Badge>}
+                  </div>
+                  <div className="text-[11px] text-[var(--workspace-text-subtle)] md:text-right">{t('workspace.agentDeployments.updatedAt', { time: new Date(deployment.updatedAt).toLocaleString() })}</div>
+                </div>
+              )
+            })}
+            {filteredAgentDeployments.length === 0 && (
+              <div className="rounded-xl border border-dashed border-[color:var(--workspace-border-strong)] px-4 py-5 text-sm text-[var(--workspace-text-muted)]">
+                {t('workspace.agentDeployments.empty')}
               </div>
             )}
           </div>

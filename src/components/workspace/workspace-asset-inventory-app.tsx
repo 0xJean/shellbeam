@@ -28,11 +28,13 @@ import {
   type ServerMonitorStatus,
 } from '@/lib/server-monitor'
 import { useServerMonitorStates } from '@/lib/server-monitor-state'
+import { listMcpDeploymentRecords, type McpDeploymentRecord } from '@/lib/mcp'
 import { cn } from '@/lib/utils'
 import {
   Activity,
   AlertTriangle,
   Boxes,
+  Bot,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -67,6 +69,7 @@ import { WorkspaceServerList, workspaceServerMatchesSearch, type WorkspaceServer
 import { WorkspaceToolManagerApp, TOOL_CATALOG } from './workspace-tool-manager-app'
 
 interface WorkspaceAssetInventoryAppProps {
+  activeVaultId?: string
   selectedHostId?: string | null
   hostAddress?: string | null
   hosts: HostProfile[]
@@ -217,6 +220,21 @@ function getInventoryToolServiceName(toolId: string) {
 function projectMatches(project: WorkspaceInventoryProject, query: string, signals: string[] = []) {
   if (!query) return true
   return [project.name, project.kind, project.path, ...signals].join(' ').toLowerCase().includes(query)
+}
+
+function agentDeploymentTone(status: string): 'good' | 'warn' | 'bad' | 'info' | 'default' {
+  if (status === 'deployed') return 'good'
+  if (status === 'failed') return 'bad'
+  if (status === 'deploying' || status === 'planned') return 'warn'
+  if (status === 'unknown') return 'info'
+  return 'default'
+}
+
+function agentDeploymentStatusLabel(status: string, t: TFunction) {
+  const knownStatus = ['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(status)
+    ? status
+    : 'unknown'
+  return t(`workspace.agentDeployments.status.${knownStatus}`)
 }
 
 function isRunningSignal(signal: string) {
@@ -829,6 +847,7 @@ function AssetInventoryHeader({
 }
 
 export function WorkspaceAssetInventoryApp({
+  activeVaultId,
   selectedHostId = null,
   hostAddress = null,
   hosts,
@@ -857,6 +876,8 @@ export function WorkspaceAssetInventoryApp({
   const [sortMode, setSortMode] = useState<AssetSortMode>('recent')
   const sharedStates = useWorkspaceInventoryStates()
   const monitorStates = useServerMonitorStates()
+  const [agentDeployments, setAgentDeployments] = useState<McpDeploymentRecord[]>([])
+  const [agentDeploymentsObservedAt, setAgentDeploymentsObservedAt] = useState<number | null>(null)
   const [states, setStates] = useState<Record<string, HostInventoryState>>(() => {
     const shared = selectWorkspaceInventoryStatesForHosts(hosts)
     return Object.entries(loadWorkspaceInventoryCache(hosts)).reduce<Record<string, HostInventoryState>>((next, [key, entry]) => {
@@ -871,6 +892,35 @@ export function WorkspaceAssetInventoryApp({
   const scanRunIdRef = useRef(0)
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
   const { t } = useT()
+
+  useEffect(() => {
+    let cancelled = false
+    if (!activeVaultId) {
+      setAgentDeployments([])
+      setAgentDeploymentsObservedAt(null)
+      return
+    }
+    void listMcpDeploymentRecords(activeVaultId).then((result) => {
+      if (cancelled) return
+      setAgentDeployments(result.projects)
+      setAgentDeploymentsObservedAt(result.observedAt)
+    }).catch(() => {
+      if (cancelled) return
+      setAgentDeployments([])
+      setAgentDeploymentsObservedAt(null)
+    })
+    return () => { cancelled = true }
+  }, [activeVaultId])
+
+  const agentDeploymentsByHost = useMemo(() => {
+    const grouped = new Map<string, McpDeploymentRecord[]>()
+    agentDeployments.forEach((deployment) => {
+      const current = grouped.get(deployment.hostId) ?? []
+      current.push(deployment)
+      grouped.set(deployment.hostId, current)
+    })
+    return grouped
+  }, [agentDeployments])
 
   useEffect(() => {
     if (!selectedKey && initialHost) setSelectedKey(hostKey(initialHost))
@@ -893,6 +943,7 @@ export function WorkspaceAssetInventoryApp({
       const state = states[hostKey(host)]
       const inventory = state?.inventory
       const monitor = monitorStates[getServerMonitorHostKey(host)]
+      const registeredProjects = agentDeploymentsByHost.get(host.id) ?? []
       const network = networkByAddress[host.address]
       const searchData: WorkspaceServerSearchData = {
         network: [network?.scopeLabel, network?.versionLabel, network?.resolvedLocationLabel],
@@ -902,6 +953,15 @@ export function WorkspaceAssetInventoryApp({
           ...getProjectSearchValues(inventory),
           ...(inventory?.containers.flatMap((container) => [container.name, container.image]) ?? []),
           ...(inventory?.pm2.map((process) => process.raw) ?? []),
+          ...registeredProjects.flatMap((project) => [
+            project.name,
+            project.deploymentPath,
+            project.projectKind,
+            project.status,
+            project.agentName,
+            project.runtime?.language,
+            project.runtime?.packageManager,
+          ]),
         ],
       }
       return workspaceServerMatchesSearch(host, normalizedQuery, searchData)
@@ -929,7 +989,7 @@ export function WorkspaceAssetInventoryApp({
       }
       return (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)
     })
-  }, [groupFilter, hosts, monitorStates, networkByAddress, query, sortMode, states, tagFilter])
+  }, [agentDeploymentsByHost, groupFilter, hosts, monitorStates, networkByAddress, query, sortMode, states, tagFilter])
 
   const selectedHost = useMemo(() => {
     return hostRows.find((host) => hostKey(host) === selectedKey) ?? hostRows[0] ?? hosts.find((host) => hostKey(host) === selectedKey) ?? hosts[0]
@@ -949,6 +1009,22 @@ export function WorkspaceAssetInventoryApp({
   const serviceCount = readyStates.reduce((total, state) => total + (state.inventory?.services.filter((service) => service.active === 'active').length ?? 0), 0)
   const cachedCount = Object.values(states).filter((state) => state.inventory).length
   const selectedNetwork = selectedHost ? networkByAddress[selectedHost.address] : undefined
+  const normalizedQuery = query.trim().toLowerCase()
+  const selectedAgentDeployments = selectedHost ? (agentDeploymentsByHost.get(selectedHost.id) ?? []).filter((deployment) => {
+    if (!normalizedQuery) return true
+    return [
+      deployment.name,
+      deployment.deploymentPath,
+      deployment.projectKind,
+      deployment.status,
+      deployment.agentName,
+      deployment.notes,
+      deployment.runtime?.language,
+      deployment.runtime?.packageManager,
+      deployment.runtime?.processManager,
+      deployment.source?.repository,
+    ].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery)
+  }) : []
   const isMobile = presentation === 'mobile'
 
   function openToolManagerForSelectedHost() {
@@ -1010,7 +1086,6 @@ export function WorkspaceAssetInventoryApp({
     )
   }
 
-  const normalizedQuery = query.trim().toLowerCase()
   const filteredProjects = selectedInventory?.projects
     .map((project) => ({
       project,
@@ -1131,11 +1206,18 @@ export function WorkspaceAssetInventoryApp({
           renderFooter={(host) => {
             const inventory = states[hostKey(host)]?.inventory
             const monitor = monitorStates[getServerMonitorHostKey(host)]?.latest
+              const registeredProjects = agentDeploymentsByHost.get(host.id) ?? []
+              const latestRegistration = registeredProjects[0]
             const source = monitor?.snapshot ? t('workspace.monitor.source.live') : inventory ? t('workspace.monitor.source.inventory') : t('workspace.monitor.source.pending')
             return (
               <div className="mt-2 text-[11px] text-[var(--workspace-text-subtle)]">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <Bot className="h-3 w-3 shrink-0 text-[var(--workspace-accent-text)]" />
+                    <span className="truncate">{t('workspace.agentDeployments.summary', { count: registeredProjects.length })}</span>
+                    {latestRegistration && <span className="truncate">· {agentDeploymentStatusLabel(latestRegistration.status, t)}</span>}
+                  </div>
                 <div>{monitor?.snapshot?.os || inventory?.resource.os ? t('workspace.asset.version', { version: monitor?.snapshot?.os || inventory?.resource.os || '' }) : t('workspace.asset.versionPending')}</div>
-                <div>{source}{monitor?.lastSuccessAt ? ` · ${new Date(monitor.lastSuccessAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</div>
+                  <div>{source}{monitor?.lastSuccessAt ? ` · ${new Date(monitor.lastSuccessAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}{agentDeploymentsObservedAt ? ` · ${t('workspace.agentDeployments.updatedAt', { time: new Date(agentDeploymentsObservedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })}` : ''}</div>
               </div>
             )
           }}
@@ -1162,6 +1244,7 @@ export function WorkspaceAssetInventoryApp({
             />
           ) : view === 'deployments' ? (
             <ProjectDeploymentsPanel
+              agentDeployments={agentDeployments}
               selectedHostId={selectedHost?.id ?? selectedHostId}
               hosts={hosts}
               resolveAuthSecret={resolveAuthSecret}
@@ -1355,9 +1438,10 @@ export function WorkspaceAssetInventoryApp({
 
                   {selectedInventory && <AssetDetailSection
                     icon={FolderGit2}
-                    title={t('workspace.asset.projectDirectories')}
+                    title={t('workspace.assetDiscovery.title')}
                     meta={filteredProjects.length}
                   >
+                    <p className="mb-3 text-xs leading-5 text-[var(--workspace-text-muted)]">{t('workspace.assetDiscovery.description')}</p>
                     <div className={cn('grid gap-2', isMobile ? 'grid-cols-1' : 'xl:grid-cols-2')}>
                       {filteredProjects.map(({ project, signals }) => {
                         const isRunning = signals.some(isRunningSignal)
@@ -1402,6 +1486,41 @@ export function WorkspaceAssetInventoryApp({
                       : t('workspace.asset.scanHostHint')}
                 </div>
               )}
+
+              <AssetDetailSection
+                icon={Bot}
+                title={t('workspace.agentDeployments.title')}
+                meta={t('workspace.agentDeployments.count', { count: selectedAgentDeployments.length })}
+              >
+                <p className="mb-3 text-xs leading-5 text-[var(--workspace-text-muted)]">{t('workspace.agentDeployments.description')}</p>
+                {selectedAgentDeployments.length > 0 ? (
+                  <div className={cn('grid gap-2', isMobile ? 'grid-cols-1' : 'xl:grid-cols-2')}>
+                    {selectedAgentDeployments.map((deployment) => (
+                      <div key={`${deployment.clientId}:${deployment.deploymentId}`} className="min-w-0 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] px-3 py-2.5">
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-xs font-semibold text-[var(--workspace-text-strong)]">{deployment.name || deployment.projectKind}</div>
+                            <div className="mt-1 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{deployment.deploymentPath}</div>
+                          </div>
+                          <Badge tone={agentDeploymentTone(deployment.status)}>{agentDeploymentStatusLabel(deployment.status, t)}</Badge>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {deployment.agentName && <Badge tone="info">{t('workspace.agentDeployments.agent', { name: deployment.agentName })}</Badge>}
+                          {deployment.projectKind && <Badge>{deployment.projectKind}</Badge>}
+                          {deployment.runtime?.language && <Badge>{deployment.runtime.language}{deployment.runtime.version ? ` ${deployment.runtime.version}` : ''}</Badge>}
+                          {deployment.runtime?.packageManager && <Badge>{deployment.runtime.packageManager}</Badge>}
+                        </div>
+                        {deployment.source?.repository && <div className="mt-2 truncate text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.agentDeployments.source')}: {deployment.source.repository}</div>}
+                        <div className="mt-1 text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.agentDeployments.updatedAt', { time: new Date(deployment.updatedAt).toLocaleString() })}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-panel)] px-4 py-5 text-sm text-[var(--workspace-text-muted)]">
+                    {t('workspace.agentDeployments.empty')}
+                  </div>
+                )}
+              </AssetDetailSection>
             </div>
           )}
         </div>

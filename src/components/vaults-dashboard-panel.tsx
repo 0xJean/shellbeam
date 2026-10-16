@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Vault, Plus, Pencil, Trash2, Check, X, Server, FileCode, ChevronDown, KeyRound, Network } from 'lucide-react'
+import { Vault, Plus, Pencil, Trash2, Check, X, Server, FileCode, ChevronDown, KeyRound, Network, Bot } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -19,12 +19,15 @@ import type { VaultStatus } from '@/lib/vault'
 import { KeychainTab } from '@/components/keychain-tab'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
+import { listMcpDeploymentRecords } from '@/lib/mcp'
 
 interface VaultStats {
   hosts: number
   snippets: number
   keys: number
   portForwards: number
+  deployments: number
+  deploymentUpdatedAt: number | null
 }
 
 export type VaultTab = 'hosts' | 'keychain' | 'snippets'
@@ -87,15 +90,23 @@ export function VaultsDashboardPanel({
 
   async function loadStats(vaultId: string): Promise<VaultStats> {
     try {
-      const [hosts, snippets, keys, rules] = await Promise.all([
+      const [hosts, snippets, keys, rules, deployments] = await Promise.all([
         listHosts(vaultId),
         listSnippets(vaultId),
         vaultStatus(vaultId).then((s) => (s.initialized ? vaultListSecretKeys(vaultId) : [])),
         listPortForwardRules(vaultId),
+        listMcpDeploymentRecords(vaultId),
       ])
-      return { hosts: hosts.length, snippets: snippets.length, keys: keys.length, portForwards: rules.length }
+      return {
+        hosts: hosts.length,
+        snippets: snippets.length,
+        keys: keys.length,
+        portForwards: rules.length,
+        deployments: deployments.projects.length,
+        deploymentUpdatedAt: deployments.projects.reduce<number | null>((latest, project) => Math.max(latest ?? 0, project.updatedAt), null),
+      }
     } catch {
-      return { hosts: 0, snippets: 0, keys: 0, portForwards: 0 }
+      return { hosts: 0, snippets: 0, keys: 0, portForwards: 0, deployments: 0, deploymentUpdatedAt: null }
     }
   }
 
@@ -179,6 +190,8 @@ export function VaultsDashboardPanel({
                 <span className="flex items-center gap-1" title="Keys"><KeyRound className="h-3 w-3" />{s?.keys ?? '-'}</span>
                 <span className="flex items-center gap-1" title="Snippets"><FileCode className="h-3 w-3" />{s?.snippets ?? '-'}</span>
                 <span className="flex items-center gap-1" title="Port Forwards"><Network className="h-3 w-3" />{s?.portForwards ?? '-'}</span>
+                <span className="flex items-center gap-1" title={t('vaults.agentDeploymentsCount')}><Bot className="h-3 w-3" />{s?.deployments ?? '-'}</span>
+                {s?.deploymentUpdatedAt && <span className="flex items-center gap-1" title={t('vaults.agentDeploymentsUpdated', { time: new Date(s.deploymentUpdatedAt).toLocaleString() })}>{t('vaults.agentDeploymentsUpdated', { time: new Date(s.deploymentUpdatedAt).toLocaleString() })}</span>}
               </div>
             )
           })()}

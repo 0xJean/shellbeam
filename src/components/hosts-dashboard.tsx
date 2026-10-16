@@ -12,11 +12,12 @@ import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { getWorkspaceInventoryHealthStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
+import { listMcpDeploymentRecords, type McpDeploymentRecord } from '@/lib/mcp'
+import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
 import { buildKomariProbeLinks, checkKomariLinkedProbe, runKomariLinkedProbeOperation, type KomariProbeLink } from '@/lib/komari-probe-link'
 import { runKomariAlertAction, type KomariAlertAction } from '@/lib/komari-alert-actions'
 import type { KomariAlertRecord } from '@/lib/komari-alerts'
 import { listShellbeamAgents } from '@/lib/shellbeam-agent'
-import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import { loadKomariPersistence, persistKomariSync } from '@/lib/komari-persistence'
 import { readKomariAlertState } from '@/lib/komari-persistence'
@@ -273,6 +274,7 @@ export function HostsDashboard({
   const { t } = useT()
   const sharedStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
+  const [agentDeployments, setAgentDeployments] = useState<McpDeploymentRecord[]>([])
   const [hostOpsViews, setHostOpsViews] = useState<Record<string, HostOpsView>>({})
   const [komariProbeLinks, setKomariProbeLinks] = useState<KomariProbeLink[]>([])
   const [komariProbeActionKey, setKomariProbeActionKey] = useState<string | null>(null)
@@ -420,7 +422,9 @@ export function HostsDashboard({
           resolveAuthSecret: resolveKomariHostSecret,
         })
       } else {
-        // Link the confirmed Probe OperationJob to the newest active lifecycle row.
+        // Pick the newest open lifecycle row for this mapped node. The
+        // operation bridge persists the job id against that row; Komari still
+        // decides when the alert actually recovers on a later sync.
         const alert = link.alertState?.alerts
           .filter((candidate) => (candidate.status === 'active' || candidate.status === 'acknowledged')
             && candidate.integrationId === link.integrationId
@@ -445,6 +449,8 @@ export function HostsDashboard({
       }
       await refreshHostOps(true)
     } catch (error) {
+      // The bridge persists rejected/failed OperationJobs. Keep the host list
+      // usable while the audit remains the source of truth for the details.
       console.error('Komari Probe operation failed', error)
     } finally {
       setKomariProbeActionKey(null)
@@ -472,6 +478,9 @@ export function HostsDashboard({
         ),
       })
     } catch (error) {
+      // Confirmation rejection and persistence failures remain in the
+      // OperationJob journal; keep the host list responsive and refresh the
+      // card so its audit count reflects the terminal job state.
       console.error('Komari alert operation failed', error)
     } finally {
       await refreshHostOps(true).catch((error) => {
@@ -576,6 +585,30 @@ export function HostsDashboard({
   }, [hosts, refreshHostOps, resolveKomariHostSecret, t])
 
 
+  useEffect(() => {
+    let cancelled = false
+    if (!activeVaultId) {
+      setAgentDeployments([])
+      return
+    }
+    void listMcpDeploymentRecords(activeVaultId).then((result) => {
+      if (!cancelled) setAgentDeployments(result.projects)
+    }).catch(() => {
+      if (!cancelled) setAgentDeployments([])
+    })
+    return () => { cancelled = true }
+  }, [activeVaultId])
+
+  const agentDeploymentsByHost = useMemo(() => {
+    const grouped = new Map<string, McpDeploymentRecord[]>()
+    agentDeployments.forEach((deployment) => {
+      const current = grouped.get(deployment.hostId) ?? []
+      current.push(deployment)
+      grouped.set(deployment.hostId, current)
+    })
+    return grouped
+  }, [agentDeployments])
+
   const operationalSummaryByHost = useMemo(() => {
     const summaries = new Map<string, HostOperationalSummary | undefined>()
     hosts.forEach((host) => {
@@ -654,7 +687,8 @@ export function HostsDashboard({
           (h.jumpUser && h.jumpUser.toLowerCase().includes(q)) ||
           (h.jumpPort && String(h.jumpPort).includes(q)) ||
           (h.group && h.group.toLowerCase().includes(q)) ||
-          (h.tags && h.tags.some((tag) => tag.toLowerCase().includes(q)))
+          (h.tags && h.tags.some((tag) => tag.toLowerCase().includes(q))) ||
+          (agentDeploymentsByHost.get(h.id)?.some((deployment) => [deployment.name, deployment.deploymentPath, deployment.status].filter(Boolean).join(' ').toLowerCase().includes(q)) ?? false)
       )
     }
     if (groupFilter !== 'All') {
@@ -674,7 +708,7 @@ export function HostsDashboard({
       case 'oldest': sorted.sort((a, b) => (a.updatedAt || a.createdAt) - (b.updatedAt || b.createdAt)); break
     }
     return sorted
-  }, [hosts, effectiveSearch, groupFilter, sharedStates, statusFilter, tagFilter, sortMode, hostOpsLoading, hostOpsViews])
+  }, [agentDeploymentsByHost, hosts, effectiveSearch, groupFilter, sharedStates, statusFilter, tagFilter, sortMode, hostOpsLoading, hostOpsViews])
 
   const statusCounts = useMemo(() => hosts.reduce<Record<Exclude<HostStatusFilter, 'all'>, number>>((counts, host) => {
     const status = getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)
@@ -921,6 +955,8 @@ export function HostsDashboard({
                     resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}
                     operations={operationalSummaryByHost.get(host.id)}
                     network={networkByAddress[host.address]}
+                    agentDeploymentCount={agentDeploymentsByHost.get(host.id)?.length ?? 0}
+                    agentDeploymentStatus={agentDeploymentsByHost.get(host.id)?.[0]?.status}
                     onConnect={handleConnect}
                     onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                     onDelete={(id) => void onDeleteHost(id)}
@@ -981,6 +1017,8 @@ export function HostsDashboard({
                           resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}
                           operations={operationalSummaryByHost.get(host.id)}
                           network={networkByAddress[host.address]}
+                          agentDeploymentCount={agentDeploymentsByHost.get(host.id)?.length ?? 0}
+                          agentDeploymentStatus={agentDeploymentsByHost.get(host.id)?.[0]?.status}
                           onSelect={onSelectHost}
                           onConnect={handleConnect}
                           onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}

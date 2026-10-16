@@ -1281,6 +1281,7 @@ export function PcLayout() {
                       ) : browserPageMode ? null : (
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            activeVaultId={vault.activeVaultId}
                             sessionId={tab.sessionId}
                             mobile={false}
                             hostName={tab.hostName}
@@ -1427,6 +1428,7 @@ export function PcLayout() {
                       ) : browserPageMode ? null : (
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            activeVaultId={vault.activeVaultId}
                             sessionId={tab.sessionId}
                             mobile
                             hostName={tab.hostName}
@@ -1553,6 +1555,7 @@ export function PcLayout() {
               {app.pcSidebarNav === 'asset-inventory' && (
                 <div className="h-full min-h-0 p-4 md:p-6">
                   <WorkspaceAssetInventoryApp
+                    activeVaultId={vault.activeVaultId}
                     selectedHostId={hostsCtx.selectedHostId}
                     hosts={hostsCtx.hosts}
                     resolveAuthSecret={resolveWorkspaceAuthSecret}

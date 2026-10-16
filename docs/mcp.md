@@ -12,7 +12,7 @@ environment installation, automatic rollback, or a remote agent/daemon.
    to remain running. No public or LAN listener is created.
 3. In the intended vault, choose a client name and individual servers. Cached
    information is the default; separately opt into refresh, command execution,
-   file reading, file writing and local Komari alert management. New hosts are never included automatically.
+   file reading, file writing, local Komari alert management and deployment metadata. New hosts are never included automatically.
 4. Choose Codex (TOML), Claude Desktop (JSON), or another stdio client (JSON).
    Generate the configuration and merge only its ShellBeam entry into
    your local MCP client's configuration. Keep the token secret. It is shown
@@ -68,6 +68,47 @@ does not read desktop login credentials or convert subscriptions into API keys.
 Models for those clients are selected in the clients themselves, independently
 of ShellBeam's AI Assistant settings.
 
+### Structured workspace flow
+
+For a new session, call `get_workspace_snapshot` first. It returns one structured
+JSON document containing ShellBeam and Vault state, authorized servers, cached
+inventory, live monitor data, recent probe data, known deployment records,
+capabilities and warnings. Use `servers[].selection.reason` and timestamps to
+choose a suitable server; missing values are unknown and discovered project
+manifests are not proof of an active deployment.
+
+Deployment records are explicit agent-supplied metadata. After planning,
+deploying or verifying a project, call `record_project_deployment` with a stable
+`deploymentId`, project `name`, absolute `deploymentPath`, `status`, dependencies,
+runtime components and source information. Reuse the same ID to update the
+record. This writes only a local ShellBeam record; it does not run commands,
+install dependencies or assert that ShellBeam performed the deployment. Use
+`list_project_deployments` to query records without loading the UI.
+
+The record capability is disabled by default and is independent from remote
+command/file permissions. Grant it only when the agent may maintain deployment
+metadata.
+
+### Machine-readable recovery
+
+Every JSON-RPC error includes `error.data.reason`, `error.data.retryable` and
+`error.data.recovery`. Tool failures preserve the human-readable `error` string
+and add the same fields to `structuredContent`.
+
+| Condition | Agent behavior |
+| --- | --- |
+| `shellbeam_unavailable` / `SHELLBEAM_NOT_RUNNING` | Ask the user to start ShellBeam and enable MCP, then retry. Do not launch a GUI from the stdio bridge. |
+| `mcp_disabled` | Ask the user to enable MCP in ShellBeam settings, then retry. |
+| `vault_locked` | Continue using cached JSON reads. Ask the user to unlock the authorized Vault before refresh, SSH commands or file operations. |
+| `permission_denied` | Ask the user to grant the specific MCP capability or use a cached read-only flow. |
+| `mcp_instance_expired` | Ask the user to restart or re-enable MCP and regenerate the client configuration if needed. |
+| `host_authorization_expired` | Ask the user to re-authorize the changed server; never bypass the identity check. |
+
+If ShellBeam is closed, the stdio process remains a thin bridge and returns a
+machine-readable unavailable error. If the Vault is locked, cached inventory,
+metrics and deployment records remain available; remote work is paused rather
+than reported as an offline server.
+
 Official references: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp),
 [local MCP client setup](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
 
@@ -96,6 +137,9 @@ Protocol references: [lifecycle](https://modelcontextprotocol.io/specification/2
 | `list_servers` | Cached information | Paginated, scoped hosts and monitor status |
 | `get_server_inventory` | Cached information | Asset snapshot and latest on-demand probe |
 | `get_server_metrics` | Cached information | Latest sample and paginated 24-hour history |
+| `get_workspace_snapshot` | Cached information | One structured JSON view for server selection and deployment context |
+| `list_project_deployments` | Cached information | Agent-supplied deployment metadata for this client |
+| `record_project_deployment` | Local metadata | Create or update a deployment record; no remote action |
 | `get_server_operations` | Cached information | Authorized host OperationJob states and bounded audit metadata |
 | `get_server_probe_state` | Cached information | Komari/Probe snapshots, mappings and freshness |
 | `get_server_alerts` | Cached information | Local Komari alert lifecycle and audit rows |
