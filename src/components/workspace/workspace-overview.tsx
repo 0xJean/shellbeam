@@ -10,6 +10,7 @@ import {
 import { WorkspaceActivityFeed, type WorkspaceActivityItem } from './workspace-activity-feed'
 import { WorkspaceAppGrid } from './workspace-app-grid'
 import { WorkspaceStatusCards } from './workspace-status-cards'
+import { HealthChecksPanel } from '../health-checks-panel'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
 interface WorkspaceOverviewProps {
@@ -66,6 +67,14 @@ export function WorkspaceOverview({
         hosts={hosts}
         resolveAuthSecret={resolveAuthSecret}
       />
+
+      {activeHost && resolveAuthSecret && (
+        <HealthChecksPanel
+          activeVaultId={activeVaultId}
+          host={activeHost}
+          resolveAuthSecret={resolveAuthSecret}
+        />
+      )}
 
       <section className="space-y-3">
         <div className="text-sm font-semibold">{t('workspace.section.applications')}</div>
