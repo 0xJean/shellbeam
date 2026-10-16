@@ -31,6 +31,8 @@ describe('Komari sync orchestration', () => {
     expect(result.snapshots[0]?.metrics?.data.cpuPercent).toBe(33)
     expect(result.alerts).toEqual({ load: 1, offline: 1, total: 2, active: null, updatedAt: 2_000 })
     expect(result.snapshots[0]?.alerts).toEqual(result.alerts)
+    expect(result.alertState?.summary.open).toBe(2)
+    expect(result.alertState?.alerts.map((alert) => alert.integrationId)).toEqual(['komari-prod', 'komari-prod'])
   })
 
   it('skips a fresh persisted sync and allows an explicit refresh', async () => {
@@ -48,6 +50,31 @@ describe('Komari sync orchestration', () => {
     })
     expect(result).toMatchObject({ skipped: true, skipReason: 'ttl', syncedAt: 1_000 })
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('retains Komari aggregate counts and does not infer recovery from unknown counters', async () => {
+    const previous = {
+      schemaVersion: 1 as const,
+      alerts: [{
+        schemaVersion: 1 as const, source: 'komari' as const, alertId: 'komari-alert-1', fingerprint: 'komari-prod||host-1|load',
+        integrationId: 'komari-prod', nodeId: null, hostId: 'host-1', kind: 'load', title: 'load', severity: 'warning' as const,
+        count: 2, status: 'active' as const, firstSeenAt: 1_000, lastSeenAt: 1_000, acknowledgedAt: null, acknowledgedBy: null,
+        resolvedAt: null, closedAt: null, relatedOperationJobId: null, deduplicatedCount: 0,
+      }],
+      audit: [],
+      summary: { load: 2, offline: 0, total: 2, active: 1, updatedAt: 1_000, open: 1, acknowledged: 0, resolved: 0, closed: 0, deduplicated: 0, localUpdatedAt: 1_000 },
+    }
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/admin/client/list')) return new Response(JSON.stringify([]), { status: 200 })
+      if (url.includes('/api/admin/notification/')) return new Response(JSON.stringify({ total: null }), { status: 200 })
+      return new Response('[]', { status: 200 })
+    })
+    const result = await syncKomariIntegration({
+      integrationId: 'komari-prod', config: { endpoint: 'https://komari.example' }, hosts: [], now: 2_000, fetchImpl, alertState: previous,
+    })
+    expect(result.alertState?.alerts[0]?.status).toBe('active')
+    expect(result.alertState?.summary.load).toBeNull()
   })
 
   it('caps concurrent recent-metric requests while preserving all snapshots', async () => {

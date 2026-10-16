@@ -11,6 +11,12 @@ import {
 import { mapKomariNodesToHosts, type KomariMappingResult } from './komari-mapping'
 import { createKomariProbeProvider } from './komari-probe-provider'
 import type { ProbeSnapshot } from './probe-provider'
+import {
+  komariAlertObservationsFromSummary,
+  reconcileKomariAlerts,
+  type KomariAlertAuditEntry,
+  type KomariAlertState,
+} from './komari-alerts'
 
 export interface KomariSyncResult {
   integrationId: string
@@ -19,6 +25,9 @@ export interface KomariSyncResult {
   mapping: KomariMappingResult
   snapshots: ProbeSnapshot[]
   alerts: KomariAlertSummary | null
+  /** Local lifecycle state derived from the aggregate Komari alert summary. */
+  alertState: KomariAlertState | null
+  alertAudit: KomariAlertAuditEntry[]
   skipped?: boolean
   skipReason?: 'ttl'
 }
@@ -82,6 +91,8 @@ export async function syncKomariIntegration(options: {
   force?: boolean
   maxConcurrency?: number
   includeAlerts?: boolean
+  alertState?: KomariAlertState | null
+  alertActor?: string
 }): Promise<KomariSyncResult> {
   const syncedAt = options.now ?? Date.now()
   const ttlMs = options.ttlMs ?? DEFAULT_KOMARI_SYNC_TTL_MS
@@ -93,6 +104,8 @@ export async function syncKomariIntegration(options: {
       mapping: emptyMapping(),
       snapshots: [],
       alerts: null,
+      alertState: options.alertState ?? null,
+      alertAudit: [],
       skipped: true,
       skipReason: 'ttl',
     }
@@ -111,6 +124,29 @@ export async function syncKomariIntegration(options: {
   const alerts = options.includeAlerts === false
     ? null
     : await getKomariAlertSummary(options.config, options.fetchImpl, syncedAt)
+  const alertState = alerts
+    ? (() => {
+        const reconciled = reconcileKomariAlerts(
+          options.alertState?.alerts ?? [],
+          komariAlertObservationsFromSummary(alerts, { integrationId: options.integrationId }),
+          {
+            now: syncedAt,
+            actor: options.alertActor ?? 'komari-sync',
+            // An unsupported summary cannot prove recovery. A supported
+            // aggregate includes both zero and non-zero counters, so absent
+            // alerts are safe to resolve after a complete sync.
+            complete: alerts.unsupported !== true && alerts.load !== null && alerts.offline !== null,
+            baseSummary: alerts,
+          },
+        )
+        return {
+          schemaVersion: 1 as const,
+          alerts: reconciled.alerts,
+          audit: [...(options.alertState?.audit ?? []), ...reconciled.audit].slice(-1000),
+          summary: reconciled.summary,
+        }
+      })()
+    : options.alertState ?? null
   const provider = createKomariProbeProvider({
     endpoint: options.config.endpoint,
     client: createKomariProbeClient(options.config, options.fetchImpl),
@@ -139,6 +175,8 @@ export async function syncKomariIntegration(options: {
     clients,
     mapping,
     alerts,
+    alertState,
+    alertAudit: alertState ? alertState.audit : [],
     snapshots: snapshots.filter((snapshot): snapshot is ProbeSnapshot => snapshot !== null),
   }
 }

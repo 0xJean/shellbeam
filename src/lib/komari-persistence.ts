@@ -1,5 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { KomariAlertSummary } from './komari'
+import {
+  parseKomariAlertState,
+  toKomariAlertStatePayload,
+  type KomariAlertState,
+} from './komari-alerts'
 import type { ProbeSnapshot } from './probe-provider'
 import type { KomariHostMapping } from './komari-mapping'
 
@@ -59,7 +64,7 @@ export interface KomariSyncStatePayload {
   integrationId: string
   lastSyncedAt: number
   ttlMs: number
-  alertSummary?: KomariAlertSummary | null
+  alertSummary?: KomariAlertSummary | Record<string, unknown> | null
   updatedAt?: number
 }
 
@@ -154,6 +159,34 @@ export async function upsertKomariSyncState(payload: KomariSyncStatePayload): Pr
   return invoke<void>('upsert_komari_sync_state', { payload })
 }
 
+/** Read the lifecycle state embedded in the sync state's alert summary. Older
+ * caches only contain aggregate counts and intentionally return null. */
+export function readKomariAlertState(syncState: KomariSyncState | null | undefined): KomariAlertState | null {
+  return parseKomariAlertState(syncState?.alertSummary)
+}
+
+/** Persist the local alert lifecycle alongside the existing Komari sync state.
+ * This keeps acknowledgement/recovery durable without adding a second
+ * database or retaining remote notification payloads. */
+export async function persistKomariAlertState(options: {
+  integrationId: string
+  state: Omit<KomariAlertState, 'schemaVersion'> | KomariAlertState
+  lastSyncedAt?: number
+  ttlMs?: number
+  updatedAt?: number
+}): Promise<void> {
+  const integrationId = required(options.integrationId, 'integration id')
+  const current = await getKomariSyncState(integrationId)
+  const now = options.updatedAt ?? Date.now()
+  return upsertKomariSyncState({
+    integrationId,
+    lastSyncedAt: options.lastSyncedAt ?? current?.lastSyncedAt ?? now,
+    ttlMs: options.ttlMs ?? current?.ttlMs ?? 60_000,
+    alertSummary: toKomariAlertStatePayload({ schemaVersion: 1, ...options.state }),
+    updatedAt: now,
+  })
+}
+
 export async function upsertKomariMapping(payload: KomariMappingPayload): Promise<void> {
   return invoke<void>('upsert_komari_mapping', { payload })
 }
@@ -179,6 +212,7 @@ export async function persistKomariSync(options: {
   updatedAt?: number
   ttlMs?: number
   alertSummary?: KomariAlertSummary | null
+  alertState?: KomariAlertState | null
 }): Promise<void> {
   const integrationId = required(options.integrationId, 'integration id')
   const updatedAt = options.updatedAt ?? Date.now()
@@ -187,7 +221,9 @@ export async function persistKomariSync(options: {
       integrationId,
       lastSyncedAt: updatedAt,
       ttlMs: options.ttlMs ?? 60_000,
-      alertSummary: options.alertSummary ?? null,
+      alertSummary: options.alertState
+        ? toKomariAlertStatePayload(options.alertState)
+        : options.alertSummary ?? null,
       snapshots: options.snapshots.map((snapshot) => {
         const payload = toKomariSnapshotPayload(snapshot, updatedAt)
         if (payload.integrationId !== integrationId) {

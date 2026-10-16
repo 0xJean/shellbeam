@@ -460,6 +460,15 @@ const zhCN: Record<string, string> = {
   'hosts.opsAlertsShort': '告警',
   'hosts.opsUnsupported': '不支持',
   'hosts.opsActive': '活跃',
+  'hosts.alert.active': '活跃',
+  'hosts.alert.acknowledged': '已确认',
+  'hosts.alert.resolved': '已恢复',
+  'hosts.alert.closed': '已关闭',
+  'hosts.alert.acknowledge': '确认告警',
+  'hosts.alert.close': '关闭告警',
+  'hosts.alert.openTerminal': '打开终端排查',
+  'hosts.alert.linkedOperation': '运维任务 {jobId}',
+  'hosts.alert.audit': '告警生命周期审计',
 
   // Host form
   'hostForm.editHost': '编辑主机',

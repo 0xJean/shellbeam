@@ -15,6 +15,7 @@ import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import { loadKomariPersistence, persistKomariSync } from '@/lib/komari-persistence'
+import { readKomariAlertState } from '@/lib/komari-persistence'
 import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, syncKomariIntegration } from '@/lib/komari-sync'
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -250,6 +251,7 @@ export function HostsDashboard({
             .map(async (integration) => {
               const cached = await loadKomariPersistence(integration.id).catch(() => ({ snapshots: [], mappings: [], syncState: null, lastSyncedAt: null }))
               const cachedSnapshots = cached.snapshots.map((entry) => entry.snapshot)
+              const cachedAlertState = readKomariAlertState(cached.syncState)
               const lastSyncedAt = cached.lastSyncedAt
               const ttlMs = cached.syncState?.ttlMs ?? DEFAULT_KOMARI_SYNC_TTL_MS
               if (!forceKomari && isKomariSyncFresh(lastSyncedAt, Date.now(), ttlMs)) {
@@ -265,6 +267,7 @@ export function HostsDashboard({
                 lastSyncedAt,
                 ttlMs,
                 force: forceKomari,
+                alertState: cachedAlertState,
               })
               if (!result.skipped) {
                 await persistKomariSync({
@@ -276,6 +279,7 @@ export function HostsDashboard({
                   updatedAt: result.syncedAt,
                   ttlMs,
                   alertSummary: result.alerts,
+                  alertState: result.alertState,
                 }).catch(() => undefined)
               }
               return result.skipped ? cachedSnapshots : result.snapshots

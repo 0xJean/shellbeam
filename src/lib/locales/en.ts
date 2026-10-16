@@ -460,6 +460,15 @@ const en: Record<string, string> = {
   'hosts.opsAlertsShort': 'Alerts',
   'hosts.opsUnsupported': 'n/a',
   'hosts.opsActive': 'active',
+  'hosts.alert.active': 'Active',
+  'hosts.alert.acknowledged': 'Acknowledged',
+  'hosts.alert.resolved': 'Recovered',
+  'hosts.alert.closed': 'Closed',
+  'hosts.alert.acknowledge': 'Acknowledge alert',
+  'hosts.alert.close': 'Close alert',
+  'hosts.alert.openTerminal': 'Open Terminal to investigate',
+  'hosts.alert.linkedOperation': 'Operation {jobId}',
+  'hosts.alert.audit': 'Alert lifecycle audit',
 
   // Host form
   'hostForm.editHost': 'Edit Host',
