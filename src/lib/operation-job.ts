@@ -96,6 +96,7 @@ export interface UpdateOperationJobRequest {
  * can request a host-scoped slice without loading the entire local journal. */
 export interface OperationJobListQuery {
   hostId?: string
+  vaultId?: string
   status?: OperationJobStatus
   action?: string
   source?: OperationSource
@@ -105,6 +106,7 @@ export interface OperationJobListQuery {
 export interface OperationAuditListQuery {
   jobId?: string
   hostId?: string
+  vaultId?: string
   limit?: number
 }
 

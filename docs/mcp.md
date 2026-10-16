@@ -96,6 +96,7 @@ Protocol references: [lifecycle](https://modelcontextprotocol.io/specification/2
 | `list_servers` | Cached information | Paginated, scoped hosts and monitor status |
 | `get_server_inventory` | Cached information | Asset snapshot and latest on-demand probe |
 | `get_server_metrics` | Cached information | Latest sample and paginated 24-hour history |
+| `get_server_operations` | Cached information | Authorized host OperationJob states and bounded audit metadata |
 | `refresh_server_info` | Refresh | Job ID for a bounded Linux read-only probe |
 | `run_command` | Execute | Job ID for an arbitrary SSH command |
 | `get_command_result` | Own scoped jobs | Status, bounded output or restart uncertainty |

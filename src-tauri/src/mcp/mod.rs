@@ -6,7 +6,7 @@ mod store;
 
 use crate::data::{
     hosts::{load_hosts, HostProfile},
-    server_monitor, workspace_inventory,
+    operation_jobs, server_monitor, workspace_inventory,
 };
 use crate::storage::{data_file_path, now_unix_ms, read_json_or_default, write_json};
 use crate::vault::secrets::VaultState;
@@ -498,6 +498,56 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                 "completeness":"partial","untrustedContent":true,
                 "notice":"Discovered projects are not verified deployments. Empty lists can mean missing permissions or unsupported tools. Check updatedAt/sample timestamps; cached observations can be stale."}),
             )
+        }
+        "get_server_operations" => {
+            let status = args["status"].as_str().map(str::to_owned);
+            if let Some(status) = status.as_deref() {
+                if !matches!(
+                    status,
+                    "queued" | "running" | "completed" | "failed" | "unknown" | "cancelled"
+                ) {
+                    return Err("INVALID_OPERATION: unsupported status filter".into());
+                }
+            }
+            let action = args["action"].as_str().map(str::to_owned);
+            let limit = args["limit"].as_u64().unwrap_or(100).clamp(1, 500) as u32;
+            let jobs = operation_jobs::operation_job_list(
+                app.clone(),
+                Some(operation_jobs::OperationJobListQuery {
+                    host_id: Some(host.id.clone()),
+                    vault_id: Some(client.vault_id.clone()),
+                    status,
+                    action,
+                    source: None,
+                    limit: Some(limit),
+                }),
+            )?;
+            let job_ids = jobs
+                .iter()
+                .map(|job| job.job_id.as_str())
+                .collect::<HashSet<_>>();
+            let audits = operation_jobs::operation_audit_list(
+                app.clone(),
+                Some(operation_jobs::OperationAuditListQuery {
+                    job_id: None,
+                    host_id: Some(host.id.clone()),
+                    vault_id: Some(client.vault_id.clone()),
+                    limit: Some(limit),
+                }),
+            )?
+            .into_iter()
+            .filter(|audit| job_ids.contains(audit.job_id.as_str()))
+            .collect::<Vec<_>>();
+            Ok(json!({
+                "server": public_host(host, client),
+                "operations": jobs,
+                "audits": audits,
+                "totalOperations": jobs.len(),
+                "totalAudits": audits.len(),
+                "observedAt": now_unix_ms(),
+                "vaultUnlocked": vault_unlocked,
+                "notice": "Operation records are local audit metadata. They contain bounded summaries, not complete remote command output. An unknown status means the remote outcome requires reconciliation."
+            }))
         }
         "get_server_metrics" => {
             let now = now_unix_ms();

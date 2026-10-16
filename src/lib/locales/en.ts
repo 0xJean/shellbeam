@@ -1869,6 +1869,33 @@ const en: Record<string, string> = {
   'activity.event.local_terminal': 'Local terminal',
   'activity.event.operation': 'Operations',
 
+  // Operations and audit center
+  'operations.title': 'Operations & audit',
+  'operations.description': 'Review confirmed operations, grouped batches, and their durable audit trail.',
+  'operations.refresh': 'Refresh operations',
+  'operations.tab.operations': 'Operations',
+  'operations.tab.audit': 'Audit history',
+  'operations.empty': 'No operation jobs match this filter',
+  'operations.auditEmpty': 'No audit entries match this filter',
+  'operations.unknownHost': 'Unknown host',
+  'operations.hostsCount': '{count} host(s)',
+  'operations.requestId': 'request={id}',
+  'operations.retry': 'Retry',
+  'operations.filter.all': 'All statuses',
+  'operations.filter.queued': 'Queued',
+  'operations.filter.running': 'Running',
+  'operations.filter.completed': 'Completed',
+  'operations.filter.failed': 'Failed',
+  'operations.filter.unknown': 'Unknown',
+  'operations.filter.cancelled': 'Cancelled',
+  'operations.status.queued': 'Queued',
+  'operations.status.running': 'Running',
+  'operations.status.completed': 'Completed',
+  'operations.status.failed': 'Failed',
+  'operations.status.unknown': 'Unknown',
+  'operations.status.cancelled': 'Cancelled',
+
+
   // Right Sidebar
   'rightSidebar.terminal': 'Terminal',
   'rightSidebar.snippets': 'Snippets',

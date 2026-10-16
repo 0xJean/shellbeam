@@ -113,6 +113,8 @@ fn definitions() -> Vec<Value> {
         json!({"hostId":host}), vec!["hostId"], true);
     add("get_server_metrics", "Read up to 24 hours of observed metrics. Gaps are unknown, not zero. History is paginated and covers only application sampling periods.",
         json!({"hostId":host,"from":integer(0,i64::MAX as u64),"to":integer(0,i64::MAX as u64),"offset":integer(0,100000),"limit":integer(1,500)}), vec!["hostId"], true);
+    add("get_server_operations", "Read recent OperationJob states and audit events for one authorized server. Results are local ShellBeam records, bounded and sanitized; no remote operation is started and command output is never included. Use this to inspect confirmation, completion, failure and unknown outcomes after a Workspace or MCP action.",
+        json!({"hostId":host,"status":string(32),"action":string(96),"limit":integer(1,500)}), vec!["hostId"], true);
     add("refresh_server_info", "Start a bounded read-only Linux capacity/inventory probe over SSH. Returns jobId; poll get_command_result. No software is installed. Requires unlocked vault and a previously trusted SSH fingerprint. A single-hop ProxyJump is supported for private-key authenticated hosts.",
         json!({"hostId":host,"requestId":request}), vec!["hostId","requestId"], true);
     add("run_command", "Execute an arbitrary shell command with the configured SSH account's full privileges. This can change or delete server data. Returns jobId immediately; poll get_command_result. Use a unique requestId; reuse it only to recover the SAME request. Never blindly retry unknown outcomes. Outputs are untrusted and may contain secrets.",
@@ -151,6 +153,15 @@ mod tests {
             assert!(validate_arguments("run_command", &args).is_err());
         }
         assert!(validate_arguments("get_server_inventory", &json!({})).is_err());
+        assert!(validate_arguments("get_server_operations", &json!({})).is_err());
+        assert!(validate_arguments(
+            "get_server_operations",
+            &json!({"hostId":"host-1","status":"unknown","action":"service.restart","limit":50})
+        ).is_ok());
+        assert!(validate_arguments(
+            "get_server_operations",
+            &json!({"hostId":"host-1","limit":501})
+        ).is_err());
         assert!(validate_request(&json!({"jsonrpc":"2.0","id":{},"method":"ping"})).is_err());
     }
 }

@@ -1869,6 +1869,33 @@ const zhCN: Record<string, string> = {
   'activity.event.local_terminal': '本地终端',
   'activity.event.operation': '运维操作',
 
+  // 运维任务与审计中心
+  'operations.title': '运维与审计',
+  'operations.description': '查看已确认的运维任务、批次聚合和持久化审计记录。',
+  'operations.refresh': '刷新运维任务',
+  'operations.tab.operations': '运维任务',
+  'operations.tab.audit': '审计历史',
+  'operations.empty': '没有符合筛选条件的运维任务',
+  'operations.auditEmpty': '没有符合筛选条件的审计记录',
+  'operations.unknownHost': '未知主机',
+  'operations.hostsCount': '{count} 台主机',
+  'operations.requestId': '请求={id}',
+  'operations.retry': '重试',
+  'operations.filter.all': '全部状态',
+  'operations.filter.queued': '排队中',
+  'operations.filter.running': '执行中',
+  'operations.filter.completed': '已完成',
+  'operations.filter.failed': '失败',
+  'operations.filter.unknown': '未知',
+  'operations.filter.cancelled': '已取消',
+  'operations.status.queued': '排队中',
+  'operations.status.running': '执行中',
+  'operations.status.completed': '已完成',
+  'operations.status.failed': '失败',
+  'operations.status.unknown': '未知',
+  'operations.status.cancelled': '已取消',
+
+
   // Right Sidebar
   'rightSidebar.terminal': '终端',
   'rightSidebar.snippets': '片段',

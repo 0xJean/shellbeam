@@ -81,6 +81,7 @@ pub struct UpdateOperationJobRequest {
 #[serde(rename_all = "camelCase")]
 pub struct OperationJobListQuery {
     pub host_id: Option<String>,
+    pub vault_id: Option<String>,
     pub status: Option<String>,
     pub action: Option<String>,
     pub source: Option<String>,
@@ -117,6 +118,7 @@ pub struct OperationAudit {
 pub struct OperationAuditListQuery {
     pub job_id: Option<String>,
     pub host_id: Option<String>,
+    pub vault_id: Option<String>,
     pub limit: Option<u32>,
 }
 
@@ -664,16 +666,18 @@ pub fn operation_job_list(
         .prepare(&format!(
             "SELECT {JOB_COLUMNS} FROM operation_jobs
              WHERE (?1 IS NULL OR host_id=?1)
-               AND (?2 IS NULL OR status=?2)
-               AND (?3 IS NULL OR action=?3)
-               AND (?4 IS NULL OR source=?4)
-             ORDER BY updated_at DESC LIMIT ?5"
+               AND (?2 IS NULL OR vault_id=?2)
+               AND (?3 IS NULL OR status=?3)
+               AND (?4 IS NULL OR action=?4)
+               AND (?5 IS NULL OR source=?5)
+             ORDER BY updated_at DESC LIMIT ?6"
         ))
         .map_err(|e| format!("Prepare operation job query failed: {e}"))?;
     let rows = statement
         .query_map(
             params![
                 query.host_id,
+                query.vault_id,
                 query.status,
                 query.action,
                 query.source,
@@ -725,12 +729,20 @@ pub fn operation_audit_list(
                     host_address,action,target,risk,provider,transport,params_summary,result_summary,
                     error_code,error_summary,at
              FROM operation_audit
-             WHERE (?1 IS NULL OR job_id=?1) AND (?2 IS NULL OR host_id=?2)
-             ORDER BY at DESC LIMIT ?3",
+             WHERE (?1 IS NULL OR job_id=?1)
+               AND (?2 IS NULL OR host_id=?2)
+               AND (?3 IS NULL OR EXISTS (
+                 SELECT 1 FROM operation_jobs jobs
+                 WHERE jobs.job_id=operation_audit.job_id AND jobs.vault_id=?3
+               ))
+             ORDER BY at DESC LIMIT ?4",
         )
         .map_err(|e| format!("Prepare operation audit query failed: {e}"))?;
     let rows = statement
-        .query_map(params![query.job_id, query.host_id, limit], audit_from_row)
+        .query_map(
+            params![query.job_id, query.host_id, query.vault_id, limit],
+            audit_from_row,
+        )
         .map_err(|e| format!("Query operation audit failed: {e}"))?;
     rows.map(|row| row.map_err(|e| format!("Read operation audit failed: {e}")))
         .collect()

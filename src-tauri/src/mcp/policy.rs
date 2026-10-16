@@ -85,6 +85,7 @@ impl Client {
             "list_servers"
             | "get_server_inventory"
             | "get_server_metrics"
+            | "get_server_operations"
             | "get_command_result" => true,
             "refresh_server_info" => self.permissions.refresh,
             "run_command" => self.permissions.execute,
@@ -153,6 +154,7 @@ mod tests {
     fn defaults_are_cached_information_only_and_never_expose_token_hash() {
         let client = client();
         assert!(client.allows("list_servers"));
+        assert!(client.allows("get_server_operations"));
         for tool in [
             "run_command",
             "refresh_server_info",

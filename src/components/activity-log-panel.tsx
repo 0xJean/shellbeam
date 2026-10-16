@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from './host-display-meta'
+import OperationsAuditCenter from './operations-audit-center'
 
 const EVENT_ICONS: Record<string, { Icon: typeof Plug; color: string }> = {
   connect: { Icon: Plug, color: 'text-emerald-500' },
@@ -190,6 +191,7 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
           </div>
         ))}
       </div>
+      <OperationsAuditCenter className="border-t border-border/60" />
     </div>
   )
 }
