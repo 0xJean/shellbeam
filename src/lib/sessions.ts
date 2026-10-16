@@ -21,6 +21,9 @@ export interface CommandRunRequest {
   password?: string
   privateKey?: string
   passphrase?: string
+  jumpHost?: string
+  jumpPort?: number
+  jumpUser?: string
   command: string
 }
 

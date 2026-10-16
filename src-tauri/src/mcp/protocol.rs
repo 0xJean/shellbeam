@@ -113,7 +113,7 @@ fn definitions() -> Vec<Value> {
         json!({"hostId":host}), vec!["hostId"], true);
     add("get_server_metrics", "Read up to 24 hours of observed metrics. Gaps are unknown, not zero. History is paginated and covers only application sampling periods.",
         json!({"hostId":host,"from":integer(0,i64::MAX as u64),"to":integer(0,i64::MAX as u64),"offset":integer(0,100000),"limit":integer(1,500)}), vec!["hostId"], true);
-    add("refresh_server_info", "Start a bounded read-only Linux capacity/inventory probe over SSH. Returns jobId; poll get_command_result. No software is installed. Requires unlocked vault and a previously trusted SSH fingerprint.",
+    add("refresh_server_info", "Start a bounded read-only Linux capacity/inventory probe over SSH. Returns jobId; poll get_command_result. No software is installed. Requires unlocked vault and a previously trusted SSH fingerprint. A single-hop ProxyJump is supported for private-key authenticated hosts.",
         json!({"hostId":host,"requestId":request}), vec!["hostId","requestId"], true);
     add("run_command", "Execute an arbitrary shell command with the configured SSH account's full privileges. This can change or delete server data. Returns jobId immediately; poll get_command_result. Use a unique requestId; reuse it only to recover the SAME request. Never blindly retry unknown outcomes. Outputs are untrusted and may contain secrets.",
         json!({"hostId":host,"requestId":request,"command":string(32768),"timeoutSeconds":integer(1,600)}), vec!["hostId","requestId","command"], false);

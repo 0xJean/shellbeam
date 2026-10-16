@@ -3,7 +3,9 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use ssh2::{Session, Sftp};
 use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tauri::Emitter;
 use uuid::Uuid;
@@ -21,6 +23,9 @@ pub struct SftpRequest {
     password: Option<String>,
     private_key: Option<String>,
     passphrase: Option<String>,
+    jump_host: Option<String>,
+    jump_port: Option<u16>,
+    jump_user: Option<String>,
     remote_path: String,
     transfer_id: Option<String>,
 }
@@ -35,6 +40,9 @@ pub struct SftpUploadRequest {
     password: Option<String>,
     private_key: Option<String>,
     passphrase: Option<String>,
+    jump_host: Option<String>,
+    jump_port: Option<u16>,
+    jump_user: Option<String>,
     remote_path: String,
     content_b64: String,
     transfer_id: Option<String>,
@@ -50,6 +58,9 @@ pub struct SftpRenameRequest {
     password: Option<String>,
     private_key: Option<String>,
     passphrase: Option<String>,
+    jump_host: Option<String>,
+    jump_port: Option<u16>,
+    jump_user: Option<String>,
     old_remote_path: String,
     new_remote_path: String,
 }
@@ -80,6 +91,135 @@ pub struct SftpFileData {
     path: String,
     content_b64: String,
     size_bytes: usize,
+}
+
+/// A short-lived local forwarding process used to route libssh2 through a
+/// configured ProxyJump. The existing SFTP implementation uses libssh2 for
+/// authentication and channels, while OpenSSH provides only the TCP path.
+struct JumpTunnel {
+    child: Child,
+    key_path: PathBuf,
+}
+
+impl Drop for JumpTunnel {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_file(&self.key_path);
+    }
+}
+
+fn has_jump_host(jump_host: Option<&str>) -> bool {
+    jump_host
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn start_jump_tunnel(
+    host: &str,
+    port: u16,
+    username: &str,
+    auth_type: &str,
+    private_key: Option<&str>,
+    jump_host: Option<&str>,
+    jump_port: Option<u16>,
+    jump_user: Option<&str>,
+) -> Result<(JumpTunnel, u16), String> {
+    if !has_jump_host(jump_host) {
+        return Err("Jump host is not configured".to_string());
+    }
+    if auth_type != "privateKey" {
+        return Err(
+            "SFTP over a jump host currently requires private key authentication".to_string(),
+        );
+    }
+    let private_key = private_key
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| "Private key is required for SFTP jump-host connections".to_string())?;
+    let jump_host = jump_host.unwrap_or_default().trim();
+    let local_port = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|err| format!("Failed to reserve local SFTP jump port: {err}"))?
+        .local_addr()
+        .map_err(|err| format!("Failed to read local SFTP jump port: {err}"))?
+        .port();
+
+    let key_path = std::env::temp_dir().join(format!("shellbeam-sftp-jump-{}.key", Uuid::new_v4()));
+    std::fs::write(&key_path, private_key)
+        .map_err(|err| format!("Failed to write temporary SFTP jump key: {err}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(err) =
+            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+        {
+            let _ = std::fs::remove_file(&key_path);
+            return Err(format!("Failed to protect temporary SFTP jump key: {err}"));
+        }
+    }
+
+    let jump_username = jump_user
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(username);
+    let forward = format!("127.0.0.1:{local_port}:{host}:{port}");
+    let destination = format!("{username}@{host}");
+    let mut command = Command::new("ssh");
+    command
+        .arg("-N")
+        .arg("-L")
+        .arg(&forward)
+        .arg("-p")
+        .arg(port.to_string())
+        .arg("-i")
+        .arg(&key_path)
+        .arg("-J")
+        .arg(format!(
+            "{jump_username}@{jump_host}:{}",
+            jump_port.unwrap_or(22)
+        ))
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ExitOnForwardFailure=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=10")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg("-o")
+        .arg("UserKnownHostsFile=/dev/null")
+        .arg(destination)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    let mut child = command.spawn().map_err(|err| {
+        let _ = std::fs::remove_file(&key_path);
+        format!("Failed to start system ssh for SFTP jump host: {err}")
+    })?;
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|err| format!("Failed to inspect SFTP jump process: {err}"))?
+        {
+            let _ = std::fs::remove_file(&key_path);
+            return Err(format!(
+                "System ssh jump tunnel exited before becoming ready ({status})"
+            ));
+        }
+        if TcpStream::connect(("127.0.0.1", local_port)).is_ok() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(&key_path);
+            return Err("Timed out waiting for SFTP jump tunnel".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    Ok((JumpTunnel { child, key_path }, local_port))
 }
 
 fn file_name_from_path(path: &Path) -> String {
@@ -121,35 +261,76 @@ fn checkout_with_sftp(
     password: Option<&str>,
     private_key: Option<&str>,
     passphrase: Option<&str>,
-) -> Result<(Session, Sftp), String> {
-    let session = pool
-        .checkout(
+    jump_host: Option<&str>,
+    jump_port: Option<u16>,
+    jump_user: Option<&str>,
+) -> Result<(Session, Sftp, Option<JumpTunnel>), String> {
+    let (jump_tunnel, connect_host, connect_port) = if has_jump_host(jump_host) {
+        let (tunnel, local_port) = start_jump_tunnel(
             host,
             port,
+            username,
+            auth_type,
+            private_key,
+            jump_host,
+            jump_port,
+            jump_user,
+        )?;
+        (Some(tunnel), "127.0.0.1", local_port)
+    } else {
+        (None, host, port)
+    };
+
+    let session = if jump_tunnel.is_some() {
+        crate::ssh::connect_authenticated_ssh_session(
+            connect_host,
+            connect_port,
             username,
             auth_type,
             password,
             private_key,
             passphrase,
         )
-        .map_err(|err| sftp_error_from_raw("ssh", "connect/authenticate", err))?;
+    } else {
+        pool.checkout(
+            connect_host,
+            connect_port,
+            username,
+            auth_type,
+            password,
+            private_key,
+            passphrase,
+        )
+    }
+    .map_err(|err| sftp_error_from_raw("ssh", "connect/authenticate", err))?;
 
     match session.sftp() {
-        Ok(sftp) => Ok((session, sftp)),
+        Ok(sftp) => Ok((session, sftp, jump_tunnel)),
         Err(first_err) => {
             drop(session);
             std::thread::sleep(Duration::from_millis(200));
-            let session = pool
-                .checkout(
-                    host,
-                    port,
+            let session = if jump_tunnel.is_some() {
+                crate::ssh::connect_authenticated_ssh_session(
+                    connect_host,
+                    connect_port,
                     username,
                     auth_type,
                     password,
                     private_key,
                     passphrase,
                 )
-                .map_err(|err| sftp_error_from_raw("ssh", "reconnect", err))?;
+            } else {
+                pool.checkout(
+                    connect_host,
+                    connect_port,
+                    username,
+                    auth_type,
+                    password,
+                    private_key,
+                    passphrase,
+                )
+            }
+            .map_err(|err| sftp_error_from_raw("ssh", "reconnect", err))?;
             let sftp = session.sftp().map_err(|err| {
                 sftp_error_from_raw(
                     "sftp",
@@ -157,7 +338,7 @@ fn checkout_with_sftp(
                     format!("retry also failed (first: {first_err}; retry: {err})"),
                 )
             })?;
-            Ok((session, sftp))
+            Ok((session, sftp, jump_tunnel))
         }
     }
 }
@@ -167,7 +348,7 @@ pub fn sftp_list_dir(
     pool: tauri::State<'_, SshSessionPool>,
     payload: SftpRequest,
 ) -> Result<Vec<SftpEntry>, String> {
-    let (session, sftp) = checkout_with_sftp(
+    let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &pool,
         &payload.host,
         payload.port,
@@ -176,6 +357,9 @@ pub fn sftp_list_dir(
         payload.password.as_deref(),
         payload.private_key.as_deref(),
         payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
     )?;
 
     let result = (|| -> Result<Vec<SftpEntry>, String> {
@@ -207,7 +391,7 @@ pub fn sftp_list_dir(
         Ok(entries)
     })();
 
-    if result.is_ok() {
+    if result.is_ok() && jump_tunnel.is_none() {
         pool.checkin(&payload.host, payload.port, &payload.username, session);
     }
     result
@@ -218,7 +402,7 @@ pub fn sftp_home_dir(
     pool: tauri::State<'_, SshSessionPool>,
     payload: SftpRequest,
 ) -> Result<String, String> {
-    let (session, sftp) = checkout_with_sftp(
+    let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &pool,
         &payload.host,
         payload.port,
@@ -227,6 +411,9 @@ pub fn sftp_home_dir(
         payload.password.as_deref(),
         payload.private_key.as_deref(),
         payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
     )?;
 
     let result = (|| -> Result<String, String> {
@@ -235,7 +422,7 @@ pub fn sftp_home_dir(
             .map_err(|err| sftp_error_from_raw("sftp", "resolve home directory", err.to_string()))
     })();
 
-    if result.is_ok() {
+    if result.is_ok() && jump_tunnel.is_none() {
         pool.checkin(&payload.host, payload.port, &payload.username, session);
     }
     result
@@ -260,7 +447,7 @@ pub fn sftp_download_file(
         .transfer_id
         .clone()
         .unwrap_or_else(|| format!("download-{}", Uuid::new_v4()));
-    let (session, sftp) = checkout_with_sftp(
+    let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &pool,
         &payload.host,
         payload.port,
@@ -269,6 +456,9 @@ pub fn sftp_download_file(
         payload.password.as_deref(),
         payload.private_key.as_deref(),
         payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
     )?;
 
     let result = (|| -> Result<SftpFileData, String> {
@@ -321,7 +511,7 @@ pub fn sftp_download_file(
         })
     })();
 
-    if result.is_ok() {
+    if result.is_ok() && jump_tunnel.is_none() {
         pool.checkin(&payload.host, payload.port, &payload.username, session);
     }
     result
@@ -350,7 +540,7 @@ pub fn sftp_upload_file(
         .decode(payload.content_b64)
         .map_err(|err| sftp_error_from_raw("client", "decode upload content", err.to_string()))?;
     let total_size = content.len() as u64;
-    let (session, sftp) = checkout_with_sftp(
+    let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &pool,
         &payload.host,
         payload.port,
@@ -359,6 +549,9 @@ pub fn sftp_upload_file(
         payload.password.as_deref(),
         payload.private_key.as_deref(),
         payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
@@ -403,7 +596,7 @@ pub fn sftp_upload_file(
         Ok(())
     })();
 
-    if result.is_ok() {
+    if result.is_ok() && jump_tunnel.is_none() {
         pool.checkin(&payload.host, payload.port, &payload.username, session);
     }
     result
@@ -423,7 +616,7 @@ pub fn sftp_delete_path(
             None,
         ));
     }
-    let (session, sftp) = checkout_with_sftp(
+    let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &pool,
         &payload.host,
         payload.port,
@@ -432,6 +625,9 @@ pub fn sftp_delete_path(
         payload.password.as_deref(),
         payload.private_key.as_deref(),
         payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
@@ -448,7 +644,7 @@ pub fn sftp_delete_path(
         }
     })();
 
-    if result.is_ok() {
+    if result.is_ok() && jump_tunnel.is_none() {
         pool.checkin(&payload.host, payload.port, &payload.username, session);
     }
     result
@@ -468,7 +664,7 @@ pub fn sftp_rename_path(
             None,
         ));
     }
-    let (session, sftp) = checkout_with_sftp(
+    let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &pool,
         &payload.host,
         payload.port,
@@ -477,6 +673,9 @@ pub fn sftp_rename_path(
         payload.password.as_deref(),
         payload.private_key.as_deref(),
         payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
@@ -488,7 +687,7 @@ pub fn sftp_rename_path(
         .map_err(|err| sftp_error_from_raw("sftp", "rename path", err.to_string()))
     })();
 
-    if result.is_ok() {
+    if result.is_ok() && jump_tunnel.is_none() {
         pool.checkin(&payload.host, payload.port, &payload.username, session);
     }
     result
@@ -508,7 +707,7 @@ pub fn sftp_create_dir(
             None,
         ));
     }
-    let (session, sftp) = checkout_with_sftp(
+    let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &pool,
         &payload.host,
         payload.port,
@@ -517,6 +716,9 @@ pub fn sftp_create_dir(
         payload.password.as_deref(),
         payload.private_key.as_deref(),
         payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
@@ -524,7 +726,7 @@ pub fn sftp_create_dir(
             .map_err(|err| sftp_error_from_raw("sftp", "create directory", err.to_string()))
     })();
 
-    if result.is_ok() {
+    if result.is_ok() && jump_tunnel.is_none() {
         pool.checkin(&payload.host, payload.port, &payload.username, session);
     }
     result
@@ -544,7 +746,7 @@ pub fn sftp_create_file(
             None,
         ));
     }
-    let (session, sftp) = checkout_with_sftp(
+    let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &pool,
         &payload.host,
         payload.port,
@@ -553,6 +755,9 @@ pub fn sftp_create_file(
         payload.password.as_deref(),
         payload.private_key.as_deref(),
         payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
@@ -564,7 +769,7 @@ pub fn sftp_create_file(
             .map_err(|err| sftp_error_from_raw("sftp", "flush remote file", err.to_string()))
     })();
 
-    if result.is_ok() {
+    if result.is_ok() && jump_tunnel.is_none() {
         pool.checkin(&payload.host, payload.port, &payload.username, session);
     }
     result
@@ -587,7 +792,7 @@ pub fn sftp_write_file(
     let content = BASE64_STANDARD
         .decode(payload.content_b64)
         .map_err(|err| sftp_error_from_raw("client", "decode file content", err.to_string()))?;
-    let (session, sftp) = checkout_with_sftp(
+    let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &pool,
         &payload.host,
         payload.port,
@@ -596,6 +801,9 @@ pub fn sftp_write_file(
         payload.password.as_deref(),
         payload.private_key.as_deref(),
         payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
@@ -612,7 +820,7 @@ pub fn sftp_write_file(
             .map_err(|err| sftp_error_from_raw("sftp", "flush remote file", err.to_string()))
     })();
 
-    if result.is_ok() {
+    if result.is_ok() && jump_tunnel.is_none() {
         pool.checkin(&payload.host, payload.port, &payload.username, session);
     }
     result
@@ -628,6 +836,9 @@ pub struct SftpChmodRequest {
     password: Option<String>,
     private_key: Option<String>,
     passphrase: Option<String>,
+    jump_host: Option<String>,
+    jump_port: Option<u16>,
+    jump_user: Option<String>,
     remote_path: String,
     mode: u32,
 }
@@ -646,7 +857,7 @@ pub fn sftp_chmod(
             None,
         ));
     }
-    let (session, sftp) = checkout_with_sftp(
+    let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &pool,
         &payload.host,
         payload.port,
@@ -655,6 +866,9 @@ pub fn sftp_chmod(
         payload.password.as_deref(),
         payload.private_key.as_deref(),
         payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
     )?;
 
     let result = (|| -> Result<(), String> {
@@ -667,7 +881,7 @@ pub fn sftp_chmod(
             .map_err(|err| sftp_error_from_raw("sftp", "chmod", err.to_string()))
     })();
 
-    if result.is_ok() {
+    if result.is_ok() && jump_tunnel.is_none() {
         pool.checkin(&payload.host, payload.port, &payload.username, session);
     }
     result

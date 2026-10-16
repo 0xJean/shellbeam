@@ -6,7 +6,8 @@ import { useT } from '@/lib/i18n'
 import { getResourceUsageFillClassName, getResourceUsageTextClassName } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
-import { AlertTriangle, Clock, Cpu, HardDrive, KeyRound, Laptop, LockKeyhole, MemoryStick, Pencil, RefreshCw, Server, Tag, Terminal, Trash2, User } from 'lucide-react'
+import type { OperationAuditEntry } from '@/lib/operation-job'
+import { AlertTriangle, Activity, Bot, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
@@ -28,8 +29,34 @@ function formatRelativeTime(ts: number, t: TFn): string {
 
 export function statusConfig(status: string | undefined, t: TFn) {
   if (status === 'online') return { label: t('hostCard.online'), dot: 'bg-[color:var(--workspace-status-good)]', text: 'text-[color:var(--workspace-status-good-text)]', bg: 'bg-[var(--workspace-status-good-bg)]', border: 'border-[color:var(--workspace-status-good-border)]' }
+  if (status === 'stale') return { label: t('hostCard.stale'), dot: 'bg-[color:var(--workspace-status-warn)]', text: 'text-[color:var(--workspace-status-warn-text)]', bg: 'bg-[var(--workspace-status-warn-bg)]', border: 'border-[color:var(--workspace-status-warn-border)]' }
   if (status === 'offline') return { label: t('hostCard.offline'), dot: 'bg-[color:var(--workspace-status-bad)]', text: 'text-[color:var(--workspace-status-bad-text)]', bg: 'bg-[var(--workspace-status-bad-bg)]', border: 'border-[color:var(--workspace-status-bad-border)]' }
+  if (status === 'unknown') return { label: t('hostCard.unknown'), dot: 'bg-[color:var(--workspace-text-subtle)]', text: 'text-[var(--workspace-text-muted)]', bg: 'bg-[var(--workspace-surface-800)]', border: 'border-[color:var(--workspace-border-soft)]' }
+  if (status === 'paused') return { label: t('hostCard.paused'), dot: 'bg-[color:var(--workspace-text-subtle)]', text: 'text-[var(--workspace-text-muted)]', bg: 'bg-[var(--workspace-surface-800)]', border: 'border-[color:var(--workspace-border-soft)]' }
+  if (status === 'jump-unavailable') return { label: t('hostCard.jumpUnavailable'), dot: 'bg-[color:var(--workspace-status-bad)]', text: 'text-[color:var(--workspace-status-bad-text)]', bg: 'bg-[var(--workspace-status-bad-bg)]', border: 'border-[color:var(--workspace-status-bad-border)]' }
   return null
+}
+
+type HostHealthStatus = 'online' | 'stale' | 'offline' | 'checking' | 'unknown' | 'paused' | 'jump-unavailable'
+
+export interface HostOperationalSummary {
+  serviceTotal: number | null
+  serviceActive: number | null
+  serviceFailed: number | null
+  processTotal: number | null
+  processRunning: number | null
+  alertTotal?: number | null
+  alertActive?: number | null
+  alertUnsupported?: boolean
+  auditCount: number
+  latestAudit?: Pick<OperationAuditEntry, 'action' | 'target' | 'status' | 'createdAt' | 'transport' | 'provider'>
+  provider?: string
+  sampledAt?: number
+  transport: 'direct' | 'proxy-jump'
+  agentStatus?: string
+  agentHealth?: string
+  agentVersion?: string | null
+  agentHeartbeatAt?: number | null
 }
 
 export function groupIconConfig(group: string) {
@@ -51,11 +78,19 @@ function getDisplayGroupLabel(group: string | undefined, t: TFn) {
   return translated !== `group.${group}` ? translated : group
 }
 
+function formatJumpHost(host: HostProfile) {
+  if (!host.jumpHost?.trim()) return ''
+  const user = host.jumpUser?.trim() ? `${host.jumpUser.trim()}@` : ''
+  const port = host.jumpPort ? `:${host.jumpPort}` : ''
+  return `${user}${host.jumpHost.trim()}${port}`
+}
+
 interface HostGridCardProps {
   host: HostProfile
   isSelected: boolean
-  status?: 'online' | 'offline' | 'checking'
+  status?: HostHealthStatus
   resource?: WorkspaceInventoryResource
+  operations?: HostOperationalSummary
   network?: HostNetworkDisplay
   onConnect: (id: string) => void
   onEdit: (id: string) => void
@@ -63,12 +98,13 @@ interface HostGridCardProps {
   onSelect: (id: string) => void
 }
 
-export function HostGridCard({ host, isSelected, status, resource, network, onConnect, onEdit, onDelete }: HostGridCardProps) {
+export function HostGridCard({ host, isSelected, status, resource, operations, network, onConnect, onEdit, onDelete }: HostGridCardProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const groupLabel = getDisplayGroupLabel(host.group, t)
+  const jumpHost = formatJumpHost(host)
 
   return (
     <>
@@ -124,7 +160,7 @@ export function HostGridCard({ host, isSelected, status, resource, network, onCo
                 : <><LockKeyhole className="h-3 w-3" /><span>{t('hostCard.password')}</span></>}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {sc ? (
               <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold', sc.bg, sc.text)}>
                 <span className={cn('h-1.5 w-1.5 rounded-full', sc.dot)} />{sc.label}
@@ -136,6 +172,15 @@ export function HostGridCard({ host, isSelected, status, resource, network, onCo
             ) : null}
             {host.group && (
               <span className="rounded-full bg-[var(--workspace-surface-700)] px-2 py-0.5 text-[10px] font-medium text-[var(--workspace-text-muted)]">{groupLabel}</span>
+            )}
+            {jumpHost && (
+              <span
+                className="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--workspace-accent-subtle)] px-2 py-0.5 text-[10px] font-medium text-[var(--workspace-accent-text)]"
+                title={`${t('hosts.jumpHost')}: ${jumpHost}`}
+              >
+                <Route className="h-2.5 w-2.5 shrink-0" />
+                <span className="truncate">{t('hosts.jumpHost')}: {jumpHost}</span>
+              </span>
             )}
           </div>
           {network && (
@@ -150,6 +195,7 @@ export function HostGridCard({ host, isSelected, status, resource, network, onCo
             className="text-xs text-[var(--workspace-text-muted)]"
             iconClassName="h-3.5 w-3.5"
           />
+          <HostOperationalMeta summary={operations} t={t} />
           <div className="flex items-center gap-1 overflow-hidden">
             {host.tags && host.tags.length > 0 ? (
               <>
@@ -192,8 +238,9 @@ interface HostListItemProps {
   index: number
   host: HostProfile
   isSelected: boolean
-  status?: 'online' | 'offline' | 'checking'
+  status?: HostHealthStatus
   resource?: WorkspaceInventoryResource
+  operations?: HostOperationalSummary
   network?: HostNetworkDisplay
   onSelect: (id: string) => void
   onConnect: (id: string) => void
@@ -201,7 +248,7 @@ interface HostListItemProps {
   onDelete: (id: string) => void
 }
 
-function HostStatusPill({ status, sc, t }: { status?: 'online' | 'offline' | 'checking'; sc: ReturnType<typeof statusConfig>; t: TFn }) {
+function HostStatusPill({ status, sc, t }: { status?: HostHealthStatus; sc: ReturnType<typeof statusConfig>; t: TFn }) {
   if (sc) {
     return (
       <span className={cn('inline-flex h-9 min-w-[6rem] items-center justify-center gap-1.5 rounded-full border px-3 text-xs font-semibold', sc.bg, sc.text, sc.border)}>
@@ -300,11 +347,89 @@ function HostResourceSummary({ resource, t }: { resource?: WorkspaceInventoryRes
   )
 }
 
+function formatSummaryAge(ts: number | undefined, t: TFn) {
+  if (!ts) return t('hosts.opsNoSample')
+  return formatRelativeTime(ts, t)
+}
+
+function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary; t: TFn }) {
+  if (!summary) return null
+
+  const latest = summary.latestAudit
+  const latestLabel = latest
+    ? `${latest.action}${latest.target ? ` ${latest.target}` : ''} · ${latest.status}`
+    : t('hosts.opsNoAudit')
+  const transportLabel = summary.transport === 'proxy-jump' ? t('hosts.opsProxyJump') : t('hosts.opsDirect')
+  const formatCount = (value: number | null) => value == null ? '—' : String(value)
+  const lifecycleStatuses = ['not-installed', 'installing', 'installed', 'upgrading', 'uninstalling', 'offline', 'unsupported', 'unknown', 'failed', 'retired']
+  const lifecycleStatus = lifecycleStatuses.includes(summary.agentStatus ?? '') ? summary.agentStatus : 'unknown'
+  const healthStatuses = ['online', 'offline', 'stale', 'unsupported', 'unknown']
+  const agentHealth = healthStatuses.includes(summary.agentHealth ?? '') ? summary.agentHealth : 'unknown'
+
+  return (
+    <div data-testid="host-ops-summary" data-host-ops-summary className="mt-2 space-y-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 text-[10px] text-[var(--workspace-text-muted)]">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="inline-flex shrink-0 items-center gap-1" title={t('hosts.opsServices')}>
+          <Wrench className="h-3 w-3 text-[var(--workspace-accent-text)]" />
+          <span>{t('hosts.opsServicesShort')}</span>
+          <strong className="font-mono text-[var(--workspace-text-strong)]">{formatCount(summary.serviceActive)}/{formatCount(summary.serviceTotal)}</strong>
+          {(summary.serviceFailed ?? 0) > 0 && <span className="text-[color:var(--workspace-status-bad-text)]">· {formatCount(summary.serviceFailed)} {t('hosts.opsFailed')}</span>}
+        </span>
+        <span className="inline-flex shrink-0 items-center gap-1" title={t('hosts.opsProcesses')}>
+          <Activity className="h-3 w-3 text-[var(--workspace-status-info-text)]" />
+          <span>{t('hosts.opsProcessesShort')}</span>
+          <strong className="font-mono text-[var(--workspace-text-strong)]">{formatCount(summary.processRunning)}/{formatCount(summary.processTotal)}</strong>
+        </span>
+      </div>
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="inline-flex min-w-0 items-center gap-1" title={t('hosts.opsAudit')}>
+          <ListChecks className="h-3 w-3 shrink-0" />
+          <span className="truncate">{latestLabel}</span>
+          <span className="shrink-0 font-mono">({summary.auditCount})</span>
+        </span>
+      </div>
+      {(summary.alertTotal !== undefined || summary.alertUnsupported || summary.alertActive != null) && (
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="inline-flex min-w-0 items-center gap-1" title={t('hosts.opsAlerts')}>
+            <AlertTriangle className="h-3 w-3 shrink-0 text-[color:var(--workspace-status-warn-text)]" />
+            <span>{t('hosts.opsAlertsShort')}</span>
+            <strong className="font-mono text-[var(--workspace-text-strong)]">
+              {summary.alertUnsupported ? t('hosts.opsUnsupported') : formatCount(summary.alertTotal ?? null)}
+            </strong>
+            {summary.alertActive != null && <span className="text-[color:var(--workspace-status-bad-text)]">· {summary.alertActive} {t('hosts.opsActive')}</span>}
+          </span>
+        </div>
+      )}
+      {summary.agentStatus && (
+        <div className="flex min-w-0 items-center gap-2" title={t('workspace.agentProbe.description')}>
+          <Bot className="h-3 w-3 shrink-0 text-[var(--workspace-accent-text)]" />
+          <span className="shrink-0">{t('workspace.agentProbe.title')}</span>
+          <strong className="truncate font-medium text-[var(--workspace-text-strong)]">
+            {t(`workspace.agentProbe.lifecycle.${lifecycleStatus}`)}
+          </strong>
+          {summary.agentHealth && <span className="shrink-0 text-[var(--workspace-text-subtle)]">· {t(`workspace.agentProbe.${agentHealth === 'online' ? 'online' : agentHealth === 'offline' ? 'offline' : 'unknown'}`)}</span>}
+          {summary.agentVersion && <span className="shrink-0 font-mono">v{summary.agentVersion}</span>}
+          {summary.agentHeartbeatAt && <span className="ml-auto shrink-0">{formatSummaryAge(summary.agentHeartbeatAt, t)}</span>}
+        </div>
+      )}
+      <div className="flex min-w-0 items-center gap-2 text-[var(--workspace-text-subtle)]">
+        <span className="inline-flex min-w-0 items-center gap-1 truncate" title={summary.provider || t('hosts.opsNoProvider')}>
+          <ShieldCheck className="h-3 w-3 shrink-0" />
+          <span className="truncate">{summary.provider || t('hosts.opsNoProvider')}</span>
+        </span>
+        <span className="shrink-0">{transportLabel}</span>
+        <span className="ml-auto shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
+      </div>
+    </div>
+  )
+}
+
 function HostGroupTagsMeta({ host, t }: { host: HostProfile; t: TFn }) {
   const groupLabel = getDisplayGroupLabel(host.group, t)
   const tags = host.tags ?? []
+  const jumpHost = formatJumpHost(host)
 
-  if (!groupLabel && tags.length === 0) return null
+  if (!groupLabel && tags.length === 0 && !jumpHost) return null
 
   return (
     <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
@@ -331,6 +456,16 @@ function HostGroupTagsMeta({ host, t }: { host: HostProfile; t: TFn }) {
       {tags.length > 3 && (
         <span className="inline-flex items-center rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-1 text-[10px] font-medium text-[var(--workspace-text-subtle)]">
           +{tags.length - 3}
+        </span>
+      )}
+      {jumpHost && (
+        <span
+          data-host-jump-pill
+          className="inline-flex max-w-full items-center gap-1 rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-accent-subtle)] px-2 py-1 text-[10px] font-medium text-[var(--workspace-accent-text)]"
+          title={`${t('hosts.jumpHost')}: ${jumpHost}`}
+        >
+          <Route className="h-3 w-3 shrink-0" />
+          <span className="truncate">{t('hosts.jumpHost')}: {jumpHost}</span>
         </span>
       )}
     </div>
@@ -365,7 +500,7 @@ function getNetworkScopeLabel(network: HostNetworkDisplay | undefined, t: TFn) {
   return t('hosts.networkUnknown')
 }
 
-export function HostListItem({ index, host, isSelected, status, resource, network, onSelect, onConnect, onEdit, onDelete }: HostListItemProps) {
+export function HostListItem({ index, host, isSelected, status, resource, operations, network, onSelect, onConnect, onEdit, onDelete }: HostListItemProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
@@ -392,7 +527,7 @@ export function HostListItem({ index, host, isSelected, status, resource, networ
         className={cn(
           'group grid w-full cursor-pointer gap-4 rounded-2xl border px-4 py-5 text-left transition-[background-color,border-color,box-shadow]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-border-glow)]',
-          'xl:grid-cols-[3.25rem_minmax(14rem,1.14fr)_minmax(12rem,0.92fr)_minmax(10rem,0.75fr)_7rem_minmax(15rem,1.02fr)_7rem_6.5rem] xl:items-center xl:gap-4',
+          'xl:grid-cols-[3.25rem_minmax(14rem,1.14fr)_minmax(12rem,0.92fr)_minmax(10rem,0.75fr)_7rem_minmax(15rem,1.02fr)_minmax(14rem,1fr)_7rem_6.5rem] xl:items-center xl:gap-4',
           isSelected
             ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-row-selected)] shadow-[inset_3px_0_0_var(--workspace-primary-500),var(--workspace-shadow-card)]'
             : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] shadow-[var(--workspace-shadow-card)] hover:border-[color:var(--workspace-border-strong)] hover:bg-[var(--workspace-surface-800)]',
@@ -442,6 +577,8 @@ export function HostListItem({ index, host, isSelected, status, resource, networ
         </div>
 
         <HostResourceSummary resource={resource} t={t} />
+
+        <HostOperationalMeta summary={operations} t={t} />
 
         <div className="flex items-center">
           <HostStatusPill status={status} sc={sc} t={t} />

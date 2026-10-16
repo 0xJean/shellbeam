@@ -35,6 +35,7 @@ const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
 const TASKBAR_APPS = APP_LABELS.filter((item) => item.id !== 'overview')
 
 interface WorkspaceDesktopShellProps {
+  activeVaultId?: string
   sessionId: string
   hostName: string
   hostAddress: string
@@ -129,6 +130,7 @@ function LiveDate() {
 }
 
 export function WorkspaceDesktopShell({
+  activeVaultId,
   sessionId,
   hostName,
   hostAddress,
@@ -413,6 +415,7 @@ export function WorkspaceDesktopShell({
                     </button>
                   </div>
                 <WorkspaceStatusCards
+                  activeVaultId={activeVaultId}
                   hostAddress={hostAddress}
                   selectedHostId={hostId}
                   hosts={hosts}

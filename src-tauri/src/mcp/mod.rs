@@ -392,9 +392,17 @@ pub(super) fn dispatch(app: &tauri::AppHandle, client: &Client, request: Value) 
 }
 
 fn public_host(host: &HostProfile, client: &Client) -> Value {
+    // MCP ProxyJump uses the same private-key credential for the destination
+    // and the single jump host. Password-authenticated jump chains remain
+    // unsupported until separate jump-host credentials are modelled.
+    let connection_supported = host
+        .jump_host
+        .as_deref()
+        .map(|value| value.trim().is_empty() || host.auth_type == "privateKey")
+        .unwrap_or(true);
     json!({"hostId":host.id,"name":host.name,"address":host.address,"port":host.port,"username":host.username,
         "group":host.group,"tags":host.tags,"authType":host.auth_type,"jumpHost":host.jump_host,
-        "connectionSupported":host.jump_host.as_deref().unwrap_or("").is_empty(),
+        "connectionSupported":connection_supported,
         "authorizationValid":client.authorize_host(host).is_ok()})
 }
 
@@ -646,6 +654,52 @@ fn submit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn host_with_jump(auth_type: &str) -> HostProfile {
+        HostProfile {
+            id: "host".into(),
+            name: "Host".into(),
+            address: "target.example.com".into(),
+            port: 22,
+            username: "target".into(),
+            group: String::new(),
+            auth_type: auth_type.into(),
+            secret_key_ref: None,
+            password_key_ref: None,
+            private_key_ref: Some("private-key".into()),
+            tags: Vec::new(),
+            jump_host: Some("jump.example.com".into()),
+            jump_port: Some(2200),
+            jump_user: Some("bastion".into()),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn test_client() -> Client {
+        Client {
+            id: "client".into(),
+            name: "Client".into(),
+            vault_id: "vault".into(),
+            hosts: Vec::new(),
+            permissions: Permissions::default(),
+            created_at: 0,
+            token_hash: None,
+        }
+    }
+
+    #[test]
+    fn public_host_marks_private_key_proxy_jump_as_supported() {
+        let client = test_client();
+        assert_eq!(
+            public_host(&host_with_jump("privateKey"), &client)["connectionSupported"],
+            true
+        );
+        assert_eq!(
+            public_host(&host_with_jump("password"), &client)["connectionSupported"],
+            false
+        );
+    }
 
     #[test]
     fn remote_capacity_is_three_global_and_one_per_vault_host() {

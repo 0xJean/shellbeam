@@ -20,6 +20,9 @@ export interface RemoteFsAuth {
   authType: AuthType
   password?: string
   privateKey?: string
+  jumpHost?: string
+  jumpPort?: number
+  jumpUser?: string
 }
 
 export async function resolveRemoteFsAuth(
@@ -34,6 +37,9 @@ export async function resolveRemoteFsAuth(
     authType: host.authType,
     password: host.authType === 'password' ? secret : undefined,
     privateKey: host.authType === 'privateKey' ? secret : undefined,
+    jumpHost: host.jumpHost,
+    jumpPort: host.jumpPort,
+    jumpUser: host.jumpUser,
   }
 }
 

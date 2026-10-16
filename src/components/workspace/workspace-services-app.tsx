@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
+import { runConfirmedOperation, type OperationJob } from '@/lib/operation-job'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 
 const SERVICES_COMMAND = 'systemctl list-units --type=service --all --no-pager --plain --no-legend | head -n 40'
@@ -43,6 +44,15 @@ function getBadgeClass(active: string) {
   if (active === 'active') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
   if (active === 'failed') return 'border-red-500/30 bg-red-500/10 text-red-300'
   return 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+}
+
+function isSafeServiceName(name: string) {
+  return /^[A-Za-z0-9_.@:-]+\.service$/.test(name) && name.length <= 160
+}
+
+function operationOutput(job: OperationJob, output: string) {
+  const summary = `job=${job.jobId} audit=${job.auditId} status=${job.status}`
+  return output ? `${summary}\n\n${output}` : summary
 }
 
 export function WorkspaceServicesApp({
@@ -110,19 +120,49 @@ export function WorkspaceServicesApp({
   }
 
   async function runServiceAction(action: 'start' | 'stop' | 'restart' | 'status') {
-    if (!selectedService) return
+    if (!host || !selectedService) return
+
+    if (!isSafeServiceName(selectedService.name)) {
+      setError(t('workspace.services.invalidService'))
+      return
+    }
 
     setActionLoading(action)
     setError('')
 
     try {
       const command = action === 'status'
-        ? `systemctl status ${selectedService.name} --no-pager`
-        : `systemctl ${action} ${selectedService.name} && systemctl status ${selectedService.name} --no-pager`
-      const result = await runRemoteCommand(command)
-      const combined = [result.stdout, result.stderr].filter(Boolean).join('\n')
-      setActionOutput(combined || t('workspace.services.actionCompleted', { action: t(`workspace.services.action.${action}`) }))
-      await loadServices()
+        ? `systemctl status --no-pager ${selectedService.name}`
+        : `systemctl ${action} ${selectedService.name} && systemctl status --no-pager ${selectedService.name}`
+
+      if (action === 'status') {
+        const result = await runRemoteCommand(command)
+        const combined = [result.stdout, result.stderr].filter(Boolean).join('\n')
+        setActionOutput(combined || t('workspace.services.actionCompleted', { action: t(`workspace.services.action.${action}`) }))
+      } else {
+        const confirmation = t('workspace.operation.confirm', {
+          action: t(`workspace.services.action.${action}`),
+          target: selectedService.name,
+        })
+        const execution = await runConfirmedOperation({
+          host,
+          action: `service.${action}`,
+          target: selectedService.name,
+          risk: action === 'start' ? 'low' : 'high',
+          paramsSummary: `systemctl ${action} ${selectedService.name}`,
+          confirmMessage: confirmation,
+          execute: () => runRemoteCommand(command),
+          getResult: (result) => result,
+        })
+        if (!execution) {
+          setActionOutput(t('workspace.operation.cancelled'))
+          return
+        }
+        const result = execution.value
+        const combined = [result.stdout, result.stderr].filter(Boolean).join('\n')
+        setActionOutput(operationOutput(execution.job, combined || t('workspace.services.actionCompleted', { action: t(`workspace.services.action.${action}`) })))
+        await loadServices()
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {

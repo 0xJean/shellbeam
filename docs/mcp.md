@@ -166,9 +166,12 @@ its own commands and file operations within the user's authorization.
 
 ## v1 limits
 
-Desktop, local agents and Linux inventory only. Configured jump hosts fail
-explicitly rather than being bypassed. Key passphrases, interactive prompts,
-PTY sessions, remote/cloud MCP, autonomous deployment and automatic environment
-setup are not implemented. Password and unencrypted private-key authentication
-reuse the existing vault. Cached information remains readable by authorized
-clients while a vault is locked; new remote operations require that vault unlocked.
+Desktop, local agents and Linux inventory only. A configured single-hop jump
+host is supported for private-key authenticated targets through a short-lived
+local OpenSSH forwarding process; the same key is used for the target and jump
+host, and password-authenticated jump chains remain unsupported. Key
+passphrases, interactive prompts, PTY sessions, remote/cloud MCP, autonomous
+deployment and automatic environment setup are not implemented. Password and
+unencrypted private-key authentication reuse the existing vault. Cached
+information remains readable by authorized clients while a vault is locked; new
+remote operations require that vault unlocked.

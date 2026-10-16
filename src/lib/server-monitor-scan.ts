@@ -1,6 +1,5 @@
 import type { HostProfile } from '@/lib/hosts'
 import {
-  fetchServerMonitorSnapshot,
   getServerMonitorHostKey,
   listServerMonitorHistory,
   listServerMonitorLatest,
@@ -16,10 +15,13 @@ import {
   pruneServerMonitorStates,
   type ServerMonitorHostState,
 } from './server-monitor-state'
+import { createAgentlessSshProbeProvider } from './probe-provider'
 
 export const SERVER_MONITOR_INTERVAL_MS = 60 * 1000
 export const SERVER_MONITOR_HISTORY_MS = 24 * 60 * 60 * 1000
 export const SERVER_MONITOR_CONCURRENCY = 3
+
+const serverMonitorProbeProvider = createAgentlessSshProbeProvider()
 
 interface ScanOptions {
   hosts: HostProfile[]
@@ -135,7 +137,15 @@ export async function scanServerMonitorHosts({
       const attemptAt = Date.now()
 
       try {
-        const snapshot = await fetchServerMonitorSnapshot({ host, resolveAuthSecret })
+        const probe = await serverMonitorProbeProvider.probe({
+          host,
+          resolveAuthSecret,
+          sections: ['metrics'],
+        })
+        if (!probe.metrics) {
+          throw new Error(probe.errors[0]?.message || 'server monitor returned no usable Linux metrics')
+        }
+        const snapshot = probe.metrics.data
         if (!isCurrent()) return
 
         const latest = createServerMonitorLatest(host, 'online', attemptAt, previous?.latest, {

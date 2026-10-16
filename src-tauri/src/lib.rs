@@ -91,6 +91,18 @@ pub fn run() {
             data::hosts::create_host,
             data::hosts::update_host,
             data::hosts::delete_host,
+            data::komari::list_komari_integrations,
+            data::komari::upsert_komari_integration,
+            data::komari::delete_komari_integration,
+            data::komari_persistence::list_komari_snapshots,
+            data::komari_persistence::upsert_komari_snapshot,
+            data::komari_persistence::list_komari_mappings,
+            data::komari_persistence::upsert_komari_mapping,
+            data::komari_persistence::replace_komari_mappings,
+            data::komari_persistence::persist_komari_sync,
+            data::komari_persistence::get_komari_sync_state,
+            data::komari_persistence::upsert_komari_sync_state,
+            data::komari_persistence::clear_komari_persistence,
             data::workspace_inventory::list_workspace_inventory_snapshots,
             data::workspace_inventory::upsert_workspace_inventory_snapshot,
             data::workspace_inventory::delete_workspace_inventory_snapshot,
@@ -109,6 +121,10 @@ pub fn run() {
             data::server_monitor::save_server_monitor_result,
             data::server_monitor::delete_server_monitor_data,
             data::server_monitor::clear_server_monitor_data,
+            data::shellbeam_agent::list_shellbeam_agents,
+            data::shellbeam_agent::upsert_shellbeam_agent,
+            data::shellbeam_agent::record_shellbeam_agent_heartbeat,
+            data::shellbeam_agent::clear_shellbeam_agents,
             ssh::commands::test_ssh_connection,
             ssh::commands::run_ssh_command,
             net::sftp::sftp_home_dir,
@@ -128,6 +144,11 @@ pub fn run() {
             data::history::list_command_history,
             data::activity_log::append_activity,
             data::activity_log::list_activity_log,
+            data::operation_jobs::operation_job_create,
+            data::operation_jobs::operation_job_update,
+            data::operation_jobs::operation_job_get,
+            data::operation_jobs::operation_job_list,
+            data::operation_jobs::operation_audit_list,
             data::ssh_config::parse_ssh_config,
             sync::commands::get_system_hostname,
             sync::commands::sync_get_bootstrap,
@@ -203,6 +224,9 @@ pub fn run() {
             browser::stop_browser_socks_proxy,
         ])
         .setup(|app| {
+            if let Err(error) = data::operation_jobs::recover(app.handle()) {
+                log::error!("Operation job recovery failed: {error}");
+            }
             if let Err(error) = mcp::initialize(app.handle()) {
                 log::error!("MCP initialization failed: {error}");
             }

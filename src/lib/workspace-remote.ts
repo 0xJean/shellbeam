@@ -34,6 +34,9 @@ export async function runWorkspaceRemoteCommand(options: {
     authType: host.authType,
     password: host.authType === 'password' ? secret : undefined,
     privateKey: host.authType === 'privateKey' ? secret : undefined,
+    jumpHost: host.jumpHost,
+    jumpPort: host.jumpPort,
+    jumpUser: host.jumpUser,
     command,
   })
 }
