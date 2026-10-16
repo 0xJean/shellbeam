@@ -4,7 +4,7 @@ use crate::vault::secrets::{get_secret_value, VaultState};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Map, Value};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};

@@ -10,6 +10,9 @@ pub struct Permissions {
     pub read_files: bool,
     pub write_files: bool,
     pub refresh: bool,
+    /// Allow local Komari alert lifecycle mutations and their OperationJob audit.
+    #[serde(default)]
+    pub manage_alerts: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -89,6 +92,7 @@ impl Client {
             | "get_server_metrics"
             | "get_server_operations"
             | "get_command_result" => true,
+            "acknowledge_server_alert" | "close_server_alert" => self.permissions.manage_alerts,
             "refresh_server_info" => self.permissions.refresh,
             "run_command" => self.permissions.execute,
             "read_remote_file" => self.permissions.read_files,
@@ -157,6 +161,9 @@ mod tests {
         let client = client();
         assert!(client.allows("list_servers"));
         assert!(client.allows("get_server_operations"));
+        assert!(client.allows("get_server_alerts"));
+        assert!(!client.allows("acknowledge_server_alert"));
+        assert!(!client.allows("close_server_alert"));
         for tool in [
             "run_command",
             "refresh_server_info",
@@ -195,6 +202,15 @@ mod tests {
         host.address = "192.0.2.1".into();
         host.password_key_ref = Some("secret-b".into());
         assert!(client.authorize_host(&host).is_err());
+    }
+
+    #[test]
+    fn manage_alerts_is_local_lifecycle_capability() {
+        let mut client = client();
+        client.permissions.manage_alerts = true;
+        assert!(client.allows("acknowledge_server_alert"));
+        assert!(client.allows("close_server_alert"));
+        assert!(!client.allows("run_command"));
     }
 
     #[test]

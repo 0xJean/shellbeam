@@ -734,6 +734,144 @@ fn link_komari_alert_operation(
     Ok(false)
 }
 
+/// Apply a local Komari alert lifecycle transition and append the corresponding
+/// lifecycle audit event. This deliberately never uses the Komari endpoint:
+/// the cached sync state is the local source of truth until the next provider
+/// sync reconciles the alert against Komari again.
+fn mutate_komari_alert(
+    app: &tauri::AppHandle,
+    client: &Client,
+    host: &HostProfile,
+    integration_id: &str,
+    alert_id: &str,
+    action: &str,
+    operation_job_id: &str,
+) -> Result<Value, String> {
+    let integration_id = integration_id.trim();
+    let alert_id = alert_id.trim();
+    if integration_id.is_empty() || alert_id.is_empty() {
+        return Err("KOMARI_ALERT_NOT_FOUND".into());
+    }
+    let integration = komari::list_komari_integrations(app.clone(), client.vault_id.clone())?
+        .into_iter()
+        .find(|integration| integration.enabled && integration.id == integration_id)
+        .ok_or("KOMARI_INTEGRATION_NOT_FOUND")?;
+    let mapped_nodes = komari_persistence::list_komari_mappings(app.clone(), None)?
+        .into_iter()
+        .filter(|mapping| mapping.integration_id == integration.id && mapping.host_id == host.id)
+        .map(|mapping| mapping.node_id)
+        .collect::<HashSet<_>>();
+    let state = komari_persistence::get_komari_sync_state(app.clone(), integration.id.clone())?
+        .ok_or("KOMARI_ALERT_NOT_FOUND")?;
+    let mut summary = state.alert_summary.ok_or("KOMARI_ALERT_NOT_FOUND")?;
+    let now = now_unix_ms();
+    let (alert, audit_event) = {
+        let summary_object = summary
+            .as_object_mut()
+            .ok_or("KOMARI_ALERT_STATE_INVALID")?;
+        let alerts = summary_object
+            .get_mut("alerts")
+            .and_then(Value::as_array_mut)
+            .ok_or("KOMARI_ALERT_NOT_FOUND")?;
+        let alert = alerts
+            .iter_mut()
+            .find(|alert| {
+                alert["alertId"].as_str() == Some(alert_id)
+                    && alert["integrationId"]
+                        .as_str()
+                        .map_or(true, |value| value == integration_id)
+                    && (alert["hostId"].as_str() == Some(host.id.as_str())
+                        || alert["nodeId"]
+                            .as_str()
+                            .is_some_and(|node_id| mapped_nodes.contains(node_id)))
+            })
+            .ok_or("KOMARI_ALERT_NOT_FOUND")?;
+        if action == "acknowledge" && alert["status"].as_str() == Some("active") {
+            alert["status"] = json!("acknowledged");
+            alert["acknowledgedAt"] = json!(now);
+            alert["acknowledgedBy"] = json!(format!("mcp-client:{}", client.id));
+        } else if action == "close" {
+            alert["status"] = json!("closed");
+            alert["closedAt"] = json!(now);
+        }
+        // Keep the first confirmed MCP lifecycle operation discoverable from
+        // the alert row. A prior diagnostic/remediation link remains intact;
+        // every subsequent action is still represented in the audit event.
+        if alert["relatedOperationJobId"].is_null() {
+            alert["relatedOperationJobId"] = json!(operation_job_id);
+        }
+        let event = json!({
+            "auditId": format!("komari-{}-{}", action, uuid::Uuid::new_v4()),
+            "alertId": alert_id,
+            "fingerprint": alert["fingerprint"].clone(),
+            "event": if action == "acknowledge" { "acknowledged" } else { "closed" },
+            "status": alert["status"].clone(),
+            "actor": format!("mcp-client:{}", client.id),
+            "operationJobId": operation_job_id,
+            "at": now,
+        });
+        (alert.clone(), event)
+    };
+    let summary_object = summary
+        .as_object_mut()
+        .ok_or("KOMARI_ALERT_STATE_INVALID")?;
+    let audit_rows = summary_object
+        .entry("audit")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or("KOMARI_ALERT_STATE_INVALID")?;
+    audit_rows.push(audit_event.clone());
+    if audit_rows.len() > 1_000 {
+        let drain = audit_rows.len() - 1_000;
+        audit_rows.drain(0..drain);
+    }
+    let alert_rows = summary_object
+        .get("alerts")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let count_status = |status: &str| {
+        alert_rows
+            .iter()
+            .filter(|alert| alert["status"].as_str() == Some(status))
+            .count() as i64
+    };
+    let active = count_status("active");
+    let acknowledged = count_status("acknowledged");
+    let resolved = count_status("resolved");
+    let closed = count_status("closed");
+    let lifecycle = summary_object.entry("summary").or_insert_with(|| json!({}));
+    let lifecycle = lifecycle
+        .as_object_mut()
+        .ok_or("KOMARI_ALERT_STATE_INVALID")?;
+    lifecycle
+        .entry("total")
+        .or_insert_with(|| json!(alert_rows.len() as i64));
+    lifecycle.entry("active").or_insert_with(|| json!(active));
+    lifecycle.insert("open".into(), json!(active + acknowledged));
+    lifecycle.insert("acknowledged".into(), json!(acknowledged));
+    lifecycle.insert("resolved".into(), json!(resolved));
+    lifecycle.insert("closed".into(), json!(closed));
+    lifecycle.insert("localUpdatedAt".into(), json!(now));
+    komari_persistence::upsert_komari_sync_state(
+        app.clone(),
+        komari_persistence::KomariSyncStatePayload {
+            integration_id: state.integration_id,
+            last_synced_at: state.last_synced_at,
+            ttl_ms: state.ttl_ms,
+            alert_summary: Some(summary),
+            updated_at: Some(now),
+        },
+    )?;
+    Ok(json!({
+        "integrationId": integration_id,
+        "alert": alert,
+        "audit": audit_event,
+        "localOnly": true,
+        "observedAt": now,
+    }))
+}
+
 fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Result<Value, String> {
     let hosts = load_hosts(app, Some(&client.vault_id))?;
     if tool == "get_command_result" {
@@ -901,6 +1039,9 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                 "notice": "Alert records are local lifecycle metadata. Acknowledgement and closure do not change Komari remotely; use a linked Probe/SSH OperationJob to diagnose or recover the host.",
             }))
         }
+        "acknowledge_server_alert" | "close_server_alert" => {
+            submit_local_alert_action(app, client, host, tool, args)
+        }
         "get_server_operations" => {
             let status = args["status"].as_str().map(str::to_owned);
             if let Some(status) = status.as_deref() {
@@ -986,6 +1127,197 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
             )
         }
         _ => submit(app, client, host, tool, args),
+    }
+}
+
+fn submit_local_alert_action(
+    app: &tauri::AppHandle,
+    client: &Client,
+    host: &HostProfile,
+    tool: &str,
+    args: Value,
+) -> Result<Value, String> {
+    let request_id = args["requestId"].as_str().ok_or("REQUEST_ID_REQUIRED")?;
+    let integration_id = args["integrationId"]
+        .as_str()
+        .ok_or("KOMARI_INTEGRATION_REQUIRED")?;
+    let alert_id = args["alertId"].as_str().ok_or("KOMARI_ALERT_REQUIRED")?;
+    let hash = policy::digest(
+        serde_json::to_vec(&json!([tool, args, policy::identity(host)]))
+            .map_err(|error| error.to_string())?,
+    );
+    recheck(app, client, host)?;
+    let actor = format!("mcp-client:{}", client.id);
+    let action = if tool == "acknowledge_server_alert" {
+        "acknowledge"
+    } else {
+        "close"
+    };
+    let operation_action = format!("mcp.{tool}");
+    if let Some(operation_job) = operation_jobs::operation_job_find_by_request(
+        app.clone(),
+        &client.vault_id,
+        &host.id,
+        &actor,
+        &operation_action,
+        request_id,
+    )? {
+        let request_summary = format!("requestHash={hash}");
+        if operation_job.params_summary.as_deref() != Some(request_summary.as_str()) {
+            return Err(
+                "REQUEST_ID_CONFLICT: use a new requestId for a different operation".into(),
+            );
+        }
+        let operation_job_json = serde_json::to_value(&operation_job)
+            .map_err(|_| "OPERATION_JOB_SERIALIZATION_FAILED")?;
+        return Ok(json!({
+            "jobId": operation_job.job_id,
+            "operationJobId": operation_job.job_id,
+            "operationAuditId": operation_job.audit_id,
+            "status": operation_job.status,
+            "operationJob": operation_job_json,
+            "deduplicated": true,
+            "localOnly": true,
+        }));
+    }
+    let operation_job = operation_jobs::operation_job_create(
+        app.clone(),
+        operation_jobs::CreateOperationJobRequest {
+            host_id: Some(host.id.clone()),
+            vault_id: Some(client.vault_id.clone()),
+            host_name: Some(host.name.clone()),
+            host_address: Some(host.address.clone()),
+            username: Some(host.username.clone()),
+            source: "mcp".into(),
+            actor: Some(actor.clone()),
+            action: operation_action,
+            target: format!("komari-alert:{alert_id}"),
+            risk: "low".into(),
+            provider: Some("komari-local".into()),
+            transport: Some("local".into()),
+            params_summary: Some(format!("requestHash={hash}")),
+            confirmation_required: false,
+            request_id: Some(request_id.to_string()),
+        },
+    )?;
+    if let Err(error) = store::audit(app, &client.id, Some(&host.id), tool, "starting") {
+        log::error!("MCP local alert audit persistence failed: {error}");
+        let _ = operation_jobs::operation_job_update(
+            app.clone(),
+            operation_jobs::UpdateOperationJobRequest {
+                job_id: operation_job.job_id,
+                status: "failed".into(),
+                confirmation_status: None,
+                confirmed_by: None,
+                result_summary: None,
+                error_code: Some("mcp_access_audit_failed".into()),
+                error_summary: Some("Could not persist the MCP access audit record".into()),
+                actor: Some(actor),
+            },
+        );
+        return Err("MCP_AUDIT_FAILED".into());
+    }
+    let running = operation_jobs::operation_job_update(
+        app.clone(),
+        operation_jobs::UpdateOperationJobRequest {
+            job_id: operation_job.job_id.clone(),
+            status: "running".into(),
+            confirmation_status: None,
+            confirmed_by: None,
+            result_summary: None,
+            error_code: None,
+            error_summary: None,
+            actor: Some(actor.clone()),
+        },
+    );
+    if let Err(error) = running {
+        log::error!("MCP local alert operation start failed: {error}");
+        let _ = operation_jobs::operation_job_update(
+            app.clone(),
+            operation_jobs::UpdateOperationJobRequest {
+                job_id: operation_job.job_id,
+                status: "failed".into(),
+                confirmation_status: None,
+                confirmed_by: None,
+                result_summary: None,
+                error_code: Some("mcp_operation_start_failed".into()),
+                error_summary: Some("Could not mark the local alert action as running".into()),
+                actor: Some(actor),
+            },
+        );
+        return Err("MCP_OPERATION_START_FAILED".into());
+    }
+    let result = mutate_komari_alert(
+        app,
+        client,
+        host,
+        integration_id,
+        alert_id,
+        action,
+        &operation_job.job_id,
+    );
+    match result {
+        Ok(mut result) => {
+            let summary = format!("alertId={} action={} local-only=true", alert_id, action);
+            let update = operation_jobs::UpdateOperationJobRequest {
+                job_id: operation_job.job_id.clone(),
+                status: "completed".into(),
+                confirmation_status: None,
+                confirmed_by: None,
+                result_summary: Some(summary),
+                error_code: None,
+                error_summary: None,
+                actor: Some(actor.clone()),
+            };
+            let completed = match operation_jobs::operation_job_update(app.clone(), update.clone())
+                .or_else(|error| {
+                    log::error!("MCP local alert completion audit failed: {error}; retrying once");
+                    operation_jobs::operation_job_update(app.clone(), update)
+                }) {
+                Ok(job) => job,
+                Err(error) => {
+                    log::error!("MCP local alert completion audit retry failed: {error}");
+                    let _ = operation_jobs::operation_job_update(
+                        app.clone(),
+                        operation_jobs::UpdateOperationJobRequest {
+                            job_id: operation_job.job_id,
+                            status: "failed".into(),
+                            confirmation_status: None,
+                            confirmed_by: None,
+                            result_summary: None,
+                            error_code: Some("mcp_operation_audit_failed".into()),
+                            error_summary: Some(
+                                "Could not persist the completed local alert operation audit"
+                                    .into(),
+                            ),
+                            actor: Some(actor),
+                        },
+                    );
+                    return Err("MCP_OPERATION_AUDIT_FAILED".into());
+                }
+            };
+            result["jobId"] = json!(completed.job_id);
+            result["operationJobId"] = json!(completed.job_id);
+            result["operationAuditId"] = json!(completed.audit_id);
+            result["status"] = json!(completed.status);
+            result["operationJob"] = serde_json::to_value(completed)
+                .map_err(|_| "OPERATION_JOB_SERIALIZATION_FAILED")?;
+            Ok(result)
+        }
+        Err(error) => {
+            let update = operation_jobs::UpdateOperationJobRequest {
+                job_id: operation_job.job_id.clone(),
+                status: "failed".into(),
+                confirmation_status: None,
+                confirmed_by: None,
+                result_summary: None,
+                error_code: Some("komari_alert_action_failed".into()),
+                error_summary: Some(error.clone()),
+                actor: Some(actor),
+            };
+            let _ = operation_jobs::operation_job_update(app.clone(), update);
+            Err(error)
+        }
     }
 }
 

@@ -115,6 +115,12 @@ fn definitions() -> Vec<Value> {
         json!({"hostId":host}), vec!["hostId"], true);
     add("get_server_alerts", "Read the persisted Komari alert lifecycle and audit events for one authorized server. Alert acknowledgement/closure is local metadata; use refresh_server_info with alertId to link a confirmed diagnostic OperationJob.",
         json!({"hostId":host}), vec!["hostId"], true);
+    add("acknowledge_server_alert", "Acknowledge one persisted Komari alert locally and append a lifecycle audit event. This never calls Komari or changes the remote host. Requires manageAlerts and a unique requestId; the returned OperationJob is the canonical local audit record.",
+        json!({"hostId":host,"integrationId":string(240),"alertId":string(240),"requestId":request}),
+        vec!["hostId","integrationId","alertId","requestId"], false);
+    add("close_server_alert", "Close one persisted Komari alert locally and append a lifecycle audit event. This never calls Komari or changes the remote host. Requires manageAlerts and a unique requestId; the returned OperationJob is the canonical local audit record.",
+        json!({"hostId":host,"integrationId":string(240),"alertId":string(240),"requestId":request}),
+        vec!["hostId","integrationId","alertId","requestId"], false);
     add("get_server_metrics", "Read up to 24 hours of observed metrics. Gaps are unknown, not zero. History is paginated and covers only application sampling periods.",
         json!({"hostId":host,"from":integer(0,i64::MAX as u64),"to":integer(0,i64::MAX as u64),"offset":integer(0,100000),"limit":integer(1,500)}), vec!["hostId"], true);
     add("get_server_operations", "Read recent OperationJob states and audit events for one authorized server. Results are local ShellBeam records, bounded and sanitized; no remote operation is started and command output is never included. Use this to inspect confirmation, completion, failure and unknown outcomes after a Workspace or MCP action.",
@@ -159,6 +165,18 @@ mod tests {
         assert!(validate_arguments("get_server_inventory", &json!({})).is_err());
         assert!(validate_arguments("get_server_probe_state", &json!({"hostId":"host-1"})).is_ok());
         assert!(validate_arguments("get_server_alerts", &json!({"hostId":"host-1"})).is_ok());
+        for tool in ["acknowledge_server_alert", "close_server_alert"] {
+            assert!(validate_arguments(
+                tool,
+                &json!({"hostId":"host-1","integrationId":"komari","alertId":"alert-1","requestId":"request-1"})
+            )
+            .is_ok());
+            assert!(validate_arguments(
+                tool,
+                &json!({"hostId":"host-1","integrationId":"komari","alertId":"alert-1"})
+            )
+            .is_err());
+        }
         assert!(validate_arguments("get_server_operations", &json!({})).is_err());
         assert!(validate_arguments(
             "get_server_operations",

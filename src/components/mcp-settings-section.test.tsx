@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'vault-a' }) }))
 
 const client = { id: 'client-a', name: 'Agent A', vaultId: 'vault-a', hosts: [{ id: 'h1', identity: 'hash' }],
-  permissions: { refresh: false, execute: false, readFiles: false, writeFiles: false }, createdAt: 1 }
+  permissions: { refresh: false, execute: false, readFiles: false, writeFiles: false, manageAlerts: false }, createdAt: 1 }
 const host = { id: 'h1', name: 'Dev Server', address: '192.0.2.10', username: 'deploy', port: 22 }
 
 describe('MCP settings', () => {
@@ -44,11 +44,26 @@ describe('MCP settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Authorize and generate configuration' }))
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('mcp_create_client', { payload: {
       name: 'Agent A', vaultId: 'vault-a', hostIds: ['h1'],
-      permissions: { refresh: false, execute: true, readFiles: false, writeFiles: false },
+      permissions: { refresh: false, execute: true, readFiles: false, writeFiles: false, manageAlerts: false },
     } }))
     expect((await screen.findByLabelText('MCP client configuration') as HTMLTextAreaElement).value).toContain('one-time-token')
     fireEvent.click(screen.getByRole('button', { name: 'Hide and discard configuration' }))
     expect(screen.queryByLabelText('MCP client configuration')).not.toBeInTheDocument()
+  })
+
+  it('keeps Komari alert acknowledgement and closure behind an explicit capability', async () => {
+    render(<McpSettingsSection />)
+    await screen.findByText('Dev Server')
+    const alertPermission = screen.getByLabelText(/Acknowledge or close local Komari alerts/)
+    expect(alertPermission).not.toBeChecked()
+    fireEvent.change(screen.getByLabelText('Client name'), { target: { value: 'Alert Agent' } })
+    fireEvent.click(screen.getByLabelText(/Dev Server/))
+    fireEvent.click(alertPermission)
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize and generate configuration' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('mcp_create_client', { payload: {
+      name: 'Alert Agent', vaultId: 'vault-a', hostIds: ['h1'],
+      permissions: { refresh: false, execute: false, readFiles: false, writeFiles: false, manageAlerts: true },
+    } }))
   })
 
   it('requires a second click before revocation', async () => {

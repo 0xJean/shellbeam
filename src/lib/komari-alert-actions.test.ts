@@ -60,4 +60,16 @@ describe('persistKomariAlertAction', () => {
   it('rejects unknown alerts without persisting', async () => {
     await expect(persistKomariAlertAction('close', { integrationId: 'i', state, alertId: 'missing' })).rejects.toThrow('not found')
   })
+
+  it('does not append duplicate lifecycle audit rows when a request is retried', async () => {
+    const acknowledged = await persistKomariAlertAction('acknowledge', { integrationId: 'i', state, alertId: 'a1', actor: 'alice', now: 6 })
+    const retriedAck = await persistKomariAlertAction('acknowledge', { integrationId: 'i', state: acknowledged.state, alertId: 'a1', actor: 'alice', now: 7 })
+    expect(retriedAck.state).toEqual(acknowledged.state)
+    expect(retriedAck.state.audit).toHaveLength(1)
+
+    const closed = await persistKomariAlertAction('close', { integrationId: 'i', state: retriedAck.state, alertId: 'a1', actor: 'alice', now: 8 })
+    const retriedClose = await persistKomariAlertAction('close', { integrationId: 'i', state: closed.state, alertId: 'a1', actor: 'alice', now: 9 })
+    expect(retriedClose.state).toEqual(closed.state)
+    expect(retriedClose.state.audit).toHaveLength(2)
+  })
 })

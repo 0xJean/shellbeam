@@ -5,6 +5,7 @@ export interface McpPermissions {
   execute: boolean
   readFiles: boolean
   writeFiles: boolean
+  manageAlerts: boolean
 }
 
 export const DEFAULT_MCP_PERMISSIONS: McpPermissions = {
@@ -12,6 +13,7 @@ export const DEFAULT_MCP_PERMISSIONS: McpPermissions = {
   execute: false,
   readFiles: false,
   writeFiles: false,
+  manageAlerts: false,
 }
 
 export interface McpClient {

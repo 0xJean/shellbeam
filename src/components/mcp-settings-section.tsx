@@ -165,7 +165,8 @@ export function McpSettingsSection() {
           </fieldset>
           <fieldset data-tour="mcp-permissions" disabled={busy} className="space-y-2">
             <legend className="mb-2 text-xs text-muted-foreground">{t('mcp.permissionsDescription')}</legend>
-            {(['refresh', 'execute', 'readFiles', 'writeFiles'] as const).map((permission) => (
+            <p className="mb-2 text-xs text-muted-foreground">{t('mcp.alertsDescription')}</p>
+            {(['refresh', 'execute', 'readFiles', 'writeFiles', 'manageAlerts'] as const).map((permission) => (
               <label key={permission} className="flex items-start gap-2 text-xs">
                 <input type="checkbox" checked={permissions[permission]} className="mt-0.5"
                   onChange={(event) => setPermissions((previous) => ({ ...previous, [permission]: event.target.checked }))} />

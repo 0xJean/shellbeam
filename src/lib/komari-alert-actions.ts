@@ -81,6 +81,12 @@ export async function persistKomariAlertAction(
 ): Promise<PersistKomariAlertActionResult> {
   const alert = options.state.alerts.find((candidate) => candidate.alertId === options.alertId)
   if (!alert) throw new Error('Komari alert was not found')
+  // Retries after a lost response must not append another lifecycle audit row
+  // once the requested transition has already been applied.
+  if ((action === 'acknowledge' && alert.status !== 'active')
+    || (action === 'close' && alert.status === 'closed')) {
+    return { state: options.state, alert }
+  }
   const now = options.now ?? Date.now()
   const actor = options.actor ?? 'local-user'
   const result = action === 'acknowledge'

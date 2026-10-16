@@ -12,7 +12,7 @@ environment installation, automatic rollback, or a remote agent/daemon.
    to remain running. No public or LAN listener is created.
 3. In the intended vault, choose a client name and individual servers. Cached
    information is the default; separately opt into refresh, command execution,
-   file reading and file writing. New hosts are never included automatically.
+   file reading, file writing and local Komari alert management. New hosts are never included automatically.
 4. Choose Codex (TOML), Claude Desktop (JSON), or another stdio client (JSON).
    Generate the configuration and merge only its ShellBeam entry into
    your local MCP client's configuration. Keep the token secret. It is shown
@@ -97,6 +97,10 @@ Protocol references: [lifecycle](https://modelcontextprotocol.io/specification/2
 | `get_server_inventory` | Cached information | Asset snapshot and latest on-demand probe |
 | `get_server_metrics` | Cached information | Latest sample and paginated 24-hour history |
 | `get_server_operations` | Cached information | Authorized host OperationJob states and bounded audit metadata |
+| `get_server_probe_state` | Cached information | Komari/Probe snapshots, mappings and freshness |
+| `get_server_alerts` | Cached information | Local Komari alert lifecycle and audit rows |
+| `acknowledge_server_alert` | Manage alerts | Local acknowledgement plus an auditable OperationJob |
+| `close_server_alert` | Manage alerts | Local closure plus an auditable OperationJob |
 | `refresh_server_info` | Refresh | Job ID for a bounded Linux read-only probe |
 | `run_command` | Execute | Job ID for an arbitrary SSH command |
 | `get_command_result` | Own scoped jobs | Status, bounded output or restart uncertainty |
@@ -202,3 +206,15 @@ local Komari alert. The link is diagnostic context only: a successful SSH or
 Probe operation does not resolve the alert. A later Komari sync remains the
 source of truth for recovery, and an unknown operation must be reconciled before
 retrying.
+
+MCP clients with the `manageAlerts` capability may call
+`acknowledge_server_alert` or `close_server_alert` with `hostId`,
+`integrationId`, `alertId` and a unique `requestId`. These actions update only
+the persisted local Komari lifecycle; they never call the Komari endpoint or
+change the remote host. Each request creates a linked `OperationJob` with
+`source=mcp`, `provider=komari-local` and `transport=local`, moves through
+queued/running/completed or failed, and appends both an OperationAudit row and a
+Komari lifecycle audit event. Reusing the same request ID and payload returns
+the canonical OperationJob, while a payload conflict is rejected. Query
+`get_server_operations` or `get_server_alerts` after a restart to recover the
+operation and alert audit state.
