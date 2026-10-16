@@ -9,6 +9,7 @@ import {
   upsertShellbeamAgent,
   type ShellbeamAgentRecord,
 } from '@/lib/shellbeam-agent'
+import { runShellbeamAgentArtifactOperation, type ShellbeamAgentArtifactPolicy } from '@/lib/shellbeam-agent-artifact'
 import { AlertTriangle, Bot, CheckCircle2, CircleDashed, RefreshCw, ShieldAlert, Trash2, Upload } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -16,6 +17,11 @@ interface ShellbeamAgentPanelProps {
   host: HostProfile | null
   vaultId?: string
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
+  /** Optional trusted release channel. When present, install/upgrade uses the
+   * signed artifact flow; without it the existing explicit CLI operation is
+   * retained for manually managed environments. */
+  artifactManifest?: unknown
+  artifactPolicy?: ShellbeamAgentArtifactPolicy
 }
 
 function statusTone(status: ShellbeamAgentRecord['status']) {
@@ -25,7 +31,7 @@ function statusTone(status: ShellbeamAgentRecord['status']) {
   return 'text-[var(--workspace-text-muted)]'
 }
 
-export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret }: ShellbeamAgentPanelProps) {
+export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret, artifactManifest, artifactPolicy }: ShellbeamAgentPanelProps) {
   const { t } = useT()
   const [record, setRecord] = useState<ShellbeamAgentRecord | null>(null)
   const [loading, setLoading] = useState(false)
@@ -76,14 +82,27 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
     setRunning(action)
     setError('')
     try {
-      await runShellbeamAgentOperation({
-        host,
-        vaultId,
-        resolveAuthSecret,
-        action,
-        confirmMessage: t(`workspace.agentProbe.confirm.${action}`),
-        onRecord: setRecord,
-      })
+      if ((action === 'install' || action === 'upgrade') && artifactManifest && artifactPolicy) {
+        await runShellbeamAgentArtifactOperation({
+          host,
+          vaultId,
+          resolveAuthSecret,
+          manifest: artifactManifest,
+          policy: artifactPolicy,
+          action,
+          confirmMessage: t(`workspace.agentProbe.confirm.${action}`),
+          onRecord: setRecord,
+        })
+      } else {
+        await runShellbeamAgentOperation({
+          host,
+          vaultId,
+          resolveAuthSecret,
+          action,
+          confirmMessage: t(`workspace.agentProbe.confirm.${action}`),
+          onRecord: setRecord,
+        })
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -133,6 +152,9 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
       {record?.lastError && <div className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{record.lastError}</div>}
       {record?.transport === 'proxy-jump' && <div className="mt-3 text-xs text-muted-foreground">{t('workspace.agentProbe.proxyJump')}</div>}
       {error && <div className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />{error}</div>}
+      <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
+        {artifactManifest && artifactPolicy ? t('workspace.agentProbe.artifactVerified') : t('workspace.agentProbe.artifactUnavailable')}
+      </p>
 
       <div className="mt-4 flex flex-wrap gap-2">
         <Button type="button" size="sm" variant="outline" disabled={!canOperate || record?.status === 'installed'} onClick={() => void operate('install')}>

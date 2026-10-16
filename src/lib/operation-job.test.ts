@@ -67,6 +67,38 @@ describe('operation jobs', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'operation_job_update', expect.objectContaining({ request: expect.objectContaining({ status: 'cancelled', confirmationStatus: 'rejected' }) }))
   })
 
+  it('keeps provider-specific rollback state in the durable job audit', async () => {
+    const queued = { jobId: 'job-2', auditId: 'audit-2', status: 'queued' }
+    const running = { ...queued, status: 'running' }
+    const failed = { ...queued, status: 'failed' }
+    invoke.mockResolvedValueOnce(queued).mockResolvedValueOnce(running).mockResolvedValueOnce(failed)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    await runConfirmedOperation({
+      host,
+      action: 'agent.install.artifact',
+      target: 'shellbeam-agent 0.2.0',
+      risk: 'high',
+      provider: 'shellbeam-agent',
+      confirmMessage: 'Confirm?',
+      execute: async () => ({ exitCode: 29, durationMs: 7 }),
+      getResult: (result) => ({
+        ...result,
+        resultSummary: 'exit=29; durationMs=7; rollback=verified',
+        errorCode: 'artifact_install_failed_rolled_back',
+        errorSummary: 'Artifact activation failed; rollback=verified.',
+      }),
+    })
+
+    expect(invoke).toHaveBeenNthCalledWith(3, 'operation_job_update', {
+      request: expect.objectContaining({
+        status: 'failed',
+        resultSummary: 'exit=29; durationMs=7; rollback=verified',
+        errorCode: 'artifact_install_failed_rolled_back',
+      }),
+    })
+  })
+
   it('passes host-scoped job and audit filters through to the local store', async () => {
     invoke.mockResolvedValueOnce([]).mockResolvedValueOnce([])
 

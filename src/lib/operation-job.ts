@@ -164,7 +164,11 @@ export interface RunConfirmedOperationOptions<T> {
   paramsSummary?: string
   confirmMessage: string
   execute: () => Promise<T>
-  getResult?: (value: T) => Pick<CommandRunResult, 'exitCode' | 'durationMs'>
+  getResult?: (value: T) => Pick<CommandRunResult, 'exitCode' | 'durationMs'> & {
+    resultSummary?: string
+    errorCode?: string
+    errorSummary?: string
+  }
   onJob?: (job: OperationJob) => void
   provider?: string
   transport?: string
@@ -233,8 +237,11 @@ export async function runConfirmedOperation<T>({
     const completed = await updateOperationJob({
       jobId: job.jobId,
       status: result && result.exitCode !== 0 ? 'failed' : 'completed',
-      resultSummary: result ? summarizeRemoteResult(result) : 'completed',
-      ...(result && result.exitCode !== 0 ? { errorCode: `exit_${result.exitCode}`, errorSummary: 'Remote command exited with a non-zero status' } : {}),
+      resultSummary: result?.resultSummary ?? (result ? summarizeRemoteResult(result) : 'completed'),
+      ...(result && result.exitCode !== 0 ? {
+        errorCode: result.errorCode ?? `exit_${result.exitCode}`,
+        errorSummary: result.errorSummary ?? 'Remote command exited with a non-zero status',
+      } : {}),
     })
     onJob?.(completed)
     return { value, job: completed }

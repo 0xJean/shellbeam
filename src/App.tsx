@@ -5,6 +5,7 @@ import { HostsProvider, useHosts } from '@/contexts/hosts-context'
 import { SessionsProvider } from '@/contexts/sessions-context'
 import { VaultProvider } from '@/contexts/vault-context'
 import { ServerMonitorRuntime } from '@/components/server-monitor-runtime'
+import { ShellbeamAgentRuntime } from '@/components/shellbeam-agent-runtime'
 import { PcLayout } from '@/layouts/pc-layout'
 import { listCommandHistory } from '@/lib/history'
 import { I18nProvider } from '@/lib/i18n'
@@ -73,6 +74,7 @@ function AppInnerWithVault() {
     <VaultProvider setOutput={setOutput}>
       <HostsProvider>
         <ServerMonitorRuntime />
+        <ShellbeamAgentRuntime />
         <SessionsProvider setOutput={setOutput}>
           <AppInner />
         </SessionsProvider>
