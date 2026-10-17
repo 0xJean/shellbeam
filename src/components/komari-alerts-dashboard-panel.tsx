@@ -6,6 +6,7 @@ import { loadNotificationPolicy } from '@/lib/notification-policy'
 import type { NotificationDispatchState } from '@/lib/notification-dispatch'
 import {
   dispatchAndPersistKomariAlertNotifications,
+  emitKomariAlertNotification,
   type KomariAlertNotificationSummary,
 } from '@/lib/komari-alert-notifications'
 import {
@@ -119,7 +120,7 @@ export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHo
             audit: entry.state.audit.filter((audit) => audit.at >= entry.state.summary.localUpdatedAt),
             // The in-app alert panel is the local sink. Delivery state stores
             // metadata only, while the panel remains the payload surface.
-            onLocal: async () => undefined,
+            onLocal: emitKomariAlertNotification,
           })
           return { ...entry, notificationState: result.state, notificationSummary: result.summary }
         } catch {
@@ -192,7 +193,7 @@ export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHo
         policy: loadNotificationPolicy(),
         audit: result.state.audit.slice(-1),
         state: entry.notificationState,
-        onLocal: async () => undefined,
+        onLocal: emitKomariAlertNotification,
       })
       setEntries((current) => current.map((candidate) => candidate.integrationId === entry.integrationId
         ? { ...candidate, state: result.state, notificationState: notificationResult.state, notificationSummary: notificationResult.summary }

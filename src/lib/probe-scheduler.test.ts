@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HostProfile } from './hosts'
 import { createProbeObservation, type ProbeProvider, type ProbeSnapshot } from './probe-provider'
 import { ProbeProviderRegistry, refreshProbeSnapshotFreshness } from './probe-scheduler'
 import type { PersistedProbeSnapshotRecord } from './probe-persistence'
+import { clearProbeRetrySettings, saveProbeRetrySettings } from './probe-retry-settings'
+
+afterEach(() => clearProbeRetrySettings())
 
 const host = (id: string): HostProfile => ({
   id,
@@ -103,6 +106,25 @@ describe('ProbeProviderRegistry', () => {
     expect(calls).toBe(3)
     expect(result.snapshot.health).toBe('online')
     expect(result.retry).toEqual({ attempts: 2, exhausted: false, error: 'temporary network failure' })
+  })
+
+  it('uses the persisted retry policy when a request does not override it', async () => {
+    saveProbeRetrySettings({ maxRetries: 1, retryDelayMs: 0 })
+    let calls = 0
+    const item = provider('configured-retry-agent', async () => {
+      calls += 1
+      throw new Error('temporary outage')
+    })
+    const registry = new ProbeProviderRegistry(1).register(item)
+    const result = await registry.probe({
+      host: host('configured-retry-host'),
+      resolveAuthSecret: async () => '',
+      providerId: item.ref.id,
+      sections: ['metrics'],
+      now: 100,
+    }).catch((error) => ({ error }))
+    expect(calls).toBe(2)
+    expect(result).toMatchObject({ error: expect.any(Error) })
   })
 
   it('returns stale recovery and records retry exhaustion after bounded failures', async () => {

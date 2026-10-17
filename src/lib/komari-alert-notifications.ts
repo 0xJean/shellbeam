@@ -4,6 +4,7 @@ import {
   type NotificationDispatchResult,
   type NotificationDispatchState,
   type NotificationDeliveryRecord,
+  type NotificationPayload,
 } from './notification-dispatch'
 import { normalizeNotificationPolicy, type NotificationEvent, type NotificationPolicy, type NotificationPolicyInput } from './notification-policy'
 import type {
@@ -59,6 +60,18 @@ const MAX_TEXT_LENGTH = 240
 
 export const KOMARI_NOTIFICATION_STATE_STORAGE_PREFIX = 'shellbeam.komariNotificationState.v1'
 const MAX_STORED_DELIVERIES = 1_000
+
+/** Browser event used by the in-app notification surface. Keeping the sink
+ * in this module makes recovery notifications identical whether they were
+ * emitted by a foreground sync, a cached cross-session hydration, or the
+ * alert dashboard action flow. Consumers may subscribe without coupling to
+ * Komari persistence or provider credentials. */
+export const KOMARI_NOTIFICATION_EVENT = 'shellbeam:notification'
+
+export function emitKomariAlertNotification(payload: NotificationPayload): void {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
+  window.dispatchEvent(new CustomEvent(KOMARI_NOTIFICATION_EVENT, { detail: payload }))
+}
 
 function storageKey(integrationId: string) {
   const normalized = safeText(integrationId, 'default').toLowerCase().replace(/[^a-z0-9._:-]+/g, '_').slice(0, 160) || 'default'
@@ -164,6 +177,10 @@ export function komariAlertNotificationEvent(
       auditId: safeText(audit.auditId),
       alertKind: safeText(record.kind),
       lifecycle: event,
+      // A resolved lifecycle row is the durable recovery transition. Keep the
+      // canonical kind as alert.resolved for compatibility while exposing an
+      // explicit recovery marker to in-app/webhook consumers.
+      recovered: event === 'resolved',
       count: record.count,
       relatedOperationJobId: safeText(record.relatedOperationJobId) || undefined,
     },
@@ -208,6 +225,10 @@ export async function dispatchKomariAlertNotifications(
   let lastDeliveredAt: number | null = null
 
   const policy = normalizeNotificationPolicy(options.policy)
+  // A foreground sync should produce an in-app event even when its caller
+  // does not provide a custom sink. Tests, headless MCP callers and native
+  // workers can still opt out naturally when `window` is unavailable.
+  const onLocal = options.onLocal ?? (typeof window !== 'undefined' ? emitKomariAlertNotification : undefined)
   for (const audit of boundedRows) {
     if (!eventTypes.has(audit.event)) continue
     const record = recordForAudit(state, audit)
@@ -226,10 +247,20 @@ export async function dispatchKomariAlertNotifications(
       alreadyDelivered += 1
       continue
     }
+    // Retry only channels that have not accepted this immutable audit row.
+    // If a webhook was unavailable after the in-app event was delivered, a
+    // later cross-session refresh must not emit the same local alert again
+    // just because the global dedupe window has elapsed.
+    const pendingChannels = policy.channels.filter((channel) => !deliveredChannels.has(channel))
+    const pendingPolicy = pendingChannels.length === policy.channels.length
+      ? policy
+      : { ...policy, channels: pendingChannels }
     const result = await dispatchNotification(
       event,
       {
         ...options,
+        onLocal,
+        policy: pendingPolicy,
         state: dispatchState,
         now: options.now ?? audit.at,
       },

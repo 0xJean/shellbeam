@@ -14,12 +14,16 @@ import {
   upsertPersistedProbeSnapshot,
   type PersistedProbeSnapshotRecord,
 } from './probe-persistence'
+import {
+  DEFAULT_PROBE_RECOVERY_MAX_RETRIES,
+  DEFAULT_PROBE_RECOVERY_RETRY_DELAY_MS,
+  MAX_PROBE_RECOVERY_RETRY_DELAY_MS,
+} from './probe-scheduler-constants'
+import { loadProbeRetrySettings, type ProbeRetrySettings } from './probe-retry-settings'
 
 export const DEFAULT_PROBE_SCHEDULER_CONCURRENCY = 3
 /** Additional attempts made before returning a stale durable observation. */
-export const DEFAULT_PROBE_RECOVERY_MAX_RETRIES = 2
-export const DEFAULT_PROBE_RECOVERY_RETRY_DELAY_MS = 150
-export const MAX_PROBE_RECOVERY_RETRY_DELAY_MS = 2_000
+export { DEFAULT_PROBE_RECOVERY_MAX_RETRIES, DEFAULT_PROBE_RECOVERY_RETRY_DELAY_MS, MAX_PROBE_RECOVERY_RETRY_DELAY_MS }
 
 export interface ProbeScheduleRequest extends ProbeRequest {
   /** Vault scope for durable cache records. Requests without it remain
@@ -107,14 +111,14 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
-function retryDelayMs(request: ProbeScheduleRequest, attempt: number) {
-  const configured = request.retryDelayMs ?? DEFAULT_PROBE_RECOVERY_RETRY_DELAY_MS
+function retryDelayMs(request: ProbeScheduleRequest, attempt: number, settings: ProbeRetrySettings) {
+  const configured = request.retryDelayMs ?? settings.retryDelayMs
   const base = Number.isFinite(configured) ? Math.max(0, configured) : DEFAULT_PROBE_RECOVERY_RETRY_DELAY_MS
   return Math.min(MAX_PROBE_RECOVERY_RETRY_DELAY_MS, base * (2 ** Math.max(0, attempt - 1)))
 }
 
-function maxRetries(request: ProbeScheduleRequest) {
-  const configured = request.maxRetries ?? DEFAULT_PROBE_RECOVERY_MAX_RETRIES
+function maxRetries(request: ProbeScheduleRequest, settings: ProbeRetrySettings) {
+  const configured = request.maxRetries ?? settings.maxRetries
   return Math.max(0, Math.min(5, Number.isFinite(configured) ? Math.floor(configured) : DEFAULT_PROBE_RECOVERY_MAX_RETRIES))
 }
 
@@ -329,7 +333,8 @@ export class ProbeProviderRegistry {
     const work = (async () => {
       await this.acquire()
       try {
-        const retryBudget = maxRetries(request)
+        const retrySettings = loadProbeRetrySettings()
+        const retryBudget = maxRetries(request, retrySettings)
         let snapshot: ProbeSnapshot | undefined
         let lastError: unknown
         let attempts = 0
@@ -346,7 +351,7 @@ export class ProbeProviderRegistry {
           }
           if (attempt >= retryBudget) break
           attempts += 1
-          const delay = retryDelayMs(request, attempts)
+          const delay = retryDelayMs(request, attempts, retrySettings)
           if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay))
         }
         if (!snapshot) throw lastError ?? new Error('probe_provider_failed')
@@ -374,7 +379,7 @@ export class ProbeProviderRegistry {
       } catch (error) {
         const fallback = this.cache.get(key)
         if (!fallback) throw error
-        const retry = { attempts: maxRetries(request), exhausted: true, error: errorMessage(error) }
+        const retry = { attempts: maxRetries(request, loadProbeRetrySettings()), exhausted: true, error: errorMessage(error) }
         const recovered = markProbeSnapshotRecovered(fallback.snapshot, error, now)
         const errors = [...recovered.errors]
         const staleIndex = errors.findIndex((entry) => entry.code === 'stale-cache-fallback')

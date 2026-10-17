@@ -21,7 +21,7 @@ import { listShellbeamAgents } from '@/lib/shellbeam-agent'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import { loadKomariPersistence, persistKomariAlertState, persistKomariSync } from '@/lib/komari-persistence'
 import { readKomariAlertState } from '@/lib/komari-persistence'
-import { dispatchAndPersistKomariAlertNotifications } from '@/lib/komari-alert-notifications'
+import { dispatchAndPersistKomariAlertNotifications, emitKomariAlertNotification } from '@/lib/komari-alert-notifications'
 import { loadNotificationPolicy } from '@/lib/notification-policy'
 import { runBatchDockerOperation, runBatchOperation, runBatchServiceOperation, type BatchOperationResult } from '@/lib/multi-host-operations'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
@@ -37,8 +37,18 @@ import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './
 type SortMode = 'az' | 'za' | 'newest' | 'oldest'
 type HostStatusFilter = 'all' | 'online' | 'stale' | 'checking' | 'offline' | 'paused' | 'unknown' | 'jump-unavailable'
 type HostHealthStatus = Exclude<HostStatusFilter, 'all'>
+export type HostOpsRefreshStatus = 'idle' | 'refreshing' | 'fresh' | 'recovered' | 'error'
 const SORT_KEY = 'shellbeam.hostSortMode'
 const SHOW_HOST_SUMMARY_STRIP = false
+
+function formatHostOpsRefreshTime(timestamp: number | null): string {
+  if (!timestamp) return ''
+  return new Date(timestamp).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
 
 function getHostHealthStatus(view: HostOpsView | undefined, fallback: HostHealthStatus, loading: boolean): HostHealthStatus {
   if (view?.health.state === 'paused') return 'paused'
@@ -156,6 +166,49 @@ function HostSummaryStrip({
         </div>
       )}
     </div>
+  )
+}
+
+export function HostOpsRefreshIndicator({
+  status,
+  lastRefreshedAt,
+  error,
+}: {
+  status: HostOpsRefreshStatus
+  lastRefreshedAt: number | null
+  error: string | null
+}) {
+  const { t } = useT()
+  const time = formatHostOpsRefreshTime(lastRefreshedAt)
+  const label = status === 'refreshing'
+    ? t('hosts.refreshStatus.refreshing')
+    : status === 'recovered'
+      ? t('hosts.refreshStatus.recovered', { time })
+      : status === 'error'
+        ? t('hosts.refreshStatus.error')
+        : status === 'fresh'
+          ? t('hosts.refreshStatus.updated', { time })
+          : t('hosts.refreshStatus.idle')
+  const tone = status === 'error'
+    ? 'text-[color:var(--workspace-status-bad-text)]'
+    : status === 'recovered'
+      ? 'text-[color:var(--workspace-status-warn-text)]'
+      : status === 'refreshing'
+        ? 'text-[color:var(--workspace-status-info-text)]'
+        : 'text-[var(--workspace-text-subtle)]'
+
+  return (
+    <span
+      data-testid="host-ops-refresh-status"
+      data-status={status}
+      title={error ?? undefined}
+      role="status"
+      aria-live="polite"
+      className={cn('inline-flex min-w-0 items-center gap-1.5 text-[11px]', tone)}
+    >
+      <RefreshCw className={cn('h-3 w-3 shrink-0', status === 'refreshing' && 'animate-spin')} />
+      <span className="truncate">{label}</span>
+    </span>
   )
 }
 
@@ -286,8 +339,14 @@ export function HostsDashboard({
   const [komariProbeActionKey, setKomariProbeActionKey] = useState<string | null>(null)
   const [komariAlertActionKey, setKomariAlertActionKey] = useState<string | null>(null)
   const [hostOpsLoading, setHostOpsLoading] = useState(false)
+  const [hostOpsRefreshStatus, setHostOpsRefreshStatus] = useState<HostOpsRefreshStatus>('idle')
+  const [hostOpsLastRefreshedAt, setHostOpsLastRefreshedAt] = useState<number | null>(null)
+  const [hostOpsRefreshError, setHostOpsRefreshError] = useState<string | null>(null)
   const refreshHostOps = useCallback(async (forceKomari = false) => {
     setHostOpsLoading(true)
+    setHostOpsRefreshStatus('refreshing')
+    setHostOpsRefreshError(null)
+    let recoveredFromPersistence = false
     try {
       let komariSnapshots = undefined
       const komariRecords: Array<{
@@ -366,6 +425,7 @@ export function HostsDashboard({
         // the next scheduled refresh retries the endpoint.
         const recoveredRecords = await Promise.all(syncResults.map(async (result, index) => {
           if (result.status === 'fulfilled') return result.value
+          recoveredFromPersistence = true
           const integration = enabledIntegrations[index]
           const cached = await loadKomariPersistence(integration.id).catch(() => ({ snapshots: [], mappings: [], syncState: null, lastSyncedAt: null }))
           return {
@@ -391,11 +451,7 @@ export function HostsDashboard({
             await dispatchAndPersistKomariAlertNotifications(record.integrationId, record.alertState, {
               policy: notificationPolicy,
               audit: record.alertAudit,
-              onLocal: async (payload) => {
-                if (typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('shellbeam:notification', { detail: payload }))
-                }
-              },
+              onLocal: emitKomariAlertNotification,
             })
           } catch (error) {
             // A notification sink is optional; a delivery failure must not
@@ -411,6 +467,8 @@ export function HostsDashboard({
         vaultId: activeVaultId,
       })
       setHostOpsViews(views)
+      setHostOpsLastRefreshedAt(Date.now())
+      setHostOpsRefreshStatus(recoveredFromPersistence ? 'recovered' : 'fresh')
       if (komariRecords.length > 0) {
         const agents = await listShellbeamAgents({ vaultId: activeVaultId }).catch(() => [])
         setKomariProbeLinks(komariRecords.flatMap((record) => buildKomariProbeLinks({
@@ -430,14 +488,23 @@ export function HostsDashboard({
       // view visible and make one persistence-only read so a refresh failure
       // in another session never blanks the host list.
       console.warn('Host operations refresh failed; retaining persisted view', error)
+      setHostOpsRefreshError(error instanceof Error ? error.message : String(error))
       try {
         const persistedViews = await loadHostOpsViews(hosts, {
           auditLimit: 250,
           vaultId: activeVaultId,
         })
-        if (Object.keys(persistedViews).length > 0) setHostOpsViews(persistedViews)
+        if (Object.keys(persistedViews).length > 0) {
+          setHostOpsViews(persistedViews)
+          setHostOpsLastRefreshedAt(Date.now())
+          setHostOpsRefreshStatus('recovered')
+        } else {
+          setHostOpsRefreshStatus('error')
+        }
       } catch (fallbackError) {
         console.warn('Persisted host operations refresh failed', fallbackError)
+        setHostOpsRefreshError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError))
+        setHostOpsRefreshStatus('error')
       }
     } finally {
       setHostOpsLoading(false)
@@ -931,6 +998,22 @@ export function HostsDashboard({
         controls={
           <>
           <div className="flex-1" />
+          <HostOpsRefreshIndicator
+            status={hostOpsRefreshStatus}
+            lastRefreshedAt={hostOpsLastRefreshedAt}
+            error={hostOpsRefreshError}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void handleRefreshAll()}
+            disabled={hostOpsLoading}
+            className="h-9 gap-1.5 text-xs"
+            data-testid="host-ops-refresh"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', hostOpsLoading && 'animate-spin')} />
+            <span className="hidden sm:inline">{t('hosts.refreshOps')}</span>
+          </Button>
           {onScanHosts && filteredHosts.length > 0 && (
             <Button size="sm" variant="outline" onClick={() => void handleCheckAllStatus()} disabled={checkingStatus} className="h-9 gap-1.5 text-xs">
               <RefreshCw className={cn('h-3.5 w-3.5', checkingStatus && 'animate-spin')} />

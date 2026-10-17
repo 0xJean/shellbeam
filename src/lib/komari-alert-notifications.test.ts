@@ -39,7 +39,7 @@ describe('Komari alert notifications', () => {
     const event = komariAlertNotificationEvent(state.alerts[0]!, state.audit[2]!)
     expect(event).toMatchObject({ eventId: 'audit-resolved', source: 'komari', kind: 'alert.resolved', severity: 'critical', hostId: 'host-1', integrationId: 'prod', status: 'resolved', occurredAt: 3_000 })
     expect(event.message).toContain('recovered')
-    expect(event.metadata).toMatchObject({ alertId: 'alert-1', lifecycle: 'resolved', relatedOperationJobId: 'job-1' })
+    expect(event.metadata).toMatchObject({ alertId: 'alert-1', lifecycle: 'resolved', recovered: true, relatedOperationJobId: 'job-1' })
   })
 
   it('maps every supported lifecycle transition to a stable event kind', () => {
@@ -52,6 +52,47 @@ describe('Komari alert notifications', () => {
       at: 10_000 + index,
     }).kind)
     expect(kinds).toEqual(transitions.map((event) => `alert.${event}`))
+  })
+
+  it('marks resolved rows as recovery notifications and emits the default in-app event', async () => {
+    const received: unknown[] = []
+    const listener = (event: Event) => received.push((event as CustomEvent).detail)
+    window.addEventListener('shellbeam:notification', listener)
+    try {
+      const result = await dispatchKomariAlertNotifications(state, {
+        audit: [state.audit[2]!],
+        policy: { channels: ['local'], cooldownMs: 0 },
+        now: 3_000,
+      })
+      expect(result.summary).toMatchObject({ delivered: 1, failed: 0 })
+      expect(received).toHaveLength(1)
+      expect(received[0]).toMatchObject({
+        kind: 'alert.resolved',
+        status: 'resolved',
+        metadata: { lifecycle: 'resolved', recovered: true },
+      })
+    } finally {
+      window.removeEventListener('shellbeam:notification', listener)
+    }
+  })
+
+  it('retries only failed channels after a partial recovery notification delivery', async () => {
+    const onLocal = vi.fn()
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('', { status: 503 }))
+      .mockResolvedValueOnce(new Response('', { status: 200 }))
+    const policy = { channels: ['local', 'webhook'] as const, webhookUrl: 'https://alerts.example.test/hook', cooldownMs: 0, dedupeWindowMs: 0 }
+    const first = await dispatchKomariAlertNotifications(state, {
+      audit: [state.audit[2]!], policy, onLocal, fetchImpl, now: 3_000,
+    })
+    expect(first.events[0]?.deliveries.map((delivery) => delivery.status)).toEqual(['delivered', 'failed'])
+    const second = await dispatchKomariAlertNotifications(state, {
+      audit: [state.audit[2]!], policy, state: first.state, onLocal, fetchImpl, now: 90_000,
+    })
+    expect(second.events[0]?.deliveries.map((delivery) => delivery.channel)).toEqual(['webhook'])
+    expect(second.events[0]?.deliveries[0]?.status).toBe('delivered')
+    expect(onLocal).toHaveBeenCalledTimes(1)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
   it('dispatches only bounded lifecycle transitions and returns a summary', async () => {
