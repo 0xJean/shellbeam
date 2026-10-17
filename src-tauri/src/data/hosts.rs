@@ -496,6 +496,14 @@ pub fn delete_host(
     save_hosts(&app, &hosts, vid)?;
     if let Some(host) = deleted_host {
         delete_host_inventory_data(&app, &host)?;
+        if let Err(error) = crate::mcp::delete_project_deployments_for_host(
+            &app,
+            &normalized_vault_id(vid),
+            &host.id,
+        ) {
+            // Host deletion must remain usable even if the optional MCP store is busy.
+            log::warn!("Could not clean MCP deployment records for deleted host: {error}");
+        }
     }
     Ok(())
 }

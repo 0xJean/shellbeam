@@ -17,6 +17,9 @@ import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
 import { WorkspaceStatusCards } from './workspace-status-cards'
 import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
+import { DockerOpsPanel } from './docker-ops-panel'
+import { ScheduledTasksPanel } from './scheduled-tasks-panel'
+import { SitesSslPanel } from '../sites-ssl-panel'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
 const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
@@ -30,6 +33,9 @@ const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
   { id: 'logs', labelKey: 'workspace.app.logs' },
   { id: 'browser', labelKey: 'workspace.app.browser' },
   { id: 'terminal', labelKey: 'workspace.app.terminal' },
+  { id: 'docker', labelKey: 'workspace.app.docker' },
+  { id: 'sitesSsl', labelKey: 'workspace.app.sitesSsl' },
+  { id: 'scheduledTasks', labelKey: 'workspace.app.scheduledTasks' },
 ]
 
 const TASKBAR_APPS = APP_LABELS.filter((item) => item.id !== 'overview')
@@ -80,6 +86,9 @@ const DEFAULT_WINDOW_POSITIONS: Record<WorkspaceAppId, { x: number; y: number }>
   logs: { x: 152, y: 64 },
   browser: { x: 120, y: 24 },
   terminal: { x: 168, y: 72 },
+  docker: { x: 136, y: 36 },
+  sitesSsl: { x: 152, y: 48 },
+  scheduledTasks: { x: 168, y: 60 },
 }
 
 function getDesktopWindowFrame(app: WorkspaceAppId) {
@@ -175,7 +184,7 @@ export function WorkspaceDesktopShell({
   const content = (() => {
     if (activeApp === 'assetInventory') {
       if (resolveAuthSecret) {
-        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
+        return <WorkspaceAssetInventoryApp activeVaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -212,6 +221,24 @@ export function WorkspaceDesktopShell({
     if (activeApp === 'logs') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'docker') {
+      if (activeHost && resolveAuthSecret) {
+        return <DockerOpsPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'sitesSsl') {
+      if (activeHost && resolveAuthSecret) {
+        return <SitesSslPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'scheduledTasks') {
+      if (activeHost && resolveAuthSecret) {
+        return <ScheduledTasksPanel activeVaultId={activeVaultId} host={activeHost} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -296,7 +323,7 @@ export function WorkspaceDesktopShell({
 
     if (app === 'assetInventory') {
       if (resolveAuthSecret) {
-        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
+        return <WorkspaceAssetInventoryApp activeVaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
@@ -333,6 +360,24 @@ export function WorkspaceDesktopShell({
     if (app === 'logs') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={app} />
+    }
+    if (app === 'docker') {
+      if (activeHost && resolveAuthSecret) {
+        return <DockerOpsPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={app} />
+    }
+    if (app === 'sitesSsl') {
+      if (activeHost && resolveAuthSecret) {
+        return <SitesSslPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={app} />
+    }
+    if (app === 'scheduledTasks') {
+      if (activeHost && resolveAuthSecret) {
+        return <ScheduledTasksPanel activeVaultId={activeVaultId} host={activeHost} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }

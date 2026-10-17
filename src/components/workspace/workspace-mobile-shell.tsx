@@ -16,6 +16,9 @@ import { WorkspaceLogsApp } from './workspace-logs-app'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
 import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
+import { DockerOpsPanel } from './docker-ops-panel'
+import { ScheduledTasksPanel } from './scheduled-tasks-panel'
+import { SitesSslPanel } from '../sites-ssl-panel'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
 function LiveClock() {
@@ -32,6 +35,7 @@ function LiveClock() {
 }
 
 interface WorkspaceMobileShellProps {
+  activeVaultId?: string
   sessionId: string
   hostName: string
   hostAddress: string
@@ -47,6 +51,7 @@ interface WorkspaceMobileShellProps {
 }
 
 export function WorkspaceMobileShell({
+  activeVaultId,
   sessionId,
   hostName,
   hostAddress,
@@ -66,7 +71,7 @@ export function WorkspaceMobileShell({
   const content = (() => {
     if (activeApp === 'assetInventory') {
       if (resolveAuthSecret) {
-        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} presentation="mobile" onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
+        return <WorkspaceAssetInventoryApp activeVaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} presentation="mobile" onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -103,6 +108,24 @@ export function WorkspaceMobileShell({
     if (activeApp === 'logs') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
         return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'docker') {
+      if (activeHost && resolveAuthSecret) {
+        return <DockerOpsPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'sitesSsl') {
+      if (activeHost && resolveAuthSecret) {
+        return <SitesSslPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'scheduledTasks') {
+      if (activeHost && resolveAuthSecret) {
+        return <ScheduledTasksPanel activeVaultId={activeVaultId} host={activeHost} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }

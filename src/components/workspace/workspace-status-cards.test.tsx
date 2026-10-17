@@ -57,6 +57,18 @@ describe('workspace status cards', () => {
           snapshot,
           lastAttemptAt: snapshot.sampledAt,
           lastSuccessAt: snapshot.sampledAt,
+          probeTelemetry: {
+            status: 'recovered',
+            startedAt: snapshot.sampledAt - 180,
+            completedAt: snapshot.sampledAt,
+            durationMs: 180,
+            attempts: 1,
+            maxRetries: 2,
+            retryDelayMs: 150,
+            recovered: true,
+            exhausted: false,
+            sections: ['metrics'],
+          },
           updatedAt: snapshot.sampledAt,
         },
         history: [],
@@ -71,6 +83,9 @@ describe('workspace status cards', () => {
     expect(screen.getByText(/↓ 18 MB\/s/)).toBeInTheDocument()
     expect(screen.getAllByText('Online').length).toBeGreaterThan(0)
     expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'online')
+    expect(screen.getAllByTestId('workspace-probe-telemetry')).toHaveLength(4)
+    expect(screen.getAllByTestId('workspace-probe-telemetry')[0]).toHaveTextContent('Recovered from cache')
+    expect(screen.getAllByTestId('workspace-probe-telemetry')[0]).toHaveTextContent('1 retries')
   })
 
   it('falls back gracefully when no host is selected', () => {

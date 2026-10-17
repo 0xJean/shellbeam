@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HostProfile } from './hosts'
+import type { KomariAlertState } from './komari-alerts'
 import type { ProbeSnapshot } from './probe-provider'
 import type { ShellbeamAgentRecord } from './shellbeam-agent'
 import {
@@ -41,6 +42,12 @@ describe('Komari and ShellBeam Probe linkage', () => {
     const links = buildKomariProbeLinks({ integrationId: 'komari-prod', hosts: [host], mappings: [mapping], snapshots: [snapshot], shellbeamAgents: [agent], now: 1_100 })
     expect(links).toHaveLength(1)
     expect(links[0]).toMatchObject({ status: 'linked', hostId: 'host-1', komari: { state: 'online', alerts: { active: 1 } }, probe: { state: 'installed', health: 'online', version: '1.2.0' }, recommendedAction: 'none' })
+  })
+
+  it('carries persisted alert lifecycle context to the mapped Probe action', () => {
+    const alertState = { schemaVersion: 1, alerts: [{ alertId: 'alert-1', integrationId: 'komari-prod', nodeId: 'node-1', hostId: host.id, status: 'active' }], audit: [], summary: {} } as unknown as KomariAlertState
+    const links = buildKomariProbeLinks({ integrationId: 'komari-prod', hosts: [host], mappings: [mapping], snapshots: [snapshot], alertState })
+    expect(links[0]?.alertState).toMatchObject({ alerts: [{ alertId: 'alert-1' }] })
   })
 
   it('does not hide an unmapped or stale Komari node behind a Probe action', () => {

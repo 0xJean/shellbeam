@@ -5,6 +5,10 @@ export interface McpPermissions {
   execute: boolean
   readFiles: boolean
   writeFiles: boolean
+  recordDeployments: boolean
+  /** Allow the MCP client to acknowledge or close local Komari alerts.
+   * These actions are persisted with the originating OperationJob audit. */
+  manageAlerts: boolean
 }
 
 export const DEFAULT_MCP_PERMISSIONS: McpPermissions = {
@@ -12,6 +16,8 @@ export const DEFAULT_MCP_PERMISSIONS: McpPermissions = {
   execute: false,
   readFiles: false,
   writeFiles: false,
+  recordDeployments: false,
+  manageAlerts: false,
 }
 
 export interface McpClient {
@@ -33,10 +39,45 @@ export interface McpAuditEntry {
 
 export interface McpStatus {
   enabled: boolean
+  running: boolean
   desktopSupported: boolean
   clients: McpClient[]
   activeOperations: number
   audit: McpAuditEntry[]
+}
+
+export interface McpDeploymentRecord {
+  deploymentId: string
+  clientId: string
+  agentName?: string
+  vaultId: string
+  hostId: string
+  name: string
+  deploymentPath: string
+  projectKind: string
+  status: string
+  source: {
+    repository?: string
+    ref?: string
+    commit?: string
+    artifact?: string
+  } | null
+  dependencies: Array<{ name: string; version?: string; kind?: string; source?: string }> | null
+  components: Array<{ name: string; type: string; version?: string; path?: string; status?: string }> | null
+  runtime: {
+    language?: string
+    version?: string
+    packageManager?: string
+    processManager?: string
+    entrypoint?: string
+    serviceName?: string
+    containerName?: string
+    ports?: string
+  } | null
+  notes: string
+  createdAt: number
+  updatedAt: number
+  lastVerifiedAt?: number | null
 }
 
 export type McpClientTarget = 'codex' | 'claude' | 'generic'
@@ -63,6 +104,13 @@ export function testMcpConnection(clientId: string, token: string) {
 
 export function getMcpStatus() {
   return invoke<McpStatus>('mcp_status')
+}
+
+export function listMcpDeploymentRecords(vaultId: string, hostId?: string) {
+  return invoke<{ projects: McpDeploymentRecord[]; total: number; observedAt: number }>(
+    'mcp_list_project_deployments',
+    { vaultId, hostId: hostId ?? null },
+  )
 }
 
 export function setMcpEnabled(enabled: boolean) {

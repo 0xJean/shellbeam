@@ -7,6 +7,7 @@ import type { WorkspaceInventoryCache } from './workspace-inventory'
 import { createProbeObservation } from './probe-provider'
 import type { ProbeSnapshot } from './probe-provider'
 import type { ShellbeamAgentRecord } from './shellbeam-agent'
+import type { KomariAlertState } from './komari-alerts'
 
 const host: HostProfile = {
   id: 'host-1',
@@ -137,6 +138,38 @@ describe('buildHostOpsViews', () => {
     expect(views['host-1'].health.freshness.stale).toBe(true)
   })
 
+  it('keeps in-memory ProbeProvider telemetry visible before snapshot persistence completes', () => {
+    const view = buildHostOpsViews({
+      hosts: [host],
+      monitorLatest: [{
+        ...monitor,
+        status: 'stale',
+        probeTelemetry: {
+          status: 'recovered',
+          startedAt: 900,
+          completedAt: 1_000,
+          durationMs: 100,
+          attempts: 2,
+          maxRetries: 2,
+          retryDelayMs: 150,
+          recovered: true,
+          exhausted: true,
+          sections: ['metrics'],
+          lastErrorCode: 'ssh_timeout',
+        },
+      }],
+      now: 1_100,
+    })['host-1']
+
+    expect(view.health.probe).toMatchObject({
+      state: 'recovered',
+      providerKind: 'ssh-agentless',
+      providerId: 'ssh-agentless',
+      persisted: false,
+      telemetry: expect.objectContaining({ status: 'recovered', attempts: 2, lastErrorCode: 'ssh_timeout' }),
+    })
+  })
+
   it('distinguishes a ProxyJump failure from a target host outage', () => {
     const views = buildHostOpsViews({
       hosts: [host],
@@ -183,5 +216,154 @@ describe('buildHostOpsViews', () => {
     expect(view.health.provider).toBe('komari')
     expect(view.health.fallbackProvider).toBe('ssh-agentless')
     expect(view.health.alertSummary).toMatchObject({ total: 3, active: 1 })
+  })
+
+  it('joins persisted Komari lifecycle and MCP operation links into the host view', () => {
+    const alertState: KomariAlertState = {
+      schemaVersion: 1,
+      alerts: [
+        {
+          schemaVersion: 1,
+          source: 'komari',
+          alertId: 'alert-1',
+          fingerprint: 'komari-prod|node-1|host-1|load',
+          integrationId: 'komari-prod',
+          nodeId: 'node-1',
+          hostId: host.id,
+          kind: 'load',
+          title: 'Load',
+          severity: 'warning',
+          count: 1,
+          status: 'acknowledged',
+          firstSeenAt: 1_000,
+          lastSeenAt: 1_100,
+          acknowledgedAt: 1_101,
+          acknowledgedBy: 'mcp-client:test',
+          resolvedAt: null,
+          closedAt: null,
+          relatedOperationJobId: 'job-alert-1',
+          deduplicatedCount: 0,
+        },
+        {
+          schemaVersion: 1,
+          source: 'komari',
+          alertId: 'alert-2',
+          fingerprint: 'komari-prod|node-1|host-1|offline',
+          integrationId: 'komari-prod',
+          nodeId: 'node-1',
+          hostId: host.id,
+          kind: 'offline',
+          title: 'Offline',
+          severity: 'critical',
+          count: 1,
+          status: 'closed',
+          firstSeenAt: 900,
+          lastSeenAt: 1_050,
+          acknowledgedAt: null,
+          acknowledgedBy: null,
+          resolvedAt: null,
+          closedAt: 1_060,
+          relatedOperationJobId: 'job-alert-2',
+          deduplicatedCount: 0,
+        },
+      ],
+      audit: [
+        { auditId: 'audit-1', alertId: 'alert-1', fingerprint: 'f1', event: 'acknowledged', status: 'acknowledged', actor: 'mcp-client:test', operationJobId: 'job-alert-1', at: 1_101 },
+        { auditId: 'audit-2', alertId: 'alert-2', fingerprint: 'f2', event: 'closed', status: 'closed', actor: 'mcp-client:test', operationJobId: 'job-alert-2', at: 1_060 },
+      ],
+      summary: { load: 1, offline: 1, total: 2, active: 2, updatedAt: 1_100, open: 1, acknowledged: 1, resolved: 0, closed: 1, deduplicated: 0, localUpdatedAt: 1_101 },
+    }
+    const view = buildHostOpsViews({
+      hosts: [host],
+      komariSnapshots: [{
+        schemaVersion: 1,
+        host: { hostId: host.id, address: host.address, port: host.port, username: host.username },
+        provider: { kind: 'komari', id: 'komari-prod', nodeId: 'node-1', endpoint: 'https://komari.example', capabilities: ['metrics'] },
+        transport: 'proxy-jump', health: 'online', receivedAt: 1_100, metrics: null, inventory: null, errors: [], alerts: null,
+      }],
+      komariAlertStates: [alertState],
+      now: 1_100,
+    })['host-1']
+
+    expect(view.health.alertLifecycle).toEqual({
+      total: 2, open: 1, active: 0, acknowledged: 1, resolved: 0, closed: 1, latestOperationJobId: 'job-alert-1',
+    })
+    expect(view.komariAlerts.map((alert) => [alert.alertId, alert.status, alert.relatedOperationJobId])).toEqual([
+      ['alert-1', 'acknowledged', 'job-alert-1'],
+      ['alert-2', 'closed', 'job-alert-2'],
+    ])
+    expect(view.komariAlertAudits.map((entry) => [entry.alertId, entry.event, entry.operationJobId])).toEqual([
+      ['alert-1', 'acknowledged', 'job-alert-1'],
+      ['alert-2', 'closed', 'job-alert-2'],
+    ])
+  })
+
+  it('surfaces a persisted Probe recovery marker across sessions', () => {
+    const recovered: ProbeSnapshot = {
+      schemaVersion: 1,
+      host: { hostId: host.id, address: host.address, port: host.port, username: host.username },
+      provider: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics'] },
+      transport: 'proxy-jump',
+      health: 'stale',
+      receivedAt: 1_500,
+      metrics: createProbeObservation({
+        data: monitor.snapshot!,
+        source: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics'] },
+        sampledAt: 1_000,
+        receivedAt: 1_500,
+        ttlMs: 100,
+      }),
+      inventory: null,
+      errors: [{ section: 'provider', code: 'stale-cache-fallback', message: 'fresh probe unavailable' }],
+      telemetry: {
+        status: 'recovered',
+        startedAt: 1_400,
+        completedAt: 1_500,
+        durationMs: 100,
+        attempts: 2,
+        maxRetries: 2,
+        retryDelayMs: 150,
+        recovered: true,
+        exhausted: true,
+        sections: ['metrics'],
+        lastError: 'fresh probe unavailable',
+      },
+      alerts: null,
+    }
+    const view = buildHostOpsViews({ hosts: [host], probeSnapshots: [recovered], now: 2_000 })['host-1']
+    expect(view.health.probe).toMatchObject({
+      state: 'recovered',
+      providerKind: 'ssh-agentless',
+      persisted: true,
+      sampledAt: 1_000,
+      receivedAt: 1_500,
+      telemetry: expect.objectContaining({ status: 'recovered', attempts: 2, exhausted: true }),
+    })
+    expect(view.health.state).toBe('stale')
+  })
+
+  it('recomputes persisted probe expiry when a host view is rebuilt after restart', () => {
+    const persisted: ProbeSnapshot = {
+      schemaVersion: 1,
+      host: { hostId: host.id, address: host.address, port: host.port, username: host.username },
+      provider: { kind: 'komari', id: 'komari-prod', nodeId: 'node-1', capabilities: ['metrics'] },
+      transport: 'proxy-jump',
+      health: 'online',
+      receivedAt: 1_100,
+      metrics: createProbeObservation({
+        data: monitor.snapshot!,
+        source: { kind: 'komari', id: 'komari-prod', nodeId: 'node-1', capabilities: ['metrics'] },
+        sampledAt: 1_000,
+        receivedAt: 1_100,
+        ttlMs: 500,
+      }),
+      inventory: null,
+      errors: [],
+      alerts: null,
+    }
+    const view = buildHostOpsViews({ hosts: [host], komariSnapshots: [persisted], now: 2_000 })['host-1']
+
+    expect(view.health.probe).toMatchObject({ state: 'stale', persisted: false })
+    expect(view.health.state).toBe('stale')
   })
 })

@@ -3,11 +3,13 @@ import {
   acknowledgeKomariAlert,
   closeKomariAlert,
   komariAlertObservationsFromSummary,
+  komariAlertObservationsFromProbeSnapshot,
   linkKomariAlertOperation,
   parseKomariAlertState,
   reconcileKomariAlerts,
   toKomariAlertStatePayload,
 } from './komari-alerts'
+import type { ProbeSnapshot } from './probe-provider'
 
 const summary = { load: 2, offline: 1, total: 3, active: 1, updatedAt: 1_000 }
 
@@ -43,6 +45,77 @@ describe('Komari alert lifecycle', () => {
 
   it('does not resolve a local alert when Komari withholds the count', () => {
     expect(komariAlertObservationsFromSummary({ load: null, offline: null, total: null, active: null, updatedAt: 1_000 }, { integrationId: 'prod' })).toEqual([])
+  })
+
+  it('turns Probe health, freshness and errors into recoverable lifecycle rows', () => {
+    const unhealthy = {
+      schemaVersion: 1,
+      host: { hostId: 'host-1', address: '10.0.0.1', port: 22, username: 'ops' },
+      provider: { kind: 'komari', id: 'prod', nodeId: 'node-1', capabilities: ['metrics'] },
+      transport: 'direct',
+      health: 'unknown',
+      receivedAt: 2_000,
+      metrics: null,
+      inventory: null,
+      errors: [{ section: 'metrics', message: 'request timed out', code: 'timeout' }],
+      telemetry: {
+        status: 'failed', startedAt: 1_900, completedAt: 2_000, durationMs: 100,
+        attempts: 2, maxRetries: 2, retryDelayMs: 50, recovered: false, exhausted: true,
+        lastErrorCode: 'timeout',
+      },
+    } as unknown as ProbeSnapshot
+    const observations = komariAlertObservationsFromProbeSnapshot(unhealthy, { integrationId: 'prod' }, 2_000)
+    expect(observations.find((item) => item.kind === 'probe-unknown')).toMatchObject({ count: 1, severity: 'warning' })
+    expect(observations.find((item) => item.kind === 'probe-error:metrics')).toMatchObject({
+      count: 1,
+      severity: 'warning',
+      probeTelemetry: { status: 'failed', attempts: 2, exhausted: true, lastErrorCode: 'timeout' },
+    })
+
+    const stale = {
+      ...unhealthy,
+      health: 'online',
+      errors: [],
+      metrics: {
+        data: {},
+        source: unhealthy.provider,
+        freshness: { sampledAt: 1_000, receivedAt: 2_000, ttlMs: 500, expiresAt: 1_500, expired: true },
+        confidence: 'partial',
+      },
+    } as unknown as ProbeSnapshot
+    expect(komariAlertObservationsFromProbeSnapshot(stale, { integrationId: 'prod' }, 2_000)
+      .find((item) => item.kind === 'probe-stale')).toMatchObject({ count: 1 })
+
+    const opened = reconcileKomariAlerts([], observations, { now: 2_000 })
+    expect(opened.audit.find((entry) => entry.event === 'opened')?.probeTelemetry).toMatchObject({
+      status: 'failed', attempts: 2, exhausted: true, lastErrorCode: 'timeout',
+    })
+    expect(opened.alerts.find((alert) => alert.kind === 'probe-error:metrics')?.probeTelemetry).toMatchObject({
+      status: 'failed', attempts: 2, exhausted: true, lastErrorCode: 'timeout',
+    })
+    const healthy = {
+      ...unhealthy,
+      health: 'online',
+      errors: [],
+      metrics: null,
+      telemetry: {
+        status: 'success', startedAt: 2_050, completedAt: 2_100, durationMs: 50,
+        attempts: 0, maxRetries: 2, retryDelayMs: 50, recovered: false, exhausted: false,
+      },
+    } as unknown as ProbeSnapshot
+    const recovered = reconcileKomariAlerts(
+      opened.alerts,
+      komariAlertObservationsFromProbeSnapshot(healthy, { integrationId: 'prod' }, 2_100),
+      { now: 2_100 },
+    )
+    expect(recovered.alerts.filter((alert) => alert.status === 'resolved')).toHaveLength(2)
+    expect(recovered.alerts.find((alert) => alert.kind === 'probe-error:metrics')?.probeTelemetry).toMatchObject({
+      status: 'success', attempts: 0, exhausted: false,
+    })
+    expect(recovered.audit.find((entry) => entry.event === 'resolved')?.probeTelemetry).toMatchObject({
+      status: 'success', attempts: 0, exhausted: false,
+    })
+    expect(recovered.audit.map((entry) => entry.event)).toContain('resolved')
   })
 
   it('associates a confirmed operation job and supports explicit close', () => {

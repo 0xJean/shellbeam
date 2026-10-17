@@ -25,6 +25,7 @@ export type ProbeSection = ProbeCapability
 export type ProbeTransport = 'direct' | 'proxy-jump'
 export type ProbeHealthState = 'online' | 'stale' | 'offline' | 'paused' | 'unsupported' | 'unknown'
 export type ProbeConfidence = 'observed' | 'partial' | 'inferred'
+export type ProbeCollectionStatus = 'success' | 'recovered' | 'failed'
 
 export interface ProbeJumpRoute {
   address: string
@@ -78,6 +79,28 @@ export interface ProbeAgentLifecycle {
   checkedAt?: number | null
 }
 
+/**
+ * Scheduler-owned collection telemetry.  This is deliberately part of the
+ * snapshot envelope so the host list, Workspace and MCP can explain how the
+ * latest observation was obtained after a restart.  It contains no command
+ * output or credentials.
+ */
+export interface ProbeProviderTelemetry {
+  status: ProbeCollectionStatus
+  startedAt: number
+  completedAt: number
+  durationMs: number
+  /** Number of retries after the initial provider attempt. */
+  attempts: number
+  maxRetries: number
+  retryDelayMs: number
+  recovered: boolean
+  exhausted: boolean
+  sections: ProbeSection[]
+  lastError?: string
+  lastErrorCode?: string
+}
+
 export interface ProbeSnapshot {
   schemaVersion: number
   host: ProbeHostIdentity
@@ -88,6 +111,8 @@ export interface ProbeSnapshot {
   metrics: ProbeObservation<ServerMonitorSnapshot> | null
   inventory: ProbeObservation<WorkspaceInventory> | null
   errors: ProbeError[]
+  /** Latest scheduler collection outcome, persisted with the observation. */
+  telemetry?: ProbeProviderTelemetry | null
   /** Optional provider-level alert summary associated with this observation. */
   alerts?: KomariAlertSummary | null
   /** Optional lifecycle metadata; it does not prove SSH reachability. */

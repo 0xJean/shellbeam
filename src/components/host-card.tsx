@@ -7,10 +7,14 @@ import { getResourceUsageFillClassName, getResourceUsageTextClassName } from '@/
 import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import type { OperationAuditEntry } from '@/lib/operation-job'
-import { AlertTriangle, Activity, Bot, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench } from 'lucide-react'
+import type { KomariProbeLink } from '@/lib/komari-probe-link'
+import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
+import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
+import { AlertTriangle, Activity, Bot, Check, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
+import { KomariProbeOpsView } from './komari-probe-ops-view'
 
 type TFn = (key: string, params?: Record<string, string | number>) => string
 
@@ -47,16 +51,42 @@ export interface HostOperationalSummary {
   processRunning: number | null
   alertTotal?: number | null
   alertActive?: number | null
+  alertOpen?: number | null
+  alertAcknowledged?: number | null
+  alertClosed?: number | null
+  alertLinkedJobId?: string | null
+  /** Lifecycle rows owned by the local Komari journal for this host. */
+  komariAlerts?: KomariAlertRecord[]
+  /** Host-scoped lifecycle audit rows loaded from the durable Komari journal.
+   * These are separate from OperationAuditEntry because they also include
+   * provider recovery and acknowledgement events from another session. */
+  komariAlertAudits?: KomariAlertAuditEntry[]
+  /** Acknowledge or close one of the host's persisted Komari alerts. */
+  onKomariAlertAction?: (action: 'acknowledge' | 'close', alert: KomariAlertRecord) => Promise<void> | void
+  /** Alert id currently being persisted; keeps retries scoped to one row. */
+  komariAlertBusy?: string | null
   alertUnsupported?: boolean
   auditCount: number
-  latestAudit?: Pick<OperationAuditEntry, 'action' | 'target' | 'status' | 'createdAt' | 'transport' | 'provider'>
+  auditActive?: number
+  auditFailed?: number
+  auditUnknown?: number
+  latestAudit?: Pick<OperationAuditEntry, 'action' | 'target' | 'status' | 'createdAt' | 'transport' | 'provider'> & Partial<Pick<OperationAuditEntry, 'auditId' | 'jobId' | 'source'>>
+  audits?: OperationAuditEntry[]
   provider?: string
+  probeProviderId?: string
+  probeState?: 'fresh' | 'stale' | 'recovered' | 'error' | 'unknown'
+  probeError?: string
+  probeErrorCode?: string
+  probeTelemetry?: ProbeProviderTelemetry | null
   sampledAt?: number
   transport: 'direct' | 'proxy-jump'
   agentStatus?: string
   agentHealth?: string
   agentVersion?: string | null
   agentHeartbeatAt?: number | null
+  komariProbe?: KomariProbeLink | null
+  onKomariProbeAction?: (action: 'check-probe' | 'install-probe', link: KomariProbeLink) => Promise<void> | void
+  komariProbeBusy?: boolean
 }
 
 export function groupIconConfig(group: string) {
@@ -92,13 +122,15 @@ interface HostGridCardProps {
   resource?: WorkspaceInventoryResource
   operations?: HostOperationalSummary
   network?: HostNetworkDisplay
+  agentDeploymentCount?: number
+  agentDeploymentStatus?: string
   onConnect: (id: string) => void
   onEdit: (id: string) => void
   onDelete: (id: string) => void
   onSelect: (id: string) => void
 }
 
-export function HostGridCard({ host, isSelected, status, resource, operations, network, onConnect, onEdit, onDelete }: HostGridCardProps) {
+export function HostGridCard({ host, isSelected, status, resource, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onEdit, onDelete }: HostGridCardProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
@@ -195,7 +227,7 @@ export function HostGridCard({ host, isSelected, status, resource, operations, n
             className="text-xs text-[var(--workspace-text-muted)]"
             iconClassName="h-3.5 w-3.5"
           />
-          <HostOperationalMeta summary={operations} t={t} />
+          <HostOperationalMeta host={host} summary={operations} t={t} />
           <div className="flex items-center gap-1 overflow-hidden">
             {host.tags && host.tags.length > 0 ? (
               <>
@@ -211,6 +243,11 @@ export function HostGridCard({ host, isSelected, status, resource, operations, n
               <span className="text-[10px] text-[var(--workspace-text-subtle)]">&nbsp;</span>
             )}
           </div>
+          {agentDeploymentCount > 0 && (
+            <div className="truncate text-[10px] font-medium text-[var(--workspace-status-info-text)]">
+              {t('workspace.agentDeployments.summary', { count: agentDeploymentCount })}{agentDeploymentStatus ? ` · ${t(`workspace.agentDeployments.status.${['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(agentDeploymentStatus) ? agentDeploymentStatus : 'unknown'}`)}` : ''}
+            </div>
+          )}
         </div>
 
         <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
@@ -242,6 +279,8 @@ interface HostListItemProps {
   resource?: WorkspaceInventoryResource
   operations?: HostOperationalSummary
   network?: HostNetworkDisplay
+  agentDeploymentCount?: number
+  agentDeploymentStatus?: string
   onSelect: (id: string) => void
   onConnect: (id: string) => void
   onEdit: (id: string) => void
@@ -352,8 +391,9 @@ function formatSummaryAge(ts: number | undefined, t: TFn) {
   return formatRelativeTime(ts, t)
 }
 
-function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary; t: TFn }) {
+function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?: HostOperationalSummary; t: TFn }) {
   if (!summary) return null
+  const operations = summary
 
   const latest = summary.latestAudit
   const latestLabel = latest
@@ -365,6 +405,15 @@ function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary;
   const lifecycleStatus = lifecycleStatuses.includes(summary.agentStatus ?? '') ? summary.agentStatus : 'unknown'
   const healthStatuses = ['online', 'offline', 'stale', 'unsupported', 'unknown']
   const agentHealth = healthStatuses.includes(summary.agentHealth ?? '') ? summary.agentHealth : 'unknown'
+  const actionableAlerts = (summary.komariAlerts ?? []).filter((alert) => (
+    alert.status === 'active' || alert.status === 'acknowledged' || alert.status === 'resolved'
+  ))
+  const latestAlertAudit = [...(summary.komariAlertAudits ?? [])].sort((left, right) => right.at - left.at)[0]
+
+  async function runAlertAction(action: 'acknowledge' | 'close', alert: KomariAlertRecord) {
+    if (!operations.onKomariAlertAction || operations.komariAlertBusy) return
+    await operations.onKomariAlertAction(action, alert)
+  }
 
   return (
     <div data-testid="host-ops-summary" data-host-ops-summary className="mt-2 space-y-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 text-[10px] text-[var(--workspace-text-muted)]">
@@ -388,7 +437,62 @@ function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary;
           <span className="shrink-0 font-mono">({summary.auditCount})</span>
         </span>
       </div>
-      {(summary.alertTotal !== undefined || summary.alertUnsupported || summary.alertActive != null) && (
+      {(summary.auditActive || summary.auditFailed || summary.auditUnknown) ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[10px]">
+          {summary.auditActive ? <span className="text-[color:var(--workspace-status-info-text)]">{t('hosts.opsAuditActive')}: {summary.auditActive}</span> : null}
+          {summary.auditFailed ? <span className="text-[color:var(--workspace-status-bad-text)]">{t('hosts.opsAuditFailed')}: {summary.auditFailed}</span> : null}
+          {summary.auditUnknown ? <span className="font-medium text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsAuditUnknown')}: {summary.auditUnknown}</span> : null}
+        </div>
+      ) : null}
+      {latest?.auditId && <div className="truncate font-mono text-[10px] text-[var(--workspace-text-subtle)]" title={latest.auditId}>{latest.source} · job={latest.jobId} · audit={latest.auditId}</div>}
+      {latest?.status === 'unknown' && <div className="flex items-center gap-1 text-[color:var(--workspace-status-warn-text)]"><AlertTriangle className="h-3 w-3 shrink-0" />{t('hosts.opsRecoveryRequired')}</div>}
+      {latestAlertAudit && (
+        <div data-testid="host-ops-alert-audit" className="truncate text-[10px] text-[var(--workspace-text-subtle)]" title={`${latestAlertAudit.auditId} · ${latestAlertAudit.actor}`}>
+          {t('hosts.alert.auditLatest', { event: t(`komariAlerts.event.${latestAlertAudit.event}`), actor: latestAlertAudit.actor })}
+          {latestAlertAudit.operationJobId ? ` · job=${latestAlertAudit.operationJobId}` : ''}
+        </div>
+      )}
+      {actionableAlerts.length > 0 && (
+        <div data-testid="host-ops-alert-actions" className="space-y-1.5 border-t border-[color:var(--workspace-border-soft)] pt-1.5">
+          {actionableAlerts.slice(0, 3).map((alert) => {
+            const busy = summary.komariAlertBusy === alert.alertId
+            const canAcknowledge = alert.status === 'active' && !!summary.onKomariAlertAction
+            const canClose = !!summary.onKomariAlertAction
+            return (
+              <div key={alert.alertId} className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 flex-1 truncate" title={alert.title}>
+                  <span className="font-medium text-[var(--workspace-text-strong)]">{alert.title}</span>
+                  <span className="ml-1 text-[var(--workspace-text-subtle)]">· {t(`komariAlerts.status.${alert.status}`)}</span>
+                </span>
+                {canAcknowledge && (
+                  <button
+                    type="button"
+                    data-testid={`komari-host-alert-ack-${alert.alertId}`}
+                    disabled={busy || !!summary.komariAlertBusy}
+                    onClick={(event) => { event.stopPropagation(); void runAlertAction('acknowledge', alert) }}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--workspace-border-soft)] px-1.5 py-1 text-[10px] font-medium text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />{busy ? '…' : t('komariAlerts.acknowledge')}
+                  </button>
+                )}
+                {canClose && (
+                  <button
+                    type="button"
+                    data-testid={`komari-host-alert-close-${alert.alertId}`}
+                    disabled={busy || !!summary.komariAlertBusy}
+                    onClick={(event) => { event.stopPropagation(); void runAlertAction('close', alert) }}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--workspace-border-soft)] px-1.5 py-1 text-[10px] font-medium text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] disabled:opacity-50"
+                  >
+                    <X className="h-3 w-3" />{busy ? '…' : t('komariAlerts.close')}
+                  </button>
+                )}
+              </div>
+            )
+          })}
+          {actionableAlerts.length > 3 && <span className="block text-[10px] text-[var(--workspace-text-subtle)]">+{actionableAlerts.length - 3}</span>}
+        </div>
+      )}
+      {(summary.alertTotal !== undefined || summary.alertUnsupported || summary.alertActive != null || summary.alertOpen != null || summary.alertAcknowledged != null || summary.alertClosed != null || summary.alertLinkedJobId != null) && (
         <div className="flex min-w-0 items-center gap-2">
           <span className="inline-flex min-w-0 items-center gap-1" title={t('hosts.opsAlerts')}>
             <AlertTriangle className="h-3 w-3 shrink-0 text-[color:var(--workspace-status-warn-text)]" />
@@ -397,6 +501,10 @@ function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary;
               {summary.alertUnsupported ? t('hosts.opsUnsupported') : formatCount(summary.alertTotal ?? null)}
             </strong>
             {summary.alertActive != null && <span className="text-[color:var(--workspace-status-bad-text)]">· {summary.alertActive} {t('hosts.opsActive')}</span>}
+            {summary.alertOpen != null && summary.alertOpen !== summary.alertActive && <span className="text-[color:var(--workspace-status-warn-text)]">· {summary.alertOpen} {t('hosts.alert.active')}</span>}
+            {summary.alertAcknowledged ? <span className="text-[color:var(--workspace-status-warn-text)]">· {t('hosts.alert.acknowledged')}: {summary.alertAcknowledged}</span> : null}
+            {summary.alertClosed ? <span className="text-[color:var(--workspace-status-good-text)]">· {t('hosts.alert.closed')}: {summary.alertClosed}</span> : null}
+            {summary.alertLinkedJobId && <span className="shrink-0 font-mono">{t('hosts.alert.linkedOperation', { jobId: summary.alertLinkedJobId })}</span>}
           </span>
         </div>
       )}
@@ -412,6 +520,28 @@ function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary;
           {summary.agentHeartbeatAt && <span className="ml-auto shrink-0">{formatSummaryAge(summary.agentHeartbeatAt, t)}</span>}
         </div>
       )}
+      {summary.probeState && (
+        <div className={cn(
+          'flex min-w-0 items-center gap-1.5',
+          summary.probeState === 'fresh' ? 'text-[color:var(--workspace-status-good-text)]' :
+            summary.probeState === 'error' ? 'text-[color:var(--workspace-status-bad-text)]' :
+              'text-[color:var(--workspace-status-warn-text)]',
+        )} title={summary.probeError || t('hosts.opsProbeState')}>
+          <ShieldCheck className="h-3 w-3 shrink-0" />
+          <span className="shrink-0">{t('hosts.opsProbeState')}</span>
+          <strong className="truncate font-medium">{t(`hosts.opsProbe.${summary.probeState}`)}</strong>
+          {summary.probeProviderId && <span className="truncate font-mono text-[var(--workspace-text-subtle)]">· {summary.probeProviderId}</span>}
+          {summary.probeTelemetry && (
+            <span className="shrink-0 text-[var(--workspace-text-subtle)]" title={t('hosts.opsProbe.telemetryHint')}>
+              · {t('hosts.opsProbe.attempts', { count: summary.probeTelemetry.attempts })}
+              {summary.probeTelemetry.exhausted ? ` · ${t('hosts.opsProbe.exhausted')}` : ''}
+              {` · ${t('hosts.opsProbe.duration', { ms: summary.probeTelemetry.durationMs })}`}
+            </span>
+          )}
+          {summary.probeErrorCode && <span className="shrink-0 font-mono text-[var(--workspace-text-subtle)]">· {summary.probeErrorCode}</span>}
+          {summary.probeError && <span className="truncate text-[var(--workspace-text-subtle)]" title={summary.probeError}>· {summary.probeError}</span>}
+        </div>
+      )}
       <div className="flex min-w-0 items-center gap-2 text-[var(--workspace-text-subtle)]">
         <span className="inline-flex min-w-0 items-center gap-1 truncate" title={summary.provider || t('hosts.opsNoProvider')}>
           <ShieldCheck className="h-3 w-3 shrink-0" />
@@ -420,16 +550,25 @@ function HostOperationalMeta({ summary, t }: { summary?: HostOperationalSummary;
         <span className="shrink-0">{transportLabel}</span>
         <span className="ml-auto shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
       </div>
+      {summary.komariProbe && (
+        <KomariProbeOpsView
+          host={host}
+          link={summary.komariProbe}
+          operationAudits={summary.audits}
+          onAction={summary.onKomariProbeAction}
+          busy={summary.komariProbeBusy}
+        />
+      )}
     </div>
   )
 }
 
-function HostGroupTagsMeta({ host, t }: { host: HostProfile; t: TFn }) {
+function HostGroupTagsMeta({ host, t, agentDeploymentCount = 0, agentDeploymentStatus }: { host: HostProfile; t: TFn; agentDeploymentCount?: number; agentDeploymentStatus?: string }) {
   const groupLabel = getDisplayGroupLabel(host.group, t)
   const tags = host.tags ?? []
   const jumpHost = formatJumpHost(host)
 
-  if (!groupLabel && tags.length === 0 && !jumpHost) return null
+  if (!groupLabel && tags.length === 0 && agentDeploymentCount === 0 && !jumpHost) return null
 
   return (
     <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
@@ -468,6 +607,11 @@ function HostGroupTagsMeta({ host, t }: { host: HostProfile; t: TFn }) {
           <span className="truncate">{t('hosts.jumpHost')}: {jumpHost}</span>
         </span>
       )}
+      {agentDeploymentCount > 0 && (
+        <span className="inline-flex max-w-full items-center rounded-md border border-[color:var(--workspace-status-info-border)] bg-[var(--workspace-status-info-bg)] px-2 py-1 text-[10px] font-medium text-[var(--workspace-status-info-text)]" title={t('workspace.agentDeployments.summary', { count: agentDeploymentCount })}>
+          <span className="truncate">{t('workspace.agentDeployments.summary', { count: agentDeploymentCount })}{agentDeploymentStatus ? ` · ${t(`workspace.agentDeployments.status.${['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(agentDeploymentStatus) ? agentDeploymentStatus : 'unknown'}`)}` : ''}</span>
+        </span>
+      )}
     </div>
   )
 }
@@ -500,7 +644,7 @@ function getNetworkScopeLabel(network: HostNetworkDisplay | undefined, t: TFn) {
   return t('hosts.networkUnknown')
 }
 
-export function HostListItem({ index, host, isSelected, status, resource, operations, network, onSelect, onConnect, onEdit, onDelete }: HostListItemProps) {
+export function HostListItem({ index, host, isSelected, status, resource, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onEdit, onDelete }: HostListItemProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
@@ -548,7 +692,7 @@ export function HostListItem({ index, host, isSelected, status, resource, operat
             <p className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">
               {resource?.os || `${host.username || 'root'}@${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
             </p>
-            <HostGroupTagsMeta host={host} t={t} />
+            <HostGroupTagsMeta host={host} t={t} agentDeploymentCount={agentDeploymentCount} agentDeploymentStatus={agentDeploymentStatus} />
           </div>
         </div>
 
@@ -578,7 +722,7 @@ export function HostListItem({ index, host, isSelected, status, resource, operat
 
         <HostResourceSummary resource={resource} t={t} />
 
-        <HostOperationalMeta summary={operations} t={t} />
+        <HostOperationalMeta host={host} summary={operations} t={t} />
 
         <div className="flex items-center">
           <HostStatusPill status={status} sc={sc} t={t} />

@@ -137,5 +137,7 @@ fn unavailable_application_returns_a_protocol_error_instead_of_launching_gui() {
     assert!(response["error"]["message"]
         .as_str()
         .unwrap()
-        .contains("SHELLBEAM_UNAVAILABLE"));
+        .contains("SHELLBEAM_NOT_RUNNING"));
+    assert_eq!(response["error"]["data"]["reason"], "shellbeam_unavailable");
+    assert_eq!(response["error"]["data"]["retryable"], true);
 }

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const OPERATION_DB: &str = "operation_jobs.sqlite3";
+const HOST_DB: &str = "workspace_inventory.sqlite3";
 const MAX_SUMMARY_LEN: usize = 256;
 const MAX_ROWS: i64 = 5_000;
 const MAX_AUDIT_ROWS: i64 = 10_000;
@@ -81,6 +82,7 @@ pub struct UpdateOperationJobRequest {
 #[serde(rename_all = "camelCase")]
 pub struct OperationJobListQuery {
     pub host_id: Option<String>,
+    pub vault_id: Option<String>,
     pub status: Option<String>,
     pub action: Option<String>,
     pub source: Option<String>,
@@ -100,6 +102,10 @@ pub struct OperationAudit {
     pub host_id: Option<String>,
     pub host_name: Option<String>,
     pub host_address: Option<String>,
+    /// Vault scope is returned with every audit row so consumers can keep
+    /// host history separated when the same host id is reused in another
+    /// vault. It is joined from the canonical OperationJob record.
+    pub vault_id: Option<String>,
     pub action: String,
     pub target: String,
     pub risk: String,
@@ -117,6 +123,8 @@ pub struct OperationAudit {
 pub struct OperationAuditListQuery {
     pub job_id: Option<String>,
     pub host_id: Option<String>,
+    pub vault_id: Option<String>,
+    pub source: Option<String>,
     pub limit: Option<u32>,
 }
 
@@ -125,6 +133,26 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
         .map_err(|e| format!("Open operation jobs db failed: {e}"))?;
     initialize(&db)?;
     Ok(db)
+}
+
+/// Older Workspace callers did not send a vault id with an operation request.
+/// Recover it only when the host id maps to exactly one vault; an ambiguous
+/// host remains unscoped so MCP never guesses across vault boundaries.
+fn infer_vault_id(app: &tauri::AppHandle, host_id: Option<&str>) -> Option<String> {
+    let host_id = host_id?.trim();
+    if host_id.is_empty() {
+        return None;
+    }
+    let path = data_file_path(app, HOST_DB).ok()?;
+    let db = Connection::open(path).ok()?;
+    let mut statement = db
+        .prepare("SELECT DISTINCT vault_id FROM workspace_hosts WHERE id=?1 LIMIT 2")
+        .ok()?;
+    let rows = statement
+        .query_map([host_id], |row| row.get::<_, String>(0))
+        .ok()?;
+    let vaults = rows.filter_map(Result::ok).collect::<Vec<_>>();
+    (vaults.len() == 1).then(|| vaults[0].clone())
 }
 
 fn initialize(db: &Connection) -> Result<(), String> {
@@ -434,6 +462,10 @@ pub fn operation_job_create(
     let action = sanitize_summary(Some(&request.action)).unwrap_or_else(|| "operation".to_string());
     let target = sanitize_summary(Some(&request.target)).unwrap_or_else(|| "target".to_string());
     let params_summary = sanitize_summary(request.params_summary.as_deref());
+    let vault_id = request
+        .vault_id
+        .clone()
+        .or_else(|| infer_vault_id(&app, request.host_id.as_deref()));
     let confirmation_status = if request.confirmation_required {
         "pending"
     } else {
@@ -449,7 +481,7 @@ pub fn operation_job_create(
             job_id,
             queued_audit_id,
             request.host_id,
-            request.vault_id,
+            vault_id,
             request.host_name,
             request.host_address,
             request.username,
@@ -503,6 +535,8 @@ fn legal_transition(from: &str, to: &str) -> bool {
         (from, to),
         ("queued", "running")
             | ("queued", "cancelled")
+            | ("queued", "failed")
+            | ("queued", "unknown")
             | ("running", "completed")
             | ("running", "failed")
             | ("running", "unknown")
@@ -652,6 +686,32 @@ pub fn operation_job_get(
     .map_err(|e| format!("Read operation job failed: {e}"))
 }
 
+/// Find an existing operation by its MCP idempotency scope. This closes the
+/// small crash window between creating the canonical OperationJob and linking
+/// it from the MCP result table.
+pub fn operation_job_find_by_request(
+    app: tauri::AppHandle,
+    vault_id: &str,
+    host_id: &str,
+    actor: &str,
+    action: &str,
+    request_id: &str,
+) -> Result<Option<OperationJob>, String> {
+    let db = open(&app)?;
+    db.query_row(
+        &format!(
+            "SELECT {JOB_COLUMNS} FROM operation_jobs
+             WHERE vault_id=?1 AND host_id=?2 AND source='mcp' AND actor=?3
+               AND action=?4 AND request_id=?5
+             ORDER BY queued_at DESC LIMIT 1"
+        ),
+        params![vault_id, host_id, actor, action, request_id],
+        job_from_row,
+    )
+    .optional()
+    .map_err(|e| format!("Find operation job failed: {e}"))
+}
+
 #[tauri::command]
 pub fn operation_job_list(
     app: tauri::AppHandle,
@@ -664,16 +724,18 @@ pub fn operation_job_list(
         .prepare(&format!(
             "SELECT {JOB_COLUMNS} FROM operation_jobs
              WHERE (?1 IS NULL OR host_id=?1)
-               AND (?2 IS NULL OR status=?2)
-               AND (?3 IS NULL OR action=?3)
-               AND (?4 IS NULL OR source=?4)
-             ORDER BY updated_at DESC LIMIT ?5"
+               AND (?2 IS NULL OR vault_id=?2)
+               AND (?3 IS NULL OR status=?3)
+               AND (?4 IS NULL OR action=?4)
+               AND (?5 IS NULL OR source=?5)
+             ORDER BY updated_at DESC LIMIT ?6"
         ))
         .map_err(|e| format!("Prepare operation job query failed: {e}"))?;
     let rows = statement
         .query_map(
             params![
                 query.host_id,
+                query.vault_id,
                 query.status,
                 query.action,
                 query.source,
@@ -698,16 +760,17 @@ fn audit_from_row(row: &Row<'_>) -> rusqlite::Result<OperationAudit> {
         host_id: row.get(7)?,
         host_name: row.get(8)?,
         host_address: row.get(9)?,
-        action: row.get(10)?,
-        target: row.get(11)?,
-        risk: row.get(12)?,
-        provider: row.get(13)?,
-        transport: row.get(14)?,
-        params_summary: row.get(15)?,
-        result_summary: row.get(16)?,
-        error_code: row.get(17)?,
-        error_summary: row.get(18)?,
-        created_at: row.get(19)?,
+        vault_id: row.get(10)?,
+        action: row.get(11)?,
+        target: row.get(12)?,
+        risk: row.get(13)?,
+        provider: row.get(14)?,
+        transport: row.get(15)?,
+        params_summary: row.get(16)?,
+        result_summary: row.get(17)?,
+        error_code: row.get(18)?,
+        error_summary: row.get(19)?,
+        created_at: row.get(20)?,
     })
 }
 
@@ -721,16 +784,33 @@ pub fn operation_audit_list(
     let limit = bounded_limit(query.limit, 100, 500);
     let mut statement = db
         .prepare(
-            "SELECT audit_id,job_id,event,status,confirmation_status,source,actor,host_id,host_name,
-                    host_address,action,target,risk,provider,transport,params_summary,result_summary,
-                    error_code,error_summary,at
+            "SELECT operation_audit.audit_id,operation_audit.job_id,operation_audit.event,
+                    operation_audit.status,operation_audit.confirmation_status,operation_audit.source,
+                    operation_audit.actor,operation_audit.host_id,operation_audit.host_name,
+                    operation_audit.host_address,jobs.vault_id,operation_audit.action,
+                    operation_audit.target,operation_audit.risk,operation_audit.provider,
+                    operation_audit.transport,operation_audit.params_summary,operation_audit.result_summary,
+                    operation_audit.error_code,operation_audit.error_summary,operation_audit.at
              FROM operation_audit
-             WHERE (?1 IS NULL OR job_id=?1) AND (?2 IS NULL OR host_id=?2)
-             ORDER BY at DESC LIMIT ?3",
+             LEFT JOIN operation_jobs jobs ON jobs.job_id=operation_audit.job_id
+             WHERE (?1 IS NULL OR operation_audit.job_id=?1)
+               AND (?2 IS NULL OR operation_audit.host_id=?2)
+               AND (?3 IS NULL OR jobs.vault_id=?3)
+               AND (?4 IS NULL OR operation_audit.source=?4)
+             ORDER BY operation_audit.at DESC LIMIT ?5",
         )
         .map_err(|e| format!("Prepare operation audit query failed: {e}"))?;
     let rows = statement
-        .query_map(params![query.job_id, query.host_id, limit], audit_from_row)
+        .query_map(
+            params![
+                query.job_id,
+                query.host_id,
+                query.vault_id,
+                query.source,
+                limit
+            ],
+            audit_from_row,
+        )
         .map_err(|e| format!("Query operation audit failed: {e}"))?;
     rows.map(|row| row.map_err(|e| format!("Read operation audit failed: {e}")))
         .collect()
@@ -789,5 +869,11 @@ mod tests {
         assert!(!legal_transition("unknown", "completed"));
         assert!(valid_status("cancelled"));
         assert!(!valid_status("pending"));
+    }
+
+    #[test]
+    fn queued_mcp_jobs_can_be_reconciled_as_unknown_after_restart() {
+        assert!(legal_transition("queued", "unknown"));
+        assert!(valid_status("unknown"));
     }
 }

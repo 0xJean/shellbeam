@@ -12,7 +12,7 @@ environment installation, automatic rollback, or a remote agent/daemon.
    to remain running. No public or LAN listener is created.
 3. In the intended vault, choose a client name and individual servers. Cached
    information is the default; separately opt into refresh, command execution,
-   file reading and file writing. New hosts are never included automatically.
+   file reading, file writing, local Komari alert management and deployment metadata. New hosts are never included automatically.
 4. Choose Codex (TOML), Claude Desktop (JSON), or another stdio client (JSON).
    Generate the configuration and merge only its ShellBeam entry into
    your local MCP client's configuration. Keep the token secret. It is shown
@@ -68,6 +68,47 @@ does not read desktop login credentials or convert subscriptions into API keys.
 Models for those clients are selected in the clients themselves, independently
 of ShellBeam's AI Assistant settings.
 
+### Structured workspace flow
+
+For a new session, call `get_workspace_snapshot` first. It returns one structured
+JSON document containing ShellBeam and Vault state, authorized servers, cached
+inventory, live monitor data, recent probe data, known deployment records,
+capabilities and warnings. Use `servers[].selection.reason` and timestamps to
+choose a suitable server; missing values are unknown and discovered project
+manifests are not proof of an active deployment.
+
+Deployment records are explicit agent-supplied metadata. After planning,
+deploying or verifying a project, call `record_project_deployment` with a stable
+`deploymentId`, project `name`, absolute `deploymentPath`, `status`, dependencies,
+runtime components and source information. Reuse the same ID to update the
+record. This writes only a local ShellBeam record; it does not run commands,
+install dependencies or assert that ShellBeam performed the deployment. Use
+`list_project_deployments` to query records without loading the UI.
+
+The record capability is disabled by default and is independent from remote
+command/file permissions. Grant it only when the agent may maintain deployment
+metadata.
+
+### Machine-readable recovery
+
+Every JSON-RPC error includes `error.data.reason`, `error.data.retryable` and
+`error.data.recovery`. Tool failures preserve the human-readable `error` string
+and add the same fields to `structuredContent`.
+
+| Condition | Agent behavior |
+| --- | --- |
+| `shellbeam_unavailable` / `SHELLBEAM_NOT_RUNNING` | Ask the user to start ShellBeam and enable MCP, then retry. Do not launch a GUI from the stdio bridge. |
+| `mcp_disabled` | Ask the user to enable MCP in ShellBeam settings, then retry. |
+| `vault_locked` | Continue using cached JSON reads. Ask the user to unlock the authorized Vault before refresh, SSH commands or file operations. |
+| `permission_denied` | Ask the user to grant the specific MCP capability or use a cached read-only flow. |
+| `mcp_instance_expired` | Ask the user to restart or re-enable MCP and regenerate the client configuration if needed. |
+| `host_authorization_expired` | Ask the user to re-authorize the changed server; never bypass the identity check. |
+
+If ShellBeam is closed, the stdio process remains a thin bridge and returns a
+machine-readable unavailable error. If the Vault is locked, cached inventory,
+metrics and deployment records remain available; remote work is paused rather
+than reported as an offline server.
+
 Official references: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp),
 [local MCP client setup](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
 
@@ -96,6 +137,14 @@ Protocol references: [lifecycle](https://modelcontextprotocol.io/specification/2
 | `list_servers` | Cached information | Paginated, scoped hosts and monitor status |
 | `get_server_inventory` | Cached information | Asset snapshot and latest on-demand probe |
 | `get_server_metrics` | Cached information | Latest sample and paginated 24-hour history |
+| `get_workspace_snapshot` | Cached information | One structured JSON view for server selection and deployment context |
+| `list_project_deployments` | Cached information | Agent-supplied deployment metadata for this client |
+| `record_project_deployment` | Local metadata | Create or update a deployment record; no remote action |
+| `get_server_operations` | Cached information | Authorized host OperationJob states and bounded audit metadata |
+| `get_server_probe_state` | Cached information | Komari/Probe snapshots, mappings and freshness |
+| `get_server_alerts` | Cached information | Local Komari alert lifecycle and audit rows |
+| `acknowledge_server_alert` | Manage alerts | Local acknowledgement plus an auditable OperationJob |
+| `close_server_alert` | Manage alerts | Local closure plus an auditable OperationJob |
 | `refresh_server_info` | Refresh | Job ID for a bounded Linux read-only probe |
 | `run_command` | Execute | Job ID for an arbitrary SSH command |
 | `get_command_result` | Own scoped jobs | Status, bounded output or restart uncertainty |
@@ -134,6 +183,30 @@ its own commands and file operations within the user's authorization.
 - Remote strings and file contents are untrusted data, never instructions or
   authorization to perform further operations.
 
+### Unified ProbeProvider observations
+
+Server monitor scans, Workspace inventory scans, Komari sync and MCP refreshes
+use the same `ProbeProvider` observation shape. Every observation identifies its
+provider and host, records the remote sample time and local receive time, and
+declares a TTL, expiry state and confidence (`observed`, `partial` or
+`inferred`). A failed section is represented by a section error or `null`
+observation; missing data is never converted into a healthy zero.
+
+The process-wide provider registry used by the frontend collectors applies one
+bounded concurrency budget and coalesces overlapping requests for the same
+provider, host and sections. Fresh observations are reused until their TTL
+expires, while an explicitly due monitor or Komari sync can force a new sample
+without creating duplicate in-flight SSH or HTTP work. Durable observations
+are scoped to the active Vault and hydrated after a restart. When a fresh probe
+fails, the registry returns the last observation as `stale` with an explicit
+`stale-cache-fallback` error; provider fallback still tries later providers for
+an `online` result before returning that stale recovery.
+
+MCP `refresh_server_info` keeps the legacy flattened fields for compatibility,
+and adds the canonical `metrics` and `inventory` observations. The envelope
+also includes `transport`, so a ProxyJump route remains visible to monitoring,
+Workspace and MCP consumers instead of being hidden in connection details.
+
 ## Security and execution semantics
 
 - Authorization is per client, vault, host and capability. Connection and
@@ -164,6 +237,17 @@ its own commands and file operations within the user's authorization.
   disables the listener and removes MCP data with the rest of the application.
   Only the empty process-ownership lock database remains while the app is alive.
 
+### Remote task audit
+
+Every asynchronous MCP remote operation creates one linked `OperationJob` with
+source `mcp`, provider `mcp-remote`, the selected transport (`direct` or
+`proxy-jump`) and a bounded result or error summary. The MCP job table retains
+request idempotency and in-memory output metadata; `get_command_result` resolves
+its status from the linked OperationJob and returns the audit identifiers. A
+`unknown` result means the remote outcome cannot be proven after disconnect or
+restart, so the agent must reconcile remote state before retrying. Durable audit
+records never store commands, file contents, credentials or raw remote errors.
+
 ## v1 limits
 
 Desktop, local agents and Linux inventory only. A configured single-hop jump
@@ -175,3 +259,35 @@ deployment and automatic environment setup are not implemented. Password and
 unencrypted private-key authentication reuse the existing vault. Cached
 information remains readable by authorized clients while a vault is locked; new
 remote operations require that vault unlocked.
+
+## Komari and Probe operations
+
+`get_server_probe_state` returns the cached Komari mappings, provider snapshots,
+sync TTL/freshness, ShellBeam Probe lifecycle and the latest MCP probe for one
+authorized host. Each snapshot also exposes bounded ProbeProvider telemetry
+(collection status, retry attempts/budget, duration, recovery/exhaustion and an
+optional error code), plus `recoveryState` and `recoveryAvailable` so a client
+can distinguish fresh, stale, failed and recovered observations after restart.
+`get_server_alerts` returns the bounded Komari alert lifecycle and audit rows,
+including any linked OperationJob id and the safe ProbeProvider telemetry that
+was present at the transition. These tools read local cache only and do not
+contact Komari or start SSH work.
+
+`refresh_server_info` accepts an optional `alertId`. When supplied, the newly
+created OperationJob is recorded as an `operation-linked` event on the matching
+local Komari alert. The link is diagnostic context only: a successful SSH or
+Probe operation does not resolve the alert. A later Komari sync remains the
+source of truth for recovery, and an unknown operation must be reconciled before
+retrying.
+
+MCP clients with the `manageAlerts` capability may call
+`acknowledge_server_alert` or `close_server_alert` with `hostId`,
+`integrationId`, `alertId` and a unique `requestId`. These actions update only
+the persisted local Komari lifecycle; they never call the Komari endpoint or
+change the remote host. Each request creates a linked `OperationJob` with
+`source=mcp`, `provider=komari-local` and `transport=local`, moves through
+queued/running/completed or failed, and appends both an OperationAudit row and a
+Komari lifecycle audit event. Reusing the same request ID and payload returns
+the canonical OperationJob, while a payload conflict is rejected. Query
+`get_server_operations` or `get_server_alerts` after a restart to recover the
+operation and alert audit state.

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { useVault } from '@/contexts/vault-context'
 import { listHosts, type HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import OperationsAuditCenter from '@/components/operations-audit-center'
 import {
   createMcpClient, DEFAULT_MCP_PERMISSIONS, getMcpStatus, revokeMcpClient, setMcpEnabled,
   formatMcpConfiguration, testMcpConnection,
@@ -117,6 +118,7 @@ export function McpSettingsSection() {
         </label>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">{t('mcp.description')}</p>
+      {status && <p className="mt-1 text-xs text-muted-foreground">{t(status.running ? 'mcp.runtimeRunning' : 'mcp.runtimeStopped')}</p>}
       {status && !status.desktopSupported && <p className="mt-2 text-sm text-muted-foreground">{t('mcp.desktopOnly')}</p>}
       {error && <p role="alert" className="mt-3 break-words text-xs text-red-500">{error}</p>}
       {status?.desktopSupported && (
@@ -164,7 +166,7 @@ export function McpSettingsSection() {
           </fieldset>
           <fieldset data-tour="mcp-permissions" disabled={busy} className="space-y-2">
             <legend className="mb-2 text-xs text-muted-foreground">{t('mcp.permissionsDescription')}</legend>
-            {(['refresh', 'execute', 'readFiles', 'writeFiles'] as const).map((permission) => (
+            {(['refresh', 'execute', 'readFiles', 'writeFiles', 'recordDeployments', 'manageAlerts'] as const).map((permission) => (
               <label key={permission} className="flex items-start gap-2 text-xs">
                 <input type="checkbox" checked={permissions[permission]} className="mt-0.5"
                   onChange={(event) => setPermissions((previous) => ({ ...previous, [permission]: event.target.checked }))} />
@@ -172,6 +174,7 @@ export function McpSettingsSection() {
               </label>
             ))}
           </fieldset>
+          <p className="text-xs text-muted-foreground">{t('mcp.alertsDescription')}</p>
           <Button data-tour="mcp-create" size="sm" disabled={busy || testing || !name.trim() || hostIds.length === 0 || hostIds.length > 100} onClick={() => void create()}>
             {t('mcp.create')}
           </Button>
@@ -224,6 +227,7 @@ export function McpSettingsSection() {
               </div>
             </details>
           )}
+          <OperationsAuditCenter source="mcp" vaultId={activeVaultId} limit={100} className="-mx-3 border-t pt-3" />
         </div>
       )}
     </section>

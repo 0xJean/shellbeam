@@ -4,6 +4,7 @@ import { useT } from '@/lib/i18n'
 import { resolveWorkspaceHost, runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { runConfirmedOperation, type OperationJob } from '@/lib/operation-job'
 import { WorkspaceEmptyState } from './workspace-empty-state'
+import { WorkspaceOperationRecoveryNotice } from './workspace-operation-recovery-notice'
 
 const SERVICES_COMMAND = 'systemctl list-units --type=service --all --no-pager --plain --no-legend | head -n 40'
 
@@ -193,6 +194,8 @@ export function WorkspaceServicesApp({
           {t('workspace.services.description')}
         </p>
       </div>
+
+      <WorkspaceOperationRecoveryNotice host={host} />
 
       <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3">
         <div className="text-xs text-muted-foreground">{SERVICES_COMMAND}</div>

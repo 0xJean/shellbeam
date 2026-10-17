@@ -138,6 +138,7 @@ export function HostsProvider({ children }: { children: ReactNode }) {
   const handleScanHosts = useCallback(async (hosts: HostProfile[]) => {
     await scanWorkspaceInventoryHosts({
       hosts,
+      vaultId: activeVaultId ?? undefined,
       resolveAuthSecret: async (host) => (
         await resolveAuthSecret({
           authType: host.authType,
@@ -148,7 +149,7 @@ export function HostsProvider({ children }: { children: ReactNode }) {
       ) ?? '',
       refreshIntervalMs: 0,
     })
-  }, [resolveAuthSecret])
+  }, [activeVaultId, resolveAuthSecret])
 
   const handleDefaultUsernameChange = useCallback((value: string) => {
     setDefaultUsername(value.trim() || 'root')

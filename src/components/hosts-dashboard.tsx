@@ -12,21 +12,43 @@ import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { getWorkspaceInventoryHealthStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
+import { listMcpDeploymentRecords, type McpDeploymentRecord } from '@/lib/mcp'
 import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
+import { buildKomariProbeLinks, checkKomariLinkedProbe, runKomariLinkedProbeOperation, type KomariProbeLink } from '@/lib/komari-probe-link'
+import { runKomariAlertAction, type KomariAlertAction } from '@/lib/komari-alert-actions'
+import type { KomariAlertRecord } from '@/lib/komari-alerts'
+import { listShellbeamAgents } from '@/lib/shellbeam-agent'
 import { listKomariIntegrations } from '@/lib/komari-config'
-import { loadKomariPersistence, persistKomariSync } from '@/lib/komari-persistence'
+import { loadKomariPersistence, persistKomariAlertState, persistKomariSync } from '@/lib/komari-persistence'
 import { readKomariAlertState } from '@/lib/komari-persistence'
-import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, syncKomariIntegration } from '@/lib/komari-sync'
+import { dispatchAndPersistKomariAlertNotifications, emitKomariAlertNotification } from '@/lib/komari-alert-notifications'
+import { loadNotificationPolicy } from '@/lib/notification-policy'
+import { runBatchDockerOperation, runBatchOperation, runBatchServiceOperation, type BatchOperationResult } from '@/lib/multi-host-operations'
+import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
+import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, reconcileKomariProbeAlerts, syncKomariIntegration } from '@/lib/komari-sync'
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
+import { KomariProbeMappingNotice } from './komari-probe-ops-view'
+import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
+import MultiHostOperationsPanel, { type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
 type SortMode = 'az' | 'za' | 'newest' | 'oldest'
 type HostStatusFilter = 'all' | 'online' | 'stale' | 'checking' | 'offline' | 'paused' | 'unknown' | 'jump-unavailable'
 type HostHealthStatus = Exclude<HostStatusFilter, 'all'>
+export type HostOpsRefreshStatus = 'idle' | 'refreshing' | 'fresh' | 'recovered' | 'error'
 const SORT_KEY = 'shellbeam.hostSortMode'
 const SHOW_HOST_SUMMARY_STRIP = false
+
+function formatHostOpsRefreshTime(timestamp: number | null): string {
+  if (!timestamp) return ''
+  return new Date(timestamp).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
 
 function getHostHealthStatus(view: HostOpsView | undefined, fallback: HostHealthStatus, loading: boolean): HostHealthStatus {
   if (view?.health.state === 'paused') return 'paused'
@@ -147,6 +169,49 @@ function HostSummaryStrip({
   )
 }
 
+export function HostOpsRefreshIndicator({
+  status,
+  lastRefreshedAt,
+  error,
+}: {
+  status: HostOpsRefreshStatus
+  lastRefreshedAt: number | null
+  error: string | null
+}) {
+  const { t } = useT()
+  const time = formatHostOpsRefreshTime(lastRefreshedAt)
+  const label = status === 'refreshing'
+    ? t('hosts.refreshStatus.refreshing')
+    : status === 'recovered'
+      ? t('hosts.refreshStatus.recovered', { time })
+      : status === 'error'
+        ? t('hosts.refreshStatus.error')
+        : status === 'fresh'
+          ? t('hosts.refreshStatus.updated', { time })
+          : t('hosts.refreshStatus.idle')
+  const tone = status === 'error'
+    ? 'text-[color:var(--workspace-status-bad-text)]'
+    : status === 'recovered'
+      ? 'text-[color:var(--workspace-status-warn-text)]'
+      : status === 'refreshing'
+        ? 'text-[color:var(--workspace-status-info-text)]'
+        : 'text-[var(--workspace-text-subtle)]'
+
+  return (
+    <span
+      data-testid="host-ops-refresh-status"
+      data-status={status}
+      title={error ?? undefined}
+      role="status"
+      aria-live="polite"
+      className={cn('inline-flex min-w-0 items-center gap-1.5 text-[11px]', tone)}
+    >
+      <RefreshCw className={cn('h-3 w-3 shrink-0', status === 'refreshing' && 'animate-spin')} />
+      <span className="truncate">{label}</span>
+    </span>
+  )
+}
+
 interface HostsDashboardProps {
   activeVaultId?: string
   hosts: HostProfile[]
@@ -172,10 +237,18 @@ interface HostsDashboardProps {
   headerExtraAction?: ReactNode
 }
 
-function hostOpsToCardSummary(view?: HostOpsView): HostOperationalSummary | undefined {
+function hostOpsToCardSummary(
+  view?: HostOpsView,
+  komariProbe?: KomariProbeLink,
+  onKomariProbeAction?: HostOperationalSummary['onKomariProbeAction'],
+  komariProbeBusy = false,
+  onKomariAlertAction?: HostOperationalSummary['onKomariAlertAction'],
+  komariAlertBusy?: string | null,
+): HostOperationalSummary | undefined {
   if (!view) return undefined
   const latestAudit = view.latestAudit
   const alertSummary = view.health.alertSummary
+  const alertLifecycle = view.health.alertLifecycle
   return {
     serviceTotal: view.serviceSummary.total,
     serviceActive: view.serviceSummary.active,
@@ -187,7 +260,20 @@ function hostOpsToCardSummary(view?: HostOpsView): HostOperationalSummary | unde
       alertActive: alertSummary.active,
       alertUnsupported: alertSummary.unsupported === true,
     } : {}),
+    ...(alertLifecycle ? {
+      alertAcknowledged: alertLifecycle.acknowledged,
+      alertClosed: alertLifecycle.closed,
+      alertOpen: alertLifecycle.open,
+      alertLinkedJobId: alertLifecycle.latestOperationJobId,
+    } : {}),
+    komariAlerts: view.komariAlerts,
+    komariAlertAudits: view.komariAlertAudits,
+    onKomariAlertAction,
+    komariAlertBusy,
     auditCount: view.operationSummary.total,
+    auditActive: view.operationSummary.active,
+    auditFailed: view.operationSummary.failed,
+    auditUnknown: view.operationSummary.unknown,
     latestAudit: latestAudit
       ? {
           action: latestAudit.action,
@@ -196,9 +282,20 @@ function hostOpsToCardSummary(view?: HostOpsView): HostOperationalSummary | unde
           createdAt: latestAudit.createdAt,
           transport: latestAudit.transport,
           provider: latestAudit.provider,
+          auditId: latestAudit.auditId,
+          jobId: latestAudit.jobId,
+          source: latestAudit.source,
         }
       : undefined,
+    audits: view.audits,
     provider: view.health.provider === 'unknown' ? undefined : view.health.provider,
+    ...(view.health.probe ? {
+      probeProviderId: view.health.probe.providerId,
+      probeState: view.health.probe.state,
+      probeError: view.health.probe.error,
+      probeErrorCode: view.health.probe.telemetry?.lastErrorCode,
+      probeTelemetry: view.health.probe.telemetry,
+    } : {}),
     sampledAt: view.health.freshness.sampledAt ?? undefined,
     transport: view.health.transport,
     ...(view.health.agent ? {
@@ -207,6 +304,7 @@ function hostOpsToCardSummary(view?: HostOpsView): HostOperationalSummary | unde
       agentVersion: view.health.agent.version,
       agentHeartbeatAt: view.health.agent.lastHeartbeatAt,
     } : {}),
+    ...(komariProbe ? { komariProbe, onKomariProbeAction, komariProbeBusy } : {}),
   }
 }
 
@@ -237,17 +335,34 @@ export function HostsDashboard({
   const { t } = useT()
   const sharedStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
+  const [agentDeployments, setAgentDeployments] = useState<McpDeploymentRecord[]>([])
   const [hostOpsViews, setHostOpsViews] = useState<Record<string, HostOpsView>>({})
+  const [komariProbeLinks, setKomariProbeLinks] = useState<KomariProbeLink[]>([])
+  const [komariProbeActionKey, setKomariProbeActionKey] = useState<string | null>(null)
+  const [komariAlertActionKey, setKomariAlertActionKey] = useState<string | null>(null)
   const [hostOpsLoading, setHostOpsLoading] = useState(false)
+  const [hostOpsRefreshStatus, setHostOpsRefreshStatus] = useState<HostOpsRefreshStatus>('idle')
+  const [hostOpsLastRefreshedAt, setHostOpsLastRefreshedAt] = useState<number | null>(null)
+  const [hostOpsRefreshError, setHostOpsRefreshError] = useState<string | null>(null)
   const refreshHostOps = useCallback(async (forceKomari = false) => {
     setHostOpsLoading(true)
+    setHostOpsRefreshStatus('refreshing')
+    setHostOpsRefreshError(null)
+    let recoveredFromPersistence = false
     try {
       let komariSnapshots = undefined
+      const komariRecords: Array<{
+        integrationId: string
+        snapshots: Awaited<ReturnType<typeof syncKomariIntegration>>['snapshots']
+        mappings: Awaited<ReturnType<typeof syncKomariIntegration>>['mapping']['mappings']
+        alertState: Awaited<ReturnType<typeof syncKomariIntegration>>['alertState']
+        alertAudit: Awaited<ReturnType<typeof syncKomariIntegration>>['alertAudit']
+      }> = []
       if (activeVaultId && onLoadVaultSecret) {
         const integrations = await listKomariIntegrations(activeVaultId).catch(() => [])
+        const enabledIntegrations = integrations.filter((integration) => integration.enabled)
         const syncResults = await Promise.allSettled(
-          integrations
-            .filter((integration) => integration.enabled)
+          enabledIntegrations
             .map(async (integration) => {
               const cached = await loadKomariPersistence(integration.id).catch(() => ({ snapshots: [], mappings: [], syncState: null, lastSyncedAt: null }))
               const cachedSnapshots = cached.snapshots.map((entry) => entry.snapshot)
@@ -255,13 +370,28 @@ export function HostsDashboard({
               const lastSyncedAt = cached.lastSyncedAt
               const ttlMs = cached.syncState?.ttlMs ?? DEFAULT_KOMARI_SYNC_TTL_MS
               if (!forceKomari && isKomariSyncFresh(lastSyncedAt, Date.now(), ttlMs)) {
-                return cachedSnapshots
+                const cachedAlerts = reconcileKomariProbeAlerts({
+                  integrationId: integration.id,
+                  snapshots: cachedSnapshots,
+                  alertState: cachedAlertState,
+                  now: Date.now(),
+                })
+                if (cachedAlerts.alertAudit.length > 0) {
+                  await persistKomariAlertState({
+                    integrationId: integration.id,
+                    state: cachedAlerts.alertState,
+                    lastSyncedAt: lastSyncedAt ?? undefined,
+                    ttlMs,
+                  }).catch(() => undefined)
+                }
+                return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlerts.alertState, alertAudit: cachedAlerts.alertAudit }
               }
 
               const apiKey = await onLoadVaultSecret(integration.credentialRef)
-              if (!apiKey) return cachedSnapshots
+              if (!apiKey) return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlertState, alertAudit: [] }
               const result = await syncKomariIntegration({
                 integrationId: integration.id,
+                vaultId: activeVaultId ?? undefined,
                 config: { endpoint: integration.endpoint, token: apiKey },
                 hosts,
                 lastSyncedAt,
@@ -282,30 +412,350 @@ export function HostsDashboard({
                   alertState: result.alertState,
                 }).catch(() => undefined)
               }
-              return result.skipped ? cachedSnapshots : result.snapshots
+              return {
+                integrationId: integration.id,
+                snapshots: result.skipped ? cachedSnapshots : result.snapshots,
+                mappings: result.skipped ? cached.mappings : result.mapping.mappings,
+                alertState: result.skipped ? cachedAlertState : result.alertState,
+                alertAudit: result.skipped ? [] : result.alertAudit,
+              }
             }),
         )
-        komariSnapshots = syncResults
-          .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof syncKomariIntegration>>['snapshots']> => result.status === 'fulfilled')
-          .flatMap((result) => result.value)
+        // A failed remote sync must not discard the last durable Komari
+        // mapping, snapshot, or alert lifecycle. Rehydrate that integration
+        // by index so another session still sees its host card state while
+        // the next scheduled refresh retries the endpoint.
+        const recoveredRecords = await Promise.all(syncResults.map(async (result, index) => {
+          if (result.status === 'fulfilled') return result.value
+          recoveredFromPersistence = true
+          const integration = enabledIntegrations[index]
+          const cached = await loadKomariPersistence(integration.id).catch(() => ({ snapshots: [], mappings: [], syncState: null, lastSyncedAt: null }))
+          return {
+            integrationId: integration.id,
+            snapshots: cached.snapshots.map((entry) => entry.snapshot),
+            mappings: cached.mappings,
+            alertState: readKomariAlertState(cached.syncState),
+            alertAudit: [],
+          }
+        }))
+        komariSnapshots = recoveredRecords
+          .map((record) => { komariRecords.push(record); return record.snapshots })
+          .flat()
       }
-      setHostOpsViews(await loadHostOpsViews(hosts, { auditLimit: 250, komariSnapshots, vaultId: activeVaultId }))
-    } catch {
-      setHostOpsViews({})
+      // Fresh rows deliver once; TTL cache hits may retry bounded, durable
+      // channel failures without replaying the historical alert journal.
+      if (komariRecords.length > 0) {
+        const notificationPolicy = loadNotificationPolicy()
+        await Promise.all(komariRecords.map(async (record) => {
+          if (!record.alertState) return
+          try {
+            await dispatchAndPersistKomariAlertNotifications(record.integrationId, record.alertState, {
+              policy: notificationPolicy,
+              audit: record.alertAudit,
+              retryPending: true,
+              onLocal: emitKomariAlertNotification,
+            })
+          } catch (error) {
+            // A notification sink is optional; a delivery failure must not
+            // hide fresh host health data or the persisted Komari audit.
+            console.warn('Komari alert notification delivery failed', error)
+          }
+        }))
+      }
+      const views = await loadHostOpsViews(hosts, {
+        auditLimit: 250,
+        komariSnapshots,
+        komariAlertStates: komariRecords.map((record) => record.alertState).filter((state): state is NonNullable<typeof state> => state !== null),
+        vaultId: activeVaultId,
+      })
+      setHostOpsViews(views)
+      setHostOpsLastRefreshedAt(Date.now())
+      setHostOpsRefreshStatus(recoveredFromPersistence ? 'recovered' : 'fresh')
+      if (komariRecords.length > 0) {
+        const agents = await listShellbeamAgents({ vaultId: activeVaultId }).catch(() => [])
+        setKomariProbeLinks(komariRecords.flatMap((record) => buildKomariProbeLinks({
+          integrationId: record.integrationId,
+          hosts,
+          mappings: record.mappings,
+          snapshots: record.snapshots,
+          shellbeamAgents: agents,
+          alertState: record.alertState,
+        })))
+      } else {
+        setKomariProbeLinks([])
+      }
+    } catch (error) {
+      // A remote sync can fail while the durable ProbeProvider, Komari and
+      // OperationJob rows remain available locally. Keep the last rendered
+      // view visible and make one persistence-only read so a refresh failure
+      // in another session never blanks the host list.
+      console.warn('Host operations refresh failed; retaining persisted view', error)
+      setHostOpsRefreshError(error instanceof Error ? error.message : String(error))
+      try {
+        const persistedViews = await loadHostOpsViews(hosts, {
+          auditLimit: 250,
+          vaultId: activeVaultId,
+        })
+        if (Object.keys(persistedViews).length > 0) {
+          setHostOpsViews(persistedViews)
+          setHostOpsLastRefreshedAt(Date.now())
+          setHostOpsRefreshStatus('recovered')
+        } else {
+          setHostOpsRefreshStatus('error')
+        }
+      } catch (fallbackError) {
+        console.warn('Persisted host operations refresh failed', fallbackError)
+        setHostOpsRefreshError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError))
+        setHostOpsRefreshStatus('error')
+      }
     } finally {
       setHostOpsLoading(false)
     }
   }, [activeVaultId, hosts, onLoadVaultSecret])
 
+  const resolveKomariHostSecret = useCallback(async (host: HostProfile) => {
+    if (!onLoadVaultSecret) throw new Error('Vault secret resolver is unavailable')
+    const key = host.authType === 'password' ? host.passwordKeyRef : host.privateKeyRef
+    if (!key) throw new Error(`No ${host.authType} reference is configured for ${host.name}`)
+    const secret = await onLoadVaultSecret(key)
+    if (!secret) throw new Error(`Vault secret is unavailable for ${host.name}`)
+    return secret
+  }, [onLoadVaultSecret])
+
+  const handleKomariProbeAction = useCallback(async (action: 'check-probe' | 'install-probe', link: KomariProbeLink) => {
+    if (!link.mapping) return
+    const host = hosts.find((candidate) => candidate.id === link.mapping?.hostId)
+    if (!host) return
+    const key = `${link.integrationId}:${link.nodeId}:${action}`
+    setKomariProbeActionKey(key)
+    try {
+      const mappings = [link.mapping]
+      if (action === 'check-probe') {
+        await checkKomariLinkedProbe({
+          integrationId: link.integrationId,
+          nodeId: link.nodeId,
+          mappings,
+          hosts,
+          resolveAuthSecret: resolveKomariHostSecret,
+        })
+      } else {
+        // Pick the newest open lifecycle row for this mapped node. The
+        // operation bridge persists the job id against that row; Komari still
+        // decides when the alert actually recovers on a later sync.
+        const alert = link.alertState?.alerts
+          .filter((candidate) => (candidate.status === 'active' || candidate.status === 'acknowledged')
+            && candidate.integrationId === link.integrationId
+            && (candidate.nodeId === link.nodeId || candidate.hostId === host.id))
+          .sort((left, right) => right.lastSeenAt - left.lastSeenAt)[0]
+        await runKomariLinkedProbeOperation({
+          integrationId: link.integrationId,
+          nodeId: link.nodeId,
+          mappings,
+          hosts,
+          resolveAuthSecret: resolveKomariHostSecret,
+          action: 'install',
+          vaultId: activeVaultId,
+          alertState: link.alertState,
+          alertId: alert?.alertId,
+          onAlertState: (state) => {
+            setKomariProbeLinks((current) => current.map((candidate) => candidate.integrationId === link.integrationId && candidate.nodeId === link.nodeId
+              ? { ...candidate, alertState: state }
+              : candidate))
+          },
+        })
+      }
+      await refreshHostOps(true)
+    } catch (error) {
+      // The bridge persists rejected/failed OperationJobs. Keep the host list
+      // usable while the audit remains the source of truth for the details.
+      console.error('Komari Probe operation failed', error)
+    } finally {
+      setKomariProbeActionKey(null)
+    }
+  }, [activeVaultId, hosts, refreshHostOps, resolveKomariHostSecret])
+
+  const handleKomariAlertAction = useCallback(async (host: HostProfile, action: KomariAlertAction, alert: KomariAlertRecord) => {
+    const key = `${action}:${alert.alertId}`
+    setKomariAlertActionKey(key)
+    try {
+      const persisted = await loadKomariPersistence(alert.integrationId)
+      const state = readKomariAlertState(persisted.syncState)
+      if (!state) throw new Error('Komari alert state is unavailable; refresh the host first')
+      await runKomariAlertAction(action, {
+        host,
+        integrationId: alert.integrationId,
+        state,
+        alertId: alert.alertId,
+        vaultId: activeVaultId,
+        lastSyncedAt: persisted.lastSyncedAt ?? undefined,
+        ttlMs: persisted.syncState?.ttlMs,
+        confirmMessage: t(
+          action === 'acknowledge' ? 'hosts.alert.confirmAcknowledge' : 'hosts.alert.confirmClose',
+          { host: host.name, alert: alert.title },
+        ),
+      })
+    } catch (error) {
+      // Confirmation rejection and persistence failures remain in the
+      // OperationJob journal; keep the host list responsive and refresh the
+      // card so its audit count reflects the terminal job state.
+      console.error('Komari alert operation failed', error)
+    } finally {
+      await refreshHostOps(true).catch((error) => {
+        console.error('Komari host operations refresh failed', error)
+      })
+      setKomariAlertActionKey(null)
+    }
+  }, [activeVaultId, refreshHostOps, t])
+
   useEffect(() => { void refreshHostOps() }, [activeVaultId, refreshHostOps])
 
+  // MCP acknowledgement/close actions update the persisted Komari journal in
+  // another session. Re-read the local cache when this view returns to the
+  // foreground and during a long open session so the host card reflects the
+  // same lifecycle and OperationJob audit without requiring a full reload.
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const refreshWhenVisible = () => {
+      // Returning to the foreground is the cross-session boundary: another
+      // window may have acknowledged an alert or completed a job while this
+      // one was suspended, so bypass the Komari TTL and re-read persistence.
+      if (document.visibilityState === 'visible') void refreshHostOps(true)
+    }
+    const refreshFromPeerSession = () => { void refreshHostOps(true) }
+    const refreshOnInterval = () => {
+      // Keep the periodic persistence/audit refresh cheap; visibility changes
+      // are the explicit point where a remote Komari sync should bypass TTL.
+      if (document.visibilityState === 'visible') void refreshHostOps()
+    }
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    window.addEventListener('shellbeam:host-ops-refresh', refreshFromPeerSession)
+    const timer = window.setInterval(refreshOnInterval, 15_000)
+    return () => {
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.removeEventListener('shellbeam:host-ops-refresh', refreshFromPeerSession)
+      window.clearInterval(timer)
+    }
+  }, [refreshHostOps])
 
+  const handleMultiHostOperation = useCallback(async (request: MultiHostOperationRequest): Promise<MultiHostOperationResult> => {
+    const selectedHosts = request.hostIds
+      .map((hostId) => hosts.find((host) => host.id === hostId))
+      .filter((host): host is HostProfile => Boolean(host))
+    if (selectedHosts.length === 0) throw new Error('No selected hosts are available')
+
+    const operationLabel = request.operation === 'docker.restart'
+      ? t('multiHost.operations.dockerRestart')
+      : request.operation === 'service.restart'
+        ? t('multiHost.operations.serviceRestart')
+        : t('multiHost.operations.healthCheck')
+    const confirmMessage = t('multiHost.confirm', {
+      operation: operationLabel,
+      target: request.target ?? t('multiHost.operations.healthCheck'),
+      count: selectedHosts.length,
+      hosts: selectedHosts.map((host) => host.name).join(', '),
+    })
+    let batch: BatchOperationResult<unknown>
+    if (request.operation === 'docker.restart') {
+      if (!request.target) throw new Error('A Docker container name is required')
+      batch = await runBatchDockerOperation({
+        hosts: selectedHosts,
+        containerName: request.target,
+        dockerAction: 'restart',
+        resolveAuthSecret: resolveKomariHostSecret,
+        confirmMessage,
+        confirm: () => request.confirmationRequired ? window.confirm(confirmMessage) : true,
+      })
+    } else if (request.operation === 'service.restart') {
+      if (!request.target) throw new Error('A systemd service name is required')
+      batch = await runBatchServiceOperation({
+        hosts: selectedHosts,
+        serviceName: request.target,
+        serviceAction: 'restart',
+        resolveAuthSecret: resolveKomariHostSecret,
+        confirmMessage,
+        confirm: () => request.confirmationRequired ? window.confirm(confirmMessage) : true,
+      })
+    } else if (request.operation === 'health-check') {
+      batch = await runBatchOperation({
+        hosts: selectedHosts,
+        action: 'health.refresh',
+        target: 'remote-health',
+        risk: 'read-only',
+        confirmMessage,
+        confirm: () => true,
+        execute: (host) => runWorkspaceRemoteCommand({
+          host,
+          resolveAuthSecret: resolveKomariHostSecret,
+          command: "printf '__SHELLBEAM_HEALTH=ok\n'; uptime -p 2>/dev/null || true",
+        }),
+        getResult: (value) => value,
+      })
+    } else {
+      throw new Error('Unsupported multi-host operation')
+    }
+
+    await refreshHostOps(true)
+    return {
+      operation: request.operation,
+      status: batch.status,
+      results: batch.outcomes.map((outcome) => ({
+        hostId: outcome.host.id,
+        status: outcome.status,
+        jobId: outcome.job?.jobId ?? null,
+        auditId: outcome.job?.auditId ?? null,
+        transport: outcome.transport,
+        resultSummary: outcome.resultSummary ?? outcome.job?.resultSummary ?? null,
+        errorSummary: outcome.errorSummary ?? outcome.job?.errorSummary ?? null,
+      })),
+      startedAt: batch.startedAt,
+      finishedAt: batch.finishedAt,
+    }
+  }, [hosts, refreshHostOps, resolveKomariHostSecret, t])
+
+
+  useEffect(() => {
+    let cancelled = false
+    if (!activeVaultId) {
+      setAgentDeployments([])
+      return
+    }
+    void listMcpDeploymentRecords(activeVaultId).then((result) => {
+      if (!cancelled) setAgentDeployments(result.projects)
+    }).catch(() => {
+      if (!cancelled) setAgentDeployments([])
+    })
+    return () => { cancelled = true }
+  }, [activeVaultId])
+
+  const agentDeploymentsByHost = useMemo(() => {
+    const grouped = new Map<string, McpDeploymentRecord[]>()
+    agentDeployments.forEach((deployment) => {
+      const current = grouped.get(deployment.hostId) ?? []
+      current.push(deployment)
+      grouped.set(deployment.hostId, current)
+    })
+    return grouped
+  }, [agentDeployments])
 
   const operationalSummaryByHost = useMemo(() => {
     const summaries = new Map<string, HostOperationalSummary | undefined>()
-    hosts.forEach((host) => summaries.set(host.id, hostOpsToCardSummary(hostOpsViews[host.id])))
+    hosts.forEach((host) => {
+      const link = komariProbeLinks.find((candidate) => candidate.hostId === host.id)
+      const busy = link ? komariProbeActionKey === `${link.integrationId}:${link.nodeId}:${link.recommendedAction}` : false
+      const alertBusy = komariAlertActionKey
+        ? komariAlertActionKey.slice(komariAlertActionKey.indexOf(':') + 1)
+        : null
+      summaries.set(host.id, hostOpsToCardSummary(
+        hostOpsViews[host.id],
+        link,
+        handleKomariProbeAction,
+        busy,
+        (action, alert) => handleKomariAlertAction(host, action, alert),
+        alertBusy,
+      ))
+    })
     return summaries
-  }, [hostOpsViews, hosts])
+  }, [handleKomariAlertAction, handleKomariProbeAction, hostOpsViews, hosts, komariAlertActionKey, komariProbeActionKey, komariProbeLinks])
 
   function hostKey(host: HostProfile) {
     return getWorkspaceInventoryHostKey(host)
@@ -365,7 +815,8 @@ export function HostsDashboard({
           (h.jumpUser && h.jumpUser.toLowerCase().includes(q)) ||
           (h.jumpPort && String(h.jumpPort).includes(q)) ||
           (h.group && h.group.toLowerCase().includes(q)) ||
-          (h.tags && h.tags.some((tag) => tag.toLowerCase().includes(q)))
+          (h.tags && h.tags.some((tag) => tag.toLowerCase().includes(q))) ||
+          (agentDeploymentsByHost.get(h.id)?.some((deployment) => [deployment.name, deployment.deploymentPath, deployment.status].filter(Boolean).join(' ').toLowerCase().includes(q)) ?? false)
       )
     }
     if (groupFilter !== 'All') {
@@ -385,7 +836,7 @@ export function HostsDashboard({
       case 'oldest': sorted.sort((a, b) => (a.updatedAt || a.createdAt) - (b.updatedAt || b.createdAt)); break
     }
     return sorted
-  }, [hosts, effectiveSearch, groupFilter, sharedStates, statusFilter, tagFilter, sortMode, hostOpsLoading, hostOpsViews])
+  }, [agentDeploymentsByHost, hosts, effectiveSearch, groupFilter, sharedStates, statusFilter, tagFilter, sortMode, hostOpsLoading, hostOpsViews])
 
   const statusCounts = useMemo(() => hosts.reduce<Record<Exclude<HostStatusFilter, 'all'>, number>>((counts, host) => {
     const status = getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)
@@ -549,6 +1000,22 @@ export function HostsDashboard({
         controls={
           <>
           <div className="flex-1" />
+          <HostOpsRefreshIndicator
+            status={hostOpsRefreshStatus}
+            lastRefreshedAt={hostOpsLastRefreshedAt}
+            error={hostOpsRefreshError}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void handleRefreshAll()}
+            disabled={hostOpsLoading}
+            className="h-9 gap-1.5 text-xs"
+            data-testid="host-ops-refresh"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', hostOpsLoading && 'animate-spin')} />
+            <span className="hidden sm:inline">{t('hosts.refreshOps')}</span>
+          </Button>
           {onScanHosts && filteredHosts.length > 0 && (
             <Button size="sm" variant="outline" onClick={() => void handleCheckAllStatus()} disabled={checkingStatus} className="h-9 gap-1.5 text-xs">
               <RefreshCw className={cn('h-3.5 w-3.5', checkingStatus && 'animate-spin')} />
@@ -569,6 +1036,9 @@ export function HostsDashboard({
           </>
         }
       >
+          <MultiHostOperationsPanel hosts={filteredHosts} onRunOperation={handleMultiHostOperation} />
+          <KomariAlertsDashboardPanel activeVaultId={activeVaultId} hosts={hosts} onOpenHost={onSelectHost} />
+          <KomariProbeMappingNotice links={komariProbeLinks} />
           <HostCreateDialog
             open={showAddForm}
             defaultUsername={defaultUsername}
@@ -629,6 +1099,8 @@ export function HostsDashboard({
                     resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}
                     operations={operationalSummaryByHost.get(host.id)}
                     network={networkByAddress[host.address]}
+                    agentDeploymentCount={agentDeploymentsByHost.get(host.id)?.length ?? 0}
+                    agentDeploymentStatus={agentDeploymentsByHost.get(host.id)?.[0]?.status}
                     onConnect={handleConnect}
                     onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                     onDelete={(id) => void onDeleteHost(id)}
@@ -689,6 +1161,8 @@ export function HostsDashboard({
                           resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}
                           operations={operationalSummaryByHost.get(host.id)}
                           network={networkByAddress[host.address]}
+                          agentDeploymentCount={agentDeploymentsByHost.get(host.id)?.length ?? 0}
+                          agentDeploymentStatus={agentDeploymentsByHost.get(host.id)?.[0]?.status}
                           onSelect={onSelectHost}
                           onConnect={handleConnect}
                           onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}

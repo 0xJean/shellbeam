@@ -34,6 +34,8 @@ base64 = "0.22.1"
 url = "2"
 urlencoding = "2"
 tauri-plugin-dialog = "2"
+# Pin the v2 API used by the narrow native notification adapter.
+tauri-plugin-notification = "=2.3.3"
 tauri-plugin-biometry = "0.2"
 tauri-plugin-window-state = "2"
 lazy_static = "1"

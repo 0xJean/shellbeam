@@ -4,6 +4,8 @@ import { cn } from '@/lib/utils'
 import {
   ActivitySquare,
   Boxes,
+  Box,
+  CalendarClock,
   Files,
   FolderTree,
   FolderKanban,
@@ -11,6 +13,7 @@ import {
   LayoutGrid,
   Network,
   ScrollText,
+  ShieldCheck,
   SquareTerminal,
 } from 'lucide-react'
 
@@ -25,6 +28,9 @@ const APPS: Array<{ id: WorkspaceAppId; labelKey: string; icon: typeof LayoutGri
   { id: 'logs', labelKey: 'workspace.app.logs', icon: ScrollText, accent: 'from-[var(--workspace-primary-300)] via-[var(--workspace-primary-500)] to-[var(--workspace-accent-text)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-cpu-glow)]' },
   { id: 'browser', labelKey: 'workspace.app.browser', icon: Globe, accent: 'from-[var(--workspace-metric-disk-from)] via-[var(--workspace-status-warn)] to-[var(--workspace-metric-disk-to)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-disk-glow)]' },
   { id: 'terminal', labelKey: 'workspace.app.terminal', icon: SquareTerminal, accent: 'from-[var(--workspace-text-muted)] via-[var(--workspace-text)] to-[var(--workspace-text-strong)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[var(--workspace-shadow-overlay)]' },
+  { id: 'docker', labelKey: 'workspace.app.docker', icon: Box, accent: 'from-[var(--workspace-status-info)] via-[var(--workspace-primary-400)] to-[var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[var(--workspace-metric-network-glow)]' },
+  { id: 'sitesSsl', labelKey: 'workspace.app.sitesSsl', icon: ShieldCheck, accent: 'from-[var(--workspace-status-good)] via-[var(--workspace-primary-400)] to-[var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[var(--workspace-metric-memory-glow)]' },
+  { id: 'scheduledTasks', labelKey: 'workspace.app.scheduledTasks', icon: CalendarClock, accent: 'from-[var(--workspace-status-warn)] via-[var(--workspace-primary-400)] to-[var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[var(--workspace-metric-cpu-glow)]' },
 ]
 
 interface WorkspaceAppGridProps {
