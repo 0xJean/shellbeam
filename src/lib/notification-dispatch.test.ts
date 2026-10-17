@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { dispatchNotification, redactNotificationText, createNotificationDispatcher } from './notification-dispatch'
+import { dispatchNotification, redactNotificationText, createNotificationDispatcher, NOTIFICATION_DELIVERY_TIMEOUT_MS } from './notification-dispatch'
 import type { NotificationEvent } from './notification-policy'
 
 const event: NotificationEvent = {
@@ -46,7 +46,7 @@ describe('notification dispatch', () => {
     }
   })
 
-  it('requests system permission before the first delivery', async () => {
+  it('records missing permission without prompting during background delivery', async () => {
     const shown: string[] = []
     class MockNotification {
       static permission: NotificationPermission = 'default'
@@ -61,9 +61,10 @@ describe('notification dispatch', () => {
     vi.stubGlobal('Notification', MockNotification as unknown as typeof Notification)
     try {
       const result = await dispatchNotification(event, { policy: { channels: ['system'] }, now: 10_100 })
-      expect(result.deliveries[0]).toMatchObject({ channel: 'system', status: 'delivered' })
-      expect(MockNotification.requestPermission).toHaveBeenCalledTimes(1)
-      expect(shown).toEqual(['Host offline'])
+      expect(result.deliveries[0]).toMatchObject({ channel: 'system', status: 'failed', reason: 'system-permission-required' })
+      expect(result.state.attempts).toEqual([expect.objectContaining({ channel: 'system', status: 'failed', reason: 'system-permission-required', attemptedAt: 10_100 })])
+      expect(MockNotification.requestPermission).not.toHaveBeenCalled()
+      expect(shown).toEqual([])
     } finally {
       vi.unstubAllGlobals()
     }
@@ -81,8 +82,8 @@ describe('notification dispatch', () => {
     vi.stubGlobal('Notification', MockNotification as unknown as typeof Notification)
     try {
       const result = await dispatchNotification(event, { policy: { channels: ['system'] }, logger: { warn: logger }, now: 10_200 })
-      expect(result.deliveries[0]).toMatchObject({ channel: 'system', status: 'failed', error: 'system notification permission denied' })
-      expect(logger).toHaveBeenCalledWith('Notification system delivery failed: system notification permission denied')
+      expect(result.deliveries[0]).toMatchObject({ channel: 'system', status: 'failed', error: 'system-permission-denied' })
+      expect(logger).toHaveBeenCalledWith('Notification system delivery failed: system-permission-denied')
       expect(JSON.stringify(logger.mock.calls)).not.toContain('secret-value')
     } finally {
       vi.unstubAllGlobals()
@@ -162,8 +163,8 @@ describe('notification dispatch', () => {
     })
     expect(result.deliveries).toEqual([
       { channel: 'local', status: 'skipped', reason: 'channel-unavailable' },
-      { channel: 'webhook', status: 'failed', error: 'webhook returned HTTP 500' },
-      { channel: 'system', status: 'skipped', reason: 'channel-unavailable' },
+      { channel: 'webhook', status: 'failed', reason: 'webhook-http-error', error: 'webhook returned HTTP 500' },
+      { channel: 'system', status: 'failed', reason: 'system-unavailable', error: 'system-unavailable' },
     ])
     expect(result.state.deliveries).toHaveLength(0)
     expect(logger).toHaveBeenCalledWith('Notification webhook delivery failed: webhook returned HTTP 500')
@@ -189,4 +190,50 @@ describe('notification dispatch', () => {
     expect(redactNotificationText('https://example.test/hook?token=secret-value&ok=1')).toContain('token=<redacted>')
     expect(redactNotificationText('POST https://user:password@example.test/hook')).toContain('https://<redacted>@example.test')
   })
+  it('bounds a hanging webhook request and continues to other channels', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = vi.fn<typeof fetch>(() => new Promise(() => {}))
+      const onSystem = vi.fn()
+      const pending = dispatchNotification(event, {
+        policy: { channels: ['webhook', 'system'], webhookUrl: 'https://alerts.example.test/hook' },
+        fetchImpl, onSystem, now: 5_000,
+      })
+      await vi.advanceTimersByTimeAsync(NOTIFICATION_DELIVERY_TIMEOUT_MS)
+      const result = await pending
+      expect(result.deliveries).toEqual([
+        expect.objectContaining({ channel: 'webhook', status: 'failed', reason: 'delivery-timeout' }),
+        expect.objectContaining({ channel: 'system', status: 'delivered' }),
+      ])
+      expect(fetchImpl.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+      expect(onSystem).toHaveBeenCalledTimes(1)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('persists fixed diagnostics and opaque fallback keys without sink error bodies', async () => {
+    const result = await dispatchNotification({ ...event, eventId: undefined }, {
+      policy: { channels: ['webhook'], webhookUrl: 'https://alerts.example.test/hook' },
+      fetchImpl: vi.fn<typeof fetch>().mockRejectedValue(new Error('raw provider response password=hunter2 https://user:secret@example.test/path')),
+      now: 50,
+    })
+    expect(result.state.attempts).toEqual([{
+      key: expect.stringMatching(/^[0-9a-f]+-[0-9a-f]+$/), eventId: null, channel: 'webhook',
+      status: 'failed', reason: 'webhook-request-failed', attemptedAt: 50,
+    }])
+    expect(JSON.stringify(result.state)).not.toMatch(/hunter2|secret-value|provider response|Host offline/)
+  })
+
+  it('deduplicates events without ids without persisting their titles or messages', async () => {
+    const onLocal = vi.fn()
+    const first = await dispatchNotification({ ...event, eventId: undefined }, {
+      policy: { channels: ['local'] }, onLocal, now: 1_000,
+    })
+    const second = await dispatchNotification({ ...event, eventId: undefined }, {
+      policy: { channels: ['local'] }, onLocal, now: 2_000, state: first.state,
+    })
+    expect(second.deliveries[0]?.reason).toBe('deduplicated')
+    expect(onLocal).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(first.state)).not.toMatch(/Host offline|probe token|secret-value|hunter2/)
+  })
+
 })

@@ -442,17 +442,17 @@ export function HostsDashboard({
           .map((record) => { komariRecords.push(record); return record.snapshots })
           .flat()
       }
-      // Deliver only audit rows produced by this sync. TTL cache hits and
-      // missing credentials deliberately return an empty audit list, so a
-      // refresh cannot replay historical lifecycle events.
+      // Fresh rows deliver once; TTL cache hits may retry bounded, durable
+      // channel failures without replaying the historical alert journal.
       if (komariRecords.length > 0) {
         const notificationPolicy = loadNotificationPolicy()
         await Promise.all(komariRecords.map(async (record) => {
-          if (!record.alertState || record.alertAudit.length === 0) return
+          if (!record.alertState) return
           try {
             await dispatchAndPersistKomariAlertNotifications(record.integrationId, record.alertState, {
               policy: notificationPolicy,
               audit: record.alertAudit,
+              retryPending: true,
               onLocal: emitKomariAlertNotification,
             })
           } catch (error) {

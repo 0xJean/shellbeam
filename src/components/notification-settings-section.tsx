@@ -11,14 +11,15 @@ import {
   type NotificationSeverity,
 } from '@/lib/notification-policy'
 import {
+  dispatchNotification,
   getSystemNotificationPermission,
   requestSystemNotificationPermission,
   type SystemNotificationPermission,
 } from '@/lib/notification-dispatch'
 import { Bell, LockKeyhole, ShieldCheck } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import NotificationDeliverySummary from './notification-delivery-summary'
-import { loadNotificationDeliveryState } from '@/lib/notification-delivery-state'
+import { loadNotificationDeliveryState, loadOwnNotificationDeliveryState, saveNotificationDeliveryState, NOTIFICATION_DELIVERY_CHANGED_EVENT } from '@/lib/notification-delivery-state'
 
 const CHANNELS: NotificationChannel[] = ['local', 'webhook', 'system']
 const SEVERITIES: NotificationSeverity[] = ['info', 'warning', 'critical']
@@ -26,10 +27,37 @@ const SEVERITIES: NotificationSeverity[] = ['info', 'warning', 'critical']
 export function NotificationSettingsSection() {
   const { t } = useT()
   const [policy, setPolicy] = useState<NotificationPolicy>(loadNotificationPolicy)
-  const [deliveryState] = useState(loadNotificationDeliveryState)
+  const [deliveryState, setDeliveryState] = useState(loadNotificationDeliveryState)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
-  const [systemPermission, setSystemPermission] = useState<SystemNotificationPermission>(getSystemNotificationPermission)
+  const [systemPermission, setSystemPermission] = useState<SystemNotificationPermission>('default')
+  const [systemBusy, setSystemBusy] = useState(false)
+  const [systemTestResult, setSystemTestResult] = useState<'accepted' | 'failed' | null>(null)
+
+  useEffect(() => {
+    let active = true
+    let permissionRead = 0
+    function refresh() {
+      setDeliveryState(loadNotificationDeliveryState())
+      const read = ++permissionRead
+      void getSystemNotificationPermission().then((permission) => {
+        if (active && read === permissionRead) setSystemPermission(permission)
+      })
+    }
+    function onVisible() { if (document.visibilityState === 'visible') refresh() }
+    refresh()
+    window.addEventListener(NOTIFICATION_DELIVERY_CHANGED_EVENT, refresh)
+    window.addEventListener('storage', refresh)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      active = false
+      window.removeEventListener(NOTIFICATION_DELIVERY_CHANGED_EVENT, refresh)
+      window.removeEventListener('storage', refresh)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
 
   function update(patch: Partial<NotificationPolicy>) {
     setPolicy((current) => ({ ...current, ...patch }))
@@ -61,7 +89,30 @@ export function NotificationSettingsSection() {
   }
 
   async function requestSystemPermission() {
-    setSystemPermission(await requestSystemNotificationPermission())
+    setSystemBusy(true)
+    try { setSystemPermission(await requestSystemNotificationPermission()) }
+    finally { setSystemBusy(false) }
+  }
+
+  async function testSystemNotification() {
+    setSystemBusy(true)
+    setSystemTestResult(null)
+    try {
+      const result = await dispatchNotification({
+        eventId: `system-test-${crypto.randomUUID()}`,
+        source: 'shellbeam', kind: 'notification.test', severity: 'info',
+        title: t('settings.notifications.testTitle'),
+        message: t('settings.notifications.testBody'),
+        fingerprint: 'shellbeam-system-test',
+      }, {
+        // The explicit test action is independent of unsaved alert policy.
+        policy: { enabled: true, channels: ['system'], minimumSeverity: 'info', cooldownMs: 0, dedupeWindowMs: 0 },
+        state: loadOwnNotificationDeliveryState(),
+      })
+      saveNotificationDeliveryState(result.state)
+      setSystemTestResult(result.deliveries.some((entry) => entry.status === 'delivered') ? 'accepted' : 'failed')
+      setSystemPermission(await getSystemNotificationPermission())
+    } finally { setSystemBusy(false) }
   }
 
   const summary = notificationPolicySummary(policy)
@@ -98,12 +149,16 @@ export function NotificationSettingsSection() {
             <div className="mt-3 rounded-md border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
               <p>{t('settings.notifications.systemHelp')}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={requestSystemPermission}>
+                <Button type="button" variant="outline" size="sm" onClick={requestSystemPermission} disabled={systemBusy || systemPermission === 'unavailable' || systemPermission === 'granted'}>
                   {t('settings.notifications.requestSystemPermission')}
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={testSystemNotification} disabled={systemBusy}>
+                  {t('settings.notifications.testSystem')}
                 </Button>
                 <span role="status">
                   {t(`settings.notifications.systemPermission.${systemPermission}`)}
                 </span>
+                {systemTestResult && <span role="status">{t(`settings.notifications.testResult.${systemTestResult}`)}</span>}
               </div>
             </div>
           )}

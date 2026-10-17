@@ -1,4 +1,4 @@
-import { BellRing, CheckCircle2, Clock3, Radio, Webhook } from 'lucide-react'
+import { AlertTriangle, BellRing, CheckCircle2, Clock3, Radio, Webhook } from 'lucide-react'
 import { useMemo } from 'react'
 import { useT } from '@/lib/i18n'
 import type { NotificationChannel } from '@/lib/notification-policy'
@@ -27,7 +27,7 @@ export interface NotificationDeliverySummaryProps {
 }
 
 function formatTime(value: number | null | undefined, locale: string) {
-  if (!value || !Number.isFinite(value)) return '—'
+  if (value === null || value === undefined || !Number.isFinite(value) || Math.abs(value) > 8.64e15) return '—'
   return new Intl.DateTimeFormat(locale === 'zh-CN' ? 'zh-CN' : 'en-US', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
 }
 
@@ -47,7 +47,7 @@ export function NotificationDeliverySummary({ state, summary, compact = false, c
   // ledger's successful count in that case so a refresh does not appear to
   // erase the user's delivery history.
   const delivered = currentDelivered === undefined ? persisted.delivered : Math.max(currentDelivered, persisted.delivered)
-  const recent = summary ? Math.max(persisted.recentDelivered, delivered - summary.skipped - summary.failed) : persisted.recentDelivered
+  const recent = persisted.recentDelivered
   const lastDeliveredAt = summary?.lastDeliveredAt ?? persisted.lastDeliveredAt
   const channels = Object.entries(persisted.byChannel) as Array<[NotificationChannel, number]>
 
@@ -68,10 +68,28 @@ export function NotificationDeliverySummary({ state, summary, compact = false, c
         <div className="flex items-center gap-2 text-muted-foreground"><Clock3 className="h-3.5 w-3.5" />{t('settings.notifications.lastDelivered', { time: formatTime(lastDeliveredAt, locale) })}</div>
       </div>
 
+      {persisted.lastAttemptedAt !== null && (
+        <p className="mt-2 text-xs text-muted-foreground">{t('settings.notifications.lastAttempt', { time: formatTime(persisted.lastAttemptedAt, locale) })}</p>
+      )}
+
+      {(persisted.failed > 0 || persisted.blocked > 0) && (
+        <div role="status" className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          {persisted.failed > 0 && <span>{t('settings.notifications.pendingFailures', { count: persisted.failed })}</span>}
+          {persisted.blocked > 0 && <span>{t('settings.notifications.pendingBlocked', { count: persisted.blocked })}</span>}
+        </div>
+      )}
+
       <div className="mt-3 flex flex-wrap gap-1.5">
         {channels.map(([channel, count]) => {
           const Icon = CHANNEL_ICONS[channel]
-          return <span key={channel} className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2 py-1 text-[10px] text-muted-foreground"><Icon className="h-3 w-3" />{t(`settings.notifications.channel.${channel}`)}: {count}</span>
+          const outcome = persisted.byChannelOutcome[channel]
+          return (
+            <div key={channel} data-testid={`notification-channel-${channel}`} className="rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground">
+              <span className="inline-flex items-center gap-1"><Icon className="h-3 w-3" />{t(`settings.notifications.channel.${channel}`)}: {count}</span>
+              {outcome && <p className="mt-1">{t(`settings.notifications.outcome.${outcome.status === 'skipped' ? 'blocked' : outcome.status}`)}{outcome.reason ? ` · ${t(`settings.notifications.reason.${outcome.reason}`)}` : ''}</p>}
+            </div>
+          )
         })}
       </div>
 

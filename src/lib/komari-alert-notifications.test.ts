@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { KomariAlertState } from './komari-alerts'
-import { dispatchKomariAlertNotifications, komariAlertNotificationEvent } from './komari-alert-notifications'
+import { dispatchAndPersistKomariAlertNotifications, dispatchKomariAlertNotifications, komariAlertNotificationEvent, loadKomariAlertNotificationState, saveKomariAlertNotificationState } from './komari-alert-notifications'
 
 const state: KomariAlertState = {
   schemaVersion: 1,
@@ -139,7 +139,7 @@ describe('Komari alert notifications', () => {
 
   it('dispatches only bounded lifecycle transitions and returns a summary', async () => {
     const onLocal = vi.fn()
-    const result = await dispatchKomariAlertNotifications(state, { policy: { channels: ['local'], cooldownMs: 0 }, onLocal, maxEvents: 2 })
+    const result = await dispatchKomariAlertNotifications(state, { policy: { channels: ['local'], cooldownMs: 0 }, onLocal, maxEvents: 2, now: 3_000 })
     expect(result.events).toHaveLength(2)
     expect(result.events.map((entry) => entry.payload.kind)).toEqual(['alert.acknowledged', 'alert.resolved'])
     expect(result.summary).toMatchObject({ considered: 2, omitted: 1, delivered: 2, skipped: 0, failed: 0, lastDeliveredAt: 3_000 })
@@ -212,6 +212,180 @@ describe('Komari alert notifications', () => {
     expect(result.summary.delivered).toBe(1)
     expect(loadKomariAlertNotificationState('prod').deliveries).toHaveLength(1)
     expect(onLocal).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries only the failed channel from persisted attempts on a refresh with no new audit', async () => {
+    localStorage.clear()
+    const onLocal = vi.fn()
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('', { status: 503 }))
+      .mockResolvedValueOnce(new Response('', { status: 200 }))
+    const policy = { channels: ['local', 'webhook'] as const, webhookUrl: 'https://alerts.example.test/hook', cooldownMs: 0, dedupeWindowMs: 0 }
+    const first = await dispatchAndPersistKomariAlertNotifications('prod', state, {
+      audit: [state.audit[2]!], policy, onLocal, fetchImpl, now: 10_000,
+    })
+    expect(first.state.attempts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ eventId: 'audit-resolved', channel: 'webhook', status: 'failed', attemptedAt: 10_000 }),
+    ]))
+    const retry = await dispatchAndPersistKomariAlertNotifications('prod', state, {
+      audit: [], retryPending: true, policy, onLocal, fetchImpl, now: 70_000,
+    })
+    expect(retry.summary.delivered).toBe(1)
+    expect(retry.events[0]?.deliveries.map((delivery) => delivery.channel)).toEqual(['webhook'])
+    expect(loadKomariAlertNotificationState('prod').deliveries).toHaveLength(2)
+    expect(onLocal).toHaveBeenCalledTimes(1)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    const settled = await dispatchAndPersistKomariAlertNotifications('prod', state, {
+      audit: [], retryPending: true, policy, onLocal, fetchImpl, now: 130_000,
+    })
+    expect(settled.events).toHaveLength(0)
+  })
+
+  it('retries a persisted unavailable channel once a sink becomes available', async () => {
+    const policy = { channels: ['webhook'] as const, cooldownMs: 0 }
+    const first = await dispatchKomariAlertNotifications(state, {
+      audit: [state.audit[2]!], policy, now: 10_000,
+    })
+    expect(first.events[0]?.deliveries[0]).toMatchObject({ status: 'skipped', reason: 'webhook-not-configured' })
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 200 }))
+    const retry = await dispatchKomariAlertNotifications(state, {
+      audit: [], retryPending: true, state: first.state,
+      policy: { ...policy, webhookUrl: 'https://alerts.example.test/hook' }, fetchImpl, now: 70_000,
+    })
+    expect(retry.summary.delivered).toBe(1)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('delivers a recent persisted MCP acknowledgement once without backfilling new channels', async () => {
+    localStorage.clear()
+    const persistedMcpState: KomariAlertState = {
+      ...state,
+      audit: state.audit.slice(0, 2),
+      summary: { ...state.summary, localUpdatedAt: 2_000 },
+    }
+    const onLocal = vi.fn()
+    const onSystem = vi.fn()
+    const options = { audit: [], retryPending: true, includeRecent: true, onLocal, onSystem, now: 70_000 }
+    const first = await dispatchAndPersistKomariAlertNotifications('mcp', persistedMcpState, {
+      ...options, policy: { channels: ['local'], cooldownMs: 0 },
+    })
+    expect(first.events.map((event) => event.payload.eventId)).toEqual(['audit-ack'])
+    expect(first.summary.delivered).toBe(1)
+    const reloaded = await dispatchAndPersistKomariAlertNotifications('mcp', persistedMcpState, {
+      ...options, policy: { channels: ['local', 'system'], cooldownMs: 0 }, now: 130_000,
+    })
+    expect(reloaded.events).toHaveLength(0)
+    expect(onLocal).toHaveBeenCalledTimes(1)
+    expect(onSystem).not.toHaveBeenCalled()
+  })
+
+  it('does not discover expired, future, or earlier-than-sync lifecycle facts', async () => {
+    const onLocal = vi.fn()
+    for (const [now, localUpdatedAt] of [
+      [3_001 + 24 * 60 * 60 * 1_000, 3_000],
+      [2_999, 3_000],
+      [4_000, 3_001],
+    ]) {
+      const result = await dispatchKomariAlertNotifications({ ...state, summary: { ...state.summary, localUpdatedAt: localUpdatedAt! } }, {
+        audit: [], retryPending: true, includeRecent: true,
+        policy: { channels: ['local'], cooldownMs: 0 }, onLocal, now,
+      })
+      expect(result.events).toHaveLength(0)
+    }
+    expect(onLocal).not.toHaveBeenCalled()
+  })
+
+  it('never replays history without failures or sends newly configured channels on retry', async () => {
+    const onLocal = vi.fn()
+    const onSystem = vi.fn()
+    const policy = { channels: ['local', 'system'] as const, cooldownMs: 0 }
+    const noHistory = await dispatchKomariAlertNotifications(state, { audit: [], retryPending: true, policy, onLocal, onSystem })
+    expect(noHistory.events).toHaveLength(0)
+    const failed = await dispatchKomariAlertNotifications(state, {
+      audit: [state.audit[2]!], policy: { channels: ['local'], cooldownMs: 0 },
+      onLocal: () => { throw new Error('temporarily unavailable') }, now: 10_000,
+    })
+    const retry = await dispatchKomariAlertNotifications(state, {
+      audit: [], retryPending: true, state: failed.state, policy, onLocal, onSystem, now: 70_000,
+    })
+    expect(retry.summary.delivered).toBe(1)
+    expect(onSystem).not.toHaveBeenCalled()
+  })
+
+  it('bounds automatic retries by minimum interval, count and age', async () => {
+    const onLocal = vi.fn(() => { throw new Error('temporarily unavailable') })
+    const policy = { channels: ['local'] as const, cooldownMs: 0 }
+    let result = await dispatchKomariAlertNotifications(state, {
+      audit: [state.audit[2]!], policy, onLocal, now: 10_000,
+    })
+    const early = await dispatchKomariAlertNotifications(state, {
+      audit: [], retryPending: true, state: result.state, policy, onLocal, now: 69_999,
+    })
+    expect(early.events).toHaveLength(0)
+    const expired = await dispatchKomariAlertNotifications(state, {
+      audit: [], retryPending: true, state: result.state, policy, onLocal, now: 10_001 + 24 * 60 * 60 * 1_000,
+    })
+    expect(expired.events).toHaveLength(0)
+    for (const now of [70_000, 130_000, 190_000, 250_000]) {
+      result = await dispatchKomariAlertNotifications(state, {
+        audit: [], retryPending: true, state: result.state, policy, onLocal, now,
+      })
+    }
+    expect(onLocal).toHaveBeenCalledTimes(4)
+    expect(result.events).toHaveLength(0)
+  })
+
+  it('does not retry an obsolete lifecycle row or a disabled channel', async () => {
+    const onLocal = vi.fn(() => { throw new Error('temporarily unavailable') })
+    const policy = { channels: ['local'] as const, cooldownMs: 0 }
+    const first = await dispatchKomariAlertNotifications({ ...state, audit: [state.audit[0]!] }, {
+      audit: [state.audit[0]!], policy, onLocal, now: 10_000,
+    })
+    const obsolete = await dispatchKomariAlertNotifications(state, {
+      audit: [], retryPending: true, state: first.state, policy, onLocal, now: 70_000,
+    })
+    expect(obsolete.events).toHaveLength(0)
+    const disabled = await dispatchKomariAlertNotifications({ ...state, audit: [state.audit[0]!] }, {
+      audit: [], retryPending: true, state: first.state,
+      policy: { channels: ['system'] }, onLocal, now: 70_000,
+    })
+    expect(disabled.events).toHaveLength(0)
+    expect(onLocal).toHaveBeenCalledTimes(1)
+  })
+
+  it('serializes integration delivery so concurrent consumers do not duplicate a channel', async () => {
+    localStorage.clear()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const onLocal = vi.fn(async () => gate)
+    const options = { audit: [state.audit[2]!], policy: { channels: ['local'] as const, cooldownMs: 0 }, onLocal, now: 10_000 }
+    const first = dispatchAndPersistKomariAlertNotifications('prod', state, options)
+    const second = dispatchAndPersistKomariAlertNotifications('prod', state, options)
+    await Promise.resolve()
+    release()
+    const results = await Promise.all([first, second])
+    expect(results.map((result) => result.summary.delivered)).toEqual([1, 0])
+    expect(onLocal).toHaveBeenCalledTimes(1)
+    expect(loadKomariAlertNotificationState('prod').deliveries).toHaveLength(1)
+  })
+
+  it('uses dispatch time for attempts and notifies mounted delivery indicators after saving', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(50_000)
+    const onLocal = vi.fn()
+    const listener = vi.fn()
+    window.addEventListener('shellbeam:notification-delivery-changed', listener)
+    try {
+      const result = await dispatchKomariAlertNotifications(state, {
+        audit: [state.audit[2]!], policy: { channels: ['local'], cooldownMs: 0 }, onLocal,
+      })
+      expect(result.state.attempts?.[0]?.attemptedAt).toBe(50_000)
+      expect(result.events[0]?.payload.occurredAt).toBe(3_000)
+      saveKomariAlertNotificationState('prod', result.state)
+      expect(listener).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.restoreAllMocks()
+      window.removeEventListener('shellbeam:notification-delivery-changed', listener)
+    }
   })
 
 })

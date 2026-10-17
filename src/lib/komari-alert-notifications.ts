@@ -3,10 +3,11 @@ import {
   type NotificationDispatchOptions,
   type NotificationDispatchResult,
   type NotificationDispatchState,
-  type NotificationDeliveryRecord,
+  type NotificationAttemptRecord,
   type NotificationPayload,
 } from './notification-dispatch'
-import { normalizeNotificationPolicy, type NotificationEvent, type NotificationPolicy, type NotificationPolicyInput } from './notification-policy'
+import { normalizeNotificationDeliveryState, notifyNotificationDeliveryChanged } from './notification-delivery-state'
+import { normalizeNotificationPolicy, type NotificationChannel, type NotificationEvent, type NotificationPolicy, type NotificationPolicyInput } from './notification-policy'
 import type {
   KomariAlertAuditEntry,
   KomariAlertAuditEvent,
@@ -35,6 +36,10 @@ export interface KomariAlertNotificationOptions extends Omit<NotificationDispatc
   /** Bound work performed by one sync; older rows are retained for audit but
    * never replayed as notifications. */
   maxEvents?: number
+  /** Retry only durable failed/unavailable attempts for still-current audit rows. */
+  retryPending?: boolean
+  /** Discover recent unseen lifecycle rows persisted by other sessions/MCP. */
+  includeRecent?: boolean
   /** Override the default lifecycle allow-list for a specialised caller. */
   eventTypes?: readonly KomariAlertAuditEvent[]
 }
@@ -59,7 +64,10 @@ const MAX_EVENTS = 256
 const MAX_TEXT_LENGTH = 240
 
 export const KOMARI_NOTIFICATION_STATE_STORAGE_PREFIX = 'shellbeam.komariNotificationState.v1'
-const MAX_STORED_DELIVERIES = 1_000
+const RETRY_INTERVAL_MS = 60_000
+const RETRY_MAX_AGE_MS = 24 * 60 * 60 * 1_000
+const MAX_CHANNEL_ATTEMPTS = 4
+const integrationDispatchQueues = new Map<string, Promise<void>>()
 
 /** Browser event used by the in-app notification surface. Keeping the sink
  * in this module makes recovery notifications identical whether they were
@@ -78,45 +86,23 @@ function storageKey(integrationId: string) {
   return `${KOMARI_NOTIFICATION_STATE_STORAGE_PREFIX}:${normalized}`
 }
 
-function normalizeDeliveryState(value: unknown): NotificationDispatchState {
-  const raw = value && typeof value === 'object' ? value as { deliveries?: unknown } : {}
-  const deliveries = Array.isArray(raw.deliveries) ? raw.deliveries : []
-  return {
-    deliveries: deliveries.flatMap((item): NotificationDeliveryRecord[] => {
-      if (!item || typeof item !== 'object') return []
-      const row = item as Partial<NotificationDeliveryRecord>
-      if (typeof row.key !== 'string' || typeof row.fingerprint !== 'string' || typeof row.eventKey !== 'string') return []
-      if (row.channel !== 'local' && row.channel !== 'webhook' && row.channel !== 'system') return []
-      if (!Number.isFinite(row.deliveredAt)) return []
-      return [{
-        key: safeText(row.key, '').slice(0, 600),
-        fingerprint: safeText(row.fingerprint, '').slice(0, 512),
-        eventKey: safeText(row.eventKey, '').slice(0, 1024),
-        eventId: typeof row.eventId === 'string' ? safeText(row.eventId, '').slice(0, 240) || null : null,
-        status: typeof row.status === 'string' ? safeText(row.status, '').slice(0, 96) || null : null,
-        channel: row.channel,
-        deliveredAt: Number(row.deliveredAt),
-      }]
-    }).filter((row) => row.key && row.fingerprint && row.eventKey).slice(-MAX_STORED_DELIVERIES),
-  }
-}
-
 /** Load only bounded delivery metadata. Notification payloads and webhook
  * credentials are never persisted here. */
 export function loadKomariAlertNotificationState(integrationId: string): NotificationDispatchState {
   if (typeof localStorage === 'undefined') return { deliveries: [] }
   try {
-    return normalizeDeliveryState(JSON.parse(localStorage.getItem(storageKey(integrationId)) || 'null'))
+    return normalizeNotificationDeliveryState(JSON.parse(localStorage.getItem(storageKey(integrationId)) || 'null'))
   } catch {
     return { deliveries: [] }
   }
 }
 
 export function saveKomariAlertNotificationState(integrationId: string, state: NotificationDispatchState): NotificationDispatchState {
-  const normalized = normalizeDeliveryState(state)
+  const normalized = normalizeNotificationDeliveryState(state)
   if (typeof localStorage !== 'undefined') {
     try { localStorage.setItem(storageKey(integrationId), JSON.stringify(normalized)) } catch { /* storage is optional */ }
   }
+  notifyNotificationDeliveryChanged()
   return normalized
 }
 
@@ -208,6 +194,45 @@ function uniqueAuditRows(rows: readonly KomariAlertAuditEntry[]) {
   })
 }
 
+function isRetryableAttempt(attempt: NotificationAttemptRecord) {
+  return attempt.status === 'failed' || (attempt.status === 'skipped' && (
+    attempt.reason === 'channel-unavailable'
+    || attempt.reason === 'webhook-not-configured'
+    || attempt.reason === 'system-unavailable'
+    || attempt.reason === 'system-permission-required'
+    || attempt.reason === 'system-permission-denied'
+  ))
+}
+
+/** Only failed attempts establish pending work. Old audit history, policy
+ * skips and a newly enabled channel cannot create a backlog by themselves. */
+function retryableChannels(audit: KomariAlertAuditEntry, state: NotificationDispatchState, now: number): Set<NotificationChannel> {
+  const eventId = safeText(audit.auditId)
+  const channels = new Set<NotificationChannel>()
+  for (const channel of ['local', 'webhook', 'system'] as const) {
+    if (state.deliveries.some((delivery) => delivery.eventId === eventId && delivery.channel === channel)) continue
+    const attempts = (state.attempts ?? []).filter((attempt) => attempt.eventId === eventId
+      && attempt.channel === channel && (isRetryableAttempt(attempt) || attempt.status === 'delivered'))
+    if (attempts.length === 0 || attempts.length >= MAX_CHANNEL_ATTEMPTS) continue
+    const firstAt = Math.min(...attempts.map((attempt) => attempt.attemptedAt))
+    const lastAt = Math.max(...attempts.map((attempt) => attempt.attemptedAt))
+    if (attempts.some((attempt) => attempt.status === 'delivered')
+      || now - firstAt > RETRY_MAX_AGE_MS || now - lastAt < RETRY_INTERVAL_MS) continue
+    channels.add(channel)
+  }
+  return channels
+}
+
+function latestLifecycleIds(state: KomariAlertState) {
+  const latest = new Map<string, KomariAlertAuditEntry>()
+  for (const audit of state.audit) {
+    if (!KOMARI_NOTIFICATION_EVENTS.includes(audit.event)) continue
+    const previous = latest.get(audit.alertId)
+    if (!previous || audit.at >= previous.at) latest.set(audit.alertId, audit)
+  }
+  return new Set([...latest.values()].map((audit) => audit.auditId))
+}
+
 /** Dispatch newly reconciled Komari lifecycle rows through the shared local,
  * webhook and system notification policy. A caller can pass only the audit
  * rows produced by the current sync; when omitted, the newest bounded rows
@@ -218,11 +243,30 @@ export async function dispatchKomariAlertNotifications(
 ): Promise<KomariAlertNotificationResult> {
   const maxEvents = boundedMaxEvents(options.maxEvents)
   const eventTypes = new Set(options.eventTypes ?? KOMARI_NOTIFICATION_EVENTS)
+  const now = options.now ?? Date.now()
+  let dispatchState = normalizeNotificationDeliveryState(options.state)
   const sourceRows = options.audit ?? state.audit
-  const candidateRows = uniqueAuditRows(sourceRows)
+  const latestIds = latestLifecycleIds(state)
+  // MCP actions persist lifecycle facts without running a frontend sink. Only
+  // the latest recent fact can receive its first delivery during a reload;
+  // any recorded attempt prevents channel additions from backfilling history.
+  const attemptedIds = new Set([
+    ...dispatchState.deliveries.map((delivery) => delivery.eventId),
+    ...(dispatchState.attempts ?? []).map((attempt) => attempt.eventId),
+  ])
+  const recentRows = options.includeRecent
+    ? state.audit.filter((audit) => latestIds.has(audit.auditId)
+      && audit.at >= state.summary.localUpdatedAt
+      && now - audit.at >= 0 && now - audit.at <= RETRY_MAX_AGE_MS
+      && !attemptedIds.has(safeText(audit.auditId)))
+    : []
+  const explicitIds = new Set([...sourceRows, ...recentRows].map((audit) => audit.auditId))
+  const pendingRows = options.retryPending
+    ? state.audit.filter((audit) => latestIds.has(audit.auditId) && retryableChannels(audit, dispatchState, now).size > 0)
+    : []
+  const candidateRows = uniqueAuditRows([...pendingRows, ...recentRows, ...sourceRows]).sort((left, right) => left.at - right.at)
   const boundedRows = candidateRows.slice(-maxEvents)
   const omitted = Math.max(0, candidateRows.length - boundedRows.length)
-  let dispatchState = options.state
   const events: NotificationDispatchResult[] = []
   let delivered = 0
   let skipped = 0
@@ -280,7 +324,14 @@ export async function dispatchKomariAlertNotifications(
     // If a webhook was unavailable after the in-app event was delivered, a
     // later cross-session refresh must not emit the same local alert again
     // just because the global dedupe window has elapsed.
-    const pendingChannels = configuredChannels.filter((channel) => !deliveredChannels.has(channel))
+    const retryChannels = retryableChannels(audit, dispatchState, now)
+    const pendingChannels = configuredChannels.filter((channel) => {
+      if (deliveredChannels.has(channel)) return false
+      const previousFailure = (dispatchState.attempts ?? []).some((attempt) => attempt.eventId === event.eventId
+        && attempt.channel === channel && isRetryableAttempt(attempt))
+      if (previousFailure) return latestIds.has(audit.auditId) && retryChannels.has(channel)
+      return explicitIds.has(audit.auditId)
+    })
     if (pendingChannels.length === 0) {
       alreadyDelivered += 1
       continue
@@ -295,7 +346,7 @@ export async function dispatchKomariAlertNotifications(
         onLocal,
         policy: pendingPolicy,
         state: dispatchState,
-        now: options.now ?? audit.at,
+        now,
       },
     )
     dispatchState = result.state
@@ -333,10 +384,23 @@ export async function dispatchAndPersistKomariAlertNotifications(
   state: KomariAlertState,
   options: KomariAlertNotificationOptions = {},
 ): Promise<KomariAlertNotificationResult> {
-  const result = await dispatchKomariAlertNotifications(state, {
-    ...options,
-    state: options.state ?? loadKomariAlertNotificationState(integrationId),
+  const key = storageKey(integrationId)
+  const previous = integrationDispatchQueues.get(key) ?? Promise.resolve()
+  const operation = previous.catch(() => undefined).then(async () => {
+    // Load inside the integration queue so concurrent host/dashboard refreshes
+    // see the preceding delivery before deciding which channel to retry.
+    const result = await dispatchKomariAlertNotifications(state, {
+      ...options,
+      state: options.state ?? loadKomariAlertNotificationState(integrationId),
+    })
+    result.state = saveKomariAlertNotificationState(integrationId, result.state)
+    return result
   })
-  saveKomariAlertNotificationState(integrationId, result.state)
-  return result
+  const settled = operation.then(() => undefined, () => undefined)
+  integrationDispatchQueues.set(key, settled)
+  try {
+    return await operation
+  } finally {
+    if (integrationDispatchQueues.get(key) === settled) integrationDispatchQueues.delete(key)
+  }
 }

@@ -7,6 +7,7 @@ mod error;
 mod keys;
 mod mcp;
 mod net;
+mod notifications;
 mod ssh;
 mod storage;
 mod sync;
@@ -66,12 +67,16 @@ pub fn run() {
     };
     builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_biometry::init())
         .manage(InteractiveSessionState::default())
         .manage(VaultState::default())
         .manage(SshSessionPool::default())
         .manage(mcp::McpState::default())
         .invoke_handler(tauri::generate_handler![
+            notifications::system_notification_permission,
+            notifications::request_system_notification_permission,
+            notifications::send_system_notification,
             mcp::mcp_status,
             mcp::mcp_list_project_deployments,
             mcp::mcp_set_enabled,

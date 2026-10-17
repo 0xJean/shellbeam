@@ -1,3 +1,7 @@
+import { normalizeNotificationDeliveryState } from './notification-delivery-state'
+import { sendSystemNotification, SystemNotificationError } from './system-notifications'
+export { getSystemNotificationPermission, requestSystemNotificationPermission } from './system-notifications'
+export type { SystemNotificationPermission } from './system-notifications'
 import {
   normalizeNotificationPolicy,
   notificationFingerprint,
@@ -21,8 +25,24 @@ export interface NotificationDeliveryRecord {
   deliveredAt: number
 }
 
+/** Diagnostic journal contains fixed reason codes and event identity only. */
+export type NotificationAttemptReason = NotificationSkipReason
+  | 'system-unavailable' | 'system-permission-required' | 'system-permission-denied' | 'system-send-failed'
+  | 'webhook-http-error' | 'webhook-request-failed' | 'delivery-timeout' | 'delivery-failed'
+
+export interface NotificationAttemptRecord {
+  key: string
+  eventId: string | null
+  channel: NotificationChannel
+  status: 'delivered' | 'failed' | 'skipped'
+  reason?: NotificationAttemptReason
+  attemptedAt: number
+}
+
 export interface NotificationDispatchState {
   deliveries: NotificationDeliveryRecord[]
+  /** Optional for compatibility with successful-delivery-only ledgers. */
+  attempts?: NotificationAttemptRecord[]
 }
 
 export interface NotificationPayload {
@@ -53,7 +73,7 @@ export type NotificationSkipReason =
 export interface NotificationDeliveryResult {
   channel: NotificationChannel
   status: 'delivered' | 'skipped' | 'failed'
-  reason?: NotificationSkipReason | string
+  reason?: NotificationAttemptReason
   deliveredAt?: number
   error?: string
 }
@@ -76,15 +96,6 @@ export interface NotificationDispatchOptions {
   /** Diagnostics sink. Messages are redacted and contain no event payload. */
   logger?: { warn?: (message: string) => void }
 }
-
-/**
- * The system channel is backed by the Web Notification API. Tauri's desktop
- * webview exposes the same API on supported platforms, while a browser build
- * can use its native notification surface without adding a second transport.
- * Keep this value separate from the dispatch payload so callers can render a
- * permission affordance in settings without having to emit an alert first.
- */
-export type SystemNotificationPermission = NotificationPermission | 'unavailable'
 
 export interface NotificationDispatcher {
   dispatch(event: NotificationEvent): Promise<NotificationDispatchResult>
@@ -176,29 +187,9 @@ function normalizeEvent(input: NotificationEvent, now: number): NotificationPayl
   }
 }
 
-function normalizeState(state: NotificationDispatchState | undefined): NotificationDispatchState {
-  const deliveries = Array.isArray(state?.deliveries) ? state.deliveries : []
-  return {
-    deliveries: deliveries.filter((entry): entry is NotificationDeliveryRecord => Boolean(entry)
-      && typeof entry.key === 'string'
-      && typeof entry.fingerprint === 'string'
-      && typeof entry.eventKey === 'string'
-      && (entry.channel === 'local' || entry.channel === 'webhook' || entry.channel === 'system')
-      && Number.isFinite(entry.deliveredAt)).slice(-MAX_DELIVERIES).map((entry) => ({
-        key: entry.key.slice(0, 600),
-        fingerprint: entry.fingerprint.slice(0, 512),
-        eventKey: entry.eventKey.slice(0, 1_024),
-        eventId: typeof entry.eventId === 'string' ? entry.eventId.slice(0, 240) : null,
-        status: typeof entry.status === 'string' ? entry.status.slice(0, 96) : null,
-        channel: entry.channel,
-        deliveredAt: entry.deliveredAt,
-      })),
-  }
-}
-
 function eventKey(payload: NotificationPayload): string {
   return payload.eventId
-    ?? [payload.fingerprint, payload.kind, payload.status ?? '', payload.title, payload.message ?? ''].join('|')
+    ?? `event-${identityHash(JSON.stringify([payload.fingerprint, payload.kind, payload.status, payload.title, payload.message]))}`
 }
 
 function diagnosticError(error: unknown): string {
@@ -206,84 +197,83 @@ function diagnosticError(error: unknown): string {
   return redactNotificationText(message).slice(0, 240) || 'notification delivery failed'
 }
 
-function notificationConstructor(): typeof Notification | undefined {
-  if (typeof globalThis === 'undefined') return undefined
-  const candidate = globalThis.Notification
-  return typeof candidate === 'function' ? candidate : undefined
-}
-
-/** Return the current system notification capability without prompting. */
-export function getSystemNotificationPermission(): SystemNotificationPermission {
-  const constructor = notificationConstructor()
-  if (!constructor) return 'unavailable'
-  const permission = constructor.permission
-  return permission === 'granted' || permission === 'denied' || permission === 'default'
-    ? permission
-    : 'default'
-}
-
-/** Request OS/browser permission from a user initiated settings action. */
-export async function requestSystemNotificationPermission(): Promise<SystemNotificationPermission> {
-  const constructor = notificationConstructor()
-  if (!constructor) return 'unavailable'
-  const current = getSystemNotificationPermission()
-  if (current !== 'default') return current
-  try {
-    const permission = await constructor.requestPermission()
-    return permission === 'granted' || permission === 'denied' || permission === 'default'
-      ? permission
-      : 'default'
-  } catch {
-    // Some webviews expose the API but disallow permission prompts. Keep this
-    // failure non-sensitive and let the caller present a recoverable state.
-    return 'denied'
-  }
-}
-
-/**
- * Deliver a redacted event through the OS/browser notification surface. Only
- * the bounded title and message are shown; metadata (including provider
- * summaries and identifiers) never crosses this boundary.
- */
+/** Send only redacted, bounded user-facing text to the native/browser adapter. */
 export async function emitSystemNotification(payload: NotificationPayload): Promise<void> {
-  const constructor = notificationConstructor()
-  if (!constructor) throw new Error('system notifications unavailable')
-  const permission = await requestSystemNotificationPermission()
-  if (permission !== 'granted') {
-    throw new Error(permission === 'denied'
-      ? 'system notification permission denied'
-      : 'system notification permission not granted')
-  }
   const title = redactNotificationText(payload.title).slice(0, 120) || 'ShellBeam alert'
   const body = redactNotificationText(payload.message ?? payload.hostName ?? `${payload.source} alert`).slice(0, 240)
-  if (!body) throw new Error('system notification has no safe message')
-  // Do not pass metadata or provider output to Notification options. The tag
-  // is intentionally omitted so OS notification history cannot expose IDs.
-  new constructor(title, { body })
+  await sendSystemNotification({ title, body })
+}
+
+export const NOTIFICATION_DELIVERY_TIMEOUT_MS = 10_000
+
+class DeliveryError extends Error {
+  readonly reason: NotificationAttemptReason
+  constructor(reason: NotificationAttemptReason, message: string) {
+    super(message)
+    this.reason = reason
+  }
+}
+
+/** Hash the identity so fallback keys cannot persist a message or URL. */
+function identityHash(value: string): string {
+  let left = 2166136261
+  let right = 5381
+  for (const char of value) {
+    left = Math.imul(left ^ char.charCodeAt(0), 16777619)
+    right = Math.imul(right, 33) ^ char.charCodeAt(0)
+  }
+  return `${(left >>> 0).toString(16)}-${(right >>> 0).toString(16)}`
+}
+
+function attemptKey(payload: NotificationPayload, channel: NotificationChannel): string {
+  return identityHash(JSON.stringify([payload.fingerprint, eventKey(payload), channel]))
+}
+
+function appendAttempt(result: NotificationDispatchResult, delivery: NotificationDeliveryResult, now: number) {
+  result.deliveries.push(delivery)
+  const attempts = result.state.attempts ?? []
+  attempts.push({
+    key: attemptKey(result.payload, delivery.channel),
+    eventId: result.payload.eventId ? redactNotificationText(result.payload.eventId).slice(0, 240) : null,
+    channel: delivery.channel,
+    status: delivery.status,
+    ...(delivery.reason ? { reason: delivery.reason } : {}),
+    attemptedAt: now,
+  })
+  result.state.attempts = attempts.slice(-MAX_DELIVERIES)
 }
 
 async function sendWebhook(payload: NotificationPayload, url: string, fetchImpl: typeof fetch): Promise<void> {
-  const response = await fetchImpl(url, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      source: payload.source,
-      kind: payload.kind,
-      severity: payload.severity,
-      title: payload.title,
-      message: payload.message,
-      fingerprint: payload.fingerprint,
-      hostId: payload.hostId,
-      hostName: payload.hostName,
-      integrationId: payload.integrationId,
-      status: payload.status,
-      occurredAt: payload.occurredAt,
-      metadata: payload.metadata,
-    }),
-    redirect: 'error',
-    credentials: 'omit',
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new DeliveryError('delivery-timeout', 'notification delivery timed out'))
+      controller.abort()
+    }, NOTIFICATION_DELIVERY_TIMEOUT_MS)
   })
-  if (!response.ok) throw new Error(`webhook returned HTTP ${response.status}`)
+  try {
+    const response = await Promise.race([fetchImpl(url, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: payload.source, kind: payload.kind, severity: payload.severity,
+        title: payload.title, message: payload.message, fingerprint: payload.fingerprint,
+        hostId: payload.hostId, hostName: payload.hostName, integrationId: payload.integrationId,
+        status: payload.status, occurredAt: payload.occurredAt, metadata: payload.metadata,
+      }),
+      signal: controller.signal,
+      redirect: 'error',
+      credentials: 'omit',
+    }), timeout])
+    if (!response.ok) throw new DeliveryError('webhook-http-error', `webhook returned HTTP ${response.status}`)
+  } catch (error) {
+    if (error instanceof DeliveryError) throw error
+    // Raw network errors can include endpoints or provider response bodies.
+    throw new DeliveryError('webhook-request-failed', 'webhook request failed')
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function latestDelivery(state: NotificationDispatchState, key: string) {
@@ -299,7 +289,7 @@ export async function dispatchNotification(event: NotificationEvent, options: No
   const now = options.now ?? Date.now()
   const policy = normalizeNotificationPolicy(options.policy)
   const payload = normalizeEvent(event, now)
-  const state = normalizeState(options.state)
+  const state = normalizeNotificationDeliveryState(options.state)
   const result: NotificationDispatchResult = { payload, deliveries: [], state }
   const isRecovery = payload.kind === 'alert.resolved'
     || payload.status === 'resolved'
@@ -307,20 +297,20 @@ export async function dispatchNotification(event: NotificationEvent, options: No
   const channels = isRecovery ? policy.recoveryChannels : policy.channels
 
   if (!policy.enabled) {
-    return { ...result, deliveries: channels.map((channel) => ({ channel, status: 'skipped', reason: 'disabled' as const })) }
+    for (const channel of channels) appendAttempt(result, { channel, status: 'skipped', reason: 'disabled' }, now)
+    return result
   }
 
   // Recovery notifications are a separate user preference. Keep this guard
   // in the shared dispatcher as well as the Komari adapter so future
   // ProbeProvider implementations cannot accidentally bypass the setting.
   if (isRecovery && !policy.notifyOnRecovery) {
-    return {
-      ...result,
-      deliveries: channels.map((channel) => ({ channel, status: 'skipped', reason: 'recovery-disabled' as const })),
-    }
+    for (const channel of channels) appendAttempt(result, { channel, status: 'skipped', reason: 'recovery-disabled' }, now)
+    return result
   }
   if (!notificationMeetsPolicy(payload, policy)) {
-    return { ...result, deliveries: channels.map((channel) => ({ channel, status: 'skipped', reason: 'below-minimum-severity' as const })) }
+    for (const channel of channels) appendAttempt(result, { channel, status: 'skipped', reason: 'below-minimum-severity' }, now)
+    return result
   }
 
   const keyEvent = eventKey(payload)
@@ -328,33 +318,28 @@ export async function dispatchNotification(event: NotificationEvent, options: No
     const key = `${payload.fingerprint}|${channel}`
     const previous = latestDelivery(state, key)
     if (previous && previous.eventKey === keyEvent && policy.dedupeWindowMs > 0 && now - previous.deliveredAt < policy.dedupeWindowMs) {
-      result.deliveries.push({ channel, status: 'skipped', reason: 'deduplicated' })
+      appendAttempt(result, { channel, status: 'skipped', reason: 'deduplicated' }, now)
       continue
     }
     // A lifecycle transition (for example active -> resolved) is allowed to
     // pass the cooldown. Repeated events with the same status remain quiet.
     if (previous && previous.status === payload.status && policy.cooldownMs > 0 && now - previous.deliveredAt < policy.cooldownMs) {
-      result.deliveries.push({ channel, status: 'skipped', reason: 'cooldown' })
+      appendAttempt(result, { channel, status: 'skipped', reason: 'cooldown' }, now)
       continue
     }
 
     try {
       if (channel === 'local') {
         if (!options.onLocal) {
-          result.deliveries.push({ channel, status: 'skipped', reason: 'channel-unavailable' })
+          appendAttempt(result, { channel, status: 'skipped', reason: 'channel-unavailable' }, now)
           continue
         }
         await options.onLocal(payload)
       } else if (channel === 'system') {
-        const onSystem = options.onSystem ?? (getSystemNotificationPermission() !== 'unavailable' ? emitSystemNotification : undefined)
-        if (!onSystem) {
-          result.deliveries.push({ channel, status: 'skipped', reason: 'channel-unavailable' })
-          continue
-        }
-        await onSystem(payload)
+        await (options.onSystem ?? emitSystemNotification)(payload)
       } else {
         if (!policy.webhookUrl) {
-          result.deliveries.push({ channel, status: 'skipped', reason: 'webhook-not-configured' })
+          appendAttempt(result, { channel, status: 'skipped', reason: 'webhook-not-configured' }, now)
           continue
         }
         await sendWebhook(payload, policy.webhookUrl, options.fetchImpl ?? globalThis.fetch)
@@ -369,11 +354,13 @@ export async function dispatchNotification(event: NotificationEvent, options: No
         deliveredAt: now,
       })
       if (state.deliveries.length > MAX_DELIVERIES) state.deliveries.splice(0, state.deliveries.length - MAX_DELIVERIES)
-      result.deliveries.push({ channel, status: 'delivered', deliveredAt: now })
+      appendAttempt(result, { channel, status: 'delivered', deliveredAt: now }, now)
     } catch (error) {
       const safeError = diagnosticError(error)
       options.logger?.warn?.(`Notification ${channel} delivery failed: ${safeError}`)
-      result.deliveries.push({ channel, status: 'failed', error: safeError })
+      const reason = error instanceof SystemNotificationError ? error.code
+        : error instanceof DeliveryError ? error.reason : 'delivery-failed'
+      appendAttempt(result, { channel, status: 'failed', reason, error: safeError }, now)
     }
   }
   return result
@@ -381,7 +368,7 @@ export async function dispatchNotification(event: NotificationEvent, options: No
 
 /** Stateful convenience wrapper for a runtime that emits many observations. */
 export function createNotificationDispatcher(options: Omit<NotificationDispatchOptions, 'state' | 'now'> & { policy?: NotificationPolicy | NotificationPolicyInput; state?: NotificationDispatchState }): NotificationDispatcher {
-  let state = normalizeState(options.state)
+  let state = normalizeNotificationDeliveryState(options.state)
   return {
     async dispatch(event) {
       const result = await dispatchNotification(event, { ...options, state })
@@ -389,7 +376,7 @@ export function createNotificationDispatcher(options: Omit<NotificationDispatchO
       return result
     },
     getState() {
-      return { deliveries: [...state.deliveries] }
+      return normalizeNotificationDeliveryState(state)
     },
     reset() {
       state = { deliveries: [] }

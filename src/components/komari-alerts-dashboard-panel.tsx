@@ -71,7 +71,10 @@ function mergeNotificationSummaries(entries: AlertEntry[]): NotificationDispatch
 function mergeNotificationStates(entries: AlertEntry[]): NotificationDispatchState | null {
   const states = entries.map((entry) => entry.notificationState).filter((state): state is NotificationDispatchState => state !== undefined)
   if (states.length === 0) return null
-  return { deliveries: states.flatMap((state) => state.deliveries).sort((left, right) => left.deliveredAt - right.deliveredAt).slice(-1_000) }
+  return {
+    deliveries: states.flatMap((state) => state.deliveries).sort((left, right) => left.deliveredAt - right.deliveredAt).slice(-1_000),
+    attempts: states.flatMap((state) => state.attempts ?? []).sort((left, right) => left.attemptedAt - right.attemptedAt).slice(-1_000),
+  }
 }
 
 export interface KomariAlertsDashboardPanelProps {
@@ -114,10 +117,11 @@ export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHo
         try {
           const result = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, entry.state, {
             policy: notificationPolicy,
-            // The persisted lifecycle includes audit history. Only rows from
-            // the most recent sync/action are eligible here; older rows remain
-            // visible in the audit panel but must not replay notifications.
-            audit: entry.state.audit.filter((audit) => audit.at >= entry.state.summary.localUpdatedAt),
+            // Discover recent unseen MCP/session transitions, and retry known
+            // failures without replaying old history or successful channels.
+            audit: [],
+            retryPending: true,
+            includeRecent: true,
             // The in-app alert panel is the local sink. Delivery state stores
             // metadata only, while the panel remains the payload surface.
             onLocal: emitKomariAlertNotification,
@@ -192,7 +196,7 @@ export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHo
       const notificationResult = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, result.state, {
         policy: loadNotificationPolicy(),
         audit: result.state.audit.slice(-1),
-        state: entry.notificationState,
+        retryPending: true,
         onLocal: emitKomariAlertNotification,
       })
       setEntries((current) => current.map((candidate) => candidate.integrationId === entry.integrationId
