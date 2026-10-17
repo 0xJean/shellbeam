@@ -1,5 +1,5 @@
 import type { KomariAlertSummary } from './komari'
-import type { ProbeSnapshot } from './probe-provider'
+import type { ProbeProviderTelemetry, ProbeSnapshot } from './probe-provider'
 
 /** The local lifecycle deliberately stays smaller than a notification system.
  * Komari remains the source of truth for whether a rule is firing; ShellBeam
@@ -28,6 +28,19 @@ export interface KomariAlertObservation {
   title?: string | null
   severity?: KomariAlertSeverity
   updatedAt: number
+  /** Safe scheduler telemetry attached to ProbeProvider lifecycle rows.  The
+   * alert journal stores only bounded counters/codes, never provider output. */
+  probeTelemetry?: KomariProbeAlertTelemetry
+}
+
+export interface KomariProbeAlertTelemetry {
+  status: ProbeProviderTelemetry['status']
+  attempts: number
+  maxRetries: number
+  durationMs: number
+  recovered: boolean
+  exhausted: boolean
+  lastErrorCode?: string
 }
 
 export interface KomariAlertRecord {
@@ -51,6 +64,8 @@ export interface KomariAlertRecord {
   closedAt: number | null
   relatedOperationJobId: string | null
   deduplicatedCount: number
+  /** Latest safe ProbeProvider collection outcome for this lifecycle row. */
+  probeTelemetry?: KomariProbeAlertTelemetry
 }
 
 export interface KomariAlertAuditEntry {
@@ -62,6 +77,8 @@ export interface KomariAlertAuditEntry {
   actor: string
   operationJobId: string | null
   at: number
+  /** Snapshot of ProbeProvider telemetry at this immutable transition. */
+  probeTelemetry?: KomariProbeAlertTelemetry
 }
 
 export interface KomariAlertState {
@@ -108,13 +125,41 @@ function required(value: string | null | undefined, field: string): string {
 }
 
 function safeText(value: string | null | undefined, fallback: string): string {
-  const normalized = value?.trim().replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ')
+  const normalized = value === undefined || value === null
+    ? undefined
+    : [...value.trim()].map((character) => {
+      const code = character.charCodeAt(0)
+      return code < 0x20 || code === 0x7f ? ' ' : character
+    }).join('').replace(/\s+/g, ' ')
   return (normalized || fallback).slice(0, 200)
 }
 
 function boundedCount(value: number | null | undefined): number | null {
   if (value === null || value === undefined || !Number.isFinite(value)) return null
   return Math.max(0, Math.floor(value))
+}
+
+function boundedInteger(value: unknown, fallback = 0): number {
+  const number = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(number) ? Math.max(0, Math.min(10_000_000, Math.floor(number))) : fallback
+}
+
+function normalizeProbeTelemetry(value: unknown): KomariProbeAlertTelemetry | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Partial<KomariProbeAlertTelemetry>
+  if (raw.status !== 'success' && raw.status !== 'recovered' && raw.status !== 'failed') return undefined
+  const lastErrorCode = typeof raw.lastErrorCode === 'string'
+    ? safeText(raw.lastErrorCode, '').slice(0, 120) || undefined
+    : undefined
+  return {
+    status: raw.status,
+    attempts: boundedInteger(raw.attempts),
+    maxRetries: boundedInteger(raw.maxRetries),
+    durationMs: boundedInteger(raw.durationMs),
+    recovered: raw.recovered === true,
+    exhausted: raw.exhausted === true,
+    ...(lastErrorCode ? { lastErrorCode } : {}),
+  }
 }
 
 function boundedTime(value: number | undefined, fallback: number): number {
@@ -152,6 +197,7 @@ function auditIdFor(alertId: string, event: KomariAlertAuditEvent, at: number, i
 function normalizeObservation(observation: KomariAlertObservation): KomariAlertObservation {
   const integrationId = required(observation.integrationId, 'integration id')
   const kind = required(observation.kind, 'kind')
+  const probeTelemetry = normalizeProbeTelemetry(observation.probeTelemetry)
   return {
     ...observation,
     integrationId,
@@ -163,6 +209,7 @@ function normalizeObservation(observation: KomariAlertObservation): KomariAlertO
     title: safeText(observation.title, `${kind} alert`),
     severity: observation.severity ?? severityFor(kind),
     updatedAt: boundedTime(observation.updatedAt, Date.now()),
+    ...(probeTelemetry ? { probeTelemetry } : {}),
   }
 }
 
@@ -190,10 +237,19 @@ function newRecord(observation: KomariAlertObservation, now: number): KomariAler
     closedAt: null,
     relatedOperationJobId: null,
     deduplicatedCount: 0,
+    ...(normalized.probeTelemetry ? { probeTelemetry: normalized.probeTelemetry } : {}),
   }
 }
 
-function auditFor(record: KomariAlertRecord, event: KomariAlertAuditEvent, now: number, actor: string, operationJobId: string | null, index = 0): KomariAlertAuditEntry {
+function auditFor(
+  record: KomariAlertRecord,
+  event: KomariAlertAuditEvent,
+  now: number,
+  actor: string,
+  operationJobId: string | null,
+  index = 0,
+  probeTelemetry = record.probeTelemetry,
+): KomariAlertAuditEntry {
   return {
     auditId: auditIdFor(record.alertId, event, now, index),
     alertId: record.alertId,
@@ -203,6 +259,7 @@ function auditFor(record: KomariAlertRecord, event: KomariAlertAuditEvent, now: 
     actor: safeText(actor, 'local-user'),
     operationJobId,
     at: now,
+    ...(probeTelemetry ? { probeTelemetry } : {}),
   }
 }
 
@@ -239,7 +296,7 @@ export function komariAlertObservationsFromSummary(
  * freshness and explicit provider errors remain separate lifecycle signals.
  */
 export function komariAlertObservationsFromProbeSnapshot(
-  snapshot: Pick<ProbeSnapshot, 'provider' | 'host' | 'health' | 'receivedAt' | 'metrics' | 'inventory' | 'errors'>,
+  snapshot: Pick<ProbeSnapshot, 'provider' | 'host' | 'health' | 'receivedAt' | 'metrics' | 'inventory' | 'errors' | 'telemetry'>,
   scope: KomariAlertScope,
   now = Date.now(),
 ): KomariAlertObservation[] {
@@ -248,6 +305,7 @@ export function komariAlertObservationsFromProbeSnapshot(
   const hostId = snapshot.host.hostId?.trim() || scope.hostId?.trim() || null
   const updatedAt = boundedTime(snapshot.receivedAt, now)
   const observations: KomariAlertObservation[] = []
+  const probeTelemetry = normalizeProbeTelemetry(snapshot.telemetry)
   const add = (
     kind: KomariProbeAlertKind,
     count: number,
@@ -263,6 +321,7 @@ export function komariAlertObservationsFromProbeSnapshot(
     title,
     severity,
     updatedAt,
+    ...(probeTelemetry ? { probeTelemetry } : {}),
   })
 
   const metricExpired = Boolean(snapshot.metrics && (snapshot.metrics.freshness.expired || now > snapshot.metrics.freshness.expiresAt))
@@ -313,6 +372,7 @@ export function reconcileKomariAlerts(
         count: Math.max(previous.count ?? 0, observation.count ?? 0),
         active: Math.max(previous.active ?? 0, observation.active ?? 0),
         updatedAt: Math.max(previous.updatedAt, observation.updatedAt),
+        ...(observation.probeTelemetry ? { probeTelemetry: observation.probeTelemetry } : {}),
       })
     } else {
       byFingerprint.set(fingerprint, observation)
@@ -339,6 +399,7 @@ export function reconcileKomariAlerts(
       record.count = observation.count
       record.title = observation.title ?? record.title
       record.severity = observation.severity ?? record.severity
+      if (observation.probeTelemetry) record.probeTelemetry = observation.probeTelemetry
       record.lastSeenAt = Math.max(record.lastSeenAt, now)
       if (hasSignal && wasClosed) {
         record.status = 'active'
@@ -446,18 +507,26 @@ export function parseKomariAlertState(value: unknown): KomariAlertState | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
   if (raw.schemaVersion !== 1 || !Array.isArray(raw.alerts) || !Array.isArray(raw.audit)) return null
-  const alerts = raw.alerts.filter((item): item is KomariAlertRecord => {
-    if (!item || typeof item !== 'object') return false
+  const alerts = raw.alerts.flatMap((item): KomariAlertRecord[] => {
+    if (!item || typeof item !== 'object') return []
     const record = item as Record<string, unknown>
-    return record.schemaVersion === 1 && record.source === 'komari' && typeof record.alertId === 'string'
-      && typeof record.fingerprint === 'string' && typeof record.integrationId === 'string'
-      && ['active', 'acknowledged', 'resolved', 'closed'].includes(String(record.status))
+    if (record.schemaVersion !== 1 || record.source !== 'komari' || typeof record.alertId !== 'string'
+      || typeof record.fingerprint !== 'string' || typeof record.integrationId !== 'string'
+      || !['active', 'acknowledged', 'resolved', 'closed'].includes(String(record.status))) return []
+    const telemetry = normalizeProbeTelemetry(record.probeTelemetry)
+    const sanitizedRecord = { ...record } as unknown as KomariAlertRecord
+    delete sanitizedRecord.probeTelemetry
+    return [{ ...sanitizedRecord, ...(telemetry ? { probeTelemetry: telemetry } : {}) }]
   }).slice(-500)
-  const audit = raw.audit.filter((item): item is KomariAlertAuditEntry => {
-    if (!item || typeof item !== 'object') return false
+  const audit = raw.audit.flatMap((item): KomariAlertAuditEntry[] => {
+    if (!item || typeof item !== 'object') return []
     const entry = item as Record<string, unknown>
-    return typeof entry.auditId === 'string' && typeof entry.alertId === 'string'
-      && typeof entry.fingerprint === 'string' && typeof entry.event === 'string'
+    if (typeof entry.auditId !== 'string' || typeof entry.alertId !== 'string'
+      || typeof entry.fingerprint !== 'string' || typeof entry.event !== 'string') return []
+    const telemetry = normalizeProbeTelemetry(entry.probeTelemetry)
+    const sanitizedEntry = { ...entry } as unknown as KomariAlertAuditEntry
+    delete sanitizedEntry.probeTelemetry
+    return [{ ...sanitizedEntry, ...(telemetry ? { probeTelemetry: telemetry } : {}) }]
   }).slice(-1000)
   const summary = raw.summary && typeof raw.summary === 'object'
     ? raw.summary as KomariAlertLifecycleSummary

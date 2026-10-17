@@ -280,6 +280,7 @@ function komariMonitorForHost(host: HostProfile, snapshot: ProbeSnapshot | undef
     lastAttemptAt: snapshot.receivedAt,
     lastSuccessAt: observation.freshness.sampledAt,
     error: snapshot.errors[0]?.message,
+    probeTelemetry: snapshot.telemetry ?? null,
     updatedAt: snapshot.receivedAt,
   }
 }
@@ -323,32 +324,41 @@ function komariAlertStateForHost(
   }
 }
 
-function probeStatus(snapshot: ProbeSnapshot | undefined, persisted = false): HostOpsProbeStatus | null {
-  if (!snapshot) return null
-  const observation = snapshot.metrics ?? snapshot.inventory
-  const sampledAt = observation?.freshness.sampledAt ?? null
-  const receivedAt = snapshot.receivedAt || observation?.freshness.receivedAt || null
-  const hasRecovery = snapshot.errors.some((error) => error.code === 'stale-cache-fallback')
-  const hasError = snapshot.errors.length > 0
+function probeStatus(
+  snapshot: ProbeSnapshot | undefined,
+  persisted = false,
+  monitor?: ServerMonitorLatest,
+): HostOpsProbeStatus | null {
+  // The monitor scan and Workspace can have a fresh in-memory scheduler row
+  // before the durable ProbeSnapshot write completes. Keep that telemetry
+  // visible in the same session instead of making the host card look blind.
+  const monitorTelemetry = monitor?.probeTelemetry ?? null
+  if (!snapshot && !monitorTelemetry) return null
+  const observation = snapshot?.metrics ?? snapshot?.inventory
+  const sampledAt = observation?.freshness.sampledAt ?? monitor?.snapshot?.sampledAt ?? null
+  const receivedAt = snapshot?.receivedAt || observation?.freshness.receivedAt || monitor?.updatedAt || null
+  const telemetry = snapshot?.telemetry ?? (!snapshot || snapshot.provider.kind === 'ssh-agentless' ? monitorTelemetry : null)
+  const hasRecovery = Boolean(snapshot?.errors.some((error) => error.code === 'stale-cache-fallback')) || telemetry?.status === 'recovered' || telemetry?.recovered === true
+  const hasError = Boolean(snapshot?.errors.length) || telemetry?.status === 'failed'
   const state: HostOpsProbeState = hasRecovery
     ? 'recovered'
-    : snapshot.health === 'stale' || Boolean(observation?.freshness.expired)
+    : snapshot?.health === 'stale' || Boolean(observation?.freshness.expired) || monitor?.status === 'stale'
       ? 'stale'
-      : snapshot.health === 'offline' || hasError
+      : snapshot?.health === 'offline' || monitor?.status === 'offline' || hasError
         ? 'error'
-        : snapshot.health === 'online'
+        : snapshot?.health === 'online' || monitor?.status === 'online'
           ? 'fresh'
           : 'unknown'
   return {
     state,
-    providerKind: snapshot.provider.kind,
-    providerId: snapshot.provider.id,
-    ...(snapshot.provider.nodeId ? { nodeId: snapshot.provider.nodeId } : {}),
+    providerKind: snapshot?.provider.kind ?? 'ssh-agentless',
+    providerId: snapshot?.provider.id ?? 'ssh-agentless',
+    ...(snapshot?.provider.nodeId ? { nodeId: snapshot.provider.nodeId } : {}),
     sampledAt,
     receivedAt,
     persisted,
-    telemetry: snapshot.telemetry ?? null,
-    ...(snapshot.errors[0]?.message ? { error: snapshot.errors[0].message } : {}),
+    telemetry,
+    ...(snapshot?.errors[0]?.message || monitor?.error ? { error: snapshot?.errors[0]?.message ?? monitor?.error } : {}),
   }
 }
 
@@ -445,7 +455,13 @@ export function buildHostOpsViews({
       health: {
         state: healthState(monitor, state, freshnessValue, selectedProbeSnapshot),
         provider: selectedProvider === 'unknown' ? providerFor(monitor, inventory, state, allHostAudits, shellbeamAgent, selectedProbeSnapshot) : selectedProvider,
-        probe: probeStatus(selectedProbeSnapshot, refreshedProbeSnapshots.some((snapshot) => snapshotKey(snapshot) === (selectedProbeSnapshot ? snapshotKey(selectedProbeSnapshot) : ''))),
+        probe: probeStatus(
+          selectedProbeSnapshot,
+          refreshedProbeSnapshots.some((snapshot) => snapshotKey(snapshot) === (selectedProbeSnapshot ? snapshotKey(selectedProbeSnapshot) : '')),
+          // Only attach scheduler telemetry to a matching SSH provider. A
+          // Komari snapshot must never inherit a local SSH collection result.
+          monitor === sshMonitor ? sshMonitor : undefined,
+        ),
         transport: route.transport,
         freshness: freshnessValue,
         error: monitorError || stateError || undefined,

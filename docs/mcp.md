@@ -264,9 +264,14 @@ remote operations require that vault unlocked.
 
 `get_server_probe_state` returns the cached Komari mappings, provider snapshots,
 sync TTL/freshness, ShellBeam Probe lifecycle and the latest MCP probe for one
-authorized host. `get_server_alerts` returns the bounded Komari alert lifecycle
-and audit rows, including any linked OperationJob id. These tools read local
-cache only and do not contact Komari or start SSH work.
+authorized host. Each snapshot also exposes bounded ProbeProvider telemetry
+(collection status, retry attempts/budget, duration, recovery/exhaustion and an
+optional error code), plus `recoveryState` and `recoveryAvailable` so a client
+can distinguish fresh, stale, failed and recovered observations after restart.
+`get_server_alerts` returns the bounded Komari alert lifecycle and audit rows,
+including any linked OperationJob id and the safe ProbeProvider telemetry that
+was present at the transition. These tools read local cache only and do not
+contact Komari or start SSH work.
 
 `refresh_server_info` accepts an optional `alertId`. When supplied, the newly
 created OperationJob is recorded as an `operation-linked` event on the matching

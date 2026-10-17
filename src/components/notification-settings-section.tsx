@@ -10,6 +10,11 @@ import {
   type NotificationPolicy,
   type NotificationSeverity,
 } from '@/lib/notification-policy'
+import {
+  getSystemNotificationPermission,
+  requestSystemNotificationPermission,
+  type SystemNotificationPermission,
+} from '@/lib/notification-dispatch'
 import { Bell, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 import NotificationDeliverySummary from './notification-delivery-summary'
@@ -24,6 +29,7 @@ export function NotificationSettingsSection() {
   const [deliveryState] = useState(loadNotificationDeliveryState)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const [systemPermission, setSystemPermission] = useState<SystemNotificationPermission>(getSystemNotificationPermission)
 
   function update(patch: Partial<NotificationPolicy>) {
     setPolicy((current) => ({ ...current, ...patch }))
@@ -52,6 +58,10 @@ export function NotificationSettingsSection() {
       setSaved(false)
       setError(cause instanceof Error ? cause.message : String(cause))
     }
+  }
+
+  async function requestSystemPermission() {
+    setSystemPermission(await requestSystemNotificationPermission())
   }
 
   const summary = notificationPolicySummary(policy)
@@ -84,6 +94,19 @@ export function NotificationSettingsSection() {
               </label>
             ))}
           </div>
+          {(policy.channels.includes('system') || policy.recoveryChannels.includes('system')) && (
+            <div className="mt-3 rounded-md border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
+              <p>{t('settings.notifications.systemHelp')}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={requestSystemPermission}>
+                  {t('settings.notifications.requestSystemPermission')}
+                </Button>
+                <span role="status">
+                  {t(`settings.notifications.systemPermission.${systemPermission}`)}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="rounded-md border border-border/60 p-3" data-testid="notification-recovery-settings">

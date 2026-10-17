@@ -1,6 +1,7 @@
 import type { HostProfile } from '@/lib/hosts'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { invoke } from '@tauri-apps/api/core'
+import type { ProbeProviderTelemetry } from './probe-provider'
 
 export type ServerMonitorStatus = 'checking' | 'online' | 'stale' | 'offline' | 'paused'
 
@@ -37,6 +38,8 @@ export interface ServerMonitorLatest {
   lastAttemptAt: number
   lastSuccessAt: number | null
   error?: string
+  /** Collection diagnostics from the shared ProbeProvider scheduler. */
+  probeTelemetry?: ProbeProviderTelemetry | null
   updatedAt: number
 }
 

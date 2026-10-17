@@ -160,6 +160,7 @@ export function komariAlertNotificationEvent(
 ): NotificationEvent {
   const event = audit.event
   const title = safeText(record.title, `${record.kind} alert`)
+  const probeTelemetry = audit.probeTelemetry ?? record.probeTelemetry
   return {
     eventId: safeText(audit.auditId, `${record.alertId}:${event}:${audit.at}`),
     source: 'komari',
@@ -183,6 +184,11 @@ export function komariAlertNotificationEvent(
       recovered: event === 'resolved',
       count: record.count,
       relatedOperationJobId: safeText(record.relatedOperationJobId) || undefined,
+      // ProbeProvider telemetry is already reduced to counters and an error
+      // code in the alert journal. Include that bounded view in every sink so
+      // an operator can correlate a Probe failure/recovery with the lifecycle
+      // transition without exposing command output or credentials.
+      ...(probeTelemetry ? { probeTelemetry } : {}),
     },
   }
 }

@@ -77,6 +77,15 @@ export interface NotificationDispatchOptions {
   logger?: { warn?: (message: string) => void }
 }
 
+/**
+ * The system channel is backed by the Web Notification API. Tauri's desktop
+ * webview exposes the same API on supported platforms, while a browser build
+ * can use its native notification surface without adding a second transport.
+ * Keep this value separate from the dispatch payload so callers can render a
+ * permission affordance in settings without having to emit an alert first.
+ */
+export type SystemNotificationPermission = NotificationPermission | 'unavailable'
+
 export interface NotificationDispatcher {
   dispatch(event: NotificationEvent): Promise<NotificationDispatchResult>
   getState(): NotificationDispatchState
@@ -197,6 +206,62 @@ function diagnosticError(error: unknown): string {
   return redactNotificationText(message).slice(0, 240) || 'notification delivery failed'
 }
 
+function notificationConstructor(): typeof Notification | undefined {
+  if (typeof globalThis === 'undefined') return undefined
+  const candidate = globalThis.Notification
+  return typeof candidate === 'function' ? candidate : undefined
+}
+
+/** Return the current system notification capability without prompting. */
+export function getSystemNotificationPermission(): SystemNotificationPermission {
+  const constructor = notificationConstructor()
+  if (!constructor) return 'unavailable'
+  const permission = constructor.permission
+  return permission === 'granted' || permission === 'denied' || permission === 'default'
+    ? permission
+    : 'default'
+}
+
+/** Request OS/browser permission from a user initiated settings action. */
+export async function requestSystemNotificationPermission(): Promise<SystemNotificationPermission> {
+  const constructor = notificationConstructor()
+  if (!constructor) return 'unavailable'
+  const current = getSystemNotificationPermission()
+  if (current !== 'default') return current
+  try {
+    const permission = await constructor.requestPermission()
+    return permission === 'granted' || permission === 'denied' || permission === 'default'
+      ? permission
+      : 'default'
+  } catch {
+    // Some webviews expose the API but disallow permission prompts. Keep this
+    // failure non-sensitive and let the caller present a recoverable state.
+    return 'denied'
+  }
+}
+
+/**
+ * Deliver a redacted event through the OS/browser notification surface. Only
+ * the bounded title and message are shown; metadata (including provider
+ * summaries and identifiers) never crosses this boundary.
+ */
+export async function emitSystemNotification(payload: NotificationPayload): Promise<void> {
+  const constructor = notificationConstructor()
+  if (!constructor) throw new Error('system notifications unavailable')
+  const permission = await requestSystemNotificationPermission()
+  if (permission !== 'granted') {
+    throw new Error(permission === 'denied'
+      ? 'system notification permission denied'
+      : 'system notification permission not granted')
+  }
+  const title = redactNotificationText(payload.title).slice(0, 120) || 'ShellBeam alert'
+  const body = redactNotificationText(payload.message ?? payload.hostName ?? `${payload.source} alert`).slice(0, 240)
+  if (!body) throw new Error('system notification has no safe message')
+  // Do not pass metadata or provider output to Notification options. The tag
+  // is intentionally omitted so OS notification history cannot expose IDs.
+  new constructor(title, { body })
+}
+
 async function sendWebhook(payload: NotificationPayload, url: string, fetchImpl: typeof fetch): Promise<void> {
   const response = await fetchImpl(url, {
     method: 'POST',
@@ -281,11 +346,12 @@ export async function dispatchNotification(event: NotificationEvent, options: No
         }
         await options.onLocal(payload)
       } else if (channel === 'system') {
-        if (!options.onSystem) {
+        const onSystem = options.onSystem ?? (getSystemNotificationPermission() !== 'unavailable' ? emitSystemNotification : undefined)
+        if (!onSystem) {
           result.deliveries.push({ channel, status: 'skipped', reason: 'channel-unavailable' })
           continue
         }
-        await options.onSystem(payload)
+        await onSystem(payload)
       } else {
         if (!policy.webhookUrl) {
           result.deliveries.push({ channel, status: 'skipped', reason: 'webhook-not-configured' })

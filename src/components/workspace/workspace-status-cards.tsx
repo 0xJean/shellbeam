@@ -3,7 +3,10 @@ import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
 import { useServerMonitorStates } from '@/lib/server-monitor-state'
 import type { ServerMonitorSnapshot, ServerMonitorStatus } from '@/lib/server-monitor'
 import { t } from '@/lib/i18n'
+import { listPersistedProbeSnapshots } from '@/lib/probe-persistence'
+import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
 import { ShellbeamAgentPanel } from './shellbeam-agent-panel'
+import { useEffect, useState } from 'react'
 
 interface WorkspaceStatusCardsProps {
   activeVaultId?: string
@@ -68,6 +71,29 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
   const latest = monitor?.latest
   const snapshot = latest?.snapshot ?? null
   const status = latest?.status
+  const telemetryKey = props.activeVaultId && host?.id ? `${props.activeVaultId}:${host.id}` : null
+  const [persistedTelemetryState, setPersistedTelemetryState] = useState<{ key: string; telemetry: ProbeProviderTelemetry | null } | null>(null)
+
+  useEffect(() => {
+    let active = true
+    if (!telemetryKey || !props.activeVaultId || !host?.id) return () => { active = false }
+    void listPersistedProbeSnapshots({ vaultId: props.activeVaultId, hostId: host.id })
+      .then((rows) => {
+        if (!active) return
+        const telemetry = [...rows]
+          .sort((left, right) => (right.updatedAt || right.receivedAt) - (left.updatedAt || left.receivedAt))
+          .map((row) => row.snapshot.telemetry ?? null)
+          .find((value): value is ProbeProviderTelemetry => value !== null)
+        setPersistedTelemetryState({ key: telemetryKey, telemetry: telemetry ?? null })
+      })
+      .catch(() => {
+        if (active) setPersistedTelemetryState({ key: telemetryKey, telemetry: null })
+      })
+    return () => { active = false }
+  }, [host?.id, props.activeVaultId, telemetryKey])
+
+  const persistedTelemetry = persistedTelemetryState?.key === telemetryKey ? persistedTelemetryState.telemetry : null
+  const probeTelemetry = latest?.probeTelemetry ?? persistedTelemetry
 
   return (
     <>
@@ -131,6 +157,19 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
               <span>{latest ? label : t('workspace.statusValue.notConnected')}</span>
               <span>{sampledAt ? new Date(sampledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}</span>
             </div>
+            {probeTelemetry && (
+              <div
+                data-testid="workspace-probe-telemetry"
+                className="mt-2 truncate text-[10px] text-[var(--workspace-text-subtle)]"
+                title={t('workspace.probeTelemetry.title')}
+              >
+                {t(`workspace.probeTelemetry.status.${probeTelemetry.status}`)}
+                {' · '}
+                {t('workspace.probeTelemetry.attempts', { count: probeTelemetry.attempts })}
+                {' · '}
+                {t('workspace.probeTelemetry.duration', { ms: probeTelemetry.durationMs })}
+              </div>
+            )}
           </div>
         )
         })}

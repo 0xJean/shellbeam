@@ -550,6 +550,23 @@ fn latest(app: &tauri::AppHandle, host: &HostProfile) -> Result<Value, String> {
 /// durable row is still useful as a recovery candidate, but it must never be
 /// presented as a current healthy observation after its TTL has elapsed.
 fn probe_recovery_state(snapshot: &Value, expired: bool) -> &'static str {
+    if snapshot
+        .get("telemetry")
+        .and_then(|telemetry| telemetry.get("status"))
+        .and_then(Value::as_str)
+        == Some("failed")
+    {
+        return "failed";
+    }
+    if snapshot
+        .get("telemetry")
+        .and_then(|telemetry| telemetry.get("status"))
+        .and_then(Value::as_str)
+        == Some("recovered")
+        && !expired
+    {
+        return "recovered";
+    }
     match snapshot.get("health").and_then(Value::as_str) {
         Some("offline") => "offline",
         Some("unknown") => "unknown",
@@ -605,10 +622,11 @@ fn komari_probe_state(
                 "expiresAt": record.expires_at,
                 "expired": expired,
                 "recoveryState": recovery_state,
-                "recoveryAvailable": recovery_state == "stale" || recovery_state == "unknown",
+                "recoveryAvailable": matches!(recovery_state, "stale" | "unknown" | "failed"),
                 "health": snapshot.get("health").cloned().unwrap_or(Value::Null),
                 "provider": snapshot.get("provider").cloned().unwrap_or(Value::Null),
                 "transport": snapshot.get("transport").cloned().unwrap_or(Value::Null),
+                "telemetry": snapshot.get("telemetry").cloned().unwrap_or(Value::Null),
                 "metrics": snapshot.get("metrics").cloned().unwrap_or(Value::Null),
                 "alerts": snapshot.get("alerts").cloned().unwrap_or(Value::Null),
                 "errors": snapshot.get("errors").cloned().unwrap_or(Value::Null),
@@ -627,6 +645,8 @@ fn komari_probe_state(
     .into_iter()
     .map(|record| {
         let snapshot = record.snapshot;
+        let expired = now_unix_ms() > record.expires_at;
+        let recovery_state = probe_recovery_state(&snapshot, expired);
         json!({
             "vaultId": record.vault_id,
             "providerKind": record.provider_kind,
@@ -635,10 +655,13 @@ fn komari_probe_state(
             "sampledAt": record.sampled_at,
             "receivedAt": record.received_at,
             "expiresAt": record.expires_at,
-            "expired": now_unix_ms() > record.expires_at,
+            "expired": expired,
+            "recoveryState": recovery_state,
+            "recoveryAvailable": matches!(recovery_state, "stale" | "unknown" | "failed"),
             "health": snapshot.get("health").cloned().unwrap_or(Value::Null),
             "provider": snapshot.get("provider").cloned().unwrap_or(Value::Null),
             "transport": snapshot.get("transport").cloned().unwrap_or(Value::Null),
+            "telemetry": snapshot.get("telemetry").cloned().unwrap_or(Value::Null),
             "metrics": snapshot.get("metrics").cloned().unwrap_or(Value::Null),
             "inventory": snapshot.get("inventory").cloned().unwrap_or(Value::Null),
             "errors": snapshot.get("errors").cloned().unwrap_or(Value::Null),
@@ -1950,6 +1973,31 @@ mod tests {
             "unknown"
         );
         assert_eq!(probe_recovery_state(&json!({}), false), "unknown");
+    }
+
+    #[test]
+    fn probe_telemetry_is_classified_for_mcp_observability() {
+        assert_eq!(
+            probe_recovery_state(
+                &json!({"health":"online", "telemetry":{"status":"recovered"}}),
+                false,
+            ),
+            "recovered"
+        );
+        assert_eq!(
+            probe_recovery_state(
+                &json!({"health":"online", "telemetry":{"status":"recovered"}}),
+                true,
+            ),
+            "stale"
+        );
+        assert_eq!(
+            probe_recovery_state(
+                &json!({"health":"offline", "telemetry":{"status":"failed"}}),
+                false,
+            ),
+            "failed"
+        );
     }
 
     #[test]

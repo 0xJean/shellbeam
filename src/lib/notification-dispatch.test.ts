@@ -19,6 +19,76 @@ const event: NotificationEvent = {
 }
 
 describe('notification dispatch', () => {
+  it('delivers the system channel through the browser notification surface with redacted text', async () => {
+    const shown: Array<{ title: string; options?: NotificationOptions }> = []
+    class MockNotification {
+      static permission: NotificationPermission = 'granted'
+      static requestPermission = vi.fn(async () => 'granted' as NotificationPermission)
+      constructor(title: string, options?: NotificationOptions) {
+        shown.push({ title, options })
+      }
+    }
+    vi.stubGlobal('Notification', MockNotification as unknown as typeof Notification)
+    try {
+      const result = await dispatchNotification(event, {
+        now: 10_000,
+        policy: { channels: ['system'] },
+      })
+      expect(result.deliveries).toEqual([{ channel: 'system', status: 'delivered', deliveredAt: 10_000 }])
+      expect(shown).toEqual([{
+        title: 'Host offline',
+        options: { body: 'probe token=<redacted>; password: <redacted>' },
+      }])
+      expect(JSON.stringify(shown)).not.toContain('secret-value')
+      expect(JSON.stringify(shown)).not.toContain('hunter2')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('requests system permission before the first delivery', async () => {
+    const shown: string[] = []
+    class MockNotification {
+      static permission: NotificationPermission = 'default'
+      static requestPermission = vi.fn(async () => {
+        MockNotification.permission = 'granted'
+        return 'granted' as NotificationPermission
+      })
+      constructor(title: string) {
+        shown.push(title)
+      }
+    }
+    vi.stubGlobal('Notification', MockNotification as unknown as typeof Notification)
+    try {
+      const result = await dispatchNotification(event, { policy: { channels: ['system'] }, now: 10_100 })
+      expect(result.deliveries[0]).toMatchObject({ channel: 'system', status: 'delivered' })
+      expect(MockNotification.requestPermission).toHaveBeenCalledTimes(1)
+      expect(shown).toEqual(['Host offline'])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('records a denied system permission as a failed delivery without exposing payload data', async () => {
+    class MockNotification {
+      static permission: NotificationPermission = 'denied'
+      static requestPermission = vi.fn(async () => 'denied' as NotificationPermission)
+      constructor() {
+        throw new Error('constructor should not be called when permission is denied')
+      }
+    }
+    const logger = vi.fn()
+    vi.stubGlobal('Notification', MockNotification as unknown as typeof Notification)
+    try {
+      const result = await dispatchNotification(event, { policy: { channels: ['system'] }, logger: { warn: logger }, now: 10_200 })
+      expect(result.deliveries[0]).toMatchObject({ channel: 'system', status: 'failed', error: 'system notification permission denied' })
+      expect(logger).toHaveBeenCalledWith('Notification system delivery failed: system notification permission denied')
+      expect(JSON.stringify(logger.mock.calls)).not.toContain('secret-value')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('delivers a redacted payload to local, webhook and system channels', async () => {
     const onLocal = vi.fn()
     const onSystem = vi.fn()

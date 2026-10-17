@@ -138,6 +138,38 @@ describe('buildHostOpsViews', () => {
     expect(views['host-1'].health.freshness.stale).toBe(true)
   })
 
+  it('keeps in-memory ProbeProvider telemetry visible before snapshot persistence completes', () => {
+    const view = buildHostOpsViews({
+      hosts: [host],
+      monitorLatest: [{
+        ...monitor,
+        status: 'stale',
+        probeTelemetry: {
+          status: 'recovered',
+          startedAt: 900,
+          completedAt: 1_000,
+          durationMs: 100,
+          attempts: 2,
+          maxRetries: 2,
+          retryDelayMs: 150,
+          recovered: true,
+          exhausted: true,
+          sections: ['metrics'],
+          lastErrorCode: 'ssh_timeout',
+        },
+      }],
+      now: 1_100,
+    })['host-1']
+
+    expect(view.health.probe).toMatchObject({
+      state: 'recovered',
+      providerKind: 'ssh-agentless',
+      providerId: 'ssh-agentless',
+      persisted: false,
+      telemetry: expect.objectContaining({ status: 'recovered', attempts: 2, lastErrorCode: 'ssh_timeout' }),
+    })
+  })
+
   it('distinguishes a ProxyJump failure from a target host outage', () => {
     const views = buildHostOpsViews({
       hosts: [host],

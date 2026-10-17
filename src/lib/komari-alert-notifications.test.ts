@@ -25,6 +25,10 @@ const state: KomariAlertState = {
     closedAt: null,
     relatedOperationJobId: 'job-1',
     deduplicatedCount: 1,
+    probeTelemetry: {
+      status: 'recovered', attempts: 1, maxRetries: 2, durationMs: 125,
+      recovered: true, exhausted: false, lastErrorCode: 'timeout',
+    },
   }],
   audit: [
     { auditId: 'audit-open', alertId: 'alert-1', fingerprint: 'prod|node|host|offline', event: 'opened', status: 'active', actor: 'sync', operationJobId: null, at: 1_000 },
@@ -39,7 +43,10 @@ describe('Komari alert notifications', () => {
     const event = komariAlertNotificationEvent(state.alerts[0]!, state.audit[2]!)
     expect(event).toMatchObject({ eventId: 'audit-resolved', source: 'komari', kind: 'alert.resolved', severity: 'critical', hostId: 'host-1', integrationId: 'prod', status: 'resolved', occurredAt: 3_000 })
     expect(event.message).toContain('recovered')
-    expect(event.metadata).toMatchObject({ alertId: 'alert-1', lifecycle: 'resolved', recovered: true, relatedOperationJobId: 'job-1' })
+    expect(event.metadata).toMatchObject({
+      alertId: 'alert-1', lifecycle: 'resolved', recovered: true, relatedOperationJobId: 'job-1',
+      probeTelemetry: { status: 'recovered', attempts: 1, durationMs: 125, lastErrorCode: 'timeout' },
+    })
   })
 
   it('maps every supported lifecycle transition to a stable event kind', () => {

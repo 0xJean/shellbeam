@@ -170,6 +170,7 @@ export async function scanServerMonitorHosts({
         const latest = createServerMonitorLatest(host, status, attemptAt, previous?.latest, {
           snapshot,
           lastSuccessAt,
+          probeTelemetry: probe.telemetry ?? null,
           ...(recovered && probe.errors[0]?.message ? { error: probe.errors[0].message } : {}),
         })
         const historyPoint: ServerMonitorHistoryPoint = {
