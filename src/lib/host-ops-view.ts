@@ -17,7 +17,7 @@ import {
 import { listOperationAudit, type OperationAuditEntry } from './operation-job'
 import { operationTransport } from './operation-job'
 import { refreshProbeSnapshotFreshness } from './probe-scheduler'
-import type { ProbeSnapshot } from './probe-provider'
+import type { ProbeProviderTelemetry, ProbeSnapshot } from './probe-provider'
 import { listPersistedProbeSnapshots, type PersistedProbeSnapshotRecord } from './probe-persistence'
 import type { KomariAlertSummary } from './komari'
 import type { KomariAlertAuditEntry, KomariAlertRecord, KomariAlertState } from './komari-alerts'
@@ -85,6 +85,7 @@ export interface HostOpsProbeStatus {
   sampledAt: number | null
   receivedAt: number | null
   persisted: boolean
+  telemetry?: ProbeProviderTelemetry | null
   error?: string
 }
 
@@ -346,6 +347,7 @@ function probeStatus(snapshot: ProbeSnapshot | undefined, persisted = false): Ho
     sampledAt,
     receivedAt,
     persisted,
+    telemetry: snapshot.telemetry ?? null,
     ...(snapshot.errors[0]?.message ? { error: snapshot.errors[0].message } : {}),
   }
 }

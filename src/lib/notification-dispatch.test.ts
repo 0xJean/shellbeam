@@ -58,6 +58,30 @@ describe('notification dispatch', () => {
     expect(onLocal).toHaveBeenCalledTimes(2)
   })
 
+  it('routes recovery events through their dedicated channels', async () => {
+    const onLocal = vi.fn()
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 200 }))
+    const result = await dispatchNotification({
+      ...event,
+      kind: 'alert.resolved',
+      eventId: 'event-recovered',
+      status: 'resolved',
+      metadata: { recovered: true },
+    }, {
+      policy: {
+        channels: ['local'],
+        recoveryChannels: ['webhook'],
+        webhookUrl: 'https://alerts.example.test/recovery',
+        cooldownMs: 0,
+      },
+      onLocal,
+      fetchImpl,
+    })
+    expect(result.deliveries).toEqual([{ channel: 'webhook', status: 'delivered', deliveredAt: expect.any(Number) }])
+    expect(onLocal).not.toHaveBeenCalled()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('does not record unavailable channels or failed deliveries as successful sends', async () => {
     const logger = vi.fn()
     const failedFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 500 }))

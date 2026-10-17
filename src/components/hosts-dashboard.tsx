@@ -293,6 +293,8 @@ function hostOpsToCardSummary(
       probeProviderId: view.health.probe.providerId,
       probeState: view.health.probe.state,
       probeError: view.health.probe.error,
+      probeErrorCode: view.health.probe.telemetry?.lastErrorCode,
+      probeTelemetry: view.health.probe.telemetry,
     } : {}),
     sampledAt: view.health.freshness.sampledAt ?? undefined,
     transport: view.health.transport,

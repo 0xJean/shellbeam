@@ -36,12 +36,23 @@ export interface NotificationPolicy {
   dedupeWindowMs: number
   /** HTTP(S) endpoint for the webhook channel. No credentials are stored here. */
   webhookUrl: string | null
+  /** Deliver a lifecycle event when an alert is automatically recovered. */
+  notifyOnRecovery: boolean
+  /** Channels used for recovery events. Keeping this separate lets a user
+   * silence recovery noise without losing opening/critical notifications. */
+  recoveryChannels: NotificationChannel[]
+  /** Include the bounded provider alert summary in notification metadata. */
+  includeAlertSummary: boolean
 }
 
 export type NotificationPolicyInput = Omit<Partial<NotificationPolicy>, 'channels'> & {
   channels?: readonly NotificationChannel[]
   /** Alias accepted by settings/forms that use the shorter name. */
   minSeverity?: NotificationSeverity
+  /** Backwards-compatible aliases accepted by settings/forms. */
+  recoveryEnabled?: boolean
+  notifyRecovery?: boolean
+  includeSummary?: boolean
 }
 
 export const DEFAULT_NOTIFICATION_POLICY: NotificationPolicy = {
@@ -51,6 +62,9 @@ export const DEFAULT_NOTIFICATION_POLICY: NotificationPolicy = {
   cooldownMs: 5 * 60 * 1000,
   dedupeWindowMs: 60 * 1000,
   webhookUrl: null,
+  notifyOnRecovery: true,
+  recoveryChannels: ['local'],
+  includeAlertSummary: true,
 }
 
 export const NOTIFICATION_POLICY_STORAGE_KEY = 'shellbeam.notificationPolicy'
@@ -104,6 +118,11 @@ function normalizeChannels(value: unknown): NotificationChannel[] {
   return result.length > 0 ? result : [...DEFAULT_NOTIFICATION_POLICY.channels]
 }
 
+function normalizeOptionalChannels(value: unknown, fallback: readonly NotificationChannel[]): NotificationChannel[] {
+  if (value === undefined) return [...fallback]
+  return normalizeChannels(value)
+}
+
 function normalizeSeverity(value: unknown): NotificationSeverity {
   return SEVERITIES.includes(value as NotificationSeverity)
     ? value as NotificationSeverity
@@ -113,13 +132,17 @@ function normalizeSeverity(value: unknown): NotificationSeverity {
 /** Normalize untrusted settings into a bounded, credential-free policy. */
 export function normalizeNotificationPolicy(input: unknown): NotificationPolicy {
   const raw = input && typeof input === 'object' ? input as NotificationPolicyInput : {}
+  const channels = normalizeChannels(raw.channels)
   return {
     enabled: raw.enabled !== false,
-    channels: normalizeChannels(raw.channels),
+    channels,
     minimumSeverity: normalizeSeverity(raw.minimumSeverity ?? raw.minSeverity),
     cooldownMs: normalizeDuration(raw.cooldownMs, DEFAULT_NOTIFICATION_POLICY.cooldownMs),
     dedupeWindowMs: normalizeDuration(raw.dedupeWindowMs, DEFAULT_NOTIFICATION_POLICY.dedupeWindowMs),
     webhookUrl: normalizeWebhookUrl(raw.webhookUrl),
+    notifyOnRecovery: raw.notifyOnRecovery ?? raw.recoveryEnabled ?? raw.notifyRecovery !== false,
+    recoveryChannels: normalizeOptionalChannels(raw.recoveryChannels, channels),
+    includeAlertSummary: raw.includeAlertSummary ?? raw.includeSummary !== false,
   }
 }
 
@@ -170,5 +193,9 @@ export function notificationPolicySummary(policy: NotificationPolicy) {
     cooldownMs: normalized.cooldownMs,
     dedupeWindowMs: normalized.dedupeWindowMs,
     webhookConfigured: Boolean(normalized.webhookUrl),
+    notifyOnRecovery: normalized.notifyOnRecovery,
+    recoveryEnabled: normalized.notifyOnRecovery,
+    recoveryChannels: [...normalized.recoveryChannels],
+    includeAlertSummary: normalized.includeAlertSummary,
   }
 }

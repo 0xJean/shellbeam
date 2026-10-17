@@ -19,4 +19,17 @@ describe('NotificationSettingsSection', () => {
     expect(loadNotificationPolicy()).toMatchObject({ minimumSeverity: 'critical', webhookUrl: 'https://alerts.example/hooks/abc', channels: ['local', 'webhook'] })
     expect(screen.getByRole('status')).toHaveTextContent('Notification policy saved')
   })
+
+  it('persists recovery notification controls and bounded alert summaries', () => {
+    render(<I18nProvider><NotificationSettingsSection /></I18nProvider>)
+    fireEvent.click(screen.getByLabelText('Send recovery notifications'))
+    fireEvent.click(screen.getByLabelText('Recovery: Webhook'))
+    fireEvent.click(screen.getByLabelText('Include the bounded alert summary in notification metadata'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save notification policy' }))
+    expect(loadNotificationPolicy()).toMatchObject({
+      notifyOnRecovery: false,
+      recoveryChannels: ['local', 'webhook'],
+      includeAlertSummary: false,
+    })
+  })
 })

@@ -56,4 +56,24 @@ describe('notification policy', () => {
     expect(notificationMeetsPolicy({ severity: 'critical' }, { ...DEFAULT_NOTIFICATION_POLICY, minimumSeverity: 'warning' })).toBe(true)
     expect(notificationMeetsPolicy({ severity: 'info' }, { ...DEFAULT_NOTIFICATION_POLICY, minimumSeverity: 'warning' })).toBe(false)
   })
+
+  it('normalizes and persists recovery routing controls', () => {
+    const policy = saveNotificationPolicy({
+      notifyOnRecovery: false,
+      recoveryChannels: ['webhook', 'webhook'],
+      includeAlertSummary: false,
+    })
+    expect(policy).toMatchObject({
+      notifyOnRecovery: false,
+      recoveryChannels: ['webhook'],
+      includeAlertSummary: false,
+    })
+    expect(loadNotificationPolicy()).toEqual(policy)
+    expect(notificationPolicySummary(policy)).toMatchObject({
+      recoveryEnabled: false,
+      notifyOnRecovery: false,
+      recoveryChannels: ['webhook'],
+      includeAlertSummary: false,
+    })
+  })
 })

@@ -43,6 +43,7 @@ export interface NotificationPayload {
 
 export type NotificationSkipReason =
   | 'disabled'
+  | 'recovery-disabled'
   | 'below-minimum-severity'
   | 'deduplicated'
   | 'cooldown'
@@ -235,16 +236,30 @@ export async function dispatchNotification(event: NotificationEvent, options: No
   const payload = normalizeEvent(event, now)
   const state = normalizeState(options.state)
   const result: NotificationDispatchResult = { payload, deliveries: [], state }
+  const isRecovery = payload.kind === 'alert.resolved'
+    || payload.status === 'resolved'
+    || payload.metadata.recovered === true
+  const channels = isRecovery ? policy.recoveryChannels : policy.channels
 
   if (!policy.enabled) {
-    return { ...result, deliveries: policy.channels.map((channel) => ({ channel, status: 'skipped', reason: 'disabled' as const })) }
+    return { ...result, deliveries: channels.map((channel) => ({ channel, status: 'skipped', reason: 'disabled' as const })) }
+  }
+
+  // Recovery notifications are a separate user preference. Keep this guard
+  // in the shared dispatcher as well as the Komari adapter so future
+  // ProbeProvider implementations cannot accidentally bypass the setting.
+  if (isRecovery && !policy.notifyOnRecovery) {
+    return {
+      ...result,
+      deliveries: channels.map((channel) => ({ channel, status: 'skipped', reason: 'recovery-disabled' as const })),
+    }
   }
   if (!notificationMeetsPolicy(payload, policy)) {
-    return { ...result, deliveries: policy.channels.map((channel) => ({ channel, status: 'skipped', reason: 'below-minimum-severity' as const })) }
+    return { ...result, deliveries: channels.map((channel) => ({ channel, status: 'skipped', reason: 'below-minimum-severity' as const })) }
   }
 
   const keyEvent = eventKey(payload)
-  for (const channel of policy.channels) {
+  for (const channel of channels) {
     const key = `${payload.fingerprint}|${channel}`
     const previous = latestDelivery(state, key)
     if (previous && previous.eventKey === keyEvent && policy.dedupeWindowMs > 0 && now - previous.deliveredAt < policy.dedupeWindowMs) {

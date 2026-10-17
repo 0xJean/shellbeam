@@ -237,13 +237,36 @@ export async function dispatchKomariAlertNotifications(
       continue
     }
     const event = komariAlertNotificationEvent(record, audit)
+    // Keep the payload compact by default, while allowing operators to opt in
+    // to the bounded Komari aggregate in webhook/in-app metadata. The summary
+    // contains counts and timestamps only; no provider payload is persisted.
+    if (policy.includeAlertSummary) {
+      event.metadata = {
+        ...event.metadata,
+        alertSummary: {
+          total: state.summary.total,
+          active: state.summary.active,
+          open: state.summary.open,
+          acknowledged: state.summary.acknowledged,
+          resolved: state.summary.resolved,
+          closed: state.summary.closed,
+          updatedAt: state.summary.updatedAt,
+        },
+      }
+    }
+    const isRecovery = audit.event === 'resolved'
+    if (isRecovery && !policy.notifyOnRecovery) {
+      skipped += 1
+      continue
+    }
+    const configuredChannels = isRecovery ? policy.recoveryChannels : policy.channels
     const deliveredChannels = new Set((dispatchState?.deliveries ?? [])
       .filter((delivery) => delivery.eventId === event.eventId)
       .map((delivery) => delivery.channel))
     // Audit ids are immutable lifecycle facts. Once every currently enabled
     // channel has accepted one, do not replay an old row after its cooldown
     // expires when a caller passes the persisted full audit history.
-    if (policy.channels.every((channel) => deliveredChannels.has(channel))) {
+    if (configuredChannels.every((channel) => deliveredChannels.has(channel))) {
       alreadyDelivered += 1
       continue
     }
@@ -251,10 +274,14 @@ export async function dispatchKomariAlertNotifications(
     // If a webhook was unavailable after the in-app event was delivered, a
     // later cross-session refresh must not emit the same local alert again
     // just because the global dedupe window has elapsed.
-    const pendingChannels = policy.channels.filter((channel) => !deliveredChannels.has(channel))
-    const pendingPolicy = pendingChannels.length === policy.channels.length
-      ? policy
-      : { ...policy, channels: pendingChannels }
+    const pendingChannels = configuredChannels.filter((channel) => !deliveredChannels.has(channel))
+    if (pendingChannels.length === 0) {
+      alreadyDelivered += 1
+      continue
+    }
+    const pendingPolicy = pendingChannels.length === configuredChannels.length
+      ? { ...policy, channels: configuredChannels, ...(isRecovery ? { recoveryChannels: configuredChannels } : {}) }
+      : { ...policy, channels: pendingChannels, ...(isRecovery ? { recoveryChannels: pendingChannels } : {}) }
     const result = await dispatchNotification(
       event,
       {

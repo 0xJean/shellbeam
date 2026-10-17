@@ -7,6 +7,7 @@ import {
   type ProbeRequest,
   type ProbeSection,
   type ProbeSnapshot,
+  type ProbeProviderTelemetry,
 } from './probe-provider'
 import {
   deletePersistedProbeSnapshots,
@@ -74,6 +75,36 @@ interface ProbeWorkResult {
   snapshot: ProbeSnapshot
   recovered: boolean
   retry?: ProbeRetryStatus
+}
+
+function collectionTelemetry(options: {
+  status: ProbeProviderTelemetry['status']
+  startedAt: number
+  completedAt?: number
+  attempts: number
+  maxRetries: number
+  retryDelayMs: number
+  recovered: boolean
+  exhausted: boolean
+  sections: ProbeSection[]
+  lastError?: string
+  lastErrorCode?: string
+}): ProbeProviderTelemetry {
+  const completedAt = options.completedAt ?? Date.now()
+  return {
+    status: options.status,
+    startedAt: options.startedAt,
+    completedAt,
+    durationMs: Math.max(0, completedAt - options.startedAt),
+    attempts: options.attempts,
+    maxRetries: options.maxRetries,
+    retryDelayMs: options.retryDelayMs,
+    recovered: options.recovered,
+    exhausted: options.exhausted,
+    sections: options.sections,
+    ...(options.lastError ? { lastError: options.lastError } : {}),
+    ...(options.lastErrorCode ? { lastErrorCode: options.lastErrorCode } : {}),
+  }
 }
 
 function providerKey(provider: ProbeProvider) {
@@ -330,13 +361,16 @@ export class ProbeProviderRegistry {
       return { snapshot: result.snapshot, cached: false, deduplicated: true, recovered: result.recovered, retry: result.retry }
     }
     const providerRequest: ProbeRequest = { ...request, sections }
+    const startedAt = Date.now()
     const work = (async () => {
       await this.acquire()
       try {
         const retrySettings = loadProbeRetrySettings()
         const retryBudget = maxRetries(request, retrySettings)
+        const configuredRetryDelayMs = retryDelayMs(request, 1, retrySettings)
         let snapshot: ProbeSnapshot | undefined
         let lastError: unknown
+        let lastErrorCode: string | undefined
         let attempts = 0
         let failed = false
         for (let attempt = 0; attempt <= retryBudget; attempt += 1) {
@@ -344,7 +378,9 @@ export class ProbeProviderRegistry {
             snapshot = await provider.probe(providerRequest)
             failed = probeNeedsRetry(snapshot, sections)
             if (!failed) break
-            lastError = snapshot.errors.find((entry) => entry.section === 'provider' || sections.includes(entry.section as ProbeSection))?.message
+            const latestError = snapshot.errors.find((entry) => entry.section === 'provider' || sections.includes(entry.section as ProbeSection))
+            lastError = latestError?.message
+            lastErrorCode = latestError?.code
           } catch (error) {
             lastError = error
             failed = true
@@ -360,8 +396,35 @@ export class ProbeProviderRegistry {
           : undefined
         const fallback = this.cache.get(key)
         if (fallback && probeCollectionFailed(snapshot, fallback.snapshot, sections)) {
+          const recoveredTelemetry = collectionTelemetry({
+            status: 'recovered',
+            startedAt,
+            attempts,
+            maxRetries: retryBudget,
+            retryDelayMs: configuredRetryDelayMs,
+            recovered: true,
+            exhausted: Boolean(retry?.exhausted),
+            sections,
+            ...(retry?.error ? { lastError: retry.error } : {}),
+            ...(lastErrorCode ? { lastErrorCode } : {}),
+          })
+          const recoveredSnapshot = mergeRecoveredProbeSnapshot(
+            snapshot,
+            fallback.snapshot,
+            sections,
+            snapshot.errors[0]?.message ?? lastError ?? 'provider returned no observation',
+            now,
+            retry,
+          )
+          // Preserve the last successful observation while retaining the
+          // latest failure/recovery telemetry for the next session.  The
+          // sampled data remains stale; this write never replaces it with an
+          // incomplete provider envelope.
+          const recoveredSnapshotWithTelemetry = { ...recoveredSnapshot, telemetry: recoveredTelemetry }
+          this.cache.set(key, { snapshot: recoveredSnapshotWithTelemetry })
+          if (vaultId) void this.persistence.save(recoveredSnapshotWithTelemetry, vaultId, now).catch(() => undefined)
           return {
-            snapshot: mergeRecoveredProbeSnapshot(snapshot, fallback.snapshot, sections, snapshot.errors[0]?.message ?? lastError ?? 'provider returned no observation', now, retry),
+            snapshot: recoveredSnapshotWithTelemetry,
             recovered: true,
             retry,
           }
@@ -372,22 +435,55 @@ export class ProbeProviderRegistry {
             errors: [...snapshot.errors, retryError(retry.attempts, retry.error)],
           }
         }
+        const telemetry = collectionTelemetry({
+          status: retry?.exhausted ? 'failed' : 'success',
+          startedAt,
+          attempts,
+          maxRetries: retryBudget,
+          retryDelayMs: configuredRetryDelayMs,
+          recovered: false,
+          exhausted: Boolean(retry?.exhausted),
+          sections,
+          ...(retry?.error ? { lastError: retry.error } : {}),
+          ...(lastErrorCode ? { lastErrorCode } : {}),
+        })
+        snapshot = { ...snapshot, telemetry }
         this.cache.set(key, { snapshot })
-        // A failed envelope must not replace the durable recovery candidate.
+        // A failed envelope must not replace the durable recovery candidate;
+        // stale recovery writes happen in the fallback branch above and keep
+        // the last successful observation intact.
         if (vaultId && !retry?.exhausted) void this.persistence.save(snapshot, vaultId, now).catch(() => undefined)
         return { snapshot, recovered: false, retry }
       } catch (error) {
         const fallback = this.cache.get(key)
         if (!fallback) throw error
-        const retry = { attempts: maxRetries(request, loadProbeRetrySettings()), exhausted: true, error: errorMessage(error) }
+        const retrySettings = loadProbeRetrySettings()
+        const retry = { attempts: maxRetries(request, retrySettings), exhausted: true, error: errorMessage(error) }
         const recovered = markProbeSnapshotRecovered(fallback.snapshot, error, now)
         const errors = [...recovered.errors]
         const staleIndex = errors.findIndex((entry) => entry.code === 'stale-cache-fallback')
         const marker = retryError(retry.attempts, retry.error)
         if (staleIndex >= 0) errors.splice(staleIndex, 0, marker)
         else errors.push(marker)
+        const recoveredSnapshot = {
+          ...recovered,
+          errors,
+          telemetry: collectionTelemetry({
+            status: 'recovered',
+            startedAt,
+            attempts: retry.attempts,
+            maxRetries: maxRetries(request, retrySettings),
+            retryDelayMs: retryDelayMs(request, 1, retrySettings),
+            recovered: true,
+            exhausted: true,
+            sections,
+            lastError: retry.error,
+          }),
+        }
+        this.cache.set(key, { snapshot: recoveredSnapshot })
+        if (vaultId) void this.persistence.save(recoveredSnapshot, vaultId, now).catch(() => undefined)
         return {
-          snapshot: { ...recovered, errors },
+          snapshot: recoveredSnapshot,
           recovered: true,
           retry,
         }

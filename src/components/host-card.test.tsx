@@ -145,6 +145,20 @@ describe('host list item', () => {
           },
           provider: 'ssh-agentless',
           sampledAt: 1000,
+          probeState: 'recovered',
+          probeProviderId: 'ssh-agentless',
+          probeTelemetry: {
+            status: 'recovered',
+            startedAt: 900,
+            completedAt: 1000,
+            durationMs: 100,
+            attempts: 2,
+            maxRetries: 2,
+            retryDelayMs: 150,
+            recovered: true,
+            exhausted: true,
+            sections: ['metrics'],
+          },
           transport: 'direct',
         }}
         onSelect={vi.fn()}
@@ -160,6 +174,7 @@ describe('host list item', () => {
     expect(screen.getByText(/service\.restart/)).toBeInTheDocument()
     expect(screen.getByText(/audit-1/)).toBeInTheDocument()
     expect(screen.getByText(/Unknown: 2/)).toBeInTheDocument()
+    expect(screen.getByText(/2 retries/)).toBeInTheDocument()
   })
 
   it('surfaces MCP alert lifecycle and linked OperationJob outcome in the host ops row', () => {

@@ -36,6 +36,13 @@ export function NotificationSettingsSection() {
     update({ channels: next.length > 0 ? next : ['local'] })
   }
 
+  function toggleRecoveryChannel(channel: NotificationChannel, enabled: boolean) {
+    const next = enabled
+      ? [...new Set([...policy.recoveryChannels, channel])]
+      : policy.recoveryChannels.filter((item) => item !== channel)
+    update({ recoveryChannels: next.length > 0 ? next : ['local'] })
+  }
+
   function save() {
     try {
       setPolicy(saveNotificationPolicy(policy))
@@ -79,6 +86,36 @@ export function NotificationSettingsSection() {
           </div>
         </div>
 
+        <div className="rounded-md border border-border/60 p-3" data-testid="notification-recovery-settings">
+          <label className="flex items-center gap-2 text-sm">
+            <input data-testid="notification-recovery-enabled" type="checkbox" checked={policy.notifyOnRecovery} onChange={(event) => update({ notifyOnRecovery: event.target.checked })} className="rounded" />
+            {t('settings.notifications.notifyRecovery')}
+          </label>
+          <p className="mt-1 text-xs text-muted-foreground">{t('settings.notifications.recoveryDescription')}</p>
+          <div className="mt-3">
+            <div className="text-sm text-muted-foreground">{t('settings.notifications.recoveryChannels')}</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {CHANNELS.map((channel) => (
+                <label key={`recovery-${channel}`} className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs">
+                  <input
+                    data-testid={`notification-recovery-channel-${channel}`}
+                    type="checkbox"
+                    checked={policy.recoveryChannels.includes(channel)}
+                    aria-label={t(`settings.notifications.recoveryChannel.${channel}`)}
+                    onChange={(event) => toggleRecoveryChannel(channel, event.target.checked)}
+                    className="rounded"
+                  />
+                  {t(`settings.notifications.recoveryChannel.${channel}`)}
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+            <input data-testid="notification-include-alert-summary" type="checkbox" checked={policy.includeAlertSummary} onChange={(event) => update({ includeAlertSummary: event.target.checked })} className="rounded" />
+            {t('settings.notifications.includeSummary')}
+          </label>
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="text-sm text-muted-foreground">{t('settings.notifications.minimumSeverity')}
             <select value={policy.minimumSeverity} onChange={(event) => update({ minimumSeverity: event.target.value as NotificationSeverity })} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-xs">
@@ -112,7 +149,7 @@ export function NotificationSettingsSection() {
 
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" size="sm" onClick={save}>{t('settings.notifications.save')}</Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => { setPolicy({ ...DEFAULT_NOTIFICATION_POLICY, channels: [...DEFAULT_NOTIFICATION_POLICY.channels] }); setSaved(false); setError('') }}>{t('settings.notifications.reset')}</Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => { setPolicy({ ...DEFAULT_NOTIFICATION_POLICY, channels: [...DEFAULT_NOTIFICATION_POLICY.channels], recoveryChannels: [...DEFAULT_NOTIFICATION_POLICY.recoveryChannels] }); setSaved(false); setError('') }}>{t('settings.notifications.reset')}</Button>
           {saved && <span role="status" className="text-xs text-emerald-600">{t('settings.notifications.saved')}</span>}
           {error && <span role="alert" className="text-xs text-red-500">{error}</span>}
         </div>

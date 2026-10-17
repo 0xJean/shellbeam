@@ -9,6 +9,7 @@ import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
+import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
 import { AlertTriangle, Activity, Bot, Check, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
@@ -75,6 +76,8 @@ export interface HostOperationalSummary {
   probeProviderId?: string
   probeState?: 'fresh' | 'stale' | 'recovered' | 'error' | 'unknown'
   probeError?: string
+  probeErrorCode?: string
+  probeTelemetry?: ProbeProviderTelemetry | null
   sampledAt?: number
   transport: 'direct' | 'proxy-jump'
   agentStatus?: string
@@ -528,6 +531,14 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
           <span className="shrink-0">{t('hosts.opsProbeState')}</span>
           <strong className="truncate font-medium">{t(`hosts.opsProbe.${summary.probeState}`)}</strong>
           {summary.probeProviderId && <span className="truncate font-mono text-[var(--workspace-text-subtle)]">· {summary.probeProviderId}</span>}
+          {summary.probeTelemetry && (
+            <span className="shrink-0 text-[var(--workspace-text-subtle)]" title={t('hosts.opsProbe.telemetryHint')}>
+              · {t('hosts.opsProbe.attempts', { count: summary.probeTelemetry.attempts })}
+              {summary.probeTelemetry.exhausted ? ` · ${t('hosts.opsProbe.exhausted')}` : ''}
+              {` · ${t('hosts.opsProbe.duration', { ms: summary.probeTelemetry.durationMs })}`}
+            </span>
+          )}
+          {summary.probeErrorCode && <span className="shrink-0 font-mono text-[var(--workspace-text-subtle)]">· {summary.probeErrorCode}</span>}
           {summary.probeError && <span className="truncate text-[var(--workspace-text-subtle)]" title={summary.probeError}>· {summary.probeError}</span>}
         </div>
       )}

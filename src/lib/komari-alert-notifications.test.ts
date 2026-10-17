@@ -76,6 +76,41 @@ describe('Komari alert notifications', () => {
     }
   })
 
+  it('routes recovery notifications through configured channels and includes a bounded summary', async () => {
+    const onLocal = vi.fn()
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 200 }))
+    const result = await dispatchKomariAlertNotifications(state, {
+      audit: [state.audit[2]!],
+      policy: {
+        channels: ['local'],
+        recoveryChannels: ['webhook'],
+        webhookUrl: 'https://alerts.example.test/hook',
+        includeAlertSummary: true,
+        cooldownMs: 0,
+      },
+      onLocal,
+      fetchImpl,
+      now: 3_000,
+    })
+    expect(result.events[0]?.deliveries).toEqual([{ channel: 'webhook', status: 'delivered', deliveredAt: 3_000 }])
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(onLocal).not.toHaveBeenCalled()
+    const body = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)) as { metadata?: { alertSummary?: Record<string, unknown> } }
+    expect(body.metadata?.alertSummary).toMatchObject({ total: 0, active: 0, resolved: 1 })
+  })
+
+  it('suppresses recovery rows when the persisted policy disables them', async () => {
+    const onLocal = vi.fn()
+    const result = await dispatchKomariAlertNotifications(state, {
+      audit: [state.audit[2]!],
+      policy: { channels: ['local'], notifyOnRecovery: false, cooldownMs: 0 },
+      onLocal,
+    })
+    expect(result.events).toHaveLength(0)
+    expect(result.summary).toMatchObject({ considered: 1, skipped: 1, delivered: 0 })
+    expect(onLocal).not.toHaveBeenCalled()
+  })
+
   it('retries only failed channels after a partial recovery notification delivery', async () => {
     const onLocal = vi.fn()
     const fetchImpl = vi.fn<typeof fetch>()

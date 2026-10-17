@@ -283,6 +283,19 @@ describe('buildHostOpsViews', () => {
       }),
       inventory: null,
       errors: [{ section: 'provider', code: 'stale-cache-fallback', message: 'fresh probe unavailable' }],
+      telemetry: {
+        status: 'recovered',
+        startedAt: 1_400,
+        completedAt: 1_500,
+        durationMs: 100,
+        attempts: 2,
+        maxRetries: 2,
+        retryDelayMs: 150,
+        recovered: true,
+        exhausted: true,
+        sections: ['metrics'],
+        lastError: 'fresh probe unavailable',
+      },
       alerts: null,
     }
     const view = buildHostOpsViews({ hosts: [host], probeSnapshots: [recovered], now: 2_000 })['host-1']
@@ -292,6 +305,7 @@ describe('buildHostOpsViews', () => {
       persisted: true,
       sampledAt: 1_000,
       receivedAt: 1_500,
+      telemetry: expect.objectContaining({ status: 'recovered', attempts: 2, exhausted: true }),
     })
     expect(view.health.state).toBe('stale')
   })

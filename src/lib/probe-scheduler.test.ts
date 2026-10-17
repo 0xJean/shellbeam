@@ -106,6 +106,15 @@ describe('ProbeProviderRegistry', () => {
     expect(calls).toBe(3)
     expect(result.snapshot.health).toBe('online')
     expect(result.retry).toEqual({ attempts: 2, exhausted: false, error: 'temporary network failure' })
+    expect(result.snapshot.telemetry).toMatchObject({
+      status: 'success',
+      attempts: 2,
+      maxRetries: 2,
+      retryDelayMs: 0,
+      recovered: false,
+      exhausted: false,
+      sections: ['metrics'],
+    })
   })
 
   it('uses the persisted retry policy when a request does not override it', async () => {
@@ -158,7 +167,19 @@ describe('ProbeProviderRegistry', () => {
     expect(result.recovered).toBe(true)
     expect(result.retry).toMatchObject({ attempts: 2, exhausted: true })
     expect(result.snapshot.errors).toContainEqual(expect.objectContaining({ code: 'recovery-retry-exhausted' }))
-    expect(store.save).not.toHaveBeenCalled()
+    expect(result.snapshot.telemetry).toMatchObject({
+      status: 'recovered',
+      attempts: 2,
+      maxRetries: 2,
+      recovered: true,
+      exhausted: true,
+      sections: ['metrics'],
+      lastError: 'agent remains offline',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.save).toHaveBeenCalledTimes(1)
+    const savedSnapshot = (store.save.mock.calls as unknown as Array<[ProbeSnapshot]>)[0]?.[0]
+    expect(savedSnapshot?.telemetry).toMatchObject({ status: 'recovered', exhausted: true })
   })
 
   it('enforces a shared concurrency limit across hosts', async () => {
@@ -233,7 +254,10 @@ describe('ProbeProviderRegistry', () => {
     expect(result.snapshot.metrics?.freshness.expired).toBe(true)
     expect(result.snapshot.errors.at(-1)).toMatchObject({ code: 'stale-cache-fallback' })
     expect(store.list).toHaveBeenCalledTimes(1)
-    expect(store.save).not.toHaveBeenCalled()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.save).toHaveBeenCalledTimes(1)
+    const savedSnapshot = (store.save.mock.calls as unknown as Array<[ProbeSnapshot]>)[0]?.[0]
+    expect(savedSnapshot?.telemetry).toMatchObject({ status: 'recovered', recovered: true })
   })
 
   it('persists a successful observation and removes host records when cleared', async () => {
