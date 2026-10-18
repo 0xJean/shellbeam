@@ -9,6 +9,7 @@ import { LocalOpsRuntime } from '@/components/local-ops-runtime'
 import { ServerMonitorRuntime } from '@/components/server-monitor-runtime'
 import { ProbeAlertRuntime } from '@/components/probe-alert-runtime'
 import { ShellbeamAgentRuntime } from '@/components/shellbeam-agent-runtime'
+import { UserConfirmationRuntime } from '@/components/user-confirmation-dialog'
 import { PcLayout } from '@/layouts/pc-layout'
 import { listCommandHistory } from '@/lib/history'
 import { I18nProvider } from '@/lib/i18n'
@@ -76,6 +77,7 @@ function AppInnerWithVault() {
   return (
     <VaultProvider setOutput={setOutput}>
       <HostsProvider>
+        <UserConfirmationRuntime />
         <ProbeAlertRuntime />
         <ServerMonitorRuntime />
         <LocalOpsRuntime />

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_BATCH_CONCURRENCY,
   MAX_BATCH_HOSTS,
@@ -11,6 +11,7 @@ import {
 import type { HostProfile } from './hosts'
 import type { CreateOperationJobRequest, OperationJob, UpdateOperationJobRequest } from './operation-job'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
+import { registerUserConfirmationPresenter } from './user-confirmation'
 
 vi.mock('./workspace-remote', () => ({ runWorkspaceRemoteCommand: vi.fn() }))
 
@@ -44,6 +45,9 @@ function batchAudit() {
   return { createJob, updateJob }
 }
 const remoteResult = (stdout = '', exitCode = 0) => ({ stdout, stderr: '', exitCode, durationMs: 1 })
+let unregister: (() => void) | undefined
+afterEach(() => { unregister?.(); unregister = undefined })
+function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done }); return { promise, resolve } }
 
 describe('batch canonical result closure', () => {
   beforeEach(() => { vi.mocked(runWorkspaceRemoteCommand).mockReset() })
@@ -150,6 +154,141 @@ describe('multi-host operations', () => {
     expect(selectBatchHosts([host('a'), host('b')], ['b', 'b', 'a']).selectedHostIds).toEqual(['b', 'a'])
     expect(normalizeBatchConcurrency(100)).toBe(MAX_BATCH_CONCURRENCY)
     expect(normalizeBatchConcurrency(0)).toBe(2)
+  })
+
+  it.each(['default', 'custom'] as const)('awaits deferred %s confirmation before running any host and records rejection for every host', async mode => {
+    for (const answer of [true, false]) {
+      let respond!: (value: boolean) => void
+      const pending = new Promise<boolean>(resolve => { respond = resolve })
+      const confirm = mode === 'default'
+        ? vi.spyOn(window, 'confirm').mockReturnValue(pending as unknown as boolean)
+        : vi.fn(() => pending)
+      const audit = batchAudit()
+      const execute = vi.fn(async () => remoteResult())
+      const work = runBatchOperation({ hosts: [host('a'), host('b', 'jump')], action: 'service.restart', target: 'nginx.service', risk: 'high',
+        confirmMessage: 'Confirm batch?', ...(mode === 'custom' ? { confirm: confirm as () => Promise<boolean> } : {}), execute, ...audit })
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+      expect(audit.createJob).toHaveBeenCalledTimes(2)
+      expect(audit.updateJob).not.toHaveBeenCalled()
+      expect(execute).not.toHaveBeenCalled()
+      respond(answer)
+      const result = await work
+      expect(result.status).toBe(answer ? 'completed' : 'cancelled')
+      expect(execute).toHaveBeenCalledTimes(answer ? 2 : 0)
+      if (!answer) expect(audit.updateJob.mock.calls.map(([request]) => [request.status, request.confirmationStatus])).toEqual([['cancelled', 'rejected'], ['cancelled', 'rejected']])
+      confirm.mockRestore()
+    }
+  })
+
+  it.each(['true', 1, {}, undefined])('fails closed for a custom confirmation resolving non-boolean %j', async value => {
+    const execute = vi.fn(async () => remoteResult())
+    const audit = batchAudit()
+    const result = await runBatchOperation({ hosts: [host('a'), host('b')], action: 'service.restart', target: 'nginx.service', risk: 'high', confirmMessage: 'Confirm?',
+      confirm: (() => Promise.resolve(value)) as () => Promise<boolean>, execute, ...audit })
+    expect(result).toMatchObject({ status: 'cancelled', cancelledCount: 2 })
+    expect(execute).not.toHaveBeenCalled()
+    expect(audit.updateJob.mock.calls.map(([request]) => request.status)).toEqual(['cancelled', 'cancelled'])
+  })
+
+  it.each(['throw', 'reject'] as const)('cancels every queued batch job when confirmation callbacks %s', async failure => {
+    const execute = vi.fn(async () => remoteResult())
+    const audit = batchAudit()
+    const result = await runBatchOperation({ hosts: [host('a'), host('b')], action: 'service.restart', target: 'nginx.service', risk: 'high', confirmMessage: 'Confirm?',
+      confirm: () => { if (failure === 'throw') throw new Error('dialog unavailable'); return Promise.reject(new Error('dialog unavailable')) }, execute, ...audit })
+    expect(result).toMatchObject({ status: 'cancelled', cancelledCount: 2 })
+    expect(execute).not.toHaveBeenCalled()
+    expect(audit.updateJob.mock.calls.map(([request]) => request.confirmationStatus)).toEqual(['pending', 'pending'])
+  })
+
+  it.each(['scope-changed', 'busy', 'unavailable', 'rejected'] as const)('records %s accurately instead of inventing human rejection', async reason => {
+    unregister = registerUserConfirmationPresenter(async () => ({ accepted: false, reason }))
+    const execute = vi.fn(async () => remoteResult()), audit = batchAudit()
+    const result = await runBatchOperation({ hosts: [host('a'), host('b')], action: 'service.restart', target: 'nginx.service', risk: 'high', confirmMessage: 'Confirm?', execute, ...audit })
+    expect(result.status).toBe('cancelled')
+    expect(execute).not.toHaveBeenCalled()
+    expect(result.outcomes.every(outcome => outcome.job?.confirmationStatus === (reason === 'rejected' ? 'rejected' : 'pending'))).toBe(true)
+    expect(result.outcomes.every(outcome => outcome.job?.errorCode === (reason === 'scope-changed' ? 'operation_scope_changed' : `confirmation_${reason}`))).toBe(true)
+  })
+
+  it('retains the default app decision guard across concurrent native running-job writes and later workers', async () => {
+    let current = true, running = 0
+    const entered = deferred(), release = deferred()
+    unregister = registerUserConfirmationPresenter(async () => ({ accepted: true, reason: 'accepted', isCurrent: () => current }))
+    const audit = batchAudit(), write = audit.updateJob.getMockImplementation()!
+    audit.updateJob.mockImplementation(async request => {
+      if (request.status === 'running') { if (++running === 2) entered.resolve(); await release.promise }
+      return write(request)
+    })
+    const execute = vi.fn(async () => remoteResult())
+    const work = runBatchOperation({ hosts: [host('a'), host('b'), host('c')], action: 'service.restart', target: 'nginx.service', risk: 'high', confirmMessage: 'Confirm?', maxConcurrency: 2, execute, ...audit })
+    await entered.promise
+    current = false; release.resolve()
+    const result = await work
+    expect(result).toMatchObject({ status: 'cancelled', cancelledCount: 3 })
+    expect(execute).not.toHaveBeenCalled()
+    expect(result.outcomes.every(outcome => outcome.job?.status === 'cancelled' && outcome.job?.confirmationStatus === 'confirmed' && outcome.job?.errorCode === 'operation_scope_changed')).toBe(true)
+    expect(audit.updateJob.mock.calls.filter(([request]) => request.status === 'running')).toHaveLength(2)
+  })
+
+  it('preserves completed work and stops subsequent workers when the initiating scope changes', async () => {
+    let current = true
+    unregister = registerUserConfirmationPresenter(async () => ({ accepted: true, reason: 'accepted', isCurrent: () => current }))
+    const audit = batchAudit(), write = audit.updateJob.getMockImplementation()!
+    audit.updateJob.mockImplementation(async request => { const value = await write(request); if (request.status === 'completed') current = false; return value })
+    const execute = vi.fn(async () => remoteResult())
+    const result = await runBatchOperation({ hosts: [host('a'), host('b')], action: 'service.restart', target: 'nginx.service', risk: 'high', confirmMessage: 'Confirm?', maxConcurrency: 1, execute, ...audit })
+    expect(result).toMatchObject({ status: 'partial', completedCount: 1, cancelledCount: 1 })
+    expect(execute).toHaveBeenCalledOnce()
+    expect(result.outcomes[0].job?.status).toBe('completed')
+    expect(result.outcomes[1].job).toMatchObject({ status: 'cancelled', confirmationStatus: 'confirmed', errorCode: 'operation_scope_changed' })
+  })
+
+  it('respects an explicit scope guard even when a legacy custom callback returns true', async () => {
+    let current = true
+    const audit = batchAudit(), write = audit.updateJob.getMockImplementation()!
+    audit.updateJob.mockImplementation(async request => { const value = await write(request); if (request.status === 'running') current = false; return value })
+    const execute = vi.fn(async () => remoteResult())
+    const result = await runBatchOperation({ hosts: [host('a')], action: 'service.restart', target: 'nginx.service', risk: 'high', confirmMessage: 'Confirm?', confirm: async () => true, isCurrent: () => current, execute, ...audit })
+    expect(result.status).toBe('cancelled')
+    expect(execute).not.toHaveBeenCalled()
+    expect(result.outcomes[0].job).toMatchObject({ status: 'cancelled', confirmationStatus: 'confirmed', errorCode: 'operation_scope_changed' })
+  })
+
+  it('cancels a Docker job if scope changes while its immutable identity read is in flight, before any write', async () => {
+    let current = true
+    const entered = deferred(), release = deferred()
+    unregister = registerUserConfirmationPresenter(async () => ({ accepted: true, reason: 'accepted', isCurrent: () => current }))
+    vi.mocked(runWorkspaceRemoteCommand).mockImplementation(async () => { entered.resolve(); await release.promise; return remoteResult(`__SB_DOCKER_ID=${'a'.repeat(64)}`) })
+    const work = runBatchDockerOperation({ hosts: [host('a')], containerName: 'api', dockerAction: 'restart', resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', ...batchAudit() })
+    await entered.promise
+    current = false; release.resolve()
+    const result = await work
+    expect(result.status).toBe('cancelled')
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledOnce()
+    expect(vi.mocked(runWorkspaceRemoteCommand).mock.calls[0][0].command).toContain('docker inspect')
+    expect(result.outcomes[0].job).toMatchObject({ status: 'cancelled', confirmationStatus: 'confirmed', errorCode: 'operation_scope_changed' })
+  })
+
+  it('keeps a sent service restart unknown when scope changes before post-state collection instead of claiming cancellation', async () => {
+    let current = true
+    unregister = registerUserConfirmationPresenter(async () => ({ accepted: true, reason: 'accepted', isCurrent: () => current }))
+    vi.mocked(runWorkspaceRemoteCommand).mockImplementation(async () => { current = false; return remoteResult() })
+    const result = await runBatchServiceOperation({ hosts: [host('a')], serviceName: 'nginx.service', serviceAction: 'restart', resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', ...batchAudit() })
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledOnce()
+    expect(result.outcomes[0].job).toMatchObject({ status: 'unknown', errorCode: 'remote_state_unknown' })
+  })
+
+  it('does not accept a late service post-state from an invalidated route as completed', async () => {
+    let current = true
+    const entered = deferred(), release = deferred()
+    unregister = registerUserConfirmationPresenter(async () => ({ accepted: true, reason: 'accepted', isCurrent: () => current }))
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce(remoteResult()).mockImplementationOnce(async () => { entered.resolve(); await release.promise; return remoteResult('ActiveState=active\nUnitFileState=enabled') })
+    const work = runBatchServiceOperation({ hosts: [host('a')], serviceName: 'nginx.service', serviceAction: 'restart', resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', ...batchAudit() })
+    await entered.promise
+    current = false; release.resolve()
+    const result = await work
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledTimes(2)
+    expect(result.outcomes[0].job).toMatchObject({ status: 'unknown', errorCode: 'remote_state_unknown' })
   })
 
   it('creates one audited job per selected host and runs a bounded ProxyJump batch', async () => {

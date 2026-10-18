@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core'
 import type { CommandRunResult } from './sessions'
 import type { HostProfile } from './hosts'
 import { remoteOperationStatus } from './operation-verification'
+import { requestUserDecision, type UserConfirmationDecision } from './user-confirmation'
+import { hostOperationReview } from './operation-review'
 
 export type OperationJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'unknown' | 'cancelled'
 export type OperationRisk = 'read-only' | 'low' | 'high'
@@ -254,20 +256,30 @@ export async function runConfirmedOperation<T>({
   }
   if (isCurrent?.() === false) return cancelChangedScope(job)
 
-  if (risk !== 'read-only' && !window.confirm(confirmMessage)) {
+  const decision: UserConfirmationDecision = risk === 'read-only' ? { accepted: true, reason: 'accepted' } : await requestUserDecision({
+    message: `${confirmMessage}\n\n${hostOperationReview(host, paramsSummary ?? `${action} ${target}`)}`,
+    vaultId: vaultId ?? host.vaultId,
+    host,
+    risk,
+    isCurrent,
+  })
+  const scopeCurrent = () => {
+    try { return isCurrent?.() !== false && decision.isCurrent?.() !== false } catch { return false }
+  }
+  if (!scopeCurrent() || decision.reason === 'scope-changed') return cancelChangedScope(job, decision.accepted)
+  if (!decision.accepted) {
+    const rejected = decision.reason === 'rejected'
     const cancelled = await updateOperationJob({
       jobId: job.jobId,
       status: 'cancelled',
-      confirmationStatus: 'rejected',
-      errorCode: 'confirmation_rejected',
-      errorSummary: 'Operation was cancelled before execution',
+      confirmationStatus: rejected ? 'rejected' : job.confirmationStatus,
+      errorCode: rejected ? 'confirmation_rejected' : `confirmation_${decision.reason}`,
+      errorSummary: rejected ? 'Operation was cancelled before execution' : 'Operation confirmation was unavailable; no action was sent',
       actor: actor ?? 'local-user',
     })
     onJob?.(cancelled)
     return null
   }
-  if (isCurrent?.() === false) return cancelChangedScope(job, true)
-
   const running = await updateOperationJob({
     jobId: job.jobId,
     status: 'running',
@@ -276,7 +288,7 @@ export async function runConfirmedOperation<T>({
     actor: actor ?? 'local-user',
   })
   onJob?.(running)
-  if (isCurrent?.() === false) return cancelChangedScope(running, true)
+  if (!scopeCurrent()) return cancelChangedScope(running, true)
 
   try {
     const value = await execute()

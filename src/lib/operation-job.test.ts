@@ -67,6 +67,33 @@ describe('operation jobs', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'operation_job_update', expect.objectContaining({ request: expect.objectContaining({ status: 'cancelled', confirmationStatus: 'rejected' }) }))
   })
 
+  it.each([true, false])('does not mark running or send a command before asynchronous consent resolves %s', async accepted => {
+    const queued = { jobId: 'async-job', auditId: 'async-audit', status: 'queued', confirmationStatus: 'pending' }
+    invoke.mockImplementation(async (command, args) => command === 'operation_job_create' ? queued : { ...queued, ...(args as { request: object }).request })
+    let respond!: (answer: boolean) => void
+    vi.spyOn(window, 'confirm').mockReturnValue(new Promise<boolean>(resolve => { respond = resolve }) as unknown as boolean)
+    const execute = vi.fn(async () => ({ exitCode: 0, durationMs: 1 }))
+    const pending = runConfirmedOperation({ host, action: 'service.restart', target: 'nginx.service', risk: 'high', confirmMessage: 'Restart?', execute, getResult: value => value })
+    await vi.waitFor(() => expect(window.confirm).toHaveBeenCalled())
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(execute).not.toHaveBeenCalled()
+    respond(accepted)
+    const result = await pending
+    expect(execute).toHaveBeenCalledTimes(accepted ? 1 : 0)
+    expect(result?.job.status ?? 'cancelled').toBe(accepted ? 'completed' : 'cancelled')
+    expect(invoke).toHaveBeenNthCalledWith(2, 'operation_job_update', { request: expect.objectContaining({ status: accepted ? 'running' : 'cancelled', confirmationStatus: accepted ? 'confirmed' : 'rejected' }) })
+  })
+
+  it('does not invent human rejection when the asynchronous dialog is unavailable', async () => {
+    const queued = { jobId: 'blocked-dialog-job', auditId: 'blocked-dialog-audit', status: 'queued', confirmationStatus: 'pending' }
+    invoke.mockImplementation(async (command, args) => command === 'operation_job_create' ? queued : { ...queued, ...(args as { request: object }).request })
+    vi.spyOn(window, 'confirm').mockReturnValue(Promise.reject(new Error('dialog unavailable')) as unknown as boolean)
+    const execute = vi.fn()
+    expect(await runConfirmedOperation({ host, action: 'service.restart', target: 'nginx.service', risk: 'high', confirmMessage: 'Restart?', execute })).toBeNull()
+    expect(execute).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({ status: 'cancelled', confirmationStatus: 'pending', errorCode: 'confirmation_unavailable' }) })
+  })
+
   it.each(['before-create', 'after-create', 'after-consent', 'after-running'] as const)('does not execute when the host or Vault changes %s', async (phase) => {
     let current = phase !== 'before-create'
     const queued = { jobId: 'scoped-job', auditId: 'scoped-audit', status: 'queued', confirmationStatus: 'pending' }

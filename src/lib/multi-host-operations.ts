@@ -13,6 +13,7 @@ import { runWorkspaceRemoteCommand } from './workspace-remote'
 import { remoteOperationStatus, verifiedOperationAudit, type VerifiedOperationResult } from './operation-verification'
 import { executeVerifiedServiceAction, safeDiagnosticService } from './workspace-diagnostics'
 import { buildDockerCommand, buildDockerVerificationCommand, dockerPostState } from './docker-ops'
+import { requestUserDecision, type UserConfirmationDecision } from './user-confirmation'
 
 /**
  * Multi-host work is deliberately bounded.  A batch is a convenience for a
@@ -79,7 +80,8 @@ export interface RunBatchOperationOptions<T> {
   requestId?: string
   /** Override browser confirmation in tests or an application-owned dialog. */
   confirm?: (context: BatchConfirmationContext) => boolean | Promise<boolean>
-  execute: (host: HostProfile) => Promise<T>
+  isCurrent?: () => boolean
+  execute: (host: HostProfile, scope: { isCurrent: () => boolean }) => Promise<T>
   getResult?: (value: T) => Pick<CommandRunResult, 'exitCode' | 'durationMs'> & {
     resultSummary?: string
     errorCode?: string
@@ -131,10 +133,12 @@ function boundedError(error: unknown) {
   return safeOperationTarget(error instanceof Error ? error.message : String(error), 240)
 }
 
-function defaultConfirmation(_context: BatchConfirmationContext, message: string) {
-  if (typeof window === 'undefined' || typeof window.confirm !== 'function') return false
-  return window.confirm(message)
+function defaultConfirmation(context: BatchConfirmationContext, message: string, vaultId?: string, isCurrent?: () => boolean): Promise<UserConfirmationDecision> {
+  return requestUserDecision({ message, risk: context.risk, hosts: context.hosts, vaultId, isCurrent })
 }
+
+class BatchScopeChangedError extends Error {}
+function assertBatchScope(scope: { isCurrent: () => boolean }) { if (!scope.isCurrent()) throw new BatchScopeChangedError('operation_scope_changed') }
 
 function initialOutcome<T>(host: HostProfile): BatchHostOutcome<T> {
   return {
@@ -166,6 +170,7 @@ function aggregateStatus<T>(outcomes: BatchHostOutcome<T>[], confirmed: boolean)
   }
   const completed = outcomes.filter((outcome) => outcome.status === 'completed').length
   const unknown = outcomes.filter((outcome) => outcome.status === 'unknown').length
+  if (cancelled > 0) return cancelled === outcomes.length ? 'cancelled' : 'partial'
   if (completed === outcomes.length) return 'completed'
   if (unknown === outcomes.length) return 'unknown'
   if (failed === outcomes.length) return 'failed'
@@ -256,20 +261,33 @@ export async function runBatchOperation<T>(options: RunBatchOperationOptions<T>)
   const queueable = outcomes.filter((outcome) => outcome.job)
   // If every audit record failed to create, report those local failures rather
   // than mislabelling the batch as a user cancellation.
-  const confirmed = queueable.length === 0 || (!requiresConfirmation || await (options.confirm
-    ? options.confirm({ action, target, hostCount: hosts.length, hosts, risk: options.risk })
-    : defaultConfirmation({ action, target, hostCount: hosts.length, hosts, risk: options.risk }, options.confirmMessage)))
-
-  if (!confirmed) {
-    await Promise.all(queueable.map(async (outcome) => {
+  let decision: UserConfirmationDecision = { accepted: true, reason: 'accepted' }
+  if (queueable.length > 0 && requiresConfirmation) {
+    const context = { action, target, hostCount: hosts.length, hosts, risk: options.risk }
+    try {
+      if (options.confirm) {
+        const answer = await options.confirm(context)
+        decision = { accepted: answer === true, reason: answer === true ? 'accepted' : answer === false ? 'rejected' : 'unavailable' }
+      } else decision = await defaultConfirmation(context, options.confirmMessage, options.vaultId ?? hosts[0]?.vaultId, options.isCurrent)
+    } catch {
+      // A rejected/blocked asynchronous dialog leaves every queued job
+      // auditable as cancelled; it never authorizes a partial remote batch.
+      decision = { accepted: false, reason: 'unavailable' }
+    }
+  }
+  const isCurrent = () => {
+    try { return options.isCurrent?.() !== false && decision.isCurrent?.() !== false } catch { return false }
+  }
+  async function cancelOutcome(outcome: BatchHostOutcome<T>, reason: UserConfirmationDecision['reason']) {
       if (!outcome.job) return
       try {
         outcome.job = await updateJob({
           jobId: outcome.job.jobId,
           status: 'cancelled',
-          confirmationStatus: 'rejected',
-          errorCode: 'confirmation_rejected',
-          errorSummary: 'Operation was cancelled before execution',
+          confirmationStatus: !requiresConfirmation ? 'not_required' : decision.accepted === true ? 'confirmed' : reason === 'rejected' ? 'rejected' : 'pending',
+          ...(requiresConfirmation && decision.accepted === true ? { confirmedBy: 'local-user' } : {}),
+          errorCode: reason === 'scope-changed' ? 'operation_scope_changed' : `confirmation_${reason}`,
+          errorSummary: reason === 'scope-changed' ? 'The initiating host or Vault changed before execution' : 'Operation was cancelled before execution',
         })
       } catch (error) {
         outcome.errorCode = 'operation_job_update_failed'
@@ -277,7 +295,11 @@ export async function runBatchOperation<T>(options: RunBatchOperationOptions<T>)
       }
       outcome.status = 'cancelled'
       options.onOutcome?.(outcome)
-    }))
+  }
+
+  if (decision.accepted !== true || !isCurrent()) {
+    const reason = decision.accepted === true ? 'scope-changed' : decision.reason
+    await Promise.all(queueable.map(outcome => cancelOutcome(outcome, reason)))
     const finishedAt = now()
     return finalizeResult({ options, batchId, action, target, risk: options.risk, selectedHostIds, outcomes, startedAt, finishedAt, confirmed: false })
   }
@@ -293,6 +315,7 @@ export async function runBatchOperation<T>(options: RunBatchOperationOptions<T>)
       nextIndex += 1
       if (!outcome?.job) continue
       const host = outcome.host
+      if (!isCurrent()) { await cancelOutcome(outcome, 'scope-changed'); continue }
       try {
         outcome.job = await updateJob({
           jobId: outcome.job.jobId,
@@ -302,7 +325,8 @@ export async function runBatchOperation<T>(options: RunBatchOperationOptions<T>)
         })
         outcome.status = 'running'
         options.onOutcome?.(outcome)
-        const value = await options.execute(host)
+        if (!isCurrent()) { await cancelOutcome(outcome, 'scope-changed'); continue }
+        const value = await options.execute(host, { isCurrent })
         const summary = summarizeResult(value, options.getResult)
         outcome.value = value
         outcome.resultSummary = summary.resultSummary
@@ -318,6 +342,7 @@ export async function runBatchOperation<T>(options: RunBatchOperationOptions<T>)
           ...(outcome.status !== 'completed' ? { errorCode: outcome.errorCode, errorSummary: outcome.errorSummary } : {}),
         })
       } catch (error) {
+        if (error instanceof BatchScopeChangedError) { await cancelOutcome(outcome, 'scope-changed'); continue }
         const unknown = outcome.status === 'unknown' || isUnknownOperationError(error)
         outcome.status = unknown ? 'unknown' : 'failed'
         outcome.errorCode = unknown ? 'remote_state_unknown' : 'operation_failed'
@@ -412,10 +437,11 @@ export function runBatchServiceOperation(options: Omit<RunBatchOperationOptions<
     target: options.serviceName,
     risk: serviceRisk(options.serviceAction),
     paramsSummary: command,
-    execute: async (host) => {
-      const run = (command: string) => runWorkspaceRemoteCommand({ host, vaultId: batchVaultId(host, options.vaultId), resolveAuthSecret: options.resolveAuthSecret, command })
+    execute: async (host, scope) => {
+      const run = (command: string) => { assertBatchScope(scope); return runWorkspaceRemoteCommand({ host, vaultId: batchVaultId(host, options.vaultId), resolveAuthSecret: options.resolveAuthSecret, command }) }
       if (options.serviceAction === 'status') {
         const result = await run(command)
+        assertBatchScope(scope)
         if (remoteOperationStatus(result) !== 'completed') return result
         const active = result.stdout.match(/^ActiveState=([a-z-]+)$/m)?.[1]
         return active ? { ...result, resultSummary: `status=observed; active=${active}` } : { ...result, exitCode: -1, errorCode: 'remote_state_unknown', resultSummary: 'status=unobservable', errorSummary: 'Service state could not be observed' }
@@ -426,7 +452,7 @@ export function runBatchServiceOperation(options: Omit<RunBatchOperationOptions<
         const verified = await executeVerifiedServiceAction(async (next) => {
           const result = await run(next)
           if (!mutation) mutation = result
-          else observation = result
+          else { observation = result; assertBatchScope(scope) }
           return result
         }, options.serviceName, options.serviceAction)
         return verified.errorCode === 'remote_state_unknown' && observation && remoteOperationStatus(observation) === 'unknown'
@@ -464,8 +490,8 @@ export function runBatchDockerOperation(options: Omit<RunBatchOperationOptions<C
     target: options.containerName,
     risk: dockerRisk(options.dockerAction),
     paramsSummary: command,
-    execute: async (host): Promise<VerifiedOperationResult> => {
-      const run = (command: string) => runWorkspaceRemoteCommand({ host, vaultId: batchVaultId(host, options.vaultId), resolveAuthSecret: options.resolveAuthSecret, command })
+    execute: async (host, scope): Promise<VerifiedOperationResult> => {
+      const run = (command: string) => { assertBatchScope(scope); return runWorkspaceRemoteCommand({ host, vaultId: batchVaultId(host, options.vaultId), resolveAuthSecret: options.resolveAuthSecret, command }) }
       // Resolution happens only after the one batch confirmation. A stable
       // full id prevents later name reuse from redirecting the accepted write.
       const resolved = await run(`docker inspect --format '__SB_DOCKER_ID={{.Id}}' ${quoted}`)
@@ -477,6 +503,7 @@ export function runBatchDockerOperation(options: Omit<RunBatchOperationOptions<C
       if (remoteOperationStatus(result) !== 'completed') return { ...result, durationMs: resolved.durationMs + result.durationMs, verification: { status: 'not-run', summary: 'Docker command did not complete; no post-state was claimed.' } }
       try {
         const observed = await run(buildDockerVerificationCommand(id))
+        assertBatchScope(scope)
         const state = remoteOperationStatus(observed) === 'completed' ? dockerPostState(observed.stdout, { id, name: options.containerName, image: '', status: '', ports: '', running: false }) : null
         const verified = state && !state.paused && !state.restarting && (options.dockerAction === 'stop' ? !state.running && ['exited', 'created'].includes(state.status) : state.running && state.status === 'running')
         return { ...result, ...(remoteOperationStatus(observed) === 'unknown' ? { errorCode: observed.errorCode, errorType: observed.errorType } : {}), durationMs: resolved.durationMs + result.durationMs + observed.durationMs, verification: { status: verified ? 'verified' : 'unknown', summary: state ? `action=${options.dockerAction}; observed=${state.status}; running=${state.running}; paused=${state.paused}; restarting=${state.restarting}` : 'Docker post-state is unavailable; verify before retrying.' } }

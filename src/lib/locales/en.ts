@@ -1,4 +1,8 @@
 const en: Record<string, string> = {
+  'confirmation.title': 'Review operation',
+  'confirmation.cancel': 'Cancel',
+  'confirmation.accept': 'Confirm operation',
+  'confirmation.typeToken': 'Type {token} to confirm',
   'workspace.docker.observationUnavailable': 'Container state could not be observed. Refresh before acting.',
   'workspace.operation.hostReview': 'Host: {host}\nRoute: {route}\nCommand summary: {command}',
   'workspace.operation.route.direct': 'Direct',

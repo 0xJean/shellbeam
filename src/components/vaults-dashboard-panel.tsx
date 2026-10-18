@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Vault, Plus, Pencil, Trash2, Check, X, Server, FileCode, ChevronDown, KeyRound, Network, Bot } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,7 @@ import { KeychainTab } from '@/components/keychain-tab'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 import { listMcpDeploymentRecords } from '@/lib/mcp'
+import { confirmUserAction } from '@/lib/user-confirmation'
 
 interface VaultStats {
   hosts: number
@@ -65,11 +66,9 @@ interface VaultsDashboardPanelProps {
 export function VaultsDashboardPanel({
   activeVaultId, vaults, vaultStatusState, vaultKeys, vaultBusy,
   autoLockMinutes, lastActivityAt,
-  securityEvents: _securityEvents,
-  onSwitchVault, onInitialize: _onInitialize, onUnlock: _onUnlock, onLock, onAutoLockMinutesChange,
+  onSwitchVault, onLock, onAutoLockMinutesChange,
   onRefresh, onRefreshVaults,
-  onSaveSecret: _onSaveSecret, onLoadSecret: _onLoadSecret, onDeleteSecret,
-  onClearSecurityEvents: _onClearSecurityEvents,
+  onDeleteSecret,
   onOutput, onError,
   activeTab: controlledTab, onTabChange,
   hostsTabContent, snippetsTabContent,
@@ -87,6 +86,14 @@ export function VaultsDashboardPanel({
   const setActiveTab = onTabChange ?? setInternalTab
   const vaultUnlocked = vaultStatusState?.unlocked ?? false
   const activeVault = vaults.find((v) => v.id === activeVaultId)
+  const deletionGeneration = useRef(0)
+  const currentVaults = useRef(vaults)
+  useEffect(() => {
+    const generation = deletionGeneration
+    generation.current++
+    return () => { generation.current++ }
+  }, [activeVaultId, vaultUnlocked])
+  useEffect(() => { currentVaults.current = vaults }, [vaults])
 
   async function loadStats(vaultId: string): Promise<VaultStats> {
     try {
@@ -147,13 +154,20 @@ export function VaultsDashboardPanel({
 
   async function handleDelete(vaultId: string) {
     if (vaultId === DEFAULT_VAULT_ID) { onError?.('Cannot delete the default Personal vault'); return }
-    if (!confirm('Delete this vault? All data will be lost.')) return
+    const target = vaults.find(vault => vault.id === vaultId)
+    if (!target || !vaultUnlocked) return
+    const generation = deletionGeneration.current
+    const scopeCurrent = () => generation === deletionGeneration.current
+    const isCurrent = () => scopeCurrent() && currentVaults.current.some(vault => vault.id === target.id && vault.name === target.name && vault.createdAt === target.createdAt)
     try {
+      if (await confirmUserAction({ message: `Delete vault "${target.name}"? All data will be lost.`, risk: 'high', vaultId: activeVaultId, isCurrent }) !== true || !isCurrent()) return
       await deleteVault(vaultId)
+      if (!scopeCurrent()) return
       await onRefreshVaults?.(); await onRefresh()
+      if (!scopeCurrent()) return
       if (activeVaultId === vaultId) onSwitchVault(DEFAULT_VAULT_ID)
       onOutput?.('Vault deleted')
-    } catch (e) { onError?.(String(e)) }
+    } catch (e) { if (scopeCurrent()) onError?.(String(e)) }
   }
 
   const tabs: { id: VaultTab; label: string; icon: React.ReactNode }[] = [
@@ -264,7 +278,7 @@ function VaultDropdown({
                       <div className="flex items-center gap-0.5 ml-2">
                         <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => { onSetEditingId(v.id); onSetEditName(v.name) }}><Pencil className="h-3 w-3" /></Button>
                         {v.id !== DEFAULT_VAULT_ID && (
-                          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" onClick={() => void onDelete(v.id)}><Trash2 className="h-3 w-3" /></Button>
+                          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" aria-label={`${t('common.delete')} ${v.name}`} onClick={() => void onDelete(v.id)}><Trash2 className="h-3 w-3" /></Button>
                         )}
                       </div>
                     </>

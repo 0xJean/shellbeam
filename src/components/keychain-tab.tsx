@@ -6,8 +6,9 @@ import { useT } from '@/lib/i18n'
 import { generateSshKey, importPrivateKeyFromFile } from '@/lib/keys'
 import { cn } from '@/lib/utils'
 import { vaultGetSecret, vaultSetSecret } from '@/lib/vault'
+import { confirmUserAction } from '@/lib/user-confirmation'
 import { ClipboardPaste, Copy, Eye, EyeOff, FileUp, Key, Plus, RefreshCw, Search, Trash2, Wand2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 function isSshKey(key: string): boolean {
   return key.includes('privateKey') || key.endsWith('.key') || key.startsWith('ssh.')
@@ -54,6 +55,14 @@ export function KeychainTab({
   const [revealingKey, setRevealingKey] = useState<string | null>(null)
   const [revealedSecret, setRevealedSecret] = useState<{ key: string; value: string } | null>(null)
   const [showRevealedValue, setShowRevealedValue] = useState(true)
+  const deletionGeneration = useRef(0)
+  const currentKeys = useRef(vaultKeys)
+  useEffect(() => {
+    const generation = deletionGeneration
+    generation.current++
+    return () => { generation.current++ }
+  }, [activeVaultId, vaultUnlocked])
+  useEffect(() => { currentKeys.current = vaultKeys }, [vaultKeys])
 
   const addKeyModes: { id: AddKeyMode; label: string; icon: React.ReactNode }[] = [
     { id: 'generate', label: t('keychain.generate'), icon: <Wand2 className="h-4 w-4" /> },
@@ -128,12 +137,16 @@ export function KeychainTab({
   }
 
   async function handleDeleteKey(key: string) {
-    if (!confirm(`Delete key "${key}"?`)) return
+    const generation = deletionGeneration.current
+    const isCurrent = () => vaultUnlocked && generation === deletionGeneration.current && currentKeys.current.includes(key)
+    if (!isCurrent()) return
     try {
+      if (await confirmUserAction({ message: `Delete key "${key}"?`, risk: 'high', vaultId: activeVaultId, isCurrent }) !== true || !isCurrent()) return
       await onDeleteSecret(key)
+      if (generation !== deletionGeneration.current) return
       await onRefresh()
-      onOutput?.(`Deleted: ${key}`)
-    } catch (e) { onError?.(String(e)) }
+      if (generation === deletionGeneration.current) onOutput?.(`Deleted: ${key}`)
+    } catch (e) { if (generation === deletionGeneration.current) onError?.(String(e)) }
   }
 
   async function handleRevealKey(key: string) {
@@ -355,7 +368,7 @@ export function KeychainTab({
                       <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 hover:text-foreground disabled:opacity-50" onClick={() => void handleRevealKey(key)} title={t('keychain.showSecret')} disabled={!vaultUnlocked || revealingKey === key}>
                         {revealingKey === key ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 hover:text-destructive" onClick={() => void handleDeleteKey(key)} title={t('common.delete')}>
+                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 hover:text-destructive" onClick={() => void handleDeleteKey(key)} title={t('common.delete')} aria-label={`${t('common.delete')} ${key}`}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>

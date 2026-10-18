@@ -195,6 +195,27 @@ syntax, protocol and safety-helper tests are not substitutes for an executed
 Linux GUI pass. Exact commit CI results must be checked before counting the
 journey or Linux notification presentation as accepted.
 
+The ninth [UI run 39104588281](https://github.com/0xJean/shellbeam/actions/runs/39104588281),
+head `f40ea7b907d0b012b3cc35fbf8a020100d8b06c8`, merge checkout
+`b487772174b0161e91d86fbdde5152ae6b765102`, again proved both actual service-opening
+banners and the direct three-click diagnosis. The added checkpoints locate its
+failure at `ops_ui_service_confirmation_prompt_failed`, after one actual
+`workspace-service-restart` click. No visible Services error or cancelled output
+was observed. Cleanup and application exit passed; the full journey did not.
+
+Inspection of the installed `tauri-plugin-dialog` 2.6.0 initialization found that
+it replaces `window.confirm` with an async function. The old synchronous boolean
+test could therefore proceed before any human decision. The shared confirmation
+path now awaits an explicit decision and uses an actual application dialog on
+desktop/mobile. Cancel is the initial focus; the host/route/action are visible,
+destructive file tokens remain exact, and unavailable/busy prompts do not invent
+human rejection. A retained scope guard is checked after the running-job write
+before sending an operation, including host and referenced-jump changes. Native
+fallbacks for standalone consumers also await a strict boolean result. The GUI
+journey reads the real same-Vault/host dialog and clicks its response once; it
+does not inject consent or treat a missing dialog as success. New CI must prove
+this correction and all subsequent steps.
+
 Even a successful isolated Linux run does not prove macOS/Windows notification
 presentation, mobile browser/device behavior, an external Komari deployment,
 public-CA domain-control renewal or production Agent distribution. Those remain

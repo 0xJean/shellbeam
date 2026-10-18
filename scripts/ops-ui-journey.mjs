@@ -20,6 +20,7 @@ export const OPS_UI_SELECTORS = Object.freeze({
   trust: 'dialog[open] [data-testid="host-key-accept"]',
   audit: '[data-testid="operations-audit-center"]',
   auditTab: '[data-testid="audit-tab"]',
+  confirmation: 'dialog[open] [data-testid="user-confirmation"]',
 })
 const S = OPS_UI_SELECTORS
 const roles = ['jump', 'direct', 'via']
@@ -278,17 +279,83 @@ async function openServices(driver, role, state) {
   check(await driver.attr(serviceRoot(state.hostIds[role]), 'data-vault-id') === state.vaultId, 'service_vault_scope_mismatch')
 }
 
+/** Traverse the real, source/status-filtered Activity journal. Background
+ * monitor reads can fill its latest page; no enlarged query or direct IPC is
+ * used to retrieve an old consent record. Native audit retention is 10k and
+ * this view displays 100 rows, so 100 pages is the complete bounded search. */
+export async function findOpsUiAuditRow({ driver, selector, status }) {
+  check(['cancelled', 'completed'].includes(status), 'audit_status_invalid')
+  const root = S.audit
+  const source = `${root} ${testId('operations-source-filter')}`
+  const filter = `${root} ${testId('operations-filter')}`
+  const refresh = `${root} ${testId('operations-refresh')}`
+  const page = `${root} ${testId('operations-page')}`
+  const older = `${root} ${testId('operations-older')}`
+  await driver.waitFor(source)
+  await driver.select(source, 'workspace')
+  await driver.select(filter, status)
+  await waitEnabled(driver, refresh)
+  // Refresh resets any retained history cursor even when select's current
+  // value was already correct and the browser emitted no change event.
+  await driver.click(refresh)
+  for (let number = 1; number <= 100; number++) {
+    await driver.until(async () => await enabled(driver, refresh)
+      && (await driver.text(page)).trim() === `Page ${number}`
+      && await driver.attr(source, 'value') === 'workspace' && await driver.attr(filter, 'value') === status, { timeoutMs: 30000 })
+    check((await driver.findAll(`${root} ${testId('operations-error')}`)).length === 0, 'audit_load_failed')
+    const rows = await driver.findAll(selector)
+    check(rows.length <= 1, 'audit_record_ambiguous')
+    if (rows.length === 1 && await driver.isDisplayed(rows[0])) return rows[0]
+    if (number === 100 || !await enabled(driver, older)) break
+    await driver.click(older)
+  }
+  throw new Error('ops_ui_audit_record_missing')
+}
+
 async function auditJob(driver, role, state, unit, status, jobId) {
   await openDashboardPage(driver, 'activity')
   await driver.click(S.auditTab)
   const row = `${testId('operation-audit-row')}[data-host-id=${q(state.hostIds[role])}][data-vault-id=${q(state.vaultId)}][data-action="service.restart"][data-target=${q(unit)}][data-status=${q(status)}][data-confirmation=${q(status === 'cancelled' ? 'rejected' : 'confirmed')}][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]${jobId ? `[data-job-id=${q(jobId)}]` : ''}`
-  await driver.waitFor(row, { timeoutMs: 30000 })
-  const id = await driver.attr(row, 'data-job-id')
+  const match = await findOpsUiAuditRow({ driver, selector: row, status })
+  const id = await driver.attr(match, 'data-job-id')
   check(typeof id === 'string' && id.length > 0 && (!jobId || id === jobId), 'operation_job_missing')
   return id
 }
 
-export async function reviewOpsUiServiceConfirmation({ driver, css, unit, accept, record, role }) {
+/** Read the app's actual visible consent surface. A native dialog ACK, hidden
+ * node, matching name in another Vault or typed file-operation prompt cannot
+ * substitute for this single-host operation review. Raw text is discarded. */
+export async function waitForOpsUiConfirmation({ driver, vaultId, hostId, expectedText }) {
+  check(typeof vaultId === 'string' && vaultId.length > 0 && typeof hostId === 'string' && hostId.length > 0
+    && Array.isArray(expectedText) && expectedText.length > 0 && expectedText.every(value => typeof value === 'string' && value.length > 0), 'confirmation_context_missing')
+  return driver.until(async () => {
+    const dialogs = await driver.findAll(S.confirmation)
+    if (!dialogs.length) return false
+    check(dialogs.length === 1, 'confirmation_ambiguous')
+    if (!await driver.isDisplayed(dialogs[0])) return false
+    check(await driver.attr(dialogs[0], 'data-vault-id') === vaultId
+      && await driver.attr(dialogs[0], 'data-host-id') === hostId, 'confirmation_scope_mismatch')
+    check((await driver.findAll(`${S.confirmation} ${testId('user-confirmation-token')}`)).length === 0, 'confirmation_unexpected_token')
+    const messages = await driver.findAll(`${S.confirmation} ${testId('user-confirmation-message')}`)
+    check(messages.length === 1, 'confirmation_message_missing')
+    if (!await driver.isDisplayed(messages[0])) return false
+    const message = await driver.text(messages[0])
+    check(typeof message === 'string' && expectedText.every(value => message.includes(value)), 'confirmation_target_mismatch')
+    return dialogs[0]
+  }, { timeoutMs: 30000 })
+}
+
+export async function respondOpsUiConfirmation({ driver, vaultId, hostId, expectedText, accept }) {
+  check(typeof accept === 'boolean', 'confirmation_response_invalid')
+  const button = `${S.confirmation} ${testId(accept ? 'user-confirmation-accept' : 'user-confirmation-cancel')}`
+  await waitEnabled(driver, button)
+  // Recheck the same scope immediately before the single real button click.
+  await waitForOpsUiConfirmation({ driver, vaultId, hostId, expectedText })
+  await driver.click(button)
+  await driver.until(async () => !(await driver.findAll(S.confirmation)).length, { timeoutMs: 30000 })
+}
+
+export async function reviewOpsUiServiceConfirmation({ driver, css, unit, hostName, hostId, vaultId, accept, record, role }) {
   let phase = 'ready'
   const note = () => record('ops-ui-service-confirmation-stage', { role, accept, phase })
   try {
@@ -297,11 +364,10 @@ export async function reviewOpsUiServiceConfirmation({ driver, css, unit, accept
     phase = 'click'; await note()
     await driver.click(css)
     phase = 'prompt'; await note()
-    const message = await driver.until(() => driver.alertText(), { timeoutMs: 30000 })
-    check(typeof message === 'string' && message.includes(unit), 'confirmation_target_mismatch')
+    const confirmation = { driver, vaultId, hostId, expectedText: [unit, hostName] }
+    await waitForOpsUiConfirmation(confirmation)
     phase = 'respond'; await note()
-    if (accept) await driver.acceptAlert()
-    else await driver.dismissAlert()
+    await respondOpsUiConfirmation({ ...confirmation, accept })
     phase = 'settle'; await note()
     await waitEnabled(driver, css)
     phase = 'complete'; await note()
@@ -358,14 +424,14 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await record(`ops-ui-${role}-diagnosis`, { passed: true, steps })
     const baseline = await checkpoint('before-cancel', { role, unit })
     check(baseline && typeof baseline === 'object', 'observer_baseline_missing')
-    await reviewOpsUiServiceConfirmation({ driver, css: `${serviceRoot(id)} ${testId('workspace-service-restart')}`, unit, accept: false, record, role })
+    await reviewOpsUiServiceConfirmation({ driver, css: `${serviceRoot(id)} ${testId('workspace-service-restart')}`, unit, hostName: fixture.hosts[role].name, hostId: id, vaultId: state.vaultId, accept: false, record, role })
     await checkpoint('after-cancel', { role, unit, baseline })
     const cancelled = await auditJob(driver, role, state, unit, 'cancelled')
     await record(`ops-ui-${role}-cancelled`, { passed: true, jobId: cancelled, mutations: 0 })
     await openServices(driver, role, state)
     await driver.waitFor(serviceRow(id, unit))
     await driver.click(serviceRow(id, unit))
-    await reviewOpsUiServiceConfirmation({ driver, css: `${serviceRoot(id)} ${testId('workspace-service-restart')}`, unit, accept: true, record, role })
+    await reviewOpsUiServiceConfirmation({ driver, css: `${serviceRoot(id)} ${testId('workspace-service-restart')}`, unit, hostName: fixture.hosts[role].name, hostId: id, vaultId: state.vaultId, accept: true, record, role })
     await driver.until(async () => (await driver.text(output)).includes('status=completed'), { timeoutMs: 60000 })
     await driver.waitFor(`${serviceRow(id, unit)}[data-active-state="active"]`, { timeoutMs: 30000 })
     await checkpoint('after-confirm', { role, unit, baseline })

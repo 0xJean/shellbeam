@@ -1,30 +1,115 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { activateOpsUiRules, classifyOpsUiConnectionFailure, initializeOpsUiVault, OPS_UI_SELECTORS, resumeOpsUiJourney, reviewOpsUiServiceConfirmation, runOpsUiIncidents } from './ops-ui-journey.mjs'
+import { JSDOM } from 'jsdom'
+import { activateOpsUiRules, classifyOpsUiConnectionFailure, findOpsUiAuditRow, initializeOpsUiVault, OPS_UI_SELECTORS, resumeOpsUiJourney, reviewOpsUiServiceConfirmation, runOpsUiIncidents } from './ops-ui-journey.mjs'
 
-test('service confirmation requires the actual target prompt and never retries a click or consents after failure', async () => {
-  const events = [], clicks = [], responses = []
+function confirmationUnit({ problem } = {}) {
+  const dom = new JSDOM('<div data-testid="workspace-services-app" data-host-id="host"><button data-testid="workspace-service-restart">Restart</button><div data-testid="workspace-services-error">INVALID_OPERATION: private credential detail</div></div>')
+  const { document } = dom.window, clicks = [], events = []
   const css = '[data-testid="workspace-services-app"][data-host-id="host"] [data-testid="workspace-service-restart"]'
+  const element = value => typeof value === 'string' ? document.querySelector(value) : value
   const driver = {
-    async waitFor() {}, async attr() { return null }, async click(value) { clicks.push(value) },
-    async until(read) { return read() }, async alertText() { throw new Error('private native detail') },
-    async findAll(selector) { return selector.endsWith('[data-testid="workspace-services-error"]') ? ['error'] : [] },
-    async isDisplayed() { return true }, async text() { return 'INVALID_OPERATION: private credential detail' },
-    async acceptAlert() { responses.push('accept') }, async dismissAlert() { responses.push('dismiss') },
+    async findAll(selector) { return [...document.querySelectorAll(selector)] },
+    async waitFor(selector) { const row = element(selector); assert(row); return row },
+    async isDisplayed(value) { const row = element(value); return !!row && !row.closest('[hidden]') },
+    async attr(value, field) { return element(value).getAttribute(field) },
+    async text(value) { return element(value).textContent },
+    async until(read) { const value = await read(); if (!value) throw new Error('private timeout detail'); return value },
+    async click(value) {
+      const row = element(value); assert(row); clicks.push(row.dataset.testid)
+      if (row.dataset.testid === 'workspace-service-restart') {
+        document.body.insertAdjacentHTML('beforeend', `<dialog ${problem === 'closed' ? '' : 'open'}><div data-testid="user-confirmation" data-vault-id="${problem === 'vault' ? 'foreign' : 'vault'}" data-host-id="${problem === 'host' ? 'foreign' : 'host'}" ${problem === 'hidden' ? 'hidden' : ''}><p data-testid="user-confirmation-message">${problem === 'target' ? 'other.service' : 'unit.service'} · ${problem === 'host-name' ? 'other host' : 'isolated host'}</p>${problem === 'token' ? '<input data-testid="user-confirmation-token">' : ''}<button data-testid="user-confirmation-cancel">Cancel</button><button data-testid="user-confirmation-accept">Confirm</button></div></dialog>`)
+        if (problem === 'ambiguous') document.body.append(document.querySelector('dialog').cloneNode(true))
+      } else row.closest('dialog').remove()
+    },
   }
-  await assert.rejects(reviewOpsUiServiceConfirmation({ driver, css, unit: 'unit.service', accept: true, role: 'direct', record: async (name, detail) => events.push({ name, ...detail }) }), /ops_ui_service_confirmation_prompt_failed/)
-  assert.equal(clicks.length, 1)
-  assert.deepEqual(responses, [])
-  assert.deepEqual(events.at(-1), { name: 'ops-ui-service-confirmation-failed', role: 'direct', accept: true, phase: 'prompt', errorVisible: true, errorCategory: 'invalid-operation', cancelledOutput: false })
-  assert(!JSON.stringify(events).includes('private'))
+  return { dom, driver, clicks, events, options: { driver, css, unit: 'unit.service', hostName: 'isolated host', hostId: 'host', vaultId: 'vault', role: 'direct', record: async (name, details) => events.push({ name, ...details }) } }
+}
+
+test('service confirmation requires one actual visible same-host/Vault target dialog and never retries or consents after failure', async () => {
+  for (const problem of ['closed', 'hidden', 'vault', 'host', 'target', 'host-name', 'token', 'ambiguous']) {
+    const unit = confirmationUnit({ problem })
+    try {
+      await assert.rejects(reviewOpsUiServiceConfirmation({ ...unit.options, accept: true }), /ops_ui_service_confirmation_prompt_failed/)
+      assert.deepEqual(unit.clicks, ['workspace-service-restart'])
+      assert.deepEqual(unit.events.at(-1), { name: 'ops-ui-service-confirmation-failed', role: 'direct', accept: true, phase: 'prompt', errorVisible: true, errorCategory: 'invalid-operation', cancelledOutput: false })
+      assert(!JSON.stringify(unit.events).includes('private'))
+    } finally { unit.dom.window.close() }
+  }
 })
 
-test('service confirmation reports each real cancellation boundary in order', async () => {
-  const events = [], responses = []
-  const driver = { async waitFor() {}, async attr() { return null }, async click() {}, async until(read) { return read() }, async alertText() { return 'Confirm restart unit.service?' }, async dismissAlert() { responses.push('dismiss') }, async acceptAlert() { responses.push('accept') } }
-  await reviewOpsUiServiceConfirmation({ driver, css: '[data-testid="workspace-service-restart"]', unit: 'unit.service', accept: false, role: 'via', record: async (_, detail) => events.push(detail.phase) })
-  assert.deepEqual(events, ['ready', 'click', 'prompt', 'respond', 'settle', 'complete'])
-  assert.deepEqual(responses, ['dismiss'])
+test('service confirmation clicks the single actual cancel/accept control and reports each boundary in order', async () => {
+  for (const accept of [false, true]) {
+    const unit = confirmationUnit()
+    try {
+      await reviewOpsUiServiceConfirmation({ ...unit.options, accept })
+      assert.deepEqual(unit.events.map(event => event.phase), ['ready', 'click', 'prompt', 'respond', 'settle', 'complete'])
+      assert.deepEqual(unit.clicks, ['workspace-service-restart', `user-confirmation-${accept ? 'accept' : 'cancel'}`])
+      assert.equal(unit.dom.window.document.querySelector('dialog'), null)
+    } finally { unit.dom.window.close() }
+  }
+})
+
+test('service confirmation does not click a response if the visible dialog changes Vault after review', async () => {
+  const unit = confirmationUnit()
+  try {
+    unit.options.record = async (name, detail) => {
+      unit.events.push({ name, ...detail })
+      if (detail.phase === 'respond') unit.dom.window.document.querySelector('[data-testid="user-confirmation"]').dataset.vaultId = 'foreign'
+    }
+    await assert.rejects(reviewOpsUiServiceConfirmation({ ...unit.options, accept: true }), /ops_ui_service_confirmation_respond_failed/)
+    assert.deepEqual(unit.clicks, ['workspace-service-restart'])
+  } finally { unit.dom.window.close() }
+})
+
+function auditPages({ targetPage = 2, pages = 3, problem } = {}) {
+  const dom = new JSDOM('<section data-testid="operations-audit-center"><select data-testid="operations-source-filter"><option value="all">All</option><option value="workspace">Workspace</option></select><select data-testid="operations-filter"><option value="all">All</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page"></span><button data-testid="operations-older">Older</button><div data-testid="page-rows"></div></section>')
+  const document = dom.window.document, actions = []
+  let page = pages
+  const element = value => typeof value === 'string' ? document.querySelector(value) : value
+  const render = () => {
+    document.querySelector('[data-testid="operations-page"]').textContent = `Page ${page}`
+    document.querySelector('[data-testid="operations-older"]').disabled = page >= pages
+    const rows = document.querySelector('[data-testid="page-rows"]')
+    rows.replaceChildren()
+    if (page === targetPage) rows.insertAdjacentHTML('beforeend', `<div data-testid="operation-audit-row" data-job-id="saved-job">Saved consent audit</div>${problem === 'ambiguous' ? '<div data-testid="operation-audit-row" data-job-id="saved-job">Duplicate</div>' : ''}`)
+    if (problem === 'load') rows.insertAdjacentHTML('beforeend', '<div data-testid="operations-error">Fixed test failure</div>')
+  }
+  render()
+  const driver = {
+    async findAll(selector) { return [...document.querySelectorAll(selector)] },
+    async waitFor(selector) { const row = element(selector); assert(row); return row },
+    async attr(value, field) { const row = element(value); return field === 'value' ? row.value : row.getAttribute(field) },
+    async isDisplayed(value) { return !element(value).hidden },
+    async text(value) { return element(value).textContent },
+    async select(selector, value) { element(selector).value = value; actions.push([element(selector).dataset.testid, value]); page = 1; render() },
+    async click(selector) { const row = element(selector); assert(!row.disabled); actions.push(row.dataset.testid); page = row.dataset.testid === 'operations-refresh' ? 1 : page + 1; render() },
+    async until(read) { const result = await read(); assert(result, 'unit visible UI state required'); return result },
+  }
+  return { dom, document, driver, actions, options: { driver, selector: '[data-testid="operation-audit-row"][data-job-id="saved-job"]', status: 'completed' } }
+}
+
+test('audit lookup uses actual Workspace/status controls, resets old pages and finds the exact retained record through visible pagination', async () => {
+  const unit = auditPages()
+  try {
+    const row = await findOpsUiAuditRow(unit.options)
+    assert.equal(row.dataset.jobId, 'saved-job')
+    assert.deepEqual(unit.actions, [['operations-source-filter', 'workspace'], ['operations-filter', 'completed'], 'operations-refresh', 'operations-older'])
+    assert.equal(unit.document.querySelector('[data-testid="operations-page"]').textContent, 'Page 2')
+    await findOpsUiAuditRow(unit.options)
+    assert.deepEqual(unit.actions.slice(-4), [['operations-source-filter', 'workspace'], ['operations-filter', 'completed'], 'operations-refresh', 'operations-older'])
+  } finally { unit.dom.window.close() }
+})
+
+test('audit lookup refuses missing, ambiguous and failed data and never traverses past the 100-page retention bound', async () => {
+  for (const [options, reason] of [[{ targetPage: 4 }, /audit_record_missing/], [{ targetPage: 1, problem: 'ambiguous' }, /audit_record_ambiguous/], [{ problem: 'load' }, /audit_load_failed/], [{ targetPage: 101, pages: 101 }, /audit_record_missing/]]) {
+    const unit = auditPages(options)
+    try {
+      await assert.rejects(findOpsUiAuditRow(unit.options), reason)
+      assert(unit.actions.filter(action => action === 'operations-older').length <= 99)
+      if (options.pages === 101) assert.equal(unit.actions.filter(action => action === 'operations-older').length, 99)
+    } finally { unit.dom.window.close() }
+  }
 })
 
 test('connection diagnostics retain only fixed native endpoint categories', () => {
@@ -178,13 +263,21 @@ function recoveryDriver(state, restartedAfter, allowFresh) {
   let selected = null
   let sampleRead = false
   let index = 0
+  let auditStatus = 'all'
   const reads = []
   return {
     reads,
     async waitFor() {}, async fill() {}, async click() {},
-    async findAll() { return [] },
-    async select(css) { selected = css.includes('direct-host') ? 'direct' : 'via'; index = 0 },
+    async findAll(css) { return css.includes('operation-audit-row') ? [css] : [] },
+    async isDisplayed() { return true },
+    async text(css) { assert(css.includes('operations-page')); return 'Page 1' },
+    async select(css, value) {
+      if (css.includes('operations-filter')) auditStatus = value
+      else if (!css.includes('operations-source-filter')) { selected = css.includes('direct-host') ? 'direct' : 'via'; index = 0 }
+    },
     async attr(css, name) {
+      if (name === 'disabled') return null
+      if (name === 'value') return css.includes('operations-source-filter') ? 'workspace' : auditStatus
       if (name === 'data-mode') return 'unlock'
       if (name === 'data-vault-id') return state.vaultId
       if (name === 'data-job-id') return /\[data-job-id="([^"]+)"\]/.exec(css)?.[1]
@@ -234,15 +327,38 @@ test('recovery never passes solely on a persisted healthy cache or without a res
 
 test('incident recovery awaits its evidence hook only after the matching resolved route is visible', async () => {
   const { fixture, state } = journeyContext()
+  const dom = new JSDOM('<section data-testid="operations-audit-center"><select data-testid="operations-source-filter"><option value="all">All</option><option value="workspace">Workspace</option></select><select data-testid="operations-filter"><option value="all">All</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page">Page 1</span><button data-testid="operations-older" disabled>Older</button></section>'), document = dom.window.document
   let role = 'direct'
   let confirmed = false
   const observed = []
   const diagnosed = []
+  const responses = [], requests = []
   const driver = {
     async waitFor(css) { if (css.includes('data-alert-status="resolved"')) { assert(css.includes(`data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}"`)); observed.push(role) } },
-    async select(css) { role = css.includes('direct-host') ? 'direct' : 'via' },
-    async click(css) { if (css.includes('host-services-open')) { role = css.includes('direct-host') ? 'direct' : 'via'; confirmed = false; diagnosed.push(role) } },
+    async select(css, value) {
+      if (css.includes('operations-')) document.querySelector(css).value = value
+      else role = css.includes('direct-host') ? 'direct' : 'via'
+    },
+    async click(css) {
+      if (css.includes('host-services-open')) { role = css.includes('direct-host') ? 'direct' : 'via'; confirmed = false; diagnosed.push(role) }
+      else if (css.includes('workspace-service-restart')) {
+        requests.push(role)
+        document.body.insertAdjacentHTML('beforeend', `<dialog open><div data-testid="user-confirmation" data-vault-id="${state.vaultId}" data-host-id="${state.hostIds[role]}"><p data-testid="user-confirmation-message">Restart ${fixture.hosts[role].serviceUnit} · ${fixture.hosts[role].name}</p><button data-testid="user-confirmation-cancel">Cancel</button><button data-testid="user-confirmation-accept">Confirm</button></div></dialog>`)
+      } else if (css.includes('user-confirmation-accept') || css.includes('user-confirmation-cancel')) {
+        const button = document.querySelector(css); assert(button)
+        const accept = button.dataset.testid === 'user-confirmation-accept'
+        responses.push(`${role}:${accept ? 'accept' : 'cancel'}`)
+        if (accept) confirmed = true
+        document.querySelector('[data-testid="operations-audit-center"]').insertAdjacentHTML('beforeend', `<div data-testid="operation-audit-row" data-vault-id="${state.vaultId}" data-host-id="${state.hostIds[role]}" data-action="service.restart" data-target="${fixture.hosts[role].serviceUnit}" data-status="${accept ? 'completed' : 'cancelled'}" data-confirmation="${accept ? 'confirmed' : 'rejected'}" data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}" data-job-id="${accept ? 'completed' : 'cancelled'}-${role}"></div>`)
+        button.closest('dialog').remove()
+      }
+    },
+    async findAll(css) { return [...document.querySelectorAll(css)] },
+    async isDisplayed(row) { return !row.hidden },
     async attr(css, name) {
+      if (typeof css !== 'string') return css.getAttribute(name)
+      if (css.includes('user-confirmation')) return document.querySelector(css).getAttribute(name)
+      if (name === 'value') return document.querySelector(css).value
       if (name === 'data-open-count') return '1'
       if (name === 'data-host-health') return 'online'
       if (name === 'data-vault-id') return state.vaultId
@@ -251,10 +367,8 @@ test('incident recovery awaits its evidence hook only after the matching resolve
       if (name === 'data-job-id') return `${css.includes('data-status="cancelled"') ? 'cancelled' : 'completed'}-${role}`
       throw new Error('unexpected read')
     },
-    async text() { return confirmed ? 'status=completed' : `${fixture.hosts[role].serviceUnit}\nActive: failed (Result: exit-code)` },
+    async text(row) { return typeof row !== 'string' ? row.textContent : row.includes('operations-page') ? document.querySelector(row).textContent : confirmed ? 'status=completed' : `${fixture.hosts[role].serviceUnit}\nActive: failed (Result: exit-code)` },
     async until(fn) { const result = await fn(); assert(result); return result },
-    async alertText() { return `Restart ${fixture.hosts[role].serviceUnit}` },
-    async acceptAlert() { confirmed = true }, async dismissAlert() {},
   }
   const first = deferred()
   const release = deferred()
@@ -264,10 +378,15 @@ test('incident recovery awaits its evidence hook only after the matching resolve
     recovered.push(current)
     if (current === 'direct') { first.resolve(); await release.promise }
   } })
-  await first.promise
-  assert.deepEqual(recovered, ['direct'])
-  assert.equal(diagnosed.includes('via'), false)
-  release.resolve()
-  assert.equal((await work).passed, true)
-  assert.deepEqual(recovered, ['direct', 'via'])
+  try {
+    await first.promise
+    assert.deepEqual(recovered, ['direct'])
+    assert.equal(diagnosed.includes('via'), false)
+    release.resolve()
+    assert.equal((await work).passed, true)
+    assert.deepEqual(recovered, ['direct', 'via'])
+    assert.deepEqual(requests, ['direct', 'direct', 'via', 'via'])
+    assert.deepEqual(responses, ['direct:cancel', 'direct:accept', 'via:cancel', 'via:accept'])
+    assert.equal(document.querySelector('dialog'), null)
+  } finally { release.resolve(); dom.window.close() }
 })

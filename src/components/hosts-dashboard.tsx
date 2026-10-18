@@ -781,7 +781,6 @@ export function HostsDashboard({
         dockerAction: 'restart',
         resolveAuthSecret: resolveKomariHostSecret,
         confirmMessage,
-        confirm: () => window.confirm(confirmMessage),
       })
     } else if (request.operation === 'service.restart') {
       if (!request.target) throw new Error('A systemd service name is required')
@@ -792,7 +791,6 @@ export function HostsDashboard({
         serviceAction: 'restart',
         resolveAuthSecret: resolveKomariHostSecret,
         confirmMessage,
-        confirm: () => window.confirm(confirmMessage),
       })
     } else if (request.operation === 'health-check') {
       batch = await runBatchOperation({

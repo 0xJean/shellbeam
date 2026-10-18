@@ -1,4 +1,8 @@
 const zhCN: Record<string, string> = {
+  'confirmation.title': '确认操作',
+  'confirmation.cancel': '取消',
+  'confirmation.accept': '确认执行',
+  'confirmation.typeToken': '输入 {token} 以确认',
   'workspace.docker.observationUnavailable': '容器状态无法确认，请刷新后再操作。',
   'workspace.operation.hostReview': '主机：{host}\n连接路径：{route}\n命令摘要：{command}',
   'workspace.operation.route.direct': '直连',
