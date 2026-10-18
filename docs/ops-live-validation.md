@@ -99,6 +99,11 @@ invoked by the isolated workflow. A locally skipped test is not a passing live
 validation. The runner guard tests can be run locally with
 `node --test scripts/run-ops-live.test.mjs`.
 
-The expanded suite contains 16 cases. Its local syntax/type/guard checks and
-disabled-mode skips are not Linux acceptance. The private-ACME/mixed-target
-execution record must be attached to the exact new PR head after CI runs.
+The expanded suite passed on 2026-10-18: [CI 39095032262](https://github.com/0xJean/shellbeam/actions/runs/39095032262),
+head `d0d2b2d48b7e1393d8595496ce6d0b6724bca007`, with **16 passed / 0 skipped** and no retries.
+The downloaded [redacted result](https://github.com/0xJean/shellbeam/actions/runs/39095032262/artifacts/12124338103)
+confirms `success: true` and `cleanup: passed`. Its `checkedOutCommit` matches
+the PR merge checkout `a6870574df8a811811026feb09c82e61855e363b`, distinct from
+the branch head. All four main CI jobs and seven Agent CI jobs passed for that
+head. Later changes require their own CI result; local disabled-mode skips
+are never substituted for this Linux evidence.

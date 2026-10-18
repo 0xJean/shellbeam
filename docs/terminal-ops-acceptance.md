@@ -60,7 +60,7 @@
 | 要求 | 实现证据 | 验证与状态 |
 | --- | --- | --- |
 | Docker、Sites/SSL和有限批量 | 对应Workspace面板、`operation-verification.ts` 和有界批量模型 | 单机与批量Docker按不可变ID执行并inspect后态；服务stop/inactive正确判定；Sites reload验证配置/active/站点重扫；SSL续期按原证书路径检查身份、有效期和不回退，合法未续期明确标unchanged；未知结果不重放写操作 |
-| 真实Linux运维组合验收 | `scripts/ci-ops-live.sh`、`ci-ops-acme.sh`、`run-ops-live.mjs`、`ops-live.test.ts`、仅cfg(test)原生桥 | 已提交版本有8项真实通过证据；扩展为16项，增加独立Docker双目标混合批量、真实私有ACME HTTP-01及产品Certbot dry-run/renewal、双SAN实际HTTPS部署、写后断线unknown和批量审计恢复。扩展本轮仍待精确提交CI执行；本机skip不算通过。只替换IPC/确认输入，禁止重试；两个目标共享Linux内核。边界见`ops-live-validation.md` |
+| 真实Linux运维组合验收 | `scripts/ci-ops-live.sh`、`ci-ops-acme.sh`、`run-ops-live.mjs`、`ops-live.test.ts`、仅cfg(test)原生桥 | 提交`d0d2b2d`已执行16项真实通过、零跳过/重试，脱敏报告success/cleanup均通过。覆盖独立Docker双目标混合批量、真实私有ACME HTTP-01及产品Certbot dry-run/renewal、双SAN实际HTTPS部署、写后断线unknown和批量审计恢复。只替换IPC/确认输入；两个目标共享Linux内核，本机skip不算通过；后续提交须核对各自CI。边界见`ops-live-validation.md` |
 | Network观察 | `network-ops.ts`、NetworkOpsPanel、双端路由 | Linux ss/ip读取监听、连接、接口、主路由；输出有界；同主机Services/Logs/Terminal跳转；复用健康检查调度 |
 | 应用级定时操作 | `scheduled-ops-runtime.ts`、ScheduledOpsRuntime、面板 | 启用确认、授权绑定命令+周期，执行关联启用任务；手动/后台原生结构化timeout/disconnect/output-limit均按canonical unknown暂停并撤授权，下一tick不重放；exec前明确未发送的超时保持failed；锁库/重启暂停，不补跑；桌面退出后不调度写操作 |
 | 系统/Webhook通知 | 通知策略、平台原生命令和diagnostics | macOS UN权限/发送回调、Windows真实Setting/Show、Linux真实DBus往返；无法查询per-app权限时显示unknown，不使用插件恒Granted/丢弃错误路径。系统API接收不等于OS展示或已读；有界重试不重放远端动作；参见`docs/ops-notifications.md` |
@@ -97,11 +97,13 @@ Freshness/Agent历史回灌本轮本地回归：140个前端文件、900项通�
 
 Komari手动映射/控制台本轮本地回归：前端939项通过，16项Linux真实Ops与1项Linux collector在macOS跳过；原生138项通过、真实Ops桥1项ignored，另2项MCP stdio通过；生产构建及两个Node原生套件6项通过。首轮扩展Linux验收执行16项，其中13项通过、3项在HTTPS证明的错误字段断言失败（原生无错误为null，测试误要求undefined）；修正此契约后必须以新提交CI重跑，不能把已执行过的续期过程等同于完整用例通过。
 
+修正后的提交`d0d2b2d`在[主CI 39095032262](https://github.com/0xJean/shellbeam/actions/runs/39095032262)与[Agent CI 39095032274](https://github.com/0xJean/shellbeam/actions/runs/39095032274)全部11项通过。下载核对的[脱敏报告](https://github.com/0xJean/shellbeam/actions/runs/39095032262/artifacts/12124338103)为16项通过、零跳过、`success: true`、`cleanup: passed`；PR合并检出为`a6870574df8a811811026feb09c82e61855e363b`。前一次失败保留为契约修正记录，不改写成通过；新结果独立证明完整用例已执行。
+
 | 项目 | 完成证据 | 当前边界 |
 | --- | --- | --- |
 | 桌面系统通知 | 对应安装包中验证允许/拒绝/系统禁用，以及实际横幅或通知中心条目 | Linux真实daemon ACK仍不等于展示；macOS/Windows编译与helper测试不等于系统授权或可见通知 |
 | Komari部署 | 实际部署的TLS、token权限、节点映射、WebView请求及告警到Workspace跳转 | 已有官方1.6.0本地真实服务HTTP契约证据，尚不覆盖用户外部部署或所有版本 |
 | 正式Agent制品 | 受保护签名环境、四目标制品、审核后的HTTPS来源，真实客户端首装/第二版升级/失败回滚/卸载及ProxyJump审计 | 生产密钥来源待决定，工作流尚未进入默认分支；未生成生产信任根、未发布Agent版本 |
-| 主机运维产品指标 | 打包应用从列表发现异常到首次有效诊断不超过3步，再执行确认动作、观察后态与同主机审计 | 组件流程、真实SSH路由及后态观察测试各自通过，仍需合并到真实用户桌面流程；Docker/SSL/混合多主机操作需对应测试环境 |
+| 主机运维产品指标 | 打包应用从列表发现异常到首次有效诊断不超过3步，再执行确认动作、观察后态与同主机审计 | 组件流程及隔离Linux Docker/SSL/混合多主机16项命令组合已通过；仍需真实用户桌面、生产Vault和实际部署环境，私有ACME不替代公有CA域名控制验收 |
 
 远端Agent历史在桌面退出期间保留；新版本通过有界分页在重连后回灌，独立Vault/host/provider/node游标与数据同事务提交、CAS检查、锁库不推进，原采样时间和缺口保留。Workspace独立显示会话结果与持久进度；旧Agent不支持分页时明确unavailable，不读取无界历史。此增强仍不能替代正式签名制品和打包实机验收。
