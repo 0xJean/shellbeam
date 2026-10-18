@@ -86,8 +86,8 @@ export function NotificationDeliverySummary({ state, summary, compact = false, c
           const outcome = persisted.byChannelOutcome[channel]
           return (
             <div key={channel} data-testid={`notification-channel-${channel}`} className="rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground">
-              <span className="inline-flex items-center gap-1"><Icon className="h-3 w-3" />{t(`settings.notifications.channel.${channel}`)}: {count}</span>
-              {outcome && <p className="mt-1">{t(`settings.notifications.outcome.${outcome.status === 'skipped' ? 'blocked' : outcome.status}`)}{outcome.reason ? ` · ${t(`settings.notifications.reason.${outcome.reason}`)}` : ''}</p>}
+              <span className="inline-flex items-center gap-1"><Icon className="h-3 w-3" />{t(`settings.notifications.channel.${channel}`)}: <span data-testid="notification-channel-count">{count}</span></span>
+              {outcome && <p className="mt-1"><span data-testid="notification-channel-outcome">{t(`settings.notifications.outcome.${outcome.status === 'skipped' ? 'blocked' : outcome.status}`)}</span>{outcome.reason ? ` · ${t(`settings.notifications.reason.${outcome.reason}`)}` : ''}</p>}
             </div>
           )
         })}

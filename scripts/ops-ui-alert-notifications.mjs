@@ -68,23 +68,44 @@ export function parseSystemDeliveryDiagnostic(text) {
   return { delivered: Number(match[1]), accepted: /\bAccepted\b/.test(text) }
 }
 
-export async function readSystemDeliveryDiagnostic(driver, { timeoutMs = 8_000 } = {}) {
+export function parseSystemDeliveryFields(countText, outcomeText) {
+  requireFact(typeof countText === 'string' && /^[0-9]{1,6}$/.test(countText.trim()), 'invalid_system_delivery_diagnostic')
+  requireFact(typeof outcomeText === 'string' && ['Accepted', 'Failed', 'Blocked'].includes(outcomeText.trim()), 'invalid_system_delivery_diagnostic')
+  return { delivered: Number(countText.trim()), accepted: outcomeText.trim() === 'Accepted' }
+}
+
+export async function readSystemDeliveryDiagnostic(driver, { timeoutMs = 8_000, record } = {}) {
   requireFact(Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 30_000, 'invalid_diagnostic_timeout')
   await driver.waitFor(SYSTEM, { timeoutMs })
   // The rendered summary is below the policy controls. A native W3C click on
   // this inert div scrolls it into view; neither text presence nor an offscreen
   // lookup alone is evidence that its diagnostics are visible to the user.
   await driver.click(SYSTEM)
-  return until(async () => {
+  let readiness = { cardVisible: false, countElements: 0, outcomeElements: 0, countVisible: false, outcomeVisible: false, countLength: 0, outcomeLength: 0, fieldsValid: false }
+  try { return await until(async () => {
     const card = await driver.find(SYSTEM)
-    if (!await driver.isDisplayed(card)) return false
-    const text = await driver.text(card)
-    try { return parseSystemDeliveryDiagnostic(text) }
+    readiness.cardVisible = await driver.isDisplayed(card)
+    if (!readiness.cardVisible) return false
+    // Read the actual displayed child spans, not the card's concatenated
+    // flex/icon text, attributes, hidden data or application state.
+    const counts = await driver.findAll('[data-testid="notification-channel-count"]', card)
+    const outcomes = await driver.findAll('[data-testid="notification-channel-outcome"]', card)
+    readiness.countElements = counts.length; readiness.outcomeElements = outcomes.length
+    if (counts.length !== 1 || outcomes.length !== 1) return false
+    readiness.countVisible = await driver.isDisplayed(counts[0]); readiness.outcomeVisible = await driver.isDisplayed(outcomes[0])
+    if (!readiness.countVisible || !readiness.outcomeVisible) return false
+    const countText = await driver.text(counts[0]), outcomeText = await driver.text(outcomes[0])
+    readiness.countLength = countText.length; readiness.outcomeLength = outcomeText.length
+    try { const result = parseSystemDeliveryFields(countText, outcomeText); readiness.fieldsValid = true; return result }
     catch (cause) {
       if (cause?.message === 'ops_ui_alert_notifications_invalid_system_delivery_diagnostic') return false
       throw cause
     }
-  }, 'system_delivery_diagnostic_not_ready', timeoutMs)
+  }, 'system_delivery_diagnostic_not_ready', timeoutMs) }
+  catch (cause) {
+    if (record) await record('notification-system-diagnostic-readiness', readiness)
+    throw cause
+  }
 }
 
 export async function assertSafeLocalServiceUi(driver, { hostId, vaultId, name, status, role }) {
@@ -142,7 +163,6 @@ async function saveSystemPolicy(driver) {
   await openSettings(driver)
   await verifyPolicy(driver)
 }
-const diagnostic = readSystemDeliveryDiagnostic
 
 export async function startOpsUiAlertNotifications({ driver, fixture, record, checkpoint, resumeState }) {
   const hosts = localServiceNotificationScope(resumeState)
@@ -154,6 +174,7 @@ export async function startOpsUiAlertNotifications({ driver, fixture, record, ch
   let afterRestartDone = false
   let stopped = false
   const verified = new Set()
+  const diagnostic = (currentDriver) => readSystemDeliveryDiagnostic(currentDriver, { record })
   const assertScope = () => {
     const current = localServiceNotificationScope(resumeState)
     requireFact(ROLES.every((role) => current[role] === hosts[role]), 'host_scope_changed')

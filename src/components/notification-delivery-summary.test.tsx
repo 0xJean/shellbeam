@@ -1,9 +1,28 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { I18nProvider } from '@/lib/i18n'
 import { NotificationDeliverySummary } from './notification-delivery-summary'
 
 describe('NotificationDeliverySummary', () => {
+  it('exposes the real displayed per-channel numeric count and outcome as independent visible text', () => {
+    const view = render(<I18nProvider><NotificationDeliverySummary state={{ deliveries: [
+      { key: 'one', fingerprint: 'f', eventKey: 'one', eventId: null, status: 'active', channel: 'system', deliveredAt: 1000 },
+      { key: 'two', fingerprint: 'g', eventKey: 'two', eventId: null, status: 'active', channel: 'system', deliveredAt: 2000 },
+    ] }} /></I18nProvider>)
+    const card = within(screen.getByTestId('notification-channel-system'))
+    expect(card.getByTestId('notification-channel-count')).toBeVisible()
+    expect(card.getByTestId('notification-channel-count')).toHaveTextContent(/^2$/)
+    expect(card.getByTestId('notification-channel-outcome')).toBeVisible()
+    expect(card.getByTestId('notification-channel-outcome')).toHaveTextContent(/^Accepted$/)
+    expect(within(screen.getByTestId('notification-channel-local')).getByTestId('notification-channel-count')).toHaveTextContent(/^0$/)
+    expect(within(screen.getByTestId('notification-channel-local')).queryByTestId('notification-channel-outcome')).toBeNull()
+    view.rerender(<I18nProvider><NotificationDeliverySummary state={{ deliveries: [], attempts: [
+      { key: 'failed', eventId: 'f', channel: 'system', status: 'failed', reason: 'system-unavailable', attemptedAt: 3000 },
+    ] }} /></I18nProvider>)
+    expect(card.getByTestId('notification-channel-count')).toHaveTextContent(/^0$/)
+    expect(card.getByTestId('notification-channel-outcome')).toHaveTextContent(/^Failed$/)
+    expect(screen.getByTestId('notification-channel-system')).toHaveTextContent('System channel unavailable')
+  })
   it('shows aggregate bridge results and channel counters without payloads', () => {
     render(<I18nProvider><NotificationDeliverySummary
       summary={{ considered: 4, delivered: 2, skipped: 1, failed: 1, lastDeliveredAt: 1_000 }}

@@ -164,6 +164,19 @@ restart cases were not reached. Cleanup and application exit passed. The next
 readiness correction scrolls the inert System diagnostic card into view and
 waits for a strictly parsed count; it never turns a missing count into zero.
 
+The seventh [UI run 39102128622](https://github.com/0xJean/shellbeam/actions/runs/39102128622),
+head `a954f37cfe2c1fd5a95c288f87482a8d880ee430`, merge checkout
+`6769f4cf6cc2b9c5e9d2ff563df750e1a093f316`, again passed all four explicit
+test-button cases, but still failed at
+`ops_ui_alert_notifications_system_delivery_diagnostic_not_ready`.
+Cleanup and confirmed application exit passed. Real service lifecycle delivery,
+incident mutations and restart recovery were not reached. The next correction
+reads separate actual visible count and outcome spans inside the exact System
+card rather than relying on concatenated icon/flex text. It still rejects
+missing, hidden, malformed or duplicate fields, and reports only bounded
+readiness booleans and lengths on failure. This correction needs fresh CI;
+the failed report does not establish the precise rendering cause.
+
 Host-save, trust-prompt and tab-state checkpoints remain credential-free. Local
 syntax, protocol and safety-helper tests are not substitutes for an executed
 Linux GUI pass. Exact commit CI results must be checked before counting the

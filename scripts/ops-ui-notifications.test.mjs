@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { JSDOM } from 'jsdom'
-import { assertSafeLocalServiceUi, localServiceNotificationConfig, localServiceNotificationScope, parseSystemDeliveryDiagnostic, readSystemDeliveryDiagnostic } from './ops-ui-alert-notifications.mjs'
+import { assertSafeLocalServiceUi, localServiceNotificationConfig, localServiceNotificationScope, parseSystemDeliveryDiagnostic, parseSystemDeliveryFields, readSystemDeliveryDiagnostic } from './ops-ui-alert-notifications.mjs'
 import {
   evidencePathIsOwned,
   notificationDaemonConfig,
@@ -172,31 +172,66 @@ test('delivery diagnostics retain the actual count and distinguish accepted from
 })
 
 test('delivery diagnostic readiness scrolls the inert visible card into view and waits for a real numeric observation', async () => {
-  const card = {}
+  const card = {}, count = {}, outcome = {}
   const events = []
   let reads = 0
   const driver = {
     waitFor: async (target) => { events.push('wait'); assert.match(target, /notification-channel-system/); return card },
     click: async (target) => { events.push('scroll'); assert.match(target, /notification-channel-system/) },
     find: async () => card,
-    isDisplayed: async (target) => { assert.equal(target, card); events.push('visible'); return true },
-    text: async (target) => { assert.equal(target, card); events.push('read'); return reads++ === 0 ? '\r\n \t' : '\r\n System: 3\nFailed · System channel unavailable\n' },
+    findAll: async (target, parent) => { assert.equal(parent, card); return target.includes('-count') ? [count] : [outcome] },
+    isDisplayed: async () => true,
+    text: async (target) => { assert.notEqual(target, card); events.push('read'); return target === count ? reads++ === 0 ? '\r\n \t' : ' 3\n' : 'Failed' },
   }
   assert.deepEqual(await readSystemDeliveryDiagnostic(driver, { timeoutMs: 500 }), { delivered: 3, accepted: false })
-  assert.deepEqual(events, ['wait', 'scroll', 'visible', 'read', 'visible', 'read'])
+  assert.deepEqual(events, ['wait', 'scroll', 'read', 'read', 'read', 'read'])
 })
 
 test('blank, hidden or malformed diagnostics fail without inventing zero deliveries or accepted status', async () => {
-  const card = {}
-  for (const [visible, text] of [[true, ''], [false, 'System: 0\nAccepted'], [true, 'System: unavailable\nAccepted']]) {
+  const card = {}, count = {}, outcome = {}
+  for (const [visible, text] of [[true, ''], [false, '0'], [true, 'unavailable']]) {
     const driver = {
       waitFor: async () => card, click: async () => {}, find: async () => card,
+      findAll: async (target) => target.includes('-count') ? [count] : [outcome],
       isDisplayed: async () => visible,
-      text: async () => { assert.equal(visible, true); return text },
+      text: async (target) => { assert.equal(visible, true); assert.notEqual(target, card); return target === count ? text : 'Accepted' },
     }
     await assert.rejects(readSystemDeliveryDiagnostic(driver, { timeoutMs: 1 }), /system_delivery_diagnostic_not_ready/)
   }
   await assert.rejects(readSystemDeliveryDiagnostic({}, { timeoutMs: 0 }), /invalid_diagnostic_timeout/)
+})
+
+test('visible child diagnostic protocol accepts only decimal counts and exact outcome text', () => {
+  assert.deepEqual(parseSystemDeliveryFields(' \n7\u00a0', ' Accepted\r\n'), { delivered: 7, accepted: true })
+  assert.deepEqual(parseSystemDeliveryFields('0', 'Failed'), { delivered: 0, accepted: false })
+  assert.deepEqual(parseSystemDeliveryFields('0', 'Blocked'), { delivered: 0, accepted: false })
+  for (const [count, outcome] of [[null, 'Accepted'], ['', 'Accepted'], ['System: 7', 'Accepted'], ['7e2', 'Accepted'], ['1000000', 'Accepted'], ['7', ''], ['7', 'Not Accepted'], ['7', 'Accepted · Channel unavailable']]) {
+    assert.throws(() => parseSystemDeliveryFields(count, outcome), /invalid_system_delivery_diagnostic/)
+  }
+})
+
+test('diagnostic contract reads only visible System descendants and never borrows another channel or hidden value', async () => {
+  const dom = new JSDOM('<section data-testid="notification-settings"><div data-testid="notification-channel-webhook"><span data-testid="notification-channel-count">99</span><span data-testid="notification-channel-outcome">Accepted</span></div><div data-testid="notification-channel-system">irrelevant icon/label prefix<span data-testid="notification-channel-count">3</span><span data-testid="notification-channel-outcome">Failed</span></div></section>')
+  const document = dom.window.document
+  const driver = {
+    waitFor: async (target) => document.querySelector(target), click: async () => {},
+    find: async (target) => document.querySelector(target),
+    findAll: async (target, parent) => [...(parent ?? document).querySelectorAll(target)],
+    isDisplayed: async (target) => !target.closest('[hidden]'),
+    text: async (target) => { assert(target.matches('[data-testid="notification-channel-count"], [data-testid="notification-channel-outcome"]')); return target.textContent },
+  }
+  try {
+    assert.deepEqual(await readSystemDeliveryDiagnostic(driver), { delivered: 3, accepted: false })
+    const count = document.querySelector('[data-testid="notification-channel-system"] [data-testid="notification-channel-count"]')
+    count.hidden = true
+    const events = []
+    await assert.rejects(readSystemDeliveryDiagnostic(driver, { timeoutMs: 1, record: async (name, details) => events.push({ name, ...details }) }), /system_delivery_diagnostic_not_ready/)
+    assert.equal(events[0].countVisible, false)
+    assert.equal(events[0].fieldsValid, false)
+    assert(!JSON.stringify(events).includes('irrelevant'))
+    count.remove()
+    await assert.rejects(readSystemDeliveryDiagnostic(driver, { timeoutMs: 1 }), /system_delivery_diagnostic_not_ready/)
+  } finally { dom.window.close() }
 })
 
 test('Network screenshot guard requires the displayed scoped lifecycle and refuses any retained credential value', async () => {
