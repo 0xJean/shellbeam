@@ -204,7 +204,7 @@ export function WorkspaceServicesApp({
   }
 
   return (
-    <div data-testid="workspace-services-app" data-host-id={host.id} data-vault-id={vaultId ?? host.vaultId} data-selected-service={selectedService?.name} className="space-y-4">
+    <div data-testid="workspace-services-app" data-host-id={host.id} data-vault-id={vaultId ?? host.vaultId} data-selected-service={selectedService?.name} className="min-w-0 space-y-4">
       <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
         <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">{t('workspace.app.services')}</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">{t('workspace.services.title')}</h2>
@@ -236,13 +236,13 @@ export function WorkspaceServicesApp({
           {error}
         </div>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(20rem,0.8fr)]">
-          <div className="rounded-xl border border-border/60 bg-card">
-            <div className="grid grid-cols-[minmax(0,1.4fr)_100px_100px_100px] gap-3 rounded-t-xl border-b border-border/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              <div>{t('workspace.services.column.service')}</div>
-              <div>{t('workspace.services.column.load')}</div>
-              <div>{t('workspace.services.column.active')}</div>
-              <div>{t('workspace.services.column.sub')}</div>
+        <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(20rem,0.8fr)]">
+          <div className="min-w-0 rounded-xl border border-border/60 bg-card">
+            <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 rounded-t-xl border-b border-border/60 px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:grid-cols-[minmax(0,1.4fr)_100px_100px_100px] sm:gap-3 sm:px-4">
+              <div className="min-w-0 break-words sm:break-normal">{t('workspace.services.column.service')}</div>
+              <div className="hidden sm:block">{t('workspace.services.column.load')}</div>
+              <div className="min-w-0 break-words sm:break-normal">{t('workspace.services.column.active')}</div>
+              <div className="min-w-0 break-words sm:break-normal">{t('workspace.services.column.sub')}</div>
             </div>
             {/* Desktop and mobile window bodies already scroll. A nested list
                 scrollport can extend beyond a short window and clip its rows. */}
@@ -261,21 +261,22 @@ export function WorkspaceServicesApp({
                       data-service-unit={row.name} data-active-state={row.active} aria-pressed={isSelected}
                       type="button"
                       onClick={() => setSelectedServiceName(row.name)}
-                      className={`grid w-full grid-cols-[minmax(0,1.4fr)_100px_100px_100px] gap-3 border-b border-border/40 px-4 py-3 text-left text-sm transition-colors last:rounded-b-xl last:border-b-0 ${
+                      className={`grid w-full min-w-0 grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-border/40 px-3 py-3 text-left text-sm transition-colors last:rounded-b-xl last:border-b-0 sm:grid-cols-[minmax(0,1.4fr)_100px_100px_100px] sm:gap-3 sm:px-4 ${
                         isSelected ? 'bg-primary/10' : 'hover:bg-muted/40'
                       }`}
                     >
                       <div className="min-w-0">
-                        <div className="truncate font-medium">{row.name}</div>
-                        <div className="truncate text-xs text-muted-foreground">{row.description || t('workspace.services.noDescription')}</div>
+                        <div className="break-all font-medium sm:truncate sm:break-normal">{row.name}</div>
+                        <div className="break-words text-xs text-muted-foreground sm:truncate sm:break-normal">{row.description || t('workspace.services.noDescription')}</div>
+                        <div className="break-words text-xs text-muted-foreground sm:hidden">{t('workspace.services.column.load')}: {row.load}</div>
                       </div>
-                      <div>{row.load}</div>
-                      <div>
-                        <span className={`rounded-full border px-2 py-1 text-[11px] font-medium ${getBadgeClass(row.active)}`}>
+                      <div className="hidden sm:block">{row.load}</div>
+                      <div className="min-w-0">
+                        <span className={`inline-block max-w-full break-all rounded-full border px-2 py-1 text-[11px] font-medium sm:inline sm:max-w-none sm:break-normal ${getBadgeClass(row.active)}`}>
                           {row.active}
                         </span>
                       </div>
-                      <div>{row.sub}</div>
+                      <div className="min-w-0 break-all sm:break-normal">{row.sub}</div>
                     </button>
                   )
                 })
@@ -283,11 +284,11 @@ export function WorkspaceServicesApp({
             </div>
           </div>
 
-          <div className="space-y-4 rounded-xl border border-border/60 bg-card p-5">
+          <div className="min-w-0 space-y-4 rounded-xl border border-border/60 bg-card p-5">
             <div>
               <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{t('workspace.services.selectedService')}</div>
-              <div className="mt-2 text-xl font-semibold">{selectedService?.name ?? t('workspace.services.chooseService')}</div>
-              <div className="mt-1 text-sm text-muted-foreground">{selectedService?.description || t('workspace.services.selectHint')}</div>
+              <div className="mt-2 break-all text-xl font-semibold sm:break-words">{selectedService?.name ?? t('workspace.services.chooseService')}</div>
+              <div className="mt-1 break-words text-sm text-muted-foreground">{selectedService?.description || t('workspace.services.selectHint')}</div>
             </div>
 
             {selectedService && (

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceServicesApp } from './workspace-services-app'
 
@@ -70,6 +70,40 @@ describe('workspace services app', () => {
     await waitFor(() => {
       expect(screen.getByText(/systemd services are not available/i)).toBeInTheDocument()
     })
+  })
+
+  it('preserves full service identity and load metadata when selecting a long second row for diagnosis', async () => {
+    const unit = 'applicationwithanuninterruptedlongservicenamefornarrowviewports.service'
+    const onOpenLogs = vi.fn()
+    runSshCommand.mockImplementation(async (payload) => ({
+      stdout: payload.command.startsWith('systemctl list-units')
+        ? `nginx.service loaded active running Web server\n${unit} loaded failed auto-restart Narrow service description`
+        : `Observed status for ${unit}`,
+      stderr: '', exitCode: 0, durationMs: 1,
+    }))
+    render(<WorkspaceServicesApp selectedHostId="host-1" hosts={[{ ...host, vaultId: 'team' }]} resolveAuthSecret={async () => 'secret'} vaultId="team" onOpenLogs={onOpenLogs} />)
+
+    const row = await within(screen.getByTestId('workspace-services-list')).findByRole('button', { name: new RegExp(unit) })
+    expect(within(row).getByText(unit)).toBeInTheDocument()
+    expect(within(row).getByText('Load: loaded')).toBeInTheDocument()
+    expect(within(row).getByText('failed')).toBeInTheDocument()
+    expect(within(row).getByText('auto-restart')).toBeInTheDocument()
+    expect(row).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(row)
+    expect(row).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('workspace-services-app')).toHaveAttribute('data-selected-service', unit)
+    fireEvent.click(screen.getByTestId('workspace-service-status'))
+    await waitFor(() => expect(runSshCommand).toHaveBeenCalledWith(expect.objectContaining({
+      vaultId: 'team', hostId: 'host-1', command: `systemctl status --no-pager -- ${unit}`,
+    })))
+    expect(await screen.findByText(`Observed status for ${unit}`)).toBeInTheDocument()
+    expect(invoke).toHaveBeenCalledWith('operation_job_create', { request: expect.objectContaining({
+      vaultId: 'team', hostId: 'host-1', action: 'service.status', target: unit, risk: 'read-only',
+    }) })
+    fireEvent.click(screen.getByRole('button', { name: `Open logs for ${unit}` }))
+    expect(onOpenLogs).toHaveBeenCalledExactlyOnceWith(unit)
+    expect(runSshCommand.mock.calls.every(([payload]) => /systemctl (?:list-units|status)\b/.test(payload.command))).toBe(true)
   })
 
   it('uses host address fallback when host id is unavailable', async () => {

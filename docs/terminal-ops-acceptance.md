@@ -29,6 +29,7 @@
 | Overview来源与回退 | WorkspaceProviderSummary、共用`buildHostOpsViews` | 并列显示当前/其他Provider的健康、原始采样/接收/Komari同步时间、TTL、可信程度与实际能力；缺失时间显示未知，不借资产扫描或缓存写入伪造指标时间。Komari过期/不可用时明确显示SSH回退，遥测只属于实际选中的指标观察；资源建议独立检查该指标deadline |
 | 文件写操作确认和审计 | `file-operation.ts`、`remote-fs.ts`、Files/SFTP组件 | 只读亦有审计；创建/上传/覆盖/删除/重命名/权限统一确认，后态stat验证；高风险强确认；路径哈希，无内容入审计；取消零执行 |
 | 进程、服务和日志稳定诊断 | `workspace-diagnostics.ts` 和相应Workspace应用 | 有界读取/分页/筛选；进程终止、服务启停及enable/disable后态验证；无法观察结果记unknown；日志跟随可停止且有时限 |
+| Services窄屏字段展示 | `WorkspaceServicesApp` | 窄屏使用Service/Active/Sub三弹性列，Load字段名和值保留在名称附行；sm恢复原四列。容器允许缩小，长名称/状态可断行，完整选中unit保留。只使用窗口正文纵向滚动；组件验证第二行身份、同Vault status审计及Logs目标，未替代320/375/390px实际渲染或移动设备验收 |
 | 真实异常到处理结果 | 实际desktop/mobile Overview的RecommendationsPanel | 流程测试：真实本地规则告警→日志诊断→确认重启→后态观察→OperationJob；取消不执行 |
 | HTTP/TCP检查与本地规则 | `health-check-scheduler.ts`、`local-alert-*.ts`、`local-ops-store.ts` | 应用级有界调度，历史、持续时间、滞回、unknown不恢复、失败与恢复通知；复用OperationJob路径判断，仅保存jumpHostId的主机在成功、失败、unknown和取消未发送结果中均保留ProxyJump，持久化历史、服务告警和恢复视图不误标直连 |
 | 跨会话告警审计 | `data/local_ops.rs`、`local-ops-persistence.ts`、`local-alert-actions.ts` | 原生按Vault/host/kind隔离、revision CAS；确认/关闭关联同scope已确认OperationJob；MCP返回安全历史和关联任务 |
@@ -139,3 +140,5 @@ Agent分阶段scope检查与GUI几何诊断本地回归：前端1250项通过、
 提交`c21ddf6`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39108198016)和[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39108198109)共11项通过；[核对的真实Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39108198016/artifacts/12129521842)为16项通过、零跳过、success/cleanup通过，合并检出`0327f389e1953b6780cfff6e22b8eb101d710f0a`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39108198018)再次通过直连取消/一次重启/恢复横幅，随后复现跳板服务行实际点击失败。部分坐标和受控截图证实窗口正文裁切目标行，且有正常queued读取被误显示为待恢复；Services后续改用窗口正文单一纵向滚动，组件27项和生产构建通过，但仍须新提交的安装包实测，不记为完整GUI通过。
 
 提交`2312139`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39108730919)/[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39108730926)共11项通过，[真实Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39108730919/artifacts/12129363399)16项通过、零跳过、清理成功，合并检出`2f16b553dd7f45c91b83d61a205763bf962e9b2f`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39108730917)已通过完整两路Local Service旅程及首次重启恢复（journey/recovery/alertNotifications均passed），并实际观察独立Probe故障/恢复六条系统横幅及六条metadata任务。最终在资产排空前因runner未等待异步主机摘要而报scope mismatch，未执行Probe第二次重启；GUI总结果仍为failed，清理和应用退出成功。
+
+Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例在macOS跳过，TypeScript/Vite生产构建通过；Services/incident/MobileShell/recovery组件28项通过，修改范围ESLint与空白检查通过。新增用长第二unit选择验证实际状态命令、同Vault审计、Logs原始目标及Load字段保留，不使用class断言代替布局证据；尚无窄屏安装包或设备渲染通过记录。
