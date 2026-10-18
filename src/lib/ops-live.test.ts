@@ -181,7 +181,9 @@ printf '%s\\n' "$served" | openssl x509 -noout -serial`
     // certificate/key bodies reach the result or SQLite audit.
     const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: `bash -o pipefail -c ${shellQuote(script)}`, audit: { action: 'ssl.https.verify', target: domain } })
     expect(result.exitCode, 'real HTTPS must verify hostname/issuer, fixed content and the served certificate').toBe(0)
-    expect(result.errorType).toBeUndefined()
+    // Rust's Option is serialized as null; both absent/null mean no native
+    // transport error. A concrete error code must still fail this proof.
+    expect(result.errorType ?? null).toBeNull()
     expect(result.stdout.match(/^serial=([A-Fa-f0-9]+)$/m)?.[1].toUpperCase()).toBe(diskSerial)
   }
 }
@@ -606,6 +608,6 @@ describe.skipIf(!ENABLED)('Real isolated SSH Docker / Sites / SSL and SQLite aud
     // replace this refusal with invented empty database responses.
     await expect(listOperationJobs({ vaultId: 'ops-live-foreign-vault', limit: 500 })).rejects.toThrow('OPS_LIVE_NATIVE_COMMAND_FAILED')
     await expect(listOperationAudit({ vaultId: 'ops-live-foreign-vault', limit: 500 })).rejects.toThrow('OPS_LIVE_NATIVE_COMMAND_FAILED')
-    console.log('Ops live acceptance passed: real loopback direct/ProxyJump SSH, independent mixed-batch Docker targets, Nginx/OpenSSL, private-ACME HTTP01 Certbot dry-run/renewal and cross-process scoped SQLite audit; no desktop, production Vault or public-CA renewal claim.')
+    console.log('Scoped Ops audit recovery checked after a native process restart; the runner reports whole-suite acceptance only when every live case passes without skips.')
   })
 })
