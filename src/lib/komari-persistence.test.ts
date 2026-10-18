@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import {
   loadKomariPersistence,
+  confirmedKomariSyncAt,
   persistKomariAlertState,
   persistKomariSync,
   readKomariAlertState,
@@ -107,5 +108,41 @@ describe('Komari persistence adapter', () => {
     })
     const payload = vi.mocked(invoke).mock.calls[1]?.[1] as { payload: { alertSummary: Record<string, unknown> } }
     expect(readKomariAlertState({ integrationId: 'integration-1', lastSyncedAt: 900, ttlMs: 30_000, alertSummary: payload.payload.alertSummary, updatedAt: 1_100 })).toMatchObject({ alerts: state.alerts })
+  })
+
+  it.each([undefined, 1_300])('keeps legacy alert TTL scheduling without claiming sync provenance (hint: %s)', async (lastSyncedAt) => {
+    vi.clearAllMocks()
+    const state = reconcileKomariAlerts([], [{ integrationId: 'integration-1', hostId: 'host-1', kind: 'load', count: 1, updatedAt: 1_000 }], { now: 1_000 })
+    vi.mocked(invoke).mockResolvedValueOnce(null).mockResolvedValueOnce(undefined)
+    await persistKomariAlertState({ integrationId: 'integration-1', state: { schemaVersion: 1, ...state }, lastSyncedAt, updatedAt: 1_400 })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'upsert_komari_sync_state', {
+      payload: expect.objectContaining({ lastSyncedAt: lastSyncedAt ?? 1_400, updatedAt: 1_400 }),
+    })
+    expect((vi.mocked(invoke).mock.calls[1][1] as { payload: object }).payload).not.toHaveProperty('lastSuccessfulSyncAt')
+  })
+
+  it('never forwards successful-sync provenance from a lifecycle write', async () => {
+    vi.clearAllMocks()
+    const state = reconcileKomariAlerts([], [{ integrationId: 'integration-1', hostId: 'host-1', kind: 'load', count: 1, updatedAt: 1_000 }], { now: 1_000 })
+    vi.mocked(invoke)
+      .mockResolvedValueOnce({ integrationId: 'integration-1', lastSyncedAt: 900, lastSuccessfulSyncAt: 850, ttlMs: 30_000, alertSummary: null, updatedAt: 900 })
+      .mockResolvedValueOnce(undefined)
+    await persistKomariAlertState({ integrationId: 'integration-1', state: { schemaVersion: 1, ...state }, lastSyncedAt: 1_300, updatedAt: 1_400 })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'upsert_komari_sync_state', {
+      payload: expect.objectContaining({ lastSyncedAt: 1_300, ttlMs: 30_000, updatedAt: 1_400 }),
+    })
+    expect((vi.mocked(invoke).mock.calls[1][1] as { payload: object }).payload).not.toHaveProperty('lastSuccessfulSyncAt')
+  })
+
+  it('requires native successful-sync provenance for the current integration configuration', () => {
+    const integration = { id: 'integration-1', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'token', enabled: true, createdAt: 1, updatedAt: 1_000 }
+    const state = { integrationId: 'integration-1', lastSyncedAt: 1_400, ttlMs: 60_000, alertSummary: null, updatedAt: 1_400 }
+    expect(confirmedKomariSyncAt(integration, state, 1_500)).toBeNull()
+    expect(confirmedKomariSyncAt(integration, { ...state, lastSuccessfulSyncAt: null }, 1_500)).toBeNull()
+    expect(confirmedKomariSyncAt(integration, { ...state, lastSuccessfulSyncAt: 1_200 }, 1_500)).toBe(1_200)
+    for (const stamp of [0, 999, 1_501, Number.NaN]) {
+      expect(confirmedKomariSyncAt(integration, { ...state, lastSuccessfulSyncAt: stamp }, 1_500)).toBeNull()
+    }
+    expect(confirmedKomariSyncAt(integration, { ...state, integrationId: 'other', lastSuccessfulSyncAt: 1_200 }, 1_500)).toBeNull()
   })
 })

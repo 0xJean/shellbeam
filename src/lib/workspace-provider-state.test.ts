@@ -23,7 +23,7 @@ function row(snapshot: ProbeSnapshot, vaultId = host.vaultId!): PersistedProbeSn
   return { vaultId, hostId: snapshot.host.hostId, providerKind: snapshot.provider.kind, providerId: snapshot.provider.id, snapshot, sampledAt: snapshot.metrics?.freshness.sampledAt ?? snapshot.receivedAt, receivedAt: snapshot.receivedAt, expiresAt: snapshot.metrics?.freshness.expiresAt ?? snapshot.receivedAt, updatedAt: snapshot.receivedAt }
 }
 function komari(): WorkspaceKomariState {
-  return { integration: { id: 'integration-a', vaultId: 'vault-a', name: 'Komari', endpoint: 'https://example.test', credentialRef: 'secret', enabled: true, createdAt: 1, updatedAt: 1 }, state: { snapshots: [], mappings: [], syncState: { integrationId: 'integration-a', lastSyncedAt: now - 50, ttlMs: 60_000, alertSummary: null, updatedAt: now }, lastSyncedAt: now - 50 }, error: false }
+  return { integration: { id: 'integration-a', vaultId: 'vault-a', name: 'Komari', endpoint: 'https://example.test', credentialRef: 'secret', enabled: true, createdAt: 1, updatedAt: 1 }, state: { snapshots: [], mappings: [], syncState: { integrationId: 'integration-a', lastSyncedAt: now - 50, lastSuccessfulSyncAt: now - 50, ttlMs: 60_000, alertSummary: null, updatedAt: now }, lastSyncedAt: now - 50 }, error: false }
 }
 function data(rows: PersistedProbeSnapshotRecord[] = []): WorkspaceProviderData {
   return { rows, komari: [komari()], monitors: [], inventoryCache: {}, inventoryStates: {}, agents: [] }
@@ -76,6 +76,18 @@ describe('Workspace provider projection', () => {
     const result = buildWorkspaceProviderState({ host, vaultId: 'vault-a', data: current, now })
     expect(result.source).toMatchObject({ health: 'unknown', sampledAt: null, expiresAt: null, lastSyncedAt: null })
     expect(result.view?.metrics).toBeNull()
+  })
+
+  it('keeps legacy alert-created sync times unknown without changing valid metric sampling or TTL', () => {
+    const current = data([row(probe())])
+    current.komari[0].state!.syncState!.lastSuccessfulSyncAt = undefined
+    current.komari[0].state!.syncState!.lastSyncedAt = now
+    const result = buildWorkspaceProviderState({ host, vaultId: 'vault-a', data: current, now })
+    expect(result.source).toMatchObject({ health: 'online', sampledAt: now, lastSyncedAt: null, ttlMs: 10_000, expiresAt: now + 10_000 })
+    expect(result.view?.metrics?.sampledAt).toBe(now)
+    current.komari[0].state!.syncState!.lastSuccessfulSyncAt = now - 50
+    current.komari[0].integration.updatedAt = now - 25
+    expect(buildWorkspaceProviderState({ host, vaultId: 'vault-a', data: current, now }).source?.lastSyncedAt).toBeNull()
   })
 
   it('uses the durable expiry and ignores foreign Vault rows, integration config and reassigned nodes', () => {

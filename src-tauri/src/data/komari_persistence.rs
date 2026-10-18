@@ -105,7 +105,10 @@ pub struct KomariMappingEdit {
 #[serde(rename_all = "camelCase")]
 pub struct KomariSyncState {
     pub integration_id: String,
+    /// Compatibility scheduling metadata, not proof of a successful sync.
     pub last_synced_at: i64,
+    #[serde(default)]
+    pub last_successful_sync_at: Option<i64>,
     pub ttl_ms: i64,
     pub alert_summary: Option<Value>,
     pub updated_at: i64,
@@ -172,13 +175,45 @@ fn initialize(conn: &Connection) -> Result<(), String> {
           last_synced_at INTEGER NOT NULL,
           ttl_ms INTEGER NOT NULL,
           alert_summary_json TEXT,
-          updated_at INTEGER NOT NULL
+          updated_at INTEGER NOT NULL,
+          last_successful_sync_at INTEGER
         );
         "#,
     )
     .map_err(|err| format!("Initialize Komari persistence db failed: {err}"))?;
+    // Old last_synced_at values may have come from a local alert/cache write.
+    // Never backfill provenance from them. Serialize the nullable migration so
+    // two windows opening the old database cannot both ALTER the same column.
+    if !has_successful_sync_column(conn)? {
+        let tx = Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+            .map_err(|_| "Begin Komari sync provenance migration failed")?;
+        if !has_successful_sync_column(&tx)? {
+            tx.execute(
+                "ALTER TABLE komari_sync_state ADD COLUMN last_successful_sync_at INTEGER",
+                [],
+            )
+            .map_err(|_| "Migrate Komari sync provenance failed")?;
+        }
+        tx.commit()
+            .map_err(|_| "Commit Komari sync provenance migration failed")?;
+    }
     super::probe_persistence::initialize(&conn)?;
     Ok(())
+}
+
+fn has_successful_sync_column(conn: &Connection) -> Result<bool, String> {
+    let mut statement = conn
+        .prepare("PRAGMA table_info(komari_sync_state)")
+        .map_err(|_| "Read Komari sync schema failed")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|_| "Read Komari sync schema failed")?;
+    for column in columns {
+        if column.map_err(|_| "Read Komari sync schema failed")? == "last_successful_sync_at" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn id(value: &str, field: &str) -> Result<String, String> {
@@ -252,6 +287,7 @@ fn read_sync_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<KomariSyncState>
         ttl_ms: row.get(2)?,
         alert_summary,
         updated_at: row.get(4)?,
+        last_successful_sync_at: row.get(5)?,
     })
 }
 
@@ -494,7 +530,7 @@ fn edit_mapping(
         tx.execute("DELETE FROM probe_snapshots WHERE vault_id=?1 AND provider_kind='komari' AND provider_id=?2", params![vault, integration]).map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
     }
     tx.execute(
-        "UPDATE komari_sync_state SET last_synced_at=0 WHERE integration_id=?1",
+        "UPDATE komari_sync_state SET last_synced_at=0,last_successful_sync_at=NULL WHERE integration_id=?1",
         params![integration],
     )
     .map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
@@ -793,6 +829,17 @@ fn persist_sync(conn: &mut Connection, payload: &KomariPersistencePayload) -> Re
                 updated_at: Some(last_synced_at),
             },
         )?;
+        // Only this complete-sync transaction may establish provenance. Keep
+        // it independent of alert updated_at ordering: a local acknowledgement
+        // during an in-flight sync must not prevent recording that real sync.
+        // Ordinary sync-state upserts deliberately never write this column.
+        if last_synced_at > 0 && last_synced_at <= now_unix_ms() {
+            tx.execute(
+                "UPDATE komari_sync_state SET last_successful_sync_at=MAX(COALESCE(last_successful_sync_at,0),?1) WHERE integration_id=?2",
+                params![last_synced_at, integration_id],
+            )
+            .map_err(|_| "Save Komari successful sync provenance failed")?;
+        }
     }
     tx.commit()
         .map_err(|err| format!("Commit Komari sync persistence failed: {err}"))
@@ -806,7 +853,7 @@ pub fn get_komari_sync_state(
     let integration_id = normalize_integration_id(&integration_id)?;
     let conn = open(&app)?;
     conn.query_row(
-        "SELECT integration_id, last_synced_at, ttl_ms, alert_summary_json, updated_at
+        "SELECT integration_id, last_synced_at, ttl_ms, alert_summary_json, updated_at, last_successful_sync_at
          FROM komari_sync_state WHERE integration_id = ?1",
         params![integration_id],
         read_sync_state,
@@ -924,6 +971,146 @@ mod tests {
             ttl_ms: Some(60_000),
             alert_summary: None,
         }
+    }
+
+    fn sync_state(conn: &rusqlite::Connection) -> super::KomariSyncState {
+        conn.query_row("SELECT integration_id,last_synced_at,ttl_ms,alert_summary_json,updated_at,last_successful_sync_at FROM komari_sync_state WHERE integration_id='server'", [], super::read_sync_state).unwrap()
+    }
+
+    #[test]
+    fn legacy_alert_timestamps_never_gain_provenance_and_real_sync_survives_local_write_ordering() {
+        let path = std::env::temp_dir().join(format!(
+            "shellbeam-komari-provenance-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        {
+            let mut conn = rusqlite::Connection::open(&path).unwrap();
+            // Simulate an existing database, including a timestamp once created
+            // by an alert write. Migration must not infer success from it.
+            conn.execute_batch("CREATE TABLE komari_sync_state(integration_id TEXT PRIMARY KEY NOT NULL,last_synced_at INTEGER NOT NULL,ttl_ms INTEGER NOT NULL,alert_summary_json TEXT,updated_at INTEGER NOT NULL); INSERT INTO komari_sync_state VALUES('server',1300,60000,NULL,1400);").unwrap();
+            prepare_mapping_db(&conn);
+            assert_eq!(sync_state(&conn).last_successful_sync_at, None);
+            assert_eq!(sync_state(&conn).last_synced_at, 1300);
+
+            // Even a caller attempting to send the new field cannot set it via
+            // the generic alert payload. It is not a deserializable input field.
+            let alert: super::KomariSyncStatePayload = serde_json::from_value(json!({"integrationId":"server","lastSyncedAt":1500,"lastSuccessfulSyncAt":1500,"ttlMs":60000,"updatedAt":1600})).unwrap();
+            let tx = conn.transaction().unwrap();
+            super::insert_sync_state(&tx, &alert).unwrap();
+            tx.commit().unwrap();
+            assert_eq!(sync_state(&conn).last_successful_sync_at, None);
+
+            // A real sync begun before that local alert write still establishes
+            // provenance, without replacing the newer legacy scheduling row.
+            super::persist_sync(&mut conn, &sync(0, "one", "address")).unwrap();
+            assert_eq!(sync_state(&conn).last_successful_sync_at, Some(1000));
+            assert_eq!(sync_state(&conn).last_synced_at, 1500);
+            let tx = conn.transaction().unwrap();
+            super::insert_sync_state(&tx, &alert).unwrap();
+            tx.commit().unwrap();
+            assert_eq!(sync_state(&conn).last_successful_sync_at, Some(1000));
+        }
+        {
+            let mut conn = rusqlite::Connection::open(&path).unwrap();
+            super::initialize(&conn).unwrap();
+            assert_eq!(sync_state(&conn).last_successful_sync_at, Some(1000));
+            super::edit_mapping(&mut conn, &edit("node", Some("two"), 0)).unwrap();
+            assert_eq!(sync_state(&conn).last_successful_sync_at, None);
+            assert_eq!(sync_state(&conn).last_synced_at, 0);
+            // A superseded mapping's failed transaction cannot restore it.
+            assert_eq!(
+                super::persist_sync(&mut conn, &sync(0, "one", "address")).unwrap_err(),
+                "KOMARI_MAPPING_CONFLICT"
+            );
+            assert_eq!(sync_state(&conn).last_successful_sync_at, None);
+            super::persist_sync(&mut conn, &sync(1, "two", "manual")).unwrap();
+            assert_eq!(sync_state(&conn).last_successful_sync_at, Some(1000));
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn concurrent_old_database_opens_migrate_nullable_provenance_once_without_backfill() {
+        let path = std::env::temp_dir().join(format!(
+            "shellbeam-komari-provenance-migration-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE komari_sync_state(integration_id TEXT PRIMARY KEY NOT NULL,last_synced_at INTEGER NOT NULL,ttl_ms INTEGER NOT NULL,alert_summary_json TEXT,updated_at INTEGER NOT NULL); INSERT INTO komari_sync_state VALUES('server',1300,60000,NULL,1400);").unwrap();
+        }
+        let ready = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let threads = (0..4)
+            .map(|_| {
+                let path = path.clone();
+                let ready = ready.clone();
+                std::thread::spawn(move || {
+                    let conn = rusqlite::Connection::open(path).unwrap();
+                    conn.busy_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    ready.wait();
+                    super::initialize(&conn).unwrap();
+                    assert_eq!(sync_state(&conn).last_successful_sync_at, None);
+                    assert_eq!(sync_state(&conn).last_synced_at, 1300);
+                })
+            })
+            .collect::<Vec<_>>();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn concurrent_alert_and_sync_writers_preserve_real_provenance_and_legacy_ttl_metadata() {
+        let path = std::env::temp_dir().join(format!(
+            "shellbeam-komari-provenance-writers-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            prepare_mapping_db(&conn);
+        }
+        let ready = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let threads = [false, true]
+            .into_iter()
+            .map(|is_sync| {
+                let path = path.clone();
+                let ready = ready.clone();
+                std::thread::spawn(move || {
+                    let mut conn = rusqlite::Connection::open(path).unwrap();
+                    conn.busy_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    ready.wait();
+                    if is_sync {
+                        super::persist_sync(&mut conn, &sync(0, "one", "address")).unwrap();
+                    } else {
+                        let tx = conn.transaction().unwrap();
+                        super::insert_sync_state(
+                            &tx,
+                            &super::KomariSyncStatePayload {
+                                integration_id: "server".into(),
+                                last_synced_at: 2000,
+                                ttl_ms: 60_000,
+                                alert_summary: None,
+                                updated_at: Some(2000),
+                            },
+                        )
+                        .unwrap();
+                        tx.commit().unwrap();
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            assert_eq!(sync_state(&conn).last_successful_sync_at, Some(1000));
+            assert_eq!(sync_state(&conn).last_synced_at, 2000);
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

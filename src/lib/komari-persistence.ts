@@ -7,6 +7,7 @@ import {
 } from './komari-alerts'
 import type { ProbeSnapshot } from './probe-provider'
 import type { KomariHostMapping } from './komari-mapping'
+import type { KomariIntegration } from './komari-config'
 import { getProbeProviderRegistry } from './probe-scheduler'
 
 /** A durable ProbeSnapshot row returned by the local Komari cache. */
@@ -77,10 +78,19 @@ export interface KomariPersistedState {
 
 export interface KomariSyncState {
   integrationId: string
+  /** Legacy TTL scheduling metadata; older local alert writes could set it. */
   lastSyncedAt: number
+  /** Native provenance: only a committed remote sync may establish this. */
+  lastSuccessfulSyncAt?: number | null
   ttlMs: number
   alertSummary: Record<string, unknown> | null
   updatedAt: number
+}
+
+/** Cache/mapping writes and legacy sync rows cannot prove a remote sync. */
+export function confirmedKomariSyncAt(integration: KomariIntegration, state: KomariSyncState | null | undefined, now = Date.now()): number | null {
+  const stamp = state?.lastSuccessfulSyncAt
+  return state?.integrationId === integration.id && typeof stamp === 'number' && Number.isFinite(stamp) && stamp > 0 && stamp <= now && stamp >= (integration.updatedAt ?? 0) ? stamp : null
 }
 
 export interface KomariSyncStatePayload {
@@ -194,6 +204,7 @@ export function readKomariAlertState(syncState: KomariSyncState | null | undefin
 export async function persistKomariAlertState(options: {
   integrationId: string
   state: Omit<KomariAlertState, 'schemaVersion'> | KomariAlertState
+  /** Legacy scheduling hint only; this is never successful-sync provenance. */
   lastSyncedAt?: number
   ttlMs?: number
   updatedAt?: number
@@ -203,6 +214,8 @@ export async function persistKomariAlertState(options: {
   const now = options.updatedAt ?? Date.now()
   return upsertKomariSyncState({
     integrationId,
+    // Preserve the existing TTL scheduling behavior. Native storage keeps the
+    // independent lastSuccessfulSyncAt untouched by this local-only write.
     lastSyncedAt: options.lastSyncedAt ?? current?.lastSyncedAt ?? now,
     ttlMs: options.ttlMs ?? current?.ttlMs ?? 60_000,
     alertSummary: toKomariAlertStatePayload({ schemaVersion: 1, ...options.state }),

@@ -4,7 +4,7 @@ import { buildHostOpsViews, type HostOpsHealthState, type HostOpsProvider, type 
 import type { HostProfile } from './hosts'
 import { getHostIdentity } from './host-identity'
 import { listKomariIntegrations, type KomariIntegration } from './komari-config'
-import { KOMARI_MAPPING_CHANGED_EVENT, loadKomariPersistence, type KomariPersistedState } from './komari-persistence'
+import { KOMARI_MAPPING_CHANGED_EVENT, confirmedKomariSyncAt, loadKomariPersistence, type KomariPersistedState } from './komari-persistence'
 import { listPersistedProbeSnapshots, type PersistedProbeSnapshotRecord } from './probe-persistence'
 import { refreshProbeSnapshotFreshness } from './probe-scheduler'
 import type { ProbeCapability, ProbeConfidence, ProbeProviderKind, ProbeProviderTelemetry, ProbeSnapshot } from './probe-provider'
@@ -169,7 +169,7 @@ export function buildWorkspaceProviderState(options: WorkspaceProviderStateOptio
     return { kind: snapshot.provider.kind, id: snapshot.provider.id, ...(snapshot.provider.nodeId ? { nodeId: snapshot.provider.nodeId } : {}), health: providerView.health.state,
       confidence: observation?.confidence ?? null, sampledAt,
       receivedAt: validTime(observation?.freshness.receivedAt ?? snapshot.receivedAt, now),
-      lastSyncedAt: snapshot.provider.kind === 'komari' ? validTime(integration?.state?.syncState?.lastSyncedAt, now) : null,
+      lastSyncedAt: snapshot.provider.kind === 'komari' && integration ? confirmedKomariSyncAt(integration.integration, integration.state?.syncState, now) : null,
       ttlMs: observation?.freshness.ttlMs ?? null, expiresAt: sampledAt === null ? null : observation?.freshness.expiresAt ?? null,
       capabilities: [...snapshot.provider.capabilities], syncError: snapshot.provider.kind === 'komari' && Boolean(integration?.error),
     }
@@ -195,7 +195,7 @@ export function buildWorkspaceProviderState(options: WorkspaceProviderStateOptio
   for (const entry of komari) {
     for (const mapping of entry.state?.mappings.filter((row) => row.hostId === host.id && row.integrationId === entry.integration.id) ?? []) {
       if (sources.some((source) => source.kind === 'komari' && source.id === entry.integration.id && source.nodeId === mapping.nodeId)) continue
-      sources.push({ kind: 'komari', id: entry.integration.id, nodeId: mapping.nodeId, health: 'unknown', confidence: null, sampledAt: null, receivedAt: null, lastSyncedAt: validTime(entry.state?.syncState?.lastSyncedAt, now), ttlMs: null, expiresAt: null, capabilities: [], syncError: entry.error })
+      sources.push({ kind: 'komari', id: entry.integration.id, nodeId: mapping.nodeId, health: 'unknown', confidence: null, sampledAt: null, receivedAt: null, lastSyncedAt: confirmedKomariSyncAt(entry.integration, entry.state?.syncState, now), ttlMs: null, expiresAt: null, capabilities: [], syncError: entry.error })
     }
   }
   const selectedId = view.health.probe?.providerId
