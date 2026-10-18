@@ -36,6 +36,8 @@ pub struct SshRequest {
     pub jump_port: Option<u16>,
     pub jump_user: Option<String>,
     pub command: String,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

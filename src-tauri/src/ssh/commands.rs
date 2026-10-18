@@ -1,12 +1,27 @@
 use super::transport::{self, Connection, Route};
 use super::{failed_result, CommandRunResult, ConnectionTestResult, SshRequest};
+use crate::collection_limits::limits;
 use crate::history::append_history;
 use serde_json::Value;
 use std::io::Read;
 use std::time::{Duration, Instant};
 
-pub const REMOTE_OUTPUT_LIMIT: usize = 256 * 1024;
-pub const REMOTE_COMMAND_TIMEOUT_SECS: u64 = 90;
+pub fn remote_output_limit() -> usize {
+    limits().remote.output_bytes
+}
+
+fn command_timeout(requested_ms: Option<u64>) -> Duration {
+    // Workspace probes can shorten their deadline, never extend the desktop
+    // one-shot command ceiling. Explicit MCP tasks have a separate budget.
+    Duration::from_millis(
+        requested_ms
+            .unwrap_or(limits().remote.command_timeout_ms)
+            .clamp(
+                limits().remote.min_command_timeout_ms,
+                limits().remote.command_timeout_ms,
+            ),
+    )
+}
 
 fn route(app: &tauri::AppHandle, payload: &SshRequest) -> Result<(Route, Value), String> {
     if let Some(host_id) = payload
@@ -129,7 +144,7 @@ pub(crate) fn run_ssh_command_sync(app: tauri::AppHandle, payload: SshRequest) -
                         connection,
                         &payload.command,
                         start,
-                        Duration::from_secs(REMOTE_COMMAND_TIMEOUT_SECS),
+                        command_timeout(payload.timeout_ms),
                     );
                     if result.verified_host_keys.is_some() {
                         result.host_identity = Some(identity);
@@ -215,7 +230,7 @@ pub fn execute(
             match read {
                 Ok(0) => {}
                 Ok(count) => {
-                    if stdout.len() + stderr.len() + count > REMOTE_OUTPUT_LIMIT {
+                    if stdout.len() + stderr.len() + count > remote_output_limit() {
                         return failed_result(
                             start,
                             "Remote output limit exceeded; verify the operation before retrying"
@@ -303,5 +318,25 @@ pub fn execute(
         error_code: (exit_code != 0).then(|| "remote_command_failed".into()),
         error_source: (exit_code != 0).then(|| "remote".into()),
         retryable: None,
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn caller_can_shorten_but_never_extend_desktop_command_deadline() {
+        let ordinary = Duration::from_millis(limits().remote.command_timeout_ms);
+        assert_eq!(command_timeout(None), ordinary);
+        assert_eq!(command_timeout(Some(u64::MAX)), ordinary);
+        assert_eq!(
+            command_timeout(Some(0)),
+            Duration::from_millis(limits().remote.min_command_timeout_ms)
+        );
+        assert_eq!(
+            command_timeout(Some(limits().remote.collector_timeout_ms)),
+            Duration::from_millis(limits().remote.collector_timeout_ms)
+        );
+        assert_eq!(remote_output_limit(), limits().remote.output_bytes);
     }
 }

@@ -1,3 +1,4 @@
+import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
@@ -13,7 +14,7 @@ import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-aler
 import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import type { HostOpsCapability } from '@/lib/host-ops-view'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
-import { AlertTriangle, Activity, Bot, Check, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
+import { AlertTriangle, Activity, Bot, Check, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Network, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
@@ -156,6 +157,7 @@ interface HostGridCardProps {
   isSelected: boolean
   status?: HostHealthStatus
   resource?: WorkspaceInventoryResource
+  metrics?: ServerMonitorSnapshot
   operations?: HostOperationalSummary
   network?: HostNetworkDisplay
   agentDeploymentCount?: number
@@ -168,7 +170,7 @@ interface HostGridCardProps {
   onSelect: (id: string) => void
 }
 
-export function HostGridCard({ host, isSelected, status, resource, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete }: HostGridCardProps) {
+export function HostGridCard({ host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete }: HostGridCardProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
@@ -265,6 +267,7 @@ export function HostGridCard({ host, isSelected, status, resource, operations, n
             className="text-xs text-[var(--workspace-text-muted)]"
             iconClassName="h-3.5 w-3.5"
           />
+          <HostResourceSummary resource={resource} metrics={metrics} t={t} />
           <HostOperationalMeta host={host} summary={operations} t={t} />
           <div className="flex items-center gap-1 overflow-hidden">
             {host.tags && host.tags.length > 0 ? (
@@ -316,6 +319,7 @@ interface HostListItemProps {
   isSelected: boolean
   status?: HostHealthStatus
   resource?: WorkspaceInventoryResource
+  metrics?: ServerMonitorSnapshot
   operations?: HostOperationalSummary
   network?: HostNetworkDisplay
   agentDeploymentCount?: number
@@ -417,12 +421,48 @@ function HostResourceMetric({
   )
 }
 
-function HostResourceSummary({ resource, t }: { resource?: WorkspaceInventoryResource; t: TFn }) {
+function formatThroughput(value: number | null | undefined, t: TFn) {
+  if (value == null || !Number.isFinite(value) || value < 0) return t('hosts.opsFilters.unknown')
+  if (value < 1024) return `${Math.round(value)} B/s`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB/s`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB/s`
+}
+
+function formatUptime(seconds: number | null | undefined, t: TFn) {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return t('hosts.opsFilters.unknown')
+  const totalSeconds = Math.floor(seconds)
+  const days = Math.floor(totalSeconds / 86_400)
+  const hours = Math.floor(totalSeconds / 3_600) % 24
+  const minutes = Math.floor(totalSeconds / 60) % 60
+  if (days > 0) return t('workspace.monitor.uptime.days', { days, hours })
+  if (hours > 0) return t('workspace.monitor.uptime.hours', { hours, minutes })
+  if (minutes > 0) return t('workspace.monitor.uptime.minutes', { minutes })
+  return t('hostCard.uptimeSeconds', { seconds: totalSeconds })
+}
+
+function HostResourceSummary({ resource, metrics, t }: { resource?: WorkspaceInventoryResource; metrics?: ServerMonitorSnapshot; t: TFn }) {
+  // A current Provider's missing field stays unknown instead of borrowing a
+  // possibly older inventory value from a different source.
+  const uptime = metrics ? formatUptime(metrics.uptimeSeconds, t) : resource?.uptime?.trim() || t('hosts.opsFilters.unknown')
   return (
-    <div className="min-w-0 space-y-1.5 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 xl:border-0 xl:bg-transparent xl:p-0">
-      <HostResourceMetric icon={Cpu} iconKey="cpu" label={t('workspace.common.cpu')} value={resource?.cpuPercent} detail={resource?.uptime} t={t} />
-      <HostResourceMetric icon={MemoryStick} iconKey="memory" label={t('workspace.common.memoryShort')} value={resource?.memoryPercent} detail={resource?.memoryText} t={t} />
-      <HostResourceMetric icon={HardDrive} iconKey="disk" label={t('workspace.common.diskShort')} value={resource?.diskPercent} detail={resource?.diskText} t={t} />
+    <div data-testid="host-resource-summary" className="min-w-0 space-y-1.5 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 xl:border-0 xl:bg-transparent xl:p-0">
+      <HostResourceMetric icon={Cpu} iconKey="cpu" label={t('workspace.common.cpu')} value={metrics ? metrics.cpuPercent : resource?.cpuPercent} t={t} />
+      <HostResourceMetric icon={MemoryStick} iconKey="memory" label={t('workspace.common.memoryShort')} value={metrics ? metrics.memoryPercent : resource?.memoryPercent} detail={metrics ? undefined : resource?.memoryText} t={t} />
+      <HostResourceMetric icon={HardDrive} iconKey="disk" label={t('workspace.common.diskShort')} value={metrics ? metrics.diskPercent : resource?.diskPercent} detail={metrics ? undefined : resource?.diskText} t={t} />
+      <dl className="space-y-1.5 border-t border-[color:var(--workspace-border-soft)] pt-1.5 text-[10px] text-[var(--workspace-text-muted)]">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <dt className="inline-flex shrink-0 items-center gap-1.5"><Network className="h-3 w-3" aria-hidden="true" />{t('workspace.monitor.network')}</dt>
+          <dd data-testid="host-resource-throughput" className="min-w-0 break-words font-mono text-[var(--workspace-text-strong)]">{metrics ? <>
+            <span title={t('workspace.monitor.receive')}>↓ {formatThroughput(metrics.networkRxBytesPerSec, t)}</span>
+            {' · '}
+            <span title={t('workspace.monitor.transmit')}>↑ {formatThroughput(metrics.networkTxBytesPerSec, t)}</span>
+          </> : resource?.network?.trim() || t('hosts.opsFilters.unknown')}</dd>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <dt className="inline-flex shrink-0 items-center gap-1.5"><Clock className="h-3 w-3" aria-hidden="true" />{t('workspace.monitor.uptime')}</dt>
+          <dd data-testid="host-resource-uptime" className="min-w-0 break-words font-mono text-[var(--workspace-text-strong)]">{uptime}</dd>
+        </div>
+      </dl>
     </div>
   )
 }
@@ -690,7 +730,7 @@ function getNetworkScopeLabel(network: HostNetworkDisplay | undefined, t: TFn) {
   return t('hosts.networkUnknown')
 }
 
-export function HostListItem({ index, host, isSelected, status, resource, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete }: HostListItemProps) {
+export function HostListItem({ index, host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete }: HostListItemProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
@@ -766,7 +806,7 @@ export function HostListItem({ index, host, isSelected, status, resource, operat
           <span className="font-mono text-sm font-semibold text-[var(--workspace-text-strong)]">{updatedAt}</span>
         </div>
 
-        <HostResourceSummary resource={resource} t={t} />
+        <HostResourceSummary resource={resource} metrics={metrics} t={t} />
 
         <HostOperationalMeta host={host} summary={operations} t={t} />
 

@@ -1,6 +1,8 @@
+import { COLLECTION_LIMITS, collectionConcurrency } from './collection-limits'
 import type { HostProfile } from './hosts'
 import {
   createAgentlessSshProbeProvider,
+  validateProbeSnapshotSources,
   type ProbeCapability,
   type ProbeProvider,
   type ProbeObservation,
@@ -22,7 +24,7 @@ import {
 } from './probe-scheduler-constants'
 import { loadProbeRetrySettings, type ProbeRetrySettings } from './probe-retry-settings'
 
-export const DEFAULT_PROBE_SCHEDULER_CONCURRENCY = 3
+export const DEFAULT_PROBE_SCHEDULER_CONCURRENCY = COLLECTION_LIMITS.scheduler.concurrency
 /** Additional attempts made before returning a stale durable observation. */
 export { DEFAULT_PROBE_RECOVERY_MAX_RETRIES, DEFAULT_PROBE_RECOVERY_RETRY_DELAY_MS, MAX_PROBE_RECOVERY_RETRY_DELAY_MS }
 
@@ -152,7 +154,7 @@ function retryDelayMs(request: ProbeScheduleRequest, attempt: number, settings: 
 
 function maxRetries(request: ProbeScheduleRequest, settings: ProbeRetrySettings) {
   const configured = request.maxRetries ?? settings.maxRetries
-  return Math.max(0, Math.min(5, Number.isFinite(configured) ? Math.floor(configured) : DEFAULT_PROBE_RECOVERY_MAX_RETRIES))
+  return Math.max(0, Math.min(COLLECTION_LIMITS.scheduler.maxRetries, Number.isFinite(configured) ? Math.floor(configured) : DEFAULT_PROBE_RECOVERY_MAX_RETRIES))
 }
 
 function retryError(attempts: number, error: unknown) {
@@ -202,6 +204,7 @@ export function refreshProbeSnapshotFreshness(snapshot: ProbeSnapshot, now = Dat
       },
     }
   }
+  snapshot = validateProbeSnapshotSources(snapshot)
   const metrics = refresh(snapshot.metrics)
   const inventory = refresh(snapshot.inventory)
   const expired = [metrics, inventory].filter(Boolean).some((observation) => observation!.freshness.expired)
@@ -290,13 +293,14 @@ export class ProbeProviderRegistry {
     for (const key of this.cache.keys()) {
       if (key.startsWith(`${normalizedVaultId}:`) && (!hostId || key.includes(`:${hostId}:`))) this.cache.delete(key)
     }
+    this.hydratedRecords = this.hydratedRecords.filter((record) => record.vaultId !== normalizedVaultId || Boolean(hostId && record.hostId !== hostId))
     await this.persistence.remove({ vaultId: normalizedVaultId, ...(hostId ? { hostId } : {}) }).catch(() => undefined)
   }
 
   private async hydrate(vaultId: string) {
     if (!this.hydrations.has(vaultId)) {
       const hydration = this.persistence.list({ vaultId }).then((records) => {
-        this.hydratedRecords = records
+        this.hydratedRecords = [...this.hydratedRecords.filter((record) => record.vaultId !== vaultId), ...records.filter((record) => record.vaultId === vaultId)]
         for (const provider of new Set(this.providers.values())) this.applyHydratedRecords(provider, vaultId)
       }).catch(() => undefined)
       this.hydrations.set(vaultId, hydration)
@@ -307,17 +311,23 @@ export class ProbeProviderRegistry {
   private applyHydratedRecords(provider: ProbeProvider, vaultId?: string) {
     for (const record of this.hydratedRecords) {
       if (record.providerId !== provider.ref.id || record.providerKind !== provider.ref.kind || (vaultId && record.vaultId !== vaultId)) continue
+      if (record.snapshot?.host?.hostId !== record.hostId
+        || record.snapshot?.provider?.id !== record.providerId
+        || record.snapshot?.provider?.kind !== record.providerKind) continue
       const host = { id: record.hostId } as HostProfile
       // The row carries the durable expiry used by the storage transaction.
       // Copy it into the envelope before checking freshness so an older
       // in-memory TTL cannot make a persisted observation appear fresh.
+      const original = validateProbeSnapshotSources(record.snapshot)
       const snapshot = {
-        ...record.snapshot,
-        metrics: record.snapshot.metrics
-          ? { ...record.snapshot.metrics, freshness: { ...record.snapshot.metrics.freshness, sampledAt: record.sampledAt, expiresAt: record.expiresAt } }
+        ...original,
+        metrics: original.metrics
+          ? { ...original.metrics, freshness: { ...original.metrics.freshness, expiresAt: Math.min(original.metrics.freshness.expiresAt, record.expiresAt) } }
           : null,
-        inventory: record.snapshot.inventory
-          ? { ...record.snapshot.inventory, freshness: { ...record.snapshot.inventory.freshness, sampledAt: record.sampledAt, expiresAt: record.expiresAt } }
+        // The row indexes the primary observation. Inventory collected at a
+        // different time must retain its own original timestamp and TTL.
+        inventory: original.inventory
+          ? { ...original.inventory, freshness: { ...original.inventory.freshness, expiresAt: original.metrics ? original.inventory.freshness.expiresAt : Math.min(original.inventory.freshness.expiresAt, record.expiresAt) } }
           : null,
       }
       if (snapshot.metrics) this.cache.set(cacheKey(provider, host, ['metrics'], record.vaultId), { snapshot })
@@ -327,22 +337,25 @@ export class ProbeProviderRegistry {
   }
 
   private async acquire() {
-    const limit = Math.max(1, Math.floor(this.concurrency) || DEFAULT_PROBE_SCHEDULER_CONCURRENCY)
+    const limit = collectionConcurrency(this.concurrency)
     if (this.active < limit) {
       this.active += 1
       return
     }
     await new Promise<void>((resolve) => this.waiters.push({ resolve }))
-    this.active += 1
+    // release hands this waiter its existing slot, with no transient free
+    // capacity in which a newly arriving request could overtake it.
   }
 
   private release() {
-    this.active = Math.max(0, this.active - 1)
-    this.waiters.shift()?.resolve()
+    const waiter = this.waiters.shift()
+    if (waiter) waiter.resolve()
+    else this.active = Math.max(0, this.active - 1)
   }
 
   async probe(request: ProbeScheduleRequest): Promise<ProbeScheduleResult> {
-    const vaultId = request.vaultId?.trim() || undefined
+    if (request.vaultId && request.host.vaultId && request.vaultId !== request.host.vaultId) throw new Error('PROBE_VAULT_SCOPE_MISMATCH')
+    const vaultId = request.vaultId?.trim() || request.host.vaultId?.trim() || undefined
     if (vaultId) await this.hydrate(vaultId)
     const sections = requestSections(request)
     const provider = this.get(request.providerId ?? 'ssh-agentless')
@@ -362,7 +375,7 @@ export class ProbeProviderRegistry {
       const result = await existing
       return { snapshot: result.snapshot, cached: false, deduplicated: true, recovered: result.recovered, retry: result.retry }
     }
-    const providerRequest: ProbeRequest = { ...request, sections }
+    const providerRequest: ProbeRequest = { ...request, vaultId, sections }
     const startedAt = Date.now()
     const work = (async () => {
       await this.acquire()
@@ -377,7 +390,9 @@ export class ProbeProviderRegistry {
         let failed = false
         for (let attempt = 0; attempt <= retryBudget; attempt += 1) {
           try {
-            snapshot = await provider.probe(providerRequest)
+            const collected = await provider.probe(providerRequest)
+            if (collected.host?.hostId !== request.host.id || collected.provider?.id !== provider.ref.id || collected.provider?.kind !== provider.ref.kind) throw new Error('PROBE_IDENTITY_MISMATCH')
+            snapshot = validateProbeSnapshotSources(collected)
             failed = probeNeedsRetry(snapshot, sections)
             if (!failed) break
             const latestError = snapshot.errors.find((entry) => entry.section === 'provider' || sections.includes(entry.section as ProbeSection))

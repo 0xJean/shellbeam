@@ -1,8 +1,11 @@
-import { render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { act, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getServerMonitorHostKey } from '@/lib/server-monitor'
 import { clearServerMonitorStates, mergeServerMonitorStates } from '@/lib/server-monitor-state'
 import { WorkspaceStatusCards } from './workspace-status-cards'
+
+vi.mock('./shellbeam-agent-panel', () => ({ ShellbeamAgentPanel: () => null }))
+vi.mock('@/lib/probe-persistence', () => ({ listPersistedProbeSnapshots: vi.fn(async () => []) }))
 
 const host = {
   id: 'host-1',
@@ -41,6 +44,24 @@ const snapshot = {
 describe('workspace status cards', () => {
   beforeEach(() => {
     clearServerMonitorStates()
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('ages a persisted online sample to stale without another SSH request', () => {
+    vi.useFakeTimers()
+    const sampledAt = Date.now()
+    const key = getServerMonitorHostKey(host)
+    mergeServerMonitorStates({ [key]: { history: [], latest: {
+      hostKey: key, hostId: host.id, hostName: host.name, hostAddress: host.address,
+      username: host.username, port: host.port, status: 'online', snapshot: { ...snapshot, sampledAt },
+      lastAttemptAt: sampledAt, lastSuccessAt: sampledAt, updatedAt: sampledAt,
+    } } })
+    render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={host.id} hosts={[host]} />)
+    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'online')
+    act(() => vi.advanceTimersByTime(150_000))
+    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'stale')
+    expect(screen.getAllByText('Data stale')).not.toHaveLength(0)
+    expect(screen.getByText('23%')).toBeInTheDocument()
   })
 
   it('shows live telemetry values from the shared monitor state', () => {
@@ -92,6 +113,27 @@ describe('workspace status cards', () => {
     render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={null} hosts={[host]} />)
 
     expect(screen.getAllByText('Not connected').length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'idle')
+  })
+
+  it('uses only the active Vault observation when host IDs collide', async () => {
+    const vaultHost = { ...host, vaultId: 'active' }
+    const otherHost = { ...host, vaultId: 'other', address: '10.0.0.99' }
+    for (const [candidate, cpu] of [[host, 99], [otherHost, 88], [vaultHost, 37]] as const) {
+      const key = getServerMonitorHostKey(candidate)
+      mergeServerMonitorStates({ [key]: { history: [], latest: {
+        hostKey: key, hostId: candidate.id, hostName: candidate.name, hostAddress: candidate.address,
+        username: candidate.username, port: candidate.port, status: 'online', snapshot: { ...snapshot, cpuPercent: cpu },
+        lastAttemptAt: snapshot.sampledAt, lastSuccessAt: snapshot.sampledAt, updatedAt: snapshot.sampledAt,
+      } } })
+    }
+    const view = await act(async () => render(<WorkspaceStatusCards activeVaultId="active" hostAddress={host.address} selectedHostId={host.id} hosts={[otherHost, host]} />))
+    expect(screen.getByText('37%')).toBeInTheDocument()
+    expect(screen.queryByText('99%')).not.toBeInTheDocument()
+    expect(screen.queryByText('88%')).not.toBeInTheDocument()
+    await act(async () => view.rerender(<WorkspaceStatusCards activeVaultId="missing" hostAddress={host.address} selectedHostId={host.id} hosts={[otherHost, host]} />))
+    expect(screen.queryByText('37%')).not.toBeInTheDocument()
+    expect(screen.queryByText('99%')).not.toBeInTheDocument()
     expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'idle')
   })
 

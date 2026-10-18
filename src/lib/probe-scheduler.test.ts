@@ -65,6 +65,85 @@ function provider(id: string, probe: ProbeProvider['probe']): ProbeProvider {
 }
 
 describe('ProbeProviderRegistry', () => {
+  it('keeps inventory original freshness separate from the primary metrics row and preserves legitimate Komari node identity', async () => {
+    const item: ProbeProvider = { ref: { kind: 'komari', id: 'source-a', capabilities: ['metrics', 'inventory'] }, probe: vi.fn() }
+    const old = snapshot(item, host('one'), 100)
+    old.metrics!.source = { ...item.ref, nodeId: 'remote-node' }
+    old.inventory = createProbeObservation({ data: { resource: { arch: 'aarch64' }, scannedAt: 400 } as never, source: { ...item.ref, nodeId: 'remote-node' }, sampledAt: 400, receivedAt: 450, ttlMs: 1000 })
+    const store = { list: vi.fn(async () => [{ vaultId: 'vault-a', providerKind: item.ref.kind, providerId: item.ref.id, hostId: 'one', snapshot: old, sampledAt: 100, receivedAt: 450, expiresAt: 200, updatedAt: 450 }]), save: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) }
+    const result = await new ProbeProviderRegistry(1, store).register(item).probe({ host: host('one'), vaultId: 'vault-a', providerId: item.ref.id, sections: ['inventory'], resolveAuthSecret: async () => '', now: 500 })
+    expect(result.cached).toBe(true)
+    expect(item.probe).not.toHaveBeenCalled()
+    expect(result.snapshot.inventory?.freshness).toMatchObject({ sampledAt: 400, expiresAt: 1400, expired: false })
+    expect(result.snapshot.inventory?.source.nodeId).toBe('remote-node')
+    expect(result.snapshot.inventory?.data.resource.arch).toBe('aarch64')
+  })
+  it('hands a released slot to its waiter before a newly arriving request can overtake it', async () => {
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    let active = 0
+    let maximum = 0
+    const item = provider('handoff', async (request) => {
+      active += 1
+      maximum = Math.max(maximum, active)
+      if (request.host.id === 'first') await firstGate
+      else await new Promise((resolve) => setTimeout(resolve, 1))
+      active -= 1
+      return snapshot(item, request.host, 100)
+    })
+    const registry = new ProbeProviderRegistry(1).register(item)
+    const request = (id: string) => ({ host: host(id), providerId: item.ref.id, sections: ['metrics'] as const, resolveAuthSecret: async () => '', now: 100 })
+    const first = registry.probe(request('first'))
+    await Promise.resolve()
+    const waiting = registry.probe(request('waiting'))
+    releaseFirst()
+    const newcomer = new Promise<unknown>((resolve, reject) => queueMicrotask(() => { void registry.probe(request('new')).then(resolve, reject) }))
+    await Promise.all([first, waiting, newcomer])
+    expect(maximum).toBe(1)
+  })
+  it('rejects a foreign Vault before hydration or collection and separates implicit host Vault scopes', async () => {
+    const item = provider('scoped', vi.fn(async (request) => snapshot(item, request.host, request.now ?? 0)))
+    const store = { list: vi.fn(async () => []), save: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) }
+    const registry = new ProbeProviderRegistry(1, store).register(item)
+    const target = { ...host('same'), vaultId: 'vault-a' }
+    await expect(registry.probe({ host: target, vaultId: 'vault-b', providerId: item.ref.id, resolveAuthSecret: async () => '', now: 100 })).rejects.toThrow('PROBE_VAULT_SCOPE_MISMATCH')
+    expect(store.list).not.toHaveBeenCalled()
+    expect(item.probe).not.toHaveBeenCalled()
+    const request = { host: target, providerId: item.ref.id, sections: ['metrics'] as const, resolveAuthSecret: async () => '', now: 100 }
+    await registry.probe(request)
+    await registry.probe({ ...request, host: { ...target, vaultId: 'vault-b' } })
+    expect(item.probe).toHaveBeenCalledTimes(2)
+    expect(store.list.mock.calls).toEqual([[{ vaultId: 'vault-a' }], [{ vaultId: 'vault-b' }]])
+  })
+
+  it('returns unknown for missing observation sources and never labels them as the current provider', async () => {
+    const item = provider('unknown-source', async (request) => {
+      const value = snapshot(item, request.host, request.now ?? 0)
+      delete (value.metrics as unknown as { source?: unknown }).source
+      return value
+    })
+    const result = await new ProbeProviderRegistry().register(item).probe({ host: host('one'), providerId: item.ref.id, sections: ['metrics'], resolveAuthSecret: async () => '', maxRetries: 0, now: 100 })
+    expect(result.snapshot).toMatchObject({ health: 'unknown', metrics: null })
+    expect(result.snapshot.errors).toContainEqual(expect.objectContaining({ code: 'observation_source_invalid' }))
+  })
+
+  it('does not hydrate a row whose envelope belongs to a different host or provider', async () => {
+    const item = provider('current', vi.fn(async (request) => snapshot(item, request.host, request.now ?? 0)))
+    const old = snapshot(item, host('different'), 100)
+    const store = { list: vi.fn(async () => [{ vaultId: 'vault-a', providerKind: item.ref.kind, providerId: item.ref.id, hostId: 'one', snapshot: old, sampledAt: 100, receivedAt: 100, expiresAt: 1000, updatedAt: 100 }]), save: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) }
+    const result = await new ProbeProviderRegistry(1, store).register(item).probe({ host: host('one'), vaultId: 'vault-a', providerId: item.ref.id, sections: ['metrics'], resolveAuthSecret: async () => '', now: 100 })
+    expect(item.probe).toHaveBeenCalledTimes(1)
+    expect(result.snapshot.host.hostId).toBe('one')
+    expect(result.cached).toBe(false)
+  })
+
+  it('rejects a live envelope for another host without caching or persisting it', async () => {
+    const item = provider('mismatched', async () => snapshot(item, host('different'), 100))
+    const store = { list: vi.fn(async () => []), save: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) }
+    await expect(new ProbeProviderRegistry(1, store).register(item).probe({ host: host('one'), vaultId: 'vault-a', providerId: item.ref.id, sections: ['metrics'], resolveAuthSecret: async () => '', maxRetries: 0, now: 100 })).rejects.toThrow('PROBE_IDENTITY_MISMATCH')
+    expect(store.save).not.toHaveBeenCalled()
+  })
+
   it('deduplicates concurrent requests for one host and caches fresh observations', async () => {
     let calls = 0
     let release!: () => void

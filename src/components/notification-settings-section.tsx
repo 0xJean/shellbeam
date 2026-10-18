@@ -149,7 +149,7 @@ export function NotificationSettingsSection() {
             <div className="mt-3 rounded-md border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
               <p>{t('settings.notifications.systemHelp')}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={requestSystemPermission} disabled={systemBusy || systemPermission === 'unavailable' || systemPermission === 'granted'}>
+                <Button type="button" variant="outline" size="sm" onClick={requestSystemPermission} disabled={systemBusy || systemPermission !== 'default'}>
                   {t('settings.notifications.requestSystemPermission')}
                 </Button>
                 <Button type="button" variant="outline" size="sm" onClick={testSystemNotification} disabled={systemBusy}>

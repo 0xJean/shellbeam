@@ -1,6 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
 
-export type SystemNotificationPermission = 'granted' | 'denied' | 'default' | 'unavailable'
+export type SystemNotificationPermission = 'granted' | 'denied' | 'default' | 'limited' | 'unknown' | 'unavailable'
 export type SystemNotificationErrorCode = 'system-unavailable' | 'system-permission-required' | 'system-permission-denied' | 'system-send-failed'
 
 export class SystemNotificationError extends Error {
@@ -24,7 +24,7 @@ function browserNotification(): typeof Notification | undefined {
 }
 
 function permissionState(value: unknown): SystemNotificationPermission {
-  return value === 'granted' || value === 'denied' || value === 'default' ? value : 'unavailable'
+  return value === 'granted' || value === 'denied' || value === 'default' || value === 'limited' || value === 'unknown' ? value : 'unavailable'
 }
 
 function nativeError(cause: unknown): SystemNotificationError {
@@ -76,14 +76,17 @@ function boundedText(value: string, length: number): string {
 
 /** Resolves after backend acceptance. OS focus modes can still suppress banners. */
 export async function sendSystemNotification(content: SystemNotificationContent): Promise<void> {
+  const native = isTauri()
   const permission = await getSystemNotificationPermission()
   if (permission === 'unavailable') throw new SystemNotificationError('system-unavailable')
   if (permission === 'denied') throw new SystemNotificationError('system-permission-denied')
-  if (permission !== 'granted') throw new SystemNotificationError('system-permission-required')
+  // Freedesktop has a real notification service but no per-app permission API.
+  // Its native backend may attempt delivery without claiming OS authorization.
+  if (permission !== 'granted' && !(native && (permission === 'unknown' || permission === 'limited'))) throw new SystemNotificationError('system-permission-required')
   const title = boundedText(content.title, 120)
   const body = boundedText(content.body, 240)
   if (!title || !body) throw new SystemNotificationError('system-send-failed')
-  if (isTauri()) {
+  if (native) {
     try {
       await invoke('send_system_notification', { title, body })
     } catch (cause) {

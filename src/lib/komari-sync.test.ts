@@ -13,6 +13,31 @@ const host: HostProfile = {
   id: 'host-1', name: 'prod', address: '10.0.0.1', port: 22, username: 'ops', group: 'Production', authType: 'password', tags: [], createdAt: 0, updatedAt: 0,
 }
 
+function healthyRecoverySnapshot(): ProbeSnapshot {
+  return {
+    schemaVersion: 1,
+    host: { hostId: 'host-1', address: '10.0.0.1', port: 22, username: 'ops' },
+    provider: { kind: 'komari', id: 'komari-recovery', nodeId: 'node-1', capabilities: ['metrics'] },
+    transport: 'direct',
+    health: 'online',
+    receivedAt: 2_000,
+    metrics: {
+      data: {
+        hostname: 'prod', os: 'Linux', kernel: '', uptimeSeconds: 100, cpuPercent: 25,
+        load1: null, load5: null, load15: null, memoryUsedBytes: null, memoryTotalBytes: null,
+        memoryPercent: null, diskUsedBytes: null, diskTotalBytes: null, diskPercent: null,
+        networkRxBytesPerSec: null, networkTxBytesPerSec: null, latencyMs: null, sampledAt: 1_900,
+      },
+      source: { kind: 'komari', id: 'komari-recovery', nodeId: 'node-1', capabilities: ['metrics'] },
+      freshness: { sampledAt: 1_900, receivedAt: 2_000, ttlMs: 60_000, expiresAt: 61_900, expired: false },
+      confidence: 'partial',
+    },
+    inventory: null,
+    errors: [],
+    alerts: { load: 0, offline: 0, total: 0, active: 0, updatedAt: 2_000 },
+  }
+}
+
 describe('Komari sync orchestration', () => {
   it('discovers, maps and probes metrics through the shared provider contract', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
@@ -118,23 +143,7 @@ describe('Komari sync orchestration', () => {
       { integrationId: 'komari-recovery', kind: 'load', count: 1, updatedAt: 1_000 },
       { integrationId: 'komari-recovery', nodeId: 'node-1', hostId: 'host-1', kind: 'probe-error:metrics', count: 1, updatedAt: 1_000 },
     ], { now: 1_000 })
-    const healthySnapshot = {
-      schemaVersion: 1,
-      host: { hostId: 'host-1', address: '10.0.0.1', port: 22, username: 'ops' },
-      provider: { kind: 'komari', id: 'komari-recovery', nodeId: 'node-1', capabilities: ['metrics'] },
-      transport: 'direct',
-      health: 'online',
-      receivedAt: 2_000,
-      metrics: {
-        data: {},
-        source: { kind: 'komari', id: 'komari-recovery', nodeId: 'node-1', capabilities: ['metrics'] },
-        freshness: { sampledAt: 1_900, receivedAt: 2_000, ttlMs: 60_000, expiresAt: 61_900, expired: false },
-        confidence: 'partial',
-      },
-      inventory: null,
-      errors: [],
-      alerts: { load: 0, offline: 0, total: 0, active: 0, updatedAt: 2_000 },
-    } as unknown as ProbeSnapshot
+    const healthySnapshot = healthyRecoverySnapshot()
     const recovered = reconcileKomariProbeAlerts({
       integrationId: 'komari-recovery',
       snapshots: [healthySnapshot],
@@ -146,23 +155,53 @@ describe('Komari sync orchestration', () => {
     expect(recovered.alertAudit.map((entry) => entry.event)).toEqual(['resolved', 'resolved'])
     expect(recovered.alertState.audit.map((entry) => entry.event)).toEqual(['opened', 'opened', 'resolved', 'resolved'])
 
-    const failingSnapshot = {
+    const failingSnapshot: ProbeSnapshot = {
       ...healthySnapshot,
       health: 'online',
       receivedAt: 3_000,
-      metrics: null,
-      errors: [{ section: 'metrics', code: 'timeout', message: 'temporary failure' }],
+      // A partial report can retain a dated, still-fresh observation while
+      // reporting a collection error; online is valid only with that evidence.
+      errors: [{ section: 'metrics', code: 'partial', message: 'partial metrics report' }],
       alerts: { load: 1, offline: 0, total: 1, active: 1, updatedAt: 3_000 },
-    } as unknown as ProbeSnapshot
+    }
     const reopened = reconcileKomariProbeAlerts({
       integrationId: 'komari-recovery',
       snapshots: [failingSnapshot],
       alertState: recovered.alertState,
       now: 3_000,
     })
+    expect(reopened.alertState.alerts).toHaveLength(2)
     expect(reopened.alertState.alerts.every((alert) => alert.status === 'active')).toBe(true)
     expect(reopened.alertAudit.map((entry) => entry.event)).toEqual(['reopened', 'reopened'])
     expect(reopened.alertState.audit.map((entry) => entry.event)).toEqual(['opened', 'opened', 'resolved', 'resolved', 'reopened', 'reopened'])
+  })
+
+  it('opens exactly one unknown-health alert when a restored online envelope has no observations', () => {
+    const initial = reconcileKomariAlerts([], [
+      { integrationId: 'komari-recovery', kind: 'load', count: 1, updatedAt: 1_000 },
+      { integrationId: 'komari-recovery', nodeId: 'node-1', hostId: host.id, kind: 'probe-error:metrics', count: 1, updatedAt: 1_000 },
+    ], { now: 1_000 })
+    const healthySnapshot = healthyRecoverySnapshot()
+    const recovered = reconcileKomariProbeAlerts({ integrationId: 'komari-recovery', snapshots: [healthySnapshot], alertState: { schemaVersion: 1, ...initial }, now: 2_000 })
+    const withoutObservation: ProbeSnapshot = {
+      ...healthySnapshot, receivedAt: 3_000, metrics: null, inventory: null,
+      // Persisted older clients may have claimed online despite a failed read.
+      health: 'online', errors: [{ section: 'metrics', code: 'timeout', message: 'temporary failure' }],
+      alerts: { load: 1, offline: 0, total: 1, active: 1, updatedAt: 3_000 },
+    }
+    const result = reconcileKomariProbeAlerts({ integrationId: 'komari-recovery', snapshots: [withoutObservation], alertState: recovered.alertState, now: 3_000 })
+    expect(result.alertAudit.map(({ event, fingerprint }) => ({ event, fingerprint }))).toEqual([
+      { event: 'opened', fingerprint: 'komari-recovery|node-1|host-1|probe-unknown' },
+      { event: 'reopened', fingerprint: 'komari-recovery|node-1|host-1|probe-error:metrics' },
+      { event: 'reopened', fingerprint: 'komari-recovery|||load' },
+    ])
+    expect(result.alertState.alerts).toHaveLength(3)
+    expect(result.alertState.alerts.every((alert) => alert.status === 'active')).toBe(true)
+    expect(result.alertState.alerts.find((alert) => alert.kind === 'probe-unknown')).toMatchObject({ firstSeenAt: 3_000, count: 1 })
+    // A repeated hydration must neither open another alert nor append audits.
+    const repeated = reconcileKomariProbeAlerts({ integrationId: 'komari-recovery', snapshots: [withoutObservation], alertState: result.alertState, now: 3_100 })
+    expect(repeated.alertState.alerts).toHaveLength(3)
+    expect(repeated.alertAudit).toEqual([])
   })
 
   it('skips a fresh persisted sync and allows an explicit refresh', async () => {

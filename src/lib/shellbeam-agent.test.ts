@@ -111,12 +111,14 @@ describe('ShellBeam Probe lifecycle', () => {
 
   it('uses real daemon metrics and inventory with original timestamps and unknown values', () => {
     const record = normalizeShellbeamAgentRecord({ hostId: host.id, status: 'installed', health: 'online', transport: 'proxy-jump', lastHeartbeatAt: 100_000, heartbeatTtlMs: 5_000, capabilities: ['metrics', 'inventory', 'heartbeat'] }, 102_000)
-    const output = JSON.stringify({ schemaVersion: 1, sampledAt: 100_000, metrics: { hostname: 'edge', os: 'Linux', memoryTotalBytes: 4096, memoryUsedBytes: 2048, memoryPercent: 50, diskPercent: null, cpuPercent: 12 }, inventory: { tools: [{ id: 'git', name: 'git', binary: 'git', path: '/usr/bin/git', secret: 'not-persisted' }], services: [{ name: 'app.service', active: 'active' }] }, secret: 'not-persisted' })
+    const output = JSON.stringify({ schemaVersion: 1, sampledAt: 100_000, metrics: { hostname: 'edge', os: 'Linux', memoryTotalBytes: 4096, memoryUsedBytes: 2048, memoryPercent: 50, diskPercent: null, cpuPercent: 12 }, inventory: { resource: { arch: 'remote-aarch64' }, tools: [{ id: 'git', name: 'git', binary: 'git', path: '/usr/bin/git', secret: 'not-persisted' }], services: [{ name: 'app.service', active: 'active' }] }, secret: 'not-persisted' })
     const snapshot = parseShellbeamAgentObservation(output, record, host, 102_000)
     expect(snapshot.metrics?.data).toMatchObject({ cpuPercent: 12, memoryPercent: 50, diskPercent: null })
     expect(snapshot.metrics?.freshness).toMatchObject({ sampledAt: 100_000, receivedAt: 102_000, expiresAt: 105_000, expired: false })
     expect(snapshot.inventory?.data.tools[0]).toMatchObject({ id: 'git' })
     expect(snapshot.inventory?.data.services[0]).toMatchObject({ enabled: 'unknown' })
+    expect(snapshot.inventory?.data.resource.arch).toBe('remote-aarch64')
+    expect(parseShellbeamAgentObservation(output.replace('"resource":{"arch":"remote-aarch64"},', ''), record, host, 102_000).inventory?.data.resource.arch).toBeNull()
     expect(JSON.stringify(snapshot)).not.toContain('not-persisted')
     expect(parseShellbeamAgentObservation(output, record, host, 106_000).health).toBe('stale')
     expect(normalizeShellbeamAgentRecord({ ...record, status: 'unknown', health: 'unknown' }, 102_000).health).toBe('unknown')

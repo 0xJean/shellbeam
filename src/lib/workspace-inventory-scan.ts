@@ -1,3 +1,4 @@
+import { COLLECTION_LIMITS, collectionConcurrency } from './collection-limits'
 import { scopeObservationHosts } from './host-observation-scope'
 import type { HostProfile } from './hosts'
 import {
@@ -18,7 +19,7 @@ import {
 import { getProbeProviderRegistry } from './probe-scheduler'
 import { isUnsupportedProbeError } from './unified-probe'
 
-export const WORKSPACE_INVENTORY_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+export const WORKSPACE_INVENTORY_REFRESH_INTERVAL_MS = COLLECTION_LIMITS.cadence.inventoryIntervalMs
 
 const probeRegistry = getProbeProviderRegistry()
 
@@ -61,7 +62,7 @@ export async function scanWorkspaceInventoryHosts({
   hosts,
   vaultId,
   resolveAuthSecret,
-  concurrency = 3,
+  concurrency = COLLECTION_LIMITS.scheduler.concurrency,
   isCurrent = () => true,
   currentStates = getWorkspaceInventoryStates(),
   refreshIntervalMs = WORKSPACE_INVENTORY_REFRESH_INTERVAL_MS,
@@ -176,7 +177,7 @@ export async function scanWorkspaceInventoryHosts({
   }
 
   try {
-    await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, targetHosts.length)) }, () => worker()))
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(collectionConcurrency(concurrency), targetHosts.length)) }, () => worker()))
   } finally {
     if (!isCurrent()) {
       restoreWorkspaceInventoryStatesFromScan(scanId, previousStates)

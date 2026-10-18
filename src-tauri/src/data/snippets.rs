@@ -187,6 +187,7 @@ pub async fn run_snippet_command(
             jump_port: None,
             jump_user: None,
             command: snippet.command,
+            timeout_ms: None,
         };
         let result = run_ssh_command_sync(app.clone(), request);
 

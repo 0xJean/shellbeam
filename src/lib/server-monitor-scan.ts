@@ -1,3 +1,4 @@
+import { COLLECTION_LIMITS, collectionConcurrency } from './collection-limits'
 import { observationVaultIds, scopeObservationHosts } from './host-observation-scope'
 import type { HostProfile } from '@/lib/hosts'
 import {
@@ -19,9 +20,9 @@ import {
 import { getProbeProviderRegistry } from './probe-scheduler'
 import { isUnsupportedProbeError } from './unified-probe'
 
-export const SERVER_MONITOR_INTERVAL_MS = 60 * 1000
-export const SERVER_MONITOR_HISTORY_MS = 24 * 60 * 60 * 1000
-export const SERVER_MONITOR_CONCURRENCY = 3
+export const SERVER_MONITOR_INTERVAL_MS = COLLECTION_LIMITS.cadence.monitorIntervalMs
+export const SERVER_MONITOR_HISTORY_MS = COLLECTION_LIMITS.history.monitorRetentionMs
+export const SERVER_MONITOR_CONCURRENCY = COLLECTION_LIMITS.scheduler.concurrency
 
 const probeRegistry = getProbeProviderRegistry()
 
@@ -236,7 +237,7 @@ export async function scanServerMonitorHosts({
 
   await Promise.all(
     Array.from(
-      { length: Math.max(1, Math.min(concurrency, hosts.length)) },
+      { length: Math.max(1, Math.min(collectionConcurrency(concurrency), hosts.length)) },
       () => worker(),
     ),
   )

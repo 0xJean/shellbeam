@@ -56,6 +56,16 @@ openssl-sys = { version = "0.9", features = ["vendored"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 ssh2 = { version = "0.9", features = ["openssl-on-win32"] }
 webview2-com-sys = "0.38"
+windows = { version = "0.61.3", features = ["UI_Notifications", "Data_Xml_Dom", "Foundation"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
+objc2 = "=0.6.3"
+objc2-foundation = { version = "0.3.2", features = ["NSBundle", "NSError", "NSString"] }
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "UNUserNotificationCenter", "UNNotificationSettings", "UNNotificationRequest", "UNNotificationContent", "UNNotificationTrigger", "block2"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies.zbus]
+version = "5"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc = "0.2"

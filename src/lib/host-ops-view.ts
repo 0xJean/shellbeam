@@ -215,14 +215,15 @@ function freshness(
   now: number,
   staleAfterMs: number,
 ): HostOpsFreshness {
-  const sampledCandidates = [
-    monitor?.snapshot?.sampledAt,
+  // Once metrics are selected, only their own sample can establish age.
+  // An inventory refresh or a newer failed attempt is not a new metric sample.
+  const sampledCandidates = (monitor?.snapshot ? [monitor.snapshot.sampledAt] : [
     inventory?.scannedAt,
     monitor?.lastSuccessAt ?? undefined,
     state?.updatedAt,
-  ].filter((value): value is number => typeof value === 'number' && value > 0)
+  ]).filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= now)
   const sampledAt = sampledCandidates.length > 0 ? Math.max(...sampledCandidates) : null
-  const updatedAt = Math.max(
+  const updatedAt = monitor?.snapshot ? monitor.updatedAt || null : Math.max(
     monitor?.updatedAt ?? 0,
     inventoryUpdatedAt ?? 0,
     state?.updatedAt ?? 0,
@@ -278,6 +279,7 @@ function healthState(
   if (monitor?.status) {
     if (monitor.status === 'checking') return 'checking'
     if ((monitor.status === 'offline' || monitor.status === 'stale') && jumpUnavailable) return 'jump-unavailable'
+    if (monitor.status === 'online' && freshnessValue.sampledAt === null) return 'unknown'
     if (monitor.status === 'online' && freshnessValue.stale) return 'stale'
     return monitor.status
   }
@@ -526,7 +528,8 @@ export function buildHostOpsViews({
     const selectedObservation = monitor === komariMonitor && komariMonitor ? komariSnapshot?.metrics : monitor === genericMonitor && genericMonitor ? probeSnapshot?.metrics : probeSnapshot?.provider.kind === 'ssh-agentless' ? probeSnapshot.metrics : null
     if (selectedObservation && monitor?.snapshot?.sampledAt === selectedObservation.freshness.sampledAt) {
       const stamp = selectedObservation.freshness
-      freshnessValue = { ...freshnessValue, sampledAt: stamp.sampledAt, ageMs: Math.max(0, now - stamp.sampledAt), stale: stamp.expired || stamp.sampledAt > now || now > stamp.expiresAt, ttlMs: stamp.ttlMs, expiresAt: stamp.expiresAt }
+      const validSample = Number.isFinite(stamp.sampledAt) && stamp.sampledAt > 0 && stamp.sampledAt <= now
+      freshnessValue = { ...freshnessValue, sampledAt: validSample ? stamp.sampledAt : null, updatedAt: stamp.receivedAt, ageMs: validSample ? now - stamp.sampledAt : null, stale: validSample && (stamp.expired || now > stamp.expiresAt), ttlMs: stamp.ttlMs, expiresAt: validSample ? stamp.expiresAt : null }
     }
     const monitorError = monitor?.error?.trim()
     const stateError = state?.error?.trim()

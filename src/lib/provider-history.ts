@@ -1,7 +1,8 @@
+import { COLLECTION_LIMITS } from './collection-limits'
 import { invoke } from '@tauri-apps/api/core'
 import type { ServerMonitorSnapshot } from './server-monitor'
 import type { ProbeConfidence, ProbeObservation, ProbeProviderKind } from './probe-provider'
-export const PROVIDER_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+export const PROVIDER_HISTORY_RETENTION_MS = COLLECTION_LIMITS.history.retentionMs
 export interface ProviderMetricHistoryPoint {
   providerKind: ProbeProviderKind
   providerId: string
@@ -24,7 +25,7 @@ export async function appendProviderMetricHistory(vaultId: string, points: Provi
   if (!vaultId.trim()) throw new Error('history_scope_invalid')
   if (points.length === 0) return
   // Native persistence also validates scope/fields and drops unknown metadata.
-  for (let offset = 0; offset < points.length; offset += 1000) await invoke<void>('append_provider_metric_history', { payload: { vaultId, points: points.slice(offset, offset + 1000) } })
+  for (let offset = 0; offset < points.length; offset += COLLECTION_LIMITS.history.appendChunkPoints) await invoke<void>('append_provider_metric_history', { payload: { vaultId, points: points.slice(offset, offset + COLLECTION_LIMITS.history.appendChunkPoints) } })
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('provider-metric-history-changed', { detail: { vaultId } }))
 }
 export async function listProviderMetricHistory(query: ProviderMetricHistoryQuery) {

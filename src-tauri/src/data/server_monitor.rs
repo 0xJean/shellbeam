@@ -1,3 +1,4 @@
+use crate::collection_limits::limits;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -5,7 +6,6 @@ use serde_json::Value;
 use crate::storage::data_file_path;
 
 const SERVER_MONITOR_DB: &str = "workspace_inventory.sqlite3";
-const HISTORY_RETENTION_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// Shared renderer/native observation key. Old unscoped rows are not migrated
 /// into a Vault because their original owner cannot be inferred safely.
@@ -369,7 +369,7 @@ fn persist_result(
         .map_err(|err| format!("Save server monitor history failed: {err}"))?;
     }
 
-    let cutoff = payload.latest.updated_at - HISTORY_RETENTION_MS;
+    let cutoff = payload.latest.updated_at - limits().history.monitor_retention_ms;
     tx.execute(
         "DELETE FROM server_monitor_history WHERE sampled_at < ?1",
         params![cutoff],

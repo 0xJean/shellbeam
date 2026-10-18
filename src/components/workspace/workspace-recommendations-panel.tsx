@@ -8,6 +8,7 @@ import { getServerMonitorHostKey } from '@/lib/server-monitor'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { loadLocalAlertState, LOCAL_OPS_CHANGED_EVENT } from '@/lib/local-ops-store'
 import { getWorkspaceRecommendations, type WorkspaceRecommendation } from '@/lib/workspace-recommendations'
+import { COLLECTION_LIMITS } from '@/lib/collection-limits'
 
 export interface WorkspaceRecommendationsPanelProps {
   host: HostProfile | null
@@ -28,11 +29,16 @@ export function WorkspaceRecommendationsPanel({ host, vaultId, onSelectApp, reco
     window.addEventListener('storage', refresh)
     return () => { clearInterval(timer); window.removeEventListener(LOCAL_OPS_CHANGED_EVENT, refresh); window.removeEventListener('storage', refresh) }
   }, [])
-  const monitor = host ? monitors[getServerMonitorHostKey(host)]?.latest : undefined
-  const inventory = host ? inventories[getWorkspaceInventoryHostKey(host)] : undefined
-  const metrics = monitor?.status === 'online' && monitor.snapshot && now - monitor.snapshot.sampledAt <= 5 * 60_000 ? monitor.snapshot : null
-  const assets = inventory?.status === 'ready' && inventory.updatedAt && now - inventory.updatedAt <= 5 * 60_000 ? inventory.inventory : null
-  const alerts = host ? loadLocalAlertState(vaultId ?? host.vaultId, host.id).alerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged') : []
+  const scopedHost = host && (!vaultId || !host.vaultId || host.vaultId === vaultId)
+    ? host.vaultId || !vaultId ? host : { ...host, vaultId }
+    : null
+  const monitor = scopedHost ? monitors[getServerMonitorHostKey(scopedHost)]?.latest : undefined
+  const inventory = scopedHost ? inventories[getWorkspaceInventoryHostKey(scopedHost)] : undefined
+  const metricAge = monitor?.snapshot ? now - monitor.snapshot.sampledAt : Number.NaN
+  const assetAge = inventory?.inventory ? now - inventory.inventory.scannedAt : Number.NaN
+  const metrics = monitor?.status === 'online' && metricAge >= 0 && metricAge <= COLLECTION_LIMITS.cadence.metricsTtlMs ? monitor.snapshot : null
+  const assets = inventory?.status === 'ready' && assetAge >= 0 && assetAge <= COLLECTION_LIMITS.cadence.inventoryTtlMs ? inventory.inventory : null
+  const alerts = scopedHost ? loadLocalAlertState(scopedHost.vaultId, scopedHost.id).alerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged') : []
   const items = recommendations ?? getWorkspaceRecommendations({
     diskUsagePercent: metrics?.diskPercent ?? undefined, cpuUsagePercent: metrics?.cpuPercent ?? undefined,
     memoryUsagePercent: metrics?.memoryPercent ?? undefined,

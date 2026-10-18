@@ -1,9 +1,10 @@
-# Shared Linux read-only collector; consumed by Desktop and native MCP.
+# Shared Linux read-only collector template; rendered from collection-limits.json
+# by Desktop and native MCP. Remote hosts do not need a config/JSON parser.
 sb_clean() { tr '\n|' '  ' | sed 's/[[:space:]][[:space:]]*/ /g' | cut -c 1-180; }
 sb_run() {
-  if command -v timeout >/dev/null 2>&1; then timeout 2 "$@"; else
+  if command -v timeout >/dev/null 2>&1; then timeout __SB_LIMIT_optionalCommandTimeoutSeconds__ "$@"; else
     "$@" & sb_child=$!
-    (sleep 2; kill "$sb_child" 2>/dev/null) & sb_watch=$!
+    (sleep __SB_LIMIT_optionalCommandTimeoutSeconds__; kill "$sb_child" 2>/dev/null) & sb_watch=$!
     wait "$sb_child"; sb_result=$?
     kill "$sb_watch" 2>/dev/null; wait "$sb_watch" 2>/dev/null
     return "$sb_result"
@@ -34,12 +35,12 @@ printf '__SB_PROBE_OS=%s\n' "$(sed -n 's/^PRETTY_NAME=//p' /etc/os-release 2>/de
 printf '__SB_PROBE_UPTIME=%s\n' "$(cut -d ' ' -f 1 /proc/uptime 2>/dev/null)"
 printf '__SB_PROBE_LOAD=%s\n' "$(cat /proc/loadavg 2>/dev/null)"
 awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ {printf "__SB_PROBE_MEM=%s %s\n", $1, $2}' /proc/meminfo 2>/dev/null
-df -Pk 2>/dev/null | head -n 101 | cut -c 1-1024 | sed 's/^/__SB_PROBE_DISK=/'
-df -Pi 2>/dev/null | head -n 101 | cut -c 1-1024 | sed 's/^/__SB_PROBE_INODE=/'
+df -Pk 2>/dev/null | head -n $((__SB_LIMIT_filesystemRows__ + 1)) | cut -c 1-1024 | sed 's/^/__SB_PROBE_DISK=/'
+df -Pi 2>/dev/null | head -n $((__SB_LIMIT_filesystemRows__ + 1)) | cut -c 1-1024 | sed 's/^/__SB_PROBE_INODE=/'
 if [ "${1:-all}" != metrics ]; then
-ss -H -lntu 2>/dev/null | head -n 200 | cut -c 1-240 | sed 's/^/__SB_PROBE_PORT=/'
+ss -H -lntu 2>/dev/null | head -n __SB_LIMIT_portRows__ | cut -c 1-240 | sed 's/^/__SB_PROBE_PORT=/'
 if command -v systemctl >/dev/null 2>&1; then
-  sb_run systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null | head -n 200 | cut -c 1-240 | sed 's/^/__SB_PROBE_SERVICE=/'
+  sb_run systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null | head -n __SB_LIMIT_serviceRows__ | cut -c 1-240 | sed 's/^/__SB_PROBE_SERVICE=/'
 fi
 sb_probe_tool() {
   tool_id="$1"
@@ -58,7 +59,7 @@ sb_probe_tool() {
   fi
   path_value="$(command -v "$found" 2>/dev/null | sb_clean)"
   version_value=""
-  if [ "$(( $(date +%s) - SB_PROBE_STARTED ))" -lt 15 ]; then version_value="$(sb_run "$found" --version 2>&1 | head -n 1 | sb_clean)"; fi
+  if [ "$(( $(date +%s) - SB_PROBE_STARTED ))" -lt __SB_LIMIT_versionBudgetSeconds__ ]; then version_value="$(sb_run "$found" --version 2>&1 | head -n 1 | sb_clean)"; fi
   printf '__SB_PROBE_TOOLDETAIL=%s|%s|%s|%s|%s|%s\n' "$tool_id" "$tool_name" "$category" "$found" "$path_value" "$version_value"
 }
 
@@ -139,7 +140,7 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 if command -v docker >/dev/null 2>&1; then
-  sb_run docker ps -a --format '__SB_PROBE_DOCKERDETAIL={{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.ID}}' 2>/dev/null | head -n 100 | cut -c 1-1024
+  sb_run docker ps -a --format '__SB_PROBE_DOCKERDETAIL={{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.ID}}' 2>/dev/null | head -n __SB_LIMIT_containerRows__ | cut -c 1-1024
 fi
 
 if [ -r "$HOME/.pm2/dump.pm2" ]; then
@@ -160,13 +161,13 @@ sb_project_kind() {
 
 sb_json_project_name() {
   if command -v python3 >/dev/null 2>&1; then
-    head -c 65536 "$1" | python3 -I -c 'import json,sys
+    head -c __SB_LIMIT_manifestReadBytes__ "$1" | python3 -I -c 'import json,sys
 try:
- value=json.loads(sys.stdin.read(65536)).get("name")
+ value=json.loads(sys.stdin.read(__SB_LIMIT_manifestReadBytes__)).get("name")
  if isinstance(value,str): sys.stdout.write(value[:180])
 except (ValueError,AttributeError): pass' 2>/dev/null | sb_clean
   else
-    head -c 65536 "$1" | sed -n 's/^[[:space:]]*"name"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' 2>/dev/null | head -n 1 | sb_clean
+    head -c __SB_LIMIT_manifestReadBytes__ "$1" | sed -n 's/^[[:space:]]*"name"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' 2>/dev/null | head -n 1 | sb_clean
   fi
 }
 
@@ -213,9 +214,9 @@ sb_project_root() {
 
 for root in /var/www /srv /opt /home; do
   if [ -d "$root" ]; then
-    find "$root" -maxdepth 4 -type f \( -name package.json -o -name docker-compose.yml -o -name docker-compose.yaml -o -name compose.yml -o -name compose.yaml -o -name go.mod -o -name pyproject.toml -o -name requirements.txt -o -name composer.json -o -name Cargo.toml \) 2>/dev/null | head -n 30
+    find "$root" -maxdepth __SB_LIMIT_projectDepth__ -type f \( -name package.json -o -name docker-compose.yml -o -name docker-compose.yaml -o -name compose.yml -o -name compose.yaml -o -name go.mod -o -name pyproject.toml -o -name requirements.txt -o -name composer.json -o -name Cargo.toml \) 2>/dev/null | head -n __SB_LIMIT_projectRowsPerRoot__
   fi
-done | head -n 80 | while IFS= read -r marker; do
+done | head -n __SB_LIMIT_projectManifestRows__ | while IFS= read -r marker; do
   project_dir="$(sb_project_root "$(dirname "$marker")")"
   marker_name="$(basename "$marker")"
   project_kind="$(sb_project_kind "$marker_name")"

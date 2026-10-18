@@ -177,6 +177,36 @@ describe('buildHostOpsViews', () => {
     expect(views['host-1'].health.freshness.stale).toBe(true)
   })
 
+  it('does not wash old selected metrics fresh with a new inventory or inventory attempt', () => {
+    const now = 3_601_000
+    const currentInventory = { ...inventoryCache['host-1'].inventory, scannedAt: now }
+    const view = buildHostOpsViews({
+      hosts: [host], monitorLatest: [monitor],
+      inventoryCache: { 'host-1': { inventory: currentInventory, updatedAt: now } },
+      now,
+    })[host.id]
+    expect(view.metrics?.sampledAt).toBe(1_000)
+    expect(view.health).toMatchObject({ state: 'stale', provider: 'ssh-agentless', lastSuccessAt: 1_000 })
+    expect(view.health.freshness).toMatchObject({ sampledAt: 1_000, updatedAt: 1_000, ageMs: 3_600_000, stale: true })
+    expect(view.inventory?.scannedAt).toBe(now)
+  })
+
+  it('retains the selected metric Provider TTL independently of inventory freshness', () => {
+    const source = { kind: 'ssh-agentless' as const, id: 'ssh-agentless', capabilities: ['metrics' as const] }
+    const probe: ProbeSnapshot = { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username }, provider: source, transport: 'proxy-jump', health: 'online', receivedAt: 1_000, metrics: createProbeObservation({ data: monitor.snapshot!, source, sampledAt: 1_000, receivedAt: 1_000, ttlMs: 200 }), inventory: null, errors: [] }
+    const view = buildHostOpsViews({ hosts: [host], monitorLatest: [monitor], probeSnapshots: [probe], inventoryCache: { 'host-1': { ...inventoryCache['host-1'], updatedAt: 1_300, inventory: { ...inventoryCache['host-1'].inventory, scannedAt: 1_300 } } }, now: 1_300, staleAfterMs: 5_000 })[host.id]
+    expect(view.health.state).toBe('stale')
+    expect(view.health.freshness).toMatchObject({ sampledAt: 1_000, ageMs: 300, ttlMs: 200, expiresAt: 1_200, stale: true })
+  })
+
+  it.each([0, Number.NaN, 20_000])('keeps invalid metric sample time %s unknown instead of borrowing inventory time', (sampledAt) => {
+    const now = 10_000
+    const view = buildHostOpsViews({ hosts: [host], monitorLatest: [{ ...monitor, snapshot: { ...monitor.snapshot!, sampledAt } }], inventoryCache: { 'host-1': { ...inventoryCache['host-1'], updatedAt: now, inventory: { ...inventoryCache['host-1'].inventory, scannedAt: now } } }, now })[host.id]
+    expect(view.health.state).toBe('unknown')
+    expect(view.health.freshness).toMatchObject({ sampledAt: null, ageMs: null, ttlMs: null, expiresAt: null })
+    expect(view.metrics?.memoryPercent).toBe(10)
+  })
+
   it('keeps in-memory ProbeProvider telemetry visible before snapshot persistence completes', () => {
     const view = buildHostOpsViews({
       hosts: [host],

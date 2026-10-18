@@ -1,3 +1,4 @@
+import { matchesHostSearch } from '@/lib/host-search'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { HostOpsAdvancedFilters } from '@/components/host-ops-filters'
 import { DEFAULT_HOST_OPS_FILTERS, matchesHostOpsFilters, type HostOpsFilters } from '@/lib/host-ops-filters'
@@ -864,14 +865,7 @@ export function HostsDashboard({
     if (q) {
       filtered = hosts.filter(
         (h) =>
-          h.name.toLowerCase().includes(q) ||
-          h.address.toLowerCase().includes(q) ||
-          (h.username && h.username.toLowerCase().includes(q)) ||
-          (h.jumpHost && h.jumpHost.toLowerCase().includes(q)) ||
-          (h.jumpUser && h.jumpUser.toLowerCase().includes(q)) ||
-          (h.jumpPort && String(h.jumpPort).includes(q)) ||
-          (h.group && h.group.toLowerCase().includes(q)) ||
-          (h.tags && h.tags.some((tag) => tag.toLowerCase().includes(q))) ||
+          matchesHostSearch(h, q, hosts) ||
           (agentDeploymentsByHost.get(h.id)?.some((deployment) => [deployment.name, deployment.deploymentPath, deployment.status].filter(Boolean).join(' ').toLowerCase().includes(q)) ?? false)
       )
     }
@@ -1156,6 +1150,7 @@ export function HostsDashboard({
                     isSelected={selectedHostId === host.id}
                     status={getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)}
                     resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}
+                    metrics={hostOpsViews[host.id]?.metrics ?? undefined}
                     operations={operationalSummaryByHost.get(host.id)}
                     network={networkByAddress[host.address]}
                     agentDeploymentCount={agentDeploymentsByHost.get(host.id)?.length ?? 0}
@@ -1220,6 +1215,7 @@ export function HostsDashboard({
                           isSelected={selectedHostId === host.id}
                           status={getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)}
                           resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}
+                          metrics={hostOpsViews[host.id]?.metrics ?? undefined}
                           operations={operationalSummaryByHost.get(host.id)}
                           network={networkByAddress[host.address]}
                           agentDeploymentCount={agentDeploymentsByHost.get(host.id)?.length ?? 0}

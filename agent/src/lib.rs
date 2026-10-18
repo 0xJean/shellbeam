@@ -397,7 +397,7 @@ pub fn collect() -> Value {
     } else {
         Vec::new()
     };
-    let inventory = json!({ "resource": { "hostname":hostname,"os":os,"kernel":kernel,"uptime":uptime.map(|s| format!("{}s",s as u64)).unwrap_or_default(),"cpuPercent":cpu_percent,"memoryPercent":percentage(memory_used,memory_total),"memoryText":memory_used.zip(memory_total).map(|(u,t)| format!("{u}/{t} B")).unwrap_or_default(),"diskPercent":percentage(disk_used,disk_total),"diskText":disk_used.zip(disk_total).map(|(u,t)| format!("{u}/{t} B")).unwrap_or_default(),"network":rate.map(|(rx,tx)|format!("{:.0} B/s",rx+tx)).unwrap_or_default() }, "tools":tools,"services":services,"containers":[],"pm2":[],"projects":[],"scannedAt":sampled_at });
+    let inventory = json!({ "resource": { "hostname":hostname,"os":os,"kernel":kernel,"arch":std::env::consts::ARCH,"uptime":uptime.map(|s| format!("{}s",s as u64)).unwrap_or_default(),"cpuPercent":cpu_percent,"memoryPercent":percentage(memory_used,memory_total),"memoryText":memory_used.zip(memory_total).map(|(u,t)| format!("{u}/{t} B")).unwrap_or_default(),"diskPercent":percentage(disk_used,disk_total),"diskText":disk_used.zip(disk_total).map(|(u,t)| format!("{u}/{t} B")).unwrap_or_default(),"network":rate.map(|(rx,tx)|format!("{:.0} B/s",rx+tx)).unwrap_or_default() }, "tools":tools,"services":services,"containers":[],"pm2":[],"projects":[],"scannedAt":sampled_at });
     let observed = cpu_percent.is_some() || memory_total.is_some() || disk_total.is_some();
     json!({"schemaVersion":1,"agentId":format!("shellbeam-agent-{hostname}"),"version":VERSION,"status":"installed","health":if observed {"online"} else {"unknown"},"capabilities":["heartbeat","metrics","inventory"],"lastHeartbeatAt":sampled_at,"heartbeatTtlMs":180000,"serviceName":"shellbeam-agent","sampledAt":sampled_at,"metrics":metrics,"inventory":inventory,"errors":if observed {Vec::<Value>::new()} else {vec![json!({"section":"provider","code":"collection_unavailable","message":"No metric source was readable"})]}})
 }
@@ -788,6 +788,7 @@ mod tests {
         assert!(value["metrics"]["memoryTotalBytes"].as_u64().unwrap() > 0);
         assert!(value["metrics"]["diskTotalBytes"].as_u64().unwrap() > 0);
         assert!(value["inventory"]["resource"]["hostname"].is_string());
+        assert_eq!(value["inventory"]["resource"]["arch"], std::env::consts::ARCH);
         assert!(value["metrics"]["latencyMs"].is_null());
     }
     #[test]

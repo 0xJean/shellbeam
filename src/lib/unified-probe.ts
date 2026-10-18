@@ -1,3 +1,4 @@
+import { COLLECTION_LIMITS, renderProbeCollector } from './collection-limits'
 import type { VerifiedHostKey } from './sessions'
 import collectorScript from '../../shared/probe-collector.sh?raw'
 import type { ServerMonitorSnapshot } from './server-monitor'
@@ -21,11 +22,11 @@ export function isUnsupportedProbeError(error: unknown) {
 }
 
 export const UNIFIED_PROBE_SCHEMA_VERSION = 1
-export const UNIFIED_PROBE_OUTPUT_LIMIT = 256 * 1024
+export const UNIFIED_PROBE_OUTPUT_LIMIT = COLLECTION_LIMITS.remote.outputBytes
 export function buildUnifiedProbeCommand(section: 'metrics' | 'inventory' | 'all' = 'all') {
   if (!['metrics', 'inventory', 'all'].includes(section)) throw new Error('PROBE_SECTION_INVALID')
   const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
-  return `sh -c ${quote(collectorScript)} shellbeam-probe ${section}`
+  return `sh -c ${quote(renderProbeCollector(collectorScript))} shellbeam-probe ${section}`
 }
 export interface UnifiedProbeResult {
   hostIdentity?: HostIdentity
@@ -75,16 +76,16 @@ export function parseUnifiedProbeOutput(output: string, receivedAt = Date.now())
       const multiplier = key === 'DISK' ? 1024 : 1
       const amount = (index: number) => { const value = number(parts[index]); return value === null ? null : value * multiplier }
       const rows = key === 'DISK' ? filesystems : inodes
-      if (rows.length < 100) rows.push({ device: parts[0], total: amount(1), used: amount(2), available: amount(3), usedPercent: percent(number(parts[4].replace('%', ''))), mount: parts.slice(5).join(' '), unit: key === 'DISK' ? 'bytes' : 'inodes' })
+      if (rows.length < COLLECTION_LIMITS.collector.filesystemRows) rows.push({ device: parts[0], total: amount(1), used: amount(2), available: amount(3), usedPercent: percent(number(parts[4].replace('%', ''))), mount: parts.slice(5).join(' '), unit: key === 'DISK' ? 'bytes' : 'inodes' })
       continue
     }
-    if (key === 'PORT' && listeningPorts.length < 200) listeningPorts.push(value)
-    if (key === 'TOOLDETAIL' && tools.length < 100) { const [id, name, category, binary, path, version = ''] = value.split('|'); if (id && name) tools.push({ id, name, category, binary, path, version }) }
-    if (key === 'SERVICE' && services.size < 200) { const [name, , active] = parts; if (name) services.set(name, { name, active: active ?? 'unknown', enabled: 'unknown' }) }
-    if (key === 'SERVICEDETAIL') { const [name, active, enabled] = value.split('|'); if (name) services.set(name, { name, active: active || 'unknown', enabled: enabled || 'unknown' }) }
-    if (key === 'DOCKERDETAIL' && containers.length < 100) { const [name, image, status, ports = ''] = value.split('|'); if (name) containers.push({ name, image, status, ports }) }
-    if (key === 'PROJECTDETAIL' && projects.length < 100) { const [path, kind, name, modifiedAt = ''] = value.split('|'); if (path) projects.push({ path, kind, name, modifiedAt }) }
-    if (key === 'PM2' && pm2.length < 25) pm2.push({ raw: value })
+    if (key === 'PORT' && listeningPorts.length < COLLECTION_LIMITS.collector.portRows) listeningPorts.push(value)
+    if (key === 'TOOLDETAIL' && tools.length < COLLECTION_LIMITS.collector.toolRows) { const [id, name, category, binary, path, version = ''] = value.split('|'); if (id && name) tools.push({ id, name, category, binary, path, version }) }
+    if (key === 'SERVICE' && services.size < COLLECTION_LIMITS.collector.serviceRows) { const [name, , active] = parts; if (name) services.set(name, { name, active: active ?? 'unknown', enabled: 'unknown' }) }
+    if (key === 'SERVICEDETAIL' && (services.size < COLLECTION_LIMITS.collector.serviceDetailRows || services.has(value.split('|')[0]))) { const [name, active, enabled] = value.split('|'); if (name) services.set(name, { name, active: active || 'unknown', enabled: enabled || 'unknown' }) }
+    if (key === 'DOCKERDETAIL' && containers.length < COLLECTION_LIMITS.collector.containerRows) { const [name, image, status, ports = ''] = value.split('|'); if (name) containers.push({ name, image, status, ports }) }
+    if (key === 'PROJECTDETAIL' && projects.length < COLLECTION_LIMITS.collector.projectRows) { const [path, kind, name, modifiedAt = ''] = value.split('|'); if (path) projects.push({ path, kind, name, modifiedAt }) }
+    if (key === 'PM2' && pm2.length < COLLECTION_LIMITS.collector.pm2Rows) pm2.push({ raw: value })
   }
   if (sampledAt === null) throw new Error('PROBE_INVALID_SAMPLE_TIME')
   const capacityNumber = (key: string) => typeof capacity[key] === 'number' ? capacity[key] as number : null
@@ -101,14 +102,14 @@ export function parseUnifiedProbeOutput(output: string, receivedAt = Date.now())
     networkRxBytesPerSec: capacityNumber('networkRxBytesPerSec'), networkTxBytesPerSec: capacityNumber('networkTxBytesPerSec'), latencyMs: null, sampledAt,
   }
   const inventory = normalizeWorkspaceInventory({
-    resource: { hostname: metrics.hostname, os: metrics.os, kernel: metrics.kernel, uptime: metrics.uptimeSeconds === null ? '' : `${metrics.uptimeSeconds}s`, cpuPercent: metrics.cpuPercent, memoryPercent: metrics.memoryPercent, memoryText: memoryUsed === null || memoryTotal === null ? '' : `${memoryUsed}/${memoryTotal} B`, diskPercent: metrics.diskPercent, diskText: metrics.diskUsedBytes === null || metrics.diskTotalBytes === null ? '' : `${metrics.diskUsedBytes}/${metrics.diskTotalBytes} B`, network: metrics.networkRxBytesPerSec === null || metrics.networkTxBytesPerSec === null ? '' : `${metrics.networkRxBytesPerSec}/${metrics.networkTxBytesPerSec} B/s` },
+    resource: { hostname: metrics.hostname, os: metrics.os, kernel: metrics.kernel, arch: clean(capacity.arch as string) || null, uptime: metrics.uptimeSeconds === null ? '' : `${metrics.uptimeSeconds}s`, cpuPercent: metrics.cpuPercent, memoryPercent: metrics.memoryPercent, memoryText: memoryUsed === null || memoryTotal === null ? '' : `${memoryUsed}/${memoryTotal} B`, diskPercent: metrics.diskPercent, diskText: metrics.diskUsedBytes === null || metrics.diskTotalBytes === null ? '' : `${metrics.diskUsedBytes}/${metrics.diskTotalBytes} B`, network: metrics.networkRxBytesPerSec === null || metrics.networkTxBytesPerSec === null ? '' : `${metrics.networkRxBytesPerSec}/${metrics.networkTxBytesPerSec} B/s` },
     tools, services: [...services.values()], containers, projects, pm2, scannedAt: sampledAt, listeningPorts, filesystems, inodes,
   })
   return { metrics, inventory, capacity, filesystems, inodes, listeningPorts }
 }
 
 export async function fetchUnifiedProbe(options: { vaultId?: string; host: HostProfile; resolveAuthSecret: (host: HostProfile) => Promise<string>; section?: 'metrics' | 'inventory' | 'all' }): Promise<UnifiedProbeResult> {
-  const result = await runWorkspaceRemoteCommand({ ...options, command: buildUnifiedProbeCommand(options.section ?? 'all'), audit: { action: 'probe.collect', target: `host ${options.section ?? 'metrics and inventory'}` } })
+  const result = await runWorkspaceRemoteCommand({ ...options, timeoutMs: COLLECTION_LIMITS.remote.collectorTimeoutMs, command: buildUnifiedProbeCommand(options.section ?? 'all'), audit: { action: 'probe.collect', target: `host ${options.section ?? 'metrics and inventory'}` } })
   const unsupported = result.stdout.match(/^__SB_PROBE_UNSUPPORTED_OS=([^\r\n]{1,80})$/m)?.[1]
   if (result.exitCode === 2 && unsupported) throw new UnsupportedProbeError(unsupported, result.hostIdentity, result.verifiedHostKeys)
   if (result.exitCode !== 0) throw new Error(result.errorCode || result.errorType || 'PROBE_COLLECTION_FAILED')

@@ -23,6 +23,7 @@ export async function runWorkspaceRemoteCommand(options: {
   host: HostProfile
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   command: string
+  timeoutMs?: number
   vaultId?: string
   audit?: { action: string; target: string }
 }): Promise<CommandRunResult> {
@@ -42,7 +43,7 @@ export async function runWorkspaceRemoteCommand(options: {
     return execution.value
   }
   if (host.id && vaultId) {
-    return runSshCommand({ vaultId, hostId: host.id, host: '', port: 22, username: '', authType: host.authType, command })
+    return runSshCommand({ vaultId, hostId: host.id, host: '', port: 22, username: '', authType: host.authType, command, ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}) })
   }
   const secret = await resolveAuthSecret(host)
 
@@ -58,5 +59,6 @@ export async function runWorkspaceRemoteCommand(options: {
     jumpPort: host.jumpPort,
     jumpUser: host.jumpUser,
     command,
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
   })
 }

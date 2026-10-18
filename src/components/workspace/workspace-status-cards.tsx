@@ -1,12 +1,13 @@
 import type { HostProfile } from '@/lib/hosts'
 import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
 import { useServerMonitorStates } from '@/lib/server-monitor-state'
-import type { ServerMonitorSnapshot, ServerMonitorStatus } from '@/lib/server-monitor'
+import { getServerMonitorHostKey, type ServerMonitorSnapshot, type ServerMonitorStatus } from '@/lib/server-monitor'
 import { t } from '@/lib/i18n'
 import { listPersistedProbeSnapshots } from '@/lib/probe-persistence'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
 import { ShellbeamAgentPanel } from './shellbeam-agent-panel'
 import { useEffect, useState } from 'react'
+import { COLLECTION_LIMITS } from '@/lib/collection-limits'
 
 interface WorkspaceStatusCardsProps {
   activeVaultId?: string
@@ -24,8 +25,8 @@ const STATUS_CARDS = [
   { key: 'network', labelKey: 'workspace.status.network', accent: 'from-[var(--workspace-metric-network-from)] to-[var(--workspace-metric-network-to)]', glow: 'bg-[var(--workspace-metric-network-glow)]' },
 ] as const
 
-function formatBytesPerSecond(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return null
+function formatBytesPerSecond(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return null
   const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
   let next = Math.max(0, value)
   let index = 0
@@ -56,9 +57,10 @@ function statusTone(status: ServerMonitorStatus | undefined) {
 
 function getCardValue(key: (typeof STATUS_CARDS)[number]['key'], snapshot: ServerMonitorSnapshot | null) {
   if (!snapshot) return { value: null, percent: null }
-  if (key === 'cpu') return { value: snapshot.cpuPercent === null ? null : `${Math.round(snapshot.cpuPercent)}%`, percent: snapshot.cpuPercent }
-  if (key === 'memory') return { value: snapshot.memoryPercent === null ? null : `${Math.round(snapshot.memoryPercent)}%`, percent: snapshot.memoryPercent }
-  if (key === 'disk') return { value: snapshot.diskPercent === null ? null : `${Math.round(snapshot.diskPercent)}%`, percent: snapshot.diskPercent }
+  if (key !== 'network') {
+    const value = snapshot[key === 'cpu' ? 'cpuPercent' : key === 'memory' ? 'memoryPercent' : 'diskPercent']
+    return value == null || !Number.isFinite(value) ? { value: null, percent: null } : { value: `${Math.round(value)}%`, percent: value }
+  }
   const rx = formatBytesPerSecond(snapshot.networkRxBytesPerSec)
   const tx = formatBytesPerSecond(snapshot.networkTxBytesPerSec)
   if (!rx && !tx) return { value: null, percent: null }
@@ -68,11 +70,23 @@ function getCardValue(key: (typeof STATUS_CARDS)[number]['key'], snapshot: Serve
 export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
   const { hostAddress, selectedHostId = null, hosts = [] } = props
   const monitorStates = useServerMonitorStates()
-  const host = resolveWorkspaceMetricsHost(hosts, { selectedHostId, hostAddress })
-  const monitor = host ? monitorStates[host.id || `${host.username}@${host.address}:${host.port || 22}`] : undefined
+  const host = resolveWorkspaceMetricsHost(hosts, { selectedHostId, hostAddress, vaultId: props.activeVaultId })
+  const monitor = host ? monitorStates[getServerMonitorHostKey(host)] : undefined
   const latest = monitor?.latest
   const snapshot = latest?.snapshot ?? null
-  const status = latest?.status
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
+  // A persisted online flag cannot keep an old sample live indefinitely. The
+  // monitor explicitly samples SSH metrics; unrelated inventory updates never
+  // extend this collector's freshness budget.
+  const sampleTime = snapshot?.sampledAt
+  const validSample = typeof sampleTime === 'number' && Number.isFinite(sampleTime) && sampleTime > 0 && sampleTime <= now
+  const status = latest?.status === 'online'
+    ? !validSample ? 'checking' : now - sampleTime > COLLECTION_LIMITS.cadence.metricsTtlMs ? 'stale' : 'online'
+    : latest?.status
   const telemetryKey = props.activeVaultId && host?.id ? `${props.activeVaultId}:${host.id}` : null
   const [persistedTelemetryState, setPersistedTelemetryState] = useState<{ key: string; telemetry: ProbeProviderTelemetry | null } | null>(null)
 

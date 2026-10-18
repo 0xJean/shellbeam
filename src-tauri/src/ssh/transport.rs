@@ -952,7 +952,8 @@ mod tests {
         assert_eq!(result.error_code.as_deref(), Some("output_limit"));
         assert_ne!(result.exit_code, 0);
         assert!(
-            result.stdout.len() + result.stderr.len() < super::super::commands::REMOTE_OUTPUT_LIMIT
+            result.stdout.len() + result.stderr.len()
+                < super::super::commands::remote_output_limit()
         );
     }
     #[test]

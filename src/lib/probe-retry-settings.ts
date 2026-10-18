@@ -1,3 +1,4 @@
+import { COLLECTION_LIMITS } from './collection-limits'
 /**
  * User-controlled defaults for ProbeProvider recovery.  Request-level values
  * still take precedence, while this small preference keeps monitor,
@@ -11,7 +12,7 @@ import {
 } from './probe-scheduler-constants'
 
 export const PROBE_RETRY_SETTINGS_STORAGE_KEY = 'shellbeam.probeRetrySettings.v1'
-export const MAX_PROBE_RECOVERY_RETRIES = 5
+export const MAX_PROBE_RECOVERY_RETRIES = COLLECTION_LIMITS.scheduler.maxRetries
 
 export interface ProbeRetrySettings {
   maxRetries: number

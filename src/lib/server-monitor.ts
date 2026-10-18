@@ -1,3 +1,4 @@
+import { COLLECTION_LIMITS } from './collection-limits'
 import type { HostProfile } from '@/lib/hosts'
 import { getHostObservationKey, type ObservationHost } from './host-observation-scope'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
@@ -221,6 +222,7 @@ export async function fetchServerMonitorSnapshot(options: {
     host: options.host,
     resolveAuthSecret: options.resolveAuthSecret,
     command: SERVER_MONITOR_COMMAND,
+    timeoutMs: COLLECTION_LIMITS.remote.collectorTimeoutMs,
     audit: { action: 'probe.metrics', target: 'host metrics' },
     vaultId: options.vaultId,
   })

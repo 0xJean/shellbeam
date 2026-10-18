@@ -10,6 +10,14 @@ on:
         type: choice
         options: [stable, preview, canary]
         default: stable
+      rollout_percentage:
+        description: Signed rollout percentage (integer 0-100; installation still requires confirmation)
+        type: number
+        default: 100
+      previous_hashes:
+        description: Optional JSON object mapping artifact IDs to their previous executable SHA-256
+        type: string
+        default: '{}'
 permissions:
   contents: read
 jobs:
@@ -75,9 +83,11 @@ jobs:
           AGENT_RELEASE_SIGNING_KEY_PEM: ${{ secrets.AGENT_RELEASE_SIGNING_KEY_PEM }}
           AGENT_RELEASE_VERSION: ${{ inputs.version }}
           AGENT_RELEASE_CHANNEL: ${{ inputs.channel }}
+          AGENT_ROLLOUT_PERCENTAGE: ${{ inputs.rollout_percentage }}
+          AGENT_PREVIOUS_HASHES: ${{ inputs.previous_hashes }}
         run: |
           node --test agent/scripts/publish-release.test.mjs
-          node agent/scripts/publish-release.mjs --input-dir agent/dist --output agent/dist/release-catalog.json --version "$AGENT_RELEASE_VERSION" --channel "$AGENT_RELEASE_CHANNEL" --base-url "https://github.com/${{ github.repository }}/releases/download/agent-v$AGENT_RELEASE_VERSION"
+          node agent/scripts/publish-release.mjs --input-dir agent/dist --output agent/dist/release-catalog.json --version "$AGENT_RELEASE_VERSION" --channel "$AGENT_RELEASE_CHANNEL" --rollout-percentage "$AGENT_ROLLOUT_PERCENTAGE" --previous-hashes "$AGENT_PREVIOUS_HASHES" --base-url "https://github.com/${{ github.repository }}/releases/download/agent-v$AGENT_RELEASE_VERSION"
       - name: Create reviewable release draft
         env:
           GH_TOKEN: ${{ github.token }}

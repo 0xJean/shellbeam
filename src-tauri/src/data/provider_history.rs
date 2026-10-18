@@ -1,12 +1,10 @@
 //! Bounded, vault/host/provider/node scoped metric history. This stores only a
 //! whitelisted metric observation, never API responses, credentials or commands.
+use crate::collection_limits::limits;
 use crate::storage::{data_file_path, now_unix_ms};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-const RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
-const MAX_SERIES_POINTS: i64 = 10080;
-const MAX_TOTAL_POINTS: i64 = 100000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetricHistoryPoint {
@@ -109,7 +107,7 @@ fn metrics(value: &Value, sampled_at: i64) -> Result<Value, String> {
 }
 fn append(conn: &mut Connection, payload: &MetricHistoryBatch, now: i64) -> Result<(), String> {
     let vault = id(&payload.vault_id)?;
-    if payload.points.len() > 10000 {
+    if payload.points.len() > limits().history.max_batch_points {
         return Err("history_batch_too_large".into());
     }
     let tx = conn
@@ -131,7 +129,7 @@ fn append(conn: &mut Connection, payload: &MetricHistoryBatch, now: i64) -> Resu
         {
             return Err("history_timestamp_invalid".into());
         }
-        if point.sampled_at < now.saturating_sub(RETENTION_MS) {
+        if point.sampled_at < now.saturating_sub(limits().history.retention_ms) {
             continue;
         }
         let safe = metrics(&point.metrics, point.sampled_at)?;
@@ -144,12 +142,12 @@ fn append(conn: &mut Connection, payload: &MetricHistoryBatch, now: i64) -> Resu
     }
     tx.execute(
         "DELETE FROM provider_metric_history WHERE sampled_at<?1",
-        params![now.saturating_sub(RETENTION_MS)],
+        params![now.saturating_sub(limits().history.retention_ms)],
     )
     .map_err(|_| "history_retention_failed")?;
     // Retention is global as well as per series, so a large fleet cannot grow this cache indefinitely.
-    tx.execute("DELETE FROM provider_metric_history WHERE rowid IN (SELECT rowid FROM (SELECT rowid,ROW_NUMBER() OVER (PARTITION BY vault_id,provider_kind,provider_id,host_id,node_id ORDER BY sampled_at DESC) AS rank FROM provider_metric_history) WHERE rank>?1)",params![MAX_SERIES_POINTS]).map_err(|_|"history_retention_failed")?;
-    tx.execute("DELETE FROM provider_metric_history WHERE rowid IN (SELECT rowid FROM provider_metric_history ORDER BY sampled_at DESC LIMIT -1 OFFSET ?1)",params![MAX_TOTAL_POINTS]).map_err(|_|"history_retention_failed")?;
+    tx.execute("DELETE FROM provider_metric_history WHERE rowid IN (SELECT rowid FROM (SELECT rowid,ROW_NUMBER() OVER (PARTITION BY vault_id,provider_kind,provider_id,host_id,node_id ORDER BY sampled_at DESC) AS rank FROM provider_metric_history) WHERE rank>?1)",params![limits().history.max_series_points]).map_err(|_|"history_retention_failed")?;
+    tx.execute("DELETE FROM provider_metric_history WHERE rowid IN (SELECT rowid FROM provider_metric_history ORDER BY sampled_at DESC LIMIT -1 OFFSET ?1)",params![limits().history.max_total_points]).map_err(|_|"history_retention_failed")?;
     tx.commit().map_err(|_| "history_commit_failed".into())
 }
 fn list(
@@ -163,33 +161,46 @@ fn list(
     let to = query.to.unwrap_or(now).min(now.saturating_add(300000));
     let from = query
         .from
-        .unwrap_or(to.saturating_sub(24 * 60 * 60 * 1000))
-        .max(now.saturating_sub(RETENTION_MS));
+        .unwrap_or(to.saturating_sub(limits().history.default_query_range_ms))
+        .max(now.saturating_sub(limits().history.retention_ms));
     if from > to {
         return Err("history_range_invalid".into());
     }
-    let limit = query.limit.unwrap_or(1000).clamp(2, 4000);
+    let limit = query
+        .limit
+        .unwrap_or(limits().history.default_query_points)
+        .clamp(2, limits().history.max_query_points);
     // Read a bounded host slice ordered across the requested window, then
     // evenly downsample each source to preserve coverage and null gaps.
-    let mut statement=conn.prepare("SELECT provider_kind,provider_id,host_id,node_id,sampled_at,received_at,expires_at,metrics_json,confidence FROM provider_metric_history WHERE vault_id=?1 AND host_id=?2 AND (?3 IS NULL OR provider_id=?3) AND sampled_at>=?4 AND sampled_at<=?5 ORDER BY sampled_at ASC LIMIT 100000").map_err(|_|"history_query_failed")?;
+    let mut statement=conn.prepare("SELECT provider_kind,provider_id,host_id,node_id,sampled_at,received_at,expires_at,metrics_json,confidence FROM provider_metric_history WHERE vault_id=?1 AND host_id=?2 AND (?3 IS NULL OR provider_id=?3) AND sampled_at>=?4 AND sampled_at<=?5 ORDER BY sampled_at ASC LIMIT ?6").map_err(|_|"history_query_failed")?;
     let rows = statement
-        .query_map(params![vault, host, provider, from, to], |row| {
-            Ok(MetricHistoryPoint {
-                provider_kind: row.get(0)?,
-                provider_id: row.get(1)?,
-                host_id: row.get(2)?,
-                node_id: row.get(3)?,
-                sampled_at: row.get(4)?,
-                received_at: row.get(5)?,
-                expires_at: row.get(6)?,
-                metrics: serde_json::from_str(&row.get::<_, String>(7)?)
-                    .unwrap_or_else(|_| json!({})),
-                confidence: row.get(8)?,
-                history_partial: None,
-                total_series: None,
-                gap_before: None,
-            })
-        })
+        .query_map(
+            params![
+                vault,
+                host,
+                provider,
+                from,
+                to,
+                limits().history.max_total_points
+            ],
+            |row| {
+                Ok(MetricHistoryPoint {
+                    provider_kind: row.get(0)?,
+                    provider_id: row.get(1)?,
+                    host_id: row.get(2)?,
+                    node_id: row.get(3)?,
+                    sampled_at: row.get(4)?,
+                    received_at: row.get(5)?,
+                    expires_at: row.get(6)?,
+                    metrics: serde_json::from_str(&row.get::<_, String>(7)?)
+                        .unwrap_or_else(|_| json!({})),
+                    confidence: row.get(8)?,
+                    history_partial: None,
+                    total_series: None,
+                    gap_before: None,
+                })
+            },
+        )
         .map_err(|_| "history_query_failed")?;
     let mut series =
         std::collections::BTreeMap::<(String, String, String), Vec<MetricHistoryPoint>>::new();
@@ -376,7 +387,7 @@ mod tests {
     fn retention_and_future_timestamps_are_enforced() {
         let mut conn = Connection::open_in_memory().unwrap();
         schema(&conn).unwrap();
-        let now = RETENTION_MS + 100000;
+        let now = limits().history.retention_ms + 100000;
         let old = point(1);
         let mut recent = point(now - 100);
         recent.received_at = now;

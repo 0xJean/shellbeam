@@ -83,9 +83,11 @@ export function parseWorkspaceMetrics(output: string): WorkspaceMetrics {
 
 export function resolveWorkspaceMetricsHost(
   hosts: HostProfile[],
-  options: { selectedHostId?: string | null; hostAddress?: string | null },
+  options: { selectedHostId?: string | null; hostAddress?: string | null; vaultId?: string },
 ) {
-  return resolveWorkspaceHost(hosts, options)
+  const eligible = options.vaultId ? hosts.filter((host) => !host.vaultId || host.vaultId === options.vaultId) : hosts
+  const host = resolveWorkspaceHost(eligible, options)
+  return host && options.vaultId && !host.vaultId ? { ...host, vaultId: options.vaultId } : host
 }
 
 function buildWorkspaceMetricsError(result: { stderr?: string; exitCode?: number; errorType?: string; errorCode?: string }) {

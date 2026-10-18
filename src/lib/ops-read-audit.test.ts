@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { runSshCommand } from './sessions'
 import { runSiteOperation, runSiteSslScan } from './sites-ssl'
 import type { HostProfile } from './hosts'
+import { runWorkspaceRemoteCommand } from './workspace-remote'
+import { COLLECTION_LIMITS } from './collection-limits'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('./sessions', () => ({ runSshCommand: vi.fn() }))
@@ -17,6 +19,15 @@ beforeEach(() => {
 })
 afterEach(() => vi.restoreAllMocks())
 describe('External read and internal post-state audit boundaries', () => {
+  it('preserves a shortened collector deadline through the single audited call and keeps timeout outcome unknown', async () => {
+    vi.mocked(runSshCommand).mockResolvedValueOnce({ ...result(), exitCode: -1, errorType: 'network', errorCode: 'target_timeout' })
+    const observed = await runWorkspaceRemoteCommand({ host, resolveAuthSecret: vi.fn(), command: 'read-only probe', timeoutMs: COLLECTION_LIMITS.remote.collectorTimeoutMs, audit: { action: 'probe.collect', target: 'host all' } })
+    expect(observed.errorCode).toBe('target_timeout')
+    expect(runSshCommand).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ vaultId: 'vault-b', hostId: host.id, timeoutMs: COLLECTION_LIMITS.remote.collectorTimeoutMs }))
+    expect(createCalls()).toHaveLength(1)
+    expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({ status: 'unknown', errorCode: 'target_timeout' }) })
+    expect(window.confirm).not.toHaveBeenCalled()
+  })
   it('journals a manual site scan through the actual Workspace helper in its saved Vault without prompting', async () => {
     vi.mocked(runSshCommand).mockResolvedValueOnce(result('__SB_SITE=nginx|app.example||||app.example|configured'))
     const resolveAuthSecret = vi.fn(async () => 'never-transfer-secret')

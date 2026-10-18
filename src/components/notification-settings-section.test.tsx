@@ -5,6 +5,7 @@ import { loadNotificationPolicy } from '@/lib/notification-policy'
 import { NotificationSettingsSection } from './notification-settings-section'
 import { loadNotificationDeliveryState, saveNotificationDeliveryState } from '@/lib/notification-delivery-state'
 import { saveKomariAlertNotificationState } from '@/lib/komari-alert-notifications'
+import { SystemNotificationError } from '@/lib/system-notifications'
 
 const native = vi.hoisted(() => ({ permission: vi.fn(), request: vi.fn(), send: vi.fn() }))
 vi.mock('@/lib/system-notifications', async (original) => ({
@@ -62,6 +63,24 @@ describe('NotificationSettingsSection', () => {
     await waitFor(() => expect(screen.getByText(/Submitted to the system/)).toBeInTheDocument())
     expect(loadNotificationDeliveryState().attempts).toEqual([expect.objectContaining({ channel: 'system', status: 'delivered' })])
     expect(localStorage.getItem('shellbeam.notificationDeliveryState')).not.toContain('notification test')
+  })
+
+  it('shows system-managed permission honestly and waits for actual backend failure', async () => {
+    native.permission.mockResolvedValue('unknown')
+    let rejectSend!: (reason: unknown) => void
+    native.send.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSend = reject }))
+    render(<I18nProvider><NotificationSettingsSection /></I18nProvider>)
+    fireEvent.click(screen.getByLabelText('System'))
+    await waitFor(() => expect(screen.getByText('System-managed; per-app permission status is unavailable')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Allow system notifications' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }))
+    await waitFor(() => expect(rejectSend).toBeTypeOf('function'))
+    expect(screen.queryByText(/Submitted to the system/)).not.toBeInTheDocument()
+    expect(loadNotificationDeliveryState().attempts ?? []).toEqual([])
+    await act(async () => { rejectSend(new SystemNotificationError('system-send-failed')) })
+    await waitFor(() => expect(loadNotificationDeliveryState().attempts).toEqual([expect.objectContaining({ channel: 'system', status: 'failed', reason: 'system-send-failed' })]))
+    expect(screen.queryByText(/Submitted to the system/)).not.toBeInTheDocument()
+    expect(native.request).not.toHaveBeenCalled()
   })
 
   it('refreshes diagnostics from same-session Komari saves and cross-session storage events', async () => {

@@ -8,11 +8,32 @@ remote operation succeeded.
 
 ## System channel
 
-The desktop app uses `tauri-plugin-notification` through three narrow Rust
-commands: permission status, an explicit permission request, and send. Only the
-main app webview can call them. The send command accepts bounded title/body text,
-checks permission again, and returns fixed error codes. Remote embedded webviews
-do not receive the raw notification plugin API.
+The desktop app uses three narrow Rust commands: permission status, an explicit
+permission request, and send. Only the main app webview can call them. The send
+command accepts bounded title/body text, checks permission again, and returns
+fixed error codes. Remote embedded webviews do not receive a notification API.
+
+The desktop path does not use the notification plugin's unconditional permission
+grant or asynchronous send that discards backend errors:
+
+- macOS uses `UNUserNotificationCenter` to read actual authorization, request it
+  only from the explicit settings action, and await the add-request callback.
+  The bundle identifier must match the embedded app identifier. An unbundled
+  development executable reports unavailable instead of impersonating Terminal.
+  UserNotifications is weak-linked and class availability is checked before use;
+  older supported macOS versions without this framework report unavailable
+  instead of failing at process startup. The app's minimum macOS version is not raised.
+- Windows uses this application's notifier identity, reads its actual OS setting
+  and propagates the `Show` result. A denied setting cannot be overridden by an
+  application prompt; the user changes it in Windows notification settings.
+- Linux uses real Freedesktop D-Bus requests with a bounded method timeout. A
+  missing notification daemon is unavailable. Since the protocol has no per-app
+  permission query, an available daemon produces a system-managed/unknown status,
+  never a fabricated grant. Sending is allowed in that state and awaits the
+  daemon's notification ID. It does not trigger a permission prompt.
+
+OS callback waits run outside the UI thread. Mobile targets retain their native
+notification plugin permission flow; they are not covered by desktop acceptance.
 
 Browser previews use the Web Notification API. A native backend error never
 falls back to the browser API. Background alert delivery does not prompt for
@@ -20,11 +41,19 @@ permission. Use **Settings → Notifications → Allow system notifications**, t
 **Send test notification** to verify the configured environment. The test uses
 fixed translated text, records its outcome, and does not send a webhook.
 
-A successful result means that the backend accepted the request. OS notification
+A successful desktop result means that the OS API acknowledged the request. OS notification
 settings, focus modes, and native transport behavior can still suppress a banner;
 this is not a read receipt. Packaged builds should be checked on each supported
-OS before release. Native integration follows the
-[Tauri notification plugin](https://v2.tauri.app/plugin/notification/).
+OS before release. Permission and backend acceptance are separate from an actual
+banner, notification-center entry or read receipt.
+
+Linux CI runs two explicitly enabled native tests on independent private D-Bus
+sessions: delivery without a notification daemon must fail, and a real `dunst`
+process must acknowledge delivery. The test bus disables notification-service
+auto-activation, and the positive test uses Xvfb and cleans up its own daemon.
+These tests exercise the production D-Bus adapter; they do not prove visible
+desktop presentation. Helper/frontend tests separately cover permission guards,
+late backend failures, XML/text bounds and safe error codes.
 
 ## Delivery diagnostics
 

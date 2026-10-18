@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "notes": {
+    "remote": "Desktop interactive one-shot commands and MCP run_command default to 90s; explicit MCP tasks may request 600s. Read-only collector calls use 60s. All command output shares a 256KiB combined stdout/stderr budget.",
+    "collector": "Row caps bound the shared shell frame and both decoders. Service detail rows allow the 200 discovered units plus 25 curated services. Version discovery stops after 15s; each optional subprocess gets 2s.",
+    "history": "Canonical provider history keeps seven days, with both per-series and global caps. Monitor charts retain their existing shorter 24h view. IPC batches and chart query limits are smaller than storage limits on purpose.",
+    "cadence": "Monitor samples every minute; rich inventory refreshes every five minutes. Their freshness TTLs intentionally exceed those intervals. MCP reuses a verified read-only snapshot for at most 30s."
+  },
+  "remote": {
+    "outputBytes": 262144,
+    "commandTimeoutMs": 90000,
+    "minCommandTimeoutMs": 1000,
+    "mcpCommandMaxTimeoutMs": 600000,
+    "collectorTimeoutMs": 60000,
+    "mcpFileTimeoutMs": 10000,
+    "mcpFileDefaultReadBytes": 65536,
+    "mcpFileMaxReadBytes": 131072
+  },
+  "collector": {
+    "filesystemRows": 100,
+    "portRows": 200,
+    "toolRows": 100,
+    "serviceRows": 200,
+    "serviceDetailRows": 225,
+    "containerRows": 100,
+    "projectRows": 100,
+    "pm2Rows": 25,
+    "optionalCommandTimeoutSeconds": 2,
+    "versionBudgetSeconds": 15,
+    "projectDepth": 4,
+    "projectRowsPerRoot": 30,
+    "projectManifestRows": 80,
+    "manifestReadBytes": 65536
+  },
+  "scheduler": {
+    "concurrency": 3,
+    "defaultRetries": 2,
+    "maxRetries": 5,
+    "retryDelayMs": 150,
+    "maxRetryDelayMs": 2000
+  },
+  "cadence": {
+    "monitorIntervalMs": 60000,
+    "inventoryIntervalMs": 300000,
+    "metricsTtlMs": 120000,
+    "inventoryTtlMs": 600000,
+    "mcpProbeCacheMs": 30000
+  },
+  "history": {
+    "retentionMs": 604800000,
+    "monitorRetentionMs": 86400000,
+    "maxSeriesPoints": 10080,
+    "maxTotalPoints": 100000,
+    "appendChunkPoints": 1000,
+    "maxBatchPoints": 10000,
+    "defaultQueryPoints": 1000,
+    "maxQueryPoints": 4000,
+    "defaultQueryRangeMs": 86400000
+  }
+}

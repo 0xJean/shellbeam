@@ -3,6 +3,7 @@
 mod agent_release;
 mod biometric_store;
 mod browser;
+mod collection_limits;
 mod data;
 mod error;
 mod keys;

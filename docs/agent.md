@@ -9,6 +9,7 @@ The optional agent is a real standalone Rust collector. It reads local CPU, memo
 - Collection interval: 60 seconds. The daemon continues independently of ShellBeam, collecting at most 1,440 local observations and 16 MiB of JSONL history. The oldest samples are removed first. Restarts retain history. A process lock prevents duplicate collectors.
 - Latest status contains original sample time, heartbeat TTL, source version, capabilities, metrics and inventory. Stale status is offline; unreadable/unsupported values remain unknown.
 - The desktop's lifecycle scheduler imports the actual observations into canonical ProbeProvider persistence. These can be read after restarting ShellBeam. It does not manufacture samples for the period when SSH is unreachable.
+- The desktop currently imports the latest `probe/status.json` observation, not the remote `history.jsonl` backlog. Remote history survives a desktop outage and can be read with the agent's `history --json` CLI, but reconnecting does not automatically fill that interval in desktop charts.
 - The daemon needs only the current user's read permissions. It discovers user systemd services, not privileged services, container workloads, secrets, environments or process command lines. There is no cloud upload or telemetry sink.
 
 ## Build and inspect without installing
@@ -50,6 +51,8 @@ Uninstall stops the user service, removes its service file and executable, and v
 
 `.github/workflows/agent-release.yml` builds Linux x86_64/aarch64 and macOS x86_64/aarch64 artifacts, runs native daemon tests and signs a release catalog. The final job creates a GitHub **draft** for human release review. It is not an unattended upgrade mechanism.
 
+The PR agent workflow also builds all four release targets without signing keys or publishing assets. These compile checks are separate from the native Linux/macOS collection and real user-service lifecycle tests.
+
 Configure the protected `agent-release` GitHub environment with two separate Ed25519 private keys, `AGENT_ARTIFACT_SIGNING_KEY_PEM` and `AGENT_RELEASE_SIGNING_KEY_PEM`. Generate and retain keys offline, for example:
 
 ```sh
@@ -60,6 +63,10 @@ openssl pkey -in release-private.pem -pubout -outform DER | tail -c 32 | openssl
 ```
 
 Store only the raw 32-byte base64 public keys in ShellBeam settings. Never put private keys in the repository, manifest, desktop settings or agent host. The publisher refuses missing/non-Ed25519 keys. Its canonical signing formats match `shellbeam-agent-artifact.ts` and `shellbeam-agent-release.ts` and protect artifact URL, exact hash, size, version, platform, channel, expiry and rollout.
+
+The signing keys must be distinct; the publisher rejects the same key for both roles. The workflow must exist on the default branch before GitHub allows a manual dispatch. Its inputs include `version`, `channel`, integer `rollout_percentage` (0–100, default 100), and optional `previous_hashes` JSON. Each previous hash belongs to a specific artifact ID, for example `{"shellbeam-agent-linux-x86_64":"<64 hexadecimal characters>"}`. Unknown artifact IDs and malformed hashes are rejected. A partial map pins only the supplied targets; omitted targets retain the manually confirmed pre-change hash guard. Rollout and previous hashes are included in the release signature. Rollout eligibility never authorizes installation by itself.
+
+For an offline publisher invocation, pass the same options as `--rollout-percentage 25 --previous-hashes '{"shellbeam-agent-linux-x86_64":"<64 hexadecimal characters>"}'`. Keys are read only from the two signing environment variables above. Tests create ephemeral test keys and fixture bytes; they do not configure a production trust root or prove that a production release was published. Draft assets are not anonymously downloadable, so end-to-end desktop download acceptance requires an explicitly approved, accessible HTTPS source or publication of a reviewed release.
 
 After reviewing and publishing the draft:
 

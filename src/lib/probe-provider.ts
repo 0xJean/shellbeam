@@ -1,3 +1,4 @@
+import { COLLECTION_LIMITS } from './collection-limits'
 import { fetchUnifiedProbe, UnsupportedProbeError, isUnsupportedProbeError } from './unified-probe'
 import { getHostIdentity, type HostIdentity, type JumpHostIdentity } from './host-identity'
 import type { HostProfile } from './hosts'
@@ -136,8 +137,8 @@ export interface AgentlessProbeOptions {
   dependencies?: AgentlessProbeDependencies
 }
 
-export const DEFAULT_AGENTLESS_METRICS_TTL_MS = 2 * 60 * 1000
-export const DEFAULT_AGENTLESS_INVENTORY_TTL_MS = 10 * 60 * 1000
+export const DEFAULT_AGENTLESS_METRICS_TTL_MS = COLLECTION_LIMITS.cadence.metricsTtlMs
+export const DEFAULT_AGENTLESS_INVENTORY_TTL_MS = COLLECTION_LIMITS.cadence.inventoryTtlMs
 
 export function getProbeHostIdentity(host: HostProfile, profiles: readonly HostProfile[] = []): ProbeHostIdentity { return getHostIdentity(host, profiles) }
 
@@ -191,6 +192,34 @@ function healthFromObservations(observations: Array<ProbeObservation<unknown> | 
   const available = observations.filter((observation): observation is ProbeObservation<unknown> => Boolean(observation && observation.freshness.sampledAt <= observation.freshness.receivedAt))
   if (available.length === 0) return 'unknown'
   return available.some((observation) => !observation.freshness.expired) ? 'online' : 'stale'
+}
+
+/** A persisted/delegated value without its original provider is not an
+ * observation. In particular, never stamp the current provider onto an old
+ * payload and thereby turn an unidentified value into healthy data. */
+export function validateProbeSnapshotSources(snapshot: ProbeSnapshot): ProbeSnapshot {
+  const errors: ProbeError[] = []
+  const validate = <T>(observation: ProbeObservation<T> | null, section: 'metrics' | 'inventory') => {
+    if (!observation) return null
+    const source = observation.source
+    const freshness = observation.freshness
+    if (source?.kind !== snapshot.provider.kind || source?.id !== snapshot.provider.id
+      || !source?.id?.trim() || !freshness
+      || ![freshness.sampledAt, freshness.receivedAt, freshness.expiresAt, freshness.ttlMs].every(Number.isFinite)
+      || freshness.sampledAt < 0 || freshness.sampledAt > freshness.receivedAt
+      || freshness.ttlMs < 0 || freshness.expiresAt < freshness.sampledAt) {
+      errors.push({ section, code: 'observation_source_invalid', message: 'Observation source or original freshness is unavailable' })
+      return null
+    }
+    return observation
+  }
+  const metrics = validate(snapshot.metrics, 'metrics')
+  const inventory = validate(snapshot.inventory, 'inventory')
+  return {
+    ...snapshot, metrics, inventory,
+    health: !metrics && !inventory && (snapshot.health === 'online' || snapshot.health === 'stale') ? 'unknown' : snapshot.health,
+    errors: [...snapshot.errors, ...errors],
+  }
 }
 
 /**
@@ -302,7 +331,7 @@ export function createDelegatingProbeProvider(options: {
       const receivedAt = request.now ?? Date.now()
       try {
         const result = await options.collect(request)
-        return {
+        return validateProbeSnapshotSources({
           schemaVersion: PROBE_PROVIDER_SCHEMA_VERSION,
           host: getProbeHostIdentity(request.host),
           provider: options.ref,
@@ -312,7 +341,7 @@ export function createDelegatingProbeProvider(options: {
           metrics: result.metrics ?? null,
           inventory: result.inventory ?? null,
           errors: [],
-        }
+        })
       } catch (error) {
         return {
           schemaVersion: PROBE_PROVIDER_SCHEMA_VERSION,

@@ -1,3 +1,4 @@
+import { COLLECTION_LIMITS } from './collection-limits'
 import { getHostObservationKey, observationVaultIds, type ObservationHost } from './host-observation-scope'
 import type { HostProfile } from '@/lib/hosts'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
@@ -9,6 +10,8 @@ export interface WorkspaceInventoryResource {
   hostname: string
   os: string
   kernel: string
+  /** Remote machine architecture; absent legacy observations remain unknown. */
+  arch?: string | null
   uptime: string
   cpuPercent: number | null
   memoryPercent: number | null
@@ -107,6 +110,7 @@ const DEFAULT_RESOURCE: WorkspaceInventoryResource = {
   hostname: '',
   os: '',
   kernel: '',
+  arch: null,
   uptime: '',
   cpuPercent: null,
   memoryPercent: null,
@@ -370,6 +374,12 @@ export function parseWorkspaceInventory(output: string): WorkspaceInventory {
         return
       }
 
+      const arch = markerValue(line, '__SB_ARCH')
+      if (arch !== null) {
+        resource.arch = arch || null
+        return
+      }
+
       const kernel = markerValue(line, '__SB_KERNEL')
       if (kernel !== null) {
         resource.kernel = kernel
@@ -473,6 +483,7 @@ export async function fetchWorkspaceInventory(options: {
     host,
     resolveAuthSecret,
     command: WORKSPACE_INVENTORY_COMMAND,
+    timeoutMs: COLLECTION_LIMITS.remote.collectorTimeoutMs,
     audit: { action: 'probe.inventory', target: 'host inventory' },
     vaultId: options.vaultId,
   })

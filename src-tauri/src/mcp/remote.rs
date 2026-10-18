@@ -1,4 +1,5 @@
 use super::policy::Client;
+use crate::collection_limits::{limits, render_probe_collector};
 use crate::data::hosts::HostProfile;
 use crate::vault::secrets::VaultState;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -7,9 +8,6 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tauri::Manager;
-
-const OUTPUT_LIMIT: usize = 256 * 1024;
-const PROBE: &str = include_str!("../../../shared/probe-collector.sh");
 
 type Connection = crate::ssh::transport::Connection;
 
@@ -91,7 +89,7 @@ fn file_operation(
 ) -> Result<Value, String> {
     let path = args["path"].as_str().ok_or("INVALID_PATH")?;
     validate_path(path)?;
-    session.set_timeout(10_000);
+    session.set_timeout(limits().remote.mcp_file_timeout_ms);
     let sftp = session.sftp().map_err(|e| e.to_string())?;
     let path = Path::new(path);
     if tool == "read_remote_file" {
@@ -104,7 +102,10 @@ fn file_operation(
             return Err("NOT_A_REGULAR_FILE".into());
         }
         let offset = args["offset"].as_u64().unwrap_or(0);
-        let length = args["length"].as_u64().unwrap_or(65536).min(131072);
+        let length = args["length"]
+            .as_u64()
+            .unwrap_or(limits().remote.mcp_file_default_read_bytes)
+            .min(limits().remote.mcp_file_max_read_bytes);
         file.seek(SeekFrom::Start(offset))
             .map_err(|e| e.to_string())?;
         let mut data = Vec::new();
@@ -188,7 +189,7 @@ pub fn run(
             &super::policy::identity(host),
         )? {
             let age = crate::storage::now_unix_ms() - cached["sampledAt"].as_i64().unwrap_or(0);
-            if (0..30_000).contains(&age) {
+            if (0..limits().cadence.mcp_probe_cache_ms).contains(&age) {
                 super::recheck(app, client, host)?;
                 cached["cached"] = json!(true);
                 return Ok(cached);
@@ -202,21 +203,30 @@ pub fn run(
         "run_command" => command(
             &session,
             args["command"].as_str().unwrap(),
-            args["timeoutSeconds"].as_u64().unwrap_or(90),
+            args["timeoutSeconds"]
+                .as_u64()
+                .unwrap_or(limits().remote.command_timeout_ms / 1000)
+                .clamp(
+                    limits().remote.min_command_timeout_ms / 1000,
+                    limits().remote.mcp_command_max_timeout_ms / 1000,
+                ),
         ),
-        "refresh_server_info" => command(&session, &format!("/bin/sh -c {}", quote(PROBE)), 60)
-            .and_then(|output| {
-                if let Some(os) = unsupported_probe_os(&output) {
-                    return Ok(json!({"status":"completed","unsupportedOs":os}));
-                }
-                if output["status"] != "completed" || output["truncated"] == true {
-                    return Err(
-                        "PROBE_FAILED: missing or truncated inventory; previous data retained"
-                            .into(),
-                    );
-                }
-                parse_probe(output["stdout"].as_str().unwrap_or(""))
-            }),
+        "refresh_server_info" => command(
+            &session,
+            &format!("/bin/sh -c {}", quote(&render_probe_collector())),
+            limits().remote.collector_timeout_ms / 1000,
+        )
+        .and_then(|output| {
+            if let Some(os) = unsupported_probe_os(&output) {
+                return Ok(json!({"status":"completed","unsupportedOs":os}));
+            }
+            if output["status"] != "completed" || output["truncated"] == true {
+                return Err(
+                    "PROBE_FAILED: missing or truncated inventory; previous data retained".into(),
+                );
+            }
+            parse_probe(output["stdout"].as_str().unwrap_or(""))
+        }),
         _ => file_operation(&session, tool, args, &secrets),
     };
     // Mask known credential values; arbitrary application output is not a secret-free sandbox.
@@ -281,7 +291,7 @@ fn unsupported_probe_os(output: &Value) -> Option<String> {
 }
 
 fn parse_probe(output: &str) -> Result<Value, String> {
-    if output.len() > OUTPUT_LIMIT {
+    if output.len() > limits().remote.output_bytes {
         return Err("PROBE_OUTPUT_LIMIT".into());
     }
     let canonical = output.lines().any(|line| line == "__SB_PROBE_BEGIN");
@@ -329,13 +339,15 @@ fn parse_probe(output: &str) -> Result<Value, String> {
             }
             "TOOLDETAIL" => {
                 let fields: Vec<_> = value.split('|').collect();
-                if fields.len() >= 6 && tools.len() < 100 {
+                if fields.len() >= 6 && tools.len() < limits().collector.tool_rows {
                     tools.push(json!({"id":fields[0],"displayName":fields[1],"category":fields[2],"name":fields[3],"path":fields[4],"version":fields[5]}));
                 }
             }
             "SERVICEDETAIL" => {
                 let fields: Vec<_> = value.split('|').collect();
-                if fields.len() >= 3 && service_details.len() < 225 {
+                if fields.len() >= 3
+                    && service_details.len() < limits().collector.service_detail_rows
+                {
                     service_details.insert(
                         fields[0].to_string(),
                         json!({"name":fields[0],"active":fields[1],"enabled":fields[2]}),
@@ -344,18 +356,18 @@ fn parse_probe(output: &str) -> Result<Value, String> {
             }
             "DOCKERDETAIL" => {
                 let fields: Vec<_> = value.split('|').collect();
-                if fields.len() >= 4 && containers.len() < 100 {
+                if fields.len() >= 4 && containers.len() < limits().collector.container_rows {
                     containers.push(json!({"name":fields[0],"image":fields[1],"status":fields[2],"ports":fields[3],"id":fields.get(4)}));
                 }
             }
             "PROJECTDETAIL" => {
                 let fields: Vec<_> = value.split('|').collect();
-                if fields.len() >= 4 && projects.len() < 100 {
+                if fields.len() >= 4 && projects.len() < limits().collector.project_rows {
                     projects.push(json!({"path":fields[0],"kind":fields[1],"name":fields[2],"modifiedAt":fields[3],"manifestPath":fields.get(4).unwrap_or(&fields[0]),"status":"detected","verified":false}));
                 }
             }
             "PM2" => {
-                if pm2.len() < 25 {
+                if pm2.len() < limits().collector.pm2_rows {
                     pm2.push(json!({"raw":value}));
                 }
             }
@@ -439,22 +451,24 @@ fn parse_probe(output: &str) -> Result<Value, String> {
                 };
                 let item = json!({"device":parts[0],"mount":parts[5..].join(" "),"total":number(1),"used":number(2),"available":number(3),"usedPercent":parts[4].trim_end_matches('%').parse::<f64>().ok().filter(|v|v.is_finite()).map(|v|v.clamp(0.0,100.0)),"unit":if key == "DISK" {"bytes"} else {"inodes"}});
                 if key == "DISK" {
-                    disks.push(item);
-                } else {
+                    if disks.len() < limits().collector.filesystem_rows {
+                        disks.push(item);
+                    }
+                } else if inodes.len() < limits().collector.filesystem_rows {
                     inodes.push(item);
                 }
             }
-            "PORT" => ports.push(json!(value)),
-            "TOOL" if parts.len() == 2 => {
+            "PORT" if ports.len() < limits().collector.port_rows => ports.push(json!(value)),
+            "TOOL" if parts.len() == 2 && tools.len() < limits().collector.tool_rows => {
                 tools.push(json!({"name":parts[0],"path":parts[1],"version":null}))
             }
-            "CONTAINER" => {
+            "CONTAINER" if containers.len() < limits().collector.container_rows => {
                 if let Ok(container) = serde_json::from_str::<Value>(value) {
                     containers.push(container);
                 }
             }
             "SERVICE" => {
-                if services.len() < 200 {
+                if services.len() < limits().collector.service_rows {
                     services.push(json!(value));
                     if parts.len() >= 3 {
                         service_details.entry(parts[0].to_string()).or_insert_with(
@@ -463,7 +477,7 @@ fn parse_probe(output: &str) -> Result<Value, String> {
                     }
                 }
             }
-            "PROJECT" => {
+            "PROJECT" if projects.len() < limits().collector.project_rows => {
                 projects.push(json!({"manifestPath":value,"status":"detected","verified":false}))
             }
             _ => {}
@@ -477,7 +491,7 @@ fn parse_probe(output: &str) -> Result<Value, String> {
         "capacity":capacity,"filesystems":disks,"inodes":inodes,"listeningPorts":ports,"tools":tools,
         "containers":containers,"services":services,"serviceDetails":service_details.into_values().collect::<Vec<_>>(),"pm2":pm2,"projects":projects,"untrustedContent":true,
         "completeness":"partial", "limitations":["Optional tools or permissions may be unavailable; empty lists do not prove absence.",
-        "At most 100 filesystems, 200 listening sockets/services, 100 containers/manifests; project depth limited to 3.",
+        format!("At most {} filesystems, {} listening sockets, {} discovered services plus curated service details, {} containers, {} manifests; project depth limited to {}.", limits().collector.filesystem_rows, limits().collector.port_rows, limits().collector.service_rows, limits().collector.container_rows, limits().collector.project_rows, limits().collector.project_depth),
         "Runtime versions and project health must be verified separately; this scan does not execute project code."]}),
     )
 }
@@ -506,9 +520,6 @@ pub(super) fn monitor_snapshot(probe: &Value) -> Value {
         "networkRxBytesPerSec":capacity["networkRxBytesPerSec"],"networkTxBytesPerSec":capacity["networkTxBytesPerSec"],
         "latencyMs":probe["latencyMs"],"sampledAt":probe["sampledAt"]})
 }
-
-const METRICS_TTL_MS: i64 = 2 * 60 * 1_000;
-const INVENTORY_TTL_MS: i64 = 10 * 60 * 1_000;
 
 fn probe_host_identity(host: &HostProfile) -> Value {
     let mut identity = json!({
@@ -671,6 +682,7 @@ fn inventory_snapshot(probe: &Value, sampled_at: i64) -> Value {
             "hostname": capacity["hostname"].as_str().unwrap_or_default(),
             "os": capacity["os"].as_str().unwrap_or_default(),
             "kernel": capacity["kernel"].as_str().unwrap_or_default(),
+            "arch": capacity["arch"].as_str().filter(|value| !value.trim().is_empty()),
             "uptime": if capacity["uptimeSeconds"].is_number() { format!("{}s", number_text(&capacity["uptimeSeconds"])) } else { String::new() },
             "cpuPercent": capacity["cpuPercent"],
             "memoryPercent": used.zip(capacity["memoryTotalBytes"].as_u64()).and_then(|(used, total)| (total > 0).then_some(100.0 * used as f64 / total as f64)),
@@ -762,7 +774,7 @@ fn attach_probe_contract(value: &mut Value, host: &HostProfile) {
         &provider,
         sampled_at,
         received_at,
-        METRICS_TTL_MS,
+        limits().cadence.metrics_ttl_ms,
         confidence,
     );
     value["inventory"] = probe_observation(
@@ -770,7 +782,7 @@ fn attach_probe_contract(value: &mut Value, host: &HostProfile) {
         &provider,
         sampled_at,
         received_at,
-        INVENTORY_TTL_MS,
+        limits().cadence.inventory_ttl_ms,
         "partial",
     );
     value["errors"] = json!([]);
@@ -870,8 +882,36 @@ mod tests {
         assert_eq!(result["completeness"], "partial");
         assert!(result["capacity"].get("memoryTotalBytes").is_none());
         for forbidden in ["sudo ", "apt ", "yum ", "restart", " > ", "source "] {
-            assert!(!PROBE.contains(forbidden));
+            assert!(!render_probe_collector().contains(forbidden));
         }
+    }
+    #[test]
+    fn shared_budgets_bound_decoded_rows_and_preserve_remote_architecture() {
+        let fixture = include_str!("../../../shared/fixtures/linux-probe-v1.txt");
+        let mut probe = parse_probe(fixture).unwrap();
+        attach_probe_contract(&mut probe, &host_with_jump("privateKey"));
+        assert_eq!(probe["capacity"]["arch"], "x86_64");
+        assert_eq!(probe["inventory"]["data"]["resource"]["arch"], "x86_64");
+        let without_arch = fixture
+            .lines()
+            .filter(|line| !line.starts_with("__SB_PROBE_ARCH="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut unknown = parse_probe(&without_arch).unwrap();
+        attach_probe_contract(&mut unknown, &host_with_jump("privateKey"));
+        assert!(unknown["inventory"]["data"]["resource"]["arch"].is_null());
+        let mut rows = String::new();
+        for index in 0..limits().collector.port_rows + 5 {
+            rows.push_str(&format!("__SB_PROBE_PORT=tcp {index}\n"));
+        }
+        let bounded =
+            parse_probe(&fixture.replace("__SB_PROBE_END", &format!("{rows}__SB_PROBE_END")))
+                .unwrap();
+        assert_eq!(
+            bounded["listeningPorts"].as_array().unwrap().len(),
+            limits().collector.port_rows
+        );
+        assert!(parse_probe(&"x".repeat(limits().remote.output_bytes + 1)).is_err());
     }
     #[test]
     fn limits_and_path_validation() {
@@ -915,7 +955,10 @@ mod tests {
         assert_eq!(probe["capacity"], legacy_capacity);
         assert_eq!(probe["metrics"]["data"]["cpuPercent"], 25.0);
         assert_eq!(probe["metrics"]["confidence"], "partial");
-        assert_eq!(probe["metrics"]["freshness"]["ttlMs"], METRICS_TTL_MS);
+        assert_eq!(
+            probe["metrics"]["freshness"]["ttlMs"],
+            limits().cadence.metrics_ttl_ms
+        );
         assert_eq!(probe["inventory"]["data"]["resource"]["uptime"], "42s");
         assert_eq!(probe["inventory"]["data"]["resource"]["network"], "0/0");
         assert_eq!(probe["inventory"]["data"]["resource"]["hostname"], "node-1");

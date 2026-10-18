@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceModeToggle } from './workspace-mode-toggle'
 import { WorkspaceOverview } from './workspace-overview'
 import { clearServerMonitorStates, mergeServerMonitorStates } from '@/lib/server-monitor-state'
-import type { ServerMonitorLatest } from '@/lib/server-monitor'
+import { getServerMonitorHostKey, type ServerMonitorLatest } from '@/lib/server-monitor'
 import { clearLocalOpsMemory, saveLocalAlertState } from '@/lib/local-ops-store'
 vi.mock('./shellbeam-agent-panel', () => ({ ShellbeamAgentPanel: () => null }))
 vi.mock('@/lib/probe-persistence', () => ({ listPersistedProbeSnapshots: vi.fn(async () => []) }))
@@ -96,7 +96,7 @@ describe('workspace overview', () => {
   it('uses current host metrics and vault-scoped alerts to show actionable diagnostics', async () => {
     const host = { id: 'host-1', name: 'Production API', address: '10.0.0.15', port: 22, username: 'root', group: 'Default', authType: 'password' as const, tags: [], createdAt: 0, updatedAt: 0 }
     const now = Date.now()
-    mergeServerMonitorStates({ [host.id]: { history: [], latest: { status: 'online', snapshot: { sampledAt: now, diskPercent: 96, cpuPercent: 90, memoryPercent: 30 } } as ServerMonitorLatest } })
+    mergeServerMonitorStates({ [getServerMonitorHostKey({ ...host, vaultId: 'team' })]: { history: [], latest: { status: 'online', snapshot: { sampledAt: now, diskPercent: 96, cpuPercent: 90, memoryPercent: 30 } } as ServerMonitorLatest } })
     const onSelectApp = vi.fn()
     await act(async () => { render(<WorkspaceOverview activeVaultId="team" hostId={host.id} hosts={[host]} hostName={host.name} hostAddress={host.address} activeApp="overview" onSelectApp={onSelectApp} />) })
     expect(screen.getByText('Inspect CPU or memory pressure')).toBeInTheDocument()
@@ -108,5 +108,17 @@ describe('workspace overview', () => {
     expect(screen.getByText('Investigate active host alerts in logs')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Open logs' }))
     expect(onSelectApp).toHaveBeenLastCalledWith('logs')
+  })
+
+  it('does not treat future metrics or another Vault observation as current recommendations', async () => {
+    const host = { id: 'same-id', vaultId: 'team', name: 'API', address: '10.0.0.15', port: 22, username: 'ops', group: 'Default', authType: 'password' as const, tags: [], createdAt: 0, updatedAt: 0 }
+    const now = Date.now()
+    mergeServerMonitorStates({
+      [getServerMonitorHostKey(host)]: { history: [], latest: { status: 'online', snapshot: { sampledAt: now + 60_000, diskPercent: 96, cpuPercent: 90, memoryPercent: 30 } } as ServerMonitorLatest },
+      [getServerMonitorHostKey({ ...host, vaultId: 'other' })]: { history: [], latest: { status: 'online', snapshot: { sampledAt: now, diskPercent: 96, cpuPercent: 90, memoryPercent: 30 } } as ServerMonitorLatest },
+    })
+    await act(async () => render(<WorkspaceOverview activeVaultId="team" hostId={host.id} hosts={[host]} hostName={host.name} hostAddress={host.address} activeApp="overview" onSelectApp={() => {}} />))
+    expect(screen.queryByText('Inspect CPU or memory pressure')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-recommendations')).not.toBeInTheDocument()
   })
 })

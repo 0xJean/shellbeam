@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { HostGridCard, HostListItem } from './host-card'
+import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
@@ -17,6 +18,13 @@ const host = {
   createdAt: 0,
   updatedAt: 0,
 }
+
+const sampledMetrics: ServerMonitorSnapshot = {
+  hostname: 'api', os: 'Linux', kernel: '', uptimeSeconds: 90_061, cpuPercent: 15, load1: null, load5: null, load15: null,
+  memoryUsedBytes: null, memoryTotalBytes: null, memoryPercent: null, diskUsedBytes: null, diskTotalBytes: null, diskPercent: null,
+  networkRxBytesPerSec: 1024, networkTxBytesPerSec: 2048, latencyMs: null, sampledAt: 1000,
+}
+const oldResource = { hostname: 'api', os: 'Linux', kernel: '', uptime: 'old uptime', cpuPercent: 95, memoryPercent: 20, memoryText: '', diskPercent: 30, diskText: '', network: 'old throughput' }
 
 describe('host list item', () => {
   it.each(['grid', 'list'] as const)('routes %s shortcuts to the exact host and keeps keyboard navigation inside the control', (view) => {
@@ -46,6 +54,53 @@ describe('host list item', () => {
     render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
     expect(screen.getByText('Unsupported monitoring')).toBeInTheDocument()
     expect(screen.queryByText('Offline')).not.toBeInTheDocument()
+  })
+
+  it.each(['grid', 'list'] as const)('shows sampled network throughput and uptime explicitly in the %s view', (mode) => {
+    const props = { host, isSelected: false, resource: oldResource, metrics: sampledMetrics, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
+    expect(screen.getByText('Network throughput')).toBeVisible()
+    expect(screen.getByTestId('host-resource-throughput')).toHaveTextContent('↓ 1.0 KB/s · ↑ 2.0 KB/s')
+    expect(screen.getByText('Uptime')).toBeVisible()
+    expect(screen.getByTestId('host-resource-uptime')).toHaveTextContent('1d 1h')
+    expect(screen.queryByText('old uptime')).not.toBeInTheDocument()
+    expect(screen.queryByText('old throughput')).not.toBeInTheDocument()
+    expect(screen.getByRole('meter', { name: 'CPU 15%' })).toBeInTheDocument()
+  })
+
+  it.each(['grid', 'list'] as const)('keeps missing %s observations unknown while preserving a genuinely observed zero', (mode) => {
+    const props = { host, isSelected: false, resource: oldResource, metrics: { ...sampledMetrics, uptimeSeconds: null, networkRxBytesPerSec: 0, networkTxBytesPerSec: null }, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    const view = render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
+    expect(screen.getByTestId('host-resource-throughput')).toHaveTextContent('↓ 0 B/s · ↑ Unknown')
+    expect(screen.getByTestId('host-resource-uptime')).toHaveTextContent('Unknown')
+    const missing = { ...props, metrics: undefined, resource: undefined }
+    view.rerender(mode === 'grid' ? <HostGridCard {...missing} /> : <HostListItem {...missing} index={1} />)
+    expect(screen.getByTestId('host-resource-throughput')).toHaveTextContent('Unknown')
+    expect(screen.getByTestId('host-resource-throughput')).not.toHaveTextContent('0 B/s')
+    expect(screen.getByTestId('host-resource-uptime')).toHaveTextContent('Unknown')
+    expect(screen.getByTestId('host-resource-uptime')).not.toHaveTextContent('0s')
+  })
+
+  it('retains available legacy inventory values when no metric observation exists', () => {
+    render(<HostGridCard host={host} isSelected={false} resource={{ ...oldResource, uptime: '3 days', network: '12.5 KB/s' }} onSelect={vi.fn()} onConnect={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.getByTestId('host-resource-throughput')).toHaveTextContent('12.5 KB/s')
+    expect(screen.getByTestId('host-resource-uptime')).toHaveTextContent('3 days')
+  })
+
+  it('localizes throughput, uptime and unknown values in Chinese', () => {
+    const previousLocale = localStorage.getItem('shellbeam.locale')
+    localStorage.setItem('shellbeam.locale', 'zh-CN')
+    try {
+      const props = { host, isSelected: false, metrics: { ...sampledMetrics, uptimeSeconds: 42, networkTxBytesPerSec: null }, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+      render(<HostGridCard {...props} />)
+      expect(screen.getByText('网络吞吐')).toBeVisible()
+      expect(screen.getByText('运行时间')).toBeVisible()
+      expect(screen.getByTestId('host-resource-throughput')).toHaveTextContent('↑ 未知')
+      expect(screen.getByTestId('host-resource-uptime')).toHaveTextContent('42 秒')
+    } finally {
+      if (previousLocale) localStorage.setItem('shellbeam.locale', previousLocale)
+      else localStorage.removeItem('shellbeam.locale')
+    }
   })
 
   it('renders cached region and system icons in list mode', () => {

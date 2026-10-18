@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
-import { buildUnifiedProbeCommand, parseUnifiedProbeOutput, fetchUnifiedProbe, UnsupportedProbeError } from './unified-probe'
+import { buildUnifiedProbeCommand, parseUnifiedProbeOutput, fetchUnifiedProbe, UnsupportedProbeError, UNIFIED_PROBE_OUTPUT_LIMIT } from './unified-probe'
 import { createAgentlessSshProbeProvider } from './probe-provider'
 import { parseServerMonitorOutput } from './server-monitor'
 import { parseWorkspaceInventory } from './workspace-inventory'
@@ -34,8 +34,7 @@ describe('One shared Linux collector wire contract', () => {
     expect(snapshot.transport).toBe('proxy-jump')
   })
   it.skipIf(process.platform !== 'linux')('runs the actual shared script on Linux and skips inventory subprocesses for metrics-only probes', () => {
-    const script = 'shared/probe-collector.sh'
-    const result = spawnSync('sh', ['-x', script, 'metrics'], { encoding: 'utf8', timeout: 15_000, maxBuffer: 262144 })
+    const result = spawnSync('sh', ['-x', '-c', buildUnifiedProbeCommand('metrics')], { encoding: 'utf8', timeout: 15_000, maxBuffer: 2 * UNIFIED_PROBE_OUTPUT_LIMIT })
     expect(result.status, result.stderr).toBe(0)
     const sample = parseUnifiedProbeOutput(result.stdout)
     expect(sample.metrics.uptimeSeconds).not.toBeNull()

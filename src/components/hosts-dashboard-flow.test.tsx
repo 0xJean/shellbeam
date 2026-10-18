@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { HostsDashboard } from './hosts-dashboard'
 import { I18nProvider } from '@/lib/i18n'
 import { buildHostOpsViews, loadHostOpsViews } from '@/lib/host-ops-view'
+import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
 import type { HostProfile } from '@/lib/hosts'
 import { invoke } from '@tauri-apps/api/core'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
@@ -21,8 +22,42 @@ beforeEach(() => {
   views['host-1'] = { ...views['host-1'], health: { ...views['host-1'].health, state: 'stale', provider: 'ssh-agentless', freshness: { sampledAt: now - 600_000, updatedAt: now - 600_000, ageMs: 600_000, stale: true, ttlMs: 60_000 } }, resource: { hostname: 'db', os: 'Debian', kernel: '', uptime: '', cpuPercent: 10, diskPercent: null, memoryPercent: 20, memoryText: '', diskText: '', network: '' }, capabilities: ['services'], highestAlertSeverity: null, alertOpenCount: 0 }
   vi.mocked(loadHostOpsViews).mockReset().mockResolvedValue(views)
 })
-function renderDashboard(extra: Partial<React.ComponentProps<typeof HostsDashboard>> = {}) { return render(<I18nProvider><HostsDashboard activeVaultId="vault" hosts={hosts} selectedHostId={null} loading={false} onSelectHost={vi.fn()} onCreateHost={vi.fn()} onUpdateHost={vi.fn()} onDeleteHost={vi.fn()} {...extra} /></I18nProvider>) }
+function dashboardElement(extra: Partial<React.ComponentProps<typeof HostsDashboard>> = {}) { return <I18nProvider><HostsDashboard activeVaultId="vault" hosts={hosts} selectedHostId={null} loading={false} onSelectHost={vi.fn()} onCreateHost={vi.fn()} onUpdateHost={vi.fn()} onDeleteHost={vi.fn()} {...extra} /></I18nProvider> }
+function renderDashboard(extra: Partial<React.ComponentProps<typeof HostsDashboard>> = {}) { return render(dashboardElement(extra)) }
 describe('host operations filter workflow', () => {
+  it('shows selected provider throughput and uptime without requiring an inventory snapshot', async () => {
+    const views = buildHostOpsViews({ hosts })
+    const metrics: ServerMonitorSnapshot = { hostname: 'api', os: 'Linux', kernel: '', uptimeSeconds: 90_061, cpuPercent: 12, load1: null, load5: null, load15: null, memoryUsedBytes: null, memoryTotalBytes: null, memoryPercent: null, diskUsedBytes: null, diskTotalBytes: null, diskPercent: null, networkRxBytesPerSec: 0, networkTxBytesPerSec: 2048, latencyMs: null, sampledAt: Date.now() }
+    views['host-0'].metrics = metrics
+    vi.mocked(loadHostOpsViews).mockResolvedValue(views)
+    renderDashboard()
+    await waitFor(() => expect(screen.getByText('↓ 0 B/s')).toBeVisible())
+    expect(screen.getByText('↑ 2.0 KB/s')).toBeVisible()
+    expect(screen.getByText('1d 1h')).toBeVisible()
+  })
+
+  it('searches current referenced jump metadata immediately after the jump profile is edited', async () => {
+    const target = { ...hosts[0], jumpHostId: 'jump', jumpHost: 'old.jump.example', jumpUser: 'old-jump-user', jumpPort: 2201 }
+    const jump = { ...hosts[1], id: 'jump', name: 'Original Bastion', address: 'old.jump.example', username: 'old-jump-user', port: 2201 }
+    const profiles = [target, jump, hosts[1]]
+    let view!: ReturnType<typeof renderDashboard>
+    await act(async () => { view = renderDashboard({ hosts: profiles, externalSearch: 'Original Bastion' }) })
+    expect(screen.getByText('API host', { selector: 'p' })).toBeVisible()
+    const editedJump = { ...jump, name: 'Edited Gateway', address: 'new.jump.example', username: 'current-jump-user', port: 2299, updatedAt: 2 }
+    const editedProfiles = [target, editedJump, hosts[1]]
+    for (const query of ['Edited Gateway', 'new.jump.example', 'current-jump-user', '2299']) {
+      await act(async () => { view.rerender(dashboardElement({ hosts: editedProfiles, externalSearch: query })) })
+      expect(screen.getByText('API host', { selector: 'p' })).toBeVisible()
+      expect(screen.queryByText('DB host', { selector: 'p' })).not.toBeInTheDocument()
+    }
+    for (const query of ['Original Bastion', 'old.jump.example', 'old-jump-user', '2201']) {
+      await act(async () => { view.rerender(dashboardElement({ hosts: editedProfiles, externalSearch: query })) })
+      expect(screen.queryByText('API host', { selector: 'p' })).not.toBeInTheDocument()
+    }
+    await act(async () => { view.rerender(dashboardElement({ hosts: [target, hosts[1]], externalSearch: 'old.jump.example' })) })
+    expect(screen.queryByText('API host', { selector: 'p' })).not.toBeInTheDocument()
+  })
+
   it('filters unsupported hosts separately from unreachable hosts', async () => {
     const views = buildHostOpsViews({ hosts })
     views['host-0'].health.state = 'unsupported'

@@ -46,6 +46,28 @@ describe('native system notification adapter', () => {
     expect(completed).toHaveBeenCalledOnce()
   })
 
+  it.each(['unknown', 'limited'] as const)('preserves %s permissions without inventing a grant or prompting', async (permission) => {
+    mockedInvoke.mockResolvedValueOnce(permission).mockResolvedValueOnce(permission).mockResolvedValueOnce(undefined)
+    expect(await getSystemNotificationPermission()).toBe(permission)
+    await sendSystemNotification({ title: 'Probe', body: 'Recovered' })
+    expect(mockedInvoke.mock.calls.map(([command]) => command)).toEqual([
+      'system_notification_permission', 'system_notification_permission', 'send_system_notification',
+    ])
+  })
+
+  it('waits for a late native rejection and never reports queue acceptance as success', async () => {
+    let rejectSend!: (reason: unknown) => void
+    mockedInvoke.mockResolvedValueOnce('granted').mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSend = reject }))
+    const accepted = vi.fn()
+    const sending = sendSystemNotification({ title: 'Probe', body: 'Offline' }).then(accepted)
+    const rejected = expect(sending).rejects.toMatchObject({ code: 'system-send-failed' })
+    await vi.waitFor(() => expect(rejectSend).toBeTypeOf('function'))
+    expect(accepted).not.toHaveBeenCalled()
+    rejectSend('system-send-failed')
+    await rejected
+    expect(accepted).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['default', 'system-permission-required'],
     ['denied', 'system-permission-denied'],
