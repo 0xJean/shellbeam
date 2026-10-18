@@ -1,6 +1,31 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { activateOpsUiRules, classifyOpsUiConnectionFailure, initializeOpsUiVault, OPS_UI_SELECTORS, resumeOpsUiJourney, runOpsUiIncidents } from './ops-ui-journey.mjs'
+import { activateOpsUiRules, classifyOpsUiConnectionFailure, initializeOpsUiVault, OPS_UI_SELECTORS, resumeOpsUiJourney, reviewOpsUiServiceConfirmation, runOpsUiIncidents } from './ops-ui-journey.mjs'
+
+test('service confirmation requires the actual target prompt and never retries a click or consents after failure', async () => {
+  const events = [], clicks = [], responses = []
+  const css = '[data-testid="workspace-services-app"][data-host-id="host"] [data-testid="workspace-service-restart"]'
+  const driver = {
+    async waitFor() {}, async attr() { return null }, async click(value) { clicks.push(value) },
+    async until(read) { return read() }, async alertText() { throw new Error('private native detail') },
+    async findAll(selector) { return selector.endsWith('[data-testid="workspace-services-error"]') ? ['error'] : [] },
+    async isDisplayed() { return true }, async text() { return 'INVALID_OPERATION: private credential detail' },
+    async acceptAlert() { responses.push('accept') }, async dismissAlert() { responses.push('dismiss') },
+  }
+  await assert.rejects(reviewOpsUiServiceConfirmation({ driver, css, unit: 'unit.service', accept: true, role: 'direct', record: async (name, detail) => events.push({ name, ...detail }) }), /ops_ui_service_confirmation_prompt_failed/)
+  assert.equal(clicks.length, 1)
+  assert.deepEqual(responses, [])
+  assert.deepEqual(events.at(-1), { name: 'ops-ui-service-confirmation-failed', role: 'direct', accept: true, phase: 'prompt', errorVisible: true, errorCategory: 'invalid-operation', cancelledOutput: false })
+  assert(!JSON.stringify(events).includes('private'))
+})
+
+test('service confirmation reports each real cancellation boundary in order', async () => {
+  const events = [], responses = []
+  const driver = { async waitFor() {}, async attr() { return null }, async click() {}, async until(read) { return read() }, async alertText() { return 'Confirm restart unit.service?' }, async dismissAlert() { responses.push('dismiss') }, async acceptAlert() { responses.push('accept') } }
+  await reviewOpsUiServiceConfirmation({ driver, css: '[data-testid="workspace-service-restart"]', unit: 'unit.service', accept: false, role: 'via', record: async (_, detail) => events.push(detail.phase) })
+  assert.deepEqual(events, ['ready', 'click', 'prompt', 'respond', 'settle', 'complete'])
+  assert.deepEqual(responses, ['dismiss'])
+})
 
 test('connection diagnostics retain only fixed native endpoint categories', () => {
   for (const stage of ['target', 'jump']) {

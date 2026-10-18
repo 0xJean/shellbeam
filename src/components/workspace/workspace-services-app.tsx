@@ -232,7 +232,7 @@ export function WorkspaceServicesApp({
           description={t('workspace.services.unsupportedDescription')}
         />
       ) : error ? (
-        <div className="rounded-2xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-300">
+        <div role="alert" data-testid="workspace-services-error" className="rounded-2xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-300">
           {error}
         </div>
       ) : (

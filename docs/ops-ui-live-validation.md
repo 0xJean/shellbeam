@@ -177,6 +177,19 @@ missing, hidden, malformed or duplicate fields, and reports only bounded
 readiness booleans and lengths on failure. This correction needs fresh CI;
 the failed report does not establish the precise rendering cause.
 
+The eighth [UI run 39103821275](https://github.com/0xJean/shellbeam/actions/runs/39103821275),
+head `bce00614a6c84578538c260816066ef3dc6642eb`, merge checkout
+`dd62525dd8b42aa48cd398259af05791d8e537cd`, passed the saved-policy diagnostics
+and both real service-opening notifications with independent X11 counts and
+complete title/body OCR. The direct host's actual failed-service diagnosis
+passed in three clicks, and the independent observer confirmed the original
+start count of one. It then timed out during the first confirmation workflow.
+The report still records `success: false`, successful cleanup and confirmed
+application exit; cancellation, confirmed mutation, recovery delivery and restart
+were not verified. The next runner records fixed ready/click/prompt/respond/settle
+boundaries and only fixed categories from the already-visible Services error.
+It does not repeat a click, bypass a prompt, or infer consent from a timeout.
+
 Host-save, trust-prompt and tab-state checkpoints remain credential-free. Local
 syntax, protocol and safety-helper tests are not substitutes for an executed
 Linux GUI pass. Exact commit CI results must be checked before counting the

@@ -288,14 +288,43 @@ async function auditJob(driver, role, state, unit, status, jobId) {
   return id
 }
 
-async function reviewAndRespond(driver, css, unit, accept) {
-  await waitEnabled(driver, css)
-  await driver.click(css)
-  const message = await driver.until(() => driver.alertText(), { timeoutMs: 30000 })
-  check(typeof message === 'string' && message.includes(unit), 'confirmation_target_mismatch')
-  if (accept) await driver.acceptAlert()
-  else await driver.dismissAlert()
-  await waitEnabled(driver, css)
+export async function reviewOpsUiServiceConfirmation({ driver, css, unit, accept, record, role }) {
+  let phase = 'ready'
+  const note = () => record('ops-ui-service-confirmation-stage', { role, accept, phase })
+  try {
+    await note()
+    await waitEnabled(driver, css)
+    phase = 'click'; await note()
+    await driver.click(css)
+    phase = 'prompt'; await note()
+    const message = await driver.until(() => driver.alertText(), { timeoutMs: 30000 })
+    check(typeof message === 'string' && message.includes(unit), 'confirmation_target_mismatch')
+    phase = 'respond'; await note()
+    if (accept) await driver.acceptAlert()
+    else await driver.dismissAlert()
+    phase = 'settle'; await note()
+    await waitEnabled(driver, css)
+    phase = 'complete'; await note()
+  } catch {
+    let errorVisible = false, cancelledOutput = false, errorCategory = 'unavailable'
+    try {
+      const root = css.slice(0, css.lastIndexOf(' '))
+      const errors = await driver.findAll(`${root} [data-testid="workspace-services-error"]`)
+      errorVisible = errors.length === 1 && await driver.isDisplayed(errors[0])
+      if (errorVisible) {
+        // Inspect only the existing visible error, then discard it. Never put
+        // native/provider messages, endpoints or credential details in reports.
+        const text = await driver.text(errors[0])
+        errorCategory = text.includes('VAULT_LOCKED') ? 'vault-locked' : text.includes('INVALID_OPERATION') ? 'invalid-operation'
+          : /database/i.test(text) ? 'database-unavailable' : 'other'
+      }
+      const outputs = await driver.findAll(`${root} [data-testid="workspace-services-output"]`)
+      cancelledOutput = outputs.length === 1 && await driver.isDisplayed(outputs[0])
+        && (await driver.text(outputs[0])).trim() === 'Operation cancelled before execution.'
+    } catch { /* An actual open modal may refuse element inspection. */ }
+    await record('ops-ui-service-confirmation-failed', { role, accept, phase, errorVisible, errorCategory, cancelledOutput })
+    throw new Error(`ops_ui_service_confirmation_${phase}_failed`)
+  }
 }
 
 export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, resumeState: state, onRecovered }) {
@@ -329,14 +358,14 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await record(`ops-ui-${role}-diagnosis`, { passed: true, steps })
     const baseline = await checkpoint('before-cancel', { role, unit })
     check(baseline && typeof baseline === 'object', 'observer_baseline_missing')
-    await reviewAndRespond(driver, `${serviceRoot(id)} ${testId('workspace-service-restart')}`, unit, false)
+    await reviewOpsUiServiceConfirmation({ driver, css: `${serviceRoot(id)} ${testId('workspace-service-restart')}`, unit, accept: false, record, role })
     await checkpoint('after-cancel', { role, unit, baseline })
     const cancelled = await auditJob(driver, role, state, unit, 'cancelled')
     await record(`ops-ui-${role}-cancelled`, { passed: true, jobId: cancelled, mutations: 0 })
     await openServices(driver, role, state)
     await driver.waitFor(serviceRow(id, unit))
     await driver.click(serviceRow(id, unit))
-    await reviewAndRespond(driver, `${serviceRoot(id)} ${testId('workspace-service-restart')}`, unit, true)
+    await reviewOpsUiServiceConfirmation({ driver, css: `${serviceRoot(id)} ${testId('workspace-service-restart')}`, unit, accept: true, record, role })
     await driver.until(async () => (await driver.text(output)).includes('status=completed'), { timeoutMs: 60000 })
     await driver.waitFor(`${serviceRow(id, unit)}[data-active-state="active"]`, { timeoutMs: 30000 })
     await checkpoint('after-confirm', { role, unit, baseline })

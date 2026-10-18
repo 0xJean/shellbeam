@@ -95,7 +95,7 @@ export class OpsUiDriver {
   noteInteraction(kind, locator) {
     // Keep only a fixed test-control identifier. Never retain locator text,
     // input contents, error payloads or credential values in diagnostics.
-    const control = typeof locator === 'string' ? /data-testid=["']([a-z0-9-]{1,80})["']/.exec(locator)?.[1] : null
+    const control = typeof locator === 'string' ? [...locator.matchAll(/data-testid=["']([a-z0-9-]{1,80})["']/g)].at(-1)?.[1] : null
     this.lastInteraction = { kind, control: control ?? 'native-control' }
   }
   async clickElement(element) {
