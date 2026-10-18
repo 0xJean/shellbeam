@@ -33,6 +33,7 @@
 | HTTP/TCP检查与本地规则 | `health-check-scheduler.ts`、`local-alert-*.ts`、`local-ops-store.ts` | 应用级有界调度，历史、持续时间、滞回、unknown不恢复、失败与恢复通知；复用OperationJob路径判断，仅保存jumpHostId的主机在成功、失败、unknown和取消未发送结果中均保留ProxyJump，持久化历史、服务告警和恢复视图不误标直连 |
 | 跨会话告警审计 | `data/local_ops.rs`、`local-ops-persistence.ts`、`local-alert-actions.ts` | 原生按Vault/host/kind隔离、revision CAS；确认/关闭关联同scope已确认OperationJob；MCP返回安全历史和关联任务 |
 | 历史任务与审计查询 | `OperationsAuditCenter`、原生`operation_jobs`查询 | 来源和状态在原生筛选，按时间与唯一ID复合游标翻页，每页最多100条；任务与审计独立分页，历史页暂停自动刷新，刷新回到最新。切换Vault/主机/筛选拒绝迟到结果；仍受5000任务/10000审计的既有保留上限约束，不承诺无限历史 |
+| Workspace结果未知提示 | `WorkspaceOperationRecoveryNotice`、原生启动recover | 只显示同Vault/主机canonical unknown；正常queued/running留在任务进度，跨应用重启未完成任务由原生转unknown。初始读取无证据不闪警告，可见时15秒及focus/visibility只读刷新、单请求合并；读取失败保留未知证据，成功读到终态才移除；显式Vault冲突不查全局，切scope/卸载清理并拒绝迟到结果，不重放远端动作 |
 | 异步操作确认 | `user-confirmation.ts`、应用级`UserConfirmationDialog`、OperationJob/文件/批量入口 | Tauri Dialog 2.6会把`window.confirm`替换为Promise，必须等待严格布尔结果。应用内真实确认窗默认聚焦取消，显示主机、路径和动作摘要；文件保留精确输入token。锁库/切库/主机或跳板变更撤销待确认，作用域guard保留至实际发送前；不可用/忙碌不记为人工拒绝，已同意但未发送的取消保留confirmed。31f33a5打包GUI已证明直连真实取消零变更、确认只重启一次及恢复通知；跳板处理和完整重启闭环仍未通过 |
 | MCP本地告警确认/关闭 | `mcp/local_alerts.rs`、协议oneOf与原生local_ops内部事务 | 保留Komari参数兼容；服务、健康检查和独立ProbeProvider告警必须显式`alertSource=local-ops`、ruleId及expectedRevision。复查manageAlerts/同Vault主机授权，规范Job记录客户端授权为not_required，不伪造人工确认；SQLite保证CAS、跨会话与并发幂等，不重放非终态任务。桌面confirmed-only入口保持独立 |
 | 超时/断线/信号/输出过量 | 原生公共command执行器、OperationJob结果映射 | 不推断远端动作已停止；不确定结果为unknown，无自动重放写操作 |
@@ -132,3 +133,5 @@ Overview与移动控制台整合本地回归：前端1003项通过，16项Linux�
 Agent分阶段scope检查与GUI几何诊断本地回归：前端1250项通过、17项Linux用例在macOS跳过，TypeScript/Vite生产构建通过；7个Node套件101项通过。新增覆盖确认presenter独立guard、下载/home/旧hash/prepare/upload期间作用域变化、首次变更前取消与发送后unknown、prepare失败停止激活、已知activation结果不被UI变化改写，以及同Vault推断和显式冲突拒绝。这些本地结果不证明生产签名分发或完整GUI闭环，新提交CI需单独核对。
 
 提交`0150e80`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39107634955)和[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39107634945)共11项通过；下载核对的[真实Linux Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39107634955/artifacts/12128743372)确认16项通过、零跳过、success/cleanup均通过，合并检出`d8f5b9e02a7ea16c376bddbc0e71ba588c6ebdfb`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39107634937)通过测试通知四状态及两条服务开启横幅，随后在直连服务点击前的矩形诊断报`element not interactable`；已导出真实受控Services截图，清理与应用退出通过。本轮没有证明此前跳板点击已修复，也未执行后续Probe旅程；详见`ops-ui-live-validation.md`。
+
+结果未知提示修正本地回归：前端1260项通过、17项Linux用例在macOS跳过，TypeScript/Vite生产构建通过；定向恢复提示/Services/Activity组件29项通过。覆盖当前queued/running不误报、跨Vault二次筛选、显式scope冲突、延迟/失败读保留证据、可见刷新和canonical终态移除、请求合并、切库迟到与卸载清理。未变更远端命令或操作状态，不以此推断Services点击问题已解决。

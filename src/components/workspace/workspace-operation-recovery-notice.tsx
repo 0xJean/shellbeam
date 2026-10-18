@@ -1,14 +1,14 @@
 import { AlertTriangle, RefreshCw, Route } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
-import { listOperationJobs, type OperationJob, type OperationJobStatus } from '@/lib/operation-job'
+import { listOperationJobs, type OperationJob } from '@/lib/operation-job'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
-const RECOVERABLE: OperationJobStatus[] = ['unknown', 'queued', 'running']
-
 /**
- * Shows durable jobs which may have outlived the terminal or Workspace window.
+ * Shows canonical jobs whose remote outcome is unknown. Startup recovery already
+ * converts interrupted queued/running jobs to unknown; current activity is not a
+ * recovery incident.
  * It only reads the local job journal; the operator still decides whether a
  * follow-up check is safe. This keeps MCP and UI jobs visible after a restart
  * without replaying a remote command automatically.
@@ -16,40 +16,56 @@ const RECOVERABLE: OperationJobStatus[] = ['unknown', 'queued', 'running']
 export function WorkspaceOperationRecoveryNotice({ host, vaultId }: { host: HostProfile; vaultId?: string }) {
   const { t } = useT()
   const scopedVaultId = vaultId ?? host.vaultId
+  const vaultMismatch = Boolean(vaultId && host.vaultId && vaultId !== host.vaultId)
   const scope = JSON.stringify([scopedVaultId, host.id])
   const [state, setState] = useState<{ scope: string; audits: OperationJob[]; loading: boolean } | null>(null)
-  const generation = useRef(0)
-  const audits = state?.scope === scope ? state.audits : []
+  const reload = useRef<((showLoading?: boolean) => Promise<void>) | null>(null)
+  const audits = !vaultMismatch && state?.scope === scope ? state.audits : []
   const loading = state?.scope === scope && state.loading
 
-  const load = useCallback(async () => {
+  useEffect(() => {
     // A host id is only meaningful within its Vault. Never query the global
     // journal when a legacy/unsaved host has no scope.
-    if (!scopedVaultId?.trim() || !host.id.trim()) return
-    const request = ++generation.current
-    setState({ scope, audits: [], loading: true })
-    try {
-      // Audit events retain queued/running history even after a job finishes.
-      // Read canonical current statuses, so old events cannot suggest a replay.
-      const entries = (await Promise.all(RECOVERABLE.map((status) =>
-        listOperationJobs({ vaultId: scopedVaultId, hostId: host.id, status, limit: 5 }),
-      ))).flat()
-      if (request !== generation.current) return
-      setState({ scope, loading: false, audits: entries.filter((entry) =>
-        entry.vaultId === scopedVaultId && entry.hostId === host.id && RECOVERABLE.includes(entry.status),
-      ).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 5) })
-    } catch {
-      if (request === generation.current) setState({ scope, audits: [], loading: false })
-    }
-  }, [host.id, scopedVaultId, scope])
-
-  useEffect(() => {
-    const requests = generation
+    if (vaultMismatch || !scopedVaultId?.trim() || !host.id.trim()) return
     let active = true
+    let pending = false
+    const load = async (showLoading = false) => {
+      if (!active || pending) return
+      pending = true
+      if (showLoading) {
+        setState((current) => ({ scope, audits: current?.scope === scope ? current.audits : [], loading: true }))
+      }
+      try {
+        // Read current jobs, not historical audit events. Neither an active
+        // queued/running read nor an old event proves an unknown remote outcome.
+        const entries = await listOperationJobs({ vaultId: scopedVaultId, hostId: host.id, status: 'unknown', limit: 5 })
+        if (!active) return
+        setState({ scope, loading: false, audits: entries.filter((entry) =>
+          entry.vaultId === scopedVaultId && entry.hostId === host.id && entry.status === 'unknown',
+        ).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 5) })
+      } catch {
+        // A failed journal read cannot prove that a previously unknown outcome
+        // has been reconciled. Keep the last scoped result until a successful read.
+        if (active) setState((current) => ({ scope, audits: current?.scope === scope ? current.audits : [], loading: false }))
+      } finally {
+        pending = false
+      }
+    }
+    reload.current = load
+    const onVisible = () => { if (document.visibilityState === 'visible') void load() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    const timer = window.setInterval(onVisible, 15_000)
     queueMicrotask(() => { if (active) void load() })
-    return () => { active = false; requests.current++ }
-  }, [load])
-  if (audits.length === 0 && !loading) return null
+    return () => {
+      active = false
+      if (reload.current === load) reload.current = null
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+      window.clearInterval(timer)
+    }
+  }, [host.id, scopedVaultId, scope, vaultMismatch])
+  if (audits.length === 0) return null
 
   return (
     <section data-testid="workspace-operation-recovery" className="rounded-xl border border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] px-4 py-3 text-[color:var(--workspace-status-warn-text)]">
@@ -73,7 +89,7 @@ export function WorkspaceOperationRecoveryNotice({ host, vaultId }: { host: Host
             ))}
           </div>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading} className="shrink-0 rounded-md border border-current/20 p-1.5 transition-colors hover:bg-black/5 disabled:cursor-wait disabled:opacity-60" title={t('workspace.operation.recovery.refresh')}>
+        <button type="button" onClick={() => void reload.current?.(true)} disabled={loading} className="shrink-0 rounded-md border border-current/20 p-1.5 transition-colors hover:bg-black/5 disabled:cursor-wait disabled:opacity-60" title={t('workspace.operation.recovery.refresh')}>
           <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
         </button>
       </div>
