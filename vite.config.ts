@@ -33,6 +33,9 @@ export default defineConfig({
     },
   },
   test: {
+    // Node's native test runner owns scripts/*.test.mjs and Agent publisher
+    // tests. Vitest cannot count their TAP failures or preserve file: URLs.
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',

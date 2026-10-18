@@ -306,6 +306,7 @@ function hostOpsToCardSummary(
     sampledAt: view.health.freshness.sampledAt ?? undefined,
     ttlMs: view.health.freshness.ttlMs,
     expiresAt: view.health.freshness.expiresAt,
+    expiryReason: view.health.freshness.expiryReason,
     capabilities: view.capabilities,
     highestAlertSeverity: view.highestAlertSeverity,
     localAlertOpen: view.localAlertOpen,

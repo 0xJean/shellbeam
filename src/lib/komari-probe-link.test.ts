@@ -22,7 +22,7 @@ const snapshot: ProbeSnapshot = {
   metrics: {
     data: { hostname: 'prod', os: 'Linux', kernel: '6.8', uptimeSeconds: 1, cpuPercent: 1, load1: 0, load5: 0, load15: 0, memoryUsedBytes: 1, memoryTotalBytes: 2, memoryPercent: 50, diskUsedBytes: 1, diskTotalBytes: 2, diskPercent: 50, networkRxBytesPerSec: 1, networkTxBytesPerSec: 1, latencyMs: null, sampledAt: 1_000 },
     source: { kind: 'komari', id: 'komari-prod', nodeId: 'node-1', endpoint: 'https://komari.example', capabilities: ['metrics'] },
-    freshness: { sampledAt: 1_000, receivedAt: 1_000, ttlMs: 5_000, expiresAt: 6_000, expired: false }, confidence: 'partial',
+    freshness: { sampledAt: 1_000, receivedAt: 1_000, ttlMs: 5_000, expiresAt: 6_000, expired: false, expiryReason: null }, confidence: 'partial',
   },
   inventory: null, errors: [], alerts: { load: 1, offline: 0, total: 1, active: 1, updatedAt: 1_000 },
 }

@@ -6,6 +6,18 @@ The schema preserves CPU, load, memory, disk, uptime and network counters plus r
 
 Both TS adapters and native MCP test the same `shared/fixtures/linux-probe-v1.txt` fixture. The Linux-only test also executes the actual collector and verifies that a metrics-only scan omits inventory subprocesses. That test is skipped on macOS and runs in Linux frontend CI.
 
+Freshness includes `expiryReason: "ttl-expired"` after the original sample deadline, or `null` while valid. UI/scheduler hydration and native MCP recompute both expiry and its reason, including legacy envelopes. A failed collection remains a separate error/recovery condition and does not invent TTL expiry. Future or invalid samples and missing sources are rejected rather than labeled healthy.
+
+## Agent reconnect history
+
+The live Agent scheduler imports history only after a successful current observation. `history-page --json --agent-id <id> --after <ms> --through <ms>` returns ascending original snapshots with a fixed inclusive cutoff and exclusive cursor. The Agent validates the entire retained window before emitting a page; malformed, foreign-node or future samples in that window fail the page. Sorting and deduplication happen before the count/byte limit. A missing timestamp cannot be assigned to a window and also fails validation.
+
+`provider_history_import_cursors` is independent of the latest snapshot and keyed by Vault/host/provider kind/provider id/node. A `BEGIN IMMEDIATE` transaction checks the expected cursor/revision, appends with `INSERT OR IGNORE`, applies retention and commits the new cursor. Persistence failure or a locked Vault does not advance it. Imports retain the original sample time, TTL and source; a later arrival does not rewrite an existing sample. History clearing deletes matching rows and cursors in one transaction.
+
+Cancellation or timeout prevents another page/import from being started after the read returns. It cannot undo a SQLite transaction already dispatched to the native layer; that transaction may still complete in its original scope. The next pass resumes from authoritative durable progress, and timeout diagnostics retain any pages already confirmed committed.
+
+Each desktop pass is bounded to four pages / 30 seconds per host, inside the existing fleet concurrency slot. A remaining backlog reports partial and resumes on another tick. The Workspace separates a session's imported counts and safe failure reason from durable progress; neither a successful backfill nor a failed one proves the host's current health. Old agents without the paging command report unavailable, without falling back to an unbounded response. Agent remote retention still limits how much of an outage can be recovered.
+
 ## Komari API compatibility
 
 Contract fixtures use synthetic data following the official [API documentation](https://komari-document.pages.dev/en/dev/api), the [1.6.0 route bindings](https://github.com/komari-monitor/komari/blob/1.6.0/web/router/router.go), and the [1.6.0 response handlers](https://github.com/komari-monitor/komari/blob/1.6.0/web/rpc/jsonrpc/public.go). They cover flat historical records, nested live reports, node mappings, denied access, partial observations, and server versions 1.0.3 and 1.6.0. API key support begins at 1.0.3; older and unknown versions are identified rather than assumed compatible.

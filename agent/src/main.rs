@@ -50,6 +50,56 @@ fn run() -> std::io::Result<()> {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(100),
         )?,
+        "history-page" => {
+            // This additive command is deliberately strict: an absent or
+            // malformed cursor must never silently turn into a full read.
+            let mut index = 1;
+            while index < args.len() {
+                let argument = &args[index];
+                if ![
+                    "--json",
+                    "--state-dir",
+                    "--agent-id",
+                    "--after",
+                    "--through",
+                    "--limit",
+                ]
+                .contains(&argument.as_str())
+                    || args[..index].contains(argument)
+                {
+                    return Err(std::io::Error::other("history_page_arguments_invalid"));
+                }
+                if argument != "--json"
+                    && args
+                        .get(index + 1)
+                        .map_or(true, |next| next.starts_with("--"))
+                {
+                    return Err(std::io::Error::other("history_page_arguments_invalid"));
+                }
+                index += if argument == "--json" { 1 } else { 2 };
+            }
+            let required = |name: &str| {
+                option(name).ok_or_else(|| std::io::Error::other("history_page_arguments_invalid"))
+            };
+            let timestamp = |name: &str| -> std::io::Result<u64> {
+                required(name)?
+                    .parse()
+                    .map_err(|_| std::io::Error::other("history_page_arguments_invalid"))
+            };
+            let limit = match option("--limit") {
+                Some(value) => value
+                    .parse()
+                    .map_err(|_| std::io::Error::other("history_page_arguments_invalid"))?,
+                None => agent::history_protocol_limits().default_points,
+            };
+            agent::history_page(
+                &directory,
+                required("--agent-id")?,
+                timestamp("--after")?,
+                timestamp("--through")?,
+                limit,
+            )?
+        }
         "install" | "upgrade" => agent::install(&executable, &directory)?,
         "uninstall" => agent::uninstall(
             &executable,
@@ -64,7 +114,7 @@ fn run() -> std::io::Result<()> {
             serde_json::json!({"version":agent::VERSION,"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH})
         }
         _ => {
-            println!("ShellBeam Agent {}\nCommands: daemon, collect --json, probe --json, history --json, install --json, upgrade --json, uninstall --json [--purge], service start|stop|restart|status.\nState: ~/.local/share/shellbeam-agent (0600); service: systemd --user or launchd; no listening ports or outbound traffic.\nLinux requires an active user systemd manager; persistent post-logout collection requires the administrator to enable linger for that account explicitly.",agent::VERSION);
+            println!("ShellBeam Agent {}\nCommands: daemon, collect --json, probe --json, history --json, history-page --json --agent-id <id> --after <ms> --through <ms> [--limit <1..100>], install --json, upgrade --json, uninstall --json [--purge], service start|stop|restart|status.\nState: ~/.local/share/shellbeam-agent (0600); service: systemd --user or launchd; no listening ports or outbound traffic.\nLinux requires an active user systemd manager; persistent post-logout collection requires the administrator to enable linger for that account explicitly.",agent::VERSION);
             return Ok(());
         }
     };

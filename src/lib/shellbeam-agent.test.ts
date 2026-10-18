@@ -24,6 +24,13 @@ const host: HostProfile = {
 }
 
 describe('ShellBeam Probe lifecycle', () => {
+  it('never imports plausible live metrics or starts healthy state from an uncertain native read', async () => {
+    const now = Date.now()
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce({ stdout: JSON.stringify({ schemaVersion: 1, agentId: 'node', status: 'installed', health: 'online', sampledAt: now, lastHeartbeatAt: now, metrics: { cpuPercent: 20 } }), stderr: '', exitCode: 0, durationMs: 1, errorType: 'unknown' })
+    const checked = await checkShellbeamAgent(host, async () => '', now)
+    expect(checked.record.health).toBe('unknown')
+    expect(checked.snapshot?.metrics).toBeNull()
+  })
   it('normalizes lifecycle records and derives heartbeat health without changing SSH semantics', () => {
     const record = normalizeShellbeamAgentRecord({
       hostId: host.id,

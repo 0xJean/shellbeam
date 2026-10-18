@@ -29,7 +29,7 @@ function healthyRecoverySnapshot(): ProbeSnapshot {
         networkRxBytesPerSec: null, networkTxBytesPerSec: null, latencyMs: null, sampledAt: 1_900,
       },
       source: { kind: 'komari', id: 'komari-recovery', nodeId: 'node-1', capabilities: ['metrics'] },
-      freshness: { sampledAt: 1_900, receivedAt: 2_000, ttlMs: 60_000, expiresAt: 61_900, expired: false },
+      freshness: { sampledAt: 1_900, receivedAt: 2_000, ttlMs: 60_000, expiresAt: 61_900, expired: false, expiryReason: null },
       confidence: 'partial',
     },
     inventory: null,

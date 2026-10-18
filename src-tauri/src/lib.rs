@@ -83,6 +83,8 @@ pub fn run() {
             data::provider_history::append_provider_metric_history,
             data::provider_history::list_provider_metric_history,
             data::provider_history::clear_provider_metric_history,
+            data::provider_history::get_provider_history_cursor,
+            data::provider_history::append_provider_history_page,
             notifications::system_notification_permission,
             notifications::request_system_notification_permission,
             notifications::send_system_notification,

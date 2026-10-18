@@ -15,7 +15,8 @@ import { loadShellbeamAgentReleaseSettings } from '@/lib/shellbeam-agent-release
 import { shellbeamAgentReleaseParamsSummary, type ValidatedShellbeamAgentRelease } from '@/lib/shellbeam-agent-release'
 import { runShellbeamAgentArtifactOperation, type ShellbeamAgentArtifactPolicy } from '@/lib/shellbeam-agent-artifact'
 import { AlertTriangle, Bot, CheckCircle2, CircleDashed, RefreshCw, ShieldAlert, Trash2, Upload } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ShellbeamAgentHistoryView } from './shellbeam-agent-history-view'
 
 interface ShellbeamAgentPanelProps {
   host: HostProfile | null
@@ -36,59 +37,74 @@ function statusTone(status: ShellbeamAgentRecord['status']) {
 
 export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret, artifactManifest, artifactPolicy }: ShellbeamAgentPanelProps) {
   const { t } = useT()
+  const scopeKey = host && (!host.vaultId || host.vaultId === vaultId) ? JSON.stringify([vaultId, host.id]) : null
+  const scopeRef = useRef({ key: scopeKey, generation: 0 })
+  if (scopeRef.current.key !== scopeKey) scopeRef.current = { key: scopeKey, generation: scopeRef.current.generation + 1 }
+  const scopeGeneration = scopeRef.current.generation
+  const scopeToken = JSON.stringify([scopeKey, scopeGeneration])
+  const isCurrent = () => scopeRef.current.key === scopeKey && scopeRef.current.generation === scopeGeneration
   const [storedRecord, setRecord] = useState<ShellbeamAgentRecord | null>(null)
-  const record = storedRecord?.hostId === host?.id ? storedRecord : null
-  const [loading, setLoading] = useState(false)
-  const [running, setRunning] = useState<'install' | 'upgrade' | 'uninstall' | null>(null)
-  const [error, setError] = useState('')
-  const [releaseLoading, setReleaseLoading] = useState(false)
-  const [releaseState, setReleaseState] = useState<{ hostId: string; release: ValidatedShellbeamAgentRelease; policy: ShellbeamAgentArtifactPolicy } | null>(null)
-  const release = releaseState?.hostId === host?.id ? releaseState : null
+  const record = scopeKey && storedRecord?.hostId === host?.id && storedRecord?.vaultId === vaultId ? storedRecord : null
+  const [loadingState, setLoadingState] = useState({ key: scopeToken, value: false })
+  const loading = loadingState.key === scopeToken && loadingState.value
+  const setLoading = useCallback((value: boolean) => setLoadingState({ key: scopeToken, value }), [scopeToken])
+  const [runningState, setRunningState] = useState<{ key: string; value: 'install' | 'upgrade' | 'uninstall' | null }>({ key: scopeToken, value: null })
+  const running = runningState.key === scopeToken ? runningState.value : null
+  const setRunning = useCallback((value: 'install' | 'upgrade' | 'uninstall' | null) => setRunningState({ key: scopeToken, value }), [scopeToken])
+  const [errorEntry, setErrorEntry] = useState<{ key: string; value: string } | null>(null)
+  const error = errorEntry?.key === scopeToken ? errorEntry?.value : ''
+  const setError = useCallback((value: string) => setErrorEntry({ key: scopeToken, value }), [scopeToken])
+  const [releaseLoadingState, setReleaseLoadingState] = useState({ key: scopeToken, value: false })
+  const releaseLoading = releaseLoadingState.key === scopeToken && releaseLoadingState.value
+  const setReleaseLoading = useCallback((value: boolean) => setReleaseLoadingState({ key: scopeToken, value }), [scopeToken])
+  const [releaseState, setReleaseState] = useState<{ vaultId: string; hostId: string; release: ValidatedShellbeamAgentRelease; policy: ShellbeamAgentArtifactPolicy } | null>(null)
+  const release = scopeKey && releaseState?.hostId === host?.id && releaseState?.vaultId === vaultId ? releaseState : null
   const selectedManifest = release?.release.manifest.artifact ?? artifactManifest
   const selectedPolicy = release?.policy ?? artifactPolicy
   const artifactReady = Boolean(selectedManifest && selectedPolicy)
 
+  const loadFailed = t('workspace.agentProbe.loadFailed')
+  const hostId = host?.id
   useEffect(() => {
     let cancelled = false
-    if (!host) {
-      setRecord(null)
-      return
-    }
+    if (!hostId || !scopeKey) return
     setLoading(true)
-    void listShellbeamAgents({ vaultId, hostId: host.id }).then((records) => {
-      if (!cancelled) setRecord(records[0] ?? null)
+    setError('')
+    void listShellbeamAgents({ vaultId, hostId }).then((records) => {
+      if (!cancelled) setRecord(records.find((entry) => entry.hostId === hostId && entry.vaultId === vaultId) ?? null)
     }).catch(() => {
-      if (!cancelled) setError(t('workspace.agentProbe.loadFailed'))
+      if (!cancelled) setError(loadFailed)
     }).finally(() => {
       if (!cancelled) setLoading(false)
     })
     return () => { cancelled = true }
-  }, [host, t, vaultId])
+  }, [hostId, scopeKey, vaultId, loadFailed, setError, setLoading])
 
   const heartbeatAge = useMemo(() => {
     if (!record?.lastHeartbeatAt) return null
     return Math.max(0, Date.now() - record.lastHeartbeatAt)
   }, [record])
-  const canOperate = Boolean(host && resolveAuthSecret && !running && !releaseLoading)
+  const canOperate = Boolean(scopeKey && host && resolveAuthSecret && !running && !releaseLoading)
 
   async function refresh() {
-    if (!host || !resolveAuthSecret) return
+    if (!host || !scopeKey || !resolveAuthSecret) return
     setLoading(true)
     setError('')
     try {
       const checked = await checkShellbeamAgent(host, resolveAuthSecret, Date.now(), vaultId)
+      if (!isCurrent()) return
       const next = { ...checked.record, vaultId }
       setRecord(next)
       await upsertShellbeamAgent(next)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      if (isCurrent()) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
   }
 
   async function operate(action: 'install' | 'upgrade' | 'uninstall') {
-    if (!host || !resolveAuthSecret) return
+    if (!host || !scopeKey || !resolveAuthSecret) return
     setRunning(action)
     setError('')
     try {
@@ -103,7 +119,7 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
           releaseSummary: release ? shellbeamAgentReleaseParamsSummary({ release: release.release }) : undefined,
           action,
           confirmMessage: t(`workspace.agentProbe.confirm.${action}`),
-          onRecord: setRecord,
+          onRecord: (next) => { if (isCurrent() && next.hostId === host.id && next.vaultId === vaultId) setRecord(next) },
         })
       } else {
         if (action !== 'uninstall') throw new Error('release_catalog_not_configured')
@@ -113,29 +129,30 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
           resolveAuthSecret,
           action,
           confirmMessage: t(`workspace.agentProbe.confirm.${action}`),
-          onRecord: setRecord,
+          onRecord: (next) => { if (isCurrent() && next.hostId === host.id && next.vaultId === vaultId) setRecord(next) },
         })
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      if (isCurrent()) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setRunning(null)
+      if (isCurrent()) setRunning(null)
     }
   }
 
   async function loadRelease() {
-    if (!host || !resolveAuthSecret) return
+    if (!host || !scopeKey || !resolveAuthSecret) return
     setReleaseLoading(true)
     setError('')
     try {
       const settings = loadShellbeamAgentReleaseSettings()
       const selected = await loadShellbeamAgentCatalogRelease({ host, vaultId, resolveAuthSecret, currentVersion: record?.version, settings })
-      setReleaseState({ hostId: host.id, release: selected, policy: { allowedHosts: settings.artifactAllowedHosts, trustedPublicKeyBase64: settings.artifactTrustedPublicKeyBase64 } })
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
-    finally { setReleaseLoading(false) }
+      if (!isCurrent()) return
+      setReleaseState({ vaultId, hostId: host.id, release: selected, policy: { allowedHosts: settings.artifactAllowedHosts, trustedPublicKeyBase64: settings.artifactTrustedPublicKeyBase64 } })
+    } catch (cause) { if (isCurrent()) setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { if (isCurrent()) setReleaseLoading(false) }
   }
 
-  if (!host) return null
+  if (!host || !scopeKey) return null
 
   return (
     <section data-testid="shellbeam-agent-panel" className="rounded-xl border border-border/60 bg-card px-5 py-4">
@@ -166,13 +183,15 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
         </div>
         <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('workspace.agentProbe.heartbeat')}</div>
-          <div className="mt-1 text-sm font-medium">{heartbeatAge === null ? t('workspace.agentProbe.never') : heartbeatAge <= (record?.heartbeatTtlMs ?? SHELLBEAM_AGENT_HEARTBEAT_TTL_MS) ? t('workspace.agentProbe.online') : t('workspace.agentProbe.offline')}</div>
+          <div className="mt-1 text-sm font-medium">{heartbeatAge === null ? t('workspace.agentProbe.never') : record?.health === 'online' && heartbeatAge <= (record?.heartbeatTtlMs ?? SHELLBEAM_AGENT_HEARTBEAT_TTL_MS) ? t('workspace.agentProbe.online') : record?.health === 'offline' || record?.health === 'stale' ? t('workspace.agentProbe.offline') : t('workspace.agentProbe.unknown')}</div>
         </div>
         <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('workspace.agentProbe.capabilities')}</div>
           <div className="mt-1 truncate text-sm font-medium">{record?.capabilities.length ? record.capabilities.join(', ') : t('workspace.agentProbe.none')}</div>
         </div>
       </div>
+
+      <ShellbeamAgentHistoryView vaultId={vaultId} hostId={host.id} nodeId={record?.agentId} />
 
       {record?.lastError && <div className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{record.lastError}</div>}
       {record?.transport === 'proxy-jump' && <div className="mt-3 text-xs text-muted-foreground">{t('workspace.agentProbe.proxyJump')}</div>}

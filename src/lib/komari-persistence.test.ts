@@ -33,7 +33,7 @@ const snapshot: ProbeSnapshot = {
       nodeId: 'node-1',
       capabilities: ['metrics'],
     },
-    freshness: { sampledAt: 1_000, receivedAt: 1_100, ttlMs: 120_000, expiresAt: 121_000, expired: false },
+    freshness: { sampledAt: 1_000, receivedAt: 1_100, ttlMs: 120_000, expiresAt: 121_000, expired: false, expiryReason: null },
     confidence: 'observed',
   },
   inventory: null,

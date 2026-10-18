@@ -30,7 +30,7 @@ const snapshot: ProbeSnapshot = {
   metrics: {
     data: { sampledAt: 1_000 } as never,
     source: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics'] },
-    freshness: { sampledAt: 1_000, receivedAt: 1_100, ttlMs: 60_000, expiresAt: 61_000, expired: false },
+    freshness: { sampledAt: 1_000, receivedAt: 1_100, ttlMs: 60_000, expiresAt: 61_000, expired: false, expiryReason: null },
     confidence: 'observed',
   },
   inventory: null,

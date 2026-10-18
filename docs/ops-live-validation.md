@@ -67,8 +67,13 @@ in `terminal-ops-acceptance.md`.
 
 ## Execution record
 
-The live gate is being introduced in this change. Its first actual workflow
-result must be recorded in the PR; a locally skipped test is not a passing live
-validation. Ordinary frontend tests skip these eight cases unless explicitly
-invoked by the isolated workflow. The runner guard tests can be run locally with
+The first real run passed on 2026-10-18: [CI 39091612213](https://github.com/0xJean/shellbeam/actions/runs/39091612213),
+head `7c98ab0f255a8a5249262f44e02f4950e4845082`, with **8 passed / 0 skipped** and no retries.
+The [redacted result](https://github.com/0xJean/shellbeam/actions/runs/39091612213/artifacts/12122144672)
+confirms `success: true` and `cleanup: passed`. Its `checkedOutCommit` is GitHub's
+PR merge commit `5337042c496b3f743bf7a113b7252d8e64c1b0de`, separate from the run's head SHA.
+This evidence belongs to that commit; later changes require their own CI result.
+Ordinary frontend tests skip these eight cases unless explicitly
+invoked by the isolated workflow. A locally skipped test is not a passing live
+validation. The runner guard tests can be run locally with
 `node --test scripts/run-ops-live.test.mjs`.

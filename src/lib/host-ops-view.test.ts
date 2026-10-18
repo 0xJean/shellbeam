@@ -196,7 +196,7 @@ describe('buildHostOpsViews', () => {
     const probe: ProbeSnapshot = { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username }, provider: source, transport: 'proxy-jump', health: 'online', receivedAt: 1_000, metrics: createProbeObservation({ data: monitor.snapshot!, source, sampledAt: 1_000, receivedAt: 1_000, ttlMs: 200 }), inventory: null, errors: [] }
     const view = buildHostOpsViews({ hosts: [host], monitorLatest: [monitor], probeSnapshots: [probe], inventoryCache: { 'host-1': { ...inventoryCache['host-1'], updatedAt: 1_300, inventory: { ...inventoryCache['host-1'].inventory, scannedAt: 1_300 } } }, now: 1_300, staleAfterMs: 5_000 })[host.id]
     expect(view.health.state).toBe('stale')
-    expect(view.health.freshness).toMatchObject({ sampledAt: 1_000, ageMs: 300, ttlMs: 200, expiresAt: 1_200, stale: true })
+    expect(view.health.freshness).toMatchObject({ sampledAt: 1_000, ageMs: 300, ttlMs: 200, expiresAt: 1_200, stale: true, expiryReason: 'ttl-expired' })
   })
 
   it.each([0, Number.NaN, 20_000])('keeps invalid metric sample time %s unknown instead of borrowing inventory time', (sampledAt) => {

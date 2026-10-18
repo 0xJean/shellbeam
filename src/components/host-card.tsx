@@ -90,6 +90,7 @@ export interface HostOperationalSummary {
   sampledAt?: number
   ttlMs?: number | null
   expiresAt?: number | null
+  expiryReason?: 'ttl-expired' | null
   capabilities?: HostOpsCapability[]
   highestAlertSeverity?: 'info' | 'warning' | 'critical' | null
   localAlertOpen?: number
@@ -634,6 +635,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
       <div data-testid="host-ops-capabilities" className="flex flex-wrap gap-1" title={t('hosts.opsFilters.capabilitiesHint')}>
         {(summary.capabilities ?? []).map((capability) => <span key={capability} className="rounded border border-border/50 px-1 py-0.5">{t(`hosts.opsFilters.capability.${capability}`)}</span>)}
         {summary.ttlMs != null && <span className="rounded border border-border/50 px-1 py-0.5" title={summary.expiresAt ? new Date(summary.expiresAt).toLocaleString() : undefined}>TTL {Math.round(summary.ttlMs / 1_000)}s</span>}
+        {summary.expiryReason === 'ttl-expired' && <span data-testid="host-ops-expiry-reason" className="rounded border border-border/50 px-1 py-0.5 text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsExpiryReason.ttl-expired')}</span>}
       </div>
       {(summary.highestAlertSeverity || summary.localAlertOpen) ? <div data-testid="host-ops-local-alerts" className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsFilters.highest')}: {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {summary.localAlertOpen ?? 0}</div> : null}
       {summary.komariProbe && (

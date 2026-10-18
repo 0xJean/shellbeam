@@ -1,4 +1,5 @@
 pub mod bridge;
+mod freshness;
 mod policy;
 mod protocol;
 mod remote;
@@ -605,11 +606,19 @@ fn komari_probe_state(
     let snapshots = komari_persistence::list_komari_snapshots(app.clone(), None)?
         .into_iter()
         .filter(|snapshot| {
-            snapshot.host_id == host.id && integration_ids.contains(&snapshot.integration_id)
+            snapshot.host_id == host.id
+                && integration_ids.contains(&snapshot.integration_id)
+                && freshness::matches_scope(
+                    &snapshot.snapshot,
+                    "komari",
+                    &snapshot.integration_id,
+                    &snapshot.host_id,
+                )
         })
         .map(|record| {
-            let snapshot = record.snapshot;
-            let expired = now_unix_ms() > record.expires_at;
+            let mut snapshot = record.snapshot;
+            let expired =
+                freshness::refresh_snapshot(&mut snapshot, record.expires_at, now_unix_ms());
             let recovery_state = probe_recovery_state(&snapshot, expired);
             json!({
                 "integrationId": record.integration_id,
@@ -617,8 +626,9 @@ fn komari_probe_state(
                 "hostId": record.host_id,
                 "sampledAt": record.sampled_at,
                 "receivedAt": record.received_at,
-                "expiresAt": record.expires_at,
+                "expiresAt": freshness::primary_deadline(&snapshot),
                 "expired": expired,
+                "expiryReason": freshness::expiry_reason(expired),
                 "recoveryState": recovery_state,
                 "recoveryAvailable": matches!(recovery_state, "stale" | "unknown" | "failed"),
                 "health": snapshot.get("health").cloned().unwrap_or(Value::Null),
@@ -641,9 +651,17 @@ fn komari_probe_state(
         }),
     )?
     .into_iter()
+    .filter(|record| {
+        freshness::matches_scope(
+            &record.snapshot,
+            &record.provider_kind,
+            &record.provider_id,
+            &record.host_id,
+        )
+    })
     .map(|record| {
-        let snapshot = record.snapshot;
-        let expired = now_unix_ms() > record.expires_at;
+        let mut snapshot = record.snapshot;
+        let expired = freshness::refresh_snapshot(&mut snapshot, record.expires_at, now_unix_ms());
         let recovery_state = probe_recovery_state(&snapshot, expired);
         json!({
             "vaultId": record.vault_id,
@@ -652,8 +670,9 @@ fn komari_probe_state(
             "hostId": record.host_id,
             "sampledAt": record.sampled_at,
             "receivedAt": record.received_at,
-            "expiresAt": record.expires_at,
+            "expiresAt": freshness::primary_deadline(&snapshot),
             "expired": expired,
+            "expiryReason": freshness::expiry_reason(expired),
             "recoveryState": recovery_state,
             "recoveryAvailable": matches!(recovery_state, "stale" | "unknown" | "failed"),
             "health": snapshot.get("health").cloned().unwrap_or(Value::Null),

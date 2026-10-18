@@ -2,6 +2,7 @@ import { COLLECTION_LIMITS, collectionConcurrency } from './collection-limits'
 import type { HostProfile } from './hosts'
 import {
   createAgentlessSshProbeProvider,
+  refreshProbeFreshness,
   validateProbeSnapshotSources,
   type ProbeCapability,
   type ProbeProvider,
@@ -198,13 +199,10 @@ export function refreshProbeSnapshotFreshness(snapshot: ProbeSnapshot, now = Dat
     if (!observation) return null
     return {
       ...observation,
-      freshness: {
-        ...observation.freshness,
-        expired: now > observation.freshness.expiresAt,
-      },
+      freshness: refreshProbeFreshness(observation.freshness, now),
     }
   }
-  snapshot = validateProbeSnapshotSources(snapshot)
+  snapshot = validateProbeSnapshotSources(snapshot, now)
   const metrics = refresh(snapshot.metrics)
   const inventory = refresh(snapshot.inventory)
   const expired = [metrics, inventory].filter(Boolean).some((observation) => observation!.freshness.expired)
@@ -319,6 +317,7 @@ export class ProbeProviderRegistry {
       // Copy it into the envelope before checking freshness so an older
       // in-memory TTL cannot make a persisted observation appear fresh.
       const original = validateProbeSnapshotSources(record.snapshot)
+      const rowIndexesMetrics = Boolean(record.snapshot.metrics)
       const snapshot = {
         ...original,
         metrics: original.metrics
@@ -327,7 +326,7 @@ export class ProbeProviderRegistry {
         // The row indexes the primary observation. Inventory collected at a
         // different time must retain its own original timestamp and TTL.
         inventory: original.inventory
-          ? { ...original.inventory, freshness: { ...original.inventory.freshness, expiresAt: original.metrics ? original.inventory.freshness.expiresAt : Math.min(original.inventory.freshness.expiresAt, record.expiresAt) } }
+          ? { ...original.inventory, freshness: { ...original.inventory.freshness, expiresAt: rowIndexesMetrics ? original.inventory.freshness.expiresAt : Math.min(original.inventory.freshness.expiresAt, record.expiresAt) } }
           : null,
       }
       if (snapshot.metrics) this.cache.set(cacheKey(provider, host, ['metrics'], record.vaultId), { snapshot })
@@ -392,7 +391,7 @@ export class ProbeProviderRegistry {
           try {
             const collected = await provider.probe(providerRequest)
             if (collected.host?.hostId !== request.host.id || collected.provider?.id !== provider.ref.id || collected.provider?.kind !== provider.ref.kind) throw new Error('PROBE_IDENTITY_MISMATCH')
-            snapshot = validateProbeSnapshotSources(collected)
+            snapshot = refreshProbeSnapshotFreshness(collected, request.now ?? Date.now())
             failed = probeNeedsRetry(snapshot, sections)
             if (!failed) break
             const latestError = snapshot.errors.find((entry) => entry.section === 'provider' || sections.includes(entry.section as ProbeSection))

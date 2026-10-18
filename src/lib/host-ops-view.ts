@@ -75,6 +75,7 @@ export interface HostOpsFreshness {
   stale: boolean
   ttlMs?: number | null
   expiresAt?: number | null
+  expiryReason?: 'ttl-expired' | null
 }
 
 export interface HostOpsOperationSummary {
@@ -236,6 +237,7 @@ function freshness(
     stale: ageMs !== null && ageMs > staleAfterMs,
     ttlMs: sampledAt === null ? null : staleAfterMs,
     expiresAt: sampledAt === null ? null : sampledAt + staleAfterMs,
+    expiryReason: ageMs !== null && ageMs > staleAfterMs ? 'ttl-expired' : null,
   }
 }
 
@@ -529,7 +531,7 @@ export function buildHostOpsViews({
     if (selectedObservation && monitor?.snapshot?.sampledAt === selectedObservation.freshness.sampledAt) {
       const stamp = selectedObservation.freshness
       const validSample = Number.isFinite(stamp.sampledAt) && stamp.sampledAt > 0 && stamp.sampledAt <= now
-      freshnessValue = { ...freshnessValue, sampledAt: validSample ? stamp.sampledAt : null, updatedAt: stamp.receivedAt, ageMs: validSample ? now - stamp.sampledAt : null, stale: validSample && (stamp.expired || now > stamp.expiresAt), ttlMs: stamp.ttlMs, expiresAt: validSample ? stamp.expiresAt : null }
+      freshnessValue = { ...freshnessValue, sampledAt: validSample ? stamp.sampledAt : null, updatedAt: stamp.receivedAt, ageMs: validSample ? now - stamp.sampledAt : null, stale: validSample && (stamp.expired || now > stamp.expiresAt), ttlMs: stamp.ttlMs, expiresAt: validSample ? stamp.expiresAt : null, expiryReason: validSample && (stamp.expired || now > stamp.expiresAt) ? 'ttl-expired' : null }
     }
     const monitorError = monitor?.error?.trim()
     const stateError = state?.error?.trim()

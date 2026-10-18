@@ -10,6 +10,8 @@ import { operationTransport } from './operation-job'
 import { upsertPersistedProbeSnapshot } from './probe-persistence'
 import { parseShellbeamAgentObservation } from './shellbeam-agent'
 import type { ProbeSnapshot } from './probe-provider'
+import { COLLECTION_LIMITS } from './collection-limits'
+import { syncShellbeamAgentHistory, SHELLBEAM_AGENT_HISTORY_TIMEOUT_MS, type ShellbeamAgentHistorySyncSummary } from './shellbeam-agent-history'
 
 /**
  * Agent lifecycle polling is deliberately a read-only scheduler. Installing,
@@ -17,9 +19,9 @@ import type { ProbeSnapshot } from './probe-provider'
  * OperationJob. This scheduler only performs the one-shot probe and persists
  * its redacted lifecycle summary.
  */
-export const SHELLBEAM_AGENT_SCHEDULE_INTERVAL_MS = 60 * 1000
-export const SHELLBEAM_AGENT_SCHEDULE_CONCURRENCY = 3
-export const SHELLBEAM_AGENT_CHECK_TIMEOUT_MS = 30 * 1000
+export const SHELLBEAM_AGENT_SCHEDULE_INTERVAL_MS = COLLECTION_LIMITS.cadence.monitorIntervalMs
+export const SHELLBEAM_AGENT_SCHEDULE_CONCURRENCY = COLLECTION_LIMITS.scheduler.concurrency
+export const SHELLBEAM_AGENT_CHECK_TIMEOUT_MS = SHELLBEAM_AGENT_HISTORY_TIMEOUT_MS
 
 export interface ShellbeamAgentScheduleOptions {
   hosts: HostProfile[]
@@ -40,12 +42,16 @@ export interface ShellbeamAgentScheduleOptions {
   onRecord?: (record: ShellbeamAgentRecord) => void
   persistSnapshot?: (snapshot: ProbeSnapshot, vaultId: string) => Promise<unknown>
   onError?: (error: unknown, host: HostProfile) => void
+  importHistory?: boolean
+  syncHistory?: typeof syncShellbeamAgentHistory
+  onHistory?: (summary: ShellbeamAgentHistorySyncSummary) => void
 }
 
 export interface ShellbeamAgentScheduleResult {
   checkedHosts: HostProfile[]
   skippedHosts: HostProfile[]
   records: ShellbeamAgentRecord[]
+  history: ShellbeamAgentHistorySyncSummary[]
 }
 
 export interface ShellbeamAgentScheduler {
@@ -142,6 +148,7 @@ export function createShellbeamAgentScheduler(options: ShellbeamAgentScheduleOpt
     const scanGeneration = generation
     const startedAt = now()
     const pending = options.hosts.filter((host) => {
+      if (host.vaultId && host.vaultId !== vaultId) return false
       if (options.shouldCheck && !options.shouldCheck(host)) return false
       const key = hostKey(vaultId, host)
       const previousAttempt = lastAttemptAt.get(key) ?? 0
@@ -152,6 +159,7 @@ export function createShellbeamAgentScheduler(options: ShellbeamAgentScheduleOpt
     const skippedHosts = options.hosts.filter((host) => !pending.includes(host))
     const checkedHosts: HostProfile[] = []
     const records: ShellbeamAgentRecord[] = []
+    const history: ShellbeamAgentHistorySyncSummary[] = []
 
     const run = async () => {
       const queue = pending.slice()
@@ -168,6 +176,8 @@ export function createShellbeamAgentScheduler(options: ShellbeamAgentScheduleOpt
           let observation: ProbeSnapshot | undefined
           try {
             const result = await withTimeout(check(host, options.resolveAuthSecret, checkedAt), timeoutMs)
+            if (result.record.hostId !== host.id || result.record.vaultId !== 'local' && result.record.vaultId !== vaultId
+              || result.snapshot && result.snapshot.host.hostId !== host.id) throw new Error('agent_check_scope_mismatch')
             const receivedAt = now()
             observation = result.snapshot ?? parseShellbeamAgentObservation(result.stdout, result.record, host, receivedAt)
             record = normalizeShellbeamAgentRecord({
@@ -196,6 +206,24 @@ export function createShellbeamAgentScheduler(options: ShellbeamAgentScheduleOpt
             await withTimeout(Promise.resolve(persist(record)), timeoutMs)
             if (generation !== scanGeneration) { inFlight.delete(key); continue }
             if (observation?.metrics || observation?.inventory) await withTimeout(Promise.resolve((options.persistSnapshot ?? upsertPersistedProbeSnapshot)(observation, vaultId)), timeoutMs)
+            if (generation !== scanGeneration) { inFlight.delete(key); continue }
+            if (options.importHistory !== false && record.status === 'installed' && observation?.metrics) {
+              let historyActive = true
+              let acknowledged: ShellbeamAgentHistorySyncSummary = { vaultId, hostId: host.id, providerKind: 'shellbeam-agent', providerId: 'shellbeam-agent', nodeId: record.agentId, status: 'failed', reason: 'timeout', imported: 0, pages: 0, hasMore: null, cursor: null }
+              let summary: ShellbeamAgentHistorySyncSummary
+              try {
+                summary = await withTimeout((options.syncHistory ?? syncShellbeamAgentHistory)({ host, record, vaultId, resolveAuthSecret: options.resolveAuthSecret, now, isCurrent: () => historyActive && generation === scanGeneration,
+                  onProgress: (progress) => { if (historyActive && generation === scanGeneration) acknowledged = { ...progress } },
+                }), SHELLBEAM_AGENT_HISTORY_TIMEOUT_MS)
+              } catch {
+                // The independent history deadline may win while a later page
+                // is pending. Never erase pages already acknowledged by SQLite.
+                summary = { ...acknowledged, status: 'failed', reason: 'timeout' }
+              } finally { historyActive = false }
+              if (generation !== scanGeneration) { inFlight.delete(key); continue }
+              history.push(summary)
+              options.onHistory?.(summary)
+            }
           } catch (error) {
             if (generation === scanGeneration) options.onError?.(redactedError(error), host)
           }
@@ -208,7 +236,7 @@ export function createShellbeamAgentScheduler(options: ShellbeamAgentScheduleOpt
       }
 
       await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, queue.length)) }, () => worker()))
-      return { checkedHosts, skippedHosts, records }
+      return { checkedHosts, skippedHosts, records, history }
     }
 
     scanPromise = run().finally(() => {

@@ -94,6 +94,25 @@ impl VaultState {
             .map(|keys| keys.contains_key(vault_id))
             .unwrap_or(false)
     }
+
+    /// Linearize a short local persistence transaction against Vault locking.
+    /// The callback must not perform remote work or re-enter VaultState.
+    pub(crate) fn while_unlocked<T>(
+        &self,
+        vault_id: &str,
+        operation: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let guard = self
+            .unlocked_keys
+            .lock()
+            .map_err(|_| "VAULT_LOCKED".to_string())?;
+        if !guard.contains_key(vault_id) {
+            return Err("VAULT_LOCKED".into());
+        }
+        let result = operation();
+        drop(guard);
+        result
+    }
 }
 
 fn derive_vault_key(master_password: &str, salt: &[u8]) -> [u8; VAULT_KEY_SIZE] {
@@ -600,4 +619,68 @@ pub fn vault_list_secret_keys(
     let mut keys = vault.secrets.keys().cloned().collect::<Vec<_>>();
     keys.sort();
     Ok(keys)
+}
+
+#[cfg(test)]
+mod unlocked_transaction_tests {
+    use super::*;
+
+    #[test]
+    fn locked_or_different_vault_never_runs_the_persistence_callback() {
+        let state = VaultState::default();
+        state
+            .unlocked_keys
+            .lock()
+            .unwrap()
+            .insert("vault-a".into(), [0; VAULT_KEY_SIZE]);
+        let ran = std::cell::Cell::new(false);
+        let result = state.while_unlocked("vault-b", || {
+            ran.set(true);
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err(), "VAULT_LOCKED");
+        assert!(!ran.get());
+        assert!(state.while_unlocked("vault-a", || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn vault_lock_waits_for_the_local_transaction_to_finish() {
+        let state = std::sync::Arc::new(VaultState::default());
+        state
+            .unlocked_keys
+            .lock()
+            .unwrap()
+            .insert("vault-a".into(), [0; VAULT_KEY_SIZE]);
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let transaction_state = state.clone();
+        let transaction = std::thread::spawn(move || {
+            transaction_state.while_unlocked("vault-a", || {
+                entered_tx.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                Ok(())
+            })
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let lock_state = state.clone();
+        let locking = std::thread::spawn(move || {
+            lock_state.unlocked_keys.lock().unwrap().remove("vault-a");
+            locked_tx.send(()).unwrap();
+        });
+        assert!(locked_rx
+            .recv_timeout(std::time::Duration::from_millis(20))
+            .is_err());
+        release_tx.send(()).unwrap();
+        assert!(transaction.join().unwrap().is_ok());
+        locking.join().unwrap();
+        locked_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(!state.is_unlocked("vault-a"));
+    }
 }

@@ -27,6 +27,17 @@ const sampledMetrics: ServerMonitorSnapshot = {
 const oldResource = { hostname: 'api', os: 'Linux', kernel: '', uptime: 'old uptime', cpuPercent: 95, memoryPercent: 20, memoryText: '', diskPercent: 30, diskText: '', network: 'old throughput' }
 
 describe('host list item', () => {
+  it.each(['grid', 'list'] as const)('explains TTL expiry in the %s card and removes it for fresh data', (mode) => {
+    const operations = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct' as const, ttlMs: 60_000, expiryReason: 'ttl-expired' as const }
+    const props = { host, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    const renderCard = (expiryReason: 'ttl-expired' | null) => mode === 'grid'
+      ? <HostGridCard {...props} operations={{ ...operations, expiryReason }} />
+      : <HostListItem {...props} index={1} operations={{ ...operations, expiryReason }} />
+    const view = render(renderCard('ttl-expired'))
+    expect(screen.getByTestId('host-ops-expiry-reason')).toHaveTextContent('Sample TTL expired')
+    view.rerender(renderCard(null))
+    expect(screen.queryByTestId('host-ops-expiry-reason')).not.toBeInTheDocument()
+  })
   it.each(['grid', 'list'] as const)('routes %s shortcuts to the exact host and keeps keyboard navigation inside the control', (view) => {
     const onOpenWorkspace = vi.fn()
     const onRefresh = vi.fn()

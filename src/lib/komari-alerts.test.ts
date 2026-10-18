@@ -79,7 +79,7 @@ describe('Komari alert lifecycle', () => {
       metrics: {
         data: {},
         source: unhealthy.provider,
-        freshness: { sampledAt: 1_000, receivedAt: 2_000, ttlMs: 500, expiresAt: 1_500, expired: true },
+        freshness: { sampledAt: 1_000, receivedAt: 2_000, ttlMs: 500, expiresAt: 1_500, expired: true, expiryReason: 'ttl-expired' },
         confidence: 'partial',
       },
     } as unknown as ProbeSnapshot

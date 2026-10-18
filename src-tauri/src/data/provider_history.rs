@@ -2,9 +2,31 @@
 //! whitelisted metric observation, never API responses, credentials or commands.
 use crate::collection_limits::limits;
 use crate::storage::{data_file_path, now_unix_ms};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tauri::Manager;
+
+const MAX_SAFE_CURSOR: i64 = 9_007_199_254_740_991;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportLimits {
+    schema_version: u32,
+    page_bytes: usize,
+    max_points: usize,
+}
+fn import_limits() -> &'static ImportLimits {
+    static VALUE: std::sync::OnceLock<ImportLimits> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        let value: ImportLimits =
+            serde_json::from_str(include_str!("../../../agent/history-protocol-limits.json"))
+                .expect("checked-in Agent history protocol limits");
+        assert_eq!(value.schema_version, 1);
+        assert!(value.page_bytes > 0 && value.max_points > 0);
+        value
+    })
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetricHistoryPoint {
@@ -45,8 +67,51 @@ pub struct MetricHistoryQuery {
     pub to: Option<i64>,
     pub limit: Option<usize>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryCursorScope {
+    pub vault_id: String,
+    pub host_id: String,
+    pub provider_kind: String,
+    pub provider_id: String,
+    pub node_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryImportPage {
+    #[serde(flatten)]
+    pub scope: HistoryCursorScope,
+    pub expected_revision: i64,
+    pub expected_cursor: Option<String>,
+    pub next_cursor: Option<String>,
+    pub points: Vec<MetricHistoryPoint>,
+    pub exhausted: bool,
+}
+
+/// Cursor state is independent of metric rows and status snapshots. Its reason
+/// comes only from fixed local classifications, never a remote command output.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryCursorState {
+    pub cursor: Option<String>,
+    pub revision: i64,
+    pub updated_at: Option<i64>,
+    pub exhausted: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryImportResult {
+    #[serde(flatten)]
+    pub state: HistoryCursorState,
+    pub appended: usize,
+}
 fn schema(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS provider_metric_history(vault_id TEXT NOT NULL,provider_kind TEXT NOT NULL,provider_id TEXT NOT NULL,host_id TEXT NOT NULL,node_id TEXT NOT NULL,sampled_at INTEGER NOT NULL,received_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,metrics_json TEXT NOT NULL,confidence TEXT NOT NULL,PRIMARY KEY(vault_id,provider_kind,provider_id,host_id,node_id,sampled_at)); CREATE INDEX IF NOT EXISTS idx_provider_history_host_time ON provider_metric_history(vault_id,host_id,sampled_at); ").map_err(|_|"history_schema_failed".into())
+    conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS provider_metric_history(vault_id TEXT NOT NULL,provider_kind TEXT NOT NULL,provider_id TEXT NOT NULL,host_id TEXT NOT NULL,node_id TEXT NOT NULL,sampled_at INTEGER NOT NULL,received_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,metrics_json TEXT NOT NULL,confidence TEXT NOT NULL,PRIMARY KEY(vault_id,provider_kind,provider_id,host_id,node_id,sampled_at)); CREATE INDEX IF NOT EXISTS idx_provider_history_host_time ON provider_metric_history(vault_id,host_id,sampled_at);
+      CREATE TABLE IF NOT EXISTS provider_history_import_cursors(vault_id TEXT NOT NULL,host_id TEXT NOT NULL,provider_kind TEXT NOT NULL,provider_id TEXT NOT NULL,node_id TEXT NOT NULL,cursor TEXT,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL,exhausted INTEGER NOT NULL,reason TEXT NOT NULL,PRIMARY KEY(vault_id,host_id,provider_kind,provider_id,node_id));").map_err(|_|"history_schema_failed".into())
 }
 fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     let conn = Connection::open(data_file_path(app, "workspace_inventory.sqlite3")?)
@@ -105,14 +170,189 @@ fn metrics(value: &Value, sampled_at: i64) -> Result<Value, String> {
     safe.insert("sampledAt".into(), json!(sampled_at));
     Ok(Value::Object(safe))
 }
+
+fn cursor_scope(value: &HistoryCursorScope) -> Result<HistoryCursorScope, String> {
+    let scope = HistoryCursorScope {
+        vault_id: id(&value.vault_id)?,
+        host_id: id(&value.host_id)?,
+        provider_kind: id(&value.provider_kind)?,
+        provider_id: id(&value.provider_id)?,
+        node_id: id(&value.node_id)?,
+    };
+    if scope.provider_kind != "shellbeam-agent" {
+        return Err("history_import_provider_invalid".into());
+    }
+    Ok(scope)
+}
+
+fn cursor_number(cursor: Option<&str>) -> Result<i64, String> {
+    match cursor {
+        None => Ok(0),
+        Some(value) => {
+            // The Agent's paging token is a canonical decimal millisecond
+            // watermark. Never retain arbitrary opaque strings or raw output.
+            let parsed = value.parse::<i64>().map_err(|_| "history_cursor_invalid")?;
+            if parsed <= 0 || parsed > MAX_SAFE_CURSOR || parsed.to_string() != value {
+                return Err("history_cursor_invalid".into());
+            }
+            Ok(parsed)
+        }
+    }
+}
+
+fn import_cursor(
+    conn: &Connection,
+    scope: &HistoryCursorScope,
+) -> Result<HistoryCursorState, String> {
+    let scope = cursor_scope(scope)?;
+    let state = conn.query_row(
+        "SELECT cursor,revision,updated_at,exhausted,reason FROM provider_history_import_cursors WHERE vault_id=?1 AND host_id=?2 AND provider_kind=?3 AND provider_id=?4 AND node_id=?5",
+        params![scope.vault_id,scope.host_id,scope.provider_kind,scope.provider_id,scope.node_id],
+        |row| Ok(HistoryCursorState { cursor:row.get(0)?, revision:row.get(1)?, updated_at:Some(row.get(2)?), exhausted:row.get::<_,i64>(3)? != 0, reason:row.get(4)? }),
+    ).optional().map_err(|_| "history_cursor_read_failed")?.unwrap_or(HistoryCursorState {
+        cursor:None, revision:0, updated_at:None, exhausted:false, reason:"not-started".into(),
+    });
+    cursor_number(state.cursor.as_deref())?;
+    if state.revision < 0
+        || state.revision > MAX_SAFE_CURSOR
+        || state.updated_at.is_some_and(|value| value < 0)
+        || !["not-started", "page-imported", "complete", "empty"].contains(&state.reason.as_str())
+    {
+        return Err("history_cursor_invalid".into());
+    }
+    Ok(state)
+}
+
+fn import_page(
+    conn: &mut Connection,
+    payload: &HistoryImportPage,
+    now: i64,
+) -> Result<HistoryImportResult, String> {
+    let scope = cursor_scope(&payload.scope)?;
+    let previous = cursor_number(payload.expected_cursor.as_deref())?;
+    let next = cursor_number(payload.next_cursor.as_deref())?;
+    if payload.expected_revision < 0 || payload.expected_revision >= MAX_SAFE_CURSOR {
+        return Err("history_cursor_invalid".into());
+    }
+    if payload.points.len()
+        > import_limits()
+            .max_points
+            .min(limits().history.max_batch_points)
+    {
+        return Err("history_batch_too_large".into());
+    }
+    if serde_json::to_vec(payload)
+        .map_err(|_| "history_page_invalid")?
+        .len()
+        > import_limits().page_bytes
+    {
+        return Err("history_page_too_large".into());
+    }
+    if payload.points.is_empty() {
+        if next != previous || !payload.exhausted {
+            return Err("history_cursor_page_invalid".into());
+        }
+    } else {
+        let maximum = payload
+            .points
+            .iter()
+            .map(|point| point.sampled_at)
+            .max()
+            .unwrap();
+        if next != maximum || next <= previous {
+            return Err("history_cursor_page_invalid".into());
+        }
+        for point in &payload.points {
+            if point.host_id != scope.host_id
+                || point.provider_kind != scope.provider_kind
+                || point.provider_id != scope.provider_id
+                || point.node_id != scope.node_id
+            {
+                return Err("history_import_scope_mismatch".into());
+            }
+            if point.sampled_at <= previous
+                || point.sampled_at > now
+                || point.sampled_at > MAX_SAFE_CURSOR
+                || point.received_at < point.sampled_at
+                || point.received_at > now
+                || point.expires_at < point.sampled_at
+                || point.expires_at > MAX_SAFE_CURSOR
+                || point.metrics["sampledAt"].as_i64() != Some(point.sampled_at)
+            {
+                return Err("history_timestamp_invalid".into());
+            }
+        }
+    }
+    // BEGIN IMMEDIATE prevents two windows from accepting the same revision.
+    // Metric inserts and the watermark commit or roll back together.
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| "history_transaction_failed")?;
+    let current = import_cursor(&tx, &scope)?;
+    if current.revision != payload.expected_revision || current.cursor != payload.expected_cursor {
+        return Err("history_cursor_conflict".into());
+    }
+    let appended = append_points(
+        &tx,
+        &MetricHistoryBatch {
+            vault_id: scope.vault_id.clone(),
+            points: payload.points.clone(),
+        },
+        now,
+        true,
+    )?;
+    let reason = if payload.points.is_empty() {
+        "empty"
+    } else if payload.exhausted {
+        "complete"
+    } else {
+        "page-imported"
+    };
+    let state = HistoryCursorState {
+        cursor: payload.next_cursor.clone(),
+        revision: current.revision + 1,
+        updated_at: Some(now),
+        exhausted: payload.exhausted,
+        reason: reason.into(),
+    };
+    tx.execute(
+        "INSERT INTO provider_history_import_cursors(vault_id,host_id,provider_kind,provider_id,node_id,cursor,revision,updated_at,exhausted,reason) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(vault_id,host_id,provider_kind,provider_id,node_id) DO UPDATE SET cursor=excluded.cursor,revision=excluded.revision,updated_at=excluded.updated_at,exhausted=excluded.exhausted,reason=excluded.reason",
+        params![scope.vault_id,scope.host_id,scope.provider_kind,scope.provider_id,scope.node_id,state.cursor,state.revision,now,state.exhausted as i64,state.reason],
+    ).map_err(|_| "history_cursor_write_failed")?;
+    tx.commit().map_err(|_| "history_commit_failed")?;
+    Ok(HistoryImportResult { state, appended })
+}
+
+fn import_page_unlocked(
+    state: &crate::vault::secrets::VaultState,
+    conn: &mut Connection,
+    payload: &HistoryImportPage,
+    now: i64,
+) -> Result<HistoryImportResult, String> {
+    let scope = cursor_scope(&payload.scope)?;
+    state.while_unlocked(&scope.vault_id, || import_page(conn, payload, now))
+}
+
 fn append(conn: &mut Connection, payload: &MetricHistoryBatch, now: i64) -> Result<(), String> {
-    let vault = id(&payload.vault_id)?;
+    id(&payload.vault_id)?;
     if payload.points.len() > limits().history.max_batch_points {
         return Err("history_batch_too_large".into());
     }
     let tx = conn
         .transaction()
         .map_err(|_| "history_transaction_failed")?;
+    append_points(&tx, payload, now, false)?;
+    tx.commit().map_err(|_| "history_commit_failed".into())
+}
+
+fn append_points(
+    tx: &Transaction<'_>,
+    payload: &MetricHistoryBatch,
+    now: i64,
+    ignore_existing: bool,
+) -> Result<usize, String> {
+    let vault = id(&payload.vault_id)?;
+    let mut appended = 0;
     for point in &payload.points {
         let host = id(&point.host_id)?;
         let provider = id(&point.provider_id)?;
@@ -138,7 +378,28 @@ fn append(conn: &mut Connection, payload: &MetricHistoryBatch, now: i64) -> Resu
         } else {
             "partial"
         };
-        tx.execute("INSERT INTO provider_metric_history(vault_id,provider_kind,provider_id,host_id,node_id,sampled_at,received_at,expires_at,metrics_json,confidence) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(vault_id,provider_kind,provider_id,host_id,node_id,sampled_at) DO UPDATE SET received_at=excluded.received_at,expires_at=excluded.expires_at,metrics_json=excluded.metrics_json,confidence=excluded.confidence WHERE excluded.received_at>=provider_metric_history.received_at",params![vault,point.provider_kind,provider,host,point.node_id,point.sampled_at,point.received_at,point.expires_at,safe.to_string(),confidence]).map_err(|_|"history_write_failed")?;
+        let sql = if ignore_existing {
+            "INSERT OR IGNORE INTO provider_metric_history(vault_id,provider_kind,provider_id,host_id,node_id,sampled_at,received_at,expires_at,metrics_json,confidence) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)"
+        } else {
+            "INSERT INTO provider_metric_history(vault_id,provider_kind,provider_id,host_id,node_id,sampled_at,received_at,expires_at,metrics_json,confidence) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(vault_id,provider_kind,provider_id,host_id,node_id,sampled_at) DO UPDATE SET received_at=excluded.received_at,expires_at=excluded.expires_at,metrics_json=excluded.metrics_json,confidence=excluded.confidence WHERE excluded.received_at>=provider_metric_history.received_at"
+        };
+        appended += tx
+            .execute(
+                sql,
+                params![
+                    vault,
+                    point.provider_kind,
+                    provider,
+                    host,
+                    point.node_id,
+                    point.sampled_at,
+                    point.received_at,
+                    point.expires_at,
+                    safe.to_string(),
+                    confidence
+                ],
+            )
+            .map_err(|_| "history_write_failed")?;
     }
     tx.execute(
         "DELETE FROM provider_metric_history WHERE sampled_at<?1",
@@ -148,7 +409,7 @@ fn append(conn: &mut Connection, payload: &MetricHistoryBatch, now: i64) -> Resu
     // Retention is global as well as per series, so a large fleet cannot grow this cache indefinitely.
     tx.execute("DELETE FROM provider_metric_history WHERE rowid IN (SELECT rowid FROM (SELECT rowid,ROW_NUMBER() OVER (PARTITION BY vault_id,provider_kind,provider_id,host_id,node_id ORDER BY sampled_at DESC) AS rank FROM provider_metric_history) WHERE rank>?1)",params![limits().history.max_series_points]).map_err(|_|"history_retention_failed")?;
     tx.execute("DELETE FROM provider_metric_history WHERE rowid IN (SELECT rowid FROM provider_metric_history ORDER BY sampled_at DESC LIMIT -1 OFFSET ?1)",params![limits().history.max_total_points]).map_err(|_|"history_retention_failed")?;
-    tx.commit().map_err(|_| "history_commit_failed".into())
+    Ok(appended)
 }
 fn list(
     conn: &Connection,
@@ -274,6 +535,23 @@ fn list(
     Ok(output)
 }
 #[tauri::command]
+pub fn get_provider_history_cursor(
+    app: tauri::AppHandle,
+    query: HistoryCursorScope,
+) -> Result<HistoryCursorState, String> {
+    import_cursor(&open(&app)?, &query)
+}
+
+#[tauri::command]
+pub fn append_provider_history_page(
+    app: tauri::AppHandle,
+    payload: HistoryImportPage,
+) -> Result<HistoryImportResult, String> {
+    let state = app.state::<crate::vault::secrets::VaultState>();
+    import_page_unlocked(&state, &mut open(&app)?, &payload, now_unix_ms())
+}
+
+#[tauri::command]
 pub fn append_provider_metric_history(
     app: tauri::AppHandle,
     payload: MetricHistoryBatch,
@@ -292,11 +570,19 @@ pub fn clear_provider_metric_history(
     app: tauri::AppHandle,
     query: MetricHistoryQuery,
 ) -> Result<(), String> {
+    clear(&mut open(&app)?, &query)
+}
+
+fn clear(conn: &mut Connection, query: &MetricHistoryQuery) -> Result<(), String> {
     let vault = id(&query.vault_id)?;
     let host = id(&query.host_id)?;
     let provider = query.provider_id.as_deref().map(id).transpose()?;
-    open(&app)?.execute("DELETE FROM provider_metric_history WHERE vault_id=?1 AND host_id=?2 AND (?3 IS NULL OR provider_id=?3)",params![vault,host,provider]).map_err(|_|"history_clear_failed")?;
-    Ok(())
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| "history_transaction_failed")?;
+    tx.execute("DELETE FROM provider_metric_history WHERE vault_id=?1 AND host_id=?2 AND (?3 IS NULL OR provider_id=?3)",params![vault,host,provider]).map_err(|_|"history_clear_failed")?;
+    tx.execute("DELETE FROM provider_history_import_cursors WHERE vault_id=?1 AND host_id=?2 AND (?3 IS NULL OR provider_id=?3)",params![vault,host,provider]).map_err(|_|"history_clear_failed")?;
+    tx.commit().map_err(|_| "history_commit_failed".into())
 }
 #[cfg(test)]
 mod tests {
@@ -327,6 +613,346 @@ mod tests {
             limit: Some(100),
         }
     }
+
+    fn import_scope() -> HistoryCursorScope {
+        HistoryCursorScope {
+            vault_id: "vault-a".into(),
+            host_id: "host-1".into(),
+            provider_kind: "shellbeam-agent".into(),
+            provider_id: "shellbeam-agent".into(),
+            node_id: "agent-one".into(),
+        }
+    }
+
+    fn import_point(at: i64, scope: &HistoryCursorScope) -> MetricHistoryPoint {
+        let mut point = point(at);
+        point.host_id = scope.host_id.clone();
+        point.provider_kind = scope.provider_kind.clone();
+        point.provider_id = scope.provider_id.clone();
+        point.node_id = scope.node_id.clone();
+        point.metrics["sampledAt"] = json!(at);
+        point
+    }
+
+    fn page(scope: HistoryCursorScope, times: &[i64]) -> HistoryImportPage {
+        HistoryImportPage {
+            points: times.iter().map(|at| import_point(*at, &scope)).collect(),
+            scope,
+            expected_revision: 0,
+            expected_cursor: None,
+            next_cursor: times.iter().max().map(ToString::to_string),
+            exhausted: false,
+        }
+    }
+
+    #[test]
+    fn history_import_watermark_is_independent_of_current_status_and_existing_points() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema(&conn).unwrap();
+        let scope = import_scope();
+        let mut already_observed = import_point(200, &scope);
+        already_observed.metrics["cpuPercent"] = json!(90);
+        append(
+            &mut conn,
+            &MetricHistoryBatch {
+                vault_id: scope.vault_id.clone(),
+                points: vec![already_observed, import_point(900, &scope)],
+            },
+            100000,
+        )
+        .unwrap();
+        assert_eq!(import_cursor(&conn, &scope).unwrap().cursor, None);
+        let result = import_page(&mut conn, &page(scope.clone(), &[100, 200]), 100000).unwrap();
+        assert_eq!(result.appended, 1);
+        assert_eq!(result.state.cursor.as_deref(), Some("200"));
+        assert_eq!(result.state.revision, 1);
+        let values = list(&conn, &query("vault-a"), 100000).unwrap();
+        assert_eq!(values.len(), 3);
+        assert_eq!(
+            values
+                .iter()
+                .find(|point| point.sampled_at == 200)
+                .unwrap()
+                .metrics["cpuPercent"],
+            json!(90.0)
+        );
+        assert!(values
+            .iter()
+            .all(|point| point.metrics.get("token").is_none()));
+        append(
+            &mut conn,
+            &MetricHistoryBatch {
+                vault_id: scope.vault_id.clone(),
+                points: vec![import_point(1000, &scope)],
+            },
+            100000,
+        )
+        .unwrap();
+        assert_eq!(import_cursor(&conn, &scope).unwrap(), result.state);
+    }
+
+    #[test]
+    fn history_import_cursor_is_scoped_to_vault_host_provider_and_agent_identity() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema(&conn).unwrap();
+        let base = import_scope();
+        let mut scopes = vec![base.clone()];
+        let mut next = base.clone();
+        next.vault_id = "vault-b".into();
+        scopes.push(next);
+        let mut next = base.clone();
+        next.host_id = "host-2".into();
+        scopes.push(next);
+        let mut next = base.clone();
+        next.provider_id = "agent-source-two".into();
+        scopes.push(next);
+        let mut next = base.clone();
+        next.node_id = "agent-reinstalled".into();
+        scopes.push(next);
+        for (index, scope) in scopes.iter().enumerate() {
+            assert_eq!(import_cursor(&conn, scope).unwrap().revision, 0);
+            import_page(
+                &mut conn,
+                &page(scope.clone(), &[100 + index as i64]),
+                100000,
+            )
+            .unwrap();
+        }
+        for (index, scope) in scopes.iter().enumerate() {
+            assert_eq!(
+                import_cursor(&conn, scope).unwrap().cursor,
+                Some((100 + index as i64).to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn history_import_rejects_invalid_pages_and_rolls_back_points_if_checkpoint_write_fails() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema(&conn).unwrap();
+        let scope = import_scope();
+        let mut invalid = page(scope.clone(), &[100, 200]);
+        invalid.next_cursor = Some("300".into());
+        assert_eq!(
+            import_page(&mut conn, &invalid, 100000).unwrap_err(),
+            "history_cursor_page_invalid"
+        );
+        invalid = page(scope.clone(), &[100, 200]);
+        invalid.points[1].node_id = "foreign-node".into();
+        assert_eq!(
+            import_page(&mut conn, &invalid, 100000).unwrap_err(),
+            "history_import_scope_mismatch"
+        );
+        invalid = page(scope.clone(), &[100001]);
+        assert_eq!(
+            import_page(&mut conn, &invalid, 100000).unwrap_err(),
+            "history_timestamp_invalid"
+        );
+        assert_eq!(import_cursor(&conn, &scope).unwrap().revision, 0);
+        assert!(list(&conn, &query("vault-a"), 100000).unwrap().is_empty());
+        conn.execute_batch("CREATE TRIGGER fail_import_cursor BEFORE INSERT ON provider_history_import_cursors BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
+        assert_eq!(
+            import_page(&mut conn, &page(scope.clone(), &[100, 200]), 100000).unwrap_err(),
+            "history_cursor_write_failed"
+        );
+        assert!(list(&conn, &query("vault-a"), 100000).unwrap().is_empty());
+        assert_eq!(import_cursor(&conn, &scope).unwrap().revision, 0);
+    }
+
+    #[test]
+    fn locked_vault_never_inserts_points_or_advances_an_import_cursor() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema(&conn).unwrap();
+        let scope = import_scope();
+        let payload = page(scope.clone(), &[100, 200]);
+        assert_eq!(
+            import_page_unlocked(
+                &crate::vault::secrets::VaultState::default(),
+                &mut conn,
+                &payload,
+                100000
+            )
+            .unwrap_err(),
+            "VAULT_LOCKED"
+        );
+        assert!(list(&conn, &query("vault-a"), 100000).unwrap().is_empty());
+        assert_eq!(import_cursor(&conn, &scope).unwrap().revision, 0);
+    }
+
+    #[test]
+    fn empty_history_page_does_not_advance_to_a_latest_status_or_window_end() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema(&conn).unwrap();
+        let scope = import_scope();
+        let mut empty = page(scope.clone(), &[]);
+        empty.exhausted = true;
+        let result = import_page(&mut conn, &empty, 100000).unwrap();
+        assert_eq!(result.state.cursor, None);
+        assert_eq!(result.state.reason, "empty");
+        assert_eq!(result.appended, 0);
+        empty.expected_revision = result.state.revision;
+        empty.next_cursor = Some("100000".into());
+        assert_eq!(
+            import_page(&mut conn, &empty, 100000).unwrap_err(),
+            "history_cursor_page_invalid"
+        );
+        assert_eq!(import_cursor(&conn, &scope).unwrap(), result.state);
+        let mut next = page(scope.clone(), &[100]);
+        next.expected_revision = result.state.revision;
+        import_page(&mut conn, &next, 100000).unwrap();
+        let mut replay = page(scope, &[100, 200]);
+        replay.expected_revision = 2;
+        replay.expected_cursor = Some("100".into());
+        assert_eq!(
+            import_page(&mut conn, &replay, 100000).unwrap_err(),
+            "history_timestamp_invalid"
+        );
+    }
+
+    struct ImportDirectory(std::path::PathBuf);
+    impl Drop for ImportDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn competing_sessions_commit_one_page_and_reopen_the_same_durable_watermark() {
+        let directory = ImportDirectory(
+            std::env::temp_dir().join(format!("shellbeam-history-cas-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir_all(&directory.0).unwrap();
+        let path = directory.0.join("history.sqlite3");
+        let initial = Connection::open(&path).unwrap();
+        schema(&initial).unwrap();
+        drop(initial);
+        let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let workers: Vec<_> = (0..2)
+            .map(|_| {
+                let path = path.clone();
+                let gate = gate.clone();
+                std::thread::spawn(move || {
+                    let mut conn = Connection::open(path).unwrap();
+                    conn.busy_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    gate.wait();
+                    import_page(&mut conn, &page(import_scope(), &[100, 200]), 100000)
+                })
+            })
+            .collect();
+        let results: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter_map(|result| result.as_ref().err())
+                .collect::<Vec<_>>(),
+            vec!["history_cursor_conflict"]
+        );
+        let reopened = Connection::open(path).unwrap();
+        schema(&reopened).unwrap();
+        let state = import_cursor(&reopened, &import_scope()).unwrap();
+        assert_eq!(state.cursor.as_deref(), Some("200"));
+        assert_eq!(state.revision, 1);
+        assert_eq!(list(&reopened, &query("vault-a"), 100000).unwrap().len(), 2);
+    }
+    #[test]
+    fn clearing_history_resets_only_the_same_scope_cursor_and_allows_backfill_again() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema(&conn).unwrap();
+        let base = import_scope();
+        let mut sibling_node = base.clone();
+        sibling_node.node_id = "agent-two".into();
+        let mut other_provider = base.clone();
+        other_provider.provider_id = "other-provider".into();
+        let mut other_vault = base.clone();
+        other_vault.vault_id = "vault-b".into();
+        let mut other_host = base.clone();
+        other_host.host_id = "host-2".into();
+        for scope in [
+            &base,
+            &sibling_node,
+            &other_provider,
+            &other_vault,
+            &other_host,
+        ] {
+            import_page(&mut conn, &page(scope.clone(), &[100]), 100000).unwrap();
+        }
+        let mut selection = query("vault-a");
+        selection.provider_id = Some(base.provider_id.clone());
+        clear(&mut conn, &selection).unwrap();
+        assert!(list(&conn, &selection, 100000).unwrap().is_empty());
+        assert_eq!(import_cursor(&conn, &base).unwrap().revision, 0);
+        assert_eq!(import_cursor(&conn, &sibling_node).unwrap().revision, 0);
+        for untouched in [&other_provider, &other_vault, &other_host] {
+            assert_eq!(import_cursor(&conn, untouched).unwrap().revision, 1);
+        }
+        let result = import_page(&mut conn, &page(base, &[100]), 100000).unwrap();
+        assert_eq!(result.appended, 1);
+        assert_eq!(list(&conn, &selection, 100000).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn history_clear_rolls_back_metric_deletion_if_cursor_deletion_fails() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema(&conn).unwrap();
+        let scope = import_scope();
+        let imported = import_page(&mut conn, &page(scope.clone(), &[100]), 100000).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_clear_cursor BEFORE DELETE ON provider_history_import_cursors BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
+        assert_eq!(
+            clear(&mut conn, &query("vault-a")).unwrap_err(),
+            "history_clear_failed"
+        );
+        assert_eq!(list(&conn, &query("vault-a"), 100000).unwrap().len(), 1);
+        assert_eq!(import_cursor(&conn, &scope).unwrap(), imported.state);
+    }
+
+    #[test]
+    fn history_page_budget_and_cursor_encoding_fail_without_persisting_output() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema(&conn).unwrap();
+        let scope = import_scope();
+        let times: Vec<_> = (1..=import_limits().max_points as i64 + 1).collect();
+        assert_eq!(
+            import_page(&mut conn, &page(scope.clone(), &times), 100000).unwrap_err(),
+            "history_batch_too_large"
+        );
+        let mut large = page(scope.clone(), &[100]);
+        large.points[0].metrics["rawOutput"] = json!("x".repeat(import_limits().page_bytes));
+        assert_eq!(
+            import_page(&mut conn, &large, 100000).unwrap_err(),
+            "history_page_too_large"
+        );
+        for raw in [
+            "token=do-not-save",
+            "00100",
+            "0",
+            "-1",
+            "NaN",
+            "9007199254740992",
+        ] {
+            assert_eq!(
+                cursor_number(Some(raw)).unwrap_err(),
+                "history_cursor_invalid"
+            );
+        }
+        let payload: HistoryImportPage = serde_json::from_value(json!({
+            "vaultId":"vault-a","hostId":"host-1","providerKind":"shellbeam-agent","providerId":"shellbeam-agent","nodeId":"agent-one",
+            "expectedRevision":0,"expectedCursor":null,"nextCursor":null,"points":[],"exhausted":true,"reason":"token=do-not-save"
+        })).unwrap();
+        let result = import_page(&mut conn, &payload, 100000).unwrap();
+        assert_eq!(result.state.reason, "empty");
+        let stored = import_cursor(&conn, &scope).unwrap();
+        assert_eq!(stored.reason, "empty");
+        assert!(!serde_json::to_string(&stored)
+            .unwrap()
+            .contains("do-not-save"));
+        assert!(list(&conn, &query("vault-a"), 100000).unwrap().is_empty());
+    }
+
     #[test]
     fn isolates_vault_host_provider_node_and_retains_original_nulls() {
         let mut conn = Connection::open_in_memory().unwrap();

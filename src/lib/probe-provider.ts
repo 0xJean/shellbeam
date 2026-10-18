@@ -48,6 +48,19 @@ export interface ProbeFreshness {
   ttlMs: number
   expiresAt: number
   expired: boolean
+  /** Derived from the original deadline, never from collection failure. */
+  expiryReason: 'ttl-expired' | null
+}
+
+/** Also accepts legacy persisted envelopes which predate expiryReason. Both
+ * derived fields are recomputed so a cached flag/reason cannot outlive its TTL. */
+export function refreshProbeFreshness(
+  freshness: Omit<ProbeFreshness, 'expiryReason'> & Partial<Pick<ProbeFreshness, 'expiryReason'>>,
+  now: number,
+): ProbeFreshness {
+  const expiresAt = Math.min(freshness.expiresAt, freshness.sampledAt + Math.max(0, freshness.ttlMs))
+  const expired = now > expiresAt
+  return { ...freshness, expiresAt, expired, expiryReason: expired ? 'ttl-expired' : null }
 }
 
 export interface ProbeObservation<T> {
@@ -148,13 +161,13 @@ export function getProbeTransport(host: HostProfile): ProbeTransport {
 
 function createFreshness(sampledAt: number, receivedAt: number, ttlMs: number): ProbeFreshness {
   const expiresAt = sampledAt + Math.max(0, ttlMs)
-  return {
+  return refreshProbeFreshness({
     sampledAt,
     receivedAt,
     ttlMs,
     expiresAt,
     expired: receivedAt > expiresAt,
-  }
+  }, receivedAt)
 }
 
 export function createProbeObservation<T>(options: {
@@ -197,21 +210,23 @@ function healthFromObservations(observations: Array<ProbeObservation<unknown> | 
 /** A persisted/delegated value without its original provider is not an
  * observation. In particular, never stamp the current provider onto an old
  * payload and thereby turn an unidentified value into healthy data. */
-export function validateProbeSnapshotSources(snapshot: ProbeSnapshot): ProbeSnapshot {
+export function validateProbeSnapshotSources(snapshot: ProbeSnapshot, now?: number): ProbeSnapshot {
   const errors: ProbeError[] = []
   const validate = <T>(observation: ProbeObservation<T> | null, section: 'metrics' | 'inventory') => {
     if (!observation) return null
     const source = observation.source
     const freshness = observation.freshness
-    if (source?.kind !== snapshot.provider.kind || source?.id !== snapshot.provider.id
+    if (!['ssh-agentless', 'komari', 'shellbeam-agent'].includes(snapshot.provider.kind)
+      || source?.kind !== snapshot.provider.kind || source?.id !== snapshot.provider.id
       || !source?.id?.trim() || !freshness
       || ![freshness.sampledAt, freshness.receivedAt, freshness.expiresAt, freshness.ttlMs].every(Number.isFinite)
       || freshness.sampledAt < 0 || freshness.sampledAt > freshness.receivedAt
+      || (now !== undefined && freshness.sampledAt > now)
       || freshness.ttlMs < 0 || freshness.expiresAt < freshness.sampledAt) {
       errors.push({ section, code: 'observation_source_invalid', message: 'Observation source or original freshness is unavailable' })
       return null
     }
-    return observation
+    return { ...observation, freshness: refreshProbeFreshness(freshness, now ?? freshness.receivedAt) }
   }
   const metrics = validate(snapshot.metrics, 'metrics')
   const inventory = validate(snapshot.inventory, 'inventory')

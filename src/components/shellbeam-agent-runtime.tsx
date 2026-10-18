@@ -3,6 +3,7 @@ import { useHosts } from '@/contexts/hosts-context'
 import { useVault } from '@/contexts/vault-context'
 import { listShellbeamAgents, SHELLBEAM_AGENT_STATE_CHANGED_EVENT, type ShellbeamAgentRecord } from '@/lib/shellbeam-agent'
 import { createShellbeamAgentScheduler } from '@/lib/shellbeam-agent-scheduler'
+import { publishShellbeamAgentHistorySummary } from '@/lib/shellbeam-agent-history'
 
 /**
  * Keeps installed ShellBeam Probes fresh while the desktop app is open. The
@@ -61,6 +62,7 @@ export function ShellbeamAgentRuntime() {
       vaultId: activeVaultId,
       resolveAuthSecret: resolveMonitorAuthSecret,
       previousRecords: eligibleRecords,
+      onHistory: publishShellbeamAgentHistorySummary,
       onError: (error, host) => console.error(`ShellBeam Probe background check failed for ${host.name}`, error),
     })
     scheduler.start()

@@ -65,6 +65,17 @@ function provider(id: string, probe: ProbeProvider['probe']): ProbeProvider {
 }
 
 describe('ProbeProviderRegistry', () => {
+  it('keeps valid inventory TTL when the row originally indexed an invalid metric observation', async () => {
+    const item: ProbeProvider = { ref: { kind: 'komari', id: 'source-a', capabilities: ['metrics', 'inventory'] }, probe: vi.fn() }
+    const old = snapshot(item, host('one'), 100)
+    old.metrics!.source = { ...item.ref, id: 'foreign-source' }
+    old.inventory = createProbeObservation({ data: { scannedAt: 400 } as never, source: item.ref, sampledAt: 400, receivedAt: 450, ttlMs: 1000 })
+    const store = { list: vi.fn(async () => [{ vaultId: 'vault-a', providerKind: item.ref.kind, providerId: item.ref.id, hostId: 'one', snapshot: old, sampledAt: 100, receivedAt: 450, expiresAt: 200, updatedAt: 450 }]), save: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) }
+    const result = await new ProbeProviderRegistry(1, store).register(item).probe({ host: host('one'), vaultId: 'vault-a', providerId: item.ref.id, sections: ['inventory'], resolveAuthSecret: async () => '', now: 500 })
+    expect(item.probe).not.toHaveBeenCalled()
+    expect(result.snapshot.metrics).toBeNull()
+    expect(result.snapshot.inventory?.freshness).toMatchObject({ sampledAt: 400, expiresAt: 1400, expiryReason: null })
+  })
   it('keeps inventory original freshness separate from the primary metrics row and preserves legitimate Komari node identity', async () => {
     const item: ProbeProvider = { ref: { kind: 'komari', id: 'source-a', capabilities: ['metrics', 'inventory'] }, probe: vi.fn() }
     const old = snapshot(item, host('one'), 100)
@@ -74,7 +85,7 @@ describe('ProbeProviderRegistry', () => {
     const result = await new ProbeProviderRegistry(1, store).register(item).probe({ host: host('one'), vaultId: 'vault-a', providerId: item.ref.id, sections: ['inventory'], resolveAuthSecret: async () => '', now: 500 })
     expect(result.cached).toBe(true)
     expect(item.probe).not.toHaveBeenCalled()
-    expect(result.snapshot.inventory?.freshness).toMatchObject({ sampledAt: 400, expiresAt: 1400, expired: false })
+    expect(result.snapshot.inventory?.freshness).toMatchObject({ sampledAt: 400, expiresAt: 1400, expired: false, expiryReason: null })
     expect(result.snapshot.inventory?.source.nodeId).toBe('remote-node')
     expect(result.snapshot.inventory?.data.resource.arch).toBe('aarch64')
   })
@@ -403,7 +414,7 @@ describe('ProbeProviderRegistry', () => {
     fallback.inventory = {
       data: {} as never,
       source: item.ref,
-      freshness: { sampledAt: 100, receivedAt: 100, ttlMs: 1_000, expiresAt: 1_000, expired: false },
+      freshness: { sampledAt: 100, receivedAt: 100, ttlMs: 1_000, expiresAt: 1_000, expired: false, expiryReason: null },
       confidence: 'partial',
     }
     const store = {
@@ -423,7 +434,9 @@ describe('ProbeProviderRegistry', () => {
     const item = snapshot({ ref: { kind: 'shellbeam-agent', id: 'x', capabilities: ['metrics'] } } as ProbeProvider, host('h'), 100)
     item.metrics!.freshness.expired = true
     expect(refreshProbeSnapshotFreshness(item, 150).metrics?.freshness.expired).toBe(false)
+    expect(refreshProbeSnapshotFreshness(item, 150).metrics?.freshness.expiryReason).toBeNull()
     expect(refreshProbeSnapshotFreshness(item, 1_200).metrics?.freshness.expired).toBe(true)
+    expect(refreshProbeSnapshotFreshness(item, 1_200).metrics?.freshness.expiryReason).toBe('ttl-expired')
   })
 
   it('does not read or write durable rows without a vault scope', async () => {

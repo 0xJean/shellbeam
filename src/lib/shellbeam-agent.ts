@@ -7,6 +7,7 @@ import { createProbeObservation, getProbeTransport } from './probe-provider'
 import type { ServerMonitorSnapshot } from './server-monitor'
 import type { WorkspaceInventory } from './workspace-inventory'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
+import { remoteOperationStatus } from './operation-verification'
 
 export type ShellbeamAgentLifecycleStatus =
   | 'not-installed' | 'installing' | 'installed' | 'upgrading' | 'uninstalling'
@@ -284,10 +285,11 @@ export async function checkShellbeamAgent(host: HostProfile, resolveAuthSecret: 
   // A daemon sample can be generated while the SSH request is in flight.
   // Compare it with response receipt, never the request's start timestamp.
   const receivedAt = Date.now()
-  const record = result.exitCode === 0
+  const completed = remoteOperationStatus(result) === 'completed'
+  const record = completed
     ? parseShellbeamAgentProbeOutput(result.stdout, host, receivedAt)
     : normalizeShellbeamAgentRecord({ hostId: host.id, status: 'unknown', health: 'unknown', transport: getProbeTransport(host), lastCheckedAt: now, lastErrorCode: `agent_check_exit_${result.exitCode}`, lastError: 'Agent probe command did not complete successfully' }, receivedAt)
-  const observation = parseShellbeamAgentObservation(result.stdout, record, host, receivedAt)
+  const observation = completed ? parseShellbeamAgentObservation(result.stdout, record, host, receivedAt) : shellbeamAgentRecordToProbeSnapshot(record, host, receivedAt)
   const snapshot = observation ? { ...observation, host: { ...(result.hostIdentity ?? observation.host), ...(result.verifiedHostKeys ? { verifiedHostKeys: result.verifiedHostKeys } : {}) } } : undefined
   return { record, snapshot, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, durationMs: result.durationMs }
 }
@@ -342,7 +344,7 @@ export async function runShellbeamAgentOperation(options: {
 
 export function shellbeamAgentRecordToProbeSnapshot(record: ShellbeamAgentRecord, host: HostProfile, now = Date.now()): ProbeSnapshot {
   record = normalizeShellbeamAgentRecord(record, now)
-  const source: ProbeProviderRef = { kind: 'shellbeam-agent', id: record.agentId || record.hostId, capabilities: normalizeCapabilities(record.capabilities) as ProbeCapability[] }
+  const source: ProbeProviderRef = { kind: 'shellbeam-agent', id: 'shellbeam-agent', nodeId: record.agentId || undefined, capabilities: normalizeCapabilities(record.capabilities) as ProbeCapability[] }
   return {
     schemaVersion: 1, host: getHostIdentity(host), provider: source, transport: getProbeTransport(host), health: record.health,
     receivedAt: record.lastCheckedAt || now, metrics: null, inventory: null,

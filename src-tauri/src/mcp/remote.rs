@@ -560,13 +560,7 @@ fn probe_observation(
     json!({
         "data": data,
         "source": source,
-        "freshness": {
-            "sampledAt": sampled_at,
-            "receivedAt": received_at,
-            "ttlMs": ttl_ms,
-            "expiresAt": sampled_at.saturating_add(ttl_ms),
-            "expired": received_at > sampled_at.saturating_add(ttl_ms),
-        },
+        "freshness": super::freshness::observation_freshness(sampled_at, received_at, ttl_ms),
         "confidence": confidence,
     })
 }
@@ -955,6 +949,7 @@ mod tests {
         assert_eq!(probe["capacity"], legacy_capacity);
         assert_eq!(probe["metrics"]["data"]["cpuPercent"], 25.0);
         assert_eq!(probe["metrics"]["confidence"], "partial");
+        assert!(probe["metrics"]["freshness"]["expiryReason"].is_null());
         assert_eq!(
             probe["metrics"]["freshness"]["ttlMs"],
             limits().cadence.metrics_ttl_ms

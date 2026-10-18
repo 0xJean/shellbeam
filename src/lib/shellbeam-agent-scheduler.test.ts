@@ -27,11 +27,40 @@ function baseOptions(overrides: Partial<ShellbeamAgentScheduleOptions> = {}): Sh
     now: () => 1_000,
     intervalMs: 60_000,
     concurrency: 2,
+    importHistory: false,
     ...overrides,
   }
 }
 
 describe('ShellBeam Probe background scheduler', () => {
+  it('keeps failed history import separate from a healthy current observation', async () => {
+    const record = normalizeShellbeamAgentRecord({ vaultId: 'vault-1', hostId: hosts[0].id, agentId: 'node-1', status: 'installed', health: 'online', transport: 'direct', lastHeartbeatAt: 900 }, 1000)
+    const onHistory = vi.fn()
+    const summary = { vaultId: 'vault-1', hostId: hosts[0].id, providerKind: 'shellbeam-agent' as const, providerId: 'shellbeam-agent' as const, nodeId: 'node-1', status: 'failed' as const, reason: 'invalid-page' as const, imported: 0, pages: 0, hasMore: null, cursor: null }
+    const scheduler = createShellbeamAgentScheduler(baseOptions({ hosts: [hosts[0]], importHistory: true, check: async () => ({ record, stdout: JSON.stringify({ schemaVersion: 1, sampledAt: 900, metrics: { cpuPercent: 20 } }), stderr: '', exitCode: 0, durationMs: 1 }), persist: vi.fn(async () => undefined), persistSnapshot: vi.fn(async () => undefined), syncHistory: vi.fn(async () => summary), onHistory }))
+    const result = await scheduler.scanNow()
+    expect(result.records[0].health).toBe('online')
+    expect(result.history).toEqual([summary])
+    expect(onHistory).toHaveBeenCalledWith(summary)
+  })
+  it('invalidates a deferred history import when its host context stops', async () => {
+    const record = normalizeShellbeamAgentRecord({ vaultId: 'vault-1', hostId: hosts[0].id, agentId: 'node-1', status: 'installed', health: 'online', transport: 'direct', lastHeartbeatAt: 900 }, 1000)
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => { release = resolve })
+    const onHistory = vi.fn(); const onRecord = vi.fn()
+    const syncHistory = vi.fn(async (options: Parameters<NonNullable<ShellbeamAgentScheduleOptions['syncHistory']>>[0]) => {
+      await pending
+      expect(options.isCurrent?.()).toBe(false)
+      return { vaultId: 'vault-1', hostId: hosts[0].id, providerKind: 'shellbeam-agent' as const, providerId: 'shellbeam-agent' as const, nodeId: 'node-1', status: 'cancelled' as const, reason: 'interrupted' as const, imported: 0, pages: 0, hasMore: null, cursor: null }
+    })
+    const scheduler = createShellbeamAgentScheduler(baseOptions({ hosts: [hosts[0]], importHistory: true, check: async () => ({ record, stdout: JSON.stringify({ schemaVersion: 1, sampledAt: 900, metrics: { cpuPercent: 20 } }), stderr: '', exitCode: 0, durationMs: 1 }), persist: vi.fn(async () => undefined), persistSnapshot: vi.fn(async () => undefined), syncHistory, onHistory, onRecord }))
+    const scan = scheduler.scanNow()
+    await vi.waitFor(() => expect(syncHistory).toHaveBeenCalledTimes(1))
+    scheduler.stop(); release()
+    expect((await scan).records).toEqual([])
+    expect(onHistory).not.toHaveBeenCalled()
+    expect(onRecord).not.toHaveBeenCalled()
+  })
   it('bounds concurrent checks and persists only lifecycle summaries', async () => {
     let active = 0
     let maxActive = 0
