@@ -224,6 +224,13 @@
 }
 
 @layer utilities {
+  /* Native focus/scroll-into-view traverses the actual vertical scroll
+     ancestors. Reserve the measured sticky bar height on its content targets,
+     rather than padding only this list's horizontal scrollport. */
+  .host-list-scroll-content :is(button, select, input, textarea, a[href], [tabindex]) {
+    scroll-margin-block-start: var(--host-list-scroll-clearance, 0px);
+  }
+
   .workspace-horizontal-scroll {
     scrollbar-color: var(--workspace-primary-300) var(--workspace-surface-700);
     scrollbar-width: auto;

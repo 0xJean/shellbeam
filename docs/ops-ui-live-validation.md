@@ -371,3 +371,29 @@ Foreign or missing summaries, duplicate cards, scope changes, unsafe paths and
 intervening dialogs/credentials refuse capture while preserving the original
 selection error. No screenshot is fabricated, and an unavailable rectangle does
 not turn the selection failure into success.
+
+The fifteenth [UI run 39110943186](https://github.com/0xJean/shellbeam/actions/runs/39110943186),
+head `593c938ae9e569d1b5ee7687e68e2d3440c48bb7`, merge checkout
+`0779f6a07c3508001c6da9ec4861e3e83fa7c1ad`, reproduced the via inventory
+selection failure after passing the service journey, first restart, service and
+Probe lifecycle banners, metadata jobs, and jump/direct inventory settlement.
+Cleanup and confirmed application exit passed. Aggregate Probe counters and
+the second restart were still not reached.
+
+This run's actual failure geometry establishes the obstruction: the via menu
+was initially above the viewport at `(1143, -190, 112, 32)`. After the native
+selection scrolled it into view, its rectangle was `(1143, 40, 112, 32)`, fully
+inside the sticky horizontal controls at `(201, 40, 1054, 49)`. The controlled
+`inventory-via-refresh-failed.png` independently shows that toolbar covering
+the menu. The next change must address product scrolling; no driver retry,
+forced click or omitted refresh is justified by this diagnosis.
+
+The product correction measures the horizontal controls' rendered height and
+reserves that height plus eight pixels as `scroll-margin-block-start` on this
+list's interactive content. It retains the sticky toolbar and existing scroll
+containers. In [WebKitGTK 2.50.0's Element implementation](https://github.com/WebKit/WebKit/blob/webkitgtk-2.50.0/Source/WebCore/dom/Element.cpp),
+scroll-into-view expands the target anchor rectangle by its scroll margin before
+scrolling its ancestors; setting padding only on the horizontal viewport would
+not protect the outer vertical scroller. Component checks can establish measured
+clearance and observer cleanup, but a new installed-app run must still prove
+the one native selection, final inventory settlement and second restart.

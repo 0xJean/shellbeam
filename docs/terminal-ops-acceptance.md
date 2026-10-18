@@ -63,6 +63,7 @@
 | 失败回滚 | 原子备份/替换及激活计划 | 使用真实shell强制新制品失败，验证旧文件hash恢复并重新激活；无法验证的回滚保持unknown |
 | 安装阶段的确认作用域 | `OperationExecutionContext`、Agent制品/生命周期操作、探针面板 | 下载、home/旧hash读取、prepare、SFTP和activation之间复查同一持久guard。首次变更前失效为cancelled/confirmed；可能已发送后失效为unknown，不向新路由发清理或回滚。实际已完成activation保留已知Job结果，失效后不投影健康或发后续检查；prepare失败/unknown不继续上传。锁库、主机/跳板修改与卸载面板均纳入scope |
 | 发布策略 | `.github/workflows/agent-release.yml`、`docs/agent.md` | 四目标构建与签名草稿流水线；发布入口传入签名灰度比例、每目标前版本hash；拒绝两角色共用签名密钥。PR CI独立验证四目标release构建；正式发布需要仓库配置独立私钥和审核draft，未自动发布 |
+| 正式签名方案 | `docs/agent.md`、发布workflow的独立validate任务 | 已选两角色离线保管、环境级密钥、默认分支手动触发、preview 5%和人工draft发布；个人仓库支持单维护者复核，已有可信第二维护者时可加强审批。无密钥publisher测试先于构建/签名，拒绝feature分支及tag；生产环境、密钥、公开制品和真实客户端分发尚未配置或执行 |
 
 ## Phase 4：扩展运维
 
@@ -144,3 +145,7 @@ Agent分阶段scope检查与GUI几何诊断本地回归：前端1250项通过、
 Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例在macOS跳过，TypeScript/Vite生产构建通过；Services/incident/MobileShell/recovery组件28项通过，修改范围ESLint与空白检查通过。新增用长第二unit选择验证实际状态命令、同Vault审计、Logs原始目标及Load字段保留，不使用class断言代替布局证据；尚无窄屏安装包或设备渲染通过记录。
 
 提交`d636bd8`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39109669939)/[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39109669919)共11项通过，[核对的Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39109669939/artifacts/12130086687)16项通过、零跳过、清理成功，合并检出`7df474da3197412f18970de0a9177d9a467751a7`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39109669946)再次通过两路服务/首次重启和独立Probe六横幅、六任务，并完成jump与direct两次真实资产刷新、新原始时间及健康观察。第三个via刷新菜单原生点击被拦截；没有失败时坐标或截图能确定遮挡者，最终计数和第二次重启仍未执行，GUI总结果保持failed，清理和应用退出成功。
+
+提交`593c938`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39110943174)/[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39110943161)共11项通过，[核对的Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39110943174/artifacts/12130376995)16项通过、零跳过、清理成功，合并检出`0779f6a07c3508001c6da9ec4861e3e83fa7c1ad`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39110943186)保留服务/首次重启及Probe既有通过项，仍在via资产刷新失败；新实际几何和受控截图确认固定横向控制条完整覆盖了原生滚动后的菜单。最终计数和Probe第二次重启仍未验收，清理和应用退出通过，不以诊断成功替代GUI成功。
+
+横向控制条避让修复保留sticky和既有滚动容器，按实际控件高度加8px为列表内交互目标设置滚动margin。组件验证49/81.25px高度变化、清零、观察器清理及原横向分页/范围/键盘操作；相关55项通过，完整前端1264项通过、17项Linux用例在macOS跳过，生产构建、编译CSS规则、修改范围ESLint和空白检查通过。新打包GUI仍须证明原生点击与剩余Probe闭环，不以jsdom布局推断代替。
