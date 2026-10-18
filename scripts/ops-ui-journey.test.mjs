@@ -282,6 +282,69 @@ test('service selection waits for bounded stable geometry and clicks both defaul
   }
 })
 
+test('each unavailable WebKit rectangle retains partial geometry without blocking the one real row click', async () => {
+  const fields = { row: 'workspace-service-row', list: 'workspace-services-list', service: 'workspace-services-app', window: 'workspace-desktop-window-services', content: 'workspace-window-body' }
+  for (const [field, testId] of Object.entries(fields)) {
+    const unit = serviceSelectionUnit()
+    try {
+      const realRect = unit.driver.rect, inspected = new Set()
+      unit.driver.rect = async element => {
+        inspected.add(element.dataset.testid)
+        if (element.dataset.testid === testId) throw Object.assign(new Error('SYNTHETIC_PRIVATE_WEBDRIVER_DETAIL'), { code: 'element not interactable' })
+        return realRect(element)
+      }
+      await selectOpsUiServiceRow(unit.options)
+      assert.equal(unit.clicks.length, 1)
+      assert.equal(unit.screenshots.length, 0)
+      assert.equal(inspected.size, 5)
+      const final = unit.records.at(-1)
+      assert.equal(final.phase, 'selected'); assert.equal(final.selected, true); assert.equal(final.pressed, true)
+      assert.deepEqual(final[field], { available: false, reason: 'element-not-interactable' })
+      for (const other of Object.keys(fields).filter(key => key !== field)) assert(final[other].width > 0)
+      assert(!JSON.stringify(unit.records).includes('SYNTHETIC'))
+    } finally { unit.dom.window.close() }
+  }
+})
+
+test('an unavailable ancestor rectangle never converts an actual row click failure into success', async () => {
+  const unit = serviceSelectionUnit({ problem: 'click' })
+  try {
+    const realRect = unit.driver.rect
+    unit.driver.rect = async element => {
+      if (element.dataset.testid === 'workspace-services-list') throw Object.assign(new Error('SYNTHETIC_PRIVATE_WEBDRIVER_DETAIL'), { code: 'element not interactable' })
+      return realRect(element)
+    }
+    await assert.rejects(selectOpsUiServiceRow(unit.options), /fixed_click_failed/)
+    assert.equal(unit.clicks.length, 1)
+    assert.equal(unit.screenshots.length, 1)
+    const failed = unit.records.find(row => row.phase === 'failed')
+    assert.deepEqual(failed.list, { available: false, reason: 'element-not-interactable' })
+    assert(failed.row.width > 0 && failed.content.height > 0)
+    assert.equal(failed.selected, false); assert.equal(failed.pressed, false)
+    assert.equal(unit.records.at(-1).captured, true)
+    assert(!JSON.stringify(unit.records).includes('SYNTHETIC'))
+  } finally { unit.dom.window.close() }
+})
+
+test('unrelated rectangle errors and invalid rectangle responses still stop selection before clicking', async () => {
+  for (const problem of ['transport', 'invalid']) {
+    const unit = serviceSelectionUnit()
+    try {
+      const realRect = unit.driver.rect
+      unit.driver.rect = async element => {
+        if (element.dataset.testid !== 'workspace-services-list') return realRect(element)
+        if (problem === 'transport') throw Object.assign(new Error('fixed_rect_transport_failed'), { code: 'transport failure' })
+        return { x: 0, y: 0, width: 0, height: 448 }
+      }
+      await assert.rejects(selectOpsUiServiceRow(unit.options), problem === 'transport' ? /fixed_rect_transport_failed/ : /service_selection_rect_invalid/)
+      assert.equal(unit.clicks.length, 0)
+      assert.equal(unit.screenshots.length, 1)
+      assert(unit.records.some(row => row.name === 'ops-ui-service-selection-geometry-unavailable'))
+      assert.equal(unit.records.at(-1).captured, true)
+    } finally { unit.dom.window.close() }
+  }
+})
+
 test('selection failure reads post-failure rectangles and reserves one scoped actual screenshot without retrying the row click', async () => {
   for (const problem of ['click', 'post-selection']) {
     const unit = serviceSelectionUnit({ problem })

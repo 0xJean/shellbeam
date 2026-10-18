@@ -255,3 +255,27 @@ Even a successful isolated Linux run does not prove macOS/Windows notification
 presentation, mobile browser/device behavior, an external Komari deployment,
 public-CA domain-control renewal or production Agent distribution. Those remain
 separate entries in `terminal-ops-acceptance.md`.
+
+The eleventh [UI run 39107634937](https://github.com/0xJean/shellbeam/actions/runs/39107634937),
+head `0150e806d4cd067abc93d2bdeb6de9d165451daf`, merge checkout
+`d8f5b9e02a7ea16c376bddbc0e71ba588c6ebdfb`, again passed the four real test-button
+cases and both real service-opening banners. It failed earlier than the previous
+run: geometry collection for the direct Services surface returned `element not
+interactable` before any row click. The controlled failure screenshot succeeded
+and shows the window's lower edge clipping the service list; the service row,
+list and app rectangles were not exported because the diagnostic discarded its
+partial result. That screenshot does not identify which rectangle request failed
+or establish the earlier via-row click's cause. Cleanup and app exit passed.
+
+The diagnostic correction retains each available rectangle independently and
+records only a fixed unavailable marker when the standard rectangle endpoint
+returns `element not interactable`. Unavailable geometry is not a replacement
+for, or a prerequisite to, the original real click. Invalid rectangles and other
+driver errors still fail, and the real selected-service/pressed-row checks and
+scoped failure screenshot remain required. No product layout fix or complete
+incident pass is claimed from this correction.
+
+The seven Node contract suites pass 104 tests after the diagnostic correction,
+including each unavailable field, retained partial geometry after a real click
+failure, and rejection of malformed rectangles or unrelated transport errors.
+These tests do not replace another installed-app run.

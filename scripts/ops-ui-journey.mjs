@@ -331,7 +331,15 @@ export async function readOpsUiServiceSelection({ driver, fixture, state, role }
   // "content" is the actual window body rectangle; report redaction reserves
   // keys named "body" for secret-bearing notification/message payloads.
   for (const [key, element] of Object.entries({ row: rows[0], list: lists[0], service: root, window, content: bodies[0] })) {
-    evidence[key] = validateOpsUiServiceRect(await driver.rect(element))
+    try { evidence[key] = validateOpsUiServiceRect(await driver.rect(element)) }
+    catch (error) {
+      // WebKit computes hit-test layout even for the read-only rect endpoint.
+      // A visible, clipped ancestor can therefore refuse its rectangle. Keep
+      // other real rectangles and let the one actual click prove usability;
+      // never turn an invalid response or unrelated transport error into data.
+      if (error?.code !== 'element not interactable') throw error
+      evidence[key] = { available: false, reason: 'element-not-interactable' }
+    }
   }
   return evidence
 }
