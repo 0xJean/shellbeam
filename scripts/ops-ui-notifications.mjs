@@ -285,6 +285,10 @@ export async function runOpsUiNotifications({ driver, record, checkpoint, fixtur
     requireFact(await notificationOwnerPid() === daemon.child.pid, 'foreign_notification_service')
     await command('/usr/bin/dunstctl', ['set-paused', 'false'], 'daemon_unpause')
 
+    // The preceding real Ops journey leaves a Workspace tab active. Return via
+    // its actual Dashboard tab before interacting with the desktop sidebar.
+    await driver.waitFor('[data-testid="pc-dashboard"]')
+    await driver.click('[data-testid="pc-dashboard"]')
     await driver.click("xpath=//aside//button[normalize-space(.)='Settings' or normalize-space(.)='设置']")
     await driver.click("xpath=//button[normalize-space(.)='English']")
     await until(async () => (await driver.findAll(SETTINGS)).length === 1, 'settings_missing')
