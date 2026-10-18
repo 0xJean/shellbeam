@@ -43,6 +43,19 @@ fn read_frame(stream: &mut impl Read) -> Result<Value, String> {
     serde_json::from_slice(&data).map_err(|_| "INVALID_IPC_FRAME".into())
 }
 
+fn prepare_accepted_stream(stream: &TcpStream, timeout: Duration) -> Result<(), String> {
+    // accept() inherits O_NONBLOCK on some platforms, including macOS. A
+    // read timeout alone does not make read_exact wait for a delayed first
+    // frame on such a socket. Keep accept nonblocking, each worker bounded.
+    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|e| e.to_string())
+}
+
 pub(super) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     if cfg!(mobile) {
         return Err("MCP_DESKTOP_ONLY".into());
@@ -79,8 +92,9 @@ pub(super) fn start(app: &tauri::AppHandle) -> Result<(), String> {
                     );
                     std::thread::spawn(move || {
                         let _guard = ConnectionGuard(connections);
-                        let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
-                        let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
+                        if prepare_accepted_stream(&stream, Duration::from_secs(10)).is_err() {
+                            return;
+                        }
                         let Ok(envelope) = read_frame(&mut stream) else {
                             return;
                         };
@@ -311,6 +325,37 @@ pub fn run_stdio(endpoint_path: &str, client_id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn accepted_nonblocking_socket_waits_for_a_real_delayed_first_frame() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let (connected, accepted) = std::sync::mpsc::channel();
+        let (release, send_frame) = std::sync::mpsc::channel();
+        let client = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).unwrap();
+            connected.send(()).unwrap();
+            send_frame.recv_timeout(Duration::from_secs(2)).unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            write_frame(
+                &mut stream,
+                &json!({"jsonrpc":"2.0","id":1,"method":"ping"}),
+            )
+            .unwrap();
+        });
+        accepted.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        // Make the inherited state explicit so Linux/Windows exercise the
+        // same failure mode instead of accidentally passing only on macOS.
+        stream.set_nonblocking(true).unwrap();
+        prepare_accepted_stream(&stream, Duration::from_secs(1)).unwrap();
+        release.send(()).unwrap();
+        assert_eq!(
+            read_frame(&mut stream).unwrap(),
+            json!({"jsonrpc":"2.0","id":1,"method":"ping"})
+        );
+        client.join().unwrap();
+    }
     #[test]
     fn local_diagnostic_only_initializes_and_lists_tools() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
