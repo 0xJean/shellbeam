@@ -1,0 +1,85 @@
+name: Build signed optional agent
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Agent SemVer (must match agent/Cargo.toml)
+        required: true
+        default: 0.1.0
+      channel:
+        type: choice
+        options: [stable, preview, canary]
+        default: stable
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            architecture: x86_64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+            architecture: aarch64
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            platform: macos
+            architecture: aarch64
+          - runner: macos-15
+            target: x86_64-apple-darwin
+            platform: macos
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Check version, test native daemon and build
+        env:
+          AGENT_RELEASE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          test "$(cargo metadata --manifest-path agent/Cargo.toml --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')" = "$AGENT_RELEASE_VERSION"
+          cargo test --manifest-path agent/Cargo.toml --locked
+          cargo build --manifest-path agent/Cargo.toml --release --locked --target ${{ matrix.target }}
+          mkdir -p agent/dist
+          cp agent/target/${{ matrix.target }}/release/shellbeam-agent agent/dist/shellbeam-agent-${{ matrix.platform }}-${{ matrix.architecture }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.platform }}-${{ matrix.architecture }}
+          path: agent/dist/*
+  sign-draft:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    environment: agent-release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: agent-*
+          merge-multiple: true
+          path: agent/dist
+      - name: Test publisher and sign catalog
+        env:
+          AGENT_ARTIFACT_SIGNING_KEY_PEM: ${{ secrets.AGENT_ARTIFACT_SIGNING_KEY_PEM }}
+          AGENT_RELEASE_SIGNING_KEY_PEM: ${{ secrets.AGENT_RELEASE_SIGNING_KEY_PEM }}
+          AGENT_RELEASE_VERSION: ${{ inputs.version }}
+          AGENT_RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: |
+          node --test agent/scripts/publish-release.test.mjs
+          node agent/scripts/publish-release.mjs --input-dir agent/dist --output agent/dist/release-catalog.json --version "$AGENT_RELEASE_VERSION" --channel "$AGENT_RELEASE_CHANNEL" --base-url "https://github.com/${{ github.repository }}/releases/download/agent-v$AGENT_RELEASE_VERSION"
+      - name: Create reviewable release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_RELEASE_VERSION: ${{ inputs.version }}
+        run: gh release create "agent-v$AGENT_RELEASE_VERSION" agent/dist/* --draft --target "$GITHUB_SHA" --title "Optional ShellBeam Agent $AGENT_RELEASE_VERSION" --notes "User-level, opt-in Linux/macOS metrics collector. Configure the independently trusted artifact and release public keys in ShellBeam. Read docs/agent.md before installation."

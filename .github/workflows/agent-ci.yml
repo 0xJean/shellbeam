@@ -1,0 +1,52 @@
+name: Optional agent CI
+on:
+  pull_request:
+    paths:
+      - 'agent/**'
+      - 'src/lib/shellbeam-agent*'
+      - '.github/workflows/agent-*.yml'
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'agent/**'
+      - '.github/workflows/agent-*.yml'
+permissions:
+  contents: read
+jobs:
+  collector:
+    name: Agent collection and restart (${{ matrix.runner }})
+    strategy:
+      matrix:
+        runner: [ubuntu-22.04, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test real daemon collection, bounded history and restart
+        run: cargo test --manifest-path agent/Cargo.toml --locked
+      - name: Lint standalone collector
+        run: cargo clippy --manifest-path agent/Cargo.toml --locked --all-targets -- -D warnings
+      - name: Verify signed catalog publisher
+        run: node --test agent/scripts/publish-release.test.mjs
+  user-service:
+    name: Real Linux user service lifecycle
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build agent
+        run: cargo build --manifest-path agent/Cargo.toml --locked
+      - name: Prepare isolated runner user service manager
+        run: |
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
+      - name: Install, activate, upgrade and uninstall unprivileged agent
+        env:
+          SHELLBEAM_AGENT_ALLOW_SERVICE_SMOKE: '1'
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          agent/scripts/service-smoke.sh
