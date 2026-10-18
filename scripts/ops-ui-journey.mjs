@@ -253,9 +253,22 @@ export async function setupOpsUiJourney({ driver, fixture, record }) {
     await connectAndVerify(driver, fixture, role, state, record)
     await record(`ops-ui-${role}-connection`, { passed: true, fingerprintHash: hash(normalizeFingerprint(fixture.hosts[role].expectedFingerprint)) })
   }
-  for (const role of incidentRoles) await configureRule(driver, fixture, role, state)
-  await record('ops-ui-rules-active', { count: 2, independentSecretReferences: 3, nativeCollectors: true })
   return state
+}
+
+/** The real notification channel must be ready before the first rule opens.
+ * Hooks receive only a fixed role and run while its actual Network UI is open. */
+export async function activateOpsUiRules({ driver, fixture, record, resumeState: state, onOpened }) {
+  validateFixture(fixture)
+  check(state && roles.every((role) => state.hostIds?.[role]) && typeof record === 'function', 'rule_activation_context_missing')
+  check(onOpened === undefined || typeof onOpened === 'function', 'opened_callback_invalid')
+  for (const role of incidentRoles) {
+    await configureRule(driver, fixture, role, state)
+    await record(`ops-ui-${role}-rule-opened`, { passed: true, routeVerified: true })
+    if (onOpened) await onOpened(role)
+  }
+  await record('ops-ui-rules-active', { count: 2, independentSecretReferences: 3, nativeCollectors: true })
+  return { passed: true, rules: 2 }
 }
 
 async function openServices(driver, role, state) {
@@ -285,9 +298,10 @@ async function reviewAndRespond(driver, css, unit, accept) {
   await waitEnabled(driver, css)
 }
 
-export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, resumeState: state }) {
+export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, resumeState: state, onRecovered }) {
   validateFixture(fixture)
   check(state?.vaultId && typeof checkpoint === 'function', 'incident_context_missing')
+  check(onRecovered === undefined || typeof onRecovered === 'function', 'recovered_callback_invalid')
   for (const role of incidentRoles) {
     const id = state.hostIds[role]
     const unit = fixture.hosts[role].serviceUnit
@@ -334,15 +348,17 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
     await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
     await record(`ops-ui-${role}-recovered`, { passed: true })
+    if (onRecovered) await onRecovered(role)
   }
   return { passed: true, incidents: 2, cancelledJobs: 2, completedJobs: 2, resolvedAlerts: 2, maximumDiagnosisSteps: 3 }
 }
 
 /** Called only after the runner stops and relaunches the actual application
  * with the same isolated profile. No persisted job or credential is injected. */
-export async function resumeOpsUiJourney({ driver, fixture, record, checkpoint, resumeState: state }) {
+export async function resumeOpsUiJourney({ driver, fixture, record, checkpoint, resumeState: state, restartedAfter }) {
   validateFixture(fixture)
   check(state?.vaultPassword && state.jobs.direct && state.jobs.via, 'resume_context_missing')
+  check(Number.isSafeInteger(restartedAfter) && restartedAfter > 0 && restartedAfter <= Date.now(), 'restart_boundary_missing')
   await driver.waitFor(S.vaultForm, { timeoutMs: 60000 })
   check(await driver.attr(S.vaultForm, 'data-mode') === 'unlock', 'vault_was_not_restored')
   await driver.fill(S.vaultPassword, state.vaultPassword)
@@ -358,14 +374,25 @@ export async function resumeOpsUiJourney({ driver, fixture, record, checkpoint, 
     await openDashboardPage(driver, 'hosts')
     const id = state.hostIds[role]
     await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
+    await driver.waitFor(ruleRoot(id), { timeoutMs: 60000 })
+    check(await driver.attr(ruleRoot(id), 'data-vault-id') === state.vaultId, 'restored_rule_vault_scope_mismatch')
     await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
-    await record(`ops-ui-${role}-restored`, { passed: true, auditJobs: 2, alertResolved: true })
+    const rule = `${ruleRoot(id)} ${testId('local-rule-row')}[data-rule-name=${q(state.ruleNames[role])}]`
+    await driver.waitFor(rule, { timeoutMs: 60000 })
+    await driver.until(async () => {
+      if (await driver.attr(rule, 'data-rule-state') !== 'healthy') return false
+      const raw = await driver.attr(rule, 'data-sampled-at')
+      const sampledAt = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : NaN
+      return Number.isSafeInteger(sampledAt) && sampledAt >= restartedAfter && sampledAt <= Date.now()
+    }, { timeoutMs: 120000 })
+    await record(`ops-ui-${role}-restored`, { passed: true, auditJobs: 2, alertResolved: true, freshObservation: true })
   }
-  return { passed: true, hosts: 3, incidents: 2, restoredJobs: 4, maximumDiagnosisSteps: 3 }
+  return { passed: true, hosts: 3, incidents: 2, restoredJobs: 4, freshObservations: 2, maximumDiagnosisSteps: 3 }
 }
 
 export async function runOpsUiJourney(options) {
   const resumeState = await setupOpsUiJourney(options)
+  await activateOpsUiRules({ ...options, resumeState })
   await runOpsUiIncidents({ ...options, resumeState })
   return resumeState
 }

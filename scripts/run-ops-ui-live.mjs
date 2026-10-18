@@ -157,6 +157,7 @@ export async function main(env = process.env) {
   let driver
   let child
   let log
+  let alertNotifications
   const baselines = new Map()
   const screenshots = new Set()
   const checkpoint = async (name, details) => {
@@ -225,8 +226,8 @@ export async function main(env = process.env) {
   try {
     const { stdout: commit } = await exec('git', ['rev-parse', 'HEAD'], { timeout: 5000 })
     assert(commit.trim() === env.GITHUB_SHA, 'exact checked-out commit')
-    const { setupOpsUiJourney, runOpsUiIncidents, resumeOpsUiJourney } = await import('./ops-ui-journey.mjs')
-    const { runOpsUiNotifications } = await import('./ops-ui-notifications.mjs')
+    const { setupOpsUiJourney, activateOpsUiRules, runOpsUiIncidents, resumeOpsUiJourney } = await import('./ops-ui-journey.mjs')
+    const { runOpsUiNotifications, startOpsUiAlertNotifications } = await import('./ops-ui-notifications.mjs')
     stage = 'fixture-authentication'
     await verifyFixtureAuthentication(fixture, record)
     stage = 'launch'
@@ -238,16 +239,31 @@ export async function main(env = process.env) {
     report.realVault = true
     stage = 'notifications'
     report.notifications = safeDetails(await runOpsUiNotifications({ driver, fixture, record, checkpoint }))
+    // Save the real notification policy and start the owned OS daemon before
+    // creating rules. Enabling a channel later must not backfill old events.
+    stage = 'alert-notification-policy'
+    alertNotifications = await startOpsUiAlertNotifications({ driver, fixture, record, checkpoint, resumeState })
+    stage = 'rule-activation'
+    report.rules = safeDetails(await activateOpsUiRules({ driver, fixture, record, resumeState,
+      onOpened: role => alertNotifications.verifyOpened(role) }))
     stage = 'incident-operations'
-    report.journey = safeDetails(await runOpsUiIncidents({ driver, fixture, record, checkpoint, resumeState }))
+    report.journey = safeDetails(await runOpsUiIncidents({ driver, fixture, record, checkpoint, resumeState,
+      onRecovered: role => alertNotifications.verifyResolved(role) }))
+    stage = 'alert-delivery-before-restart'
+    await alertNotifications.beforeRestart()
     stage = 'application-restart'
     await stop()
     record('application-exit-confirmed')
+    const restartedAfter = Date.now()
     await launch()
     stage = 'unlock-and-audit-recovery'
-    report.recovery = safeDetails(await resumeOpsUiJourney({ driver, fixture, record, checkpoint, resumeState }))
+    report.recovery = safeDetails(await resumeOpsUiJourney({ driver, fixture, record, checkpoint, resumeState, restartedAfter }))
+    assert(report.recovery.freshObservations === 2, 'both rules require real post-restart observations')
+    stage = 'alert-delivery-after-restart'
+    report.alertNotifications = safeDetails(await alertNotifications.afterRestart({ driver }))
     for (const role of ['direct', 'via']) assert(report.events.some(event => event.name === 'service-confirmed-once' && event.role === role), 'both routes exercised')
     assert(report.notifications?.passed === true, 'all real notification cases must pass')
+    assert(report.rules?.passed === true && report.alertNotifications?.passed === true, 'real alert notification lifecycle must pass')
     assert(report.journey?.passed === true && report.recovery?.passed === true, 'incident and recovery assertions must pass')
     report.success = true
   } catch (error) {
@@ -255,6 +271,10 @@ export async function main(env = process.env) {
     report.lastInteraction = safeDetails(driver?.lastInteraction)
     console.error(`ShellBeam UI: ${stage} failed`)
   } finally {
+    if (alertNotifications) {
+      try { await alertNotifications.stop() }
+      catch { report.success = false; record('alert-notification-daemon-cleanup-failed') }
+    }
     try { await stop(); report.applicationStopped = true }
     catch { report.applicationStopped = false; report.success = false }
     const artifactRoot = path.join(await realpath(env.RUNNER_TEMP), 'shellbeam-ops-ui-artifacts')

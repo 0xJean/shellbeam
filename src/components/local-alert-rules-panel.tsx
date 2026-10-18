@@ -43,7 +43,7 @@ export function LocalAlertRulesPanel({ activeVaultId, hostId, host }: { activeVa
   return <section className="space-y-3 border-t border-border/60 pt-4" data-testid="local-alert-rules" data-host-id={hostId} data-vault-id={activeVaultId}>
     <h3 className="text-sm font-semibold">{t('localOps.title')}</h3>
     <p className="text-xs text-muted-foreground">{t('localOps.description')}</p>
-    {rules.map((rule) => <div key={rule.id} data-testid="local-rule-row" data-rule-id={rule.id} data-rule-name={rule.name} data-rule-state={state.evaluations.find((row) => row.ruleId === rule.id)?.state ?? 'unknown'} className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-xs">
+    {rules.map((rule) => <div key={rule.id} data-testid="local-rule-row" data-rule-id={rule.id} data-rule-name={rule.name} data-rule-state={state.evaluations.find((row) => row.ruleId === rule.id)?.state ?? 'unknown'} data-sampled-at={state.evaluations.find((row) => row.ruleId === rule.id)?.sampledAt} className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-xs">
       <span className="min-w-24 flex-1">{rule.name} · {t(`localOps.metric.${rule.metric}`)}{rule.target ? ` · ${rule.target}` : ''}</span>
       <span>{rule.metric === 'service' ? t('localOps.serviceFailure') : `≥ ${rule.threshold}% / ≤ ${rule.recoveryThreshold}%`} · {rule.durationMs / 1_000}s / {rule.recoveryDurationMs / 1_000}s</span>
       <span>{t(`localOps.state.${state.evaluations.find((e) => e.ruleId === rule.id)?.state ?? 'unknown'}`)}</span>

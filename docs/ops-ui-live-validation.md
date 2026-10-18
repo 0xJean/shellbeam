@@ -52,6 +52,30 @@ call or D-Bus notification ID alone cannot satisfy the display assertion.
 Linux permission remains system-managed/unknown. These explicit test-button
 checks do not prove real incident-notification policy, delivery or read receipts.
 
+## Real service-alert delivery and restart checks
+
+The extended journey saves the real System-only opening and recovery policy
+before creating either service rule. A separate owned daemon displays only the
+two fixed fixture rule titles and their exact `opened` / `resolved` bodies.
+Each actual failed-service observation and later confirmed recovery requires its
+own mapped OS banner, bounded root-framebuffer crop and exact OCR match. The
+already-verified banner is then closed. Channel counters and daemon history must
+show exactly four accepted lifecycle deliveries, independently of the explicit
+test-button cases.
+
+After confirmed application exit, the runner records the real wall-clock restart
+boundary before launching the new process. Unlock and audit recovery must also
+observe both rules healthy with actual collection timestamps at or after that
+boundary. Only then can unchanged delivery counters and empty displayed/waiting
+queues establish that the new process did not replay the notifications. Merely
+waiting or reading old healthy caches cannot satisfy that assertion. Notification
+metadata is retained in the WebView's bounded local delivery ledger; it is not
+described as SQLite OperationJob storage.
+
+These added assertions require their own successful exact-commit CI result.
+They cover local service rules, not real Komari alert delivery or ProbeProvider
+failure/recovery delivery, and do not claim that a person read a banner.
+
 ## Isolation and cleanup
 
 Root privileges are restricted to disposable-fixture setup and teardown. The app,
@@ -112,6 +136,17 @@ classification, including saved `jumpHostId` references without copied jump
 addresses. The GUI additionally requires the matching alert route while active,
 after recovery and after app restart; a successful jumped SSH connection cannot
 mask an alert incorrectly labeled direct.
+
+The fifth [UI run 39101144044](https://github.com/0xJean/shellbeam/actions/runs/39101144044),
+head `238536f8b7f66d47a57cb09c76fd9cf919ea28df`, merge checkout
+`f4aabcaa5356996009bdb6524e32ce635078d169`, built the checksum-pinned daemon,
+repeated the real Vault and connection checks, and reached the first actual OS
+banner. Its controlled screenshot visibly contains the complete fixed title and
+body, but automated OCR failed with `ops_ui_notifications_visible_text_missing`.
+The failed assertion is retained: `success: false`, `cleanup: passed`, confirmed
+application exit and one safe PNG. Paused/resumed/unavailable notifications and
+incident/restart assertions were not reached. A visible first banner does not
+make the entire notification or GUI journey pass.
 
 Host-save, trust-prompt and tab-state checkpoints remain credential-free. Local
 syntax, protocol and safety-helper tests are not substitutes for an executed

@@ -62,14 +62,37 @@ export function evidencePathIsOwned(parent, target) {
 }
 
 export function notificationOcrMatches(text) {
+  return notificationTextOcrMatches(text, NOTIFICATION_TEST_TITLE, NOTIFICATION_TEST_BODY)
+}
+
+export function notificationTextOcrMatches(text, title, body) {
   // Only whitespace, punctuation and case are normalized. Do not fuzzy-match
   // missing/changed words or weaken pixel evidence to a D-Bus acknowledgement.
   const normalize = (value) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
   const normalized = normalize(text)
+  const heading = normalize(title)
+  // Service bodies repeat the rule name. Seeing that body alone must not also
+  // be accepted as proof that the separate title was painted on screen.
+  const titleOccurrences = heading ? normalized.split(heading).length - 1 : 0
   return {
-    title: normalized.includes(normalize(NOTIFICATION_TEST_TITLE)),
-    body: normalized.includes(normalize(NOTIFICATION_TEST_BODY)),
+    title: titleOccurrences >= (normalize(body).includes(heading) ? 2 : 1),
+    body: normalized.includes(normalize(body)),
   }
+}
+
+/** OCR segmentation can differ for a two-line banner and sparse text. Both
+ * modes read the same real pixels; no words are combined between results. A
+ * negative visibility assertion requires both independent reads to be absent. */
+export async function inspectNotificationOcrModes(read, { title, body, expectedVisible }) {
+  const modes = []
+  for (const mode of [6, 11]) {
+    const matched = notificationTextOcrMatches(await read(mode), title, body)
+    modes.push({ mode, titleMatched: matched.title, bodyMatched: matched.body })
+  }
+  const complete = modes.some((result) => result.titleMatched && result.bodyMatched)
+  const titleMatched = modes.some((result) => result.titleMatched)
+  const bodyMatched = modes.some((result) => result.bodyMatched)
+  return { accepted: expectedVisible ? complete : !titleMatched && !bodyMatched, titleMatched, bodyMatched, modes }
 }
 
 export function parseDunstCount(value) {
@@ -216,15 +239,22 @@ async function screenshotSafeUi(driver) {
   }
 }
 
-async function captureRoot({ driver, checkpoint, fixture, scratch, name, geometry, expectedVisible }) {
-  await screenshotSafeUi(driver)
+async function reserveEvidencePath({ checkpoint, fixture, name }) {
   const path = await checkpoint(name)
   const artifactDir = fixture.artifactDir ?? join(fixture.desktopDir, 'artifacts')
   requireFact(evidencePathIsOwned(fixture.desktopDir, path) && within(artifactDir, path), 'invalid_screenshot_path')
   await privateDirectory(dirname(path))
   const handle = await open(path, 'wx', 0o600).catch(() => { throw fail('screenshot_path_exists') })
   await handle.close()
+  return path
+}
+
+async function captureRoot({ driver, checkpoint, fixture, scratch, name, geometry, expectedVisible, record, assertSafeUi = screenshotSafeUi, expectedTitle = NOTIFICATION_TEST_TITLE, expectedBody = NOTIFICATION_TEST_BODY }) {
+  await assertSafeUi(driver)
+  const path = await reserveEvidencePath({ checkpoint, fixture, name })
+  const banner = await reserveEvidencePath({ checkpoint, fixture, name: `${name}-banner` })
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    await assertSafeUi(driver)
     // X11 can map/unmap before its next paint reaches the framebuffer. Retry
     // pixels only; never resend the notification or manufacture a display ACK.
     await command('/usr/bin/import', ['-window', 'root', `png:${path}`], 'root_capture', 8_000)
@@ -237,16 +267,73 @@ async function captureRoot({ driver, checkpoint, fixture, scratch, name, geometr
       && geometry.x + geometry.width <= width && geometry.y + geometry.height <= height, 'root_capture_bounds')
     // OCR only the daemon's known banner rectangle from the real root screenshot,
     // rather than collecting arbitrary text from the app/settings underneath it.
+    // Preserve the untransformed, bounded daemon rectangle as safe failure
+    // evidence. OCR input is separate and never exported with its text.
+    await command('/usr/bin/convert', [path, '-crop', `${geometry.width}x${geometry.height}+${geometry.x}+${geometry.y}`, '+repage', `png:${banner}`], 'root_crop', 8_000)
+    await chmod(banner, 0o600)
     const crop = join(scratch, `${name}-ocr.png`)
-    await command('/usr/bin/convert', [path, '-crop', `${geometry.width}x${geometry.height}+${geometry.x}+${geometry.y}`, '+repage', '-resize', '200%', '-colorspace', 'Gray', '-negate', `png:${crop}`], 'root_crop', 8_000)
-    const text = await command('/usr/bin/tesseract', [crop, 'stdout', '-l', 'eng', '--psm', '11'], 'root_ocr', 8_000)
-    const matched = notificationOcrMatches(text)
-    if (matched.title === expectedVisible && matched.body === expectedVisible) {
-      return { screenshot: basename(path), sha256: createHash('sha256').update(png).digest('hex'), screenshotBytes: png.length, width, height, ocrTitleMatched: matched.title, ocrBodyMatched: matched.body }
+    await command('/usr/bin/convert', [banner, '-resize', '200%', '-colorspace', 'Gray', '-negate', `png:${crop}`], 'root_preprocess', 8_000)
+    const matched = await inspectNotificationOcrModes((mode) => command('/usr/bin/tesseract', [crop, 'stdout', '-l', 'eng', '--psm', String(mode)], 'root_ocr', 8_000), { title: expectedTitle, body: expectedBody, expectedVisible })
+    const diagnostics = { attempt: attempt + 1, geometry, expectedVisible, ocrModes: matched.modes, bannerScreenshot: basename(banner), ocrAccepted: matched.accepted, ocrTitleMatched: matched.titleMatched, ocrBodyMatched: matched.bodyMatched }
+    if (record) await record(`${name}-pixel-inspection`, diagnostics)
+    if (matched.accepted) {
+      return { screenshot: basename(path), sha256: createHash('sha256').update(png).digest('hex'), screenshotBytes: png.length, width, height, ...diagnostics }
     }
     await delay(120)
   }
   throw fail(expectedVisible ? 'visible_text_missing' : 'suppressed_text_visible')
+}
+
+/** Shared actual daemon lifecycle for the separate test-button and local-rule
+ * acceptance phases. It never substitutes the app's invoke or notification OS
+ * adapter, and does not install a desktop notification service. */
+export async function startOwnedOpsUiNotificationDaemon({ fixture, configText, record }) {
+  requireNotificationFixtureEnvironment()
+  await privateDirectory(fixture?.desktopDir)
+  const artifactDir = fixture.artifactDir ?? join(fixture.desktopDir, 'artifacts')
+  requireFact(within(fixture.desktopDir, artifactDir), 'invalid_artifact_directory')
+  await privateDirectory(artifactDir)
+  requireFact(!await notificationOwner(), 'foreign_notification_service')
+  const tools = pinnedDunstPaths(process.env.RUNNER_TEMP)
+  await privateDirectory(tools.directory)
+  for (const tool of [tools.binary, tools.control]) {
+    const info = await lstat(tool).catch(() => { throw fail('pinned_daemon_missing') })
+    requireFact(info.isFile() && !info.isSymbolicLink() && info.uid === process.getuid() && info.nlink === 1 && (info.mode & 0o022) === 0 && (info.mode & 0o111) !== 0 && await realpath(tool) === tool, 'invalid_pinned_daemon')
+  }
+  const version = parsePinnedDunstVersion(await command(tools.binary, ['--version'], 'daemon_version'))
+  const scratch = await mkdtemp(join(fixture.desktopDir, 'notification-runtime-'))
+  let daemon
+  let stopped = false
+  const stop = async () => {
+    if (stopped) return
+    if (daemon) await daemon.stop()
+    await until(async () => !await notificationOwner(), 'daemon_cleanup_failed')
+    await rm(scratch, { recursive: true, force: true })
+    stopped = true
+    if (record) await record('notification-daemon-cleanup', { ownedDaemonExited: true, busNameReleased: true })
+  }
+  try {
+    const config = join(scratch, 'dunstrc')
+    await writeFile(config, configText, { flag: 'wx', mode: 0o600 })
+    daemon = ownDaemon(config, tools.binary)
+    await until(async () => { daemon.assertAlive(); return notificationOwner() }, 'daemon_not_ready')
+    requireFact(await notificationOwnerPid() === daemon.child.pid, 'foreign_notification_service')
+    await command(tools.control, ['set-paused', 'false'], 'daemon_unpause')
+    return {
+      version,
+      async counts() { daemon.assertAlive(); return daemonCounts(tools.control) },
+      async history() { daemon.assertAlive(); return parseDunstCount(await command(tools.control, ['count', 'history'], 'daemon_history_count')) },
+      async closeAll() { daemon.assertAlive(); await command(tools.control, ['close-all'], 'daemon_close_all') },
+      async geometry() { daemon.assertAlive(); return windowGeometry() },
+      capture(options) { daemon.assertAlive(); return captureRoot({ ...options, fixture, scratch, record }) },
+      stop,
+    }
+  } catch (cause) { await stop(); throw cause }
+}
+
+export async function startOpsUiAlertNotifications(options) {
+  const { startOpsUiAlertNotifications: start } = await import('./ops-ui-alert-notifications.mjs')
+  return start(options)
 }
 
 function ownDaemon(config, binary) {
@@ -322,7 +409,7 @@ export async function runOpsUiNotifications({ driver, record, checkpoint, fixtur
     await until(async () => (await daemonCounts(tools.control)).displayed === 1, 'normal_banner_not_displayed')
     let normalGeometry
     await until(async () => Boolean(normalGeometry = await windowGeometry()), 'normal_banner_not_viewable')
-    const normalCapture = await captureRoot({ driver, checkpoint, fixture, scratch, name: 'notification-visible', geometry: normalGeometry, expectedVisible: true })
+    const normalCapture = await captureRoot({ driver, checkpoint, fixture, scratch, record, name: 'notification-visible', geometry: normalGeometry, expectedVisible: true })
     await evidence('notification-visible', { backendAccepted: true, permissionUnknown: true, x11Viewable: true, ...await daemonCounts(tools.control), ...normalCapture })
 
     await command(tools.control, ['close-all'], 'daemon_close_all')
@@ -331,14 +418,14 @@ export async function runOpsUiNotifications({ driver, record, checkpoint, fixtur
     await clickTest(driver, true)
     await until(async () => { const value = await daemonCounts(tools.control); return value.displayed === 0 && value.waiting === 1 }, 'paused_banner_not_queued')
     await until(async () => await windowGeometry() === null, 'paused_banner_viewable')
-    const pausedCapture = await captureRoot({ driver, checkpoint, fixture, scratch, name: 'notification-paused', geometry: normalGeometry, expectedVisible: false })
+    const pausedCapture = await captureRoot({ driver, checkpoint, fixture, scratch, record, name: 'notification-paused', geometry: normalGeometry, expectedVisible: false })
     await evidence('notification-paused-accepted-not-displayed', { backendAccepted: true, paused: true, x11Viewable: false, ...await daemonCounts(tools.control), ...pausedCapture })
 
     await command(tools.control, ['set-paused', 'false'], 'daemon_unpause')
     await until(async () => { const value = await daemonCounts(tools.control); return value.displayed === 1 && value.waiting === 0 }, 'resumed_banner_not_displayed')
     let resumedGeometry
     await until(async () => Boolean(resumedGeometry = await windowGeometry()), 'resumed_banner_not_viewable')
-    const resumedCapture = await captureRoot({ driver, checkpoint, fixture, scratch, name: 'notification-resumed', geometry: resumedGeometry, expectedVisible: true })
+    const resumedCapture = await captureRoot({ driver, checkpoint, fixture, scratch, record, name: 'notification-resumed', geometry: resumedGeometry, expectedVisible: true })
     await evidence('notification-resumed-visible', { backendAccepted: true, sameQueuedNotification: true, x11Viewable: true, ...await daemonCounts(tools.control), ...resumedCapture })
 
     await command(tools.control, ['close-all'], 'daemon_close_all')
@@ -351,7 +438,7 @@ export async function runOpsUiNotifications({ driver, record, checkpoint, fixtur
     // has no action handler. Do not call an offscreen text lookup "visible UI".
     await driver.click(CHANNEL)
     requireFact(!await notificationOwner() && await windowGeometry() === null, 'daemon_unexpectedly_reactivated')
-    const unavailableCapture = await captureRoot({ driver, checkpoint, fixture, scratch, name: 'notification-unavailable', geometry: normalGeometry, expectedVisible: false })
+    const unavailableCapture = await captureRoot({ driver, checkpoint, fixture, scratch, record, name: 'notification-unavailable', geometry: normalGeometry, expectedVisible: false })
     await evidence('notification-unavailable-failed', { backendAccepted: false, permissionUnavailable: true, diagnosticsVisible: true, daemonExited: true, x11Viewable: false, displayed: null, waiting: null, ...unavailableCapture })
     return { passed: true, daemonVersion: version, checks, scope: 'explicit-test-button-linux-x11', actualAlertLifecycleVerified: false }
   } catch (cause) {
