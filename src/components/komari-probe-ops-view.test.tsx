@@ -36,6 +36,18 @@ describe('KomariProbeOpsView', () => {
     expect(screen.getByText('ProxyJump')).toBeInTheDocument()
   })
 
+  it('labels a real sync time independently and leaves missing sync metadata unknown', () => {
+    const current = { ...link, komari: { ...link.komari, sampledAt: 1000, lastSyncedAt: 2000 } }
+    const view = render(<I18nProvider><KomariProbeOpsView host={host} link={current} /></I18nProvider>)
+    const sync = screen.getByTestId('komari-host-last-sync')
+    expect(sync).toHaveTextContent('Komari last synchronized')
+    expect(sync.querySelector('time')).toHaveAttribute('datetime', new Date(2000).toISOString())
+    expect(sync.querySelector('time')).not.toHaveAttribute('datetime', new Date(1000).toISOString())
+    view.rerender(<I18nProvider><KomariProbeOpsView host={host} link={{ ...current, komari: { ...current.komari, lastSyncedAt: null } }} /></I18nProvider>)
+    expect(screen.getByTestId('komari-host-last-sync')).toHaveTextContent('Unknown')
+    expect(screen.getByTestId('komari-host-last-sync').querySelector('time')).toBeNull()
+  })
+
   it('summarizes acknowledged and closed alerts and resolves the linked MCP job audit', () => {
     const acknowledged = {
       ...link.alertState!.alerts[0],

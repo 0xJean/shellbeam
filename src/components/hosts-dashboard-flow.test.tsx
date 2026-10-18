@@ -28,6 +28,22 @@ beforeEach(() => {
 function dashboardElement(extra: Partial<React.ComponentProps<typeof HostsDashboard>> = {}) { return <I18nProvider><HostsDashboard activeVaultId="vault" hosts={hosts} selectedHostId={null} loading={false} onSelectHost={vi.fn()} onCreateHost={vi.fn()} onUpdateHost={vi.fn()} onDeleteHost={vi.fn()} {...extra} /></I18nProvider> }
 function renderDashboard(extra: Partial<React.ComponentProps<typeof HostsDashboard>> = {}) { return render(dashboardElement(extra)) }
 describe('host operations filter workflow', () => {
+  it.each([true, false])('renders only a confirmed persisted Komari sync timestamp (sync state: %s)', async (hasSync) => {
+    const syncedAt = Date.now() - 5000
+    const sampleAt = syncedAt - 10000
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true, createdAt: 1, updatedAt: 1 }]
+      if (command === 'get_komari_sync_state') return hasSync ? { integrationId: 'komari-a', lastSyncedAt: syncedAt, ttlMs: 60000, alertSummary: null, updatedAt: syncedAt } : null
+      if (command === 'list_komari_snapshots') return [{ updatedAt: syncedAt, snapshot: { schemaVersion: 1, host: { hostId: 'host-0' }, provider: { kind: 'komari', id: 'komari-a', nodeId: 'node-1', endpoint: 'https://komari.test', capabilities: ['metrics'] }, health: 'online', receivedAt: sampleAt, metrics: null, inventory: null, errors: [] } }]
+      if (command === 'list_komari_mappings') return [{ integrationId: 'komari-a', hostId: 'host-0', nodeId: 'node-1', source: 'manual', confidence: 'explicit', updatedAt: syncedAt }]
+      return command === 'mcp_list_project_deployments' ? { projects: [], total: 0, observedAt: 0 } : []
+    })
+    renderDashboard({ vaultUnlocked: true, onLoadVaultSecret: vi.fn(async () => null) })
+    const row = await screen.findByTestId('komari-host-last-sync')
+    if (hasSync) expect(row.querySelector('time')).toHaveAttribute('datetime', new Date(syncedAt).toISOString())
+    else { expect(row).toHaveTextContent('Unknown'); expect(row.querySelector('time')).toBeNull() }
+  })
+
   it('invalidates a rebound Komari source immediately while replacement sync is pending and rejects a queued old-host action', async () => {
     let moved = false
     let finishOldCheck!: (state: unknown) => void
@@ -36,7 +52,7 @@ describe('host operations filter workflow', () => {
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true }]
       if (command === 'get_komari_sync_state') return { integrationId: 'komari-a', lastSyncedAt: Date.now(), ttlMs: 60_000, alertSummary: null }
-      if (command === 'list_komari_snapshots') return moved ? [] : [{ updatedAt: Date.now(), snapshot: { schemaVersion: 1, host: { hostId: 'host-0' }, provider: { kind: 'komari', id: 'komari-a', nodeId: 'node-1', capabilities: ['metrics'] }, health: 'online', receivedAt: Date.now(), metrics: null, inventory: null, errors: [] } }]
+      if (command === 'list_komari_snapshots') return moved ? [] : [{ updatedAt: Date.now(), snapshot: { schemaVersion: 1, host: { hostId: 'host-0' }, provider: { kind: 'komari', id: 'komari-a', nodeId: 'node-1', endpoint: 'https://komari.test', capabilities: ['metrics'] }, health: 'online', receivedAt: Date.now(), metrics: null, inventory: null, errors: [] } }]
       if (command === 'list_komari_mappings') return [mapping(moved ? 'host-1' : 'host-0')]
       if (command === 'get_komari_mapping_state') {
         if (++checks === 1) return new Promise((resolve) => { finishOldCheck = resolve })
@@ -73,7 +89,7 @@ describe('host operations filter workflow', () => {
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true }]
       if (command === 'get_komari_sync_state') return { integrationId: 'komari-a', lastSyncedAt: Date.now(), ttlMs: 60_000, alertSummary: null }
-      if (command === 'list_komari_snapshots') return [{ updatedAt: Date.now(), snapshot: { schemaVersion: 1, host: { hostId: 'host-0' }, provider: { kind: 'komari', id: 'komari-a', nodeId: 'node-1', capabilities: ['metrics'] }, health: 'online', receivedAt: Date.now(), metrics: null, inventory: null, errors: [] } }]
+      if (command === 'list_komari_snapshots') return [{ updatedAt: Date.now(), snapshot: { schemaVersion: 1, host: { hostId: 'host-0' }, provider: { kind: 'komari', id: 'komari-a', nodeId: 'node-1', endpoint: 'https://komari.test', capabilities: ['metrics'] }, health: 'online', receivedAt: Date.now(), metrics: null, inventory: null, errors: [] } }]
       if (command === 'list_komari_mappings') return [manual]
       if (command === 'get_komari_mapping_state') return { revision: 1, mappings: [manual] }
       return command === 'mcp_list_project_deployments' ? { projects: [], total: 0, observedAt: 0 } : []

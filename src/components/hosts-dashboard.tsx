@@ -24,7 +24,7 @@ import { runConfirmedOperation } from '@/lib/operation-job'
 import { runKomariAlertAction, type KomariAlertAction } from '@/lib/komari-alert-actions'
 import type { KomariAlertRecord } from '@/lib/komari-alerts'
 import { listShellbeamAgents } from '@/lib/shellbeam-agent'
-import { listKomariIntegrations } from '@/lib/komari-config'
+import { listKomariIntegrations, type KomariIntegration } from '@/lib/komari-config'
 import { KOMARI_MAPPING_CHANGED_EVENT, getKomariMappingState, manualKomariMappings, loadKomariPersistence, persistKomariAlertState, persistKomariSync } from '@/lib/komari-persistence'
 import { readKomariAlertState } from '@/lib/komari-persistence'
 import { dispatchAndPersistKomariAlertNotifications, emitKomariAlertNotification } from '@/lib/komari-alert-notifications'
@@ -47,6 +47,13 @@ type HostHealthStatus = Exclude<HostStatusFilter, 'all'>
 export type HostOpsRefreshStatus = 'idle' | 'refreshing' | 'fresh' | 'recovered' | 'error'
 const SORT_KEY = 'shellbeam.hostSortMode'
 const SHOW_HOST_SUMMARY_STRIP = false
+
+function persistedKomariSyncAt(integration: KomariIntegration, state: Awaited<ReturnType<typeof loadKomariPersistence>>['syncState']): number | null {
+  const stamp = state?.lastSyncedAt
+  // A mapping/cache write is not a successful sync. A sync predating the
+  // current configuration also cannot establish this endpoint's status.
+  return state?.integrationId === integration.id && typeof stamp === 'number' && Number.isFinite(stamp) && stamp > 0 && stamp <= Date.now() && stamp >= (integration.updatedAt ?? 0) ? stamp : null
+}
 
 function formatHostOpsRefreshTime(timestamp: number | null): string {
   if (!timestamp) return ''
@@ -393,6 +400,8 @@ export function HostsDashboard({
       let komariSnapshots = undefined
       const komariRecords: Array<{
         integrationId: string
+        endpoint: string
+        lastSyncedAt: number | null
         snapshots: Awaited<ReturnType<typeof syncKomariIntegration>>['snapshots']
         mappings: Awaited<ReturnType<typeof syncKomariIntegration>>['mapping']['mappings']
         alertState: Awaited<ReturnType<typeof syncKomariIntegration>>['alertState']
@@ -409,6 +418,7 @@ export function HostsDashboard({
               const cachedSnapshots = cached.snapshots.map((entry) => entry.snapshot)
               const cachedAlertState = readKomariAlertState(cached.syncState)
               const lastSyncedAt = cached.lastSyncedAt
+              const confirmedSyncAt = persistedKomariSyncAt(integration, cached.syncState)
               const ttlMs = cached.syncState?.ttlMs ?? DEFAULT_KOMARI_SYNC_TTL_MS
               if (!forceKomari && isKomariSyncFresh(lastSyncedAt, Date.now(), ttlMs)) {
                 const cachedAlerts = reconcileKomariProbeAlerts({
@@ -425,12 +435,12 @@ export function HostsDashboard({
                     ttlMs,
                   }).catch(() => undefined)
                 }
-                return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlerts.alertState, alertAudit: cachedAlerts.alertAudit }
+                return { integrationId: integration.id, endpoint: integration.endpoint, lastSyncedAt: confirmedSyncAt, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlerts.alertState, alertAudit: cachedAlerts.alertAudit }
               }
 
               const apiKey = await onLoadVaultSecret(integration.credentialRef)
               if (!isCurrent()) throw new Error('KOMARI_REFRESH_SUPERSEDED')
-              if (!apiKey) return { integrationId: integration.id, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlertState, alertAudit: [] }
+              if (!apiKey) return { integrationId: integration.id, endpoint: integration.endpoint, lastSyncedAt: confirmedSyncAt, snapshots: cachedSnapshots, mappings: cached.mappings, alertState: cachedAlertState, alertAudit: [] }
               const mappingState = await getKomariMappingState(activeVaultId, integration.id)
               if (!isCurrent()) throw new Error('KOMARI_REFRESH_SUPERSEDED')
               const result = await syncKomariIntegration({
@@ -462,6 +472,8 @@ export function HostsDashboard({
               }
               return {
                 integrationId: integration.id,
+                endpoint: integration.endpoint,
+                lastSyncedAt: result.skipped ? confirmedSyncAt : result.syncedAt,
                 snapshots: result.skipped ? cachedSnapshots : result.snapshots,
                 mappings: result.skipped ? cached.mappings : result.mapping.mappings,
                 alertState: result.skipped ? cachedAlertState : result.alertState,
@@ -480,6 +492,8 @@ export function HostsDashboard({
           const cached = await loadKomariPersistence(integration.id).catch(() => ({ snapshots: [], mappings: [], syncState: null, lastSyncedAt: null }))
           return {
             integrationId: integration.id,
+            endpoint: integration.endpoint,
+            lastSyncedAt: persistedKomariSyncAt(integration, cached.syncState),
             snapshots: cached.snapshots.map((entry) => entry.snapshot),
             mappings: cached.mappings,
             alertState: readKomariAlertState(cached.syncState),
@@ -527,6 +541,9 @@ export function HostsDashboard({
         if (!isCurrent()) return
         setScopedKomariProbeLinks({ vaultId: activeVaultId, links: komariRecords.flatMap((record) => buildKomariProbeLinks({
           integrationId: record.integrationId,
+          vaultId: activeVaultId,
+          endpoint: record.endpoint,
+          lastSyncedAt: record.lastSyncedAt,
           hosts,
           mappings: record.mappings,
           snapshots: record.snapshots,

@@ -27,6 +27,13 @@ const sampledMetrics: ServerMonitorSnapshot = {
 const oldResource = { hostname: 'api', os: 'Linux', kernel: '', uptime: 'old uptime', cpuPercent: 95, memoryPercent: 20, memoryText: '', diskPercent: 30, diskText: '', network: 'old throughput' }
 
 describe('host list item', () => {
+  it.each(['grid', 'list'] as const)('shows actual Komari sync metadata separately in the %s host card', (mode) => {
+    const probe = { integrationId: 'komari', nodeId: 'node', hostId: host.id, mapping: { hostId: host.id, nodeId: 'node' }, status: 'linked', alertState: null, komari: { state: 'online', sampledAt: 1000, receivedAt: 1100, lastSyncedAt: 2000, alerts: null, snapshot: null }, probe: { state: 'not-recorded', health: null, version: null, lastHeartbeatAt: null, record: null }, recommendedAction: 'none' } as unknown as KomariProbeLink
+    const operations = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct' as const, sampledAt: 1000, komariProbe: probe }
+    const props = { host, isSelected: false, operations, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
+    expect(screen.getByTestId('komari-host-last-sync').querySelector('time')).toHaveAttribute('datetime', new Date(2000).toISOString())
+  })
   it.each(['grid', 'list'] as const)('explains TTL expiry in the %s card and removes it for fresh data', (mode) => {
     const operations = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct' as const, ttlMs: 60_000, expiryReason: 'ttl-expired' as const }
     const props = { host, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }

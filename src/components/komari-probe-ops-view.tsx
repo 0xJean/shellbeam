@@ -1,6 +1,7 @@
 import type { HostProfile } from '@/lib/hosts'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
+import { komariHostSyncCopy } from '@/lib/locales/komari-host-sync'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AlertTriangle, Bot, CheckCircle2, Clock3, Route, ShieldAlert, Wrench } from 'lucide-react'
@@ -29,6 +30,10 @@ function formatAge(timestamp: number | null | undefined, t: TFn) {
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return t('workspace.komariProbe.hoursAgo', { count: hours })
   return t('workspace.komariProbe.daysAgo', { count: Math.floor(hours / 24) })
+}
+
+function isKnownSyncTime(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= Date.now()
 }
 
 function stateLabel(state: KomariProbeLink['komari']['state'], t: TFn) {
@@ -67,7 +72,10 @@ function routeLabel(host: HostProfile, t: TFn) {
  * delegated to the caller's confirmed OperationJob bridge.
  */
 export function KomariProbeOpsView({ host, link, operationAudits = [], onAction, busy = false }: KomariProbeOpsViewProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const syncCopy = komariHostSyncCopy[locale]
+  const syncAt = link.komari.lastSyncedAt
+  const validSync = isKnownSyncTime(syncAt)
   const action = link.recommendedAction === 'check-probe' || link.recommendedAction === 'install-probe'
     ? link.recommendedAction
     : null
@@ -127,6 +135,12 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
             {linkedOperation && <span className="shrink-0 font-mono">{t('workspace.komariProbe.operationLinked', { id: linkedOperation })}{linkedOperationAudit ? ` · ${linkedOperationAudit.status}` : ''}</span>}
           </span>
         )}
+      </div>
+
+      <div data-testid="komari-host-last-sync" className="flex min-w-0 flex-wrap items-center gap-1.5" title={link.integrationId}>
+        <Clock3 className="h-3 w-3 shrink-0" />
+        <span>{syncCopy.syncedAt}:</span>
+        {validSync ? <time dateTime={new Date(syncAt).toISOString()}>{new Date(syncAt).toLocaleString(locale)}</time> : <span>{syncCopy.unknown}</span>}
       </div>
 
       <div className="flex min-w-0 items-center gap-2">

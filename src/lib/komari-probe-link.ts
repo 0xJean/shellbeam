@@ -1,3 +1,4 @@
+import { normalizeKomariEndpoint } from './komari'
 import type { HostProfile } from './hosts'
 import type { KomariAlertSummary } from './komari'
 import type { KomariHostMapping } from './komari-mapping'
@@ -32,6 +33,8 @@ export interface KomariProbeLink {
     state: KomariProbeDataState
     sampledAt: number | null
     receivedAt: number | null
+    /** Successful integration sync, independent of node sampling or mapping writes. */
+    lastSyncedAt?: number | null
     alerts: KomariAlertSummary | null
     snapshot: ProbeSnapshot | null
   }
@@ -154,6 +157,9 @@ function recommendedAction(options: {
  */
 export function buildKomariProbeLinks(options: {
   integrationId: string
+  vaultId?: string
+  endpoint?: string
+  lastSyncedAt?: number | null
   hosts: HostProfile[]
   mappings: MappingWithIntegration[]
   snapshots?: ProbeSnapshot[]
@@ -163,14 +169,21 @@ export function buildKomariProbeLinks(options: {
 }): KomariProbeLink[] {
   const integrationId = required(options.integrationId, 'integration')
   const now = options.now ?? Date.now()
+  const endpoint = options.endpoint ? normalizeKomariEndpoint(options.endpoint) : null
+  const hosts = options.hosts.filter((host) => !options.vaultId || !host.vaultId || host.vaultId === options.vaultId)
+  const hostIds = new Set(hosts.map((host) => host.id))
   const snapshots = (options.snapshots ?? []).filter((snapshot) => snapshot.provider.kind === 'komari' && snapshot.provider.id === integrationId)
+  const endpointMatches = (snapshot: ProbeSnapshot) => {
+    if (!endpoint) return true
+    try { return normalizeKomariEndpoint(snapshot.provider.endpoint ?? '') === endpoint } catch { return false }
+  }
   const snapshotByNode = new Map<string, ProbeSnapshot>()
   snapshots.forEach((snapshot) => {
     const nodeId = snapshot.provider.nodeId?.trim()
     if (nodeId && !snapshotByNode.has(nodeId)) snapshotByNode.set(nodeId, snapshot)
   })
-  const agentByHost = new Map((options.shellbeamAgents ?? []).map((record) => [record.hostId, record]))
-  const mappings = options.mappings.filter((mapping) => mappingBelongsToIntegration(mapping, integrationId))
+  const agentByHost = new Map((options.shellbeamAgents ?? []).filter((record) => !options.vaultId || record.vaultId === options.vaultId).map((record) => [record.hostId, record]))
+  const mappings = options.mappings.filter((mapping) => mappingBelongsToIntegration(mapping, integrationId) && (!options.vaultId || hostIds.has(mapping.hostId)))
   const nodeIds = new Set<string>([
     ...mappings.map((mapping) => mapping.nodeId),
     ...snapshots.map((snapshot) => snapshot.provider.nodeId).filter((nodeId): nodeId is string => Boolean(nodeId)),
@@ -180,11 +193,14 @@ export function buildKomariProbeLinks(options: {
     const matches = mappings.filter((mapping) => mapping.nodeId === nodeId)
     const mapping = matches.length === 1 ? matches[0] : null
     const hostMatches = mapping ? mappings.filter((candidate) => candidate.hostId === mapping.hostId) : []
-    const snapshot = snapshotByNode.get(nodeId) ?? null
+    const candidate = snapshotByNode.get(nodeId) ?? null
     const hostId = mapping?.hostId ?? null
+    const snapshot = candidate && endpointMatches(candidate) && (!mapping || candidate.host.hostId === hostId) ? candidate : null
     const probe = hostId ? agentByHost.get(hostId) ?? null : null
     const status: KomariProbeLinkStatus = matches.length > 1 || hostMatches.length > 1 ? 'conflict' : mapping ? 'linked' : 'unmapped'
     const state = komariDataState(snapshot, now)
+    const syncAt = options.lastSyncedAt
+    const lastSyncedAt = status === 'linked' && (!candidate || snapshot !== null) && typeof syncAt === 'number' && Number.isFinite(syncAt) && syncAt > 0 && syncAt <= now ? syncAt : null
     links.push({
       integrationId,
       nodeId,
@@ -196,6 +212,7 @@ export function buildKomariProbeLinks(options: {
         state,
         sampledAt: snapshot?.metrics?.freshness.sampledAt ?? snapshot?.inventory?.freshness.sampledAt ?? null,
         receivedAt: snapshot?.receivedAt ?? null,
+        lastSyncedAt,
         alerts: snapshot?.alerts ?? null,
         snapshot,
       },
