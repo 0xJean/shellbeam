@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -17,6 +17,8 @@ import {
   type OperationAuditEntry,
   type OperationJob,
   type OperationJobStatus,
+  type OperationHistoryCursor,
+  type OperationSource,
 } from '@/lib/operation-job'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -27,7 +29,7 @@ export type OperationStatusFilter = 'all' | OperationJobStatus
 export interface OperationsAuditCenterProps {
   /** Limit queries to one host when opened from a host's operations view. */
   hostId?: string
-  /** Maximum rows fetched from the local journal. The local store bounds this again. */
+  /** Visible rows per page (1–100); the store also bounds every request. */
   limit?: number
   /** Retry is deliberately delegated to the caller so this surface cannot
    * silently repeat a remote write. The caller should show confirmation and
@@ -48,6 +50,7 @@ type RequestGroup = {
 }
 
 const STATUS_FILTERS: OperationStatusFilter[] = ['all', 'queued', 'running', 'completed', 'failed', 'unknown', 'cancelled']
+const SOURCE_FILTERS = ['all', 'terminal', 'workspace', 'mcp', 'monitor'] as const
 const RETRYABLE_STATUSES: OperationJobStatus[] = ['failed', 'unknown', 'cancelled']
 
 function groupKey(job: OperationJob) {
@@ -116,11 +119,28 @@ function GroupSummary({ group }: { group: RequestGroup }) {
 }
 
 export function OperationsAuditCenter({ hostId, limit = 100, onRetry, source, vaultId, className }: OperationsAuditCenterProps) {
+  // Scope changes remount immediately, so rows from the previous Vault/host
+  // cannot remain visible until an effect or late request finishes.
+  return <ScopedOperationsAuditCenter key={JSON.stringify([hostId, vaultId, source, limit])} hostId={hostId} limit={limit} onRetry={onRetry} source={source} vaultId={vaultId} className={className} />
+}
+
+function ScopedOperationsAuditCenter({ hostId, limit = 100, onRetry, source, vaultId, className }: OperationsAuditCenterProps) {
   const { t, locale } = useT()
   const [view, setView] = useState<OperationsAuditView>('operations')
   const [status, setStatus] = useState<OperationStatusFilter>('all')
+  const [sourceFilter, setSourceFilter] = useState<(typeof SOURCE_FILTERS)[number]>('all')
+  const selectedSource = source ?? (sourceFilter === 'all' ? undefined : sourceFilter)
+  const pageSize = Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.trunc(limit))) : 100
+  const [boundaries, setBoundaries] = useState<Record<OperationsAuditView, (OperationHistoryCursor | undefined)[]>>({ operations: [undefined], audit: [undefined] })
+  const jobsBefore = boundaries.operations.at(-1)
+  const auditBefore = boundaries.audit.at(-1)
+  const [refreshVersion, setRefreshVersion] = useState(0)
+  const queryKey = JSON.stringify([status, selectedSource, jobsBefore, auditBefore, refreshVersion])
+  const [loadedKey, setLoadedKey] = useState<string | null>(null)
+  const sequence = useRef(0)
   const [jobs, setJobs] = useState<OperationJob[]>([])
   const [audits, setAudits] = useState<OperationAuditEntry[]>([])
+  const [hasOlder, setHasOlder] = useState({ operations: false, audit: false })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [retryingJobId, setRetryingJobId] = useState<string | null>(null)
@@ -128,34 +148,52 @@ export function OperationsAuditCenter({ hostId, limit = 100, onRetry, source, va
   const [restored, setRestored] = useState(false)
 
   const refresh = useCallback(async () => {
+    const request = ++sequence.current
     setLoading(true)
     setError(null)
     try {
-      const query = { ...(hostId ? { hostId } : {}), ...(vaultId ? { vaultId } : {}), ...(source ? { source } : {}), limit }
+      const query = { ...(hostId ? { hostId } : {}), ...(vaultId ? { vaultId } : {}), ...(selectedSource ? { source: selectedSource } : {}), ...(status !== 'all' ? { status } : {}), limit: pageSize + 1 }
       const [nextJobs, nextAudits] = await Promise.all([
-        listOperationJobs(query),
-        listOperationAudit({ ...(hostId ? { hostId } : {}), ...(vaultId ? { vaultId } : {}), ...(source ? { source } : {}), limit }),
+        listOperationJobs({ ...query, ...(jobsBefore ? { before: jobsBefore } : {}) }),
+        listOperationAudit({ ...query, ...(auditBefore ? { before: auditBefore } : {}) }),
       ])
+      if (request !== sequence.current) return
       const safeJobs = Array.isArray(nextJobs) ? nextJobs : []
       const safeAudits = Array.isArray(nextAudits) ? nextAudits : []
-      setJobs(source ? safeJobs.filter((job) => job.source === source) : safeJobs)
-      setAudits(source ? safeAudits.filter((audit) => audit.source === source) : safeAudits)
+      const matches = (row: { hostId?: string | null; vaultId?: string | null; source: OperationSource; status: OperationJobStatus }) => (!hostId || row.hostId === hostId) && (!vaultId || row.vaultId === vaultId) && (!selectedSource || row.source === selectedSource) && (status === 'all' || row.status === status)
+      setJobs(safeJobs.slice(0, pageSize).filter(matches))
+      setAudits(safeAudits.slice(0, pageSize).filter(matches))
+      setHasOlder({ operations: safeJobs.length > pageSize, audit: safeAudits.length > pageSize })
+      setLoadedKey(queryKey)
       setLastRefreshAt(Date.now())
       setRestored(true)
     } catch (cause) {
+      if (request !== sequence.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setLoading(false)
+      if (request === sequence.current) setLoading(false)
     }
-  }, [hostId, limit, source, vaultId])
+  }, [hostId, vaultId, selectedSource, status, pageSize, jobsBefore, auditBefore, queryKey])
 
-  useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => { void refresh(); return () => { sequence.current += 1 } }, [refresh])
+
+  function resetPages() {
+    sequence.current += 1
+    setLoadedKey(null)
+    setError(null)
+    setRestored(false)
+    setBoundaries({ operations: [undefined], audit: [undefined] })
+    setRefreshVersion(previous => previous + 1)
+  }
+
+  const browsingHistory = boundaries.operations.length > 1 || boundaries.audit.length > 1
 
   // MCP workers can finish while the Settings or Activity surface is in the
   // background. Re-read the durable journal when the app becomes visible so a
   // later session observes the canonical status instead of stale in-memory
   // output. The short interval also covers a long-running remote operation.
   useEffect(() => {
+    if (browsingHistory) return
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh() }
     document.addEventListener('visibilitychange', onVisible)
     const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh() }, 15_000)
@@ -163,13 +201,29 @@ export function OperationsAuditCenter({ hostId, limit = 100, onRetry, source, va
       document.removeEventListener('visibilitychange', onVisible)
       window.clearInterval(timer)
     }
-  }, [refresh])
+  }, [refresh, browsingHistory])
 
-  const filteredJobs = useMemo(() => status === 'all' ? jobs : jobs.filter((job) => job.status === status), [jobs, status])
+  const current = loadedKey === queryKey
+  const filteredJobs = useMemo(() => current ? jobs : [], [current, jobs])
   const groups = useMemo(() => groupJobs(filteredJobs), [filteredJobs])
   const jobsById = useMemo(() => new Map(jobs.map((job) => [job.jobId, job])), [jobs])
-  const filteredAudits = useMemo(() => status === 'all' ? audits : audits.filter((audit) => audit.status === status), [audits, status])
-  const unknownMcpJobs = useMemo(() => jobs.filter((job) => job.source === 'mcp' && job.status === 'unknown'), [jobs])
+  const filteredAudits = useMemo(() => current ? audits : [], [current, audits])
+  const unknownMcpJobs = useMemo(() => filteredJobs.filter((job) => job.source === 'mcp' && job.status === 'unknown'), [filteredJobs])
+
+  function olderPage() {
+    const lastJob = filteredJobs.at(-1)
+    const lastAudit = filteredAudits.at(-1)
+    const before = view === 'operations' ? lastJob && { timestamp: lastJob.updatedAt, id: lastJob.jobId } : lastAudit && { timestamp: lastAudit.createdAt, id: lastAudit.auditId }
+    if (!before || !hasOlder[view] || loading || !current) return
+    sequence.current += 1
+    setBoundaries(previous => ({ ...previous, [view]: [...previous[view], before] }))
+  }
+
+  function newerPage() {
+    if (boundaries[view].length <= 1 || loading) return
+    sequence.current += 1
+    setBoundaries(previous => ({ ...previous, [view]: previous[view].slice(0, -1) }))
+  }
 
   async function retry(job: OperationJob) {
     if (!onRetry || retryingJobId) return
@@ -194,7 +248,7 @@ export function OperationsAuditCenter({ hostId, limit = 100, onRetry, source, va
             <p className="mt-0.5 text-xs text-muted-foreground">{t('operations.description')}</p>
           </div>
         </div>
-        <button type="button" data-testid="operations-refresh" onClick={() => void refresh()} disabled={loading} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50" aria-label={t('operations.refresh')}>
+        <button type="button" data-testid="operations-refresh" onClick={() => { if (browsingHistory) resetPages(); else void refresh() }} disabled={loading} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50" aria-label={t('operations.refresh')}>
           <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
         </button>
       </div>
@@ -202,17 +256,30 @@ export function OperationsAuditCenter({ hostId, limit = 100, onRetry, source, va
       <div className="flex flex-wrap items-center gap-2 border-b border-border/50 px-6">
         <button type="button" data-testid="operations-tab" onClick={() => setView('operations')} className={cn('border-b-2 px-1 py-2 text-xs font-medium', view === 'operations' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground')}>{t('operations.tab.operations')}</button>
         <button type="button" data-testid="audit-tab" onClick={() => setView('audit')} className={cn('border-b-2 px-1 py-2 text-xs font-medium', view === 'audit' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground')}>{t('operations.tab.audit')}</button>
-        <label className="ml-auto flex items-center gap-1.5 py-1.5 text-xs text-muted-foreground" htmlFor="operations-status-filter">
+        {!source && <label className="ml-auto flex items-center gap-1.5 py-1.5 text-xs text-muted-foreground" htmlFor="operations-source-filter">
+          {t('operations.source.label')}
+          <select id="operations-source-filter" data-testid="operations-source-filter" value={sourceFilter} onChange={(event) => { resetPages(); setSourceFilter(event.target.value as typeof sourceFilter) }} className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
+            {SOURCE_FILTERS.map(value => <option key={value} value={value}>{t(`operations.source.${value}`)}</option>)}
+          </select>
+        </label>}
+        <label className={cn('flex items-center gap-1.5 py-1.5 text-xs text-muted-foreground', source && 'ml-auto')} htmlFor="operations-status-filter">
           <Search className="h-3.5 w-3.5" />
-          <select id="operations-status-filter" data-testid="operations-filter" value={status} onChange={(event) => setStatus(event.target.value as OperationStatusFilter)} className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
+          <select id="operations-status-filter" data-testid="operations-filter" value={status} onChange={(event) => { resetPages(); setStatus(event.target.value as OperationStatusFilter) }} className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
             {STATUS_FILTERS.map((value) => <option key={value} value={value}>{t(`operations.filter.${value}`)}</option>)}
           </select>
         </label>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 border-b border-border/30 px-6 py-2 text-xs text-muted-foreground">
+        <span data-testid="operations-page">{t('operations.page', { page: boundaries[view].length })}</span>
+        <button type="button" data-testid="operations-newer" disabled={loading || boundaries[view].length <= 1} onClick={newerPage} className="rounded border border-border/60 px-2 py-1 hover:bg-muted disabled:opacity-40">{t('operations.newer')}</button>
+        <button type="button" data-testid="operations-older" disabled={loading || !current || !hasOlder[view]} onClick={olderPage} className="rounded border border-border/60 px-2 py-1 hover:bg-muted disabled:opacity-40">{t('operations.older')}</button>
+        <span>{t(browsingHistory ? 'operations.historyPaused' : 'operations.historyRetention')}</span>
+      </div>
+
       {error && <div role="alert" data-testid="operations-error" className="mx-6 mt-4 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-700 dark:text-red-300"><XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{error}</div>}
       {restored && lastRefreshAt && <div data-testid="operations-restored" className="mx-6 mt-3 flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground"><span>{t('operations.restored')}</span><span>{formatTime(lastRefreshAt, locale)}</span></div>}
-      {unknownMcpJobs.length > 0 && <div data-testid="operations-mcp-recovery" className="mx-6 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 flex-1">{t('operations.mcpUnknown', { count: unknownMcpJobs.length })}</span><button type="button" onClick={() => setStatus('unknown')} className="rounded border border-amber-500/40 px-2 py-1 text-[10px] font-medium hover:bg-amber-500/10">{t('operations.filter.unknown')}</button></div>}
+      {unknownMcpJobs.length > 0 && <div data-testid="operations-mcp-recovery" className="mx-6 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 flex-1">{t('operations.mcpUnknown', { count: unknownMcpJobs.length })}</span><button type="button" onClick={() => { resetPages(); setStatus('unknown') }} className="rounded border border-amber-500/40 px-2 py-1 text-[10px] font-medium hover:bg-amber-500/10">{t('operations.filter.unknown')}</button></div>}
       {loading && jobs.length === 0 && audits.length === 0 && <div className="px-6 py-8 text-center text-sm text-muted-foreground">{t('common.loading')}</div>}
 
       {view === 'operations' && !loading && groups.length === 0 && <div data-testid="operations-empty" className="px-6 py-12 text-center"><FileClock className="mx-auto h-10 w-10 text-muted-foreground/20" /><p className="mt-3 text-sm text-muted-foreground">{t('operations.empty')}</p></div>}

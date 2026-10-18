@@ -1247,6 +1247,7 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                     action: None,
                     source: None,
                     limit: Some(500),
+                    ..Default::default()
                 }),
             )?;
             operation_jobs.retain(|job| linked_job_ids.contains(&job.job_id));
@@ -1258,6 +1259,7 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                     vault_id: Some(client.vault_id.clone()),
                     source: None,
                     limit: Some(500),
+                    ..Default::default()
                 }),
             )?;
             operation_audits.retain(|entry| linked_job_ids.contains(&entry.job_id));
@@ -1297,6 +1299,7 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                     action,
                     source: None,
                     limit: Some(limit),
+                    ..Default::default()
                 }),
             )?;
             let job_ids = jobs
@@ -1311,6 +1314,7 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                     vault_id: Some(client.vault_id.clone()),
                     source: None,
                     limit: Some(limit),
+                    ..Default::default()
                 }),
             )?
             .into_iter()

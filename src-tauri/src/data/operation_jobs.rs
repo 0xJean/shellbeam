@@ -80,6 +80,13 @@ pub struct UpdateOperationJobRequest {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OperationHistoryCursor {
+    pub timestamp: i64,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OperationJobListQuery {
     pub host_id: Option<String>,
     pub vault_id: Option<String>,
@@ -87,6 +94,7 @@ pub struct OperationJobListQuery {
     pub action: Option<String>,
     pub source: Option<String>,
     pub limit: Option<u32>,
+    pub before: Option<OperationHistoryCursor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,7 +133,9 @@ pub struct OperationAuditListQuery {
     pub host_id: Option<String>,
     pub vault_id: Option<String>,
     pub source: Option<String>,
+    pub status: Option<String>,
     pub limit: Option<u32>,
+    pub before: Option<OperationHistoryCursor>,
 }
 
 fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
@@ -199,6 +209,8 @@ fn initialize(db: &Connection) -> Result<(), String> {
          );
          CREATE INDEX IF NOT EXISTS idx_operation_jobs_updated_at
            ON operation_jobs(updated_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_operation_jobs_history
+           ON operation_jobs(updated_at DESC, job_id DESC);
          CREATE INDEX IF NOT EXISTS idx_operation_jobs_host_id
            ON operation_jobs(host_id, updated_at DESC);
          CREATE TABLE IF NOT EXISTS operation_audit (
@@ -225,6 +237,8 @@ fn initialize(db: &Connection) -> Result<(), String> {
          );
          CREATE INDEX IF NOT EXISTS idx_operation_audit_at
            ON operation_audit(at DESC);
+         CREATE INDEX IF NOT EXISTS idx_operation_audit_history
+           ON operation_audit(at DESC, audit_id DESC);
          CREATE INDEX IF NOT EXISTS idx_operation_audit_job_id
            ON operation_audit(job_id, at DESC);",
     )
@@ -233,6 +247,36 @@ fn initialize(db: &Connection) -> Result<(), String> {
 
 fn bounded_limit(raw: Option<u32>, fallback: u32, max: u32) -> u32 {
     raw.unwrap_or(fallback).clamp(1, max)
+}
+
+fn validate_history_query(
+    status: Option<&str>,
+    source: Option<&str>,
+    before: Option<&OperationHistoryCursor>,
+) -> Result<(), String> {
+    if status.is_some_and(|value| {
+        !matches!(
+            value,
+            "queued" | "running" | "completed" | "failed" | "unknown" | "cancelled"
+        )
+    }) {
+        return Err("INVALID_OPERATION: unknown history status".into());
+    }
+    if source.is_some_and(|value| !matches!(value, "terminal" | "workspace" | "mcp" | "monitor")) {
+        return Err("INVALID_OPERATION: unknown history source".into());
+    }
+    if let Some(cursor) = before {
+        // Cursors cross JavaScript/native boundaries; reject unsafe numeric
+        // values and incomplete boundaries rather than skipping tied rows.
+        if !(0..=9_007_199_254_740_991).contains(&cursor.timestamp)
+            || cursor.id.is_empty()
+            || cursor.id.len() > 128
+            || cursor.id.chars().any(char::is_control)
+        {
+            return Err("INVALID_OPERATION: invalid history cursor".into());
+        }
+    }
+    Ok(())
 }
 
 fn validate_text(label: &str, value: &str, required: bool) -> Result<(), String> {
@@ -759,6 +803,11 @@ pub(crate) fn list_on(
     db: &Connection,
     query: OperationJobListQuery,
 ) -> Result<Vec<OperationJob>, String> {
+    validate_history_query(
+        query.status.as_deref(),
+        query.source.as_deref(),
+        query.before.as_ref(),
+    )?;
     let limit = bounded_limit(query.limit, 100, 500);
     let mut statement = db
         .prepare(&format!(
@@ -768,7 +817,8 @@ pub(crate) fn list_on(
                AND (?3 IS NULL OR status=?3)
                AND (?4 IS NULL OR action=?4)
                AND (?5 IS NULL OR source=?5)
-             ORDER BY updated_at DESC LIMIT ?6"
+               AND (?6 IS NULL OR updated_at<?6 OR (updated_at=?6 AND job_id<?7))
+             ORDER BY updated_at DESC, job_id DESC LIMIT ?8"
         ))
         .map_err(|e| format!("Prepare operation job query failed: {e}"))?;
     let rows = statement
@@ -779,6 +829,8 @@ pub(crate) fn list_on(
                 query.status,
                 query.action,
                 query.source,
+                query.before.as_ref().map(|cursor| cursor.timestamp),
+                query.before.as_ref().map(|cursor| cursor.id.as_str()),
                 limit
             ],
             job_from_row,
@@ -827,6 +879,11 @@ pub(crate) fn audit_list_on(
     db: &Connection,
     query: OperationAuditListQuery,
 ) -> Result<Vec<OperationAudit>, String> {
+    validate_history_query(
+        query.status.as_deref(),
+        query.source.as_deref(),
+        query.before.as_ref(),
+    )?;
     let limit = bounded_limit(query.limit, 100, 500);
     let mut statement = db
         .prepare(
@@ -843,7 +900,9 @@ pub(crate) fn audit_list_on(
                AND (?2 IS NULL OR operation_audit.host_id=?2)
                AND (?3 IS NULL OR jobs.vault_id=?3)
                AND (?4 IS NULL OR operation_audit.source=?4)
-             ORDER BY operation_audit.at DESC LIMIT ?5",
+               AND (?5 IS NULL OR operation_audit.status=?5)
+               AND (?6 IS NULL OR operation_audit.at<?6 OR (operation_audit.at=?6 AND operation_audit.audit_id<?7))
+             ORDER BY operation_audit.at DESC, operation_audit.audit_id DESC LIMIT ?8",
         )
         .map_err(|e| format!("Prepare operation audit query failed: {e}"))?;
     let rows = statement
@@ -853,6 +912,9 @@ pub(crate) fn audit_list_on(
                 query.host_id,
                 query.vault_id,
                 query.source,
+                query.status,
+                query.before.as_ref().map(|cursor| cursor.timestamp),
+                query.before.as_ref().map(|cursor| cursor.id.as_str()),
                 limit
             ],
             audit_from_row,
@@ -1006,6 +1068,133 @@ mod tests {
         assert!(audit
             .iter()
             .any(|entry| entry.job_id == unknown.job_id && entry.status == "unknown"));
+    }
+
+    #[test]
+    fn history_keysets_page_tied_rows_after_reopen_without_cross_scope_or_newer_inserts() {
+        let directory = store_directory();
+        let path = directory.0.join("history.sqlite3");
+        let db = open_database(&path).unwrap();
+        for index in 0..9 {
+            let mut request = create_request(if index == 5 { "vault-b" } else { "vault-a" });
+            if index == 6 {
+                request.host_id = Some("other-host".into());
+            }
+            if index == 7 {
+                request.source = "monitor".into();
+            }
+            let job = create_on(&db, request).unwrap();
+            if index != 8 {
+                update_on(
+                    &db,
+                    update_request(&job.job_id, "cancelled", Some("rejected")),
+                )
+                .unwrap();
+            }
+        }
+        // Real journal rows can share the same millisecond. Neither timestamps
+        // alone nor OFFSET can safely identify the next page under new writes.
+        db.execute("UPDATE operation_jobs SET updated_at=1000", [])
+            .unwrap();
+        db.execute("UPDATE operation_audit SET at=1000", [])
+            .unwrap();
+        drop(db);
+        let db = open_database(&path).unwrap();
+        let filters = serde_json::json!({"vaultId":"vault-a","hostId":"same-host","source":"workspace","status":"cancelled","limit":2});
+        let expected_jobs = list_on(&db, serde_json::from_value(serde_json::json!({"vaultId":"vault-a","hostId":"same-host","source":"workspace","status":"cancelled","limit":500})).unwrap()).unwrap();
+        let expected_audits = audit_list_on(&db, serde_json::from_value(serde_json::json!({"vaultId":"vault-a","hostId":"same-host","source":"workspace","status":"cancelled","limit":500})).unwrap()).unwrap();
+        assert_eq!(expected_jobs.len(), 5);
+        assert_eq!(expected_audits.len(), 5);
+        assert!(expected_jobs
+            .windows(2)
+            .all(|pair| pair[0].job_id > pair[1].job_id));
+        assert!(expected_audits
+            .windows(2)
+            .all(|pair| pair[0].audit_id > pair[1].audit_id));
+
+        let first_jobs = list_on(&db, serde_json::from_value(filters.clone()).unwrap()).unwrap();
+        let first_audits =
+            audit_list_on(&db, serde_json::from_value(filters.clone()).unwrap()).unwrap();
+        let newer = create_on(&db, create_request("vault-a")).unwrap();
+        update_on(
+            &db,
+            update_request(&newer.job_id, "cancelled", Some("rejected")),
+        )
+        .unwrap();
+        let mut job_ids = first_jobs
+            .iter()
+            .map(|row| row.job_id.clone())
+            .collect::<Vec<_>>();
+        let mut audit_ids = first_audits
+            .iter()
+            .map(|row| row.audit_id.clone())
+            .collect::<Vec<_>>();
+        let mut job_cursor = first_jobs
+            .last()
+            .map(|row| serde_json::json!({"timestamp":row.updated_at,"id":row.job_id}));
+        let mut audit_cursor = first_audits
+            .last()
+            .map(|row| serde_json::json!({"timestamp":row.created_at,"id":row.audit_id}));
+        for _ in 0..3 {
+            let mut query = filters.clone();
+            query["before"] = job_cursor.clone().unwrap();
+            let page = list_on(&db, serde_json::from_value(query).unwrap()).unwrap();
+            assert!(page.len() <= 2);
+            if let Some(last) = page.last() {
+                job_cursor =
+                    Some(serde_json::json!({"timestamp":last.updated_at,"id":last.job_id}));
+            }
+            job_ids.extend(page.into_iter().map(|row| row.job_id));
+            let mut query = filters.clone();
+            query["before"] = audit_cursor.clone().unwrap();
+            let page = audit_list_on(&db, serde_json::from_value(query).unwrap()).unwrap();
+            assert!(page.len() <= 2);
+            if let Some(last) = page.last() {
+                audit_cursor =
+                    Some(serde_json::json!({"timestamp":last.created_at,"id":last.audit_id}));
+            }
+            audit_ids.extend(page.into_iter().map(|row| row.audit_id));
+        }
+        assert_eq!(
+            job_ids,
+            expected_jobs
+                .into_iter()
+                .map(|row| row.job_id)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            audit_ids,
+            expected_audits
+                .into_iter()
+                .map(|row| row.audit_id)
+                .collect::<Vec<_>>()
+        );
+        assert!(!job_ids.contains(&newer.job_id));
+        // Fresh reads expose the newly inserted job; paging never hides it forever.
+        let latest = list_on(&db, serde_json::from_value(filters).unwrap()).unwrap();
+        assert_eq!(latest[0].job_id, newer.job_id);
+    }
+
+    #[test]
+    fn history_queries_reject_invalid_boundaries_and_filter_values() {
+        let db = Connection::open_in_memory().unwrap();
+        initialize(&db).unwrap();
+        for query in [
+            serde_json::json!({"before":{"timestamp":-1,"id":"a"}}),
+            serde_json::json!({"before":{"timestamp":9_007_199_254_740_992_i64,"id":"a"}}),
+            serde_json::json!({"before":{"timestamp":1,"id":""}}),
+            serde_json::json!({"before":{"timestamp":1,"id":"bad\nline"}}),
+            serde_json::json!({"before":{"timestamp":1,"id":"x".repeat(129)}}),
+            serde_json::json!({"status":"not-a-status"}),
+            serde_json::json!({"source":"not-a-source"}),
+        ] {
+            assert!(list_on(&db, serde_json::from_value(query.clone()).unwrap())
+                .unwrap_err()
+                .contains("INVALID_OPERATION"));
+            assert!(audit_list_on(&db, serde_json::from_value(query).unwrap())
+                .unwrap_err()
+                .contains("INVALID_OPERATION"));
+        }
     }
 
     #[test]

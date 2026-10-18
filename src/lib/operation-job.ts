@@ -96,6 +96,12 @@ export interface UpdateOperationJobRequest {
 /** Filters shared by the host list and activity/audit views. Keep these
  * aligned with the optional fields accepted by the Tauri command so callers
  * can request a host-scoped slice without loading the entire local journal. */
+/** Stable keyset boundary in the journal's descending time/id order. */
+export interface OperationHistoryCursor {
+  timestamp: number
+  id: string
+}
+
 export interface OperationJobListQuery {
   hostId?: string
   vaultId?: string
@@ -103,6 +109,7 @@ export interface OperationJobListQuery {
   action?: string
   source?: OperationSource
   limit?: number
+  before?: OperationHistoryCursor
 }
 
 export interface OperationAuditListQuery {
@@ -110,7 +117,9 @@ export interface OperationAuditListQuery {
   hostId?: string
   vaultId?: string
   source?: OperationSource
+  status?: OperationJobStatus
   limit?: number
+  before?: OperationHistoryCursor
 }
 
 export async function createOperationJob(payload: CreateOperationJobRequest) {
