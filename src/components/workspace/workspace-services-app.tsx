@@ -204,7 +204,7 @@ export function WorkspaceServicesApp({
   }
 
   return (
-    <div data-testid="workspace-services-app" className="space-y-4">
+    <div data-testid="workspace-services-app" data-host-id={host.id} data-vault-id={vaultId ?? host.vaultId} data-selected-service={selectedService?.name} className="space-y-4">
       <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
         <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">{t('workspace.app.services')}</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">{t('workspace.services.title')}</h2>
@@ -255,6 +255,7 @@ export function WorkspaceServicesApp({
                   return (
                     <button
                       key={row.name}
+                      data-service-unit={row.name} data-active-state={row.active} aria-pressed={isSelected}
                       type="button"
                       onClick={() => setSelectedServiceName(row.name)}
                       className={`grid w-full grid-cols-[minmax(0,1.4fr)_100px_100px_100px] gap-3 border-b border-border/40 px-4 py-3 text-left text-sm transition-colors last:border-b-0 ${
@@ -291,7 +292,7 @@ export function WorkspaceServicesApp({
                 <button
                   type="button"
                   disabled={actionLoading !== null}
-                  onClick={() => void runServiceAction('status')}
+                  data-testid="workspace-service-status" onClick={() => void runServiceAction('status')}
                   className="rounded-2xl border border-border/60 px-4 py-3 text-left text-sm font-medium hover:bg-muted/40"
                 >
                   {actionLoading === 'status' ? t('workspace.services.running') : t('workspace.services.actionLabel.status', { service: selectedService.name })}
@@ -299,7 +300,7 @@ export function WorkspaceServicesApp({
                 <button
                   type="button"
                   disabled={actionLoading !== null}
-                  onClick={() => void runServiceAction('restart')}
+                  data-testid="workspace-service-restart" onClick={() => void runServiceAction('restart')}
                   className="rounded-2xl border border-border/60 px-4 py-3 text-left text-sm font-medium hover:bg-muted/40"
                 >
                   {actionLoading === 'restart' ? t('workspace.services.running') : t('workspace.services.actionLabel.restart', { service: selectedService.name })}

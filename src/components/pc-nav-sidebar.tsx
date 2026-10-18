@@ -87,6 +87,7 @@ export function PcNavSidebar({ activeNav, onNavChange }: PcNavSidebarProps) {
         {NAV_ITEMS.map((item) => (
           <button
             key={item.id}
+            data-testid={`pc-nav-${item.id}`}
             type="button"
             onClick={() => onNavChange(item.id)}
             className={cn(
@@ -106,6 +107,7 @@ export function PcNavSidebar({ activeNav, onNavChange }: PcNavSidebarProps) {
         {SYSTEM_ITEMS.map((item) => (
           <button
             key={item.id}
+            data-testid={`pc-nav-${item.id}`}
             type="button"
             onClick={() => onNavChange(item.id)}
             className={cn(

@@ -135,7 +135,7 @@ export function HostForm({
   }
 
   return (
-    <Card data-tour={!initial ? 'host-form' : undefined} className="w-full max-w-xl md:max-w-xl max-md:max-w-none max-md:border-0 max-md:rounded-none max-md:shadow-none">
+    <Card data-testid="host-form" data-tour={!initial ? 'host-form' : undefined} className="w-full max-w-xl md:max-w-xl max-md:max-w-none max-md:border-0 max-md:rounded-none max-md:shadow-none">
       <CardContent className="space-y-5 p-5">
         {/* Title */}
         <div className="flex items-center justify-between">
@@ -154,13 +154,13 @@ export function HostForm({
             <div className="relative min-w-0 flex-1">
               <Server className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                value={address} onChange={(e) => setAddress(e.target.value)}
+                data-testid="host-address" aria-label={t('hostForm.address')} value={address} onChange={(e) => setAddress(e.target.value)}
                 placeholder={t('hostForm.addressPlaceholder')} className="pl-9"
               />
             </div>
             <div className="w-20">
               <Input
-                type="number" value={port} onChange={(e) => setPort(e.target.value)}
+                data-testid="host-port" aria-label={t('hostForm.port')} type="number" value={port} onChange={(e) => setPort(e.target.value)}
                 placeholder="22" className="text-center"
               />
             </div>
@@ -174,7 +174,7 @@ export function HostForm({
             <div className="relative">
               <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                value={username} onChange={(e) => setUsername(e.target.value)}
+                data-testid="host-username" aria-label={t('hostForm.username')} value={username} onChange={(e) => setUsername(e.target.value)}
                 placeholder="root" className="pl-9"
               />
             </div>
@@ -182,7 +182,7 @@ export function HostForm({
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">{t('hostForm.label')}</label>
             <Input
-              value={name} onChange={(e) => setName(e.target.value)}
+              data-testid="host-name" aria-label={t('hostForm.label')} value={name} onChange={(e) => setName(e.target.value)}
               placeholder={t('hostForm.labelPlaceholder')}
             />
           </div>
@@ -285,7 +285,7 @@ export function HostForm({
               )}>
               <Lock className="h-3.5 w-3.5" />{t('hostForm.password')}
             </button>
-            <button type="button" onClick={() => setAuthType('privateKey')}
+            <button data-testid="host-auth-private-key" type="button" onClick={() => setAuthType('privateKey')}
               className={cn(
                 'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
                 authType === 'privateKey' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
@@ -310,7 +310,7 @@ export function HostForm({
 
         {/* Advanced: Jump Host (collapsible) */}
         <div className="space-y-3">
-          <button type="button" onClick={() => setShowAdvanced((v) => !v)}
+          <button data-testid="host-jump-toggle" aria-expanded={showAdvanced} type="button" onClick={() => setShowAdvanced((v) => !v)}
             className="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
             <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAdvanced && 'rotate-180')} />
             {t('hostForm.jumpHost')}
@@ -320,7 +320,7 @@ export function HostForm({
               <p className="text-xs text-muted-foreground">{t('hostForm.jumpHostDesc')}</p>
               <label className="block space-y-1 text-xs text-muted-foreground">
                 <span>{t('hostForm.jumpProfile')}</span>
-                <select aria-label={t('hostForm.jumpProfile')} value={jumpHostId} className="h-8 w-full rounded border bg-background px-2" onChange={(event) => {
+                <select data-testid="host-jump-profile" aria-label={t('hostForm.jumpProfile')} value={jumpHostId} className="h-8 w-full rounded border bg-background px-2" onChange={(event) => {
                   const id = event.target.value
                   setJumpHostId(id)
                   const profile = availableHosts.find((host) => host.id === id)
@@ -355,7 +355,7 @@ export function HostForm({
         {/* Action buttons at bottom */}
         <div data-tour="host-save" className="flex justify-end gap-2 pt-1">
           <Button variant="outline" size="sm" onClick={onCancel}>{t('hostForm.cancel')}</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={submitting}>
+          <Button data-testid="host-save" size="sm" onClick={handleSubmit} disabled={submitting}>
             {submitting ? t('hostForm.saving') : t('hostForm.save')}
           </Button>
         </div>
@@ -501,13 +501,13 @@ function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password
               </button>
             </div>
           ) : (
-            <Textarea value={privateKey}
+            <Textarea data-testid="host-private-key" aria-label={t('hostForm.privateKeyLabel')} value={privateKey}
               onChange={(e) => { onPrivateKey(e.target.value); onUseInline(true) }}
               placeholder={t('hostForm.privateKeyPlaceholder')} className="min-h-[80px] font-mono text-sm" />
           )}
           <div className="flex items-center gap-2">
             <Archive className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <Input value={vaultSaveName} onChange={(e) => onVaultSaveName(e.target.value)}
+            <Input data-testid="host-secret-name" aria-label={t('hostForm.saveAsName')} value={vaultSaveName} onChange={(e) => onVaultSaveName(e.target.value)}
               placeholder={defaultVaultSaveName || `${addrSlug}-${isPassword ? 'password' : 'key'}`} className="h-7 text-xs" />
           </div>
           {hasVaultKeys && (

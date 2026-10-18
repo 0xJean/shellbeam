@@ -60,7 +60,7 @@ export function PcSessionTabBar({
     <div className="sticky top-0 z-50 hidden h-12 shrink-0 items-end gap-0 overflow-x-auto border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-1 shadow-[var(--workspace-shadow-card)] backdrop-blur-sm scrollbar-none md:flex md:h-10">
       <button
         type="button"
-        onClick={onGoToDashboard}
+        data-testid="pc-dashboard" onClick={onGoToDashboard}
           className={cn(
             'flex h-10 shrink-0 items-center gap-1.5 rounded-t-md px-3 text-xs font-medium transition-colors md:h-8',
             isDashboard

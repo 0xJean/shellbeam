@@ -337,6 +337,7 @@ export function SessionTerminalView({
 
   return (
     <div
+      data-testid="terminal-session" data-session-id={sessionId} data-host-name={hostName} data-host-id={session?.hostId} data-status={isConnected ? 'connected' : isDisconnected ? 'disconnected' : 'connecting'}
       className={cn('relative flex flex-col', chromeOnly ? 'shrink-0' : 'h-full')}
       style={{
         ...(chromeOnly ? {} : { background: bg }),

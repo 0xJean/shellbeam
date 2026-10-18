@@ -138,7 +138,7 @@ function formatJumpHost(host: HostProfile, route?: Pick<HostOperationalSummary, 
 function HostOpsQuickActions({ host, onOpenWorkspace, onRefresh }: { host: HostProfile; onOpenWorkspace?: (id: string, app: WorkspaceAppId) => void; onRefresh?: (id: string) => void }) {
   const { t } = useT()
   if (!onOpenWorkspace) return null
-  return <select aria-label={t('hostOps.openForHost', { host: host.name })} value="" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={(event) => {
+  return <select data-testid="host-ops-open" aria-label={t('hostOps.openForHost', { host: host.name })} value="" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={(event) => {
     event.stopPropagation()
     if (event.target.value === 'refresh') onRefresh?.(host.id)
     else if (event.target.value) onOpenWorkspace(host.id, event.target.value as WorkspaceAppId)
@@ -182,6 +182,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
   return (
     <>
       <div
+        data-testid="host-card" data-host-id={host.id} data-host-name={host.name} data-host-health={status ?? 'unknown'}
         className={cn(
           'group relative flex flex-col rounded-xl border transition-all',
           isSelected
@@ -295,7 +296,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
         <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
           <div className="flex items-center gap-2">
             <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
-            <Button size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => onConnect(host.id)}>
+            <Button data-testid="host-connect" size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => onConnect(host.id)}>
               <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{t('hostCard.connect')}
             </Button>
             {host.updatedAt > 0 && (
@@ -637,7 +638,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
         {summary.ttlMs != null && <span className="rounded border border-border/50 px-1 py-0.5" title={summary.expiresAt ? new Date(summary.expiresAt).toLocaleString() : undefined}>TTL {Math.round(summary.ttlMs / 1_000)}s</span>}
         {summary.expiryReason === 'ttl-expired' && <span data-testid="host-ops-expiry-reason" className="rounded border border-border/50 px-1 py-0.5 text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsExpiryReason.ttl-expired')}</span>}
       </div>
-      {(summary.highestAlertSeverity || summary.localAlertOpen) ? <div data-testid="host-ops-local-alerts" className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsFilters.highest')}: {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {summary.localAlertOpen ?? 0}</div> : null}
+      {(summary.highestAlertSeverity || summary.localAlertOpen) ? <div data-testid="host-ops-local-alerts" data-open-count={summary.localAlertOpen ?? 0} data-severity={summary.highestAlertSeverity ?? 'unknown'} className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsFilters.highest')}: {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {summary.localAlertOpen ?? 0}</div> : null}
       {summary.komariProbe && (
         <KomariProbeOpsView
           host={host}
@@ -746,6 +747,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
   return (
     <>
       <div
+        data-testid="host-card" data-host-id={host.id} data-host-name={host.name} data-host-health={status ?? 'unknown'}
         role="button"
         tabIndex={0}
         onClick={() => onSelect(host.id)}
@@ -821,7 +823,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
           <button
             type="button"
             className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)] md:h-8 md:w-8"
-            onClick={(e) => { e.stopPropagation(); onConnect(host.id) }} title={t('hostCard.connect')}>
+            data-testid="host-connect" onClick={(e) => { e.stopPropagation(); onConnect(host.id) }} title={t('hostCard.connect')}>
             <Terminal className="h-4 w-4" />
           </button>
           <button

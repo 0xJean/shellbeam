@@ -27,7 +27,7 @@ export function HostKeyConfirmDialog({ info, onAccept, onReject }: HostKeyConfir
   return (
     <Dialog open={!!info} onOpenChange={(open) => { if (!open) onReject() }}>
       <DialogContent className="md:max-w-lg">
-        <div className="space-y-4 p-6">
+        <div data-testid="host-key-confirm" data-host={info.host} data-port={info.port} data-code={info.code} className="space-y-4 p-6">
           <div className="flex items-start gap-4">
             <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${isMismatch ? 'bg-destructive/10' : 'bg-amber-500/10'}`}>
               {isMismatch
@@ -59,7 +59,7 @@ export function HostKeyConfirmDialog({ info, onAccept, onReject }: HostKeyConfir
             </div>
             <div className="space-y-1 text-sm">
               <span className="font-medium text-muted-foreground">{t('hostKey.fingerprint')}</span>
-              <p className="break-all rounded bg-background p-2 font-mono text-xs">
+              <p data-testid="host-key-fingerprint" className="break-all rounded bg-background p-2 font-mono text-xs">
                 SHA256:{info.fingerprint}
               </p>
             </div>
@@ -78,7 +78,7 @@ export function HostKeyConfirmDialog({ info, onAccept, onReject }: HostKeyConfir
               {t('hostKey.cancel')}
             </Button>
             {!isMismatch && (
-              <Button onClick={onAccept} className="gap-2">
+              <Button data-testid="host-key-accept" onClick={onAccept} className="gap-2">
                 <ShieldCheck className="h-4 w-4" />
                 {t('hostKey.trustConnect')}
               </Button>

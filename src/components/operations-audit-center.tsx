@@ -266,7 +266,7 @@ export function OperationsAuditCenter({ hostId, limit = 100, onRetry, source, va
         {filteredAudits.map((entry) => {
           const job = jobsById.get(entry.jobId)
           return (
-            <div key={entry.auditId} data-testid="operation-audit-row" className="flex flex-wrap items-start gap-2 rounded-lg border border-border/40 bg-card/30 px-3 py-2.5 text-xs">
+            <div key={entry.auditId} data-testid="operation-audit-row" data-job-id={entry.jobId} data-host-id={entry.hostId} data-vault-id={entry.vaultId} data-action={entry.action} data-target={entry.target} data-status={entry.status} data-confirmation={entry.confirmationStatus} data-transport={entry.transport} className="flex flex-wrap items-start gap-2 rounded-lg border border-border/40 bg-card/30 px-3 py-2.5 text-xs">
               <StatusBadge status={entry.status} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
