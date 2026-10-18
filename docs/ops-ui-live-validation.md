@@ -343,3 +343,31 @@ sample; no timestamp is rounded forward or replaced. The seven Node suites
 pass 110 tests, including deferred/hidden summaries, immediate foreign/duplicate
 refusal, readiness timeout, whole-second timing, old-cache rejection and scope
 changes before refresh. These contracts do not prove the remaining live gates.
+
+The fourteenth [UI run 39109669946](https://github.com/0xJean/shellbeam/actions/runs/39109669946),
+head `d636bd8c2a317621cca3d2fce60c613ab170af2f`, merge checkout
+`7df474da3197412f18970de0a9177d9a467751a7`, again passed the complete two-route
+service journey, first restart, four service lifecycle banners without replay,
+and six independent Probe banners and metadata jobs. The exact scoped-summary
+wait and whole-second boundary then allowed real jump-profile and direct-host
+inventory refreshes: both retained a new original healthy sample with no open
+inventory alert. The third, via-host refresh failed with `element click
+intercepted` at the native `host-ops-open` select. The final aggregate counter
+and second restart were not reached. Cleanup and app exit passed.
+
+There is no failure-time menu geometry or screenshot in that run. The earlier
+notification screenshot shows the horizontal list controls but predates both
+successful inventory refreshes, so it cannot establish what intercepted the
+via control. The next diagnostic records bounded actual card/menu/summary/list
+viewport/control rectangles and a scoped failure screenshot. Geometry cannot
+replace the one real native selection, and the failure must remain a failure;
+fresh inventory, aggregate counters and second restart are still required.
+
+The refresh diagnostic's seven Node suites pass 114 tests. Failure capture
+rechecks every visible fixture card's identity and unique same-Vault summary,
+the target menu and refresh option, and absence of dialogs or credential inputs
+both before reserving a private screenshot path and before taking pixels.
+Foreign or missing summaries, duplicate cards, scope changes, unsafe paths and
+intervening dialogs/credentials refuse capture while preserving the original
+selection error. No screenshot is fabricated, and an unavailable rectangle does
+not turn the selection failure into success.

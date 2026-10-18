@@ -286,7 +286,7 @@ export async function main(env = process.env) {
     const probeState = await runOpsUiProbeJourney({ driver, fixture, record, checkpoint, resumeState,
       onOpened: role => probeNotifications.verifyOpened(role), onResolved: role => probeNotifications.verifyResolved(role) })
     stage = 'probe-inventory-settle'
-    report.probeInventory = safeDetails(await settleOpsUiProbeInventory({ driver, fixture, record, resumeState, probeState }))
+    report.probeInventory = safeDetails(await settleOpsUiProbeInventory({ driver, fixture, record, checkpoint, resumeState, probeState }))
     assert(report.probeInventory.passed === true && report.probeInventory.freshObservations === 3, 'all inventory observations must settle before restart')
     stage = 'probe-delivery-before-restart'
     await probeNotifications.beforeRestart()

@@ -2,7 +2,8 @@
 // application database or remote output is replaced. The injected checkpoint
 // controls only the disposable fixture's existing exact SSHD services.
 import { createHash } from 'node:crypto'
-import { findOpsUiAuditRow, respondOpsUiConfirmation, waitForOpsUiConfirmation } from './ops-ui-journey.mjs'
+import { basename, isAbsolute, relative, resolve } from 'node:path'
+import { findOpsUiAuditRow, respondOpsUiConfirmation, validateOpsUiServiceRect, waitForOpsUiConfirmation } from './ops-ui-journey.mjs'
 
 const ROLES = Object.freeze(['direct', 'via'])
 const route = (role) => role === 'via' ? 'proxy-jump' : 'direct'
@@ -61,10 +62,83 @@ export async function waitForOpsUiProbeEvaluation(driver, state, role, { status,
   }, { timeoutMs })
 }
 
+async function inventoryRefreshSurface(driver, state, role) {
+  const cards = await driver.findAll(card(state, role))
+  const summaries = await driver.findAll(`${card(state, role)} ${tid('host-ops-summary')}`)
+  const menus = await driver.findAll(`${card(state, role)} select${tid('host-ops-open')}`)
+  const refreshOptions = await driver.findAll(`${card(state, role)} select${tid('host-ops-open')} option[value="refresh"]`)
+  check(cards.length === 1 && summaries.length === 1 && menus.length === 1
+    && refreshOptions.length === 1
+    && await driver.isDisplayed(cards[0]) && await driver.isDisplayed(summaries[0])
+    && await driver.attr(summaries[0], 'data-vault-id') === state.vaultId
+    && await driver.attr(summaries[0], 'data-host-id') === state.hostIds[role], 'inventory_refresh_scope_mismatch')
+  return { card: cards[0], summary: summaries[0], menu: menus[0] }
+}
+
+async function recordInventoryRefreshGeometry({ driver, state, role, record, phase }) {
+  const surface = await inventoryRefreshSurface(driver, state, role)
+  try {
+    const viewports = await driver.findAll(tid('host-list-scroll-viewport'))
+    const controls = await driver.findAll(tid('host-list-scroll-controls'))
+    check(viewports.length === 1 && controls.length <= 1, 'inventory_refresh_geometry_surface_missing')
+    const evidence = {}
+    for (const [key, element] of Object.entries({ ...surface, viewport: viewports[0], ...(controls.length ? { controls: controls[0] } : {}) })) {
+      try { evidence[key] = validateOpsUiServiceRect(await driver.rect(element)) }
+      catch (error) {
+        if (error?.code !== 'element not interactable') throw error
+        evidence[key] = { available: false, reason: 'element-not-interactable' }
+      }
+    }
+    await record('ops-ui-probe-inventory-refresh-geometry', { role, phase, ...evidence })
+  } catch {
+    // Diagnostics cannot replace or prevent the one genuine menu interaction.
+    // Unknown geometry errors retain no native payload or invented rectangle.
+    await record('ops-ui-probe-inventory-refresh-geometry-unavailable', { role, phase, available: false })
+  }
+}
+
+async function captureInventoryRefreshFailure({ driver, fixture, state, role, record, checkpoint, assertScope }) {
+  const assertCaptureSurface = async () => {
+    assertScope()
+    check((await driver.findAll('dialog[open]')).length === 0, 'inventory_refresh_capture_refused')
+    await inventoryRefreshSurface(driver, state, role)
+    const seen = new Set()
+    for (const candidate of await driver.findAll(tid('host-card'))) {
+      if (!await driver.isDisplayed(candidate)) continue
+      const id = await driver.attr(candidate, 'data-host-id')
+      const ownedRole = ['jump', ...ROLES].find(item => state.hostIds[item] === id)
+      check(ownedRole && !seen.has(id) && await driver.attr(candidate, 'data-host-name') === fixture.hosts[ownedRole].name, 'inventory_refresh_capture_refused')
+      const summaries = await driver.findAll(`${card(state, ownedRole)} ${tid('host-ops-summary')}`)
+      check(summaries.length === 1 && await driver.attr(summaries[0], 'data-host-id') === id
+        && await driver.attr(summaries[0], 'data-vault-id') === state.vaultId, 'inventory_refresh_capture_refused')
+      seen.add(id)
+    }
+    check(seen.has(state.hostIds[role]) && seen.size <= 3, 'inventory_refresh_capture_refused')
+    for (const input of await driver.findAll('input[type="password"], textarea')) {
+      const value = await driver.attr(input, 'value')
+      check(value === null || value === undefined || value === '', 'inventory_refresh_capture_refused')
+    }
+    assertScope()
+  }
+  check(typeof checkpoint === 'function', 'inventory_refresh_capture_refused')
+  await assertCaptureSurface()
+  const within = (parent, child) => { const part = relative(parent, child); return part !== '' && part !== '..' && !part.startsWith('../') && !isAbsolute(part) }
+  const desktop = fixture.desktopDir, artifacts = fixture.artifactDir
+  check(typeof desktop === 'string' && isAbsolute(desktop) && typeof artifacts === 'string' && isAbsolute(artifacts)
+    && within(desktop, artifacts), 'inventory_refresh_capture_path_invalid')
+  const name = `inventory-${role}-refresh-failed`
+  const output = await checkpoint(name)
+  check(typeof output === 'string' && isAbsolute(output) && output === resolve(output)
+    && within(artifacts, output) && basename(output) === `${name}.png`, 'inventory_refresh_capture_path_invalid')
+  await assertCaptureSurface()
+  await driver.screenshot(output)
+  await record('ops-ui-probe-inventory-refresh-failure-capture', { role, captured: true, screenshot: basename(output) })
+}
+
 /** Drain genuine inventory recovery before recording the aggregate System
  * count. The host menu's refresh action is a forced inventory collection;
  * this does not claim inventory OS visibility or create another outage. */
-export async function settleOpsUiProbeInventory({ driver, fixture, resumeState, probeState, record }) {
+export async function settleOpsUiProbeInventory({ driver, fixture, resumeState, probeState, record, checkpoint }) {
   validateOpsUiProbeScope(fixture, resumeState)
   check(typeof record === 'function' && probeState?.vaultId === resumeState.vaultId && probeState.ruleId === RULE
     && probeState.section === 'metrics' && ['jump', ...ROLES].every(role => probeState.hostIds?.[role] === resumeState.hostIds[role]
@@ -104,7 +178,19 @@ export async function settleOpsUiProbeInventory({ driver, fixture, resumeState, 
       return Date.now() >= boundary
     }, { timeoutMs: 2000 })
     assertScope()
-    await driver.select(menu, 'refresh')
+    const diagnostics = { driver, fixture, state: probeState, role, record, checkpoint, assertScope }
+    await recordInventoryRefreshGeometry({ ...diagnostics, phase: 'before' })
+    assertScope()
+    await inventoryRefreshSurface(driver, probeState, role)
+    assertScope()
+    try { await driver.select(menu, 'refresh') }
+    catch (cause) {
+      try { await recordInventoryRefreshGeometry({ ...diagnostics, phase: 'failed' }) }
+      catch { await record('ops-ui-probe-inventory-refresh-geometry-unavailable', { role, phase: 'failed', available: false }) }
+      try { assertScope(); await captureInventoryRefreshFailure(diagnostics) }
+      catch { await record('ops-ui-probe-inventory-refresh-failure-capture', { role, captured: false }) }
+      throw cause
+    }
     assertScope()
     await waitForOpsUiProbeEvaluation(driver, probeState, role, { section: 'inventory', status: 'healthy', boundary, after: previous?.sampledAt ?? 0 })
     const result = await driver.until(async () => {

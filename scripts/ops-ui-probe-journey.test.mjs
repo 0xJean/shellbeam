@@ -265,8 +265,17 @@ async function inventoryUnit(t, { sampleMode = 'fresh', alertStatus, badField } 
   const unit = unitJourney(t)
   const probeState = await runOpsUiProbeJourney(unit)
   const document = unit.alert('direct').ownerDocument, selected = []
+  unit.fixture.desktopDir = '/private/owned-desktop'
+  unit.fixture.artifactDir = '/private/owned-desktop/artifacts'
+  const viewport = document.createElement('div')
+  viewport.dataset.testid = 'host-list-scroll-viewport'
+  document.body.append(viewport)
+  viewport.insertAdjacentHTML('beforebegin', '<div data-testid="host-list-scroll-controls"></div>')
+  unit.driver.rect = async () => ({ x: 10, y: 20, width: 300, height: 40 })
   for (const role of roles) {
     const card = document.querySelector(`article[data-host-id="${unit.resumeState.hostIds[role]}"]`)
+    card.dataset.hostName = unit.fixture.hosts[role].name
+    viewport.append(card)
     card.insertAdjacentHTML('beforeend', `<div data-testid="host-ops-summary" data-vault-id="${unit.resumeState.vaultId}" data-host-id="${unit.resumeState.hostIds[role]}"></div><select data-testid="host-ops-open"><option value="refresh">Refresh</option></select>${evaluation(unit.resumeState, role, Date.now() - 60_000).replace(rule, OPS_UI_PROBE_RULE_IDS.inventory)}`)
     const status = role === 'jump' ? alertStatus : role === 'direct' ? 'resolved' : 'closed'
     if (status) card.insertAdjacentHTML('beforeend', `<div data-testid="host-local-alert" data-rule-id="${OPS_UI_PROBE_RULE_IDS.inventory}" data-vault-id="${unit.resumeState.vaultId}" data-host-id="${unit.resumeState.hostIds[role]}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}" data-alert-status="${status}">Inventory collection unavailable</div>`)
@@ -298,6 +307,103 @@ test('inventory drain selects each real host refresh and permits no alert or an 
     assert.equal(records.length, 3)
     assert.deepEqual(records.map(record => record.inventoryAlertPresent), [false, true, true])
     assert(records.every(record => record.freshObservation && record.noOpenInventoryAlert))
+  } finally { unit.close() }
+})
+
+test('inventory refresh retains partial geometry and one safe real failure screenshot without retrying an intercepted selection', async t => {
+  const unit = await inventoryUnit(t), screenshots = [], checkpoints = []
+  try {
+    let attempts = 0
+    const rect = unit.driver.rect
+    unit.driver.rect = async element => {
+      if (element.dataset.testid === 'host-ops-open') throw Object.assign(new Error('SYNTHETIC_PRIVATE_DETAIL'), { code: 'element not interactable' })
+      return rect(element)
+    }
+    unit.driver.select = async () => { attempts++; throw Object.assign(new Error('SYNTHETIC_PRIVATE_DETAIL'), { code: 'element click intercepted' }) }
+    unit.checkpoint = async name => { checkpoints.push(name); return `${unit.fixture.artifactDir}/${name}.png` }
+    unit.driver.screenshot = async filename => screenshots.push(filename)
+    await assert.rejects(settleOpsUiProbeInventory(unit), error => error.code === 'element click intercepted')
+    assert.equal(attempts, 1)
+    assert.deepEqual(checkpoints, ['inventory-jump-refresh-failed'])
+    assert.deepEqual(screenshots, ['/private/owned-desktop/artifacts/inventory-jump-refresh-failed.png'])
+    const geometry = unit.events.filter(event => event.name === 'ops-ui-probe-inventory-refresh-geometry')
+    assert.deepEqual(geometry.map(event => event.phase), ['before', 'failed'])
+    assert(geometry.every(event => event.card.width > 0 && event.summary.height > 0 && event.viewport.width > 0 && event.controls.width > 0))
+    assert(geometry.every(event => event.menu.available === false && event.menu.reason === 'element-not-interactable'))
+    assert.equal(unit.events.at(-1).captured, true)
+    assert(!JSON.stringify(unit.events).includes('SYNTHETIC'))
+    assert(!unit.events.some(event => event.name?.includes('inventory-settled')))
+  } finally { unit.close() }
+})
+
+test('unknown geometry failures never replace the genuine selection or leak native errors', async t => {
+  const unit = await inventoryUnit(t)
+  try {
+    let attempts = 0
+    unit.driver.rect = async () => { throw Object.assign(new Error('SYNTHETIC_PRIVATE_DETAIL'), { code: 'transport failure' }) }
+    unit.driver.select = async () => { attempts++; throw Object.assign(new Error('fixed actual interception'), { code: 'element click intercepted' }) }
+    await assert.rejects(settleOpsUiProbeInventory(unit), error => error.code === 'element click intercepted')
+    assert.equal(attempts, 1)
+    assert(unit.events.some(event => event.name === 'ops-ui-probe-inventory-refresh-geometry-unavailable' && event.phase === 'before'))
+    assert(!JSON.stringify(unit.events).includes('SYNTHETIC'))
+  } finally { unit.close() }
+})
+
+test('failure pixels are refused for foreign cards, scope, dialogs, credentials and paths without hiding the original selection error', async t => {
+  for (const problem of ['vault', 'host', 'duplicate', 'card-name', 'foreign-card', 'other-vault', 'other-host', 'other-summary-missing', 'other-summary-duplicate', 'scope', 'checkpoint-scope', 'checkpoint-vault', 'checkpoint-other-vault', 'checkpoint-dialog', 'checkpoint-password', 'dialog', 'password', 'textarea', 'path']) {
+    const unit = await inventoryUnit(t), screenshots = []
+    try {
+      let attempts = 0
+      unit.checkpoint = async name => {
+        if (problem === 'checkpoint-scope') unit.resumeState.vaultId = 'foreign'
+        if (problem === 'checkpoint-vault') unit.document.querySelector(`[data-host-id="${unit.probeState.hostIds.jump}"] [data-testid="host-ops-summary"]`).dataset.vaultId = 'foreign'
+        if (problem === 'checkpoint-other-vault') unit.document.querySelector(`[data-host-id="${unit.probeState.hostIds.direct}"] [data-testid="host-ops-summary"]`).dataset.vaultId = 'foreign'
+        if (problem === 'checkpoint-dialog') unit.document.body.insertAdjacentHTML('beforeend', '<dialog open></dialog>')
+        if (problem === 'checkpoint-password') unit.document.body.insertAdjacentHTML('beforeend', '<input type="password" value="SYNTHETIC_PRIVATE_DETAIL">')
+        return problem === 'path' ? `/outside/${name}.png` : `${unit.fixture.artifactDir}/${name}.png`
+      }
+      unit.driver.screenshot = async filename => screenshots.push(filename)
+      unit.driver.select = async () => {
+        attempts++
+        const target = unit.document.querySelector(`[data-testid="host-card"][data-host-id="${unit.probeState.hostIds.jump}"]`)
+        const summary = target.querySelector('[data-testid="host-ops-summary"]')
+        if (problem === 'vault') summary.dataset.vaultId = 'foreign'
+        if (problem === 'host') summary.dataset.hostId = 'foreign'
+        if (problem === 'duplicate') target.after(target.cloneNode(true))
+        if (problem === 'card-name') target.dataset.hostName = 'SYNTHETIC_PRIVATE_DETAIL'
+        if (problem === 'foreign-card') unit.document.body.insertAdjacentHTML('beforeend', '<article data-testid="host-card" data-host-id="foreign" data-host-name="SYNTHETIC_PRIVATE_DETAIL"></article>')
+        const other = unit.document.querySelector(`[data-host-id="${unit.probeState.hostIds.direct}"] [data-testid="host-ops-summary"]`)
+        if (problem === 'other-vault') other.dataset.vaultId = 'foreign'
+        if (problem === 'other-host') other.dataset.hostId = 'foreign'
+        if (problem === 'other-summary-missing') other.remove()
+        if (problem === 'other-summary-duplicate') other.after(other.cloneNode(true))
+        if (problem === 'scope') unit.resumeState.vaultId = 'foreign'
+        if (problem === 'dialog') unit.document.body.insertAdjacentHTML('beforeend', '<dialog open></dialog>')
+        if (problem === 'password' || problem === 'textarea') {
+          unit.document.body.insertAdjacentHTML('beforeend', problem === 'password' ? '<input type="password">' : '<textarea></textarea>')
+          unit.document.querySelector(problem === 'password' ? 'input[type="password"]' : 'textarea').value = 'SYNTHETIC_PRIVATE_DETAIL'
+        }
+        throw Object.assign(new Error('fixed actual interception'), { code: 'element click intercepted' })
+      }
+      await assert.rejects(settleOpsUiProbeInventory(unit), error => error.code === 'element click intercepted')
+      assert.equal(attempts, 1)
+      assert.deepEqual(screenshots, [])
+      assert.equal(unit.events.at(-1).captured, false)
+      assert(!JSON.stringify(unit.events).includes('SYNTHETIC'))
+    } finally { unit.close() }
+  }
+})
+
+test('a DOM scope change during diagnostic reads still blocks the real refresh before selecting', async t => {
+  const unit = await inventoryUnit(t)
+  try {
+    const rect = unit.driver.rect
+    unit.driver.rect = async element => {
+      if (element.dataset.testid === 'host-list-scroll-controls') unit.document.querySelector(`[data-host-id="${unit.resumeState.hostIds.jump}"] [data-testid="host-ops-summary"]`).dataset.vaultId = 'foreign'
+      return rect(element)
+    }
+    await assert.rejects(settleOpsUiProbeInventory(unit), /inventory_refresh_scope_mismatch/)
+    assert.deepEqual(unit.selected, [])
   } finally { unit.close() }
 })
 
@@ -407,7 +513,7 @@ test('inventory drain permits a hidden target summary to become visible without 
       return displayed(element)
     }
     assert.equal((await settleOpsUiProbeInventory(unit)).passed, true)
-    assert.equal(reads, 2)
+    assert(reads >= 2)
     assert.deepEqual(unit.selected, ['jump', 'direct', 'via'])
   } finally { unit.close() }
 })
