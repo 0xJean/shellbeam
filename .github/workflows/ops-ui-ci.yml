@@ -32,13 +32,19 @@ jobs:
       - name: Install real native UI and observation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev webkit2gtk-driver libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev openssh-server dbus dunst xvfb xauth x11-utils imagemagick tesseract-ocr tesseract-ocr-eng fonts-dejavu-core
+          sudo apt-get install -y libwebkit2gtk-4.1-dev webkit2gtk-driver libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev openssh-server dbus xvfb xauth x11-utils imagemagick tesseract-ocr tesseract-ocr-eng fonts-dejavu-core build-essential pkg-config curl ca-certificates libnotify-dev libx11-dev libxinerama-dev libxrandr-dev libxss-dev libxext-dev libpango1.0-dev libgdk-pixbuf-2.0-dev
           sudo install -d /run/sshd
       - run: npm ci
       - name: Verify transport, report and fixture guards
         run: |
           node --test scripts/ops-ui-driver.test.mjs scripts/ops-ui-journey.test.mjs scripts/ops-ui-notifications.test.mjs scripts/ci-ops-ui-live.test.mjs
           bash -n scripts/ci-ops-ui-live.sh
+          bash -n scripts/install-ops-ui-dunst.sh
+      - name: Build checksum-pinned upstream dunst 1.7.3 for the real X11/count contract
+        timeout-minutes: 5
+        env:
+          SHELLBEAM_OPS_UI_LIVE: '1'
+        run: bash scripts/install-ops-ui-dunst.sh
       - name: Install pinned external Tauri WebDriver
         run: cargo install tauri-driver --version 0.1.5 --locked --root "$RUNNER_TEMP/shellbeam-webdriver"
       - name: Build real release Debian package with a distinct test binary filename

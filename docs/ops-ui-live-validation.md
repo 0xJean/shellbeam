@@ -37,6 +37,12 @@ gate; an absent dependency, missing assertion or skipped case is not a pass.
 The UI's explicit system-channel test button sends through the production native
 D-Bus adapter to an owned dunst 1.7.3 process on a private bus. Only the fixed,
 credential-free English test message is allowed to display in the owned daemon.
+Ubuntu 22.04's packaged dunst is 1.5.0 and lacks the required displayed/waiting
+counts. The gate builds upstream commit
+`c8c415a8d4520d552ff3d71b9388d88044036068` after verifying its archive SHA-256,
+keeps the matching daemon and control script in a private runner-owned directory,
+and checks their version and ownership before use. It neither replaces the
+system package nor installs notification activation services.
 
 The checks distinguish normal display, paused acceptance without display,
 unpausing the same queued message, and unavailable delivery after confirmed daemon
@@ -89,6 +95,23 @@ the multiline private-key input failed its exact UI roundtrip assertion. No key,
 credential form image or raw error was exported; cleanup passed. The keyboard
 adapter now uses the standard W3C virtual Enter key for textarea line breaks,
 retains genuine editor/input events and still requires the exact roundtrip.
+
+The fourth [UI run 39100444727](https://github.com/0xJean/shellbeam/actions/runs/39100444727),
+head `a46d34196a91c8f34e0fca74fbae5f311dec5922`, merge checkout
+`056790fcb5a7a93f49bad64c2f4162e61cbd2c3e`, passed actual Vault initialization,
+all three exact private-key form roundtrips, individual fingerprint review and
+real terminal connections for the jump, direct and ProxyJump hosts. Both local
+service rules reached active through native collectors. It then failed before
+notification presentation at `ops_ui_notifications_unsupported_daemon_version`;
+no screenshots were exported. The report confirms `success: false`,
+`cleanup: passed` and application exit. Incident operations and restart recovery
+were not reached and remain unaccepted.
+
+Local service alerts and HTTP/TCP checks now share the OperationJob route
+classification, including saved `jumpHostId` references without copied jump
+addresses. The GUI additionally requires the matching alert route while active,
+after recovery and after app restart; a successful jumped SSH connection cannot
+mask an alert incorrectly labeled direct.
 
 Host-save, trust-prompt and tab-state checkpoints remain credential-free. Local
 syntax, protocol and safety-helper tests are not substitutes for an executed

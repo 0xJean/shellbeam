@@ -24,6 +24,21 @@ const UNKNOWN = 'System-managed; per-app permission status is unavailable'
 const UNAVAILABLE = 'Unavailable in this runtime'
 const CHANNEL = '[data-testid="notification-channel-system"]'
 
+export function pinnedDunstPaths(runnerTemp) {
+  requireFact(typeof runnerTemp === 'string' && isAbsolute(runnerTemp) && runnerTemp === resolve(runnerTemp), 'invalid_pinned_daemon_path')
+  const directory = join(runnerTemp, 'shellbeam-ui-dunst-1.7.3')
+  return { directory, binary: join(directory, 'dunst'), control: join(directory, 'dunstctl') }
+}
+
+export function parsePinnedDunstVersion(value) {
+  // Upstream src/dunst.c prints this banner; Makefile at the pinned commit
+  // supplies the release date. Never match an arbitrary warning containing a
+  // version or accept Jammy's 1.5.0, which lacks the real count interface.
+  const match = typeof value === 'string' && value.match(/^Dunst - A customizable and lightweight notification-daemon (1\.7\.3)(?: \(2021-12-08\))?\r?\n?$/)
+  requireFact(match, 'unsupported_daemon_version')
+  return match[1]
+}
+
 function fail(stage) { return new Error(`ops_ui_notifications_${stage}`) }
 function requireFact(value, stage) { if (!value) throw fail(stage) }
 
@@ -170,9 +185,9 @@ async function notificationOwnerPid() {
   return Number(match[1])
 }
 
-async function daemonCounts() {
-  const displayed = parseDunstCount(await command('/usr/bin/dunstctl', ['count', 'displayed'], 'daemon_count'))
-  const waiting = parseDunstCount(await command('/usr/bin/dunstctl', ['count', 'waiting'], 'daemon_count'))
+async function daemonCounts(control) {
+  const displayed = parseDunstCount(await command(control, ['count', 'displayed'], 'daemon_count'))
+  const waiting = parseDunstCount(await command(control, ['count', 'waiting'], 'daemon_count'))
   return { displayed, waiting }
 }
 
@@ -234,8 +249,8 @@ async function captureRoot({ driver, checkpoint, fixture, scratch, name, geometr
   throw fail(expectedVisible ? 'visible_text_missing' : 'suppressed_text_visible')
 }
 
-function ownDaemon(config) {
-  const child = spawn('/usr/bin/dunst', ['-conf', config], { env: process.env, stdio: ['ignore', 'ignore', 'ignore'] })
+function ownDaemon(config, binary) {
+  const child = spawn(binary, ['-conf', config], { env: process.env, stdio: ['ignore', 'ignore', 'ignore'] })
   let exited = false
   let spawnFailed = false
   const exit = new Promise((done) => {
@@ -271,8 +286,13 @@ export async function runOpsUiNotifications({ driver, record, checkpoint, fixtur
   requireFact(within(fixture.desktopDir, artifactDir), 'invalid_artifact_directory')
   await privateDirectory(artifactDir)
   requireFact(!await notificationOwner(), 'foreign_notification_service')
-  const version = await command('/usr/bin/dunst', ['--version'], 'daemon_version')
-  requireFact(/\b1\.7\.3\b/.test(version), 'unsupported_daemon_version')
+  const tools = pinnedDunstPaths(process.env.RUNNER_TEMP)
+  await privateDirectory(tools.directory)
+  for (const tool of [tools.binary, tools.control]) {
+    const info = await lstat(tool).catch(() => { throw fail('pinned_daemon_missing') })
+    requireFact(info.isFile() && !info.isSymbolicLink() && info.uid === process.getuid() && info.nlink === 1 && (info.mode & 0o022) === 0 && (info.mode & 0o111) !== 0 && await realpath(tool) === tool, 'invalid_pinned_daemon')
+  }
+  const version = parsePinnedDunstVersion(await command(tools.binary, ['--version'], 'daemon_version'))
   const scratch = await mkdtemp(join(fixture.desktopDir, 'notification-runtime-'))
   let daemon
   const checks = []
@@ -280,10 +300,10 @@ export async function runOpsUiNotifications({ driver, record, checkpoint, fixtur
   try {
     const config = join(scratch, 'dunstrc')
     await writeFile(config, notificationDaemonConfig(), { flag: 'wx', mode: 0o600 })
-    daemon = ownDaemon(config)
+    daemon = ownDaemon(config, tools.binary)
     await until(async () => { daemon.assertAlive(); return notificationOwner() }, 'daemon_not_ready')
     requireFact(await notificationOwnerPid() === daemon.child.pid, 'foreign_notification_service')
-    await command('/usr/bin/dunstctl', ['set-paused', 'false'], 'daemon_unpause')
+    await command(tools.control, ['set-paused', 'false'], 'daemon_unpause')
 
     // The preceding real Ops journey leaves a Workspace tab active. Return via
     // its actual Dashboard tab before interacting with the desktop sidebar.
@@ -293,35 +313,35 @@ export async function runOpsUiNotifications({ driver, record, checkpoint, fixtur
     await driver.click("xpath=//button[normalize-space(.)='English']")
     await until(async () => (await driver.findAll(SETTINGS)).length === 1, 'settings_missing')
     if (!await driver.isSelected(SYSTEM_CHECKBOX)) await driver.click(SYSTEM_CHECKBOX)
-    await command('/usr/bin/dunstctl', ['close-all'], 'daemon_close_all')
-    await until(async () => { const value = await daemonCounts(); return value.displayed === 0 && value.waiting === 0 }, 'daemon_not_empty')
+    await command(tools.control, ['close-all'], 'daemon_close_all')
+    await until(async () => { const value = await daemonCounts(tools.control); return value.displayed === 0 && value.waiting === 0 }, 'daemon_not_empty')
 
     await clickTest(driver, true)
     await until(() => uiStatusContains(driver, UNKNOWN), 'linux_permission_not_unknown')
     requireFact(!await uiStatusContains(driver, 'Permission granted'), 'linux_permission_claimed_granted')
-    await until(async () => (await daemonCounts()).displayed === 1, 'normal_banner_not_displayed')
+    await until(async () => (await daemonCounts(tools.control)).displayed === 1, 'normal_banner_not_displayed')
     let normalGeometry
     await until(async () => Boolean(normalGeometry = await windowGeometry()), 'normal_banner_not_viewable')
     const normalCapture = await captureRoot({ driver, checkpoint, fixture, scratch, name: 'notification-visible', geometry: normalGeometry, expectedVisible: true })
-    await evidence('notification-visible', { backendAccepted: true, permissionUnknown: true, x11Viewable: true, ...await daemonCounts(), ...normalCapture })
+    await evidence('notification-visible', { backendAccepted: true, permissionUnknown: true, x11Viewable: true, ...await daemonCounts(tools.control), ...normalCapture })
 
-    await command('/usr/bin/dunstctl', ['close-all'], 'daemon_close_all')
-    await command('/usr/bin/dunstctl', ['set-paused', 'true'], 'daemon_pause')
-    requireFact((await command('/usr/bin/dunstctl', ['is-paused'], 'daemon_pause_state')).trim() === 'true', 'daemon_not_paused')
+    await command(tools.control, ['close-all'], 'daemon_close_all')
+    await command(tools.control, ['set-paused', 'true'], 'daemon_pause')
+    requireFact((await command(tools.control, ['is-paused'], 'daemon_pause_state')).trim() === 'true', 'daemon_not_paused')
     await clickTest(driver, true)
-    await until(async () => { const value = await daemonCounts(); return value.displayed === 0 && value.waiting === 1 }, 'paused_banner_not_queued')
+    await until(async () => { const value = await daemonCounts(tools.control); return value.displayed === 0 && value.waiting === 1 }, 'paused_banner_not_queued')
     await until(async () => await windowGeometry() === null, 'paused_banner_viewable')
     const pausedCapture = await captureRoot({ driver, checkpoint, fixture, scratch, name: 'notification-paused', geometry: normalGeometry, expectedVisible: false })
-    await evidence('notification-paused-accepted-not-displayed', { backendAccepted: true, paused: true, x11Viewable: false, ...await daemonCounts(), ...pausedCapture })
+    await evidence('notification-paused-accepted-not-displayed', { backendAccepted: true, paused: true, x11Viewable: false, ...await daemonCounts(tools.control), ...pausedCapture })
 
-    await command('/usr/bin/dunstctl', ['set-paused', 'false'], 'daemon_unpause')
-    await until(async () => { const value = await daemonCounts(); return value.displayed === 1 && value.waiting === 0 }, 'resumed_banner_not_displayed')
+    await command(tools.control, ['set-paused', 'false'], 'daemon_unpause')
+    await until(async () => { const value = await daemonCounts(tools.control); return value.displayed === 1 && value.waiting === 0 }, 'resumed_banner_not_displayed')
     let resumedGeometry
     await until(async () => Boolean(resumedGeometry = await windowGeometry()), 'resumed_banner_not_viewable')
     const resumedCapture = await captureRoot({ driver, checkpoint, fixture, scratch, name: 'notification-resumed', geometry: resumedGeometry, expectedVisible: true })
-    await evidence('notification-resumed-visible', { backendAccepted: true, sameQueuedNotification: true, x11Viewable: true, ...await daemonCounts(), ...resumedCapture })
+    await evidence('notification-resumed-visible', { backendAccepted: true, sameQueuedNotification: true, x11Viewable: true, ...await daemonCounts(tools.control), ...resumedCapture })
 
-    await command('/usr/bin/dunstctl', ['close-all'], 'daemon_close_all')
+    await command(tools.control, ['close-all'], 'daemon_close_all')
     await daemon.stop()
     await until(async () => !await notificationOwner(), 'daemon_name_not_released')
     await clickTest(driver, false)
@@ -333,7 +353,7 @@ export async function runOpsUiNotifications({ driver, record, checkpoint, fixtur
     requireFact(!await notificationOwner() && await windowGeometry() === null, 'daemon_unexpectedly_reactivated')
     const unavailableCapture = await captureRoot({ driver, checkpoint, fixture, scratch, name: 'notification-unavailable', geometry: normalGeometry, expectedVisible: false })
     await evidence('notification-unavailable-failed', { backendAccepted: false, permissionUnavailable: true, diagnosticsVisible: true, daemonExited: true, x11Viewable: false, displayed: null, waiting: null, ...unavailableCapture })
-    return { passed: true, daemonVersion: '1.7.3', checks, scope: 'explicit-test-button-linux-x11', actualAlertLifecycleVerified: false }
+    return { passed: true, daemonVersion: version, checks, scope: 'explicit-test-button-linux-x11', actualAlertLifecycleVerified: false }
   } catch (cause) {
     if (cause instanceof Error && /^ops_ui_notifications_[a-z0-9_]+$/.test(cause.message)) throw cause
     throw fail('stage_failed')

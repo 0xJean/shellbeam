@@ -1,14 +1,37 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import {
   evidencePathIsOwned,
   notificationDaemonConfig,
   notificationOcrMatches,
+  parsePinnedDunstVersion,
+  pinnedDunstPaths,
   parseDunstCount,
   parseDunstGeometry,
   requireNotificationFixtureEnvironment,
   runOpsUiNotifications,
 } from './ops-ui-notifications.mjs'
+
+test('the exact supported upstream banner is parsed without accepting the incompatible Jammy daemon or arbitrary version text', () => {
+  assert.equal(parsePinnedDunstVersion('Dunst - A customizable and lightweight notification-daemon 1.7.3 (2021-12-08)\n'), '1.7.3')
+  assert.equal(parsePinnedDunstVersion('Dunst - A customizable and lightweight notification-daemon 1.7.3\r\n'), '1.7.3')
+  for (const value of ['', null, '1.7.3', 'warning: expected version 1.7.3', 'Dunst - A customizable and lightweight notification-daemon 1.5.0\n', 'Dunst - A customizable and lightweight notification-daemon 1.7.30\n', 'Dunst - A customizable and lightweight notification-daemon 1.7.3\nerror']) {
+    assert.throws(() => parsePinnedDunstVersion(value), /unsupported_daemon_version/)
+  }
+})
+
+test('the helper selects the private pinned daemon and matching control CLI with no system-package fallback', () => {
+  assert.deepEqual(pinnedDunstPaths('/private/runner-temp'), { directory: '/private/runner-temp/shellbeam-ui-dunst-1.7.3', binary: '/private/runner-temp/shellbeam-ui-dunst-1.7.3/dunst', control: '/private/runner-temp/shellbeam-ui-dunst-1.7.3/dunstctl' })
+  for (const value of [undefined, '', 'relative', '/private/../outside', '/private/runner-temp/']) assert.throws(() => pinnedDunstPaths(value), /invalid_pinned_daemon_path/)
+})
+
+test('executing the installer without explicit opt-in refuses before any download, build or installation', () => {
+  const refused = spawnSync('/bin/bash', [fileURLToPath(new URL('./install-ops-ui-dunst.sh', import.meta.url))], { env: { ...process.env, SHELLBEAM_OPS_UI_LIVE: '0' }, encoding: 'utf8' })
+  assert.equal(refused.status, 1)
+  assert.match(refused.stderr, /^ShellBeam UI dunst: requires explicit disposable ordinary-user Linux acceptance\n$/)
+})
 
 test('notification acceptance refuses workstations, root, remote displays and sandbox overrides', () => {
   const env = { RUNNER_OS: 'Linux', GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', SHELLBEAM_OPS_UI_LIVE: '1', DISPLAY: ':99', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/private/owned/bus' }
