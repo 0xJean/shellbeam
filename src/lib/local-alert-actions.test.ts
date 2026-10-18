@@ -42,6 +42,30 @@ describe('canonical local alert actions', () => {
     await expect(runLocalAlertAction({ vaultId: 'other', host, ruleId: rule.id, action: 'close', confirmMessage: 'Confirm?' })).rejects.toThrow('ALERT_NOT_FOUND')
     expect(vi.mocked(invoke)).not.toHaveBeenCalled()
   })
+  it('does not create a job for an already superseded scope or a conflicting host Vault', async () => {
+    const confirm = vi.spyOn(window, 'confirm')
+    const options = { vaultId: 'vault', host, ruleId: rule.id, action: 'close' as const, confirmMessage: 'Confirm?' }
+    expect(await runLocalAlertAction({ ...options, isCurrent: () => false })).toBeNull()
+    await expect(runLocalAlertAction({ ...options, host: { ...host, vaultId: 'other' } })).rejects.toThrow('LOCAL_OPS_HOST_VAULT_MISMATCH')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
+    expect(loadLocalAlertState('vault', host.id).alerts[0].status).toBe('active')
+  })
+  it('cancels a queued action if the Vault switches during job creation, retaining the original alert', async () => {
+    let current = true
+    const original = vi.mocked(invoke).getMockImplementation()!
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const result = await original(command, args)
+      if (command === 'operation_job_create') current = false
+      return result
+    })
+    const confirm = vi.spyOn(window, 'confirm')
+    expect(await runLocalAlertAction({ vaultId: 'vault', host, ruleId: rule.id, action: 'close', confirmMessage: 'Confirm?', isCurrent: () => current })).toBeNull()
+    expect(confirm).not.toHaveBeenCalled()
+    expect(loadLocalAlertState('vault', host.id).alerts[0].status).toBe('active')
+    expect(loadLocalAlertState('other', host.id).alerts).toEqual([])
+    expect(job).toMatchObject({ vaultId: 'vault', hostId: host.id, status: 'cancelled', confirmationStatus: 'pending', errorCode: 'operation_scope_changed' })
+  })
 })
 
 it('does not claim a lifecycle change when the native confirmed transaction fails', async () => {

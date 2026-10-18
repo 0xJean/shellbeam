@@ -162,6 +162,8 @@ export function safeOperationTarget(target: string, maxLength = 160) {
 }
 
 export interface RunConfirmedOperationOptions<T> {
+  /** Recheck the initiating UI scope before consent and before execution. */
+  isCurrent?: () => boolean
   host: HostProfile
   /** Optional vault scope for host ids that can exist in more than one vault. */
   vaultId?: string
@@ -206,7 +208,9 @@ export async function runConfirmedOperation<T>({
   transport,
   source,
   requestId,
+  isCurrent,
 }: RunConfirmedOperationOptions<T>): Promise<{ value: T; job: OperationJob } | null> {
+  if (isCurrent?.() === false) return null
   const job = await createOperationJob({
     hostId: host.id,
     vaultId: vaultId ?? host.vaultId,
@@ -226,6 +230,21 @@ export async function runConfirmedOperation<T>({
   })
   onJob?.(job)
 
+  const cancelChangedScope = async (current: OperationJob, consentGiven = false) => {
+    const cancelled = await updateOperationJob({
+      jobId: current.jobId,
+      status: 'cancelled',
+      confirmationStatus: consentGiven ? (risk === 'read-only' ? 'not_required' : 'confirmed') : current.confirmationStatus,
+      ...(consentGiven && risk !== 'read-only' ? { confirmedBy: actor ?? 'local-user' } : {}),
+      errorCode: 'operation_scope_changed',
+      errorSummary: 'The initiating host or Vault changed before execution',
+      actor: actor ?? 'local-user',
+    })
+    onJob?.(cancelled)
+    return null
+  }
+  if (isCurrent?.() === false) return cancelChangedScope(job)
+
   if (risk !== 'read-only' && !window.confirm(confirmMessage)) {
     const cancelled = await updateOperationJob({
       jobId: job.jobId,
@@ -238,6 +257,7 @@ export async function runConfirmedOperation<T>({
     onJob?.(cancelled)
     return null
   }
+  if (isCurrent?.() === false) return cancelChangedScope(job, true)
 
   const running = await updateOperationJob({
     jobId: job.jobId,
@@ -247,6 +267,7 @@ export async function runConfirmedOperation<T>({
     actor: actor ?? 'local-user',
   })
   onJob?.(running)
+  if (isCurrent?.() === false) return cancelChangedScope(running, true)
 
   try {
     const value = await execute()

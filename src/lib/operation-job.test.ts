@@ -67,6 +67,42 @@ describe('operation jobs', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'operation_job_update', expect.objectContaining({ request: expect.objectContaining({ status: 'cancelled', confirmationStatus: 'rejected' }) }))
   })
 
+  it.each(['before-create', 'after-create', 'after-consent', 'after-running'] as const)('does not execute when the host or Vault changes %s', async (phase) => {
+    let current = phase !== 'before-create'
+    const queued = { jobId: 'scoped-job', auditId: 'scoped-audit', status: 'queued', confirmationStatus: 'pending' }
+    invoke.mockImplementation(async (command, args) => {
+      if (command === 'operation_job_create') {
+        if (phase === 'after-create') current = false
+        return queued
+      }
+      const request = (args as { request: Record<string, unknown> }).request
+      if (request.status === 'running' && phase === 'after-running') current = false
+      return { ...queued, ...request }
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockImplementation(() => {
+      if (phase === 'after-consent') current = false
+      return true
+    })
+    const execute = vi.fn()
+    expect(await runConfirmedOperation({ host, action: 'local-alert.close', target: 'probe:metrics', risk: 'low', confirmMessage: 'Confirm?', isCurrent: () => current, execute })).toBeNull()
+    expect(execute).not.toHaveBeenCalled()
+    if (phase === 'before-create') expect(invoke).not.toHaveBeenCalled()
+    else expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({
+      status: 'cancelled', errorCode: 'operation_scope_changed', confirmationStatus: phase === 'after-create' ? 'pending' : 'confirmed',
+    }) })
+    expect(confirm).toHaveBeenCalledTimes(phase === 'before-create' || phase === 'after-create' ? 0 : 1)
+  })
+
+  it('retains the actual outcome when the UI scope changes after execution has begun', async () => {
+    let current = true
+    invoke.mockImplementation(async (_command, args) => ({ jobId: 'executed-job', auditId: 'executed-audit', ...(args as { request: object }).request }))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const execute = vi.fn(async () => { current = false; return { exitCode: 0, durationMs: 1 } })
+    const result = await runConfirmedOperation({ host, action: 'service.start', target: 'nginx', risk: 'low', confirmMessage: 'Confirm?', isCurrent: () => current, execute, getResult: value => value })
+    expect(execute).toHaveBeenCalledOnce()
+    expect(result?.job.status).toBe('completed')
+  })
+
   it('keeps provider-specific rollback state in the durable job audit', async () => {
     const queued = { jobId: 'job-2', auditId: 'audit-2', status: 'queued' }
     const running = { ...queued, status: 'running' }
