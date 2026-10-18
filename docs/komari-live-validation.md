@@ -1,5 +1,25 @@
 # Isolated Komari live contract validation
 
+## First-time desktop setup
+
+The desktop console already uses ShellBeam's own browser window. In Settings →
+Komari, save the server name and base address with the API key left empty, then
+choose **Open Komari console**. Complete the server's installation wizard and
+sign in there; an external browser is not a desktop prerequisite. If protected
+metrics require an API key, create one in that console and separately save it
+in the active Vault. Console login does not automatically authorize API sync,
+and API keys are never attached to console URLs. Mobile retains the system
+browser handoff.
+
+For a loopback-only remote instance, keep an explicitly configured SSH local
+forward active and save its local endpoint. The console does not create a
+tunnel itself. A forwarded HTTP setup verifies neither public TLS nor mobile
+reachability. User-controlled credential setup, actual console rendering and
+subsequent metrics/mapping checks must be recorded separately from the smoke
+below; the documented entry is not itself a completed GUI acceptance.
+
+## Local HTTP contract smoke
+
 Run the explicit smoke with an official Komari 1.6.0 executable for the current OS:
 
 ```sh

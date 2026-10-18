@@ -30,6 +30,60 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear() })
 
 describe('saved Komari console entry', () => {
+  it.each(['en', 'zh-CN'] as const)('saves a first integration without an API Key and opens its reloaded same-Vault console without API validation (%s)', async (locale) => {
+    localStorage.setItem('shellbeam.locale', locale)
+    const copy = locale === 'en' ? en : zhCN
+    vault.unlocked = true
+    vi.mocked(isTauri).mockReturnValue(true)
+    vi.mocked(invoke).mockResolvedValueOnce('desktop')
+    const storedEndpoint = 'http://127.0.0.1:25749/komari'
+    let stored: KomariIntegration | null = null
+    vi.mocked(listKomariIntegrations).mockImplementation(async () => stored ? [
+      { ...stored, vaultId: 'vault-b', name: 'Foreign Komari', endpoint: 'https://foreign.example' }, stored,
+    ] : [])
+    vi.mocked(upsertKomariIntegration).mockImplementationOnce(async (input) => {
+      stored = integration({ id: input.id, name: input.name, endpoint: storedEndpoint, credentialRef: `komari.${input.id}.api-key`, enabled: input.enabled })
+      return stored
+    })
+    const fetchRequest = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Console setup must not require an API request'))
+    try {
+      await act(async () => { render(section()) })
+      const consoleButton = screen.getByRole('button', { name: copy['settings.komariConsoleOpen'] })
+      expect(consoleButton).toBeDisabled()
+      fireEvent.change(screen.getByLabelText(copy['settings.komariName']), { target: { value: 'First Komari' } })
+      fireEvent.change(screen.getByLabelText(copy['settings.komariEndpoint']), { target: { value: `${storedEndpoint}/` } })
+      expect(screen.getByLabelText(copy['settings.komariApiKey'])).toHaveValue('')
+      fireEvent.click(screen.getByRole('button', { name: copy['settings.komariSave'] }))
+
+      await screen.findByRole('button', { name: 'First Komari' })
+      await waitFor(() => expect(consoleButton).toBeEnabled())
+      expect(upsertKomariIntegration).toHaveBeenCalledExactlyOnceWith({
+        id: expect.any(String), vaultId: 'vault-a', name: 'First Komari', endpoint: `${storedEndpoint}/`, enabled: true,
+      })
+      expect(listKomariIntegrations).toHaveBeenNthCalledWith(2, 'vault-a')
+      expect(screen.getByLabelText(copy['settings.komariEndpoint'])).toHaveValue(storedEndpoint)
+      expect(screen.queryByRole('button', { name: 'Foreign Komari' })).not.toBeInTheDocument()
+      expect(vault.saveSecret).not.toHaveBeenCalled()
+      expect(fetchRequest).not.toHaveBeenCalled()
+      expect(invoke).not.toHaveBeenCalled()
+
+      fireEvent.change(screen.getByLabelText(copy['settings.komariEndpoint']), { target: { value: 'https://unsaved.example/?token=unsaved-query' } })
+      fireEvent.change(screen.getByLabelText(copy['settings.komariApiKey']), { target: { value: 'unsaved-console-key' } })
+      fireEvent.click(consoleButton)
+      await waitFor(() => expect(loadBrowserSource).toHaveBeenCalledTimes(1))
+      const { browserId, sessionId } = vi.mocked(openBrowserWindow).mock.calls[0][0]
+      expect(openBrowserWindow).toHaveBeenCalledExactlyOnceWith({ browserId, sessionId })
+      expect(loadBrowserSource).toHaveBeenCalledExactlyOnceWith({ browserId, sessionId, source: { kind: 'url', url: `${storedEndpoint}/` } })
+      expect(JSON.stringify([vi.mocked(openBrowserWindow).mock.calls, vi.mocked(loadBrowserSource).mock.calls])).not.toMatch(/foreign|unsaved|token|credentialRef/)
+      expect(invoke).toHaveBeenCalledExactlyOnceWith('komari_console_mode')
+      expect(vault.saveSecret).not.toHaveBeenCalled()
+      expect(fetchRequest).not.toHaveBeenCalled()
+      expect(closeBrowserWindow).not.toHaveBeenCalled()
+    } finally {
+      fetchRequest.mockRestore()
+    }
+  })
+
   it('retains the desktop window adapter on a native desktop build', async () => {
     vi.mocked(isTauri).mockReturnValue(true)
     vi.mocked(invoke).mockResolvedValueOnce('desktop')
