@@ -306,3 +306,40 @@ window enlargement, skipped row click or extra driver scroll is introduced.
 The Services, incident, mobile shell and recovery components pass 27 tests and
 the production build passes; the actual installed-app journey must establish
 whether this resolves the native click and completes the remaining gates.
+
+The thirteenth [UI run 39108730917](https://github.com/0xJean/shellbeam/actions/runs/39108730917),
+head `2312139cbe926adde237e03cff24ac6881fa9853`, merge checkout
+`2f16b553dd7f45c91b83d61a205763bf962e9b2f`, passed both actual service routes:
+two incidents, two rejected jobs without mutations, two single confirmed
+restarts, two resolved alerts and a maximum of three diagnosis clicks. The
+first real app restart recovered all three hosts, four canonical jobs and fresh
+service observations. Its four actual service lifecycle banners were retained
+without replay after restart. This establishes the previously missing via-row
+selection and the original complete Local Service journey.
+
+The independent direct/jump SSHD faults then produced all six actual metrics
+opening/recovery banners with complete title/body OCR, genuine fresh failures
+and recoveries, two cancelled acknowledgements without lifecycle changes and
+four confirmed acknowledge/close jobs. The jump profile recovered without
+metadata actions. The run subsequently failed at `probe-inventory-settle` with
+`ops_ui_probe_inventory_refresh_scope_mismatch`, before recording the final
+aggregate notification count or the second real app restart. Cleanup and app
+exit passed; the entire independent Probe journey remains unaccepted.
+
+Returning from Activity remounts HostsDashboard with cards present before its
+asynchronous scoped operations views. The inventory-settle runner checked for
+the target summary immediately after waiting for any host card, confusing that
+legitimate empty interval with a scope violation. The correction waits up to
+60 seconds for the exact host's summary, rejects visible foreign/duplicate
+summaries, and preserves the real menu refresh, new inventory boundary, alert
+settlement, final counters and second restart requirements. It never supplies
+the missing view or bypasses a failed scope check.
+
+The real collector emits whole-second sample timestamps. Before the one forced
+inventory refresh the runner also waits at most two seconds for a precomputed
+future whole-second boundary, rechecking scope throughout. It still requires
+the original sample to be at or after that boundary and newer than the previous
+sample; no timestamp is rounded forward or replaced. The seven Node suites
+pass 110 tests, including deferred/hidden summaries, immediate foreign/duplicate
+refusal, readiness timeout, whole-second timing, old-cache rejection and scope
+changes before refresh. These contracts do not prove the remaining live gates.

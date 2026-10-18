@@ -15,7 +15,7 @@
 | 状态与主机身份一致 | `host-identity.ts`、原生route identity、unsupported采集契约 | 非Linux SSH采集明确unsupported，不当成offline；可用Agent/Komari观察可优先；身份来自实际解析端点，未解析跳板引用不复用旧复制地址；任务摘要按job最新状态统计 |
 | 跨Vault观察隔离 | `host-observation-scope.ts`、monitor/inventory/tool原生持久化、MCP缓存读取 | 内存和持久化均按Vault/host标识；显式Vault与profile冲突在采集前拒绝；MCP按授权Vault读取。旧无scope缓存保留但不猜测归属，需要重新观察；已分scope的ProbeProvider历史保留 |
 | 采集预算与架构 | `shared/collection-limits.json`、TS/Rust共享读取、统一Inventory.arch | 并发、采集timeout/输出与历史保留使用一个数值源；普通SSH命令和MCP任务各自的有界预算单独命名；架构从真实采集结果传入，缺失不猜测 |
-| 通用SSH Provider失败/恢复告警 | `probe-scheduler.ts`、`probe-collection-events.ts`、`probe-alert-lifecycle.ts`、应用级ProbeAlertRuntime与local_ops | 实际采集按Provider/metrics/inventory发布一次事件；无缓存失败可开启内置告警，unknown、缓存读取及`recovered`缓存回退不算恢复，须同配置的新成功采样。先原生持久化再通知；锁库、旧Vault/主机/跳板配置及CAS失败不得投递，主机Grid/List可确认/关闭并关联OperationJob。独立Provider真实故障/恢复的打包OS通知验收仍待完成，不以Local Service用例代替 |
+| 通用SSH Provider失败/恢复告警 | `probe-scheduler.ts`、`probe-collection-events.ts`、`probe-alert-lifecycle.ts`、应用级ProbeAlertRuntime与local_ops | 实际采集按Provider/metrics/inventory发布一次事件；无缓存失败可开启内置告警，unknown、缓存读取及`recovered`缓存回退不算恢复，须同配置的新成功采样。先原生持久化再通知；锁库、旧Vault/主机/跳板配置及CAS失败不得投递，主机Grid/List可确认/关闭并关联OperationJob。2312139已实测独立直连/跳板SSHD故障、新采样恢复及六条真实OS横幅；资产刷新排空和第二次重启仍未验收 |
 
 ## Phase 1：主机诊断与操作闭环
 
@@ -24,7 +24,7 @@
 | 运维列表、健康、告警、筛选 | `host-ops-view.ts`、`host-ops-filters.ts`、HostCard/HostsDashboard | Provider、OS、严重级别、能力、资源阈值、新鲜度；显示TTL、跳板、最后错误 |
 | Probe分区采样状态 | `hostProbeEvaluations`、HostCard Grid/List与HostsDashboard | 同Vault/主机canonical metrics/inventory evaluation单独展示健康与原始采样时间，无告警时仍可见；共用180秒新鲜度，过期/缺失/无效/未来时间为unknown，UI刷新不得伪造采样时间。真实SSH告警标题包含主机名以区分多主机系统通知 |
 | 资源摘要与跳板搜索 | HostCard Grid/List、`host-search.ts` | 显式展示RX/TX与uptime，选中Provider仅有metrics时仍可展示；缺失unknown、实际0保持0；跳板引用按同Vault当前配置搜索，编辑/删除不继续匹配旧复制字段 |
-| 主机快捷诊断入口 | HostCard/HostsDashboard、SessionsContext、PcLayout | 卡片/列表提供可见的一键Services按钮，避免将原生菜单打开/选择少计为一次；打开Services、选择服务、读取真实status为三次实际点击（组件与控制流检查通过，完整GUI验收另行记录）。保留Overview、Files、Logs、健康检查和刷新；同Vault复用会话、补齐UI标签页，右侧会话提升后不重复挂载；跨Vault同名ID不得复用 |
+| 主机快捷诊断入口 | HostCard/HostsDashboard、SessionsContext、PcLayout | 卡片/列表提供可见的一键Services按钮，避免将原生菜单打开/选择少计为一次；打开Services、选择服务、读取真实status为三次实际点击，2312139打包GUI已在直连/跳板及首次真实重启后验证。保留Overview、Files、Logs、健康检查和刷新；同Vault复用会话、补齐UI标签页，右侧会话提升后不重复挂载；跨Vault同名ID不得复用 |
 | Workspace观察范围 | `workspace-provider-state.ts`、WorkspaceStatusCards、WorkspaceRecommendationsPanel | 桌面/移动Overview指标与资源建议复用主机列表的Provider选择规则；读取同Vault/host的canonical与Komari持久化，切换Vault/路由拒绝迟到读取，映射重绑立即失效旧来源；未绑定引用按明确活动Vault解析，冲突引用不展示 |
 | Overview来源与回退 | WorkspaceProviderSummary、共用`buildHostOpsViews` | 并列显示当前/其他Provider的健康、原始采样/接收/Komari同步时间、TTL、可信程度与实际能力；缺失时间显示未知，不借资产扫描或缓存写入伪造指标时间。Komari过期/不可用时明确显示SSH回退，遥测只属于实际选中的指标观察；资源建议独立检查该指标deadline |
 | 文件写操作确认和审计 | `file-operation.ts`、`remote-fs.ts`、Files/SFTP组件 | 只读亦有审计；创建/上传/覆盖/删除/重命名/权限统一确认，后态stat验证；高风险强确认；路径哈希，无内容入审计；取消零执行 |
@@ -34,7 +34,7 @@
 | 跨会话告警审计 | `data/local_ops.rs`、`local-ops-persistence.ts`、`local-alert-actions.ts` | 原生按Vault/host/kind隔离、revision CAS；确认/关闭关联同scope已确认OperationJob；MCP返回安全历史和关联任务 |
 | 历史任务与审计查询 | `OperationsAuditCenter`、原生`operation_jobs`查询 | 来源和状态在原生筛选，按时间与唯一ID复合游标翻页，每页最多100条；任务与审计独立分页，历史页暂停自动刷新，刷新回到最新。切换Vault/主机/筛选拒绝迟到结果；仍受5000任务/10000审计的既有保留上限约束，不承诺无限历史 |
 | Workspace结果未知提示 | `WorkspaceOperationRecoveryNotice`、原生启动recover | 只显示同Vault/主机canonical unknown；正常queued/running留在任务进度，跨应用重启未完成任务由原生转unknown。初始读取无证据不闪警告，可见时15秒及focus/visibility只读刷新、单请求合并；读取失败保留未知证据，成功读到终态才移除；显式Vault冲突不查全局，切scope/卸载清理并拒绝迟到结果，不重放远端动作 |
-| 异步操作确认 | `user-confirmation.ts`、应用级`UserConfirmationDialog`、OperationJob/文件/批量入口 | Tauri Dialog 2.6会把`window.confirm`替换为Promise，必须等待严格布尔结果。应用内真实确认窗默认聚焦取消，显示主机、路径和动作摘要；文件保留精确输入token。锁库/切库/主机或跳板变更撤销待确认，作用域guard保留至实际发送前；不可用/忙碌不记为人工拒绝，已同意但未发送的取消保留confirmed。31f33a5打包GUI已证明直连真实取消零变更、确认只重启一次及恢复通知；跳板处理和完整重启闭环仍未通过 |
+| 异步操作确认 | `user-confirmation.ts`、应用级`UserConfirmationDialog`、OperationJob/文件/批量入口 | Tauri Dialog 2.6会把`window.confirm`替换为Promise，必须等待严格布尔结果。应用内真实确认窗默认聚焦取消，显示主机、路径和动作摘要；文件保留精确输入token。锁库/切库/主机或跳板变更撤销待确认，作用域guard保留至实际发送前；不可用/忙碌不记为人工拒绝，已同意但未发送的取消保留confirmed。2312139打包GUI已证明两路真实取消零变更、确认各只重启一次及首次应用重启后的四条审计恢复；独立Probe第二次重启另行验收 |
 | MCP本地告警确认/关闭 | `mcp/local_alerts.rs`、协议oneOf与原生local_ops内部事务 | 保留Komari参数兼容；服务、健康检查和独立ProbeProvider告警必须显式`alertSource=local-ops`、ruleId及expectedRevision。复查manageAlerts/同Vault主机授权，规范Job记录客户端授权为not_required，不伪造人工确认；SQLite保证CAS、跨会话与并发幂等，不重放非终态任务。桌面confirmed-only入口保持独立 |
 | 超时/断线/信号/输出过量 | 原生公共command执行器、OperationJob结果映射 | 不推断远端动作已停止；不确定结果为unknown，无自动重放写操作 |
 | 工具安装与服务动作 | `workspace-tools.ts`、WorkspaceToolManagerApp | 安装/升级/卸载及服务变更先确认，展示主机/路径/命令；独立观察版本、工具存在与服务后态；同一OperationJob记录结果，无法观察为unknown |
@@ -80,7 +80,7 @@
 - Linux采集与user systemd生命周期由GitHub Actions真实Linux runner验收；本机macOS上的跳过不能算Linux验收通过。
 - macOS launchd smoke使用唯一测试label、临时state和真实生成plist；不会覆盖默认探针服务。本轮实际启动、重启、历史保留、卸载测试通过（`cargo test --manifest-path agent/Cargo.toml launchd_service_activates_restarts_and_stops_in_isolated_state -- --ignored --nocapture`）。
 - GitHub Actions覆盖前端、macOS/Linux/Windows原生测试与MCP stdio，以及独立Agent daemon/systemd检查。以本轮提交对应的状态为准，旧提交绿色检查不代表本轮通过。
-- 系统通知仍需逐平台与实际桌面环境检查；helper/mock测试不证明后端接收。隔离Ubuntu打包GUI已验证测试按钮四状态、直连/跳板服务告警开启横幅及直连实际恢复横幅；完整跳板处理、独立Probe通知、其它Linux桌面环境和macOS/Windows展示仍未验收。
+- 系统通知仍需逐平台与实际桌面环境检查；helper/mock测试不证明后端接收。隔离Ubuntu打包GUI已验证测试按钮四状态、直连/跳板服务开启/恢复四横幅及首次重启不重放，独立Probe故障/恢复六横幅也已实际观察；Probe最终计数及第二次重启、其它Linux桌面环境和macOS/Windows展示仍未验收。
 - 正式Agent发布密钥配置、release draft审核和生产发布没有执行；测试签名不能替代生产信任根。
 - 本文不将多跳、团队RBAC、完整APM/Kubernetes或无人值守自愈加入首期范围。
 
@@ -109,7 +109,7 @@ Komari手动映射/控制台本轮本地回归：前端939项通过，16项Linux
 
 | 项目 | 完成证据 | 当前边界 |
 | --- | --- | --- |
-| 桌面系统通知 | 对应安装包中验证允许/拒绝/系统禁用，以及实际横幅或通知中心条目 | 隔离Ubuntu X11测试按钮四状态、直连/跳板服务开启与直连恢复横幅已通过真实窗口/计数/OCR；完整跳板处理、独立Probe故障/恢复、其它Linux桌面及macOS/Windows授权/展示仍待验收 |
+| 桌面系统通知 | 对应安装包中验证允许/拒绝/系统禁用，以及实际横幅或通知中心条目 | 隔离Ubuntu X11测试按钮四状态、两路服务开启/恢复和首次重启无重放，以及独立Probe故障/恢复六横幅已通过真实窗口/计数/OCR；Probe最终计数/第二次重启、其它Linux桌面及macOS/Windows授权/展示仍待验收 |
 | Komari部署 | 实际部署的TLS、token权限、节点映射、WebView请求及告警到Workspace跳转 | 已有官方1.6.0本地真实服务HTTP契约证据，尚不覆盖用户外部部署或所有版本 |
 | 正式Agent制品 | 受保护签名环境、四目标制品、审核后的HTTPS来源，真实客户端首装/第二版升级/失败回滚/卸载及ProxyJump审计 | 生产密钥来源待决定，工作流尚未进入默认分支；未生成生产信任根、未发布Agent版本 |
 | 主机运维产品指标 | 打包应用从列表发现异常到首次有效诊断不超过3步，再执行确认动作、观察后态与同主机审计 | 组件流程及隔离Linux Docker/SSL/混合多主机16项命令组合已通过；仍需真实用户桌面、生产Vault和实际部署环境，私有ACME不替代公有CA域名控制验收 |
@@ -137,3 +137,5 @@ Agent分阶段scope检查与GUI几何诊断本地回归：前端1250项通过、
 结果未知提示修正本地回归：前端1260项通过、17项Linux用例在macOS跳过，TypeScript/Vite生产构建通过；定向恢复提示/Services/Activity组件29项通过。覆盖当前queued/running不误报、跨Vault二次筛选、显式scope冲突、延迟/失败读保留证据、可见刷新和canonical终态移除、请求合并、切库迟到与卸载清理。未变更远端命令或操作状态，不以此推断Services点击问题已解决。
 
 提交`c21ddf6`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39108198016)和[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39108198109)共11项通过；[核对的真实Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39108198016/artifacts/12129521842)为16项通过、零跳过、success/cleanup通过，合并检出`0327f389e1953b6780cfff6e22b8eb101d710f0a`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39108198018)再次通过直连取消/一次重启/恢复横幅，随后复现跳板服务行实际点击失败。部分坐标和受控截图证实窗口正文裁切目标行，且有正常queued读取被误显示为待恢复；Services后续改用窗口正文单一纵向滚动，组件27项和生产构建通过，但仍须新提交的安装包实测，不记为完整GUI通过。
+
+提交`2312139`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39108730919)/[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39108730926)共11项通过，[真实Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39108730919/artifacts/12129363399)16项通过、零跳过、清理成功，合并检出`2f16b553dd7f45c91b83d61a205763bf962e9b2f`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39108730917)已通过完整两路Local Service旅程及首次重启恢复（journey/recovery/alertNotifications均passed），并实际观察独立Probe故障/恢复六条系统横幅及六条metadata任务。最终在资产排空前因runner未等待异步主机摘要而报scope mismatch，未执行Probe第二次重启；GUI总结果仍为failed，清理和应用退出成功。

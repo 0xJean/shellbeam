@@ -301,6 +301,176 @@ test('inventory drain selects each real host refresh and permits no alert or an 
   } finally { unit.close() }
 })
 
+test('inventory refresh waits for a future whole UTC second and preserves the genuine second-precision sample', async t => {
+  for (const mode of ['fresh', 'same-second-cache', 'scope-change', 'clock-timeout']) {
+    const unit = await inventoryUnit(t)
+    try {
+      let now = Math.ceil(Date.now() / 1000) * 1000 + 125
+      t.mock.method(Date, 'now', () => now)
+      const oldSample = Math.floor(now / 1000) * 1000
+      for (const row of unit.document.querySelectorAll(`[data-rule-id="${OPS_UI_PROBE_RULE_IDS.inventory}"][data-testid="host-probe-evaluation"]`)) row.dataset.sampledAt = String(oldSample)
+      const select = unit.driver.select, boundaries = [], collected = []
+      unit.driver.until = async (predicate, options) => {
+        if (options?.timeoutMs === 2000) {
+          const expected = (Math.floor(now / 1000) + 1) * 1000
+          boundaries.push(expected)
+          const before = unit.selected.length
+          assert.equal(await predicate(), false)
+          assert.equal(unit.selected.length, before)
+          if (mode === 'clock-timeout') throw new Error('unit boundary timeout')
+          now = expected - 1
+          assert.equal(await predicate(), false)
+          assert.equal(unit.selected.length, before)
+          now = expected
+          if (mode === 'scope-change') unit.resumeState.vaultId = 'foreign'
+          assert.equal(await predicate(), true)
+          assert.equal(unit.selected.length, before)
+          return true
+        }
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const value = await predicate()
+          if (value) return value
+          now += 200
+        }
+        throw new Error('unit sample timeout')
+      }
+      unit.driver.select = async (selector, value) => {
+        const index = unit.selected.length
+        assert(now >= boundaries[index])
+        await select(selector, value)
+        const menu = unit.document.querySelector(selector)
+        const row = menu.closest('article').querySelector(`[data-rule-id="${OPS_UI_PROBE_RULE_IDS.inventory}"][data-testid="host-probe-evaluation"]`)
+        row.dataset.sampledAt = String(mode === 'same-second-cache' ? oldSample : Math.floor(now / 1000) * 1000)
+        collected.push(Number(row.dataset.sampledAt))
+      }
+      if (mode === 'fresh') {
+        assert.equal((await settleOpsUiProbeInventory(unit)).passed, true)
+        assert.deepEqual(unit.selected, ['jump', 'direct', 'via'])
+        assert(boundaries.every(boundary => boundary > oldSample && boundary % 1000 === 0))
+        assert.deepEqual(collected, boundaries)
+        const records = unit.events.filter(event => typeof event === 'object' && event.name.includes('inventory-settled'))
+        assert.deepEqual(records.map(record => record.originalSampleAt), collected)
+      } else {
+        await assert.rejects(settleOpsUiProbeInventory(unit), mode === 'same-second-cache' ? /unit sample timeout/ : mode === 'scope-change' ? /scope_changed/ : /unit boundary timeout/)
+        assert.deepEqual(unit.selected, mode === 'same-second-cache' ? ['jump'] : [])
+        assert.equal(boundaries.length, 1)
+        assert(!unit.events.some(event => typeof event === 'object' && event.name.includes('inventory-settled')))
+      }
+    } finally { unit.close() }
+  }
+})
+
+test('inventory drain waits read-only for a deferred target summary mount before selecting its real refresh', async t => {
+  const unit = await inventoryUnit(t)
+  try {
+    const target = unit.document.querySelector(`[data-testid="host-card"][data-host-id="${unit.resumeState.hostIds.jump}"]`)
+    const summary = target.querySelector('[data-testid="host-ops-summary"]')
+    summary.remove()
+    const findAll = unit.driver.findAll, until = unit.driver.until, bounds = []
+    let signalRead, releaseRead
+    const started = new Promise(resolve => { signalRead = resolve })
+    const pending = new Promise(resolve => { releaseRead = resolve })
+    let deferred = false
+    unit.driver.findAll = async selector => {
+      if (!deferred && selector.includes(unit.resumeState.hostIds.jump) && selector.endsWith('[data-testid="host-ops-summary"]')) {
+        deferred = true; signalRead()
+        await pending
+        return []
+      }
+      return findAll(selector)
+    }
+    unit.driver.until = async (predicate, options) => { bounds.push(options?.timeoutMs); return until(predicate) }
+    const settling = settleOpsUiProbeInventory(unit)
+    await started
+    assert.deepEqual(unit.selected, [])
+    assert(!unit.events.some(event => typeof event === 'object' && event.name.includes('inventory-settled')))
+    target.append(summary)
+    releaseRead()
+    assert.deepEqual(await settling, { passed: true, profiles: 3, freshObservations: 3 })
+    assert.deepEqual(unit.selected, ['jump', 'direct', 'via'])
+    assert.equal(bounds.filter(value => value === 60_000).length, 3)
+  } finally { unit.close() }
+})
+
+test('inventory drain permits a hidden target summary to become visible without refreshing early', async t => {
+  const unit = await inventoryUnit(t)
+  try {
+    const summary = unit.document.querySelector(`[data-host-id="${unit.resumeState.hostIds.jump}"] [data-testid="host-ops-summary"]`)
+    summary.hidden = true
+    const displayed = unit.driver.isDisplayed
+    let reads = 0
+    unit.driver.isDisplayed = async element => {
+      if (element === summary && ++reads === 2) {
+        assert.deepEqual(unit.selected, [])
+        summary.hidden = false
+      }
+      return displayed(element)
+    }
+    assert.equal((await settleOpsUiProbeInventory(unit)).passed, true)
+    assert.equal(reads, 2)
+    assert.deepEqual(unit.selected, ['jump', 'direct', 'via'])
+  } finally { unit.close() }
+})
+
+test('inventory drain immediately refuses a displayed foreign summary or duplicate target before any menu refresh', async t => {
+  for (const problem of ['vault', 'host', 'summary-duplicate', 'card-duplicate']) {
+    const unit = await inventoryUnit(t)
+    try {
+      const target = unit.document.querySelector(`[data-testid="host-card"][data-host-id="${unit.resumeState.hostIds.jump}"]`)
+      const summary = target.querySelector('[data-testid="host-ops-summary"]')
+      if (problem === 'vault') summary.dataset.vaultId = 'foreign'
+      if (problem === 'host') summary.dataset.hostId = unit.resumeState.hostIds.via
+      if (problem === 'summary-duplicate') target.append(summary.cloneNode(true))
+      if (problem === 'card-duplicate') target.after(target.cloneNode(true))
+      const until = unit.driver.until
+      let readinessPolls = 0
+      unit.driver.until = async (predicate, options) => until(async () => {
+        assert.equal(options?.timeoutMs, 60_000)
+        readinessPolls++
+        return predicate()
+      })
+      await assert.rejects(settleOpsUiProbeInventory(unit), /inventory_refresh_scope_mismatch/)
+      assert.equal(readinessPolls, 1)
+      assert.deepEqual(unit.selected, [])
+      assert(!unit.events.some(event => typeof event === 'object' && event.name.includes('inventory-settled')))
+    } finally { unit.close() }
+  }
+})
+
+test('missing or never-displayed target summaries time out within the readiness bound without a refresh', async t => {
+  for (const problem of ['missing', 'hidden']) {
+    const unit = await inventoryUnit(t)
+    try {
+      const summary = unit.document.querySelector(`[data-host-id="${unit.resumeState.hostIds.jump}"] [data-testid="host-ops-summary"]`)
+      if (problem === 'missing') summary.remove()
+      else summary.hidden = true
+      const until = unit.driver.until
+      const bounds = []
+      unit.driver.until = async (predicate, options) => { bounds.push(options?.timeoutMs); return until(predicate) }
+      await assert.rejects(settleOpsUiProbeInventory(unit), /unit timeout/)
+      assert.deepEqual(bounds, [60_000])
+      assert.deepEqual(unit.selected, [])
+      assert(!unit.events.some(event => typeof event === 'object' && event.name.includes('inventory-settled')))
+    } finally { unit.close() }
+  }
+})
+
+test('a Vault change during summary readiness fails before any host refresh', async t => {
+  const unit = await inventoryUnit(t)
+  try {
+    const findAll = unit.driver.findAll
+    unit.driver.findAll = async selector => {
+      if (selector.endsWith('[data-testid="host-ops-summary"]')) {
+        unit.resumeState.vaultId = 'foreign'
+        return []
+      }
+      return findAll(selector)
+    }
+    await assert.rejects(settleOpsUiProbeInventory(unit), /scope_changed/)
+    assert.deepEqual(unit.selected, [])
+  } finally { unit.close() }
+})
+
 test('inventory drain rejects cached/future/unknown inventory even while independent metrics keep producing fresh healthy samples', async t => {
   for (const sampleMode of ['cached', 'future', 'unknown']) {
     const unit = await inventoryUnit(t, { sampleMode })

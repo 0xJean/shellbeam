@@ -89,6 +89,13 @@ The full two-route restart journey, independent SSH Probe failure/recovery
 notifications, other Linux desktops and macOS/Windows presentation remain
 separate acceptance requirements; see `ops-ui-live-validation.md`.
 
+Run 39108730917 subsequently passed the complete direct/ProxyJump Local Service
+journey, all four lifecycle banners and no replay after the first actual app
+restart. It also observed six real independent SSH Probe failure/recovery
+banners with full OCR. The run stopped at inventory-summary readiness before
+the final Probe notification counter and second restart, so that larger journey
+is still incomplete. Platform-specific desktop/device acceptance remains open.
+
 ## Delivery diagnostics
 
 Local journals retain at most 1,000 successful deliveries and 1,000 attempts per

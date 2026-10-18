@@ -75,12 +75,35 @@ export async function settleOpsUiProbeInventory({ driver, fixture, resumeState, 
   for (const role of ['jump', ...ROLES]) {
     assertScope()
     await openPage(driver, 'hosts')
-    const summaries = await driver.findAll(`${card(probeState, role)} ${tid('host-ops-summary')}[data-vault-id=${q(probeState.vaultId)}][data-host-id=${q(probeState.hostIds[role])}]`)
-    check(summaries.length === 1 && await driver.isDisplayed(summaries[0]), 'inventory_refresh_scope_mismatch')
+    // Hosts mount before their async operational views. Wait for the actual
+    // target summary without treating that legitimate empty interval as a
+    // Vault mismatch. A displayed foreign summary or duplicate is still fatal.
+    await driver.until(async () => {
+      assertScope()
+      const targets = await driver.findAll(card(probeState, role))
+      check(targets.length <= 1, 'inventory_refresh_scope_mismatch')
+      if (!targets.length || !await driver.isDisplayed(targets[0])) return false
+      const summaries = await driver.findAll(`${card(probeState, role)} ${tid('host-ops-summary')}`)
+      check(summaries.length <= 1, 'inventory_refresh_scope_mismatch')
+      if (!summaries.length || !await driver.isDisplayed(summaries[0])) return false
+      check(await driver.attr(summaries[0], 'data-vault-id') === probeState.vaultId
+        && await driver.attr(summaries[0], 'data-host-id') === probeState.hostIds[role], 'inventory_refresh_scope_mismatch')
+      return summaries[0]
+    }, { timeoutMs: 60_000 })
+    assertScope()
     const previous = await readOpsUiProbeEvaluation(driver, probeState, role, 'inventory')
     const menu = `${card(probeState, role)} ${tid('host-ops-open')}`
     await driver.waitFor(menu)
-    const boundary = Date.now()
+    assertScope()
+    // The actual collector reports whole UTC seconds. Begin the one forced
+    // collection after a future whole-second boundary, never by rounding an
+    // existing sample forward or accepting an earlier timestamp bucket.
+    const boundary = (Math.floor(Math.max(Date.now(), previous?.sampledAt ?? 0) / 1000) + 1) * 1000
+    await driver.until(() => {
+      assertScope()
+      return Date.now() >= boundary
+    }, { timeoutMs: 2000 })
+    assertScope()
     await driver.select(menu, 'refresh')
     assertScope()
     await waitForOpsUiProbeEvaluation(driver, probeState, role, { section: 'inventory', status: 'healthy', boundary, after: previous?.sampledAt ?? 0 })
