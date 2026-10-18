@@ -116,7 +116,7 @@ const zhCN: Record<string, string> = {
   'workspace.komariProbe.state.offline': '离线',
   'workspace.komariProbe.state.unknown': '未知',
   'workspace.komariProbe.action.check-probe': '检查探针',
-  'workspace.komariProbe.action.install-probe': '安装探针',
+  'workspace.komariProbe.action.install-probe': '查看探针安装方案',
   'workspace.komariProbe.mappingNotice.title': 'Komari 映射需要处理',
   'workspace.komariProbe.mappingNotice.description': '{unmapped} 个节点未映射；{conflicts} 个映射冲突需要检查。',
   'komariAlerts.title': 'Komari 告警',

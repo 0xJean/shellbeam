@@ -8,6 +8,7 @@
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tauri::Manager;
 
 use crate::storage::{data_file_path, now_unix_ms};
 
@@ -78,6 +79,26 @@ pub struct KomariPersistencePayload {
     pub last_synced_at: Option<i64>,
     pub ttl_ms: Option<i64>,
     pub alert_summary: Option<Value>,
+    pub vault_id: Option<String>,
+    pub expected_mapping_revision: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KomariMappingState {
+    pub mappings: Vec<KomariMapping>,
+    pub revision: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KomariMappingEdit {
+    pub vault_id: String,
+    pub integration_id: String,
+    pub node_id: String,
+    /// None explicitly removes the manual choice and resumes address matching.
+    pub host_id: Option<String>,
+    pub expected_revision: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +126,11 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
         .map_err(|err| format!("Open Komari persistence db failed: {err}"))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|err| format!("Configure Komari persistence db failed: {err}"))?;
+    initialize(&conn)?;
+    Ok(conn)
+}
+
+fn initialize(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;
@@ -137,6 +163,10 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
           ON komari_mappings(integration_id, node_id);
         CREATE INDEX IF NOT EXISTS idx_komari_mappings_host
           ON komari_mappings(host_id, updated_at DESC);
+        CREATE TABLE IF NOT EXISTS komari_mapping_revisions (
+          integration_id TEXT PRIMARY KEY NOT NULL,
+          revision INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS komari_sync_state (
           integration_id TEXT PRIMARY KEY NOT NULL,
           last_synced_at INTEGER NOT NULL,
@@ -147,7 +177,8 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
         "#,
     )
     .map_err(|err| format!("Initialize Komari persistence db failed: {err}"))?;
-    Ok(conn)
+    super::probe_persistence::initialize(&conn)?;
+    Ok(())
 }
 
 fn id(value: &str, field: &str) -> Result<String, String> {
@@ -279,6 +310,12 @@ fn validate_mapping(
     let node_id = id(&payload.node_id, "node id")?;
     let source = id(&payload.source, "mapping source")?;
     let confidence = id(&payload.confidence, "mapping confidence")?;
+    if !matches!(
+        (source.as_str(), confidence.as_str()),
+        ("manual", "explicit") | ("address", "matched")
+    ) {
+        return Err("Komari mapping source is invalid".into());
+    }
     Ok((
         integration_id,
         host_id,
@@ -350,6 +387,149 @@ fn insert_snapshot(tx: &Transaction<'_>, payload: &KomariSnapshotPayload) -> Res
     )
     .map_err(|err| format!("Save Komari snapshot failed: {err}"))?;
     Ok(())
+}
+
+fn mapping_state(conn: &Connection, integration_id: &str) -> Result<KomariMappingState, String> {
+    let revision = conn
+        .query_row(
+            "SELECT revision FROM komari_mapping_revisions WHERE integration_id=?1",
+            params![integration_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| "KOMARI_MAPPING_READ_FAILED")?
+        .unwrap_or(0);
+    let mut statement = conn.prepare("SELECT integration_id,host_id,node_id,source,confidence,updated_at FROM komari_mappings WHERE integration_id=?1 ORDER BY host_id").map_err(|_| "KOMARI_MAPPING_READ_FAILED")?;
+    let mappings = statement
+        .query_map(params![integration_id], read_mapping)
+        .map_err(|_| "KOMARI_MAPPING_READ_FAILED")?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "KOMARI_MAPPING_READ_FAILED")?;
+    Ok(KomariMappingState { mappings, revision })
+}
+
+fn require_integration_scope(
+    conn: &Connection,
+    integration_id: &str,
+    vault_id: &str,
+) -> Result<(), String> {
+    let found: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM komari_integrations WHERE id=?1 AND vault_id=?2)",
+            params![integration_id, vault_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "KOMARI_MAPPING_SCOPE_MISMATCH")?;
+    if !found {
+        return Err("KOMARI_MAPPING_SCOPE_MISMATCH".into());
+    }
+    Ok(())
+}
+
+fn bump_mapping_revision(tx: &Transaction<'_>, integration_id: &str) -> Result<(), String> {
+    tx.execute("INSERT INTO komari_mapping_revisions(integration_id,revision) VALUES(?1,1) ON CONFLICT(integration_id) DO UPDATE SET revision=revision+1", params![integration_id]).map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+    Ok(())
+}
+
+fn edit_mapping(
+    conn: &mut Connection,
+    payload: &KomariMappingEdit,
+) -> Result<KomariMappingState, String> {
+    let integration = normalize_integration_id(&payload.integration_id)?;
+    let vault = id(&payload.vault_id, "vault id")?;
+    let node = id(&payload.node_id, "node id")?;
+    let host = payload
+        .host_id
+        .as_deref()
+        .map(|value| id(value, "host id"))
+        .transpose()?;
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+    require_integration_scope(&tx, &integration, &vault)?;
+    let current = mapping_state(&tx, &integration)?;
+    if current.revision != payload.expected_revision {
+        return Err("KOMARI_MAPPING_CONFLICT".into());
+    }
+    if let Some(host) = &host {
+        let found: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspace_hosts WHERE vault_id=?1 AND id=?2)",
+                params![vault, host],
+                |row| row.get(0),
+            )
+            .map_err(|_| "KOMARI_MAPPING_HOST_UNAVAILABLE")?;
+        if !found {
+            return Err("KOMARI_MAPPING_HOST_UNAVAILABLE".into());
+        }
+        if current.mappings.iter().any(|mapping| {
+            mapping.source == "manual" && mapping.host_id == *host && mapping.node_id != node
+        }) {
+            return Err("KOMARI_MAPPING_HOST_ALREADY_BOUND".into());
+        }
+    }
+    tx.execute("DELETE FROM komari_mappings WHERE integration_id=?1 AND (node_id=?2 OR (?3 IS NOT NULL AND host_id=?3))", params![integration, node, host]).map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+    if let Some(host) = &host {
+        insert_mapping(
+            &tx,
+            &KomariMappingPayload {
+                integration_id: integration.clone(),
+                host_id: host.clone(),
+                node_id: node,
+                source: "manual".into(),
+                confidence: "explicit".into(),
+                updated_at: Some(now_unix_ms()),
+            },
+        )?;
+    }
+    // A cached observation is tied to the old host/node association. History
+    // remains intact, but no latest health may survive a manual reassignment.
+    tx.execute(
+        "DELETE FROM komari_snapshots WHERE integration_id=?1",
+        params![integration],
+    )
+    .map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+    let has_probe: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='probe_snapshots')", [], |row| row.get(0)).map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+    if has_probe {
+        tx.execute("DELETE FROM probe_snapshots WHERE vault_id=?1 AND provider_kind='komari' AND provider_id=?2", params![vault, integration]).map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+    }
+    tx.execute(
+        "UPDATE komari_sync_state SET last_synced_at=0 WHERE integration_id=?1",
+        params![integration],
+    )
+    .map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+    bump_mapping_revision(&tx, &integration)?;
+    let saved = mapping_state(&tx, &integration)?;
+    tx.commit().map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+    Ok(saved)
+}
+
+#[tauri::command]
+pub fn get_komari_mapping_state(
+    app: tauri::AppHandle,
+    vault_id: String,
+    integration_id: String,
+) -> Result<KomariMappingState, String> {
+    let integration = normalize_integration_id(&integration_id)?;
+    let vault = id(&vault_id, "vault id")?;
+    let conn = open(&app)?;
+    require_integration_scope(&conn, &integration, &vault)?;
+    mapping_state(&conn, &integration)
+}
+
+#[tauri::command]
+pub fn edit_komari_mapping(
+    app: tauri::AppHandle,
+    payload: KomariMappingEdit,
+) -> Result<KomariMappingState, String> {
+    let state = app.state::<crate::vault::secrets::VaultState>();
+    let vault = id(&payload.vault_id, "vault id")?;
+    state.while_unlocked(&vault, || {
+        // Ensure legacy profiles are migrated before validating the same-Vault
+        // host inside the atomic edit transaction.
+        super::hosts::load_hosts(&app, Some(&vault))?;
+        edit_mapping(&mut open(&app)?, &payload)
+    })
 }
 
 #[tauri::command]
@@ -458,12 +638,13 @@ pub fn upsert_komari_mapping(
         .transaction()
         .map_err(|err| format!("Begin Komari mapping transaction failed: {err}"))?;
     insert_mapping(&tx, &payload)?;
+    bump_mapping_revision(&tx, &payload.integration_id)?;
     tx.commit()
         .map_err(|err| format!("Commit Komari mapping failed: {err}"))
 }
 
-/// Replace the mapping set for one integration in a single transaction. This
-/// removes stale mappings after a node is deleted or renamed in Komari.
+/// Replace automatic mappings without discarding explicit user choices.
+/// Manual bindings are changed through the revision-checked edit command.
 #[tauri::command]
 pub fn replace_komari_mappings(
     app: tauri::AppHandle,
@@ -474,17 +655,8 @@ pub fn replace_komari_mappings(
     let tx = conn
         .transaction()
         .map_err(|err| format!("Begin Komari mapping replacement failed: {err}"))?;
-    tx.execute(
-        "DELETE FROM komari_mappings WHERE integration_id = ?1",
-        params![integration_id],
-    )
-    .map_err(|err| format!("Clear Komari mappings failed: {err}"))?;
-    for mapping in &payload.mappings {
-        if mapping.integration_id.trim() != integration_id {
-            return Err("Komari mapping integration does not match the set".into());
-        }
-        insert_mapping(&tx, mapping)?;
-    }
+    replace_sync_mappings(&tx, &integration_id, &payload.mappings, None)?;
+    bump_mapping_revision(&tx, &integration_id)?;
     tx.commit()
         .map_err(|err| format!("Commit Komari mapping replacement failed: {err}"))
 }
@@ -496,27 +668,119 @@ pub fn persist_komari_sync(
     app: tauri::AppHandle,
     payload: KomariPersistencePayload,
 ) -> Result<(), String> {
+    let state = app.state::<crate::vault::secrets::VaultState>();
+    if let Some(vault) = payload.vault_id.as_deref() {
+        let vault = id(vault, "vault id")?;
+        return state.while_unlocked(&vault, || persist_sync(&mut open(&app)?, &payload));
+    }
+    persist_sync(&mut open(&app)?, &payload)
+}
+
+fn replace_sync_mappings(
+    tx: &Transaction<'_>,
+    integration: &str,
+    mappings: &[KomariMappingPayload],
+    expected_revision: Option<i64>,
+) -> Result<(), String> {
+    let saved = mapping_state(tx, integration)?;
+    if expected_revision.is_some_and(|revision| revision != saved.revision) {
+        return Err("KOMARI_MAPPING_CONFLICT".into());
+    }
+    let manual = saved
+        .mappings
+        .iter()
+        .filter(|mapping| mapping.source == "manual")
+        .collect::<Vec<_>>();
+    for mapping in mappings {
+        if mapping.integration_id.trim() != integration {
+            return Err("Komari mapping integration does not match the sync".into());
+        }
+        validate_mapping(mapping)?;
+        if mapping.source == "manual" {
+            if !manual
+                .iter()
+                .any(|saved| saved.host_id == mapping.host_id && saved.node_id == mapping.node_id)
+            {
+                return Err("KOMARI_MAPPING_CONFLICT".into());
+            }
+        } else if manual
+            .iter()
+            .any(|saved| saved.host_id == mapping.host_id || saved.node_id == mapping.node_id)
+        {
+            return Err("KOMARI_MAPPING_CONFLICT".into());
+        }
+    }
+    tx.execute(
+        "DELETE FROM komari_mappings WHERE integration_id=?1 AND source!='manual'",
+        params![integration],
+    )
+    .map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+    for mapping in mappings.iter().filter(|mapping| mapping.source != "manual") {
+        insert_mapping(tx, mapping)?;
+    }
+    Ok(())
+}
+
+fn persist_sync(conn: &mut Connection, payload: &KomariPersistencePayload) -> Result<(), String> {
     let integration_id = normalize_integration_id(&payload.integration_id)?;
-    let mut conn = open(&app)?;
     let tx = conn
-        .transaction()
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|err| format!("Begin Komari sync persistence failed: {err}"))?;
+    if let Some(vault) = payload.vault_id.as_deref() {
+        let vault = id(vault, "vault id")?;
+        require_integration_scope(&tx, &integration_id, &vault)?;
+        for mapping in &payload.mappings {
+            let found: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspace_hosts WHERE vault_id=?1 AND id=?2)",
+                    params![vault, mapping.host_id],
+                    |row| row.get(0),
+                )
+                .map_err(|_| "KOMARI_MAPPING_HOST_UNAVAILABLE")?;
+            if !found {
+                return Err("KOMARI_MAPPING_HOST_UNAVAILABLE".into());
+            }
+        }
+    }
+    replace_sync_mappings(
+        &tx,
+        &integration_id,
+        &payload.mappings,
+        payload.expected_mapping_revision,
+    )?;
     for snapshot in &payload.snapshots {
         if snapshot.integration_id.trim() != integration_id {
             return Err("Komari snapshot integration does not match the sync".into());
         }
-        insert_snapshot(&tx, snapshot)?;
-    }
-    tx.execute(
-        "DELETE FROM komari_mappings WHERE integration_id = ?1",
-        params![integration_id],
-    )
-    .map_err(|err| format!("Clear Komari mappings before sync failed: {err}"))?;
-    for mapping in &payload.mappings {
-        if mapping.integration_id.trim() != integration_id {
-            return Err("Komari mapping integration does not match the sync".into());
+        let mapped: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM komari_mappings WHERE integration_id=?1 AND host_id=?2 AND node_id=?3)", params![integration_id, snapshot.host_id, snapshot.node_id], |row| row.get(0)).map_err(|_| "KOMARI_MAPPING_READ_FAILED")?;
+        if !mapped {
+            return Err("KOMARI_MAPPING_CONFLICT".into());
         }
-        insert_mapping(&tx, mapping)?;
+        insert_snapshot(&tx, snapshot)?;
+        if let Some(vault) = payload.vault_id.as_deref() {
+            // The incoming observation may be older backfill. Project the row
+            // actually retained by the dedicated monotonic-sample upsert, not
+            // the rejected incoming payload, into the canonical provider cache.
+            let retained = tx.query_row("SELECT integration_id,node_id,host_id,snapshot_json,sampled_at,received_at,expires_at,updated_at FROM komari_snapshots WHERE integration_id=?1 AND node_id=?2", params![integration_id, snapshot.node_id], read_snapshot).map_err(|_| "KOMARI_MAPPING_READ_FAILED")?;
+            super::probe_persistence::insert_snapshot(
+                &tx,
+                &super::probe_persistence::ProbeSnapshotPayload {
+                    vault_id: vault.to_string(),
+                    provider_kind: "komari".into(),
+                    provider_id: integration_id.clone(),
+                    host_id: retained.host_id,
+                    snapshot: retained.snapshot,
+                    sampled_at: retained.sampled_at,
+                    received_at: retained.received_at,
+                    expires_at: retained.expires_at,
+                    updated_at: Some(retained.updated_at),
+                },
+            )?;
+        }
+    }
+    tx.execute("DELETE FROM komari_snapshots WHERE integration_id=?1 AND NOT EXISTS(SELECT 1 FROM komari_mappings m WHERE m.integration_id=komari_snapshots.integration_id AND m.host_id=komari_snapshots.host_id AND m.node_id=komari_snapshots.node_id)", params![integration_id]).map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+    if let Some(vault) = payload.vault_id.as_deref() {
+        tx.execute("DELETE FROM probe_snapshots WHERE vault_id=?1 AND provider_kind='komari' AND provider_id=?2 AND NOT EXISTS(SELECT 1 FROM komari_mappings m WHERE m.integration_id=probe_snapshots.provider_id AND m.host_id=probe_snapshots.host_id AND m.node_id=json_extract(probe_snapshots.snapshot_json,'$.provider.nodeId'))", params![vault, integration_id]).map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
     }
     if let Some(last_synced_at) = payload.last_synced_at {
         insert_sync_state(
@@ -606,6 +870,203 @@ pub fn clear_komari_persistence(
 mod tests {
     use super::{id, snapshot_json};
     use serde_json::json;
+
+    fn mapping_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        prepare_mapping_db(&conn);
+        conn
+    }
+
+    fn prepare_mapping_db(conn: &rusqlite::Connection) {
+        super::initialize(conn).unwrap();
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS komari_integrations(id TEXT PRIMARY KEY,vault_id TEXT); CREATE TABLE IF NOT EXISTS workspace_hosts(vault_id TEXT,id TEXT,PRIMARY KEY(vault_id,id)); INSERT OR IGNORE INTO komari_integrations VALUES('server','vault-a'); INSERT OR IGNORE INTO workspace_hosts VALUES('vault-a','one'),('vault-a','two'),('vault-b','foreign');").unwrap();
+    }
+
+    fn edit(node: &str, host: Option<&str>, revision: i64) -> super::KomariMappingEdit {
+        super::KomariMappingEdit {
+            vault_id: "vault-a".into(),
+            integration_id: "server".into(),
+            node_id: node.into(),
+            host_id: host.map(str::to_string),
+            expected_revision: revision,
+        }
+    }
+
+    fn sync(revision: i64, host: &str, source: &str) -> super::KomariPersistencePayload {
+        super::KomariPersistencePayload {
+            integration_id: "server".into(),
+            vault_id: Some("vault-a".into()),
+            expected_mapping_revision: Some(revision),
+            mappings: vec![super::KomariMappingPayload {
+                integration_id: "server".into(),
+                host_id: host.into(),
+                node_id: "node".into(),
+                source: source.into(),
+                confidence: if source == "manual" {
+                    "explicit"
+                } else {
+                    "matched"
+                }
+                .into(),
+                updated_at: Some(1_000),
+            }],
+            snapshots: vec![super::KomariSnapshotPayload {
+                integration_id: "server".into(),
+                host_id: host.into(),
+                node_id: "node".into(),
+                snapshot: json!({"host":{"hostId":host},"provider":{"kind":"komari","id":"server","nodeId":"node"},"health":"online"}),
+                sampled_at: 900,
+                received_at: 1000,
+                expires_at: 61_000,
+                updated_at: Some(1_000),
+            }],
+            last_synced_at: Some(1_000),
+            ttl_ms: Some(60_000),
+            alert_summary: None,
+        }
+    }
+
+    #[test]
+    fn manual_mapping_survives_reopen_and_sync_then_explicit_release_resumes_address_matching() {
+        let path = std::env::temp_dir().join(format!(
+            "shellbeam-komari-mapping-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        {
+            let mut conn = rusqlite::Connection::open(&path).unwrap();
+            prepare_mapping_db(&conn);
+            let saved = super::edit_mapping(&mut conn, &edit("node", Some("two"), 0)).unwrap();
+            assert_eq!(saved.revision, 1);
+        }
+        {
+            let mut conn = rusqlite::Connection::open(&path).unwrap();
+            super::initialize(&conn).unwrap();
+            assert_eq!(
+                super::mapping_state(&conn, "server").unwrap().mappings[0].host_id,
+                "two"
+            );
+            super::persist_sync(&mut conn, &sync(1, "two", "manual")).unwrap();
+            assert_eq!(
+                super::mapping_state(&conn, "server").unwrap().mappings[0].source,
+                "manual"
+            );
+            let canonical: String = conn.query_row("SELECT host_id FROM probe_snapshots WHERE vault_id='vault-a' AND provider_id='server'", [], |row| row.get(0)).unwrap();
+            assert_eq!(canonical, "two");
+            // A missing node's empty sync preserves its manual intent.
+            let mut absent = sync(1, "two", "manual");
+            absent.snapshots.clear();
+            absent.mappings.clear();
+            super::persist_sync(&mut conn, &absent).unwrap();
+            assert_eq!(
+                super::mapping_state(&conn, "server")
+                    .unwrap()
+                    .mappings
+                    .len(),
+                1
+            );
+            super::edit_mapping(&mut conn, &edit("node", None, 1)).unwrap();
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM probe_snapshots", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 0);
+            super::persist_sync(&mut conn, &sync(2, "one", "address")).unwrap();
+            let mapping = super::mapping_state(&conn, "server").unwrap();
+            assert_eq!(mapping.mappings[0].host_id, "one");
+            assert_eq!(mapping.mappings[0].source, "address");
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn stale_sync_or_edit_and_foreign_host_never_reassign_or_publish_snapshots() {
+        let mut conn = mapping_db();
+        super::persist_sync(&mut conn, &sync(0, "one", "address")).unwrap();
+        super::edit_mapping(&mut conn, &edit("node", Some("two"), 0)).unwrap();
+        assert_eq!(
+            super::persist_sync(&mut conn, &sync(0, "one", "address")).unwrap_err(),
+            "KOMARI_MAPPING_CONFLICT"
+        );
+        assert_eq!(
+            super::edit_mapping(&mut conn, &edit("node", Some("one"), 0)).unwrap_err(),
+            "KOMARI_MAPPING_CONFLICT"
+        );
+        assert_eq!(
+            super::edit_mapping(&mut conn, &edit("other", Some("foreign"), 1)).unwrap_err(),
+            "KOMARI_MAPPING_HOST_UNAVAILABLE"
+        );
+        let mut foreign = edit("other", Some("one"), 1);
+        foreign.vault_id = "vault-b".into();
+        assert_eq!(
+            super::edit_mapping(&mut conn, &foreign).unwrap_err(),
+            "KOMARI_MAPPING_SCOPE_MISMATCH"
+        );
+        assert_eq!(
+            super::edit_mapping(&mut conn, &edit("other", Some("two"), 1)).unwrap_err(),
+            "KOMARI_MAPPING_HOST_ALREADY_BOUND"
+        );
+        assert_eq!(super::mapping_state(&conn, "server").unwrap().revision, 1);
+        for table in ["komari_snapshots", "probe_snapshots"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0);
+        }
+    }
+
+    #[test]
+    fn whole_sync_projects_the_retained_newest_sample_to_both_provider_caches() {
+        let mut conn = mapping_db();
+        let mut latest = sync(0, "one", "address");
+        latest.snapshots[0].sampled_at = 200;
+        latest.snapshots[0].updated_at = Some(300);
+        latest.snapshots[0].snapshot["health"] = json!("newer");
+        super::persist_sync(&mut conn, &latest).unwrap();
+        let mut old_backfill = sync(0, "one", "address");
+        old_backfill.snapshots[0].sampled_at = 100;
+        old_backfill.snapshots[0].updated_at = Some(400);
+        old_backfill.snapshots[0].snapshot["health"] = json!("older");
+        super::persist_sync(&mut conn, &old_backfill).unwrap();
+        for table in ["komari_snapshots", "probe_snapshots"] {
+            let row: (i64, i64, String) = conn
+                .query_row(
+                    &format!("SELECT sampled_at,updated_at,snapshot_json FROM {table}"),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!((row.0, row.1), (200, 300));
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&row.2).unwrap()["health"],
+                "newer"
+            );
+        }
+    }
+
+    #[test]
+    fn automatic_reassignment_removes_old_latest_caches_without_touching_history() {
+        let mut conn = mapping_db();
+        conn.execute_batch("CREATE TABLE provider_metric_history(host_id TEXT,node_id TEXT); INSERT INTO provider_metric_history VALUES('one','node');").unwrap();
+        super::persist_sync(&mut conn, &sync(0, "one", "address")).unwrap();
+        super::persist_sync(&mut conn, &sync(0, "two", "address")).unwrap();
+        for table in ["komari_snapshots", "probe_snapshots"] {
+            let hosts: Vec<String> = conn
+                .prepare(&format!("SELECT host_id FROM {table}"))
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert_eq!(hosts, ["two"]);
+        }
+        assert_eq!(
+            conn.query_row("SELECT host_id FROM provider_metric_history", [], |row| row
+                .get::<_, String>(0))
+                .unwrap(),
+            "one"
+        );
+    }
 
     #[test]
     fn ids_reject_empty_and_control_characters() {

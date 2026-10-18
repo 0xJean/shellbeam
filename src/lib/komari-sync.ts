@@ -13,7 +13,7 @@ import {
 import { mapKomariNodesToHosts, type KomariMappingResult } from './komari-mapping'
 import { createKomariProbeProvider } from './komari-probe-provider'
 import type { ProbeSnapshot } from './probe-provider'
-import { getProbeProviderRegistry, refreshProbeSnapshotFreshness } from './probe-scheduler'
+import { ProbeProviderRegistry, refreshProbeSnapshotFreshness } from './probe-scheduler'
 import {
   komariAlertObservationsFromSummary,
   komariAlertObservationsFromProbeSnapshot,
@@ -216,13 +216,18 @@ export async function syncKomariIntegration(options: {
     metricsTtlMs: ttlMs,
     alertSummary: alerts,
   })
-  const probeRegistry = getProbeProviderRegistry().register(provider)
+  // The integration's mapping revision is checked when the whole sync commits.
+  // Do not publish intermediate host snapshots through the process-wide cache:
+  // a user may rebind a node while this remote request is still in flight.
+  const probeRegistry = new ProbeProviderRegistry(DEFAULT_KOMARI_SYNC_CONCURRENCY, {
+    list: async () => [], save: async () => undefined, remove: async () => undefined,
+  }).register(provider)
   const snapshots = await mapWithConcurrency(
     mapping.mappings,
     options.maxConcurrency ?? DEFAULT_KOMARI_SYNC_CONCURRENCY,
     async (item) => {
       const host = options.hosts.find((candidate) => candidate.id === item.hostId)
-      if (!host) return null
+      if (!host || !nodeByHostId.get(item.hostId)) return null
       const scheduled = await probeRegistry.probe({
         host,
         vaultId: options.vaultId,

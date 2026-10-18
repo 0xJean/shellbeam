@@ -242,15 +242,20 @@ export function attachShellbeamProbeToKomariSnapshot(
  * secret handling are reused automatically.
  */
 export async function checkKomariLinkedProbe(options: {
+  vaultId?: string
   integrationId: string
   nodeId: string
   mappings: MappingWithIntegration[]
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   now?: number
+  validateTarget?: (target: KomariProbeTarget) => Promise<void>
 }): Promise<{ target: KomariProbeTarget; result: ShellbeamAgentCommandResult }> {
   const target = resolveKomariProbeTarget(options)
-  const result = await checkShellbeamAgent(target.host, options.resolveAuthSecret, options.now ?? Date.now())
+  await options.validateTarget?.(target)
+  const result = options.vaultId
+    ? await checkShellbeamAgent(target.host, options.resolveAuthSecret, options.now ?? Date.now(), options.vaultId)
+    : await checkShellbeamAgent(target.host, options.resolveAuthSecret, options.now ?? Date.now())
   return { target, result }
 }
 
@@ -277,6 +282,7 @@ export async function runKomariLinkedProbeOperation(options: {
   alertId?: string
   alertActor?: string
   onAlertState?: (state: KomariAlertState) => void
+  validateTarget?: (target: KomariProbeTarget) => Promise<void>
 }): Promise<{ target: KomariProbeTarget; result: ShellbeamAgentOperationResult | null; alertState?: KomariAlertState }> {
   const target = resolveKomariProbeTarget(options)
   const result = await runShellbeamAgentOperation({
@@ -288,6 +294,7 @@ export async function runKomariLinkedProbeOperation(options: {
     version: options.version,
     confirmMessage: options.confirmMessage ?? `Confirm ${options.action} for the ShellBeam Probe linked to Komari node ${target.nodeId}?`,
     onRecord: options.onRecord,
+    beforeExecute: () => options.validateTarget?.(target) ?? Promise.resolve(),
   })
   if (!result?.job?.jobId || !options.alertState || !options.alertId) return { target, result }
   const linked = await persistKomariAlertOperationLink({

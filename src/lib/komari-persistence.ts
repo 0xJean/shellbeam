@@ -7,6 +7,7 @@ import {
 } from './komari-alerts'
 import type { ProbeSnapshot } from './probe-provider'
 import type { KomariHostMapping } from './komari-mapping'
+import { getProbeProviderRegistry } from './probe-scheduler'
 
 /** A durable ProbeSnapshot row returned by the local Komari cache. */
 export interface KomariSnapshotRecord {
@@ -33,6 +34,28 @@ export interface KomariSnapshotPayload {
 
 export interface KomariMappingRecord extends KomariHostMapping {
   integrationId: string
+}
+
+export interface KomariMappingState {
+  mappings: KomariMappingRecord[]
+  revision: number
+}
+export const KOMARI_MAPPING_CHANGED_EVENT = 'shellbeam:komari-mapping-changed'
+
+export function manualKomariMappings(mappings: readonly KomariHostMapping[]): Record<string, string> {
+  return Object.fromEntries(mappings.filter((mapping) => mapping.source === 'manual').map((mapping) => [mapping.hostId, mapping.nodeId]))
+}
+
+export async function getKomariMappingState(vaultId: string, integrationId: string): Promise<KomariMappingState> {
+  return invoke<KomariMappingState>('get_komari_mapping_state', { vaultId: required(vaultId, 'vault id'), integrationId: required(integrationId, 'integration id') })
+}
+
+export async function editKomariMapping(options: { vaultId: string; integrationId: string; nodeId: string; hostId: string | null; expectedRevision: number }): Promise<KomariMappingState> {
+  const saved = await invoke<KomariMappingState>('edit_komari_mapping', { payload: options })
+  getProbeProviderRegistry().invalidateProvider(options.vaultId, options.integrationId)
+  window.dispatchEvent(new CustomEvent(KOMARI_MAPPING_CHANGED_EVENT, { detail: { vaultId: options.vaultId, integrationId: options.integrationId } }))
+  window.dispatchEvent(new Event('shellbeam:host-ops-refresh'))
+  return saved
 }
 
 export interface KomariMappingPayload {
@@ -207,6 +230,8 @@ export async function replaceKomariMappings(
 /** Persist one complete sync in a single SQLite transaction. */
 export async function persistKomariSync(options: {
   integrationId: string
+  vaultId?: string
+  expectedMappingRevision?: number
   snapshots: ProbeSnapshot[]
   mappings: KomariHostMapping[]
   updatedAt?: number
@@ -219,6 +244,8 @@ export async function persistKomariSync(options: {
   return invoke<void>('persist_komari_sync', {
     payload: {
       integrationId,
+      ...(options.vaultId ? { vaultId: options.vaultId } : {}),
+      ...(options.expectedMappingRevision === undefined ? {} : { expectedMappingRevision: options.expectedMappingRevision }),
       lastSyncedAt: updatedAt,
       ttlMs: options.ttlMs ?? 60_000,
       alertSummary: options.alertState

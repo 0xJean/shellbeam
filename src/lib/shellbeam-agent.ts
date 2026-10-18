@@ -6,6 +6,7 @@ import type { ProbeCapability, ProbeProvider, ProbeProviderRef, ProbeSnapshot } 
 import { createProbeObservation, getProbeTransport } from './probe-provider'
 import type { ServerMonitorSnapshot } from './server-monitor'
 import type { WorkspaceInventory } from './workspace-inventory'
+import type { CommandRunResult } from './sessions'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
 import { remoteOperationStatus } from './operation-verification'
 
@@ -40,7 +41,7 @@ export interface ShellbeamAgentRecord {
 
 export type ShellbeamAgentInput = Partial<ShellbeamAgentRecord> & Pick<ShellbeamAgentRecord, 'hostId' | 'status' | 'transport'>
 
-export interface ShellbeamAgentCommandResult {
+export interface ShellbeamAgentCommandResult extends Pick<CommandRunResult, 'errorType' | 'errorCode' | 'verifiedHostKeys' | 'hostIdentity'> {
   record: ShellbeamAgentRecord
   snapshot?: ProbeSnapshot
   stdout: string
@@ -291,7 +292,9 @@ export async function checkShellbeamAgent(host: HostProfile, resolveAuthSecret: 
     : normalizeShellbeamAgentRecord({ hostId: host.id, status: 'unknown', health: 'unknown', transport: getProbeTransport(host), lastCheckedAt: now, lastErrorCode: `agent_check_exit_${result.exitCode}`, lastError: 'Agent probe command did not complete successfully' }, receivedAt)
   const observation = completed ? parseShellbeamAgentObservation(result.stdout, record, host, receivedAt) : shellbeamAgentRecordToProbeSnapshot(record, host, receivedAt)
   const snapshot = observation ? { ...observation, host: { ...(result.hostIdentity ?? observation.host), ...(result.verifiedHostKeys ? { verifiedHostKeys: result.verifiedHostKeys } : {}) } } : undefined
-  return { record, snapshot, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, durationMs: result.durationMs }
+  // Preserve the native outcome for callers that put this read in an
+  // OperationJob. Exit code zero alone cannot prove a completed SSH read.
+  return { ...result, record, snapshot }
 }
 
 export async function runShellbeamAgentOperation(options: {
@@ -303,6 +306,7 @@ export async function runShellbeamAgentOperation(options: {
   version?: string
   confirmMessage?: string
   onRecord?: (record: ShellbeamAgentRecord) => void
+  beforeExecute?: () => Promise<void>
 }): Promise<ShellbeamAgentOperationResult | null> {
   const { host, resolveAuthSecret, action, vaultId = 'local', installPath, version, confirmMessage, onRecord } = options
   const plan = buildShellbeamAgentPlan(action, { installPath, version })
@@ -314,7 +318,7 @@ export async function runShellbeamAgentOperation(options: {
       provider: 'shellbeam-agent', transport: operationTransport(host),
       paramsSummary: `path=${initial.installPath ?? SHELLBEAM_AGENT_DEFAULT_PATH}${version ? `; version=${version}` : ''}`,
       confirmMessage: confirmMessage ?? `Confirm ${action} for the ShellBeam Probe on ${host.name}?`,
-      execute: () => runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: plan.command }),
+      execute: async () => { await options.beforeExecute?.(); return runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: plan.command }) },
       getResult: (result) => result,
       onJob: () => undefined,
     })

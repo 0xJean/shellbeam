@@ -34,4 +34,10 @@ describe('Komari host mapping', () => {
     expect(result.mappings).toEqual([])
     expect(result.conflicts).toEqual([{ nodeId: 'n1', hostIds: ['h1', 'h2'], reason: 'address-ambiguous' }])
   })
+
+  it('retains a manual binding while its node is absent and reserves the host from automatic reuse', () => {
+    const result = mapKomariNodesToHosts({ hosts: [host('h1', '10.0.0.1')], nodes: [node('new-node', '10.0.0.1')], explicit: { h1: 'temporarily-absent' } })
+    expect(result.mappings).toEqual([expect.objectContaining({ hostId: 'h1', nodeId: 'temporarily-absent', source: 'manual' })])
+    expect(result.unmappedNodes).toEqual(['new-node'])
+  })
 })

@@ -116,7 +116,7 @@ const en: Record<string, string> = {
   'workspace.komariProbe.state.offline': 'Offline',
   'workspace.komariProbe.state.unknown': 'Unknown',
   'workspace.komariProbe.action.check-probe': 'Check probe',
-  'workspace.komariProbe.action.install-probe': 'Install probe',
+  'workspace.komariProbe.action.install-probe': 'Review probe installation',
   'workspace.komariProbe.mappingNotice.title': 'Komari mapping needs attention',
   'workspace.komariProbe.mappingNotice.description': '{unmapped} node(s) are unmapped; {conflicts} mapping conflict(s) need review.',
   'komariAlerts.title': 'Komari alerts',

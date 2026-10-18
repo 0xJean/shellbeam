@@ -42,14 +42,15 @@ export function mapKomariNodesToHosts(options: {
 }): KomariMappingResult {
   const now = options.now ?? Date.now()
   const hostById = new Map(options.hosts.map((host) => [host.id, host]))
-  const nodeById = new Map(options.nodes.map((node) => [node.uuid, node]))
   const usedHosts = new Set<string>()
   const usedNodes = new Set<string>()
   const mappings: KomariHostMapping[] = []
   const conflicts: KomariMappingConflict[] = []
 
   for (const [hostId, nodeId] of Object.entries(options.explicit ?? {})) {
-    if (!hostById.has(hostId) || !nodeById.has(nodeId)) continue
+    // A temporarily missing node must not release a user's explicit binding
+    // and let an unrelated address match claim that host on the next sync.
+    if (!hostById.has(hostId)) continue
     if (usedHosts.has(hostId) || usedNodes.has(nodeId)) {
       conflicts.push({ nodeId, hostIds: [hostId], reason: 'node-already-mapped' })
       continue

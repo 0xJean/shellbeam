@@ -114,6 +114,8 @@ pub fn run() {
             data::komari_persistence::list_komari_snapshots,
             data::komari_persistence::upsert_komari_snapshot,
             data::komari_persistence::list_komari_mappings,
+            data::komari_persistence::get_komari_mapping_state,
+            data::komari_persistence::edit_komari_mapping,
             data::komari_persistence::upsert_komari_mapping,
             data::komari_persistence::replace_komari_mappings,
             data::komari_persistence::persist_komari_sync,

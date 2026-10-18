@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { checkShellbeamAgent, createShellbeamAgentProbeProvider, buildShellbeamAgentPlan, deriveShellbeamAgentHealth, normalizeShellbeamAgentRecord, parseShellbeamAgentProbeOutput, recordShellbeamAgentHeartbeat, shellbeamAgentRecordToProbeSnapshot, parseShellbeamAgentObservation } from './shellbeam-agent'
 import type { HostProfile } from './hosts'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
+import { remoteOperationStatus } from './operation-verification'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('./workspace-remote', () => ({ runWorkspaceRemoteCommand: vi.fn() }))
@@ -30,6 +31,8 @@ describe('ShellBeam Probe lifecycle', () => {
     const checked = await checkShellbeamAgent(host, async () => '', now)
     expect(checked.record.health).toBe('unknown')
     expect(checked.snapshot?.metrics).toBeNull()
+    expect(checked.errorType).toBe('unknown')
+    expect(remoteOperationStatus(checked)).toBe('unknown')
   })
   it('normalizes lifecycle records and derives heartbeat health without changing SSH semantics', () => {
     const record = normalizeShellbeamAgentRecord({

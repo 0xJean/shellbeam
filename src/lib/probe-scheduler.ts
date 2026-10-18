@@ -285,6 +285,14 @@ export class ProbeProviderRegistry {
     // cache without a scope must never delete another vault's record.
   }
 
+  /** A local source reassignment invalidates latest observations, never history. */
+  invalidateProvider(vaultId: string, providerId: string) {
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(`${vaultId}:komari:${providerId}:`)) this.cache.delete(key)
+    }
+    this.hydratedRecords = this.hydratedRecords.filter((record) => record.vaultId !== vaultId || record.providerId !== providerId || record.providerKind !== 'komari')
+  }
+
   async clearScoped(vaultId: string, hostId?: string) {
     const normalizedVaultId = vaultId.trim()
     if (!normalizedVaultId) return

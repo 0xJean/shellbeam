@@ -57,6 +57,11 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
         .map_err(|err| format!("Open probe persistence db failed: {err}"))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|err| format!("Configure probe persistence db failed: {err}"))?;
+    initialize(&conn)?;
+    Ok(conn)
+}
+
+pub(crate) fn initialize(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;
@@ -80,7 +85,7 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
         "#,
     )
     .map_err(|err| format!("Initialize probe persistence db failed: {err}"))?;
-    Ok(conn)
+    Ok(())
 }
 
 fn id(value: &str, field: &str) -> Result<String, String> {
@@ -118,7 +123,10 @@ fn payload_values(
     Ok((vault, kind, provider, host, raw, updated))
 }
 
-fn insert_snapshot(tx: &Transaction<'_>, payload: &ProbeSnapshotPayload) -> Result<(), String> {
+pub(crate) fn insert_snapshot(
+    tx: &Transaction<'_>,
+    payload: &ProbeSnapshotPayload,
+) -> Result<(), String> {
     let (vault, kind, provider, host, raw, updated) = payload_values(payload)?;
     tx.execute(
         r#"

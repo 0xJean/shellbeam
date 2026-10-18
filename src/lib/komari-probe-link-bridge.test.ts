@@ -67,4 +67,13 @@ describe('Komari probe action bridge', () => {
     expect(resolveAuthSecret).not.toHaveBeenCalled()
     expect(checkShellbeamAgent).not.toHaveBeenCalled()
   })
+
+  it('revalidates a queued target before a check and after lifecycle confirmation', async () => {
+    const validateTarget = vi.fn(async () => { throw new Error('KOMARI_MAPPING_CONFLICT') })
+    await expect(checkKomariLinkedProbe({ integrationId: 'komari-prod', nodeId: 'node-1', mappings: [mapping], hosts: [host], resolveAuthSecret: async () => '', validateTarget })).rejects.toThrow('KOMARI_MAPPING_CONFLICT')
+    expect(checkShellbeamAgent).not.toHaveBeenCalled()
+    vi.mocked(runShellbeamAgentOperation).mockImplementation(async (options) => { await options.beforeExecute?.(); return null })
+    await expect(runKomariLinkedProbeOperation({ integrationId: 'komari-prod', nodeId: 'node-1', mappings: [mapping], hosts: [host], resolveAuthSecret: async () => '', action: 'install', validateTarget })).rejects.toThrow('KOMARI_MAPPING_CONFLICT')
+    expect(validateTarget).toHaveBeenCalledTimes(2)
+  })
 })
