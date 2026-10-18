@@ -90,6 +90,10 @@ export function PcSessionTabBar({
         return (
           <div
             key={session.sessionId}
+            data-testid="pc-session-tab"
+            data-host-id={session.hostId}
+            data-status={session.status}
+            data-connection-stage={session.connectionStage}
             className={cn(
               'group flex h-10 shrink-0 items-center gap-1.5 rounded-t-md pl-3 pr-1 text-xs font-medium transition-colors md:h-8',
               isActive

@@ -37,6 +37,21 @@ async function exists(driver, css) { return (await driver.findAll(css)).length >
 async function enabled(driver, css) { const value = await driver.attr(css, 'disabled'); return value === null || value === false || value === 'false' }
 async function waitEnabled(driver, css) { await driver.waitFor(css); await driver.until(() => enabled(driver, css)) }
 
+// Read only the error already displayed to the user, then discard its text.
+// Report only these fixed categories; remote errors may contain private data.
+export function classifyOpsUiConnectionFailure(value) {
+  const text = String(value)
+  for (const stage of ['target', 'jump']) {
+    for (const operation of ['credential_unavailable', 'unreachable', 'session_failed', 'handshake_failed', 'auth_failed', 'host_key_failed']) {
+      if (text.includes(`SSH ${stage} ${operation}`)) return `${stage}_${operation}`
+    }
+  }
+  for (const code of ['VAULT_LOCKED', 'JUMP_HOST_NOT_FOUND', 'HOST_NOT_FOUND', 'JUMP_CHAIN_UNSUPPORTED', 'MISSING_CREDENTIAL', 'UNSUPPORTED_AUTH_TYPE']) {
+    if (text.includes(code)) return code.toLowerCase()
+  }
+  return 'connection_error'
+}
+
 function validateFixture(fixture) {
   check(fixture && fixture.hosts && fixture.schemaVersion === 1, 'invalid_fixture')
   for (const role of roles) {
@@ -62,7 +77,7 @@ async function openDashboardPage(driver, page) {
   else await driver.waitFor(S.audit)
 }
 
-async function createHost(driver, fixture, role, state) {
+async function createHost(driver, fixture, role, state, record) {
   const host = fixture.hosts[role]
   await openDashboardPage(driver, 'hosts')
   await driver.click(S.create)
@@ -71,6 +86,10 @@ async function createHost(driver, fixture, role, state) {
   await driver.fill(testId('host-port'), String(host.port))
   await driver.fill(testId('host-username'), host.user)
   await driver.fill(testId('host-name'), host.name)
+  check(await driver.attr(testId('host-address'), 'value') === host.address
+    && Number(await driver.attr(testId('host-port'), 'value')) === host.port
+    && await driver.attr(testId('host-username'), 'value') === host.user
+    && await driver.attr(testId('host-name'), 'value') === host.name, 'host_fields_not_entered')
   await driver.click(testId('host-auth-private-key'))
   await driver.waitFor(testId('host-private-key'))
   // Only the disposable fixture key enters the genuine credential form. Do
@@ -78,6 +97,7 @@ async function createHost(driver, fixture, role, state) {
   const privateKey = await readFile(host.privateKeyPath, 'utf8')
   check(privateKey.length > 100 && privateKey.length <= 65536 && /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(privateKey), 'invalid_fixture_key')
   await driver.fill(testId('host-private-key'), privateKey)
+  check(String(await driver.attr(testId('host-private-key'), 'value')).replaceAll('\r\n', '\n') === privateKey.replaceAll('\r\n', '\n'), 'private_key_ui_roundtrip_failed')
   await driver.fill(testId('host-secret-name'), `ops-ui-${role}-private-key`)
   check(await driver.attr(testId('host-secret-name'), 'value') === `ops-ui-${role}-private-key`, 'secret_reference_not_explicit')
   if (role === 'via') {
@@ -94,11 +114,15 @@ async function createHost(driver, fixture, role, state) {
   const id = await driver.attr(card, 'data-host-id')
   check(typeof id === 'string' && id.length > 0, 'saved_host_id_missing')
   state.hostIds[role] = id
+  await record(`ops-ui-${role}-host-saved`, { passed: true, explicitReference: true, privateKeyRoundtrip: true, jumpProfileSelected: role === 'via' })
 }
 
-async function connectAndVerify(driver, fixture, role, state) {
+async function connectAndVerify(driver, fixture, role, state, record) {
   await openDashboardPage(driver, 'hosts')
   await driver.click(`${byHost(state.hostIds[role])} ${testId('host-connect')}`)
+  await record(`ops-ui-${role}-connection-clicked`, { passed: true })
+  const tab = `${testId('pc-session-tab')}[data-host-id=${q(state.hostIds[role])}]`
+  let lastTabState = null
   await driver.until(async () => {
     if (await exists(driver, S.hostKey)) {
       const address = await driver.attr(S.hostKey, 'data-host')
@@ -107,9 +131,28 @@ async function connectAndVerify(driver, fixture, role, state) {
       check(endpoint && await driver.attr(S.hostKey, 'data-code') === 'host_key_unknown', 'host_key_endpoint_or_change_rejected')
       const expected = normalizeFingerprint(fixture.hosts[endpoint].expectedFingerprint)
       check(normalizeFingerprint(await driver.text(S.fingerprint)) === expected, 'host_key_fingerprint_mismatch')
+      await record(`ops-ui-${role}-fingerprint-verified`, { endpoint, matched: true })
       state.verifiedEndpoints.add(endpoint)
       await driver.click(S.trust)
+      await record(`ops-ui-${role}-fingerprint-trusted`, { endpoint, accepted: true })
       return false
+    }
+    if (await exists(driver, tab)) {
+      const status = await driver.attr(tab, 'data-status')
+      const stage = await driver.attr(tab, 'data-connection-stage')
+      const safeStatus = ['connecting', 'connected', 'error', 'disconnected'].includes(status) ? status : 'unknown'
+      const safeStage = ['resolve_host', 'open_tcp', 'verify_host', 'secure_session', 'authenticate', 'prepare_workspace'].includes(stage) ? stage : 'unknown'
+      const tabState = `${safeStatus}:${safeStage}`
+      if (lastTabState !== tabState) {
+        await record(`ops-ui-${role}-session-state`, { status: safeStatus, stage: safeStage })
+        lastTabState = tabState
+      }
+      if (status === 'error') {
+        const message = await exists(driver, testId('session-connection-error')) ? await driver.text(testId('session-connection-error')) : ''
+        const code = classifyOpsUiConnectionFailure(message)
+        await record(`ops-ui-${role}-connection-failed`, { code })
+        throw new Error(`ops_ui_${code}`)
+      }
     }
     return exists(driver, `${testId('terminal-session')}[data-host-id=${q(state.hostIds[role])}][data-status="connected"]`)
   }, { timeoutMs: 90000 })
@@ -167,8 +210,8 @@ export async function setupOpsUiJourney({ driver, fixture, record }) {
   check((await driver.findAll(testId('host-card'))).length === 0, 'existing_hosts_refused')
   await record('ops-ui-fresh-vault', { initialized: true, welcomeDismissed: true, existingHosts: 0 })
   for (const role of roles) {
-    await createHost(driver, fixture, role, state)
-    await connectAndVerify(driver, fixture, role, state)
+    await createHost(driver, fixture, role, state, record)
+    await connectAndVerify(driver, fixture, role, state, record)
     await record(`ops-ui-${role}-connection`, { passed: true, fingerprintHash: hash(normalizeFingerprint(fixture.hosts[role].expectedFingerprint)) })
   }
   for (const role of incidentRoles) await configureRule(driver, fixture, role, state)

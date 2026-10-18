@@ -28,6 +28,7 @@ jobs:
         with:
           workspaces: src-tauri
           shared-key: ops-ui-release
+          cache-on-failure: true
       - name: Install real native UI and observation dependencies
         run: |
           sudo apt-get update
@@ -36,7 +37,7 @@ jobs:
       - run: npm ci
       - name: Verify transport, report and fixture guards
         run: |
-          node --test scripts/ops-ui-driver.test.mjs scripts/ops-ui-notifications.test.mjs scripts/ci-ops-ui-live.test.mjs
+          node --test scripts/ops-ui-driver.test.mjs scripts/ops-ui-journey.test.mjs scripts/ops-ui-notifications.test.mjs scripts/ci-ops-ui-live.test.mjs
           bash -n scripts/ci-ops-ui-live.sh
       - name: Install pinned external Tauri WebDriver
         run: cargo install tauri-driver --version 0.1.5 --locked --root "$RUNNER_TEMP/shellbeam-webdriver"

@@ -81,6 +81,19 @@ async function readFixture(env) {
 }
 
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`
+async function verifyFixtureAuthentication(fixture, record) {
+  for (const role of ['jump', 'direct', 'via']) {
+    const host = fixture.hosts[role]
+    // Validate fixture setup independently, without sharing this observer's
+    // pinned known-hosts with the app or replacing its graphical trust flow.
+    await exec('ssh', ['-F', '/dev/null', '-oBatchMode=yes', '-oIdentitiesOnly=yes',
+      '-oStrictHostKeyChecking=yes', `-oUserKnownHostsFile=${fixture.observerKnownHostsPath}`,
+      '-oGlobalKnownHostsFile=/dev/null', '-oConnectTimeout=5', '-oLogLevel=ERROR',
+      '-i', host.privateKeyPath, '-p', String(host.port), `${host.user}@${host.address}`, 'true'],
+    { timeout: 10_000, maxBuffer: 4096 }).catch(() => { throw new Error('ops_ui_fixture_authentication_failed') })
+    record('fixture-authentication-verified', { role, independentlyPinned: true })
+  }
+}
 async function observe(fixture, role) {
   const host = fixture.hosts[role]
   const { stdout } = await exec('ssh', [
@@ -214,6 +227,8 @@ export async function main(env = process.env) {
     assert(commit.trim() === env.GITHUB_SHA, 'exact checked-out commit')
     const { setupOpsUiJourney, runOpsUiIncidents, resumeOpsUiJourney } = await import('./ops-ui-journey.mjs')
     const { runOpsUiNotifications } = await import('./ops-ui-notifications.mjs')
+    stage = 'fixture-authentication'
+    await verifyFixtureAuthentication(fixture, record)
     stage = 'launch'
     console.log('ShellBeam UI: launch installed application')
     await launch()
