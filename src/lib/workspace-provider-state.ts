@@ -116,7 +116,10 @@ export function buildWorkspaceProviderState(options: WorkspaceProviderStateOptio
   const vaultId = options.vaultId?.trim() || host.vaultId
   const data = options.data ?? emptyData()
   const profiles = (options.hosts ?? [host]).filter((candidate) => !vaultId || !candidate.vaultId || candidate.vaultId === vaultId).map((candidate) => vaultId && !candidate.vaultId ? { ...candidate, vaultId } : candidate)
-  const hosts = [host, ...profiles.filter((candidate) => candidate.id !== host.id)]
+  const jump = host.jumpHostId ? profiles.find((candidate) => candidate.id === host.jumpHostId) : undefined
+  // Overview projects one target. Keep its referenced route available without
+  // rebuilding every other host on each freshness tick.
+  const hosts = jump && jump.id !== host.id ? [host, jump] : [host]
   const key = getServerMonitorHostKey(host)
   const komari = data.komari.filter((entry) => entry.integration.vaultId === vaultId && entry.integration.enabled)
   const integrationById = new Map(komari.map((entry) => [entry.integration.id, entry]))

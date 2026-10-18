@@ -131,6 +131,10 @@ describe('Workspace provider projection', () => {
     const correctRoute = { ...wrongRoute, host: { ...wrongRoute.host, jump: { hostId: jump.id, address: jump.address, port: jump.port, username: jump.username } } }
     expect(buildWorkspaceProviderState({ host: target, hosts: [target, jump], vaultId: 'vault-a', data: data([row(wrongRoute)]), now }).view?.metrics).toBeNull()
     expect(buildWorkspaceProviderState({ host: target, hosts: [target, jump], vaultId: 'vault-a', data: data([row(correctRoute)]), now }).source?.kind).toBe('shellbeam-agent')
+    const mixedFleet = [{ ...jump, vaultId: 'vault-b', address: 'foreign-bastion' }, { ...target, vaultId: 'vault-b', address: 'foreign-target' }, { ...host, id: 'unrelated-host' }, target, jump]
+    const scoped = buildWorkspaceProviderState({ host: target, hosts: mixedFleet, vaultId: 'vault-a', data: data([row(correctRoute)]), now })
+    expect(scoped.source?.kind).toBe('shellbeam-agent')
+    expect(scoped.view?.route).toMatchObject({ transport: 'proxy-jump', jumpHost: jump.address, jumpPort: jump.port, jumpUser: jump.username })
     expect(buildWorkspaceProviderState({ host: target, hosts: [target], vaultId: 'vault-a', data: data([row(correctRoute)]), now }).view?.metrics).toBeNull()
     const changedAddress = { ...host, address: '10.0.0.99' }
     expect(buildWorkspaceProviderState({ host: changedAddress, vaultId: 'vault-a', data: data([row(probe())]), now }).source?.kind).toBe('komari')
