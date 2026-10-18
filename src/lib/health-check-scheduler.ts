@@ -3,6 +3,7 @@ import type { HostProfile } from './hosts'
 import { loadHealthChecks, loadHealthCheckHistory, latestHealthCheckResults, persistHealthCheckResult, runHealthCheck, type HealthCheckDefinition, type HealthCheckResult } from './health-checks'
 import { evaluateLocalAlertRules, type LocalAlertRule } from './local-alert-rules'
 import { dispatchLocalAlertNotifications, loadLocalAlertState, saveLocalAlertState } from './local-ops-store'
+import { operationTransport } from './operation-job'
 
 const inFlight = new Map<string, Promise<HealthCheckResult>>()
 const waiters: Array<() => void> = []
@@ -34,7 +35,7 @@ export function runAndPersistHealthCheck(options: {
   const work = (async () => {
     await acquire()
     try {
-      if (options.isCurrent && !options.isCurrent()) return { checkId: options.check.id, hostId: options.host.id, status: 'unknown' as const, checkedAt: options.now ?? Date.now(), nextCheckAt: (options.now ?? Date.now()) + options.check.intervalMs, durationMs: null, latencyMs: null, provider: 'ssh-agentless' as const, transport: options.host.jumpHost ? 'proxy-jump' as const : 'direct' as const }
+      if (options.isCurrent && !options.isCurrent()) return { checkId: options.check.id, hostId: options.host.id, status: 'unknown' as const, checkedAt: options.now ?? Date.now(), nextCheckAt: (options.now ?? Date.now()) + options.check.intervalMs, durationMs: null, latencyMs: null, provider: 'ssh-agentless' as const, transport: operationTransport(options.host) }
       await hydrateLocalOpsHost(options.vaultId, options.host.id)
       const result = await (options.run ? options.run() : runHealthCheck(options))
       if (options.isCurrent && !options.isCurrent()) return result

@@ -20,6 +20,22 @@ describe('local alert observations', () => {
       expect(rows[0].value).toBeNull()
     }
   })
+  it.each([
+    { name: 'saved jump reference', route: { jumpHost: undefined, jumpHostId: 'jump-profile' }, transport: 'proxy-jump' },
+    { name: 'direct host', route: { jumpHost: undefined, jumpHostId: undefined }, transport: 'direct' },
+  ] as const)('retains the $name route in service alerts and unavailable observations', async ({ route, transport }) => {
+    const profile = { ...host, ...route }
+    const runCommand = vi.fn().mockResolvedValue({ stdout: '__SB_RULE_SERVICE_0=failed\n', exitCode: 0 })
+    const failed = await collectLocalAlertObservations({ vaultId: 'vault', host: profile, rules: [rule], resolveAuthSecret: vi.fn(), now: 1_000, runCommand })
+    expect(runCommand).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ host: profile, vaultId: 'vault' }))
+    expect(failed).toEqual([expect.objectContaining({ ruleId: rule.id, value: 1, source: 'ssh-agentless', transport })])
+    const cpu = normalizeLocalAlertRule({ ...rule, id: 'cpu', metric: 'cpu' })
+    const unknown = await collectLocalAlertObservations({ host: profile, rules: [rule, cpu], resolveAuthSecret: vi.fn(), now: 2_000,
+      probe: vi.fn().mockRejectedValue(new Error('collection unavailable')),
+      runCommand: vi.fn().mockRejectedValue(new Error('collection unavailable')) })
+    expect(unknown).toHaveLength(2)
+    expect(unknown).toEqual(expect.arrayContaining([expect.objectContaining({ ruleId: rule.id, value: null, transport }), expect.objectContaining({ ruleId: cpu.id, value: null, transport })]))
+  })
   it('uses only fresh canonical Provider metrics and does not turn cached failure into recovery', async () => {
     const cpu = normalizeLocalAlertRule({ ...rule, id: 'cpu', metric: 'cpu' })
     const snapshot = { health: 'online', provider: { kind: 'ssh-agentless' }, transport: 'proxy-jump', metrics: { data: { cpuPercent: 95 }, freshness: { sampledAt: 100, expiresAt: 2_000 } } } as ProbeSnapshot

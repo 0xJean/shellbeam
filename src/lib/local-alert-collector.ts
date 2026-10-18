@@ -4,6 +4,7 @@ import type { ProbeSnapshot } from './probe-provider'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
 import type { LocalAlertObservation, LocalAlertRule } from './local-alert-rules'
 import type { CommandRunResult } from './sessions'
+import { operationTransport } from './operation-job'
 
 function quote(value: string) { return `'${value.replace(/'/g, `'\\''`)}'` }
 export function buildLocalServiceCheckCommand(targets: string[]) {
@@ -21,7 +22,7 @@ export async function collectLocalAlertObservations(options: {
   runCommand?: (options: { vaultId?: string; host: HostProfile; resolveAuthSecret: (host: HostProfile) => Promise<string>; command: string }) => Promise<CommandRunResult>
 }): Promise<LocalAlertObservation[]> {
   const now = options.now ?? Date.now()
-  const transport = options.host.jumpHost?.trim() ? 'proxy-jump' as const : 'direct' as const
+  const transport = operationTransport(options.host)
   const result: LocalAlertObservation[] = []
   const resources = options.rules.filter((r) => r.enabled && ['cpu', 'memory', 'disk'].includes(r.metric))
   if (resources.length) {

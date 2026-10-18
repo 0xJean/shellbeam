@@ -3,10 +3,12 @@ import type { HostProfile } from './hosts'
 import { defaultHealthCheck, latestHealthCheckResults, loadHealthCheckHistory, loadHealthChecks, persistHealthCheckResult, saveHealthChecks, type HealthCheckResult } from './health-checks'
 import { createHealthCheckScheduler, runAndPersistHealthCheck } from './health-check-scheduler'
 import { clearLocalOpsMemory, loadLocalAlertState } from './local-ops-store'
+import { runWorkspaceRemoteCommand } from './workspace-remote'
+vi.mock('./workspace-remote', () => ({ runWorkspaceRemoteCommand: vi.fn() }))
 const host = { id: 'host', name: 'edge', address: '10.0.0.1', port: 22, username: 'ops', authType: 'password', group: '', tags: [], createdAt: 1, updatedAt: 1 } as HostProfile
 const check = defaultHealthCheck(host)
 function result(status: HealthCheckResult['status'], at: number, checkId = check.id): HealthCheckResult { return { checkId, hostId: host.id, status, checkedAt: at, durationMs: 5, latencyMs: 5, transport: 'proxy-jump', provider: 'ssh-agentless', nextCheckAt: at + check.intervalMs } }
-beforeEach(() => { localStorage.clear(); clearLocalOpsMemory() })
+beforeEach(() => { localStorage.clear(); clearLocalOpsMemory(); vi.mocked(runWorkspaceRemoteCommand).mockReset() })
 describe('app-level health check scheduler', () => {
   it('hydrates nextCheckAt and respects locked vaults and disabled checks', async () => {
     const run = vi.fn(async () => result('passing', 2_000))
@@ -58,5 +60,40 @@ describe('app-level health check scheduler', () => {
     expect(JSON.stringify(loadHealthCheckHistory('vault', host.id))).not.toContain('private-key')
     expect(loadHealthCheckHistory('other', host.id)).toEqual([])
     expect(loadHealthCheckHistory('vault', 'other')).toEqual([])
+  })
+
+  it.each([
+    { label: 'saved jump reference', target: { ...host, jumpHostId: 'bastion-id' }, transport: 'proxy-jump' },
+    { label: 'direct host', target: host, transport: 'direct' },
+  ] as const)('retains the $label route through real check results, persisted history and alert recovery', async ({ target, transport }) => {
+    const runCommand = vi.mocked(runWorkspaceRemoteCommand)
+      .mockResolvedValueOnce({ stdout: '', stderr: 'Connection refused', exitCode: 1, durationMs: 5 })
+      .mockResolvedValueOnce({ stdout: '', stderr: 'Authentication failed', exitCode: 255, durationMs: 5, errorType: 'auth' })
+      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, durationMs: 5 })
+    for (const [status, at] of [['failing', 1_000], ['unknown', 2_000], ['passing', 3_000]] as const) {
+      expect(await runAndPersistHealthCheck({ vaultId: 'vault', host: target, check, resolveAuthSecret: vi.fn(), now: at, notify: false })).toMatchObject({ status, checkedAt: at, transport })
+      clearLocalOpsMemory()
+      expect(loadLocalAlertState('vault', target.id).alerts[0]).toMatchObject({ status: status === 'passing' ? 'resolved' : 'active', transport, source: 'ssh-agentless' })
+    }
+    expect(runCommand).toHaveBeenCalledTimes(3)
+    expect(runCommand).toHaveBeenCalledWith(expect.objectContaining({ host: target, vaultId: 'vault' }))
+    expect(loadHealthCheckHistory('vault', target.id).map(({ status, transport }) => ({ status, transport }))).toEqual([
+      { status: 'failing', transport }, { status: 'unknown', transport }, { status: 'passing', transport },
+    ])
+    expect(loadLocalAlertState('vault', target.id).audit.map(({ event }) => event)).toEqual(['opened', 'resolved'])
+  })
+
+  it.each([
+    { label: 'saved jump reference', target: { ...host, jumpHostId: 'bastion-id' }, transport: 'proxy-jump' },
+    { label: 'direct host', target: host, transport: 'direct' },
+  ] as const)('keeps the $label route when cancelled before sending without saving an observation', async ({ target, transport }) => {
+    const run = vi.fn()
+    const resolveAuthSecret = vi.fn()
+    expect(await runAndPersistHealthCheck({ vaultId: 'vault', host: target, check, resolveAuthSecret, now: 1_000, isCurrent: () => false, run, notify: false })).toMatchObject({ status: 'unknown', transport, checkedAt: 1_000, durationMs: null, latencyMs: null })
+    expect(run).not.toHaveBeenCalled()
+    expect(runWorkspaceRemoteCommand).not.toHaveBeenCalled()
+    expect(resolveAuthSecret).not.toHaveBeenCalled()
+    expect(loadHealthCheckHistory('vault', target.id)).toEqual([])
+    expect(loadLocalAlertState('vault', target.id)).toMatchObject({ alerts: [], audit: [], evaluations: [] })
   })
 })

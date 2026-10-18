@@ -3,6 +3,7 @@ import type { HostProfile } from './hosts'
 import type { CommandRunResult } from './sessions'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
 import { loadLocalAlertState, saveLocalAlertState, notifyLocalOpsChanged } from './local-ops-store'
+import { operationTransport } from './operation-job'
 
 export type HealthCheckKind = 'tcp' | 'http'
 export type HealthCheckStatus = 'passing' | 'failing' | 'unknown'
@@ -187,10 +188,6 @@ function classifyError(error: unknown): HealthCheckErrorCode {
   return 'unknown'
 }
 
-function transportFor(host: HostProfile): 'direct' | 'proxy-jump' {
-  return host.jumpHost?.trim() ? 'proxy-jump' : 'direct'
-}
-
 function baseResult(check: HealthCheckDefinition, host: HostProfile, now: number, status: HealthCheckStatus): HealthCheckResult {
   return {
     checkId: check.id,
@@ -199,7 +196,7 @@ function baseResult(check: HealthCheckDefinition, host: HostProfile, now: number
     checkedAt: now,
     durationMs: null,
     latencyMs: null,
-    transport: transportFor(host),
+    transport: operationTransport(host),
     provider: 'ssh-agentless',
     nextCheckAt: now + check.intervalMs,
   }

@@ -6,6 +6,7 @@ import { I18nProvider } from '@/lib/i18n'
 import { LocalAlertRulesPanel } from './local-alert-rules-panel'
 import { clearLocalOpsMemory, loadLocalAlertRules, loadLocalAlertState, saveLocalAlertState } from '@/lib/local-ops-store'
 import { EMPTY_LOCAL_ALERT_STATE, evaluateLocalAlertRules } from '@/lib/local-alert-rules'
+import { collectLocalAlertObservations } from '@/lib/local-alert-collector'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 const host: HostProfile = { id: 'host', name: 'edge', address: '10.0.0.1', port: 22, username: 'ops', authType: 'password', group: 'Custom', tags: [], createdAt: 1, updatedAt: 1 }
 beforeEach(() => {
@@ -48,5 +49,20 @@ describe('LocalAlertRulesPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add alert rule' }))
     expect(screen.getByRole('alert')).toHaveTextContent('Enter a valid rule')
     expect(loadLocalAlertRules('vault', 'host')).toEqual([])
+  })
+  it('shows the observed ProxyJump route for service alerts on a saved jump reference', async () => {
+    const profile = { ...host, jumpHostId: 'saved-bastion' }
+    render(<I18nProvider><LocalAlertRulesPanel activeVaultId="vault" hostId="host" host={profile} /></I18nProvider>)
+    fireEvent.change(screen.getByLabelText('Metric'), { target: { value: 'service' } })
+    fireEvent.change(screen.getByLabelText('Rule name'), { target: { value: 'Nginx failed' } })
+    fireEvent.change(screen.getByLabelText('Service unit'), { target: { value: 'nginx.service' } })
+    fireEvent.change(screen.getByLabelText('Trigger duration (seconds)'), { target: { value: '0' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add alert rule' }))
+    const rules = loadLocalAlertRules('vault', host.id)
+    const observations = await collectLocalAlertObservations({ vaultId: 'vault', host: profile, rules, resolveAuthSecret: vi.fn(), now: 1_000,
+      runCommand: vi.fn().mockResolvedValue({ stdout: '__SB_RULE_SERVICE_0=failed\n', exitCode: 0 }) })
+    act(() => saveLocalAlertState('vault', host.id, evaluateLocalAlertRules(EMPTY_LOCAL_ALERT_STATE, rules, observations, 1_000)))
+    expect(screen.getByTestId('local-alert-row')).toHaveAttribute('data-transport', 'proxy-jump')
+    expect(screen.getByTestId('local-alert-row')).toHaveTextContent('Nginx failed · Active · ssh-agentless · proxy-jump')
   })
 })

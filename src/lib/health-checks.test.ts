@@ -15,6 +15,7 @@ const host: HostProfile = {
   privateKeyRef: 'vault:key', jumpHost: 'bastion.internal', jumpPort: 22, jumpUser: 'jump',
   createdAt: 1, updatedAt: 1,
 }
+const savedJumpHost: HostProfile = { ...host, jumpHost: undefined, jumpPort: undefined, jumpUser: undefined, jumpHostId: 'bastion-id' }
 
 describe('health checks', () => {
   beforeEach(() => localStorage.clear())
@@ -38,6 +39,32 @@ describe('health checks', () => {
       runCommand: vi.fn().mockResolvedValue({ stdout: '__SB_CHECK_HTTP=204|0.012\n', stderr: '', exitCode: 0, durationMs: 17 }),
     })
     expect(result).toMatchObject({ status: 'passing', statusCode: 204, latencyMs: 12, transport: 'proxy-jump', provider: 'ssh-agentless', nextCheckAt: 5100 })
+  })
+
+  it.each([
+    { label: 'saved jump reference', target: savedJumpHost, transport: 'proxy-jump' },
+    { label: 'direct host', target: { ...savedJumpHost, jumpHostId: undefined }, transport: 'direct' },
+  ] as const)('preserves the $label route for successful, failed and unavailable checks', async ({ target, transport }) => {
+    const check = defaultHealthCheck(target)
+    const runCommand = vi.fn()
+      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, durationMs: 5 })
+      .mockResolvedValueOnce({ stdout: '', stderr: 'Connection refused', exitCode: 1, durationMs: 5 })
+      .mockResolvedValueOnce({ stdout: '', stderr: 'Authentication failed', exitCode: 255, durationMs: 5, errorType: 'auth' })
+      .mockRejectedValueOnce(new Error('ProxyJump connection unavailable'))
+    const resolveAuthSecret = vi.fn()
+    for (const expected of [
+      { status: 'passing' },
+      { status: 'failing', errorCode: 'command' },
+      { status: 'unknown', errorCode: 'auth' },
+      { status: 'unknown', errorCode: 'jump-unavailable' },
+    ]) {
+      expect(await runHealthCheck({ host: target, check, resolveAuthSecret, runCommand, now: 100 })).toMatchObject({ ...expected, transport })
+    }
+    expect(runCommand).toHaveBeenCalledTimes(4)
+    expect(runCommand).toHaveBeenCalledWith(expect.objectContaining({ host: target, resolveAuthSecret }))
+    const invalid = await runHealthCheck({ host: target, check: { ...check, target: 'bad;target' }, resolveAuthSecret, runCommand, now: 200 })
+    expect(invalid).toMatchObject({ status: 'unknown', errorCode: 'invalid-target', transport })
+    expect(runCommand).toHaveBeenCalledTimes(4)
   })
 
   it('classifies timeout as unknown and limits concurrent refreshes while honoring TTL', async () => {

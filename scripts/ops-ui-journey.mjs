@@ -177,7 +177,7 @@ async function configureRule(driver, fixture, role, state) {
   await driver.select(`${root} ${testId('local-rule-severity')}`, 'critical')
   await driver.click(`${root} ${testId('local-rule-add')}`)
   await driver.waitFor(`${root} ${testId('local-rule-row')}[data-rule-name=${q(state.ruleNames[role])}]`)
-  await driver.waitFor(`${root} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="active"]`, { timeoutMs: 120000 })
+  await driver.waitFor(`${root} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="active"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
 }
 
 // The providers mount the Vault modal alongside the animated Welcome page.
@@ -332,7 +332,7 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await record(`ops-ui-${role}-confirmed`, { passed: true, jobId: completed, verifiedActive: true })
     await openDashboardPage(driver, 'hosts')
     await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
-    await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"]`, { timeoutMs: 120000 })
+    await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
     await record(`ops-ui-${role}-recovered`, { passed: true })
   }
   return { passed: true, incidents: 2, cancelledJobs: 2, completedJobs: 2, resolvedAlerts: 2, maximumDiagnosisSteps: 3 }
@@ -358,7 +358,7 @@ export async function resumeOpsUiJourney({ driver, fixture, record, checkpoint, 
     await openDashboardPage(driver, 'hosts')
     const id = state.hostIds[role]
     await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
-    await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"]`, { timeoutMs: 120000 })
+    await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
     await record(`ops-ui-${role}-restored`, { passed: true, auditJobs: 2, alertResolved: true })
   }
   return { passed: true, hosts: 3, incidents: 2, restoredJobs: 4, maximumDiagnosisSteps: 3 }
