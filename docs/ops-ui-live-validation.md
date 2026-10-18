@@ -279,3 +279,30 @@ The seven Node contract suites pass 104 tests after the diagnostic correction,
 including each unavailable field, retained partial geometry after a real click
 failure, and rejection of malformed rectangles or unrelated transport errors.
 These tests do not replace another installed-app run.
+
+The twelfth [UI run 39108198018](https://github.com/0xJean/shellbeam/actions/runs/39108198018),
+head `c21ddf6e38b5a7d28801f2744dd7e5b8d8c8d13f`, merge checkout
+`0327f389e1953b6780cfff6e22b8eb101d710f0a`, reproduced the original via-row
+click failure after passing direct diagnosis, cancellation, exactly one confirmed
+restart and the real recovery banner. The new partial evidence confirms that
+the direct row was at `(198, 567, 611, 61)` while its list rectangle was refused;
+the Services window was 530 pixels high and its content area 475 pixels high.
+The via row and list were both refused before and after the one actual click;
+selected and pressed both remained false. Its controlled Services screenshot
+shows the via row below the content area's lower edge, with a current queued
+`service.list` incorrectly occupying the recovery warning above it. Cleanup and
+app exit passed. This is evidence of the clipped target and a failed native
+click, not an accepted diagnosis or recovery on that route.
+
+The next product correction removes the Services list's separate vertical
+scrollport and its clipping card, using the desktop/mobile window body's
+existing scroll instead. The source still limits the list to 40 units; action
+output remains independently bounded. On the narrow single-column layout the
+action card follows the full list, so long lists require more outer scrolling;
+fixed-width status columns may also require horizontal scrolling. This change
+does not establish mobile layout acceptance. The recovery-warning correction
+shows canonical unknown outcomes rather than active queued/running tasks. No
+window enlargement, skipped row click or extra driver scroll is introduced.
+The Services, incident, mobile shell and recovery components pass 27 tests and
+the production build passes; the actual installed-app journey must establish
+whether this resolves the native click and completes the remaining gates.

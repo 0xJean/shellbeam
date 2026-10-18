@@ -53,7 +53,6 @@ describe('workspace services app', () => {
     })
     expect(screen.getByRole('button', { name: /restart nginx.service/i })).toBeInTheDocument()
     expect(screen.getByTestId('workspace-services-app')).toHaveClass('space-y-4')
-    expect(screen.getByTestId('workspace-services-list')).toHaveClass('max-h-[28rem]', 'overflow-auto')
     expect(screen.getByTestId('workspace-services-output')).toHaveClass('max-h-[20rem]', 'overflow-auto')
   })
 

@@ -237,14 +237,16 @@ export function WorkspaceServicesApp({
         </div>
       ) : (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(20rem,0.8fr)]">
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
-            <div className="grid grid-cols-[minmax(0,1.4fr)_100px_100px_100px] gap-3 border-b border-border/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          <div className="rounded-xl border border-border/60 bg-card">
+            <div className="grid grid-cols-[minmax(0,1.4fr)_100px_100px_100px] gap-3 rounded-t-xl border-b border-border/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
               <div>{t('workspace.services.column.service')}</div>
               <div>{t('workspace.services.column.load')}</div>
               <div>{t('workspace.services.column.active')}</div>
               <div>{t('workspace.services.column.sub')}</div>
             </div>
-            <div data-testid="workspace-services-list" className="max-h-[28rem] overflow-auto">
+            {/* Desktop and mobile window bodies already scroll. A nested list
+                scrollport can extend beyond a short window and clip its rows. */}
+            <div data-testid="workspace-services-list">
               {loading ? (
                 <div className="px-4 py-6 text-sm text-muted-foreground">{t('workspace.services.loadingServices')}</div>
               ) : rows.length === 0 || snapshotScope !== scope ? (
@@ -259,7 +261,7 @@ export function WorkspaceServicesApp({
                       data-service-unit={row.name} data-active-state={row.active} aria-pressed={isSelected}
                       type="button"
                       onClick={() => setSelectedServiceName(row.name)}
-                      className={`grid w-full grid-cols-[minmax(0,1.4fr)_100px_100px_100px] gap-3 border-b border-border/40 px-4 py-3 text-left text-sm transition-colors last:border-b-0 ${
+                      className={`grid w-full grid-cols-[minmax(0,1.4fr)_100px_100px_100px] gap-3 border-b border-border/40 px-4 py-3 text-left text-sm transition-colors last:rounded-b-xl last:border-b-0 ${
                         isSelected ? 'bg-primary/10' : 'hover:bg-muted/40'
                       }`}
                     >
