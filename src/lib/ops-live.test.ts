@@ -3,9 +3,11 @@ import { createInterface, type Interface } from 'node:readline'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostProfile } from './hosts'
 import { buildDockerCommand, DOCKER_LIST_COMMAND, parseDockerContainers, runDockerContainerAction, type DockerContainer } from './docker-ops'
-import { runSiteOperation, runSiteSslScan } from './sites-ssl'
+import { buildCertificateOperationCommand, runCertificateOperation, runSiteOperation, runSiteSslScan } from './sites-ssl'
 import { getOperationJob, listOperationAudit, listOperationJobs, type OperationJob } from './operation-job'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
+import { runBatchDockerOperation, type BatchOperationResult } from './multi-host-operations'
+import type { CommandRunResult } from './sessions'
 
 // Only the Tauri boundary and human confirmation are substituted. Commands,
 // SSH/ProxyJump, Docker/nginx/OpenSSL output and SQLite jobs are all real.
@@ -14,13 +16,16 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: ipc.invoke }))
 const ENABLED = process.env.SHELLBEAM_OPS_LIVE === '1'
 const PREFIX = '__SHELLBEAM_OPS_LIVE__'
 type Route = 'direct' | 'jump'
+interface ContainerFixture { containerId: string; containerName: string }
+interface AcmeFixture { managedCertificatePath: string; certificateName: string; domains: string[]; issuerCAPath: string; transportCAPath: string; directoryUrl: string; initialSerial: string; initialNotAfter: number; httpsPort: number }
 interface Ready {
   type: 'ready'
   vaultId: string
-  hosts: Record<Route, HostProfile>
-  fixture: { containerId: string; containerName: string; siteName: string; server: 'nginx'; certificatePath: string; domains: string[]; logMarker?: string }
+  hosts: Record<Route, HostProfile> & { peerJump: HostProfile }
+  fixture: ContainerFixture & { siteName: string; server: 'nginx'; certificatePath: string; domains: string[]; expectedBody: string; logMarker?: string; peer: ContainerFixture; acme: AcmeFixture }
 }
-interface Stats { commandCount: number; mutationCount: number; byHost: Record<string, { commandCount: number; mutationCount: number }>; commands: Array<{ hostId: string; summary: string }> }
+interface Counts { commandCount: number; mutationCount: number; executedCommandCount: number }
+interface Stats extends Counts { byHost: Record<string, Counts>; commands: Array<{ hostId: string; summary: string; executed: boolean }> }
 interface Pending { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
 
 /** A real native test process, not a canned invoke response. Deliberately do
@@ -127,20 +132,87 @@ class NativeOpsBridge {
 const bridge = new NativeOpsBridge()
 const routes = ['direct', 'jump'] as const
 const retainedJobs: Array<Pick<OperationJob, 'jobId' | 'hostId' | 'status' | 'confirmationStatus' | 'transport'>> = []
+const retainedBatches: Array<{ batchId: string; jobs: Array<Pick<OperationJob, 'jobId' | 'hostId' | 'status' | 'confirmationStatus' | 'transport' | 'requestId' | 'source' | 'provider'>> }> = []
 const resolveAuthSecret = async () => { throw new Error('OPS_LIVE_CREDENTIALS_MUST_REMAIN_NATIVE') }
 const stats = () => bridge.request<Stats>('ops_live_control', { action: 'stats' })
 const jobs = (host: HostProfile) => listOperationJobs({ vaultId: bridge.ready.vaultId, hostId: host.id, source: 'workspace', limit: 500 })
-const control = (action: string) => bridge.request('ops_live_control', { action })
+const control = (action: string, hostId?: string) => bridge.request('ops_live_control', { action, ...(hostId ? { hostId } : {}) })
 
 function retain(job: OperationJob) {
   retainedJobs.push({ jobId: job.jobId, hostId: job.hostId, status: job.status, confirmationStatus: job.confirmationStatus, transport: job.transport })
 }
-async function containerFor(host: HostProfile): Promise<DockerContainer> {
+async function containerFor(host: HostProfile, fixture: ContainerFixture = bridge.ready.fixture): Promise<DockerContainer> {
   const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: DOCKER_LIST_COMMAND, audit: { action: 'docker.list', target: 'containers' } })
   expect(result.exitCode, 'real Docker list must complete').toBe(0)
-  const row = parseDockerContainers(result.stdout).find((entry) => entry.name === bridge.ready.fixture.containerName && bridge.ready.fixture.containerId.startsWith(entry.id))
+  const row = parseDockerContainers(result.stdout).find((entry) => entry.name === fixture.containerName && fixture.containerId.startsWith(entry.id))
   expect(Boolean(row), 'fixture immutable container must be discovered').toBe(true)
   return row!
+}
+const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
+async function certificateProof(host: HostProfile) {
+  const { managedCertificatePath, issuerCAPath } = bridge.ready.fixture.acme
+  // Independent OpenSSL checks complement the product scan/verification. No
+  // certificate/private-key bodies are emitted or persisted by this probe.
+  const path = shellQuote(managedCertificatePath)
+  const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret,
+    command: `openssl verify -CAfile ${shellQuote(issuerCAPath)} -untrusted ${path} ${path} >/dev/null && openssl x509 -in ${path} -noout -serial -startdate -enddate -ext subjectAltName`,
+    audit: { action: 'ssl.inspect', target: managedCertificatePath } })
+  expect(result.exitCode, 'managed certificate must verify against the private fixture issuer').toBe(0)
+  const serial = result.stdout.match(/^serial=([A-Fa-f0-9]+)$/m)?.[1].toUpperCase()
+  const notBefore = Date.parse(result.stdout.match(/^notBefore=(.+)$/m)?.[1] ?? '')
+  const notAfter = Date.parse(result.stdout.match(/^notAfter=(.+)$/m)?.[1] ?? '')
+  const domains = [...result.stdout.matchAll(/DNS:([^\s,]+)/g)].map((match) => match[1]).sort()
+  expect(Boolean(serial), 'real certificate serial must be readable').toBe(true)
+  expect(Number.isFinite(notBefore) && Number.isFinite(notAfter)).toBe(true)
+  expect(domains).toEqual(bridge.ready.fixture.acme.domains.slice().sort())
+  expect(notBefore).toBeLessThanOrEqual(Date.now())
+  expect(notAfter).toBeGreaterThan(Date.now())
+  return { serial: serial!, notBefore, notAfter, observedAt: Date.now() }
+}
+async function servedCertificateProof(host: HostProfile, diskSerial: string) {
+  const { domains, issuerCAPath, httpsPort } = bridge.ready.fixture.acme
+  for (const domain of domains) {
+    const script = `body=$(curl -q --noproxy '*' --proto '=https' --fail --silent --show-error --max-time 15 --cacert ${shellQuote(issuerCAPath)} --resolve ${shellQuote(`${domain}:${httpsPort}:127.0.0.1`)} ${shellQuote(`https://${domain}:${httpsPort}/`)}) || exit $?
+[ "$body" = ${shellQuote(bridge.ready.fixture.expectedBody)} ] || exit 65
+served=$(timeout 15 openssl s_client -connect ${shellQuote(`127.0.0.1:${httpsPort}`)} -servername ${shellQuote(domain)} -verify_return_error -verify_hostname ${shellQuote(domain)} -CAfile ${shellQuote(issuerCAPath)} -showcerts </dev/null 2>/dev/null) || exit $?
+printf '%s\\n' "$served" | openssl x509 -noout -serial`
+    // This verifies actual Nginx deployment independently of the product's
+    // on-disk post-state contract. TLS is verified for each SAN; no -k or
+    // certificate/key bodies reach the result or SQLite audit.
+    const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: `bash -o pipefail -c ${shellQuote(script)}`, audit: { action: 'ssl.https.verify', target: domain } })
+    expect(result.exitCode, 'real HTTPS must verify hostname/issuer, fixed content and the served certificate').toBe(0)
+    expect(result.errorType).toBeUndefined()
+    expect(result.stdout.match(/^serial=([A-Fa-f0-9]+)$/m)?.[1].toUpperCase()).toBe(diskSerial)
+  }
+}
+function batchHosts() { return [bridge.ready.hosts.direct, bridge.ready.hosts.peerJump] }
+function batchOptions(dockerAction: 'start' | 'stop' | 'restart', label: string) {
+  return { hosts: batchHosts(), selectedHostIds: batchHosts().map((host) => host.id), vaultId: bridge.ready.vaultId, containerName: bridge.ready.fixture.containerName, dockerAction, resolveAuthSecret, confirmMessage: 'Operate both isolated Docker targets?', maxConcurrency: 2, requestId: `ops-live:batch:${label}:${crypto.randomUUID()}` }
+}
+const hostCount = (value: Stats, host: HostProfile): Counts => value.byHost[host.id] ?? { commandCount: 0, mutationCount: 0, executedCommandCount: 0 }
+
+/** Batch identity is the production batchId/requestId grouping. There is no
+ * separate parent OperationJob in this model, and this test does not invent one. */
+async function assertBatchAudit(batch: Pick<BatchOperationResult<CommandRunResult>, 'batchId' | 'selectedHostIds' | 'outcomes'>) {
+  const belongs = (job: OperationJob) => batch.selectedHostIds.some((hostId) => job.requestId === `${batch.batchId}:${hostId}`)
+  const grouped = (await listOperationJobs({ vaultId: bridge.ready.vaultId, source: 'workspace', limit: 500 })).filter(belongs)
+  expect(grouped.map((job) => job.jobId).sort()).toEqual(batch.outcomes.map((outcome) => outcome.job!.jobId).sort())
+  expect(grouped).toHaveLength(2)
+  expect((await listOperationJobs({ vaultId: bridge.ready.vaultId, source: 'terminal', limit: 500 })).filter(belongs)).toEqual([])
+  for (const outcome of batch.outcomes) {
+    const job = grouped.find((entry) => entry.jobId === outcome.job?.jobId)!
+    expect(job).toMatchObject({ vaultId: bridge.ready.vaultId, hostId: outcome.host.id, source: 'workspace', provider: 'ssh-agentless', requestId: `${batch.batchId}:${outcome.host.id}`, status: outcome.status, transport: outcome.transport })
+    const scoped = (await jobs(outcome.host)).filter(belongs)
+    expect(scoped.map((entry) => entry.jobId)).toEqual([job.jobId])
+    const audit = await listOperationAudit({ vaultId: bridge.ready.vaultId, hostId: outcome.host.id, source: 'workspace', jobId: job.jobId, limit: 100 })
+    expect(audit.length).toBeGreaterThanOrEqual(2)
+    expect(audit.every((entry) => entry.vaultId === bridge.ready.vaultId && entry.hostId === outcome.host.id && entry.source === 'workspace' && entry.transport === outcome.transport)).toBe(true)
+    expect(await listOperationAudit({ vaultId: bridge.ready.vaultId, hostId: outcome.host.id, source: 'terminal', jobId: job.jobId, limit: 100 })).toEqual([])
+    await assertAudit(job, outcome.host, outcome.status)
+  }
+}
+function retainBatch(batch: BatchOperationResult<CommandRunResult>) {
+  retainedBatches.push({ batchId: batch.batchId, jobs: batch.outcomes.map(({ job }) => ({ jobId: job!.jobId, hostId: job!.hostId, status: job!.status, confirmationStatus: job!.confirmationStatus, transport: job!.transport, requestId: job!.requestId, source: job!.source, provider: job!.provider })) })
 }
 async function assertAudit(job: OperationJob, host: HostProfile, status = job.status) {
   const stored = await getOperationJob(job.jobId)
@@ -160,11 +232,27 @@ describe.skipIf(!ENABLED)('Real isolated SSH Docker / Sites / SSL and SQLite aud
     expect(bridge.ready.vaultId).toBe('ops-live-vault')
     expect(bridge.ready.hosts.direct.id).toBe('ops-live-direct')
     expect(bridge.ready.hosts.jump.id).toBe('ops-live-jump')
+    expect(bridge.ready.hosts.peerJump.id).toBe('ops-live-peer-jump')
     expect(bridge.ready.fixture.domains).toHaveLength(2)
     expect(bridge.ready.fixture.server).toBe('nginx')
     expect(bridge.ready.hosts.direct.vaultId).toBe(bridge.ready.vaultId)
     expect(bridge.ready.hosts.jump.vaultId).toBe(bridge.ready.vaultId)
     expect(Boolean(bridge.ready.hosts.jump.jumpHostId || bridge.ready.hosts.jump.jumpHost)).toBe(true)
+    expect(bridge.ready.hosts.peerJump.vaultId).toBe(bridge.ready.vaultId)
+    expect(Boolean(bridge.ready.hosts.peerJump.jumpHostId || bridge.ready.hosts.peerJump.jumpHost)).toBe(true)
+    expect(`${bridge.ready.hosts.peerJump.address}:${bridge.ready.hosts.peerJump.port}`).not.toBe(`${bridge.ready.hosts.direct.address}:${bridge.ready.hosts.direct.port}`)
+    expect(bridge.ready.fixture.peer.containerName).toBe(bridge.ready.fixture.containerName)
+    expect(bridge.ready.fixture.peer.containerId).toMatch(/^[a-f0-9]{64}$/)
+    expect(bridge.ready.fixture.peer.containerId).not.toBe(bridge.ready.fixture.containerId)
+    expect(bridge.ready.fixture.acme.managedCertificatePath).toBe(`/etc/letsencrypt/live/${bridge.ready.fixture.acme.certificateName}/fullchain.pem`)
+    expect(bridge.ready.fixture.acme.domains.slice().sort()).toEqual(bridge.ready.fixture.domains.slice().sort())
+    expect(bridge.ready.fixture.acme.initialSerial).toMatch(/^[A-Fa-f0-9]+$/)
+    expect(bridge.ready.fixture.acme.initialNotAfter).toBeGreaterThan(Date.now())
+    expect(Number.isInteger(bridge.ready.fixture.acme.httpsPort) && bridge.ready.fixture.acme.httpsPort > 1024 && bridge.ready.fixture.acme.httpsPort <= 65535).toBe(true)
+    expect(typeof bridge.ready.fixture.expectedBody === 'string' && bridge.ready.fixture.expectedBody.length > 0 && bridge.ready.fixture.expectedBody.length <= 240).toBe(true)
+    const directory = new URL(bridge.ready.fixture.acme.directoryUrl)
+    expect(directory.protocol).toBe('https:')
+    expect(['localhost', '127.0.0.1', '[::1]']).toContain(directory.hostname)
     const wireReady = JSON.stringify(bridge.ready)
     expect(/BEGIN [A-Z ]*PRIVATE KEY/.test(wireReady)).toBe(false)
     expect(Object.values(bridge.ready.hosts).some((host) => Object.hasOwn(host, 'privateKey') || Object.hasOwn(host, 'password'))).toBe(false)
@@ -310,6 +398,184 @@ describe.skipIf(!ENABLED)('Real isolated SSH Docker / Sites / SSL and SQLite aud
     expect((await stats()).mutationCount - before.mutationCount).toBe(1)
   })
 
+  it.each(routes)('%s: executes product Certbot dry-run and renewal against private ACME HTTP01, independently verifying the live serial and expiry', async (route: Route) => {
+    const host = bridge.ready.hosts[route]
+    const baseline = await certificateProof(host)
+    vi.mocked(window.confirm).mockClear()
+    const beforeDryRun = await stats()
+    const knownDryJobs = new Set((await jobs(host)).map((job) => job.jobId))
+    const dryRun = await runCertificateOperation({ host, resolveAuthSecret, operation: 'renew-dry-run', confirmMessage: 'Dry-run renewal of the isolated private-ACME lineage?' })
+    expect(dryRun?.value.exitCode).toBe(0)
+    expect(dryRun?.value.verification.status).toBe('verified')
+    expect(dryRun?.job).toMatchObject({ action: 'ssl.renew-dry-run', status: 'completed', confirmationStatus: 'confirmed', paramsSummary: buildCertificateOperationCommand('renew-dry-run'), transport: route === 'jump' ? 'proxy-jump' : 'direct' })
+    expect(dryRun?.value.verifiedHostKeys?.map((key) => key.stage).sort()).toEqual(route === 'jump' ? ['jump', 'target'] : ['target'])
+    expect(window.confirm).toHaveBeenCalledTimes(1)
+    const afterDryRun = await stats()
+    expect(afterDryRun.commandCount - beforeDryRun.commandCount).toBe(1)
+    expect(afterDryRun.mutationCount - beforeDryRun.mutationCount).toBe(1)
+    expect((await jobs(host)).filter((job) => !knownDryJobs.has(job.jobId))).toHaveLength(1)
+    await assertAudit(dryRun!.job, host)
+    retain(dryRun!.job)
+    const afterDryProof = await certificateProof(host)
+    expect(afterDryProof.serial).toBe(baseline.serial)
+    expect(afterDryProof.notBefore).toBe(baseline.notBefore)
+    expect(afterDryProof.notAfter).toBe(baseline.notAfter)
+
+    // X.509 validity has one-second resolution. Cross the observed second
+    // before issuance so a genuinely renewed fixed-duration cert can extend.
+    await new Promise((resolve) => setTimeout(resolve, 1050 - Date.now() % 1000))
+    vi.mocked(window.confirm).mockClear()
+    const beforeRenewal = await stats()
+    const knownRenewalJobs = new Set((await jobs(host)).map((job) => job.jobId))
+    const renewal = await runCertificateOperation({ host, resolveAuthSecret, operation: 'renew', confirmMessage: 'Renew the isolated private-ACME lineage?' })
+    expect(renewal?.value.exitCode).toBe(0)
+    expect(renewal?.value.verification.status).toBe('verified')
+    expect(renewal?.value.verification.summary).toMatch(/expiry extended=[1-9][0-9]*/)
+    expect(renewal?.job).toMatchObject({ action: 'ssl.renew', status: 'completed', confirmationStatus: 'confirmed', paramsSummary: buildCertificateOperationCommand('renew'), transport: route === 'jump' ? 'proxy-jump' : 'direct' })
+    expect(renewal?.value.verifiedHostKeys?.map((key) => key.stage).sort()).toEqual(route === 'jump' ? ['jump', 'target'] : ['target'])
+    expect(window.confirm).toHaveBeenCalledTimes(1)
+    const afterRenewal = await stats()
+    expect(afterRenewal.commandCount - beforeRenewal.commandCount).toBe(3)
+    expect(afterRenewal.mutationCount - beforeRenewal.mutationCount).toBe(1)
+    expect((await jobs(host)).filter((job) => !knownRenewalJobs.has(job.jobId))).toHaveLength(1)
+    await assertAudit(renewal!.job, host)
+    retain(renewal!.job)
+    const afterRenewProof = await certificateProof(host)
+    expect(afterRenewProof.serial).not.toBe(afterDryProof.serial)
+    expect(afterRenewProof.notBefore).toBeGreaterThanOrEqual(afterDryProof.notBefore)
+    expect(afterRenewProof.notAfter).toBeGreaterThan(afterDryProof.notAfter)
+    const observed = renewal!.value.snapshot?.certificates.find((certificate) => certificate.path === bridge.ready.fixture.acme.managedCertificatePath)
+    expect(observed).toMatchObject({ hostId: host.id, serial: afterRenewProof.serial, notBefore: afterRenewProof.notBefore, notAfter: afterRenewProof.notAfter, transport: route === 'jump' ? 'proxy-jump' : 'direct' })
+    expect(observed?.domains.slice().sort()).toEqual(bridge.ready.fixture.acme.domains.slice().sort())
+    expect(renewal!.value.snapshot?.errorCode).toBeUndefined()
+    await servedCertificateProof(host, afterRenewProof.serial)
+  })
+
+  it.each(routes)('%s: rejecting either product certificate action creates one cancelled audit job with zero remote calls', async (route: Route) => {
+    const host = bridge.ready.hosts[route]
+    for (const operation of ['renew-dry-run', 'renew'] as const) {
+      vi.mocked(window.confirm).mockClear().mockReturnValue(false)
+      const before = await stats()
+      const known = new Set((await jobs(host)).map((job) => job.jobId))
+      const execution = await runCertificateOperation({ host, resolveAuthSecret, operation, confirmMessage: 'Cancel the isolated certificate action?' })
+      expect(execution).toBeNull()
+      expect(window.confirm).toHaveBeenCalledTimes(1)
+      const after = await stats()
+      expect(after.commandCount - before.commandCount).toBe(0)
+      expect(after.mutationCount - before.mutationCount).toBe(0)
+      const created = (await jobs(host)).filter((job) => !known.has(job.jobId))
+      expect(created).toHaveLength(1)
+      expect(created[0]).toMatchObject({ action: `ssl.${operation}`, status: 'cancelled', confirmationStatus: 'rejected' })
+      await assertAudit(created[0], host, 'cancelled')
+      retain(created[0])
+    }
+  })
+
+  it('keeps a real Certbot renewal unknown when its post-scan SSH disconnects and never replays the successful issuance', async () => {
+    const host = bridge.ready.hosts.jump
+    const baseline = await certificateProof(host)
+    await new Promise((resolve) => setTimeout(resolve, 1050 - Date.now() % 1000))
+    const before = await stats()
+    const known = new Set((await jobs(host)).map((job) => job.jobId))
+    await control('arm-disconnect-after-mutation', host.id)
+    try {
+      const renewal = await runCertificateOperation({ host, resolveAuthSecret, operation: 'renew', confirmMessage: 'Renew the isolated lineage before the controlled SSH disconnect?' })
+      expect(renewal?.value.exitCode).toBe(0)
+      expect(renewal?.value.verification.status).toBe('unknown')
+      expect(renewal?.job).toMatchObject({ action: 'ssl.renew', status: 'unknown', errorCode: 'remote_state_unknown', confirmationStatus: 'confirmed', transport: 'proxy-jump' })
+      expect(window.confirm).toHaveBeenCalledTimes(1)
+      const after = await stats()
+      expect(after.commandCount - before.commandCount).toBe(3)
+      expect(after.mutationCount - before.mutationCount).toBe(1)
+      expect(hostCount(after, host).executedCommandCount - hostCount(before, host).executedCommandCount).toBe(2)
+      expect((await jobs(host)).filter((job) => !known.has(job.jobId))).toHaveLength(1)
+      await assertAudit(renewal!.job, host, 'unknown')
+      retain(renewal!.job)
+    } finally { await control('restart-target', host.id) }
+    const current = await certificateProof(host)
+    expect(current.serial).not.toBe(baseline.serial)
+    expect(current.notAfter).toBeGreaterThan(baseline.notAfter)
+    await servedCertificateProof(host, current.serial)
+    expect((await stats()).mutationCount - before.mutationCount).toBe(1)
+  })
+
+  it('completes one bounded mixed-route batch against independent SSH targets and same-name containers with distinct immutable IDs', async () => {
+    const selected = batchHosts()
+    await containerFor(selected[0])
+    await containerFor(selected[1], bridge.ready.fixture.peer)
+    vi.mocked(window.confirm).mockClear()
+    const before = await stats()
+    const known = new Set((await listOperationJobs({ vaultId: bridge.ready.vaultId, source: 'workspace', limit: 500 })).map((job) => job.jobId))
+    const batch = await runBatchDockerOperation(batchOptions('restart', 'success'))
+    expect(batch).toMatchObject({ status: 'completed', completedCount: 2, failedCount: 0, unknownCount: 0, cancelledCount: 0, selectedHostIds: selected.map((host) => host.id) })
+    expect(window.confirm).toHaveBeenCalledTimes(1)
+    const after = await stats()
+    expect(after.commandCount - before.commandCount).toBe(6)
+    expect(after.mutationCount - before.mutationCount).toBe(2)
+    const expectedIds = [bridge.ready.fixture.containerId, bridge.ready.fixture.peer.containerId]
+    const targetKeys: string[] = []
+    for (const [index, outcome] of batch.outcomes.entries()) {
+      expect(outcome.job).toMatchObject({ status: 'completed', confirmationStatus: 'confirmed', transport: index === 0 ? 'direct' : 'proxy-jump' })
+      expect(outcome.value).toMatchObject({ exitCode: 0, verification: { status: 'verified' } })
+      expect(outcome.value!.stdout.trim()).toBe(expectedIds[index])
+      expect(outcome.value!.verifiedHostKeys?.map((key) => key.stage).sort()).toEqual(index === 0 ? ['target'] : ['jump', 'target'])
+      const targetKey = outcome.value!.verifiedHostKeys?.find((key) => key.stage === 'target')?.fingerprintSha256
+      expect(Boolean(targetKey)).toBe(true)
+      targetKeys.push(targetKey!)
+      expect(hostCount(after, outcome.host).commandCount - hostCount(before, outcome.host).commandCount).toBe(3)
+      expect(hostCount(after, outcome.host).mutationCount - hostCount(before, outcome.host).mutationCount).toBe(1)
+    }
+    expect(targetKeys[0]).not.toBe(targetKeys[1])
+    expect((await listOperationJobs({ vaultId: bridge.ready.vaultId, source: 'workspace', limit: 500 })).filter((job) => !known.has(job.jobId))).toHaveLength(2)
+    await assertBatchAudit(batch)
+    retainBatch(batch)
+    expect((await containerFor(selected[0])).running).toBe(true)
+    expect((await containerFor(selected[1], bridge.ready.fixture.peer)).running).toBe(true)
+  })
+
+  it('cancels the mixed batch once and persists both rejected child jobs with zero remote calls or writes', async () => {
+    vi.mocked(window.confirm).mockReturnValue(false)
+    const before = await stats()
+    const known = new Set((await listOperationJobs({ vaultId: bridge.ready.vaultId, source: 'workspace', limit: 500 })).map((job) => job.jobId))
+    const batch = await runBatchDockerOperation(batchOptions('stop', 'cancelled'))
+    expect(batch).toMatchObject({ status: 'cancelled', completedCount: 0, failedCount: 0, unknownCount: 0, cancelledCount: 2 })
+    expect(window.confirm).toHaveBeenCalledTimes(1)
+    const after = await stats()
+    expect(after.commandCount - before.commandCount).toBe(0)
+    expect(after.mutationCount - before.mutationCount).toBe(0)
+    expect((await listOperationJobs({ vaultId: bridge.ready.vaultId, source: 'workspace', limit: 500 })).filter((job) => !known.has(job.jobId))).toHaveLength(2)
+    for (const outcome of batch.outcomes) expect(outcome.job).toMatchObject({ status: 'cancelled', confirmationStatus: 'rejected', errorCode: 'confirmation_rejected' })
+    await assertBatchAudit(batch)
+    retainBatch(batch)
+  })
+
+  it('keeps only the independent jump target unknown after one mutation and a real post-state SSH disconnect, without replaying either write', async () => {
+    const [direct, peer] = batchHosts()
+    const before = await stats()
+    await control('arm-disconnect-after-mutation', peer.id)
+    try {
+      const batch = await runBatchDockerOperation(batchOptions('restart', 'partial'))
+      expect(batch).toMatchObject({ status: 'partial', completedCount: 1, failedCount: 0, unknownCount: 1, cancelledCount: 0 })
+      expect(window.confirm).toHaveBeenCalledTimes(1)
+      expect(batch.outcomes.find((outcome) => outcome.host.id === direct.id)?.job).toMatchObject({ status: 'completed', confirmationStatus: 'confirmed', transport: 'direct' })
+      expect(batch.outcomes.find((outcome) => outcome.host.id === peer.id)?.job).toMatchObject({ status: 'unknown', confirmationStatus: 'confirmed', transport: 'proxy-jump', errorCode: 'remote_state_unknown' })
+      const after = await stats()
+      expect(after.commandCount - before.commandCount).toBe(6)
+      expect(after.mutationCount - before.mutationCount).toBe(2)
+      for (const host of [direct, peer]) {
+        expect(hostCount(after, host).commandCount - hostCount(before, host).commandCount).toBe(3)
+        expect(hostCount(after, host).mutationCount - hostCount(before, host).mutationCount).toBe(1)
+      }
+      expect(hostCount(after, direct).executedCommandCount - hostCount(before, direct).executedCommandCount).toBe(3)
+      expect(hostCount(after, peer).executedCommandCount - hostCount(before, peer).executedCommandCount).toBe(2)
+      await assertBatchAudit(batch)
+      retainBatch(batch)
+    } finally { await control('restart-target', peer.id) }
+    expect((await containerFor(peer, bridge.ready.fixture.peer)).running).toBe(true)
+    expect((await containerFor(direct)).running).toBe(true)
+    expect((await stats()).mutationCount - before.mutationCount).toBe(2)
+  })
+
   it('recovers identical scoped SQLite job/audit outcomes after the native bridge process restarts', async () => {
     expect(retainedJobs.some((job) => job.status === 'completed')).toBe(true)
     expect(retainedJobs.some((job) => job.status === 'cancelled')).toBe(true)
@@ -324,10 +590,22 @@ describe.skipIf(!ENABLED)('Real isolated SSH Docker / Sites / SSL and SQLite aud
       expect(restored?.transport).toBe(job.transport)
       await assertAudit(restored!, host, job.status)
     }
+    expect(retainedBatches).toHaveLength(3)
+    for (const batch of retainedBatches) {
+      const grouped = (await listOperationJobs({ vaultId: bridge.ready.vaultId, source: 'workspace', limit: 500 })).filter((job) => batch.jobs.some((child) => child.requestId === job.requestId))
+      expect(grouped).toHaveLength(2)
+      const outcomes = batch.jobs.map((expected) => {
+        const job = grouped.find((entry) => entry.jobId === expected.jobId)!
+        expect(job).toMatchObject(expected)
+        const host = Object.values(bridge.ready.hosts).find((entry) => entry.id === expected.hostId)!
+        return { host, job, status: job.status, transport: job.transport as 'direct' | 'proxy-jump' }
+      })
+      await assertBatchAudit({ batchId: batch.batchId, selectedHostIds: outcomes.map((outcome) => outcome.host.id), outcomes })
+    }
     // The controlled bridge rejects a foreign scope before dispatch; do not
     // replace this refusal with invented empty database responses.
     await expect(listOperationJobs({ vaultId: 'ops-live-foreign-vault', limit: 500 })).rejects.toThrow('OPS_LIVE_NATIVE_COMMAND_FAILED')
     await expect(listOperationAudit({ vaultId: 'ops-live-foreign-vault', limit: 500 })).rejects.toThrow('OPS_LIVE_NATIVE_COMMAND_FAILED')
-    console.log('Ops live acceptance passed: real loopback direct/ProxyJump SSH, Docker, Nginx/OpenSSL and temporary SQLite; no desktop, production Vault or Certbot issuance claim.')
+    console.log('Ops live acceptance passed: real loopback direct/ProxyJump SSH, independent mixed-batch Docker targets, Nginx/OpenSSL, private-ACME HTTP01 Certbot dry-run/renewal and cross-process scoped SQLite audit; no desktop, production Vault or public-CA renewal claim.')
   })
 })

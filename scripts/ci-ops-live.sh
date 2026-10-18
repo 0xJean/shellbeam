@@ -20,7 +20,7 @@ fail() { printf 'ShellBeam live fixture: %s\n' "$1" >&2; exit 1; }
 ops_os_id=$(awk -F= '$1 == "ID" { gsub(/"/, "", $2); print $2 }' /etc/os-release)
 [[ $ops_os_id == ubuntu ]] || fail 'only disposable Ubuntu runners are supported'
 
-for ops_command in docker nginx openssl sshd busybox systemctl curl node python3 file dpkg-query sha256sum install realpath setsid timeout cmp stat getent; do
+for ops_command in docker dockerd nginx openssl sshd busybox systemctl curl node python3 file dpkg-query sha256sum install realpath setsid timeout cmp stat getent; do
   command -v "$ops_command" >/dev/null 2>&1 || fail "required dependency is missing: $ops_command"
 done
 [[ $(dpkg-query -W -f='${Status}' busybox-static 2>/dev/null) == 'install ok installed' ]] || fail 'busybox-static must be installed'
@@ -50,6 +50,11 @@ ops_fixture_dir=$(mktemp -d "$ops_runner_temp/shellbeam-ops-live-${GITHUB_RUN_ID
 chmod 700 "$ops_fixture_dir"
 ops_fixture_id=$(basename "$ops_fixture_dir" | tr '[:upper:]' '[:lower:]')
 ops_container_name=$ops_fixture_id
+ops_peer_docker_host=unix://$ops_fixture_dir/peer.sock
+# Dockerd also creates x/containerd/containerd.sock.ttrpc beneath exec-root. Keep
+# that longest controlled socket below Linux sockaddr_un's 108-byte budget.
+ops_peer_containerd_socket=$ops_fixture_dir/x/containerd/containerd.sock.ttrpc
+[[ ${#ops_peer_containerd_socket} -lt 108 ]] || fail 'private Docker socket path exceeds the Unix socket budget'
 ops_image_tag=$ops_fixture_id:fixture
 ops_cert_path=/etc/ssl/certs/$ops_fixture_id.pem
 ops_site_path=/etc/nginx/conf.d/$ops_fixture_id.conf
@@ -62,6 +67,10 @@ ops_cert_created=0
 ops_document_root_created=0
 ops_docker_touched=0
 ops_node_pgid=
+ops_peer_docker_pgid=
+ops_peer_docker_ready=0
+ops_peer_image_created=0
+ops_peer_container_created=0
 ops_cleanup_failed=0
 
 cleanup() {
@@ -79,6 +88,9 @@ cleanup() {
     kill -KILL -- "-$ops_node_pgid" 2>/dev/null
     wait "$ops_node_pgid" 2>/dev/null
   fi
+  if declare -F ops_acme_cleanup >/dev/null; then
+    ops_acme_cleanup || ops_cleanup_failed=1
+  fi
   if [[ $ops_nginx_touched == 1 ]]; then
     systemctl stop nginx.service >/dev/null 2>&1 || ops_cleanup_failed=1
     if [[ $ops_site_created == 1 ]]; then rm -f -- "$ops_site_path" || ops_cleanup_failed=1; fi
@@ -94,6 +106,22 @@ cleanup() {
     rm -f -- "$ops_site_path" || ops_cleanup_failed=1
   fi
   if [[ $ops_docker_touched == 1 ]]; then
+    if [[ $ops_peer_docker_ready == 1 ]]; then
+      if [[ $ops_peer_container_created == 1 ]]; then
+        if [[ $(timeout 10 docker --host "$ops_peer_docker_host" container inspect --format '{{index .Config.Labels "app.shellbeam.ops-live"}}' "$ops_container_name" 2>/dev/null) == "$ops_fixture_id" ]]; then
+          timeout 15 docker --host "$ops_peer_docker_host" container rm --force "$ops_container_name" >/dev/null 2>&1 || ops_cleanup_failed=1
+        else
+          ops_cleanup_failed=1
+        fi
+      fi
+      if [[ $ops_peer_image_created == 1 ]]; then
+        if [[ $(timeout 10 docker --host "$ops_peer_docker_host" image inspect --format '{{index .Config.Labels "app.shellbeam.ops-live"}}' "$ops_image_tag" 2>/dev/null) == "$ops_fixture_id" ]]; then
+          timeout 15 docker --host "$ops_peer_docker_host" image rm "$ops_image_tag" >/dev/null 2>&1 || ops_cleanup_failed=1
+        else
+          ops_cleanup_failed=1
+        fi
+      fi
+    fi
     if [[ $(docker container inspect --format '{{index .Config.Labels "app.shellbeam.ops-live"}}' "$ops_container_name" 2>/dev/null) == "$ops_fixture_id" ]]; then
       docker container rm --force "$ops_container_name" >/dev/null 2>&1 || ops_cleanup_failed=1
     fi
@@ -101,9 +129,28 @@ cleanup() {
       docker image rm "$ops_image_tag" >/dev/null 2>&1 || ops_cleanup_failed=1
     fi
   fi
+  if [[ -n $ops_peer_docker_pgid ]]; then
+    if kill -0 "$ops_peer_docker_pgid" 2>/dev/null; then
+      kill -TERM "$ops_peer_docker_pgid" 2>/dev/null
+      for _ in {1..100}; do
+        kill -0 "$ops_peer_docker_pgid" 2>/dev/null || break
+        sleep 0.1
+      done
+      if kill -0 "$ops_peer_docker_pgid" 2>/dev/null; then
+        kill -KILL -- "-$ops_peer_docker_pgid" 2>/dev/null
+        ops_cleanup_failed=1
+      fi
+    fi
+    wait "$ops_peer_docker_pgid" 2>/dev/null || true
+  fi
   if [[ $ops_cert_created == 1 ]]; then rm -f -- "$ops_cert_path" || ops_cleanup_failed=1; fi
   if [[ $ops_document_root_created == 1 ]]; then rm -rf -- "$ops_document_root" || ops_cleanup_failed=1; fi
-  if [[ $ops_fixture_dir == "$ops_runner_temp"/shellbeam-ops-live-* && -d $ops_fixture_dir && ! -L $ops_fixture_dir ]]; then
+  # Retain private state when a service or owned-path cleanup could not be
+  # confirmed. In particular, never leave a global Certbot symlink pointing at
+  # a tree that the helper deliberately retained after an ownership failure.
+  if [[ $ops_cleanup_failed != 0 ]]; then
+    :
+  elif [[ $ops_fixture_dir == "$ops_runner_temp"/shellbeam-ops-live-* && -d $ops_fixture_dir && ! -L $ops_fixture_dir ]]; then
     rm -rf -- "$ops_fixture_dir" || ops_cleanup_failed=1
   else
     ops_cleanup_failed=1
@@ -153,6 +200,11 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+[[ -f $ops_project/scripts/ci-ops-acme.sh ]] || fail 'the private ACME fixture helper is missing'
+# The sourced helper owns only fixture ACME processes, private files and its
+# collision-checked temporary Certbot lineage. It does not start on source.
+source "$ops_project/scripts/ci-ops-acme.sh"
+
 cp --preserve=all -- /etc/nginx/nginx.conf "$ops_fixture_dir/nginx.conf.original"
 [[ ! -e $ops_site_path && ! -L $ops_site_path && ! -e $ops_cert_path && ! -L $ops_cert_path && ! -e $ops_document_root && ! -L $ops_document_root ]] || fail 'fixture resource name collision'
 ops_site_name=$ops_fixture_id.test
@@ -200,6 +252,36 @@ for _ in {1..50}; do
   sleep 0.1
 done
 [[ $ops_container_ready == 1 ]] || fail 'fixture container did not emit its real readiness marker'
+
+# A second real Docker daemon gives the peer SSH endpoint independent state:
+# the production batch API resolves the same name to two different full IDs.
+# No bridge, packet-filter rules, registry pull or host daemon config is used.
+setsid dockerd --host "$ops_peer_docker_host" \
+  --data-root "$ops_fixture_dir/peer-docker-data" \
+  --exec-root "$ops_fixture_dir/x" \
+  --pidfile "$ops_fixture_dir/peer-docker.pid" \
+  --containerd-namespace "$ops_fixture_id-peer" \
+  --containerd-plugins-namespace "$ops_fixture_id-peer-plugins" \
+  --storage-driver vfs --bridge none --iptables=false --ip6tables=false \
+  --ip-forward=false --ip-masq=false --log-level error \
+  >"$ops_fixture_dir/peer-dockerd.log" 2>&1 &
+ops_peer_docker_pgid=$!
+for _ in {1..100}; do
+  kill -0 "$ops_peer_docker_pgid" 2>/dev/null || fail 'private Docker daemon exited before readiness'
+  if timeout 2 docker --host "$ops_peer_docker_host" info >/dev/null 2>&1; then ops_peer_docker_ready=1; break; fi
+  sleep 0.1
+done
+[[ $ops_peer_docker_ready == 1 ]] || fail 'private Docker daemon did not become ready'
+timeout 30 docker image save --output "$ops_fixture_dir/peer-image.tar" "$ops_image_tag" || fail 'fixture image export failed'
+timeout 30 docker --host "$ops_peer_docker_host" image load --input "$ops_fixture_dir/peer-image.tar" >"$ops_fixture_dir/peer-image-load.log" 2>&1 || fail 'private fixture image import failed'
+ops_peer_image_created=1
+ops_peer_container_id=$(timeout 30 docker --host "$ops_peer_docker_host" run --pull=never --detach --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 32 --memory 32m --name "$ops_container_name" --label "app.shellbeam.ops-live=$ops_fixture_id" "$ops_image_tag")
+ops_peer_container_created=1
+[[ $ops_peer_container_id =~ ^[a-f0-9]{64}$ && $ops_peer_container_id != "$ops_container_id" ]] || fail 'peer container must have a distinct immutable identity'
+[[ $(docker --host "$ops_peer_docker_host" inspect --format '{{.Image}}' "$ops_peer_container_id") == "$ops_image_id" ]] || fail 'peer image must match the exact local fixture bytes'
+[[ $(docker --host "$ops_peer_docker_host" inspect --format '{{.State.Running}}' "$ops_peer_container_id") == true ]] || fail 'peer container exited before observation'
+if docker --host "$ops_peer_docker_host" container inspect "$ops_container_id" >/dev/null 2>&1; then fail 'peer Docker daemon unexpectedly sees the primary container'; fi
+if docker container inspect "$ops_peer_container_id" >/dev/null 2>&1; then fail 'primary Docker daemon unexpectedly sees the peer container'; fi
 
 # This self-signed CA is an explicit trust anchor only for this curl request.
 # Never import it into the runner/user OS trust store and never disable TLS checks.
@@ -260,14 +342,20 @@ for ops_domain in "$ops_site_name" "$ops_second_domain"; do
   [[ $ops_response == "$ops_expected_body" ]] || fail 'independent HTTPS content did not match this fixture'
 done
 
-python3 - "$ops_fixture_json" "$ops_fixture_dir" "$ops_fixture_id" "$ops_container_id" "$ops_image_id" "$ops_site_name" "$ops_cert_path" "$ops_http_port" "$ops_https_port" "$ops_site_path" "$ops_document_root" "$ops_expected_body" "$ops_log_marker" <<'PY'
+ops_acme_setup
+[[ -f $ops_acme_metadata_json && ! -L $ops_acme_metadata_json ]] || fail 'private ACME metadata is unavailable'
+
+python3 - "$ops_fixture_json" "$ops_fixture_dir" "$ops_fixture_id" "$ops_container_id" "$ops_image_id" "$ops_site_name" "$ops_cert_path" "$ops_http_port" "$ops_https_port" "$ops_site_path" "$ops_document_root" "$ops_expected_body" "$ops_log_marker" "$ops_peer_container_id" "$ops_peer_docker_host" "$ops_acme_metadata_json" <<'PY'
 import json, os, sys
-path, root, fixture, container, image, domain, certificate, http, https, site, docroot, expected, marker = sys.argv[1:]
+path, root, fixture, container, image, domain, certificate, http, https, site, docroot, expected, marker, peer_container, peer_docker, acme_path = sys.argv[1:]
+with open(acme_path) as stream:
+    acme = json.load(stream)
 payload = dict(schemaVersion=1, fixtureId=fixture, rootFixtureDir=root,
     containerId=container, containerName=fixture, imageId=image, imageTag=fixture+':fixture',
     siteName=domain, domains=[domain, 'www.'+domain], certificatePath=certificate,
     caCertPath=certificate, httpPort=int(http), httpsPort=int(https),
-    nginxSiteConfigPath=site, documentRoot=docroot, expectedBody=expected, logMarker=marker)
+    nginxSiteConfigPath=site, documentRoot=docroot, expectedBody=expected, logMarker=marker,
+    peer=dict(containerId=peer_container, containerName=fixture, dockerHost=peer_docker), acme=acme)
 with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as stream:
     json.dump(payload, stream)
     stream.write('\n')

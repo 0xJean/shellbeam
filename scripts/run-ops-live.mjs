@@ -29,6 +29,19 @@ export function validateFixtureFields(fixture) {
     || typeof fixture.rootFixtureDir !== 'string' || !isAbsolute(fixture.rootFixtureDir)) {
     throw new Error('ops_live_fixture_invalid')
   }
+  const peer = fixture.peer
+  const acme = fixture.acme
+  if (!peer || typeof peer !== 'object' || Array.isArray(peer)
+    || !/^[a-f0-9]{64}$/.test(peer.containerId ?? '') || peer.containerId === fixture.containerId
+    || peer.containerName !== fixture.containerName
+    || peer.dockerHost !== `unix://${join(fixture.rootFixtureDir, 'peer.sock')}`
+    || !acme || typeof acme !== 'object' || Array.isArray(acme)
+    || acme.managedCertificatePath !== `/etc/letsencrypt/live/${fixture.containerName}/fullchain.pem`
+    || acme.certbotBinPath !== join(fixture.rootFixtureDir, 'acme', 'venv', 'bin')
+    || typeof acme.transportCAPath !== 'string' || !isWithin(join(fixture.rootFixtureDir, 'acme'), acme.transportCAPath)
+    || typeof acme.issuerCAPath !== 'string' || !isWithin(join(fixture.rootFixtureDir, 'acme'), acme.issuerCAPath)) {
+    throw new Error('ops_live_fixture_invalid')
+  }
   return fixture
 }
 
@@ -136,7 +149,7 @@ async function runFixture(fixturePath) {
       if (!isWithin(runnerTemp, report) || !basename(report).startsWith('shellbeam-ops-live-')) throw new Error('ops_live_report_scope_invalid')
       // Only this redacted summary is readable by the runner's artifact step;
       // fixture credentials and the full test report stay in the private root.
-      await writeFile(report, JSON.stringify({ schemaVersion: 1, success, evidence, node: process.version, checkedOutCommit: process.env.GITHUB_SHA ?? null, routes: ['direct', 'proxy-jump'], resources: ['real Docker', 'systemd nginx', 'OpenSSL certificate'], boundary: 'cfg(test) IPC bridge; no production Vault, desktop dialog or public CA validation' }, null, 2) + '\n', { mode: 0o644 })
+      await writeFile(report, JSON.stringify({ schemaVersion: 1, success, evidence, node: process.version, checkedOutCommit: process.env.GITHUB_SHA ?? null, routes: ['direct', 'proxy-jump'], resources: ['two independent Docker daemons', 'two independent SSH targets', 'systemd nginx', 'OpenSSL certificate', 'private ACME HTTP-01 / Certbot'], boundary: 'cfg(test) IPC bridge and isolated endpoints on one Linux kernel; no production Vault, desktop dialog or public CA validation' }, null, 2) + '\n', { mode: 0o644 })
       await chmod(report, 0o644)
     }
   }

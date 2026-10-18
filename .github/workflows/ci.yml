@@ -59,7 +59,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev openssh-server dbus dunst xvfb xauth nginx openssl busybox-static
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev openssh-server dbus dunst xvfb xauth nginx openssl busybox-static python3-venv
           sudo mkdir -p /run/sshd
       - run: npm ci
       - run: npm run build
@@ -79,7 +79,7 @@ jobs:
       - name: Build native Ops IPC acceptance bridge without privileges
         if: runner.os == 'Linux'
         run: node scripts/run-ops-live.mjs --build "$RUNNER_TEMP/shellbeam-ops-live-bridge-path"
-      - name: Real Docker, nginx, TLS and audited direct/ProxyJump operations
+      - name: Real multi-target Docker, ACME renewal and audited direct/ProxyJump operations
         if: runner.os == 'Linux'
         timeout-minutes: 15
         env:
