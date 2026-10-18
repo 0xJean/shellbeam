@@ -109,8 +109,14 @@ export class OpsUiDriver {
   async fill(locator, value) {
     this.noteInteraction('fill', locator)
     const element = await this.interactable(locator)
+    const tag = await this.request('GET', await this.elementRoute(element, '/name'))
+    // WebKit types ordinary characters as text interactions. A literal LF is
+    // not its virtual Enter key; multiline controls need the standard W3C key
+    // token so the real editor emits a line break and a genuine input event.
+    const text = String(value)
+    const keys = tag === 'textarea' ? text.replaceAll('\r\n', '\n').replaceAll('\n', '\uE007') : text
     await this.request('POST', await this.elementRoute(element, '/clear'), {})
-    await this.request('POST', await this.elementRoute(element, '/value'), { text: String(value), value: [...String(value)] })
+    await this.request('POST', await this.elementRoute(element, '/value'), { text: keys, value: [...keys] })
   }
   async text(locator) { return this.request('GET', await this.elementRoute(locator, '/text')) }
   async attr(locator, name) {

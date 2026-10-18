@@ -77,3 +77,29 @@ test('readiness waits for a visible enabled control before exactly one mutation'
   assert.deepEqual(driver.lastInteraction, { kind: 'fill', control: 'vault-master-password' })
   assert(!JSON.stringify(driver.lastInteraction).includes('SYNTHETIC'))
 })
+
+test('multiline input uses real W3C Enter keys and never writes through JavaScript', async t => {
+  const calls = []
+  const server = createServer(async (request, response) => {
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    const body = Buffer.concat(chunks).toString()
+    calls.push({ path: request.url, ...(body ? { body: JSON.parse(body) } : {}) })
+    let value = null
+    if (request.url.endsWith('/element')) value = { 'element-6066-11e4-a52e-4f735466cecf': 'e' }
+    else if (request.url.endsWith('/displayed') || request.url.endsWith('/enabled')) value = true
+    else if (request.url.endsWith('/name')) value = 'textarea'
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify({ value }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => { server.closeAllConnections(); server.close() })
+  const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`)
+  driver.sessionId = 's'
+  await driver.fill('[data-testid="host-private-key"]', 'SYNTHETIC\r\nMULTILINE\nVALUE\n')
+  const writes = calls.filter(call => call.path.endsWith('/value'))
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0].body.text, 'SYNTHETIC\uE007MULTILINE\uE007VALUE\uE007')
+  assert.equal(calls.filter(call => call.path.endsWith('/clear')).length, 1)
+  assert.equal(calls.some(call => call.path.includes('/execute/')), false)
+})

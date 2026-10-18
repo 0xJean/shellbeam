@@ -82,6 +82,14 @@ The next correction waits for the actual native `dialog[open]` and visible,
 enabled controls before issuing each interaction once. It never clicks Welcome
 under a pending modal, retries a submitted write or substitutes app state.
 
+The third [UI run 39100046447](https://github.com/0xJean/shellbeam/actions/runs/39100046447),
+head `8511b4f5c3a7a6e861b346011382143a9083adff`, completed actual Vault
+initialization and Welcome dismissal. It refused to save the first host because
+the multiline private-key input failed its exact UI roundtrip assertion. No key,
+credential form image or raw error was exported; cleanup passed. The keyboard
+adapter now uses the standard W3C virtual Enter key for textarea line breaks,
+retains genuine editor/input events and still requires the exact roundtrip.
+
 Host-save, trust-prompt and tab-state checkpoints remain credential-free. Local
 syntax, protocol and safety-helper tests are not substitutes for an executed
 Linux GUI pass. Exact commit CI results must be checked before counting the
