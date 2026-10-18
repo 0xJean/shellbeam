@@ -18,7 +18,9 @@ Direct and jumped targets have separate loopback SSH endpoints and separate
 initially failed systemd services. The endpoints share the runner's Linux kernel.
 
 The GUI journey creates real local service rules and waits for real observations.
-From the abnormal host card it opens Services, obtains a diagnostic result,
+From the abnormal host card it clicks the visible Services button, selects the
+failed unit and requests its actual status: three physical clicks, without
+counting a native dropdown's open-and-select as one interaction. It then
 dismisses a real confirmation, then explicitly accepts a restart confirmation.
 An independent, pinned SSH observer checks the service state, actual start counter
 and start timestamp: cancellation must change none of them, and confirmation must

@@ -27,6 +27,45 @@ const sampledMetrics: ServerMonitorSnapshot = {
 const oldResource = { hostname: 'api', os: 'Linux', kernel: '', uptime: 'old uptime', cpuPercent: 95, memoryPercent: 20, memoryText: '', diskPercent: 30, diskText: '', network: 'old throughput' }
 
 describe('host list item', () => {
+  it.each(['grid', 'list'] as const)('opens this host Services in one click from the %s view without bubbling', (mode) => {
+    const onOpenWorkspace = vi.fn()
+    const onSelect = vi.fn()
+    const onConnect = vi.fn()
+    const onParentClick = vi.fn()
+    const onParentDoubleClick = vi.fn()
+    const onParentKeyDown = vi.fn()
+    const props = { host, isSelected: false, onOpenWorkspace, onSelect, onConnect, onEdit: vi.fn(), onDelete: vi.fn() }
+    render(<div onClick={onParentClick} onDoubleClick={onParentDoubleClick} onKeyDown={onParentKeyDown}>
+      {mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />}
+    </div>)
+    const services = screen.getByRole('button', { name: 'Services · Production API' })
+    expect(services).toBeVisible()
+    expect(services).toHaveTextContent('Services')
+    fireEvent.click(services)
+    expect(onOpenWorkspace).toHaveBeenCalledExactlyOnceWith(host.id, 'services')
+    fireEvent.doubleClick(services)
+    fireEvent.keyDown(services, { key: 'Enter' })
+    fireEvent.keyDown(services, { key: ' ' })
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(onConnect).not.toHaveBeenCalled()
+    expect(onParentClick).not.toHaveBeenCalled()
+    expect(onParentDoubleClick).not.toHaveBeenCalled()
+    expect(onParentKeyDown).not.toHaveBeenCalled()
+    expect(screen.getByRole('combobox', { name: 'Open operations for Production API' })).toBeVisible()
+  })
+
+  it('localizes the direct Services button and its host context in Chinese', () => {
+    const previousLocale = localStorage.getItem('shellbeam.locale')
+    localStorage.setItem('shellbeam.locale', 'zh-CN')
+    try {
+      render(<HostGridCard host={host} isSelected={false} onOpenWorkspace={vi.fn()} onSelect={vi.fn()} onConnect={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />)
+      expect(screen.getByRole('button', { name: '服务 · Production API' })).toHaveTextContent('服务')
+    } finally {
+      if (previousLocale) localStorage.setItem('shellbeam.locale', previousLocale)
+      else localStorage.removeItem('shellbeam.locale')
+    }
+  })
+
   it.each(['grid', 'list'] as const)('shows actual Komari sync metadata separately in the %s host card', (mode) => {
     const probe = { integrationId: 'komari', nodeId: 'node', hostId: host.id, mapping: { hostId: host.id, nodeId: 'node' }, status: 'linked', alertState: null, komari: { state: 'online', sampledAt: 1000, receivedAt: 1100, lastSyncedAt: 2000, alerts: null, snapshot: null }, probe: { state: 'not-recorded', health: null, version: null, lastHeartbeatAt: null, record: null }, recommendedAction: 'none' } as unknown as KomariProbeLink
     const operations = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct' as const, sampledAt: 1000, komariProbe: probe }

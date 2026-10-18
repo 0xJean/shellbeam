@@ -138,7 +138,17 @@ function formatJumpHost(host: HostProfile, route?: Pick<HostOperationalSummary, 
 function HostOpsQuickActions({ host, onOpenWorkspace, onRefresh }: { host: HostProfile; onOpenWorkspace?: (id: string, app: WorkspaceAppId) => void; onRefresh?: (id: string) => void }) {
   const { t } = useT()
   if (!onOpenWorkspace) return null
-  return <select data-testid="host-ops-open" aria-label={t('hostOps.openForHost', { host: host.name })} value="" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={(event) => {
+  return <>
+    <button
+      type="button"
+      data-testid="host-services-open"
+      aria-label={`${t('workspace.app.services')} · ${host.name}`}
+      onClick={(event) => { event.stopPropagation(); onOpenWorkspace(host.id, 'services') }}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+      className="h-9 shrink-0 rounded-lg border border-border bg-background px-2 text-xs text-foreground transition-colors hover:bg-muted/40 md:h-8"
+    >{t('workspace.app.services')}</button>
+    <select data-testid="host-ops-open" aria-label={t('hostOps.openForHost', { host: host.name })} value="" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={(event) => {
     event.stopPropagation()
     if (event.target.value === 'refresh') onRefresh?.(host.id)
     else if (event.target.value) onOpenWorkspace(host.id, event.target.value as WorkspaceAppId)
@@ -150,7 +160,8 @@ function HostOpsQuickActions({ host, onOpenWorkspace, onRefresh }: { host: HostP
     <option value="logs">{t('workspace.app.logs')}</option>
     <option value="network">{t('hostOps.alertsAndChecks')}</option>
     {onRefresh && <option value="refresh">{t('hostOps.refreshProbe')}</option>}
-  </select>
+    </select>
+  </>
 }
 
 interface HostGridCardProps {
@@ -294,7 +305,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
         </div>
 
         <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
             <Button data-testid="host-connect" size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => onConnect(host.id)}>
               <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{t('hostCard.connect')}
@@ -818,7 +829,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
           <HostStatusPill status={status} sc={sc} t={t} />
         </div>
 
-        <div className="flex items-center justify-start gap-1 xl:justify-end [&>button]:shrink-0">
+        <div className="flex flex-wrap items-center justify-start gap-1 xl:justify-end [&>button]:shrink-0">
           <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
           <button
             type="button"

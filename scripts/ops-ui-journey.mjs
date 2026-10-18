@@ -14,10 +14,10 @@ export const OPS_UI_SELECTORS = Object.freeze({
   hosts: '[data-testid="pc-nav-hosts"]',
   activity: '[data-testid="pc-nav-activity"]',
   create: '[data-tour="host-create"]',
-  hostForm: '[data-testid="host-form"]',
-  hostKey: '[data-testid="host-key-confirm"]',
-  fingerprint: '[data-testid="host-key-fingerprint"]',
-  trust: '[data-testid="host-key-accept"]',
+  hostForm: 'dialog[open] [data-testid="host-form"]',
+  hostKey: 'dialog[open] [data-testid="host-key-confirm"]',
+  fingerprint: 'dialog[open] [data-testid="host-key-fingerprint"]',
+  trust: 'dialog[open] [data-testid="host-key-accept"]',
   audit: '[data-testid="operations-audit-center"]',
   auditTab: '[data-testid="audit-tab"]',
 })
@@ -260,7 +260,7 @@ export async function setupOpsUiJourney({ driver, fixture, record }) {
 
 async function openServices(driver, role, state) {
   await openDashboardPage(driver, 'hosts')
-  await driver.select(`${byHost(state.hostIds[role])} ${testId('host-ops-open')}`, 'services')
+  await driver.click(`${byHost(state.hostIds[role])} ${testId('host-services-open')}`)
   await driver.waitFor(serviceRoot(state.hostIds[role]), { timeoutMs: 60000 })
   check(await driver.attr(serviceRoot(state.hostIds[role]), 'data-vault-id') === state.vaultId, 'service_vault_scope_mismatch')
 }
@@ -295,10 +295,11 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await driver.waitFor(`${byHost(id)} ${testId('host-ops-local-alerts')}[data-severity="critical"]`, { timeoutMs: 120000 })
     check(Number(await driver.attr(`${byHost(id)} ${testId('host-ops-local-alerts')}`, 'data-open-count')) > 0, 'host_incident_not_visible')
     await driver.until(async () => await driver.attr(byHost(id), 'data-host-health') === 'online', { timeoutMs: 150000 })
-    // Count logical user interactions only after the actual anomaly is visible:
-    // choose Services (1), choose this unit (2), request its real status (3).
+    // Count actual clicks after the anomaly is visible. The dedicated Services
+    // button avoids hiding a native select's open + option choice in one step:
+    // open Services (1), select this unit (2), request its real status (3).
     let steps = 0
-    await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'services'); steps++
+    await driver.click(`${byHost(id)} ${testId('host-services-open')}`); steps++
     await driver.waitFor(serviceRow(id, unit), { timeoutMs: 60000 })
     check(await driver.attr(serviceRoot(id), 'data-vault-id') === state.vaultId, 'diagnostic_vault_scope_mismatch')
     check(await driver.attr(serviceRow(id, unit), 'data-active-state') === 'failed', 'fixture_service_not_failed')
