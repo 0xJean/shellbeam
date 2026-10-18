@@ -462,3 +462,44 @@ it('shows a referenced jump profile name only when that profile exists in the ac
   expect(buildHostOpsViews({ hosts: [target, jump] })[target.id].route).toMatchObject({ transport: 'proxy-jump', jumpHostName: 'Production bastion', jumpHost: '203.0.113.10' })
   expect(buildHostOpsViews({ hosts: [target] })[target.id].route.jumpHostName).toBeUndefined()
 })
+
+
+it('uses canonical-only Komari metrics with the same priority and fallback metadata as dedicated rows', () => {
+  const source = { kind: 'komari' as const, id: 'integration', nodeId: 'node', capabilities: ['metrics' as const] }
+  const snapshot: ProbeSnapshot = { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username }, provider: source, transport: 'proxy-jump', health: 'online', receivedAt: 1100, metrics: createProbeObservation({ data: { ...monitor.snapshot!, cpuPercent: 77, sampledAt: 1100 }, source, sampledAt: 1100, receivedAt: 1100, ttlMs: 5000 }), inventory: null, errors: [] }
+  const selected = buildHostOpsViews({ hosts: [host], monitorLatest: [monitor], probeSnapshots: [snapshot], now: 1200 })[host.id]
+  expect(selected.health).toMatchObject({ provider: 'komari', state: 'online', fallbackProvider: 'ssh-agentless', probe: { providerKind: 'komari', providerId: 'integration' } })
+  expect(selected.metrics?.cpuPercent).toBe(77)
+  const expired = { ...snapshot, metrics: { ...snapshot.metrics!, freshness: { ...snapshot.metrics!.freshness, ttlMs: 10, expiresAt: 1110 } } }
+  const fallback = buildHostOpsViews({ hosts: [host], monitorLatest: [monitor], probeSnapshots: [expired], now: 1200 })[host.id]
+  expect(fallback.health).toMatchObject({ provider: 'ssh-agentless', state: 'online', fallbackProvider: 'komari' })
+  expect(fallback.health.probe?.providerKind).not.toBe('komari')
+})
+
+it('does not call an unavailable Komari node healthy because its cached metrics have not expired', () => {
+  const source = { kind: 'komari' as const, id: 'integration', nodeId: 'node', capabilities: ['metrics' as const] }
+  const snapshot: ProbeSnapshot = { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username }, provider: source, transport: 'proxy-jump', health: 'offline', receivedAt: 1100, metrics: createProbeObservation({ data: monitor.snapshot!, source, sampledAt: 1000, receivedAt: 1100, ttlMs: 5000 }), inventory: null, errors: [] }
+  const view = buildHostOpsViews({ hosts: [host], probeSnapshots: [snapshot], now: 1200 })[host.id]
+  expect(view.health.state).toBe('offline')
+  const fallback = buildHostOpsViews({ hosts: [host], monitorLatest: [monitor], probeSnapshots: [{ ...snapshot, metrics: null }], now: 1200 })[host.id]
+  expect(fallback.health).toMatchObject({ provider: 'ssh-agentless', state: 'online', fallbackProvider: 'komari' })
+})
+
+it('lets a current agent observation replace an older monitor whose latest canonical attempt failed', () => {
+  const snapshot = (kind: 'ssh-agentless' | 'shellbeam-agent', health: 'online' | 'offline', receivedAt: number): ProbeSnapshot => {
+    const source = { kind, id: kind, capabilities: ['metrics' as const] }
+    return { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username }, provider: source, transport: 'proxy-jump', health, receivedAt, metrics: health === 'online' ? createProbeObservation({ data: { ...monitor.snapshot!, sampledAt: 1050 }, source, sampledAt: 1050, receivedAt, ttlMs: 5000 }) : null, inventory: null, errors: health === 'offline' ? [{ section: 'provider', message: 'collection failed' }] : [] }
+  }
+  const view = buildHostOpsViews({ hosts: [host], monitorLatest: [monitor], probeSnapshots: [snapshot('ssh-agentless', 'offline', 1200), snapshot('shellbeam-agent', 'online', 1100)], now: 1300 })[host.id]
+  expect(view.health).toMatchObject({ provider: 'shellbeam-agent', state: 'online', probe: { providerKind: 'shellbeam-agent' } })
+})
+
+
+it('does not treat an inventory-only failed collection as a new metric failure', () => {
+  const metricTelemetry = { status: 'success' as const, startedAt: 900, completedAt: 1000, durationMs: 100, attempts: 0, maxRetries: 2, retryDelayMs: 100, recovered: false, exhausted: false, sections: ['metrics' as const] }
+  const failed: ProbeSnapshot = { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username }, provider: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics', 'inventory'] }, transport: 'proxy-jump', health: 'offline', receivedAt: 1200, metrics: null, inventory: null, errors: [{ section: 'inventory', message: 'inventory unavailable' }], telemetry: { ...metricTelemetry, status: 'failed', sections: ['inventory'] } }
+  const view = buildHostOpsViews({ hosts: [host], monitorLatest: [{ ...monitor, probeTelemetry: metricTelemetry }], probeSnapshots: [failed], now: 1300 })[host.id]
+  expect(view.health).toMatchObject({ state: 'online', provider: 'ssh-agentless', probe: { state: 'fresh', providerKind: 'ssh-agentless', telemetry: { status: 'success', sections: ['metrics'] } } })
+  expect(view.metrics?.sampledAt).toBe(1000)
+  expect(view.health.error).toBeUndefined()
+})

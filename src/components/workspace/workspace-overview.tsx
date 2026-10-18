@@ -100,7 +100,7 @@ export function WorkspaceOverview({
         <WorkspaceActivityFeed items={activityItems} />
       </section>
 
-      <WorkspaceRecommendationsPanel host={activeHost ?? null} vaultId={activeVaultId} onSelectApp={onSelectApp} recommendations={recommendations} />
+      <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} recommendations={recommendations} />
     </div>
   )
 }

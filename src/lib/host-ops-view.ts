@@ -277,7 +277,13 @@ function healthState(
 ): HostOpsHealthState {
   const stages = [monitor?.error, state?.error, ...(probeSnapshot?.errors.map((error) => error.message) ?? [])].map(hostOpsConnectionFailureStage)
   const jumpUnavailable = stages.includes('jump') && !stages.includes('target')
-  if (probeSnapshot?.health === 'unsupported' && (!monitor || probeSnapshot.receivedAt >= monitor.updatedAt)) return 'unsupported'
+  if (probeSnapshot && (!monitor || probeSnapshot.receivedAt >= monitor.updatedAt)) {
+    if (probeSnapshot.health === 'unsupported') return 'unsupported'
+    if (probeSnapshot.telemetry?.status === 'failed' || probeSnapshot.health === 'offline') return jumpUnavailable ? 'jump-unavailable' : 'offline'
+    if (probeSnapshot.health === 'unknown') return 'unknown'
+    if (probeSnapshot.health === 'paused') return 'paused'
+    if (probeSnapshot.telemetry?.status === 'recovered' || probeSnapshot.health === 'stale') return jumpUnavailable ? 'jump-unavailable' : 'stale'
+  }
   if (monitor?.status) {
     if (monitor.status === 'checking') return 'checking'
     if ((monitor.status === 'offline' || monitor.status === 'stale') && jumpUnavailable) return 'jump-unavailable'
@@ -319,8 +325,11 @@ function providerFor(
 
 function komariMonitorForHost(host: HostProfile, snapshot: ProbeSnapshot | undefined): ServerMonitorLatest | undefined {
   const observation = snapshot?.metrics
-  if (!observation || (snapshot.health !== 'online' && snapshot.health !== 'stale')) return undefined
-  const status: ServerMonitorStatus = snapshot.health
+  if (!observation) return undefined
+  const status: ServerMonitorStatus = snapshot.telemetry?.status === 'failed' ? 'offline'
+    : snapshot.telemetry?.status === 'recovered' ? 'stale'
+      : snapshot.health === 'unknown' ? 'checking'
+        : snapshot.health
   return {
     hostKey: getServerMonitorHostKey(host),
     hostId: host.id,
@@ -390,7 +399,8 @@ function probeStatus(
   const observation = snapshot?.metrics ?? snapshot?.inventory
   const sampledAt = observation?.freshness.sampledAt ?? monitor?.snapshot?.sampledAt ?? null
   const receivedAt = snapshot?.receivedAt || observation?.freshness.receivedAt || monitor?.updatedAt || null
-  const telemetry = snapshot?.telemetry ?? (!snapshot || snapshot.provider.kind === 'ssh-agentless' ? monitorTelemetry : null)
+  const candidateTelemetry = snapshot?.telemetry ?? (!snapshot || snapshot.provider.kind === 'ssh-agentless' ? monitorTelemetry : null)
+  const telemetry = monitor?.snapshot && !candidateTelemetry?.sections.includes('metrics') ? null : candidateTelemetry
   const hasRecovery = Boolean(snapshot?.errors.some((error) => error.code === 'stale-cache-fallback')) || telemetry?.status === 'recovered' || telemetry?.recovered === true
   const hasError = Boolean(snapshot?.errors.length) || telemetry?.status === 'failed'
   const state: HostOpsProbeState = hasRecovery
@@ -428,9 +438,9 @@ function freshestSnapshot(current: ProbeSnapshot | undefined, candidate: ProbeSn
  * supplied by another provider for the same host. */
 function preferredHostProbe(current: ProbeSnapshot | undefined, candidate: ProbeSnapshot) {
   if (!current) return candidate
-  const freshMetrics = (snapshot: ProbeSnapshot) => snapshot.health === 'online' && snapshot.metrics && !snapshot.metrics.freshness.expired
-  if (current.health === 'unsupported' && freshMetrics(candidate)) return candidate
-  if (candidate.health === 'unsupported' && freshMetrics(current)) return current
+  const freshMetrics = (snapshot: ProbeSnapshot) => snapshot.health === 'online' && snapshot.telemetry?.status !== 'failed' && snapshot.telemetry?.status !== 'recovered' && snapshot.metrics && !snapshot.metrics.freshness.expired
+  if (!freshMetrics(current) && freshMetrics(candidate)) return candidate
+  if (!freshMetrics(candidate) && freshMetrics(current)) return current
   return freshestSnapshot(current, candidate)
 }
 
@@ -473,8 +483,15 @@ export function buildHostOpsViews({
   // Persisted freshness flags are point-in-time values. Recompute them while
   // rebuilding the host list so reopening the dashboard in another session
   // cannot present an expired Komari observation as fresh.
-  const refreshedKomariSnapshots = komariSnapshots.map((snapshot) => refreshProbeSnapshotFreshness(snapshot, now))
-  const refreshedProbeSnapshots = probeSnapshots.map((snapshot) => refreshProbeSnapshotFreshness(snapshot, now))
+  const refresh = (snapshot: ProbeSnapshot) => {
+    const refreshed = refreshProbeSnapshotFreshness(snapshot, now)
+    // Inventory has a separate cadence. Its expiry cannot invalidate a current
+    // metric observation from an otherwise successful provider.
+    return snapshot.health === 'online' && refreshed.metrics && !refreshed.metrics.freshness.expired
+      ? { ...refreshed, health: 'online' as const } : refreshed
+  }
+  const refreshedKomariSnapshots = komariSnapshots.map(refresh)
+  const refreshedProbeSnapshots = probeSnapshots.map(refresh)
   const monitorByKey = new Map(monitorLatest.map((entry) => [entry.hostKey, entry]))
   const allProbeSnapshots = [...refreshedKomariSnapshots, ...refreshedProbeSnapshots].reduce<ProbeSnapshot[]>((rows, snapshot) => {
     const index = rows.findIndex((current) => snapshotKey(current) === snapshotKey(snapshot))
@@ -482,25 +499,36 @@ export function buildHostOpsViews({
     else rows[index] = freshestSnapshot(rows[index], snapshot)
     return rows
   }, [])
-  const komariByHostId = new Map(refreshedKomariSnapshots.map((snapshot) => [snapshot.host.hostId, snapshot]))
+  const komariByHostId = new Map<string, ProbeSnapshot>()
+  for (const snapshot of allProbeSnapshots.filter((row) => row.provider.kind === 'komari')) {
+    komariByHostId.set(snapshot.host.hostId, preferredHostProbe(komariByHostId.get(snapshot.host.hostId), snapshot))
+  }
   const probeByHostId = new Map<string, ProbeSnapshot>()
   for (const snapshot of allProbeSnapshots) probeByHostId.set(snapshot.host.hostId, preferredHostProbe(probeByHostId.get(snapshot.host.hostId), snapshot))
   const agentByHostId = new Map(shellbeamAgents.map((record) => [record.hostId, record]))
 
   return hosts.reduce<Record<string, HostOpsView>>((result, host) => {
     const hostKey = getServerMonitorHostKey(host)
-    const sshMonitor = monitorByKey.get(hostKey)
+    const storedSshMonitor = monitorByKey.get(hostKey)
+    const latestSshProbe = allProbeSnapshots.filter((snapshot) => snapshot.host.hostId === host.id && snapshot.provider.kind === 'ssh-agentless'
+      && (snapshot.metrics || (!snapshot.inventory && (!snapshot.telemetry || snapshot.telemetry.sections.includes('metrics'))))).sort((left, right) => right.receivedAt - left.receivedAt)[0]
+    const sshMonitor = storedSshMonitor && latestSshProbe && latestSshProbe.receivedAt > storedSshMonitor.updatedAt
+      ? { ...storedSshMonitor, status: latestSshProbe.telemetry?.status === 'failed' ? 'offline' as const : latestSshProbe.telemetry?.status === 'recovered' ? 'stale' as const : latestSshProbe.health === 'unknown' ? 'checking' as const : latestSshProbe.health,
+        snapshot: latestSshProbe.health === 'unsupported' ? null : latestSshProbe.metrics?.data ?? storedSshMonitor.snapshot, error: latestSshProbe.errors[0]?.message, probeTelemetry: latestSshProbe.telemetry, updatedAt: latestSshProbe.receivedAt }
+      : storedSshMonitor
     const komariSnapshot = komariByHostId.get(host.id)
     const probeSnapshot = probeByHostId.get(host.id)
     const selectedProbeSnapshot = probeSnapshot && komariSnapshot ? preferredHostProbe(komariSnapshot, probeSnapshot) : komariSnapshot ?? probeSnapshot
     const shellbeamAgent = agentByHostId.get(host.id)
     const komariMonitor = komariMonitorForHost(host, komariSnapshot)
     const genericMonitor = komariMonitorForHost(host, probeSnapshot)
-    const komariFresh = Boolean(komariSnapshot?.metrics && !komariSnapshot.metrics.freshness.expired)
-    const genericFresh = Boolean(probeSnapshot?.metrics && !probeSnapshot.metrics.freshness.expired)
+    const usable = (snapshot: ProbeSnapshot | undefined) => Boolean(snapshot?.health === 'online' && snapshot.telemetry?.status !== 'failed' && snapshot.telemetry?.status !== 'recovered' && snapshot.metrics && !snapshot.metrics.freshness.expired)
+    const komariFresh = usable(komariSnapshot)
+    const genericFresh = usable(probeSnapshot)
+    const sshFresh = Boolean(sshMonitor?.status === 'online' && sshMonitor.snapshot && sshMonitor.snapshot.sampledAt > 0 && sshMonitor.snapshot.sampledAt <= now && now <= sshMonitor.snapshot.sampledAt + staleAfterMs && (!latestSshProbe || latestSshProbe.receivedAt < sshMonitor.updatedAt || usable(latestSshProbe)))
     const monitor = komariMonitor && komariFresh
       ? komariMonitor
-      : genericMonitor && genericFresh && (!sshMonitor?.snapshot || sshMonitor.status === 'unsupported')
+      : genericMonitor && genericFresh && !sshFresh
         ? genericMonitor
         : sshMonitor ?? komariMonitor ?? genericMonitor
     const inventoryEntry = inventoryCache[hostKey]
@@ -524,17 +552,22 @@ export function buildHostOpsViews({
     const selectedProvider: HostOpsProvider = monitor === komariMonitor && komariMonitor
       ? 'komari'
       : monitor === genericMonitor && genericMonitor && probeSnapshot ? probeSnapshot.provider.kind
-        : !inventoryEntry && probeInventory && selectedProbeSnapshot ? selectedProbeSnapshot.provider.kind
+        : monitor === sshMonitor && sshMonitor ? 'ssh-agentless'
+          : !inventoryEntry && probeInventory && selectedProbeSnapshot ? selectedProbeSnapshot.provider.kind
           : providerFor(sshMonitor, inventory, state, allHostAudits, shellbeamAgent, probeSnapshot)
     let freshnessValue = freshness(monitor, inventory, inventoryUpdatedAt, state, now, staleAfterMs)
-    const selectedObservation = monitor === komariMonitor && komariMonitor ? komariSnapshot?.metrics : monitor === genericMonitor && genericMonitor ? probeSnapshot?.metrics : probeSnapshot?.provider.kind === 'ssh-agentless' ? probeSnapshot.metrics : null
+    const selectedObservation = monitor === komariMonitor && komariMonitor ? komariSnapshot?.metrics : monitor === genericMonitor && genericMonitor ? probeSnapshot?.metrics : allProbeSnapshots.find((snapshot) => snapshot.host.hostId === host.id && snapshot.provider.kind === 'ssh-agentless' && snapshot.metrics?.freshness.sampledAt === monitor?.snapshot?.sampledAt)?.metrics
     if (selectedObservation && monitor?.snapshot?.sampledAt === selectedObservation.freshness.sampledAt) {
       const stamp = selectedObservation.freshness
       const validSample = Number.isFinite(stamp.sampledAt) && stamp.sampledAt > 0 && stamp.sampledAt <= now
       freshnessValue = { ...freshnessValue, sampledAt: validSample ? stamp.sampledAt : null, updatedAt: stamp.receivedAt, ageMs: validSample ? now - stamp.sampledAt : null, stale: validSample && (stamp.expired || now > stamp.expiresAt), ttlMs: stamp.ttlMs, expiresAt: validSample ? stamp.expiresAt : null, expiryReason: validSample && (stamp.expired || now > stamp.expiresAt) ? 'ttl-expired' : null }
     }
+    const metricProbe = monitor === komariMonitor && komariMonitor ? komariSnapshot
+      : monitor === genericMonitor && genericMonitor ? probeSnapshot
+        : monitor === sshMonitor && sshMonitor ? allProbeSnapshots.find((snapshot) => snapshot.host.hostId === host.id && snapshot.provider.kind === 'ssh-agentless' && snapshot.metrics?.freshness.sampledAt === sshMonitor.snapshot?.sampledAt)
+          : selectedProbeSnapshot
     const monitorError = monitor?.error?.trim()
-    const stateError = state?.error?.trim()
+    const stateError = monitor && monitor !== sshMonitor ? undefined : state?.error?.trim()
     const alertState = komariAlertStateForHost(host, allProbeSnapshots, komariAlertStates)
     const localAlerts = (localAlertStates[host.id]?.alerts ?? []).filter((alert) => alert.hostId === host.id)
     const openLocal = localAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
@@ -547,11 +580,11 @@ export function buildHostOpsViews({
       hostKey,
       route,
       health: {
-        state: healthState(monitor, state, freshnessValue, selectedProbeSnapshot),
+        state: healthState(monitor, monitor && monitor !== sshMonitor ? undefined : state, freshnessValue, metricProbe),
         provider: selectedProvider === 'unknown' ? providerFor(monitor, inventory, state, allHostAudits, shellbeamAgent, selectedProbeSnapshot) : selectedProvider,
         probe: probeStatus(
-          selectedProbeSnapshot,
-          refreshedProbeSnapshots.some((snapshot) => snapshotKey(snapshot) === (selectedProbeSnapshot ? snapshotKey(selectedProbeSnapshot) : '')),
+          metricProbe,
+          refreshedProbeSnapshots.some((snapshot) => snapshotKey(snapshot) === (metricProbe ? snapshotKey(metricProbe) : '')),
           // Only attach scheduler telemetry to a matching SSH provider. A
           // Komari snapshot must never inherit a local SSH collection result.
           monitor === sshMonitor ? sshMonitor : undefined,
@@ -567,7 +600,7 @@ export function buildHostOpsViews({
         ...(shellbeamAgent ? { agent: shellbeamAgent } : {}),
         ...(selectedProvider === 'komari' && sshMonitor?.snapshot
           ? { fallbackProvider: 'ssh-agentless' as const, fallbackReason: 'Komari metrics selected; SSH data retained as fallback.' }
-          : selectedProvider === 'ssh-agentless' && komariSnapshot?.metrics
+          : selectedProvider === 'ssh-agentless' && komariSnapshot
             ? { fallbackProvider: 'komari' as const, fallbackReason: 'Komari metrics were unavailable or stale; SSH data selected.' }
             : {}),
       },
@@ -585,7 +618,7 @@ export function buildHostOpsViews({
       localAlertOpen: openLocal.length,
       alertOpenCount: komariOpenCount === null ? null : komariOpenCount + openLocal.length,
       highestAlertSeverity,
-      capabilities: healthState(monitor, state, freshnessValue, selectedProbeSnapshot) === 'unsupported' ? ['files'] : observedCapabilities(inventory, selectedProbeSnapshot, Boolean(sshMonitor || inventoryEntry || state?.status === 'ready'), sshMonitor?.status !== 'unsupported' && Boolean(sshMonitor?.snapshot || inventoryEntry || state?.status === 'ready')),
+      capabilities: healthState(monitor, monitor && monitor !== sshMonitor ? undefined : state, freshnessValue, metricProbe) === 'unsupported' ? ['files'] : observedCapabilities(inventory, selectedProbeSnapshot, Boolean(sshMonitor || inventoryEntry || state?.status === 'ready'), sshMonitor?.status !== 'unsupported' && Boolean(sshMonitor?.snapshot || inventoryEntry || state?.status === 'ready')),
     }
     result[host.id] = view
     return result

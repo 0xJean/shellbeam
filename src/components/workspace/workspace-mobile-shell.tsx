@@ -23,6 +23,7 @@ import { SitesSslPanel } from '../sites-ssl-panel'
 import { NetworkOpsPanel } from './network-ops-panel'
 import { ProviderHistoryPanel } from './provider-history-panel'
 import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
+import { WorkspaceStatusCards } from './workspace-status-cards'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
 function LiveClock() {
@@ -206,7 +207,11 @@ export function WorkspaceMobileShell({
         <div className="min-h-[22rem]">
           <WorkspaceAppGrid activeApp={activeApp} onSelectApp={onSelectApp} variant="ios-grid" />
         </div>
-        {isOverview && <div className="space-y-4">{sessionVaultMismatch && <p role="status" className="p-4 text-sm">{t('workspace.sessionVaultMismatch')}</p>}<WorkspaceRecommendationsPanel host={activeHost ?? null} vaultId={activeVaultId} onSelectApp={onSelectApp} />{activeVaultId && activeHost && <ProviderHistoryPanel vaultId={activeVaultId} hostId={activeHost.id} />}</div>}
+        {isOverview && <div className="space-y-4">
+          {sessionVaultMismatch ? <p role="status" className="p-4 text-sm">{t('workspace.sessionVaultMismatch')}</p> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
+          <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
+          {activeVaultId && activeHost && <ProviderHistoryPanel vaultId={activeVaultId} hostId={activeHost.id} />}
+        </div>}
       </motion.div>
 
       {/* Fixed iOS Dock */}

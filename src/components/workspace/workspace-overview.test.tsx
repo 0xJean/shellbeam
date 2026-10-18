@@ -2,11 +2,18 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceModeToggle } from './workspace-mode-toggle'
 import { WorkspaceOverview } from './workspace-overview'
-import { clearServerMonitorStates, mergeServerMonitorStates } from '@/lib/server-monitor-state'
-import { getServerMonitorHostKey, type ServerMonitorLatest } from '@/lib/server-monitor'
+import { clearServerMonitorStates, createServerMonitorLatest, mergeServerMonitorStates } from '@/lib/server-monitor-state'
+import { getServerMonitorHostKey, type ServerMonitorSnapshot } from '@/lib/server-monitor'
 import { clearLocalOpsMemory, saveLocalAlertState } from '@/lib/local-ops-store'
 vi.mock('./shellbeam-agent-panel', () => ({ ShellbeamAgentPanel: () => null }))
-vi.mock('@/lib/probe-persistence', () => ({ listPersistedProbeSnapshots: vi.fn(async () => []) }))
+vi.mock('@/lib/probe-persistence', async (original) => ({ ...await original<typeof import('@/lib/probe-persistence')>(), listPersistedProbeSnapshots: vi.fn(async () => []) }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => []) }))
+
+function pressureMetrics(sampledAt: number): ServerMonitorSnapshot {
+  return { hostname: 'api', os: 'Linux', kernel: '', sampledAt, diskPercent: 96, cpuPercent: 90, memoryPercent: 30,
+    uptimeSeconds: null, load1: null, load5: null, load15: null, memoryUsedBytes: null, memoryTotalBytes: null,
+    diskUsedBytes: null, diskTotalBytes: null, networkRxBytesPerSec: null, networkTxBytesPerSec: null, latencyMs: null }
+}
 
 describe('workspace mode toggle', () => {
   it('renders terminal and workspace options and calls onChange', () => {
@@ -96,7 +103,8 @@ describe('workspace overview', () => {
   it('uses current host metrics and vault-scoped alerts to show actionable diagnostics', async () => {
     const host = { id: 'host-1', name: 'Production API', address: '10.0.0.15', port: 22, username: 'root', group: 'Default', authType: 'password' as const, tags: [], createdAt: 0, updatedAt: 0 }
     const now = Date.now()
-    mergeServerMonitorStates({ [getServerMonitorHostKey({ ...host, vaultId: 'team' })]: { history: [], latest: { status: 'online', snapshot: { sampledAt: now, diskPercent: 96, cpuPercent: 90, memoryPercent: 30 } } as ServerMonitorLatest } })
+    const scoped = { ...host, vaultId: 'team' }
+    mergeServerMonitorStates({ [getServerMonitorHostKey(scoped)]: { history: [], latest: createServerMonitorLatest(scoped, 'online', now, undefined, { snapshot: pressureMetrics(now) }) } })
     const onSelectApp = vi.fn()
     await act(async () => { render(<WorkspaceOverview activeVaultId="team" hostId={host.id} hosts={[host]} hostName={host.name} hostAddress={host.address} activeApp="overview" onSelectApp={onSelectApp} />) })
     expect(screen.getByText('Inspect CPU or memory pressure')).toBeInTheDocument()
@@ -114,8 +122,8 @@ describe('workspace overview', () => {
     const host = { id: 'same-id', vaultId: 'team', name: 'API', address: '10.0.0.15', port: 22, username: 'ops', group: 'Default', authType: 'password' as const, tags: [], createdAt: 0, updatedAt: 0 }
     const now = Date.now()
     mergeServerMonitorStates({
-      [getServerMonitorHostKey(host)]: { history: [], latest: { status: 'online', snapshot: { sampledAt: now + 60_000, diskPercent: 96, cpuPercent: 90, memoryPercent: 30 } } as ServerMonitorLatest },
-      [getServerMonitorHostKey({ ...host, vaultId: 'other' })]: { history: [], latest: { status: 'online', snapshot: { sampledAt: now, diskPercent: 96, cpuPercent: 90, memoryPercent: 30 } } as ServerMonitorLatest },
+      [getServerMonitorHostKey(host)]: { history: [], latest: createServerMonitorLatest(host, 'online', now, undefined, { snapshot: pressureMetrics(now + 60_000) }) },
+      [getServerMonitorHostKey({ ...host, vaultId: 'other' })]: { history: [], latest: createServerMonitorLatest({ ...host, vaultId: 'other' }, 'online', now, undefined, { snapshot: pressureMetrics(now) }) },
     })
     await act(async () => render(<WorkspaceOverview activeVaultId="team" hostId={host.id} hosts={[host]} hostName={host.name} hostAddress={host.address} activeApp="overview" onSelectApp={() => {}} />))
     expect(screen.queryByText('Inspect CPU or memory pressure')).not.toBeInTheDocument()

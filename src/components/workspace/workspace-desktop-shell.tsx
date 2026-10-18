@@ -494,7 +494,7 @@ export function WorkspaceDesktopShell({
                 />}
                 {activeVaultId && activeHost && <ProviderHistoryPanel vaultId={activeVaultId} hostId={activeHost.id} />}
                 </div>
-                <WorkspaceRecommendationsPanel host={activeHost ?? null} vaultId={activeVaultId} onSelectApp={onSelectApp} />
+                <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
                 <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] px-4 py-4 shadow-[var(--workspace-shadow-card)]">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-subtle)]">{t('workspace.desktop.quickHint')}</div>
                   <div className="mt-3 text-sm font-medium text-[var(--workspace-text-strong)]">{t('workspace.desktop.doubleClickHint')}</div>

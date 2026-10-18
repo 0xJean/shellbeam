@@ -1,11 +1,16 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getServerMonitorHostKey } from '@/lib/server-monitor'
 import { clearServerMonitorStates, mergeServerMonitorStates } from '@/lib/server-monitor-state'
 import { WorkspaceStatusCards } from './workspace-status-cards'
+import { WorkspaceMobileShell } from './workspace-mobile-shell'
+import { listPersistedProbeSnapshots, toPersistedProbeSnapshotPayload, type PersistedProbeSnapshotRecord } from '@/lib/probe-persistence'
+import { createProbeObservation, type ProbeSnapshot } from '@/lib/probe-provider'
+import { invoke } from '@tauri-apps/api/core'
 
 vi.mock('./shellbeam-agent-panel', () => ({ ShellbeamAgentPanel: () => null }))
-vi.mock('@/lib/probe-persistence', () => ({ listPersistedProbeSnapshots: vi.fn(async () => []) }))
+vi.mock('@/lib/probe-persistence', async (original) => ({ ...await original<typeof import('@/lib/probe-persistence')>(), listPersistedProbeSnapshots: vi.fn(async () => []) }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => []) }))
 
 const host = {
   id: 'host-1',
@@ -44,6 +49,14 @@ const snapshot = {
 describe('workspace status cards', () => {
   beforeEach(() => {
     clearServerMonitorStates()
+    localStorage.removeItem('shellbeam.locale')
+    vi.mocked(listPersistedProbeSnapshots).mockReset().mockResolvedValue([])
+    vi.mocked(invoke).mockReset().mockImplementation(async (command) => {
+      if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'active', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari-a.api-key', enabled: true, createdAt: 1, updatedAt: 1 }]
+      if (command === 'list_komari_mappings') return [{ integrationId: 'komari-a', hostId: host.id, nodeId: 'node-a', source: 'manual', confidence: 'explicit', updatedAt: Date.now() }]
+      if (command === 'get_komari_sync_state') return { integrationId: 'komari-a', lastSyncedAt: Date.now() - 2000, ttlMs: 60_000, updatedAt: Date.now(), alertSummary: null }
+      return []
+    })
   })
   afterEach(() => vi.useRealTimers())
 
@@ -107,6 +120,40 @@ describe('workspace status cards', () => {
     expect(screen.getAllByTestId('workspace-probe-telemetry')).toHaveLength(4)
     expect(screen.getAllByTestId('workspace-probe-telemetry')[0]).toHaveTextContent('Recovered from cache')
     expect(screen.getAllByTestId('workspace-probe-telemetry')[0]).toHaveTextContent('1 retries')
+  })
+
+  it.each(['cards', 'mobile Overview'] as const)('shows current Komari metrics while retaining failed SSH separately in %s', async (presentation) => {
+    const scoped = { ...host, vaultId: 'active' }
+    const sampledAt = Date.now() - 5000
+    const source = { kind: 'komari' as const, id: 'komari-a', nodeId: 'node-a', capabilities: ['metrics' as const] }
+    const probe: ProbeSnapshot = {
+      schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username },
+      provider: { ...source, capabilities: [...source.capabilities] }, health: 'online', transport: 'direct', receivedAt: sampledAt + 1000,
+      metrics: createProbeObservation({ data: { ...snapshot, cpuPercent: 57, diskPercent: null, sampledAt }, source: { ...source, capabilities: [...source.capabilities] }, sampledAt, receivedAt: sampledAt + 1000, ttlMs: 60_000, confidence: 'partial' }),
+      inventory: null, errors: [],
+    }
+    vi.mocked(listPersistedProbeSnapshots).mockResolvedValue([toPersistedProbeSnapshotPayload(probe, 'active') as PersistedProbeSnapshotRecord])
+    const key = getServerMonitorHostKey(scoped)
+    mergeServerMonitorStates({ [key]: { history: [], latest: {
+      hostKey: key, hostId: host.id, hostName: host.name, hostAddress: host.address, port: host.port, username: host.username,
+      status: 'offline', snapshot: null, updatedAt: sampledAt, lastAttemptAt: sampledAt, lastSuccessAt: null,
+      probeTelemetry: { status: 'failed', startedAt: sampledAt, completedAt: sampledAt, durationMs: 200, attempts: 2, maxRetries: 2, retryDelayMs: 150, exhausted: true, recovered: false, sections: ['metrics'] },
+    } } })
+    await act(async () => { render(presentation === 'cards'
+      ? <WorkspaceStatusCards activeVaultId="active" hostAddress={host.address} selectedHostId={host.id} hosts={[scoped]} />
+      : <WorkspaceMobileShell activeVaultId="active" sessionId="session-a" hostName={host.name} hostAddress={host.address} hostId={host.id} hosts={[scoped]} activeApp="overview" onSelectApp={() => {}} />) })
+    const cards = screen.getAllByTestId('workspace-status-card')
+    expect(within(cards[0]).getByText('57%')).toBeInTheDocument()
+    expect(cards[0]).toHaveAttribute('data-provider', 'komari')
+    expect(cards[0]).toHaveAttribute('data-status', 'online')
+    expect(within(cards[2]).getByText('Unavailable')).toBeInTheDocument()
+    expect(within(cards[2]).getByTestId('workspace-status-meter').firstElementChild).toHaveStyle({ width: '0%' })
+    expect(screen.queryByTestId('workspace-probe-telemetry')).not.toBeInTheDocument()
+    const selected = screen.getAllByTestId('workspace-provider-source').find((row) => row.dataset.selected === 'true')!
+    expect(selected).toHaveAttribute('data-provider', 'komari')
+    expect(within(selected).getByText('Partial')).toBeInTheDocument()
+    expect(within(selected).getByLabelText('Provider capabilities')).not.toHaveTextContent('Services')
+    expect(screen.getAllByTestId('workspace-provider-source').find((row) => row.dataset.provider === 'ssh-agentless')).toHaveAttribute('data-health', 'offline')
   })
 
   it('falls back gracefully when no host is selected', () => {

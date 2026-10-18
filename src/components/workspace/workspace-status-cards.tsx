@@ -1,13 +1,12 @@
 import type { HostProfile } from '@/lib/hosts'
 import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
-import { useServerMonitorStates } from '@/lib/server-monitor-state'
-import { getServerMonitorHostKey, type ServerMonitorSnapshot, type ServerMonitorStatus } from '@/lib/server-monitor'
-import { t } from '@/lib/i18n'
-import { listPersistedProbeSnapshots } from '@/lib/probe-persistence'
-import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
+import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
+import { useT } from '@/lib/i18n'
+import type { HostOpsHealthState } from '@/lib/host-ops-view'
+import { useWorkspaceProviderState } from '@/lib/workspace-provider-state'
+import { workspaceProviderCopy } from '@/lib/locales/workspace-provider'
 import { ShellbeamAgentPanel } from './shellbeam-agent-panel'
-import { useEffect, useState } from 'react'
-import { COLLECTION_LIMITS } from '@/lib/collection-limits'
+import { WorkspaceProviderSummary } from './workspace-provider-summary'
 
 interface WorkspaceStatusCardsProps {
   activeVaultId?: string
@@ -37,7 +36,9 @@ function formatBytesPerSecond(value: number | null | undefined) {
   return `${next >= 10 || index === 0 ? Math.round(next) : next.toFixed(1)} ${units[index]}`
 }
 
-function statusLabel(status: ServerMonitorStatus | undefined) {
+function statusLabel(status: HostOpsHealthState | undefined, t: (key: string) => string) {
+  if (status === 'jump-unavailable') return t('hosts.statusJumpUnavailable')
+  if (status === 'unknown') return t('hosts.statusUnknown')
   if (status === 'unsupported') return t('workspace.monitor.status.unsupported')
   if (status === 'online') return t('workspace.monitor.status.online')
   if (status === 'stale') return t('workspace.monitor.status.stale')
@@ -46,7 +47,9 @@ function statusLabel(status: ServerMonitorStatus | undefined) {
   return t('workspace.monitor.status.checking')
 }
 
-function statusTone(status: ServerMonitorStatus | undefined) {
+function statusTone(status: HostOpsHealthState | undefined) {
+  if (status === 'jump-unavailable') return 'offline'
+  if (status === 'unknown') return 'idle'
   if (status === 'unsupported') return 'idle'
   if (status === 'online') return 'online'
   if (status === 'stale') return 'stale'
@@ -68,51 +71,18 @@ function getCardValue(key: (typeof STATUS_CARDS)[number]['key'], snapshot: Serve
 }
 
 export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
+  const { t, locale } = useT()
   const { hostAddress, selectedHostId = null, hosts = [] } = props
-  const monitorStates = useServerMonitorStates()
   const host = resolveWorkspaceMetricsHost(hosts, { selectedHostId, hostAddress, vaultId: props.activeVaultId })
-  const monitor = host ? monitorStates[getServerMonitorHostKey(host)] : undefined
-  const latest = monitor?.latest
-  const snapshot = latest?.snapshot ?? null
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000)
-    return () => clearInterval(timer)
-  }, [])
-  // A persisted online flag cannot keep an old sample live indefinitely. The
-  // monitor explicitly samples SSH metrics; unrelated inventory updates never
-  // extend this collector's freshness budget.
-  const sampleTime = snapshot?.sampledAt
-  const validSample = typeof sampleTime === 'number' && Number.isFinite(sampleTime) && sampleTime > 0 && sampleTime <= now
-  const status = latest?.status === 'online'
-    ? !validSample ? 'checking' : now - sampleTime > COLLECTION_LIMITS.cadence.metricsTtlMs ? 'stale' : 'online'
-    : latest?.status
-  const telemetryKey = props.activeVaultId && host?.id ? `${props.activeVaultId}:${host.id}` : null
-  const [persistedTelemetryState, setPersistedTelemetryState] = useState<{ key: string; telemetry: ProbeProviderTelemetry | null } | null>(null)
-
-  useEffect(() => {
-    let active = true
-    if (!telemetryKey || !props.activeVaultId || !host?.id) return () => { active = false }
-    void listPersistedProbeSnapshots({ vaultId: props.activeVaultId, hostId: host.id })
-      .then((rows) => {
-        if (!active) return
-        const telemetry = [...rows]
-          .sort((left, right) => (right.updatedAt || right.receivedAt) - (left.updatedAt || left.receivedAt))
-          .map((row) => row.snapshot.telemetry ?? null)
-          .find((value): value is ProbeProviderTelemetry => value !== null)
-        setPersistedTelemetryState({ key: telemetryKey, telemetry: telemetry ?? null })
-      })
-      .catch(() => {
-        if (active) setPersistedTelemetryState({ key: telemetryKey, telemetry: null })
-      })
-    return () => { active = false }
-  }, [host?.id, props.activeVaultId, telemetryKey])
-
-  const persistedTelemetry = persistedTelemetryState?.key === telemetryKey ? persistedTelemetryState.telemetry : null
-  const probeTelemetry = latest?.probeTelemetry ?? persistedTelemetry
+  const provider = useWorkspaceProviderState({ host: host ?? null, hosts, vaultId: props.activeVaultId })
+  const snapshot = provider.view?.metrics ?? null
+  const status = provider.view?.health.state
+  const probeTelemetry = provider.telemetry
+  const hasObservation = Boolean(provider.source)
 
   return (
     <>
+      <WorkspaceProviderSummary state={provider} />
       <div
         data-testid="workspace-status-grid"
         className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3"
@@ -120,16 +90,17 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
         {STATUS_CARDS.map((card) => {
         const metric = getCardValue(card.key, snapshot)
         const primaryValue = metric.value
-          ?? (latest ? t('workspace.statusValue.unavailable') : t('workspace.statusValue.notConnected'))
-        const label = latest ? statusLabel(status) : t('workspace.statusValue.notConnected')
-        const tone = latest ? statusTone(status) : 'idle'
-        const sampledAt = snapshot?.sampledAt ?? latest?.lastSuccessAt ?? null
+          ?? (hasObservation ? t('workspace.statusValue.unavailable') : t('workspace.statusValue.notConnected'))
+        const label = hasObservation ? statusLabel(status, t) : t('workspace.statusValue.notConnected')
+        const tone = hasObservation ? statusTone(status) : 'idle'
+        const sampledAt = provider.view?.health.freshness.sampledAt
 
         return (
           <div
             key={card.labelKey}
             data-testid="workspace-status-card"
             data-status={tone}
+            data-provider={provider.source?.kind ?? 'unknown'}
             className={`min-w-0 overflow-hidden rounded-xl border bg-[var(--workspace-surface-900)] p-4 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-card)] ${
               tone === 'offline'
                 ? 'border-[color:var(--workspace-status-bad-border)]'
@@ -166,11 +137,11 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
             >
               <div
                 className={`h-full rounded-full bg-gradient-to-r ${card.accent} transition-[width] duration-500`}
-                style={{ width: `${metric.percent ?? (metric.value ? 72 : 18)}%` }}
+                style={{ width: `${metric.percent === null ? 0 : Math.max(0, Math.min(100, metric.percent))}%` }}
               />
             </div>
             <div className="mt-3 flex items-center justify-between gap-3 text-xs text-[var(--workspace-text-subtle)]">
-              <span>{latest ? label : t('workspace.statusValue.notConnected')}</span>
+              <span>{hasObservation ? `${workspaceProviderCopy[locale][provider.source!.kind]} · ${label}` : label}</span>
               <span>{sampledAt ? new Date(sampledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}</span>
             </div>
             {probeTelemetry && (
