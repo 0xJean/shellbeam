@@ -33,6 +33,7 @@ test('W3C confirmation stays explicit, errors are redacted, and input state uses
     else if (request.url.endsWith('/click')) { status = 500; value = { error: 'unexpected alert open', message: 'SYNTHETIC_PRIVATE_OUTPUT' } }
     else if (request.url.endsWith('/alert/text')) value = 'Confirm restart?'
     else if (request.url.endsWith('/property/value')) value = 'current-input'
+    else if (request.url.endsWith('/displayed') || request.url.endsWith('/enabled')) value = true
     else if (request.url.endsWith('/attribute/fail')) { status = 500; value = { error: 'unknown error', message: 'SYNTHETIC_PRIVATE_OUTPUT', stacktrace: 'SYNTHETIC_PRIVATE_OUTPUT' } }
     response.writeHead(status, { 'Content-Type': 'application/json' })
     response.end(JSON.stringify({ value }))
@@ -50,4 +51,29 @@ test('W3C confirmation stays explicit, errors are redacted, and input state uses
   assert.equal(await driver.attr('input', 'value'), 'current-input')
   await assert.rejects(driver.attr('input', 'fail'), error => error instanceof WebDriverError && error.message === 'webdriver: unknown error' && !JSON.stringify(error).includes('SYNTHETIC'))
   await driver.stop()
+})
+
+test('readiness waits for a visible enabled control before exactly one mutation', async t => {
+  let visibleReads = 0
+  let enabledReads = 0
+  const mutations = []
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* Request bodies never enter logs. */ }
+    let value = null
+    if (request.url.endsWith('/element')) value = { 'element-6066-11e4-a52e-4f735466cecf': 'e' }
+    else if (request.url.endsWith('/displayed')) value = ++visibleReads > 1
+    else if (request.url.endsWith('/enabled')) value = ++enabledReads > 1
+    else if (request.method === 'POST') mutations.push(request.url)
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify({ value }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => { server.closeAllConnections(); server.close() })
+  const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`)
+  driver.sessionId = 's'
+  await driver.fill('[data-testid="vault-master-password"]', 'SYNTHETIC-PRIVATE-INPUT')
+  assert(visibleReads >= 3 && enabledReads >= 2)
+  assert.deepEqual(mutations, ['/session/s/element/e/clear', '/session/s/element/e/value'])
+  assert.deepEqual(driver.lastInteraction, { kind: 'fill', control: 'vault-master-password' })
+  assert(!JSON.stringify(driver.lastInteraction).includes('SYNTHETIC'))
 })

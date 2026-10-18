@@ -6,10 +6,10 @@ import { readFile } from 'node:fs/promises'
 
 export const OPS_UI_SELECTORS = Object.freeze({
   welcome: '[data-testid="welcome-enter"]',
-  vaultForm: '[data-testid="vault-password-form"]',
-  vaultPassword: '[data-testid="vault-master-password"]',
-  vaultSubmit: '[data-testid="vault-submit"]',
-  biometricSkip: '[data-testid="vault-biometric-skip"]',
+  vaultForm: 'dialog[open] [data-testid="vault-password-form"]',
+  vaultPassword: 'dialog[open] [data-testid="vault-master-password"]',
+  vaultSubmit: 'dialog[open] [data-testid="vault-submit"]',
+  biometricSkip: 'dialog[open] [data-testid="vault-biometric-skip"]',
   dashboard: '[data-testid="pc-dashboard"]',
   hosts: '[data-testid="pc-nav-hosts"]',
   activity: '[data-testid="pc-nav-activity"]',
@@ -34,6 +34,7 @@ const normalizeFingerprint = (value) => String(value).trim().replace(/^SHA256:/,
 const hash = (value) => createHash('sha256').update(String(value)).digest('hex')
 function check(value, code) { if (!value) throw new Error(`ops_ui_${code}`) }
 async function exists(driver, css) { return (await driver.findAll(css)).length > 0 }
+async function visible(driver, css) { return await exists(driver, css) && await driver.isDisplayed(css) }
 async function enabled(driver, css) { const value = await driver.attr(css, 'disabled'); return value === null || value === false || value === 'false' }
 async function waitEnabled(driver, css) { await driver.waitFor(css); await driver.until(() => enabled(driver, css)) }
 
@@ -179,6 +180,63 @@ async function configureRule(driver, fixture, role, state) {
   await driver.waitFor(`${root} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="active"]`, { timeoutMs: 120000 })
 }
 
+// The providers mount the Vault modal alongside the animated Welcome page.
+// Wait for showModal's real open state and complete that top-layer flow before
+// touching Welcome; DOM presence alone does not make either control usable.
+export async function initializeOpsUiVault({ driver, password, record }) {
+  let initialized = false
+  let initializeSubmitted = false
+  let biometricSkipSubmitted = false
+  let welcomeDismissed = false
+  await record('ops-ui-startup-waiting', { passed: true })
+  await driver.until(async () => {
+    if (await visible(driver, S.biometricSkip)) {
+      check(initializeSubmitted, 'unexpected_biometric_enrollment')
+      if (biometricSkipSubmitted) return false
+      await record('ops-ui-biometric-skip-ready', { visible: true })
+      await driver.click(S.biometricSkip)
+      biometricSkipSubmitted = true
+      await record('ops-ui-biometric-skipped', { passed: true })
+      return false
+    }
+    if (await visible(driver, S.vaultForm)) {
+      const mode = await driver.attr(S.vaultForm, 'data-mode')
+      if (mode === 'biometric-opt-in') return false
+      check(mode === 'initialize', 'existing_vault_refused')
+      if (!initializeSubmitted) {
+        await record('ops-ui-vault-initialize-visible', { visible: true })
+        await driver.fill(S.vaultPassword, password)
+        check(await driver.attr(S.vaultPassword, 'value') === password, 'vault_password_ui_roundtrip_failed')
+        await record('ops-ui-vault-password-entered', { roundtrip: true })
+        await waitEnabled(driver, S.vaultSubmit)
+        await record('ops-ui-vault-initialize-submit-ready', { enabled: true })
+        await driver.click(S.vaultSubmit)
+        initializeSubmitted = true
+        await record('ops-ui-vault-initialize-submitted', { passed: true })
+      }
+      return false
+    }
+    // Even a hidden/transitional modal must finish closing before we can
+    // interact with the page underneath it. Never retry a write or consent.
+    if (await exists(driver, 'dialog')) return false
+    if (!initializeSubmitted) return false
+    if (!initialized) {
+      initialized = true
+      await record('ops-ui-vault-initialized', { passed: true })
+    }
+    if (!welcomeDismissed && await visible(driver, S.welcome)) {
+      await record('ops-ui-welcome-dismiss-ready', { visible: true })
+      await driver.click(S.welcome)
+      welcomeDismissed = true
+      await record('ops-ui-welcome-dismissed', { passed: true })
+      return false
+    }
+    return initialized && welcomeDismissed && visible(driver, S.dashboard)
+  }, { timeoutMs: 60000 })
+  await record('ops-ui-dashboard-visible', { passed: true })
+  return { initialized, welcomeDismissed }
+}
+
 /** Starts with a fresh app profile. The password is deliberately non-enumerable
  * and is retained only in runner memory for the real app restart/unlock. */
 export async function setupOpsUiJourney({ driver, fixture, record }) {
@@ -186,29 +244,10 @@ export async function setupOpsUiJourney({ driver, fixture, record }) {
   check(typeof record === 'function', 'record_callback_missing')
   const state = { hostIds: {}, ruleNames: { direct: 'ShellBeam UI direct service', via: 'ShellBeam UI via service' }, verifiedEndpoints: new Set(), jobs: {}, vaultId: null }
   Object.defineProperty(state, 'vaultPassword', { value: randomBytes(32).toString('base64url'), enumerable: false })
-  let initialized = false
-  let initializeSubmitted = false
-  let welcomeDismissed = false
-  await driver.until(async () => {
-    if (await exists(driver, S.vaultForm)) {
-      const mode = await driver.attr(S.vaultForm, 'data-mode')
-      if (mode === 'biometric-opt-in') return false
-      check(mode === 'initialize', 'existing_vault_refused')
-      if (!initializeSubmitted) {
-        await driver.fill(S.vaultPassword, state.vaultPassword)
-        await driver.click(S.vaultSubmit)
-        initializeSubmitted = true
-      }
-      return false
-    }
-    if (initializeSubmitted) initialized = true
-    if (await exists(driver, S.biometricSkip)) { await driver.click(S.biometricSkip); return false }
-    if (await exists(driver, S.welcome)) { await driver.click(S.welcome); welcomeDismissed = true; return false }
-    return initialized && welcomeDismissed && exists(driver, S.dashboard)
-  }, { timeoutMs: 60000 })
+  const { initialized, welcomeDismissed } = await initializeOpsUiVault({ driver, password: state.vaultPassword, record })
   await openDashboardPage(driver, 'hosts')
   check((await driver.findAll(testId('host-card'))).length === 0, 'existing_hosts_refused')
-  await record('ops-ui-fresh-vault', { initialized: true, welcomeDismissed: true, existingHosts: 0 })
+  await record('ops-ui-fresh-vault', { initialized, welcomeDismissed, existingHosts: 0 })
   for (const role of roles) {
     await createHost(driver, fixture, role, state, record)
     await connectAndVerify(driver, fixture, role, state, record)

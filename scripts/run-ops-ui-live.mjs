@@ -252,6 +252,7 @@ export async function main(env = process.env) {
     report.success = true
   } catch (error) {
     report.failure = { stage, code: error?.code && /^[a-z ]{1,64}$/.test(error.code) ? error.code : /^ops_ui_[a-z0-9_]{1,100}$/.test(error?.message ?? '') ? error.message : 'acceptance-failed' }
+    report.lastInteraction = safeDetails(driver?.lastInteraction)
     console.error(`ShellBeam UI: ${stage} failed`)
   } finally {
     try { await stop(); report.applicationStopped = true }

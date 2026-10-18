@@ -31,6 +31,7 @@ export class OpsUiDriver {
     this.baseUrl = url.origin
     this.requestTimeoutMs = requestTimeoutMs
     this.sessionId = null
+    this.lastInteraction = null
   }
   async request(method, path, body) {
     let response
@@ -87,7 +88,18 @@ export class OpsUiDriver {
     return this.route(`/element/${encodeURIComponent(element.id)}${suffix}`)
   }
   async click(locator) {
-    try { return await this.request('POST', await this.elementRoute(locator, '/click'), {}) }
+    this.noteInteraction('click', locator)
+    const element = await this.interactable(locator)
+    return this.clickElement(element)
+  }
+  noteInteraction(kind, locator) {
+    // Keep only a fixed test-control identifier. Never retain locator text,
+    // input contents, error payloads or credential values in diagnostics.
+    const control = typeof locator === 'string' ? /data-testid=["']([a-z0-9-]{1,80})["']/.exec(locator)?.[1] : null
+    this.lastInteraction = { kind, control: control ?? 'native-control' }
+  }
+  async clickElement(element) {
+    try { return await this.request('POST', await this.elementRoute(element, '/click'), {}) }
     catch (error) {
       // The click has opened a real modal. Leave it for the caller's explicit
       // accept/dismiss; never retry a click or automatically consent.
@@ -95,7 +107,8 @@ export class OpsUiDriver {
     }
   }
   async fill(locator, value) {
-    const element = await this.find(locator)
+    this.noteInteraction('fill', locator)
+    const element = await this.interactable(locator)
     await this.request('POST', await this.elementRoute(element, '/clear'), {})
     await this.request('POST', await this.elementRoute(element, '/value'), { text: String(value), value: [...String(value)] })
   }
@@ -105,11 +118,26 @@ export class OpsUiDriver {
     return this.request('GET', await this.elementRoute(locator, `/${name === 'value' ? 'property' : 'attribute'}/${encodeURIComponent(name)}`))
   }
   async isSelected(locator) { return this.request('GET', await this.elementRoute(locator, '/selected')) }
+  async isDisplayed(locator) { return this.request('GET', await this.elementRoute(locator, '/displayed')) }
+  async isEnabled(locator) { return this.request('GET', await this.elementRoute(locator, '/enabled')) }
+  interactable(locator, options) {
+    return this.until(async () => {
+      const element = await this.find(locator)
+      return await this.isDisplayed(element) && await this.isEnabled(element) ? element : false
+    }, options)
+  }
   async select(locator, value) {
-    const element = await this.find(locator)
+    this.noteInteraction('select', locator)
+    const element = await this.interactable(locator)
     const options = await element.findAll('option')
     for (const option of options) {
-      if (await option.getAttribute('value') === value) { await option.click(); return }
+      if (await option.getAttribute('value') === value) {
+        if (!await this.isEnabled(option)) throw new WebDriverError('element not interactable')
+        // W3C's native option click selects and emits the genuine input/change
+        // events. The select is visible; its closed popup need not be opened.
+        await this.clickElement(option)
+        return
+      }
     }
     throw new WebDriverError('no such element')
   }
@@ -122,7 +150,12 @@ export class OpsUiDriver {
     }
     throw new WebDriverError('timeout')
   }
-  waitFor(locator, options) { return this.until(() => this.find(locator), options) }
+  waitFor(locator, options) {
+    return this.until(async () => {
+      const element = await this.find(locator)
+      return await this.isDisplayed(element) ? element : false
+    }, options)
+  }
   alertText() { return this.request('GET', this.route('/alert/text')) }
   acceptAlert() { return this.request('POST', this.route('/alert/accept'), {}) }
   dismissAlert() { return this.request('POST', this.route('/alert/dismiss'), {}) }

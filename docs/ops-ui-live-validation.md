@@ -72,12 +72,18 @@ timed out. The redacted report records `success: false`, `cleanup: passed`,
 confirmed application exit and no exported screenshots. Notification, incident
 and restart assertions were not reached; this run is not an accepted GUI journey.
 
-The next run adds independent pinned SSH authentication preconditions and safe
-host-save, trust-prompt and tab-state checkpoints to identify the exact failure.
-It still uses the actual UI and native transport. Local syntax, protocol and
-safety-helper tests are not substitutes for an executed Linux GUI pass. Exact
-commit CI results must be checked before counting the journey or Linux
-notification presentation as accepted.
+The second [UI run 39099428247](https://github.com/0xJean/shellbeam/actions/runs/39099428247),
+head `dcdef130bd9f0c24b3c6de68b655b2234999a74f`, independently authenticated all
+three pinned SSH endpoints, then failed during initialization with a genuine
+`element not interactable` response. Cleanup and confirmed app exit passed again.
+The next correction waits for the actual native `dialog[open]` and visible,
+enabled controls before issuing each interaction once. It never clicks Welcome
+under a pending modal, retries a submitted write or substitutes app state.
+
+Host-save, trust-prompt and tab-state checkpoints remain credential-free. Local
+syntax, protocol and safety-helper tests are not substitutes for an executed
+Linux GUI pass. Exact commit CI results must be checked before counting the
+journey or Linux notification presentation as accepted.
 
 Even a successful isolated Linux run does not prove macOS/Windows notification
 presentation, mobile browser/device behavior, an external Komari deployment,
