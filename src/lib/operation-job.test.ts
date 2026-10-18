@@ -3,11 +3,13 @@ import {
   isUnknownOperationError,
   listOperationAudit,
   listOperationJobs,
+  OperationScopeChangedError,
   operationTransport,
   runConfirmedOperation,
   safeOperationTarget,
   summarizeRemoteResult,
 } from './operation-job'
+import { registerUserConfirmationPresenter } from './user-confirmation'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
@@ -23,6 +25,12 @@ const host = {
   tags: [],
   createdAt: 0,
   updatedAt: 0,
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(done => { resolve = done })
+  return { promise, resolve }
 }
 
 describe('operation jobs', () => {
@@ -128,6 +136,107 @@ describe('operation jobs', () => {
     const result = await runConfirmedOperation({ host, action: 'service.start', target: 'nginx', risk: 'low', confirmMessage: 'Confirm?', isCurrent: () => current, execute, getResult: value => value })
     expect(execute).toHaveBeenCalledOnce()
     expect(result?.job.status).toBe('completed')
+  })
+
+  it.each(['caller', 'host', 'jump', 'guard-error'] as const)('cancels before the first mutation when the %s scope changes during an awaited read', async (changedScope) => {
+    const scope = { caller: true, host: 1, jump: 1, guardError: false }
+    const readStarted = deferred<void>()
+    const finishRead = deferred<void>()
+    const queued = { jobId: 'staged-job', auditId: 'staged-audit', status: 'queued', confirmationStatus: 'pending' }
+    invoke.mockImplementation(async (command, args) => command === 'operation_job_create' ? queued : { ...queued, ...(args as { request: object }).request })
+    const unregister = registerUserConfirmationPresenter(async () => ({
+      accepted: true,
+      reason: 'accepted',
+      isCurrent: () => {
+        if (scope.guardError) throw new Error('scope unavailable')
+        return scope.host === 1 && scope.jump === 1
+      },
+    }))
+    const write = vi.fn(async () => ({ exitCode: 0, durationMs: 1 }))
+    const execute = vi.fn(async ({ isCurrent }: { isCurrent: () => boolean }) => {
+      expect(isCurrent()).toBe(true)
+      readStarted.resolve()
+      await finishRead.promise
+      if (!isCurrent()) throw new OperationScopeChangedError(false)
+      return write()
+    })
+    try {
+      const pending = runConfirmedOperation({ host, action: 'agent.install', target: 'shellbeam-agent', risk: 'high', confirmMessage: 'Install?', isCurrent: () => scope.caller, execute, getResult: value => value })
+      await readStarted.promise
+      expect(write).not.toHaveBeenCalled()
+      if (changedScope === 'caller') scope.caller = false
+      else if (changedScope === 'guard-error') scope.guardError = true
+      else scope[changedScope] += 1
+      finishRead.resolve()
+      expect(await pending).toBeNull()
+      expect(write).not.toHaveBeenCalled()
+      expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({
+        status: 'cancelled', confirmationStatus: 'confirmed', confirmedBy: 'local-user', errorCode: 'operation_scope_changed',
+      }) })
+    } finally { finishRead.resolve(); unregister() }
+  })
+
+  it.each(['high', 'read-only'] as const)('retains %s consent when a staged read is cancelled before a remote mutation', async risk => {
+    let current = true
+    const readStarted = deferred<void>()
+    const finishRead = deferred<void>()
+    invoke.mockImplementation(async (_command, args) => ({ jobId: 'read-phase-job', auditId: 'read-phase-audit', confirmationStatus: 'pending', ...(args as { request: object }).request }))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const pending = runConfirmedOperation({ host, action: 'agent.inspect', target: 'shellbeam-agent', risk, confirmMessage: 'Inspect?', isCurrent: () => current,
+      execute: async ({ isCurrent }) => {
+        readStarted.resolve()
+        await finishRead.promise
+        if (!isCurrent()) throw new OperationScopeChangedError(false)
+        return 'unexpected'
+      },
+    })
+    await readStarted.promise
+    current = false
+    finishRead.resolve()
+    expect(await pending).toBeNull()
+    expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({ status: 'cancelled', confirmationStatus: risk === 'read-only' ? 'not_required' : 'confirmed', errorCode: 'operation_scope_changed' }) })
+  })
+
+  it.each(['high', 'read-only'] as const)('records an unknown outcome with %s consent when the scope changes after a mutation was sent', async risk => {
+    let current = true
+    const writeStarted = deferred<void>()
+    const finishWrite = deferred<void>()
+    invoke.mockImplementation(async (_command, args) => ({ jobId: 'sent-job', auditId: 'sent-audit', ...(args as { request: object }).request }))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const cleanup = vi.fn()
+    const onJob = vi.fn()
+    const pending = runConfirmedOperation({ host, action: 'agent.install', target: 'shellbeam-agent', risk, confirmMessage: 'Install?', isCurrent: () => current, onJob,
+      execute: async ({ isCurrent }) => {
+        writeStarted.resolve()
+        await finishWrite.promise
+        if (!isCurrent()) throw new OperationScopeChangedError(true)
+        cleanup()
+        return 'unexpected'
+      },
+    })
+    const rejection = expect(pending).rejects.toMatchObject({
+      name: 'OperationScopeChangedError', sent: true, message: 'The initiating operation scope changed',
+      operationJob: { jobId: 'sent-job', status: 'unknown', confirmationStatus: risk === 'read-only' ? 'not_required' : 'confirmed', errorCode: 'operation_scope_changed' },
+    })
+    await writeStarted.promise
+    current = false
+    finishWrite.resolve()
+    await rejection
+    expect(cleanup).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({
+      status: 'unknown', confirmationStatus: risk === 'read-only' ? 'not_required' : 'confirmed', errorCode: 'operation_scope_changed',
+      errorSummary: 'The initiating host or Vault changed after a remote action was sent; remote state is unknown and must be verified before retrying',
+    }) })
+    expect(onJob).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'unknown', errorCode: 'operation_scope_changed' }))
+  })
+
+  it('requires an explicit unsent marker before cancelling a scope-changed operation', async () => {
+    invoke.mockImplementation(async (_command, args) => ({ jobId: 'unspecified-send-job', auditId: 'unspecified-send-audit', ...(args as { request: object }).request }))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await expect(runConfirmedOperation({ host, action: 'agent.install', target: 'shellbeam-agent', risk: 'high', confirmMessage: 'Install?',
+      execute: async () => { throw new OperationScopeChangedError() },
+    })).rejects.toMatchObject({ sent: true, operationJob: { status: 'unknown', confirmationStatus: 'confirmed', errorCode: 'operation_scope_changed' } })
+    expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({ status: 'unknown', errorCode: 'operation_scope_changed' }) })
   })
 
   it('keeps provider-specific rollback state in the durable job audit', async () => {

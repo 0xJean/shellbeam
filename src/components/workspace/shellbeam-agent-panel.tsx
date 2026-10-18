@@ -14,6 +14,7 @@ import { loadShellbeamAgentCatalogRelease } from '@/lib/shellbeam-agent-catalog'
 import { loadShellbeamAgentReleaseSettings } from '@/lib/shellbeam-agent-release-settings'
 import { shellbeamAgentReleaseParamsSummary, type ValidatedShellbeamAgentRelease } from '@/lib/shellbeam-agent-release'
 import { runShellbeamAgentArtifactOperation, type ShellbeamAgentArtifactPolicy } from '@/lib/shellbeam-agent-artifact'
+import { DEFAULT_VAULT_ID } from '@/lib/vaults'
 import { AlertTriangle, Bot, CheckCircle2, CircleDashed, RefreshCw, ShieldAlert, Trash2, Upload } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ShellbeamAgentHistoryView } from './shellbeam-agent-history-view'
@@ -35,14 +36,23 @@ function statusTone(status: ShellbeamAgentRecord['status']) {
   return 'text-[var(--workspace-text-muted)]'
 }
 
-export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret, artifactManifest, artifactPolicy }: ShellbeamAgentPanelProps) {
+export function ShellbeamAgentPanel({ host, vaultId = host?.vaultId ?? DEFAULT_VAULT_ID, resolveAuthSecret, artifactManifest, artifactPolicy }: ShellbeamAgentPanelProps) {
   const { t } = useT()
-  const scopeKey = host && (!host.vaultId || host.vaultId === vaultId) ? JSON.stringify([vaultId, host.id]) : null
+  const scopeKey = host && (!host.vaultId || host.vaultId === vaultId) ? JSON.stringify([
+    vaultId, host.id, host.address, host.port, host.username, host.authType,
+    host.secretKeyRef, host.passwordKeyRef, host.privateKeyRef,
+    host.jumpHostId, host.jumpHost, host.jumpPort, host.jumpUser, host.updatedAt,
+  ]) : null
   const scopeRef = useRef({ key: scopeKey, generation: 0 })
   if (scopeRef.current.key !== scopeKey) scopeRef.current = { key: scopeKey, generation: scopeRef.current.generation + 1 }
   const scopeGeneration = scopeRef.current.generation
   const scopeToken = JSON.stringify([scopeKey, scopeGeneration])
-  const isCurrent = () => scopeRef.current.key === scopeKey && scopeRef.current.generation === scopeGeneration
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+  const isCurrent = () => mountedRef.current && scopeRef.current.key === scopeKey && scopeRef.current.generation === scopeGeneration
   const [storedRecord, setRecord] = useState<ShellbeamAgentRecord | null>(null)
   const record = scopeKey && storedRecord?.hostId === host?.id && storedRecord?.vaultId === vaultId ? storedRecord : null
   const [loadingState, setLoadingState] = useState({ key: scopeToken, value: false })
@@ -57,8 +67,8 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
   const [releaseLoadingState, setReleaseLoadingState] = useState({ key: scopeToken, value: false })
   const releaseLoading = releaseLoadingState.key === scopeToken && releaseLoadingState.value
   const setReleaseLoading = useCallback((value: boolean) => setReleaseLoadingState({ key: scopeToken, value }), [scopeToken])
-  const [releaseState, setReleaseState] = useState<{ vaultId: string; hostId: string; release: ValidatedShellbeamAgentRelease; policy: ShellbeamAgentArtifactPolicy } | null>(null)
-  const release = scopeKey && releaseState?.hostId === host?.id && releaseState?.vaultId === vaultId ? releaseState : null
+  const [releaseState, setReleaseState] = useState<{ key: string; vaultId: string; hostId: string; release: ValidatedShellbeamAgentRelease; policy: ShellbeamAgentArtifactPolicy } | null>(null)
+  const release = scopeKey && releaseState?.key === scopeToken && releaseState.hostId === host?.id && releaseState.vaultId === vaultId ? releaseState : null
   const selectedManifest = release?.release.manifest.artifact ?? artifactManifest
   const selectedPolicy = release?.policy ?? artifactPolicy
   const artifactReady = Boolean(selectedManifest && selectedPolicy)
@@ -118,6 +128,7 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
           previousSha256: action === 'upgrade' ? release?.release.manifest.previousSha256 : undefined,
           releaseSummary: release ? shellbeamAgentReleaseParamsSummary({ release: release.release }) : undefined,
           action,
+          isCurrent,
           confirmMessage: t(`workspace.agentProbe.confirm.${action}`),
           onRecord: (next) => { if (isCurrent() && next.hostId === host.id && next.vaultId === vaultId) setRecord(next) },
         })
@@ -128,6 +139,7 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
           vaultId,
           resolveAuthSecret,
           action,
+          isCurrent,
           confirmMessage: t(`workspace.agentProbe.confirm.${action}`),
           onRecord: (next) => { if (isCurrent() && next.hostId === host.id && next.vaultId === vaultId) setRecord(next) },
         })
@@ -147,7 +159,7 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
       const settings = loadShellbeamAgentReleaseSettings()
       const selected = await loadShellbeamAgentCatalogRelease({ host, vaultId, resolveAuthSecret, currentVersion: record?.version, settings })
       if (!isCurrent()) return
-      setReleaseState({ vaultId, hostId: host.id, release: selected, policy: { allowedHosts: settings.artifactAllowedHosts, trustedPublicKeyBase64: settings.artifactTrustedPublicKeyBase64 } })
+      setReleaseState({ key: scopeToken, vaultId, hostId: host.id, release: selected, policy: { allowedHosts: settings.artifactAllowedHosts, trustedPublicKeyBase64: settings.artifactTrustedPublicKeyBase64 } })
     } catch (cause) { if (isCurrent()) setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { if (isCurrent()) setReleaseLoading(false) }
   }

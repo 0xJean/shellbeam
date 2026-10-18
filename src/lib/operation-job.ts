@@ -172,6 +172,22 @@ export function safeOperationTarget(target: string, maxLength = 160) {
     .slice(0, maxLength)
 }
 
+export interface OperationExecutionContext {
+  /** Includes the caller's scope and the confirmation presenter's persistent guard. */
+  isCurrent: () => boolean
+}
+
+/** A staged operation must report whether a remote mutation may already have been sent. */
+export class OperationScopeChangedError extends Error {
+  readonly sent: boolean
+
+  constructor(sent: boolean = true) {
+    super('The initiating operation scope changed')
+    this.name = 'OperationScopeChangedError'
+    this.sent = sent !== false
+  }
+}
+
 export interface RunConfirmedOperationOptions<T> {
   /** Recheck the initiating UI scope before consent and before execution. */
   isCurrent?: () => boolean
@@ -184,7 +200,7 @@ export interface RunConfirmedOperationOptions<T> {
   risk: OperationRisk
   paramsSummary?: string
   confirmMessage: string
-  execute: () => Promise<T>
+  execute: (context: OperationExecutionContext) => Promise<T>
   getResult?: (value: T) => Pick<CommandRunResult, 'exitCode' | 'durationMs'> & {
     resultSummary?: string
     errorCode?: string
@@ -248,7 +264,7 @@ export async function runConfirmedOperation<T>({
       confirmationStatus: consentGiven ? (risk === 'read-only' ? 'not_required' : 'confirmed') : current.confirmationStatus,
       ...(consentGiven && risk !== 'read-only' ? { confirmedBy: actor ?? 'local-user' } : {}),
       errorCode: 'operation_scope_changed',
-      errorSummary: 'The initiating host or Vault changed before execution',
+      errorSummary: 'The initiating host or Vault changed before a remote mutation was sent',
       actor: actor ?? 'local-user',
     })
     onJob?.(cancelled)
@@ -291,7 +307,7 @@ export async function runConfirmedOperation<T>({
   if (!scopeCurrent()) return cancelChangedScope(running, true)
 
   try {
-    const value = await execute()
+    const value = await execute({ isCurrent: scopeCurrent })
     const result = getResult?.(value)
     const status = result ? remoteOperationStatus(result) : 'completed'
     const completed = await updateOperationJob({
@@ -307,12 +323,18 @@ export async function runConfirmedOperation<T>({
     onJob?.(completed)
     return { value, job: completed }
   } catch (error) {
-    const unknown = isUnknownOperationError(error)
+    const scopeChanged = error instanceof OperationScopeChangedError
+    if (scopeChanged && error.sent === false) return cancelChangedScope(running, true)
+    const unknown = scopeChanged || isUnknownOperationError(error)
     const failed = await updateOperationJob({
       jobId: job.jobId,
       status: unknown ? 'unknown' : 'failed',
-      errorCode: unknown ? 'remote_state_unknown' : 'operation_failed',
-      errorSummary: safeOperationTarget(error instanceof Error ? error.message : String(error), 240),
+      ...(scopeChanged ? {
+        confirmationStatus: risk === 'read-only' ? 'not_required' : 'confirmed',
+        ...(risk !== 'read-only' ? { confirmedBy: actor ?? 'local-user' } : {}),
+      } : {}),
+      errorCode: scopeChanged ? 'operation_scope_changed' : unknown ? 'remote_state_unknown' : 'operation_failed',
+      errorSummary: scopeChanged ? 'The initiating host or Vault changed after a remote action was sent; remote state is unknown and must be verified before retrying' : safeOperationTarget(error instanceof Error ? error.message : String(error), 240),
       actor: actor ?? 'local-user',
     })
     onJob?.(failed)

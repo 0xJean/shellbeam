@@ -1,9 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
-import { checkShellbeamAgent, createShellbeamAgentProbeProvider, buildShellbeamAgentPlan, deriveShellbeamAgentHealth, normalizeShellbeamAgentRecord, parseShellbeamAgentProbeOutput, recordShellbeamAgentHeartbeat, shellbeamAgentRecordToProbeSnapshot, parseShellbeamAgentObservation } from './shellbeam-agent'
+import { checkShellbeamAgent, createShellbeamAgentProbeProvider, buildShellbeamAgentPlan, deriveShellbeamAgentHealth, normalizeShellbeamAgentRecord, parseShellbeamAgentProbeOutput, recordShellbeamAgentHeartbeat, shellbeamAgentRecordToProbeSnapshot, parseShellbeamAgentObservation, runShellbeamAgentOperation } from './shellbeam-agent'
 import type { HostProfile } from './hosts'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
 import { remoteOperationStatus } from './operation-verification'
+import { registerUserConfirmationPresenter } from './user-confirmation'
+import type { CommandRunResult } from './sessions'
+import { DEFAULT_VAULT_ID } from './vaults'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('./workspace-remote', () => ({ runWorkspaceRemoteCommand: vi.fn() }))
@@ -214,5 +217,94 @@ describe('ShellBeam Probe lifecycle', () => {
     })
     const payload = vi.mocked(invoke).mock.calls[0]?.[1] as { input?: Record<string, unknown> } | undefined
     expect(payload?.input).not.toHaveProperty('lastHeartbeatAt')
+  })
+})
+
+describe('Agent lifecycle consent remains scoped throughout execution', () => {
+  let callerCurrent: boolean
+  let presenterCurrent: boolean
+  let unregister: (() => void) | undefined
+
+  beforeEach(() => {
+    vi.resetAllMocks()
+    callerCurrent = true
+    presenterCurrent = true
+    unregister = registerUserConfirmationPresenter(async () => ({ accepted: true, reason: 'accepted', isCurrent: () => presenterCurrent }))
+    let job: Record<string, unknown> = {}
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'upsert_shellbeam_agent') return (args as { input: unknown }).input
+      const request = (args as { request?: Record<string, unknown> })?.request ?? {}
+      job = command === 'operation_job_create'
+        ? { ...request, jobId: 'lifecycle-job', auditId: 'lifecycle-audit', status: 'queued', confirmationStatus: 'pending' }
+        : { ...job, ...request }
+      return { ...job }
+    })
+  })
+  afterEach(() => { unregister?.(); vi.restoreAllMocks() })
+
+  it.each([undefined, 'profile-vault'])('uses the saved profile or Personal Vault when no scope is supplied (%s)', async (profileVault) => {
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce({ exitCode: 0, durationMs: 1, stdout: '__SB_AGENT_STATUS=retired', stderr: '' })
+    const result = await runShellbeamAgentOperation({ host: { ...host, vaultId: profileVault }, action: 'uninstall', resolveAuthSecret: vi.fn() })
+    const expectedVault = profileVault ?? DEFAULT_VAULT_ID
+    expect(result?.record.vaultId).toBe(expectedVault)
+    expect(invoke).toHaveBeenCalledWith('operation_job_create', { request: expect.objectContaining({ vaultId: expectedVault }) })
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledWith(expect.objectContaining({ vaultId: expectedVault }))
+  })
+
+  it('rejects conflicting Vault ids before lifecycle state, audit, or remote work', async () => {
+    const onRecord = vi.fn()
+    await expect(runShellbeamAgentOperation({ host: { ...host, vaultId: 'profile-vault' }, vaultId: 'other-vault', action: 'uninstall', resolveAuthSecret: vi.fn(), onRecord })).rejects.toThrow('WORKSPACE_VAULT_SCOPE_MISMATCH')
+    expect(invoke).not.toHaveBeenCalled()
+    expect(onRecord).not.toHaveBeenCalled()
+    expect(runWorkspaceRemoteCommand).not.toHaveBeenCalled()
+  })
+
+  it.each(['caller', 'presenter'] as const)('cancels with confirmed audit when the %s scope changes during validation', async (scope) => {
+    let finishValidation!: () => void
+    const beforeExecute = vi.fn(() => new Promise<void>((resolve) => { finishValidation = resolve }))
+    const pending = runShellbeamAgentOperation({ host, vaultId: 'lifecycle-vault', action: 'uninstall', resolveAuthSecret: vi.fn(), isCurrent: () => callerCurrent, beforeExecute })
+    await vi.waitFor(() => expect(beforeExecute).toHaveBeenCalledOnce())
+    if (scope === 'caller') callerCurrent = false
+    else presenterCurrent = false
+    finishValidation()
+    expect(await pending).toBeNull()
+    expect(runWorkspaceRemoteCommand).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({ status: 'cancelled', confirmationStatus: 'confirmed', errorCode: 'operation_scope_changed' }) })
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'upsert_shellbeam_agent')).toHaveLength(0)
+  })
+
+  it('retains a completed command on the original route and never publishes it to the new scope', async () => {
+    let complete!: (result: CommandRunResult) => void
+    vi.mocked(runWorkspaceRemoteCommand).mockImplementationOnce(() => new Promise((resolve) => { complete = resolve }))
+    const pending = runShellbeamAgentOperation({ host, vaultId: 'lifecycle-vault', action: 'uninstall', resolveAuthSecret: vi.fn(), isCurrent: () => callerCurrent })
+    await vi.waitFor(() => expect(runWorkspaceRemoteCommand).toHaveBeenCalledOnce())
+    presenterCurrent = false
+    complete({ exitCode: 0, durationMs: 1, stdout: '__SB_AGENT_STATUS=retired', stderr: '' })
+    const result = await pending
+    expect(result?.job).toMatchObject({ status: 'completed', confirmationStatus: 'confirmed' })
+    expect(result?.record.status).toBe('retired')
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'upsert_shellbeam_agent')).toHaveLength(0)
+    expect(invoke).toHaveBeenCalledWith('operation_job_create', { request: expect.objectContaining({ vaultId: 'lifecycle-vault', hostId: host.id }) })
+  })
+
+  it('audits a sent command as unknown when its transport fails after the route changes', async () => {
+    let fail!: (error: Error) => void
+    vi.mocked(runWorkspaceRemoteCommand).mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
+    const pending = runShellbeamAgentOperation({ host, vaultId: 'lifecycle-vault', action: 'uninstall', resolveAuthSecret: vi.fn(), isCurrent: () => callerCurrent })
+    const assertion = expect(pending).rejects.toMatchObject({ sent: true, operationJob: { status: 'unknown', confirmationStatus: 'confirmed', errorCode: 'operation_scope_changed' } })
+    await vi.waitFor(() => expect(runWorkspaceRemoteCommand).toHaveBeenCalledOnce())
+    callerCurrent = false
+    fail(new Error('endpoint credentials must not be copied into a new scope error'))
+    await assertion
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledOnce()
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'upsert_shellbeam_agent')).toHaveLength(0)
+    expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({ status: 'unknown', errorSummary: expect.not.stringContaining('credentials') }) })
+  })
+
+  it('never calls a native unknown result installed merely because it has exit zero', async () => {
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce({ exitCode: 0, durationMs: 1, stdout: '__SB_AGENT_STATUS=installed', stderr: '', errorType: 'unknown' })
+    const result = await runShellbeamAgentOperation({ host, vaultId: 'lifecycle-vault', action: 'upgrade', resolveAuthSecret: vi.fn() })
+    expect(result?.job.status).toBe('unknown')
+    expect(result?.record).toMatchObject({ status: 'unknown', health: 'unknown', lastErrorCode: 'remote_state_unknown' })
   })
 })

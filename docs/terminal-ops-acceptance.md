@@ -33,7 +33,7 @@
 | HTTP/TCP检查与本地规则 | `health-check-scheduler.ts`、`local-alert-*.ts`、`local-ops-store.ts` | 应用级有界调度，历史、持续时间、滞回、unknown不恢复、失败与恢复通知；复用OperationJob路径判断，仅保存jumpHostId的主机在成功、失败、unknown和取消未发送结果中均保留ProxyJump，持久化历史、服务告警和恢复视图不误标直连 |
 | 跨会话告警审计 | `data/local_ops.rs`、`local-ops-persistence.ts`、`local-alert-actions.ts` | 原生按Vault/host/kind隔离、revision CAS；确认/关闭关联同scope已确认OperationJob；MCP返回安全历史和关联任务 |
 | 历史任务与审计查询 | `OperationsAuditCenter`、原生`operation_jobs`查询 | 来源和状态在原生筛选，按时间与唯一ID复合游标翻页，每页最多100条；任务与审计独立分页，历史页暂停自动刷新，刷新回到最新。切换Vault/主机/筛选拒绝迟到结果；仍受5000任务/10000审计的既有保留上限约束，不承诺无限历史 |
-| 异步操作确认 | `user-confirmation.ts`、应用级`UserConfirmationDialog`、OperationJob/文件/批量入口 | Tauri Dialog 2.6会把`window.confirm`替换为Promise，必须等待严格布尔结果。应用内真实确认窗默认聚焦取消，显示主机、路径和动作摘要；文件保留精确输入token。锁库/切库/主机或跳板变更撤销待确认，作用域guard保留至实际发送前；不可用/忙碌不记为人工拒绝，已同意但未发送的取消保留confirmed。打包GUI的真实取消/执行/后态仍需新提交CI证明 |
+| 异步操作确认 | `user-confirmation.ts`、应用级`UserConfirmationDialog`、OperationJob/文件/批量入口 | Tauri Dialog 2.6会把`window.confirm`替换为Promise，必须等待严格布尔结果。应用内真实确认窗默认聚焦取消，显示主机、路径和动作摘要；文件保留精确输入token。锁库/切库/主机或跳板变更撤销待确认，作用域guard保留至实际发送前；不可用/忙碌不记为人工拒绝，已同意但未发送的取消保留confirmed。31f33a5打包GUI已证明直连真实取消零变更、确认只重启一次及恢复通知；跳板处理和完整重启闭环仍未通过 |
 | MCP本地告警确认/关闭 | `mcp/local_alerts.rs`、协议oneOf与原生local_ops内部事务 | 保留Komari参数兼容；服务、健康检查和独立ProbeProvider告警必须显式`alertSource=local-ops`、ruleId及expectedRevision。复查manageAlerts/同Vault主机授权，规范Job记录客户端授权为not_required，不伪造人工确认；SQLite保证CAS、跨会话与并发幂等，不重放非终态任务。桌面confirmed-only入口保持独立 |
 | 超时/断线/信号/输出过量 | 原生公共command执行器、OperationJob结果映射 | 不推断远端动作已停止；不确定结果为unknown，无自动重放写操作 |
 | 工具安装与服务动作 | `workspace-tools.ts`、WorkspaceToolManagerApp | 安装/升级/卸载及服务变更先确认，展示主机/路径/命令；独立观察版本、工具存在与服务后态；同一OperationJob记录结果，无法观察为unknown |
@@ -59,6 +59,7 @@
 | 安装、升级、卸载与心跳 | 用户systemd/launchd生命周期、Workspace探针面板 | 不隐式sudo/linger，不监听端口或接收命令；新心跳与真实版本确认成功；不支持平台拒绝安装 |
 | 制品分发与签名 | release catalog/native HTTPS下载/Ed25519双签名、SFTP激活 | 首次安装也必须签名；平台/channel/rollout/expiry/hash/size/重定向均受约束 |
 | 失败回滚 | 原子备份/替换及激活计划 | 使用真实shell强制新制品失败，验证旧文件hash恢复并重新激活；无法验证的回滚保持unknown |
+| 安装阶段的确认作用域 | `OperationExecutionContext`、Agent制品/生命周期操作、探针面板 | 下载、home/旧hash读取、prepare、SFTP和activation之间复查同一持久guard。首次变更前失效为cancelled/confirmed；可能已发送后失效为unknown，不向新路由发清理或回滚。实际已完成activation保留已知Job结果，失效后不投影健康或发后续检查；prepare失败/unknown不继续上传。锁库、主机/跳板修改与卸载面板均纳入scope |
 | 发布策略 | `.github/workflows/agent-release.yml`、`docs/agent.md` | 四目标构建与签名草稿流水线；发布入口传入签名灰度比例、每目标前版本hash；拒绝两角色共用签名密钥。PR CI独立验证四目标release构建；正式发布需要仓库配置独立私钥和审核draft，未自动发布 |
 
 ## Phase 4：扩展运维
@@ -78,7 +79,7 @@
 - Linux采集与user systemd生命周期由GitHub Actions真实Linux runner验收；本机macOS上的跳过不能算Linux验收通过。
 - macOS launchd smoke使用唯一测试label、临时state和真实生成plist；不会覆盖默认探针服务。本轮实际启动、重启、历史保留、卸载测试通过（`cargo test --manifest-path agent/Cargo.toml launchd_service_activates_restarts_and_stops_in_isolated_state -- --ignored --nocapture`）。
 - GitHub Actions覆盖前端、macOS/Linux/Windows原生测试与MCP stdio，以及独立Agent daemon/systemd检查。以本轮提交对应的状态为准，旧提交绿色检查不代表本轮通过。
-- 系统通知仍需逐平台与实际桌面环境检查；helper/mock测试不证明后端接收。隔离Ubuntu打包GUI现已验证测试按钮的真实展示、暂停排队、同条恢复和daemon不可用四种情况；这不证明真实告警通知、其它Linux桌面环境或macOS/Windows展示。
+- 系统通知仍需逐平台与实际桌面环境检查；helper/mock测试不证明后端接收。隔离Ubuntu打包GUI已验证测试按钮四状态、直连/跳板服务告警开启横幅及直连实际恢复横幅；完整跳板处理、独立Probe通知、其它Linux桌面环境和macOS/Windows展示仍未验收。
 - 正式Agent发布密钥配置、release draft审核和生产发布没有执行；测试签名不能替代生产信任根。
 - 本文不将多跳、团队RBAC、完整APM/Kubernetes或无人值守自愈加入首期范围。
 
@@ -107,7 +108,7 @@ Komari手动映射/控制台本轮本地回归：前端939项通过，16项Linux
 
 | 项目 | 完成证据 | 当前边界 |
 | --- | --- | --- |
-| 桌面系统通知 | 对应安装包中验证允许/拒绝/系统禁用，以及实际横幅或通知中心条目 | 隔离Ubuntu X11打包应用的测试按钮四状态已通过真实窗口/计数/OCR；真实告警/恢复、其它Linux桌面及macOS/Windows授权/展示仍待验收 |
+| 桌面系统通知 | 对应安装包中验证允许/拒绝/系统禁用，以及实际横幅或通知中心条目 | 隔离Ubuntu X11测试按钮四状态、直连/跳板服务开启与直连恢复横幅已通过真实窗口/计数/OCR；完整跳板处理、独立Probe故障/恢复、其它Linux桌面及macOS/Windows授权/展示仍待验收 |
 | Komari部署 | 实际部署的TLS、token权限、节点映射、WebView请求及告警到Workspace跳转 | 已有官方1.6.0本地真实服务HTTP契约证据，尚不覆盖用户外部部署或所有版本 |
 | 正式Agent制品 | 受保护签名环境、四目标制品、审核后的HTTPS来源，真实客户端首装/第二版升级/失败回滚/卸载及ProxyJump审计 | 生产密钥来源待决定，工作流尚未进入默认分支；未生成生产信任根、未发布Agent版本 |
 | 主机运维产品指标 | 打包应用从列表发现异常到首次有效诊断不超过3步，再执行确认动作、观察后态与同主机审计 | 组件流程及隔离Linux Docker/SSL/混合多主机16项命令组合已通过；仍需真实用户桌面、生产Vault和实际部署环境，私有ACME不替代公有CA域名控制验收 |
@@ -126,4 +127,6 @@ Overview与移动控制台整合本地回归：前端1003项通过，16项Linux�
 
 独立SSH Provider与MCP本地告警闭环本轮本地验证：前端1107项通过，16项真实Linux Ops和1项Linux collector在macOS跳过；TypeScript/Vite生产构建通过，修改范围ESLint通过。原生库161项通过、原Linux Ops桥1项按约定ignored，MCP stdio两项通过；50项Node UI协议/夹具/通知契约测试通过。覆盖实际work单次事件、无缓存失败、缓存不恢复、新采样恢复、跨配置缓存/任务隔离、同毫秒引用跳板变化、迟到写入不清新故障提示、原生CAS与MCP授权/幂等。最终stdio曾发现并保留WouldBlock失败，修正生产accepted socket为阻塞有界读写后，新增真实TCP延迟首帧回归及最终全量验证通过。以上不代替新提交的Linux GUI故障/通知/重启实测，也不代替正式发布。
 
-异步确认、历史审计查询与独立Probe运维视图本轮本地验证：前端1217项通过，16项真实Linux Ops与1项Linux collector在macOS跳过；TypeScript/Vite生产构建通过。原生库163项通过，既有Linux桥1项ignored，MCP stdio两项通过。95项Node UI/故障夹具/通知/分页契约测试通过；修改范围ESLint零错误，Vault页面既有refresh依赖警告保留。测试覆盖Promise未决时零发送、精确token、未同意/失效/不可用审计区分、确认后SQLite等待期间的scope失效、文件与并发批次不重放写入、真实SQLite重开和同毫秒分页，以及无告警/过期Probe采样展示。新增安装包旅程要求独立SSH故障、三profile指标恢复、六条真实OS通知、资产观察排空和第二次真实重启。该旅程尚需新提交CI实际执行，95项Node测试不能代替它。
+异步确认、历史审计查询与独立Probe运维视图本轮本地验证：前端1217项通过，16项真实Linux Ops与1项Linux collector在macOS跳过；TypeScript/Vite生产构建通过。原生库163项通过，既有Linux桥1项ignored，MCP stdio两项通过。95项Node UI/故障夹具/通知/分页契约测试通过；修改范围ESLint零错误，Vault页面既有refresh依赖警告保留。测试覆盖Promise未决时零发送、精确token、未同意/失效/不可用审计区分、确认后SQLite等待期间的scope失效、文件与并发批次不重放写入、真实SQLite重开和同毫秒分页，以及无告警/过期Probe采样展示。新增安装包旅程要求独立SSH故障、三profile指标恢复、六条真实OS通知、资产观察排空和第二次真实重启。31f33a5的主/Agent CI共11项通过、真实Linux Ops16项通过且清理成功；GUI已通过直连真实取消/单次重启/恢复通知，但在跳板服务行点击失败，尚未执行后续独立Probe旅程，不能将其记为通过。
+
+Agent分阶段scope检查与GUI几何诊断本地回归：前端1250项通过、17项Linux用例在macOS跳过，TypeScript/Vite生产构建通过；7个Node套件101项通过。新增覆盖确认presenter独立guard、下载/home/旧hash/prepare/upload期间作用域变化、首次变更前取消与发送后unknown、prepare失败停止激活、已知activation结果不被UI变化改写，以及同Vault推断和显式冲突拒绝。这些本地结果不证明生产签名分发或完整GUI闭环，新提交CI需单独核对。

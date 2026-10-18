@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { HostProfile } from './hosts'
 import { getHostIdentity } from './host-identity'
-import { operationTransport, type OperationJob, runConfirmedOperation } from './operation-job'
+import { OperationScopeChangedError, operationTransport, type OperationJob, runConfirmedOperation } from './operation-job'
 import type { ProbeCapability, ProbeProvider, ProbeProviderRef, ProbeSnapshot } from './probe-provider'
 import { createProbeObservation, getProbeTransport } from './probe-provider'
 import type { ServerMonitorSnapshot } from './server-monitor'
@@ -9,6 +9,7 @@ import type { WorkspaceInventory } from './workspace-inventory'
 import type { CommandRunResult } from './sessions'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
 import { remoteOperationStatus } from './operation-verification'
+import { DEFAULT_VAULT_ID } from './vaults'
 
 export type ShellbeamAgentLifecycleStatus =
   | 'not-installed' | 'installing' | 'installed' | 'upgrading' | 'uninstalling'
@@ -307,41 +308,66 @@ export async function runShellbeamAgentOperation(options: {
   confirmMessage?: string
   onRecord?: (record: ShellbeamAgentRecord) => void
   beforeExecute?: () => Promise<void>
+  isCurrent?: () => boolean
 }): Promise<ShellbeamAgentOperationResult | null> {
-  const { host, resolveAuthSecret, action, vaultId = 'local', installPath, version, confirmMessage, onRecord } = options
+  const { host, resolveAuthSecret, action, installPath, version, confirmMessage, onRecord } = options
+  if (options.vaultId !== undefined && host.vaultId && options.vaultId !== host.vaultId) throw new Error('WORKSPACE_VAULT_SCOPE_MISMATCH')
+  const vaultId = options.vaultId ?? host.vaultId ?? DEFAULT_VAULT_ID
+  let scopeCurrent = () => {
+    try { return options.isCurrent?.() !== false } catch { return false }
+  }
+  if (!scopeCurrent()) return null
   const plan = buildShellbeamAgentPlan(action, { installPath, version })
   const initial = normalizeShellbeamAgentRecord({ vaultId, hostId: host.id, status: action === 'install' ? 'installing' : action === 'upgrade' ? 'upgrading' : 'uninstalling', transport: operationTransport(host), installPath, installMethod: 'ssh-confirmed' }, Date.now())
   onRecord?.(initial)
   try {
     const execution = await runConfirmedOperation({
-      host, action: `agent.${action}`, target: plan.target, risk: plan.risk,
+      host, vaultId, isCurrent: options.isCurrent, action: `agent.${action}`, target: plan.target, risk: plan.risk,
       provider: 'shellbeam-agent', transport: operationTransport(host),
       paramsSummary: `path=${initial.installPath ?? SHELLBEAM_AGENT_DEFAULT_PATH}${version ? `; version=${version}` : ''}`,
       confirmMessage: confirmMessage ?? `Confirm ${action} for the ShellBeam Probe on ${host.name}?`,
-      execute: async () => { await options.beforeExecute?.(); return runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: plan.command }) },
+      execute: async (context) => {
+        scopeCurrent = context.isCurrent
+        const assertCurrent = () => { if (!scopeCurrent()) throw new OperationScopeChangedError(false) }
+        assertCurrent()
+        try { await options.beforeExecute?.() } catch (error) { assertCurrent(); throw error }
+        assertCurrent()
+        try {
+          return await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: plan.command })
+        } catch (error) {
+          if (!scopeCurrent()) throw new OperationScopeChangedError(true)
+          throw error
+        }
+      },
       getResult: (result) => result,
       onJob: () => undefined,
     })
     if (!execution) {
-      const cancelled = normalizeShellbeamAgentRecord({ ...initial, status: action === 'uninstall' ? 'installed' : 'unknown', health: 'unknown', lastErrorCode: 'confirmation_rejected', lastError: 'Operation was cancelled before execution', updatedAt: Date.now() })
-      onRecord?.(cancelled)
-      await upsertShellbeamAgent(cancelled).catch(() => undefined)
+      const cancelled = normalizeShellbeamAgentRecord({ ...initial, status: action === 'uninstall' ? 'installed' : 'unknown', health: 'unknown', lastErrorCode: 'operation_cancelled', lastError: 'Operation was cancelled before execution', updatedAt: Date.now() })
+      // Consent cancellation does not change the actual installed lifecycle.
+      if (scopeCurrent()) onRecord?.(cancelled)
       return null
     }
     const parsed = parseShellbeamAgentProbeOutput([execution.value.stdout, execution.value.stderr].filter(Boolean).join('\n'), host)
-    const lifecycleStatus = parsed.status === 'unsupported' || execution.value.exitCode === 127
+    const lifecycleStatus = execution.job.status === 'unknown'
+      ? 'unknown'
+      : parsed.status === 'unsupported' || execution.value.exitCode === 127
       ? 'unsupported'
       : execution.value.exitCode === 0
         ? action === 'uninstall' ? 'retired' : 'installed'
-        : execution.job.status === 'unknown' ? 'unknown' : 'failed'
-    const record = normalizeShellbeamAgentRecord({ ...parsed, vaultId, hostId: host.id, status: lifecycleStatus, installPath: initial.installPath, transport: operationTransport(host), installMethod: 'ssh-confirmed', lastErrorCode: execution.value.exitCode === 0 ? parsed.lastErrorCode : `exit_${execution.value.exitCode}`, lastError: execution.value.exitCode === 0 ? parsed.lastError : execution.value.stderr || parsed.lastError || 'Agent operation failed', updatedAt: Date.now() })
-    onRecord?.(record)
-    await upsertShellbeamAgent(record)
+        : 'failed'
+    const record = normalizeShellbeamAgentRecord({ ...parsed, vaultId, hostId: host.id, status: lifecycleStatus, installPath: initial.installPath, transport: operationTransport(host), installMethod: 'ssh-confirmed', lastErrorCode: execution.job.status === 'unknown' ? 'remote_state_unknown' : execution.value.exitCode === 0 ? parsed.lastErrorCode : `exit_${execution.value.exitCode}`, lastError: execution.job.status === 'unknown' ? 'Agent operation outcome is unknown; verify before retrying.' : execution.value.exitCode === 0 ? parsed.lastError : execution.value.stderr || parsed.lastError || 'Agent operation failed', updatedAt: Date.now() })
+    if (scopeCurrent()) {
+      onRecord?.(record)
+      await upsertShellbeamAgent(record)
+    }
     return { record, job: execution.job, commandResult: { record, stdout: execution.value.stdout, stderr: execution.value.stderr, exitCode: execution.value.exitCode, durationMs: execution.value.durationMs } }
   } catch (error) {
     const record = normalizeShellbeamAgentRecord({ ...initial, status: 'unknown', health: 'unknown', lastErrorCode: 'agent_operation_unknown', lastError: error instanceof Error ? error.message : String(error), updatedAt: Date.now() })
-    onRecord?.(record)
-    await upsertShellbeamAgent(record).catch(() => undefined)
+    if (scopeCurrent()) {
+      onRecord?.(record)
+      await upsertShellbeamAgent(record).catch(() => undefined)
+    }
     throw error
   }
 }

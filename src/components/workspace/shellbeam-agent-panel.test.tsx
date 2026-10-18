@@ -61,4 +61,15 @@ describe('Agent production installation entry', () => {
     expect(screen.getByText(/\.local\/bin\/shellbeam-agent.*install/)).not.toHaveTextContent('sudo')
     expect(screen.queryByText('not displayed')).not.toBeInTheDocument()
   })
+
+  it.each(['host', 'jump', 'unmount'] as const)('passes a persistent execution guard that invalidates on %s change', async (change) => {
+    const view = render(<ShellbeamAgentPanel host={host} vaultId="guard-vault" resolveAuthSecret={vi.fn()} artifactManifest={{ test: 'transport-boundary-only' }} artifactPolicy={{ allowedHosts: ['example.com'], trustedPublicKeyBase64: 'test-only' }} />)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'workspace.agentProbe.install' })) })
+    await waitFor(() => expect(runShellbeamAgentArtifactOperation).toHaveBeenCalledOnce())
+    const guard = vi.mocked(runShellbeamAgentArtifactOperation).mock.calls[0][0].isCurrent
+    expect(guard?.()).toBe(true)
+    if (change === 'unmount') view.unmount()
+    else await act(async () => { view.rerender(<ShellbeamAgentPanel host={{ ...host, ...(change === 'host' ? { address: '192.0.2.12' } : { jumpHostId: 'new-jump-profile' }), updatedAt: 2 }} vaultId="guard-vault" resolveAuthSecret={vi.fn()} artifactManifest={{ test: 'transport-boundary-only' }} artifactPolicy={{ allowedHosts: ['example.com'], trustedPublicKeyBase64: 'test-only' }} />) })
+    expect(guard?.()).toBe(false)
+  })
 })

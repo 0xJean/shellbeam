@@ -1,10 +1,12 @@
 import type { HostProfile } from './hosts'
-import { operationTransport, runConfirmedOperation, updateOperationJob, type OperationJob } from './operation-job'
+import { OperationScopeChangedError, operationTransport, runConfirmedOperation, updateOperationJob, type OperationJob } from './operation-job'
 import { sftpHomeDir, sftpUploadFile } from './sftp'
 import { checkShellbeamAgent, listShellbeamAgents, normalizeShellbeamAgentRecord, upsertShellbeamAgent, type ShellbeamAgentRecord } from './shellbeam-agent'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
 import { downloadShellbeamAgentBytes } from './shellbeam-agent-download'
 import { upsertPersistedProbeSnapshot } from './probe-persistence'
+import { remoteOperationStatus } from './operation-verification'
+import { DEFAULT_VAULT_ID } from './vaults'
 
 /**
  * A release manifest is treated as untrusted input until its URL, digest and
@@ -356,45 +358,89 @@ export async function runShellbeamAgentArtifactOperation(options: {
   vaultId?: string
   confirmMessage?: string
   onRecord?: (record: ShellbeamAgentRecord) => void
+  /** The initiating host/Vault must remain current throughout staged work. */
+  isCurrent?: () => boolean
 }): Promise<ShellbeamAgentArtifactOperationResult | null> {
-  const { host, resolveAuthSecret, manifest, policy, action = 'install', previousSha256, releaseSummary, vaultId = 'local', confirmMessage, onRecord } = options
+  const { host, resolveAuthSecret, manifest, policy, action = 'install', previousSha256, releaseSummary, confirmMessage, onRecord } = options
+  if (options.vaultId !== undefined && host.vaultId && options.vaultId !== host.vaultId) throw new Error('WORKSPACE_VAULT_SCOPE_MISMATCH')
+  const vaultId = options.vaultId ?? host.vaultId ?? DEFAULT_VAULT_ID
+  let scopeCurrent = () => {
+    try { return options.isCurrent?.() !== false } catch { return false }
+  }
+  if (!scopeCurrent()) return null
   // Validate metadata before creating the job so the confirmation dialog can
   // show the signed release version without downloading anything. The actual
   // fetch and signature verification happen only after explicit confirmation.
   const validated = validateShellbeamAgentArtifactManifest(manifest, policy)
   const previousRecord = (await listShellbeamAgents({ vaultId, hostId: host.id }).catch(() => []))[0]
+  if (!scopeCurrent()) return null
   let remoteStagePath = ''
   const initial = normalizeShellbeamAgentRecord({ vaultId, hostId: host.id, status: action === 'upgrade' ? 'upgrading' : 'installing', version: validated.manifest.version, installPath: '$HOME/.local/bin/shellbeam-agent', transport: operationTransport(host), capabilities: [], heartbeatTtlMs: 5 * 60 * 1000, lastCheckedAt: Date.now(), installMethod: 'ssh-confirmed' }, Date.now())
   onRecord?.(initial)
-  let execution: { value: { artifact: VerifiedShellbeamAgentArtifact; exitCode: number; durationMs: number; stdout: string; stderr: string; plan: ShellbeamAgentArtifactInstallPlan }; job: OperationJob } | null
+  let execution: { value: { artifact: VerifiedShellbeamAgentArtifact; exitCode: number; durationMs: number; stdout: string; stderr: string; plan: ShellbeamAgentArtifactInstallPlan; phase: 'prepare' | 'activate' }; job: OperationJob } | null
   try {
     execution = await runConfirmedOperation({
-      host, action: `agent.${action}.artifact`, target: `shellbeam-agent ${action} ${validated.manifest.version}`, risk: 'high', provider: 'shellbeam-agent', transport: operationTransport(host),
+      host, vaultId, isCurrent: options.isCurrent, action: `agent.${action}.artifact`, target: `shellbeam-agent ${action} ${validated.manifest.version}`, risk: 'high', provider: 'shellbeam-agent', transport: operationTransport(host),
       paramsSummary: `artifact=${validated.manifest.artifactId}; version=${validated.manifest.version}; sha256=${validated.sha256}${releaseSummary ? `; ${releaseSummary.slice(0, 240)}` : ''}`,
       confirmMessage: confirmMessage ?? `Confirm ${action} of ShellBeam Probe ${validated.manifest.version} on ${host.name}?`,
-      execute: async () => {
-        const artifact = await downloadAndVerifyShellbeamAgentArtifact(manifest, policy)
-        const secret = vaultId && host.id ? '' : await resolveAuthSecret(host)
-        const auth = { vaultId, hostId: host.id, host: host.address, port: host.port || 22, username: host.username || 'root', authType: host.authType, ...(host.authType === 'password' ? { password: secret } : {}), ...(host.authType === 'privateKey' ? { privateKey: secret } : {}), jumpHost: host.jumpHost, jumpPort: host.jumpPort, jumpUser: host.jumpUser }
-        const home = await sftpHomeDir({ ...auth, remotePath: '.' })
-        const paths = remotePathForVersion(home, artifact.manifest.version, artifact.manifest.artifactId)
-        let previousHash = previousSha256
-        if (action === 'upgrade' && !previousHash) {
-          const current = await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: `if command -v sha256sum >/dev/null 2>&1; then sha256sum ${shellQuote(paths.installPath)}; else shasum -a 256 ${shellQuote(paths.installPath)}; fi` })
-          previousHash = safeHash(current.stdout.trim().split(/\s+/)[0]) ?? undefined
-          if (current.exitCode !== 0 || !previousHash) throw new Error('artifact_previous_hash_unavailable')
+      execute: async (context) => {
+        scopeCurrent = context.isCurrent
+        let sent = false
+        const assertCurrent = () => { if (!scopeCurrent()) throw new OperationScopeChangedError(sent) }
+        try {
+          assertCurrent()
+          const artifact = await downloadAndVerifyShellbeamAgentArtifact(manifest, policy)
+          assertCurrent()
+          const secret = vaultId && host.id ? '' : await resolveAuthSecret(host)
+          assertCurrent()
+          const auth = { vaultId, hostId: host.id, host: host.address, port: host.port || 22, username: host.username || 'root', authType: host.authType, ...(host.authType === 'password' ? { password: secret } : {}), ...(host.authType === 'privateKey' ? { privateKey: secret } : {}), jumpHost: host.jumpHost, jumpPort: host.jumpPort, jumpUser: host.jumpUser }
+          const home = await sftpHomeDir({ ...auth, remotePath: '.' })
+          assertCurrent()
+          const paths = remotePathForVersion(home, artifact.manifest.version, artifact.manifest.artifactId)
+          let previousHash = previousSha256
+          if (action === 'upgrade' && !previousHash) {
+            const current = await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: `if command -v sha256sum >/dev/null 2>&1; then sha256sum ${shellQuote(paths.installPath)}; else shasum -a 256 ${shellQuote(paths.installPath)}; fi` })
+            assertCurrent()
+            previousHash = safeHash(current.stdout.trim().split(/\s+/)[0]) ?? undefined
+            if (remoteOperationStatus(current) !== 'completed' || !previousHash) throw new Error('artifact_previous_hash_unavailable')
+          }
+          const installPlan = buildShellbeamAgentArtifactInstallPlan({ ...paths, version: artifact.manifest.version, sha256: artifact.sha256, previousSha256: previousHash })
+          remoteStagePath = installPlan.stagingPath
+          assertCurrent()
+          // From the first submitted mutation onward, losing scope cannot prove
+          // that the original route stayed unchanged or that a write did not land.
+          sent = true
+          const prepared = await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: `mkdir -p ${shellQuote(paths.stagingPath.slice(0, paths.stagingPath.lastIndexOf('/')))} ${shellQuote(paths.backupPath.slice(0, paths.backupPath.lastIndexOf('/')))} && chmod 0700 ${shellQuote(paths.root)}` })
+          if (remoteOperationStatus(prepared) !== 'completed') return { ...prepared, artifact, plan: installPlan, phase: 'prepare' as const }
+          assertCurrent()
+          await sftpUploadFile({ ...auth, remotePath: installPlan.stagingPath, contentB64: base64FromBytes(artifact.bytes) })
+          assertCurrent()
+          const commandResult = await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: installPlan.installCommand })
+          // A completed atomic installer is actual evidence for this command's
+          // original route. Keep it even if the UI changed while it was running;
+          // follow-up reads must separately pass the persistent guard below.
+          return { ...commandResult, artifact, plan: installPlan, phase: 'activate' as const }
+        } catch (error) {
+          assertCurrent()
+          throw error
         }
-        const installPlan = buildShellbeamAgentArtifactInstallPlan({ ...paths, version: artifact.manifest.version, sha256: artifact.sha256, previousSha256: previousHash })
-        remoteStagePath = installPlan.stagingPath
-        await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: `mkdir -p ${shellQuote(paths.stagingPath.slice(0, paths.stagingPath.lastIndexOf('/')))} ${shellQuote(paths.backupPath.slice(0, paths.backupPath.lastIndexOf('/')))} && chmod 0700 ${shellQuote(paths.root)}` })
-        await sftpUploadFile({ ...auth, remotePath: installPlan.stagingPath, contentB64: base64FromBytes(artifact.bytes) })
-        const commandResult = await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: installPlan.installCommand })
-        return { ...commandResult, artifact, plan: installPlan }
       },
       getResult: (result) => {
+        if (result.phase === 'prepare') {
+          const unknown = remoteOperationStatus(result) === 'unknown'
+          return {
+            ...result,
+            ...(unknown ? { errorType: 'unknown' as const } : {}),
+            resultSummary: `phase=prepare; exit=${result.exitCode}; durationMs=${result.durationMs}`,
+            errorCode: unknown ? 'artifact_prepare_unknown' : 'artifact_prepare_failed',
+            errorSummary: unknown ? 'Artifact staging preparation outcome is unknown; verify before retrying.' : 'Artifact staging preparation failed; activation was not sent.',
+          }
+        }
         const rollback = rollbackState(result)
+        const unknown = remoteOperationStatus(result) === 'unknown' || (result.exitCode !== 0 && (rollback === 'failed' || rollback === 'unknown'))
         return {
           ...result,
+          ...(unknown ? { errorType: 'unknown' as const } : {}),
           resultSummary: `exit=${result.exitCode}; durationMs=${result.durationMs}; rollback=${rollback}`,
           ...(result.exitCode !== 0 ? {
             errorCode: rollback === 'failed' || rollback === 'unknown' ? 'artifact_rollback_unknown' : 'artifact_install_failed_rolled_back',
@@ -407,17 +453,20 @@ export async function runShellbeamAgentArtifactOperation(options: {
     })
   } catch (error) {
     const unknown = normalizeShellbeamAgentRecord({ ...initial, status: 'unknown', health: 'unknown', lastErrorCode: 'artifact_operation_unknown', lastError: error instanceof Error ? error.message : String(error), updatedAt: Date.now() }, Date.now())
-    onRecord?.(unknown)
-    await upsertShellbeamAgent(unknown).catch(() => undefined)
+    if (scopeCurrent()) {
+      onRecord?.(unknown)
+      await upsertShellbeamAgent(unknown).catch(() => undefined)
+    }
     throw error
   }
   if (!execution) {
     const cancelled = previousRecord ?? normalizeShellbeamAgentRecord({ vaultId, hostId: host.id, status: 'not-installed', health: 'unknown', transport: operationTransport(host) })
-    onRecord?.(cancelled)
+    if (scopeCurrent()) onRecord?.(cancelled)
     // Cancellation changes no lifecycle state or installed version.
     return null
   }
-  const successful = execution.value.exitCode === 0
+  const preparationFailed = execution.value.phase === 'prepare'
+  const successful = execution.value.phase === 'activate' && execution.job.status === 'completed' && execution.value.exitCode === 0
   const installedPlan = execution.value.plan
   const rollbackMarker = execution.value.stdout.match(/__SB_AGENT_ROLLBACK=(verified|removed|failed|not-needed)/)?.[1]
   const auditedJob = rollbackMarker
@@ -429,29 +478,31 @@ export async function runShellbeamAgentArtifactOperation(options: {
     : execution.job
   const artifact = execution.value.artifact
   const rollback = rollbackState(execution.value)
-  const verifiedCurrent = successful || rollback === 'verified'
+  const verifiedCurrent = scopeCurrent() && (successful || rollback === 'verified')
     ? await checkShellbeamAgent(host, resolveAuthSecret, Date.now(), vaultId).catch(() => null)
     : null
-  const currentRecord = verifiedCurrent?.record
-  if (verifiedCurrent?.snapshot && (verifiedCurrent.snapshot.metrics || verifiedCurrent.snapshot.inventory)) await upsertPersistedProbeSnapshot(verifiedCurrent.snapshot, vaultId).catch(() => undefined)
+  const currentRecord = scopeCurrent() ? verifiedCurrent?.record : undefined
+  if (scopeCurrent() && verifiedCurrent?.snapshot && (verifiedCurrent.snapshot.metrics || verifiedCurrent.snapshot.inventory)) await upsertPersistedProbeSnapshot(verifiedCurrent.snapshot, vaultId).catch(() => undefined)
   const record = normalizeShellbeamAgentRecord({
     ...initial,
     ...(currentRecord ?? {}),
     vaultId,
-    status: currentRecord?.status === 'installed' ? 'installed' as const : successful ? 'unknown' as const : execution.job.status === 'unknown' || rollback === 'failed' || rollback === 'unknown' ? 'unknown' as const : 'failed' as const,
+    status: currentRecord?.status === 'installed' ? 'installed' as const : successful ? 'unknown' as const : execution.job.status === 'unknown' || (!preparationFailed && (rollback === 'failed' || rollback === 'unknown')) ? 'unknown' as const : 'failed' as const,
     health: currentRecord?.health ?? 'unknown' as const,
     updatedAt: Date.now(),
     installedAt: successful ? Date.now() : null,
     lastCheckedAt: Date.now(),
-    lastErrorCode: successful && currentRecord?.status !== 'installed' ? 'agent_activation_check_unknown' : successful ? null : rollback === 'failed' || rollback === 'unknown' ? 'artifact_rollback_unknown' : 'artifact_install_failed_rolled_back',
-    lastError: successful && currentRecord?.status !== 'installed' ? 'Artifact activation completed but follow-up observation is unavailable.' : successful ? null : rollback === 'failed' || rollback === 'unknown'
+    lastErrorCode: preparationFailed ? execution.job.status === 'unknown' ? 'artifact_prepare_unknown' : 'artifact_prepare_failed' : successful && currentRecord?.status !== 'installed' ? 'agent_activation_check_unknown' : successful ? null : rollback === 'failed' || rollback === 'unknown' ? 'artifact_rollback_unknown' : 'artifact_install_failed_rolled_back',
+    lastError: preparationFailed ? execution.job.status === 'unknown' ? 'Artifact staging preparation outcome is unknown; verify before retrying.' : 'Artifact staging preparation failed; activation was not sent.' : successful && currentRecord?.status !== 'installed' ? 'Artifact activation completed but follow-up observation is unavailable.' : successful ? null : rollback === 'failed' || rollback === 'unknown'
       ? 'Artifact activation failed and rollback could not be verified; manual recovery is required.'
       : `Verified artifact activation failed; rollback=${rollback}.`,
     installPath: installedPlan.installPath,
     version: currentRecord?.version ?? (successful ? artifact.manifest.version : previousRecord?.version ?? null),
     transport: operationTransport(host),
   }, Date.now())
-  onRecord?.(record)
-  await upsertShellbeamAgent(record)
+  if (scopeCurrent()) {
+    onRecord?.(record)
+    await upsertShellbeamAgent(record)
+  }
   return { job: auditedJob, record, artifact, plan: installedPlan, remoteStagePath, stdout: execution.value.stdout, stderr: execution.value.stderr, exitCode: execution.value.exitCode, durationMs: execution.value.durationMs }
 }

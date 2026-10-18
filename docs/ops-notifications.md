@@ -81,9 +81,13 @@ The installed Ubuntu X11 GUI gate additionally exercises the actual test button
 with an owned, version-pinned dunst. Run 39101718712 passed normal visibility,
 paused acceptance without display, visibility after resuming the same queued
 message, and unavailable-daemon diagnostics. Exact banner OCR and real window
-counts are retained with controlled screenshots. The overall journey failed
-later at policy diagnostic readiness; real service-alert delivery, other Linux
-desktops and macOS/Windows presentation remain separate acceptance requirements.
+counts are retained with controlled screenshots. Later run 39106223515 also
+verified actual direct/ProxyJump service-opening banners, direct cancellation
+without a mutation, a single confirmed restart and its real recovery banner.
+It failed at the via-host Services row click before completing that route.
+The full two-route restart journey, independent SSH Probe failure/recovery
+notifications, other Linux desktops and macOS/Windows presentation remain
+separate acceptance requirements; see `ops-ui-live-validation.md`.
 
 ## Delivery diagnostics
 
