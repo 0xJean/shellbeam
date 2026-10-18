@@ -37,6 +37,7 @@
 | 要求 | 实现证据 | 验证与状态 |
 | --- | --- | --- |
 | endpoint/token、节点发现和映射 | `komari.ts`、`komari-mapping.ts`、配置页面 | 保留已有配置、权限、映射冲突和回退测试 |
+| Komari Web控制台入口 | `komari-console.ts`、Komari设置页 | 从已保存同Vault地址打开桌面浏览器窗口，保留反代basepath、移除query/hash且不传API密钥；拒绝危险协议/内嵌凭据，迟到旧Vault请求不能导航或继续保存。行为/双语测试通过；实际外部部署与桌面页面仍待验收，移动端沿用浏览器窗口不支持的明确错误 |
 | 同步TTL、并发、快照和告警 | `komari-sync.ts`、原生Komari persistence | 保留既有告警去重、确认/关闭、恢复通知和OperationJob跨会话关联 |
 | 历史时序、范围查询和可视化 | `data/provider_history.rs`、`provider-history.ts`、ProviderHistoryPanel | Vault/provider/host/node隔离；7天/每series10080点/总计100000点；1h/6h/24h/7d视图，来源选择、null/停采断线、原始采样时间和TTL |
 | API契约兼容 | `src/lib/fixtures/komari-http-contracts.json` 和Komari契约测试 | 依据官方Komari源码记录支持的endpoint/版本；测试权限、flat/nested记录、乱序/重复/无时间/未来时间；不宣称所有版本兼容 |
