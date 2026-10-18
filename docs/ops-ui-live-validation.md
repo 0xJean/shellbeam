@@ -9,6 +9,16 @@ following the [official Tauri WebDriver setup](https://v2.tauri.app/develop/test
 No automation plugin, embedded listener, JavaScript evaluation, mocked invoke,
 pre-seeded app database, localStorage write or fake confirmation is used.
 
+The complete installed Linux journey passed in
+[run 39113100124](https://github.com/0xJean/shellbeam/actions/runs/39113100124),
+head `11d9f6331a3214c5bb572cd1ff2786a804f6ac32`, merge checkout
+`48d6212cfb1a8877514030171847adc0a394205c`. The downloaded
+[artifact 12131831582](https://github.com/0xJean/shellbeam/actions/runs/39113100124/artifacts/12131831582)
+records `success: true`, `cleanup: passed` and confirmed application exit.
+Service operations, independent SSH Probe metrics incidents, three inventory
+refreshes and both actual application restarts passed together. This acceptance
+is limited to the isolated Ubuntu X11 environment described below.
+
 ## Journey and independent evidence
 
 The runner initializes a private Personal Vault through the UI, saves three
@@ -72,9 +82,9 @@ waiting or reading old healthy caches cannot satisfy that assertion. Notificatio
 metadata is retained in the WebView's bounded local delivery ledger; it is not
 described as SQLite OperationJob storage.
 
-These added assertions require their own successful exact-commit CI result.
-They cover local service rules, not real Komari alert delivery or ProbeProvider
-failure/recovery delivery, and do not claim that a person read a banner.
+Run 39113100124 passed these local-service assertions and the separate independent
+SSH Probe metrics journey. Service assertions alone do not establish Probe or
+Komari delivery, and neither journey claims that a person read a banner.
 
 ## Isolation and cleanup
 
@@ -89,12 +99,17 @@ are created. The final cleanup verifies owned cgroups and service removal before
 deleting private state. The installed fixture package is removed independently.
 Cleanup failure fails acceptance and retains private state when needed.
 
-Artifacts contain only a bounded redacted JSON report and controlled notification
-PNG screenshots after credential forms are closed. Passwords, private keys, Vault
+Artifacts contain only a bounded redacted JSON report, controlled notification
+PNGs and scoped fixture-only failure screenshots after credential forms are
+closed. Passwords, private keys, Vault
 databases, full DOM, OCR text, remote output and raw driver logs are not uploaded.
 The report records both the PR head and the actual checked-out merge commit.
 
 ## Execution status and remaining scope
+
+The latest complete result is run 39113100124 above. Earlier failed runs below
+retain their original scope and results; statements about unreached gates refer
+to those individual runs, not the current accepted Linux journey.
 
 The first actual [UI run 39098763837](https://github.com/0xJean/shellbeam/actions/runs/39098763837)
 tested head `db9933af748728736a46bf6e046ad2f17b3656b6`, merge checkout
@@ -388,15 +403,16 @@ inside the sticky horizontal controls at `(201, 40, 1054, 49)`. The controlled
 the menu. The next change must address product scrolling; no driver retry,
 forced click or omitted refresh is justified by this diagnosis.
 
-The product correction measures the horizontal controls' rendered height and
-reserves that height plus eight pixels as `scroll-margin-block-start` on this
-list's interactive content. It retains the sticky toolbar and existing scroll
+An attempted product correction measured the horizontal controls' rendered height
+and reserved that height plus eight pixels as `scroll-margin-block-start` on this
+list's interactive content. It retained the sticky toolbar and existing scroll
 containers. In [WebKitGTK 2.50.0's Element implementation](https://github.com/WebKit/WebKit/blob/webkitgtk-2.50.0/Source/WebCore/dom/Element.cpp),
 scroll-into-view expands the target anchor rectangle by its scroll margin before
 scrolling its ancestors; setting padding only on the horizontal viewport would
 not protect the outer vertical scroller. Component checks can establish measured
-clearance and observer cleanup, but a new installed-app run must still prove
-the one native selection, final inventory settlement and second restart.
+clearance and observer cleanup, but did not prove native selection, final
+inventory settlement or the second restart. This approach was not retained after
+the sixteenth run below.
 
 The sixteenth [UI run 39112417494](https://github.com/0xJean/shellbeam/actions/runs/39112417494),
 head `efb1b386be06b7e762efe334efee80582bbb6b4f`, merge checkout
@@ -415,6 +431,45 @@ removes the measured-clearance variable and content scroll margins; it does
 not add another scrollport or modify the driver. Horizontal range, paging and
 keyboard controls remain available, but the toolbar scrolls away vertically
 with the list. The viewport still supports native horizontal scrolling. This
-removes the established toolbar-overlap condition structurally; completion of
-native menu interactions and the full restart journey still requires a new
-installed-app run.
+removes the established toolbar-overlap condition structurally. The seventeenth
+installed-app run below subsequently passed the native menu interactions and
+complete restart journey with this structure.
+
+The seventeenth [UI run 39113100124](https://github.com/0xJean/shellbeam/actions/runs/39113100124),
+head `11d9f6331a3214c5bb572cd1ff2786a804f6ac32`, merge checkout
+`48d6212cfb1a8877514030171847adc0a394205c`, passed the complete composite gate.
+The downloaded [artifact 12131831582](https://github.com/0xJean/shellbeam/actions/runs/39113100124/artifacts/12131831582)
+contains 161 redacted events and 28 controlled PNGs. Both services required at
+most three diagnosis clicks; two rejected confirmations caused zero mutations,
+two accepted confirmations each produced exactly one restart, and both alerts
+resolved. The first actual app restart restored four canonical service jobs and
+two fresh service observations, retaining four OS lifecycle banners without replay.
+
+Independent direct and saved-jump SSHD outages then produced new metrics failure
+and recovery observations for the direct, via and collateral jump profiles. All
+six actual metrics OS banners passed mapped-window checks and complete title/body
+OCR; their PNG hashes were independently checked after download. The target hosts
+each retained a cancelled acknowledgement plus confirmed acknowledge/close jobs,
+six metadata OperationJobs in total. The collateral jump profile recovered without
+metadata actions. All three real host-menu inventory refreshes subsequently
+retained healthy original sample timestamps newer than the previous sample and
+at or after their precomputed collection boundaries, with no open inventory alert.
+
+A second confirmed app exit and third actual process launch restored the same
+six Probe metadata jobs, three fresh metrics observations and their closed/resolved
+lifecycles. The original four service jobs and two fresh service observations
+were checked again. The notification ledger was stable for five seconds before
+restart and unchanged for five seconds after it: its aggregate delivered count
+was 16, including other legitimate notifications, compared with six at the start
+of the Probe journey. This is not an assertion that the aggregate increased by
+only six. The owned metrics daemon retained exactly six history entries, zero
+displayed and zero waiting notifications, with no replay. Cleanup and final
+application exit passed.
+
+The combined `probeRecovery` and `probeNotifications` results establish metrics
+incident recovery, visible OS delivery and restart persistence in this environment.
+The inventory refresh checks do not establish inventory-notification presentation;
+`inventoryLifecycleVerified`, `komariLifecycleVerified` and `readReceiptVerified`
+remain false. macOS/Windows or other Linux desktop presentation, mobile devices,
+an external Komari deployment, public-CA renewal and production Agent distribution
+remain separate acceptance requirements.

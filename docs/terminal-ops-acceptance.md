@@ -2,6 +2,8 @@
 
 对应 [产品 PRD](./prd-terminal-ops.md)，核查日期 2026-10-18。本文记录实现证据和剩余验收，不以阶段名称或已有页面数量作为完成证明。
 
+当前隔离 Ubuntu X11 安装包完整 GUI 验收已通过：[第17次运行 39113100124](https://github.com/0xJean/shellbeam/actions/runs/39113100124)，head `11d9f6331a3214c5bb572cd1ff2786a804f6ac32`、合并检出 `48d6212cfb1a8877514030171847adc0a394205c`。[下载核对的报告与受控截图](https://github.com/0xJean/shellbeam/actions/runs/39113100124/artifacts/12131831582)确认服务闭环、独立 Probe 指标告警、三主机资产刷新及两次真实应用重启均通过，清理和最终退出成功。下文历史失败记录保持原结果；其它平台、外部 Komari、正式 Agent 分发和公有 CA 仍按各自边界验收。
+
 ## Phase 0：连接与采集底座
 
 | 要求 | 实现证据 | 验证与状态 |
@@ -15,7 +17,7 @@
 | 状态与主机身份一致 | `host-identity.ts`、原生route identity、unsupported采集契约 | 非Linux SSH采集明确unsupported，不当成offline；可用Agent/Komari观察可优先；身份来自实际解析端点，未解析跳板引用不复用旧复制地址；任务摘要按job最新状态统计 |
 | 跨Vault观察隔离 | `host-observation-scope.ts`、monitor/inventory/tool原生持久化、MCP缓存读取 | 内存和持久化均按Vault/host标识；显式Vault与profile冲突在采集前拒绝；MCP按授权Vault读取。旧无scope缓存保留但不猜测归属，需要重新观察；已分scope的ProbeProvider历史保留 |
 | 采集预算与架构 | `shared/collection-limits.json`、TS/Rust共享读取、统一Inventory.arch | 并发、采集timeout/输出与历史保留使用一个数值源；普通SSH命令和MCP任务各自的有界预算单独命名；架构从真实采集结果传入，缺失不猜测 |
-| 通用SSH Provider失败/恢复告警 | `probe-scheduler.ts`、`probe-collection-events.ts`、`probe-alert-lifecycle.ts`、应用级ProbeAlertRuntime与local_ops | 实际采集按Provider/metrics/inventory发布一次事件；无缓存失败可开启内置告警，unknown、缓存读取及`recovered`缓存回退不算恢复，须同配置的新成功采样。先原生持久化再通知；锁库、旧Vault/主机/跳板配置及CAS失败不得投递，主机Grid/List可确认/关闭并关联OperationJob。2312139已实测独立直连/跳板SSHD故障、新采样恢复及六条真实OS横幅；资产刷新排空和第二次重启仍未验收 |
+| 通用SSH Provider失败/恢复告警 | `probe-scheduler.ts`、`probe-collection-events.ts`、`probe-alert-lifecycle.ts`、应用级ProbeAlertRuntime与local_ops | 实际采集按Provider/metrics/inventory发布一次事件；无缓存失败可开启内置告警，unknown、缓存读取及`recovered`缓存回退不算恢复，须同配置的新成功采样。先原生持久化再通知；锁库、旧Vault/主机/跳板配置及CAS失败不得投递，主机Grid/List可确认/关闭并关联OperationJob。11d9f63完整打包GUI已实测独立直连/跳板SSHD故障、三profile新指标采样恢复、六条真实metrics OS横幅、六条metadata任务、三次资产刷新排空及第二次真实重启恢复；不代表inventory或Komari系统通知展示已验收 |
 
 ## Phase 1：主机诊断与操作闭环
 
@@ -24,18 +26,18 @@
 | 运维列表、健康、告警、筛选 | `host-ops-view.ts`、`host-ops-filters.ts`、HostCard/HostsDashboard | Provider、OS、严重级别、能力、资源阈值、新鲜度；显示TTL、跳板、最后错误 |
 | Probe分区采样状态 | `hostProbeEvaluations`、HostCard Grid/List与HostsDashboard | 同Vault/主机canonical metrics/inventory evaluation单独展示健康与原始采样时间，无告警时仍可见；共用180秒新鲜度，过期/缺失/无效/未来时间为unknown，UI刷新不得伪造采样时间。真实SSH告警标题包含主机名以区分多主机系统通知 |
 | 资源摘要与跳板搜索 | HostCard Grid/List、`host-search.ts` | 显式展示RX/TX与uptime，选中Provider仅有metrics时仍可展示；缺失unknown、实际0保持0；跳板引用按同Vault当前配置搜索，编辑/删除不继续匹配旧复制字段 |
-| 主机快捷诊断入口 | HostCard/HostsDashboard、SessionsContext、PcLayout | 卡片/列表提供可见的一键Services按钮，避免将原生菜单打开/选择少计为一次；打开Services、选择服务、读取真实status为三次实际点击，2312139打包GUI已在直连/跳板及首次真实重启后验证。保留Overview、Files、Logs、健康检查和刷新；同Vault复用会话、补齐UI标签页，右侧会话提升后不重复挂载；跨Vault同名ID不得复用 |
+| 主机快捷诊断入口 | HostCard/HostsDashboard、SessionsContext、PcLayout | 卡片/列表提供可见的一键Services按钮，避免将原生菜单打开/选择少计为一次；打开Services、选择服务、读取真实status为三次实际点击，11d9f63打包GUI已验证直连/跳板两路诊断，后续两次真实重启均恢复原审计与新观察。保留Overview、Files、Logs、健康检查和刷新；同Vault复用会话、补齐UI标签页，右侧会话提升后不重复挂载；跨Vault同名ID不得复用 |
 | Workspace观察范围 | `workspace-provider-state.ts`、WorkspaceStatusCards、WorkspaceRecommendationsPanel | 桌面/移动Overview指标与资源建议复用主机列表的Provider选择规则；读取同Vault/host的canonical与Komari持久化，切换Vault/路由拒绝迟到读取，映射重绑立即失效旧来源；未绑定引用按明确活动Vault解析，冲突引用不展示 |
 | Overview来源与回退 | WorkspaceProviderSummary、共用`buildHostOpsViews` | 并列显示当前/其他Provider的健康、原始采样/接收/Komari同步时间、TTL、可信程度与实际能力；缺失时间显示未知，不借资产扫描或缓存写入伪造指标时间。Komari过期/不可用时明确显示SSH回退，遥测只属于实际选中的指标观察；资源建议独立检查该指标deadline |
 | 文件写操作确认和审计 | `file-operation.ts`、`remote-fs.ts`、Files/SFTP组件 | 只读亦有审计；创建/上传/覆盖/删除/重命名/权限统一确认，后态stat验证；高风险强确认；路径哈希，无内容入审计；取消零执行 |
 | 进程、服务和日志稳定诊断 | `workspace-diagnostics.ts` 和相应Workspace应用 | 有界读取/分页/筛选；进程终止、服务启停及enable/disable后态验证；无法观察结果记unknown；日志跟随可停止且有时限 |
 | Services窄屏字段展示 | `WorkspaceServicesApp` | 窄屏使用Service/Active/Sub三弹性列，Load字段名和值保留在名称附行；sm恢复原四列。容器允许缩小，长名称/状态可断行，完整选中unit保留。只使用窗口正文纵向滚动；组件验证第二行身份、同Vault status审计及Logs目标，未替代320/375/390px实际渲染或移动设备验收 |
-| 真实异常到处理结果 | 实际desktop/mobile Overview的RecommendationsPanel | 流程测试：真实本地规则告警→日志诊断→确认重启→后态观察→OperationJob；取消不执行 |
+| 真实异常到处理结果 | 实际desktop/mobile Overview的RecommendationsPanel | 流程测试覆盖本地规则告警→日志诊断→确认重启→后态观察→OperationJob；11d9f63隔离Linux打包GUI另验证两路主机卡片→Services诊断、取消零变更、确认后态与同主机审计；移动设备实际展示仍单独验收 |
 | HTTP/TCP检查与本地规则 | `health-check-scheduler.ts`、`local-alert-*.ts`、`local-ops-store.ts` | 应用级有界调度，历史、持续时间、滞回、unknown不恢复、失败与恢复通知；复用OperationJob路径判断，仅保存jumpHostId的主机在成功、失败、unknown和取消未发送结果中均保留ProxyJump，持久化历史、服务告警和恢复视图不误标直连 |
 | 跨会话告警审计 | `data/local_ops.rs`、`local-ops-persistence.ts`、`local-alert-actions.ts` | 原生按Vault/host/kind隔离、revision CAS；确认/关闭关联同scope已确认OperationJob；MCP返回安全历史和关联任务 |
 | 历史任务与审计查询 | `OperationsAuditCenter`、原生`operation_jobs`查询 | 来源和状态在原生筛选，按时间与唯一ID复合游标翻页，每页最多100条；任务与审计独立分页，历史页暂停自动刷新，刷新回到最新。切换Vault/主机/筛选拒绝迟到结果；仍受5000任务/10000审计的既有保留上限约束，不承诺无限历史 |
 | Workspace结果未知提示 | `WorkspaceOperationRecoveryNotice`、原生启动recover | 只显示同Vault/主机canonical unknown；正常queued/running留在任务进度，跨应用重启未完成任务由原生转unknown。初始读取无证据不闪警告，可见时15秒及focus/visibility只读刷新、单请求合并；读取失败保留未知证据，成功读到终态才移除；显式Vault冲突不查全局，切scope/卸载清理并拒绝迟到结果，不重放远端动作 |
-| 异步操作确认 | `user-confirmation.ts`、应用级`UserConfirmationDialog`、OperationJob/文件/批量入口 | Tauri Dialog 2.6会把`window.confirm`替换为Promise，必须等待严格布尔结果。应用内真实确认窗默认聚焦取消，显示主机、路径和动作摘要；文件保留精确输入token。锁库/切库/主机或跳板变更撤销待确认，作用域guard保留至实际发送前；不可用/忙碌不记为人工拒绝，已同意但未发送的取消保留confirmed。2312139打包GUI已证明两路真实取消零变更、确认各只重启一次及首次应用重启后的四条审计恢复；独立Probe第二次重启另行验收 |
+| 异步操作确认 | `user-confirmation.ts`、应用级`UserConfirmationDialog`、OperationJob/文件/批量入口 | Tauri Dialog 2.6会把`window.confirm`替换为Promise，必须等待严格布尔结果。应用内真实确认窗默认聚焦取消，显示主机、路径和动作摘要；文件保留精确输入token。锁库/切库/主机或跳板变更撤销待确认，作用域guard保留至实际发送前；不可用/忙碌不记为人工拒绝，已同意但未发送的取消保留confirmed。11d9f63打包GUI已证明两路真实取消零变更、确认各只重启一次，四条服务审计在两次应用重启后均恢复；独立Probe另六条确认/取消metadata任务在第二次重启后恢复 |
 | MCP本地告警确认/关闭 | `mcp/local_alerts.rs`、协议oneOf与原生local_ops内部事务 | 保留Komari参数兼容；服务、健康检查和独立ProbeProvider告警必须显式`alertSource=local-ops`、ruleId及expectedRevision。复查manageAlerts/同Vault主机授权，规范Job记录客户端授权为not_required，不伪造人工确认；SQLite保证CAS、跨会话与并发幂等，不重放非终态任务。桌面confirmed-only入口保持独立 |
 | 超时/断线/信号/输出过量 | 原生公共command执行器、OperationJob结果映射 | 不推断远端动作已停止；不确定结果为unknown，无自动重放写操作 |
 | 工具安装与服务动作 | `workspace-tools.ts`、WorkspaceToolManagerApp | 安装/升级/卸载及服务变更先确认，展示主机/路径/命令；独立观察版本、工具存在与服务后态；同一OperationJob记录结果，无法观察为unknown |
@@ -82,7 +84,7 @@
 - Linux采集与user systemd生命周期由GitHub Actions真实Linux runner验收；本机macOS上的跳过不能算Linux验收通过。
 - macOS launchd smoke使用唯一测试label、临时state和真实生成plist；不会覆盖默认探针服务。本轮实际启动、重启、历史保留、卸载测试通过（`cargo test --manifest-path agent/Cargo.toml launchd_service_activates_restarts_and_stops_in_isolated_state -- --ignored --nocapture`）。
 - GitHub Actions覆盖前端、macOS/Linux/Windows原生测试与MCP stdio，以及独立Agent daemon/systemd检查。以本轮提交对应的状态为准，旧提交绿色检查不代表本轮通过。
-- 系统通知仍需逐平台与实际桌面环境检查；helper/mock测试不证明后端接收。隔离Ubuntu打包GUI已验证测试按钮四状态、直连/跳板服务开启/恢复四横幅及首次重启不重放，独立Probe故障/恢复六横幅也已实际观察；Probe最终计数及第二次重启、其它Linux桌面环境和macOS/Windows展示仍未验收。
+- 系统通知仍需逐平台与实际桌面环境检查；helper/mock测试不证明后端接收。11d9f63隔离Ubuntu打包GUI已完整验证测试按钮四状态、两路服务四横幅和首次重启无重放，以及独立Probe六条metrics横幅、最终持久计数和第二次重启无重放。其它Linux桌面环境、macOS/Windows展示、inventory/Komari系统通知仍需对应实测；不宣称用户已读。
 - 正式Agent发布密钥配置、release draft审核和生产发布没有执行；测试签名不能替代生产信任根。
 - 本文不将多跳、团队RBAC、完整APM/Kubernetes或无人值守自愈加入首期范围。
 
@@ -111,10 +113,10 @@ Komari手动映射/控制台本轮本地回归：前端939项通过，16项Linux
 
 | 项目 | 完成证据 | 当前边界 |
 | --- | --- | --- |
-| 桌面系统通知 | 对应安装包中验证允许/拒绝/系统禁用，以及实际横幅或通知中心条目 | 隔离Ubuntu X11测试按钮四状态、两路服务开启/恢复和首次重启无重放，以及独立Probe故障/恢复六横幅已通过真实窗口/计数/OCR；Probe最终计数/第二次重启、其它Linux桌面及macOS/Windows授权/展示仍待验收 |
+| 桌面系统通知 | 对应安装包中验证允许/拒绝/系统禁用，以及实际横幅或通知中心条目 | 11d9f63隔离Ubuntu X11完整GUI已通过测试按钮四状态、两路服务四横幅与首次重启无重放、独立Probe六条metrics横幅、三次资产刷新、第二次重启后审计/新采样和持久通知计数无重放；其它Linux桌面、macOS/Windows授权/展示、inventory/Komari系统通知仍待实测；不宣称用户已读 |
 | Komari部署 | 实际部署的TLS、token权限、节点映射、WebView请求及告警到Workspace跳转 | 已有官方1.6.0本地真实服务HTTP契约证据，尚不覆盖用户外部部署或所有版本 |
-| 正式Agent制品 | 受保护签名环境、四目标制品、审核后的HTTPS来源，真实客户端首装/第二版升级/失败回滚/卸载及ProxyJump审计 | 生产密钥来源待决定，工作流尚未进入默认分支；未生成生产信任根、未发布Agent版本 |
-| 主机运维产品指标 | 打包应用从列表发现异常到首次有效诊断不超过3步，再执行确认动作、观察后态与同主机审计 | 组件流程及隔离Linux Docker/SSL/混合多主机16项命令组合已通过；仍需真实用户桌面、生产Vault和实际部署环境，私有ACME不替代公有CA域名控制验收 |
+| 正式Agent制品 | 受保护签名环境、四目标制品、审核后的HTTPS来源，真实客户端首装/第二版升级/失败回滚/卸载及ProxyJump审计 | 签名方案已选，生产环境和密钥尚未配置，工作流尚未进入默认分支；未生成生产信任根、未发布Agent版本 |
+| 主机运维产品指标 | 打包应用从列表发现异常到首次有效诊断不超过3步，再执行确认动作、观察后态与同主机审计 | 11d9f63隔离Linux打包GUI已通过直连/跳板三次实际诊断点击、确认/取消、独立服务后态与跨两次重启审计；隔离Docker/SSL/混合多主机16项命令组合另有证据。用户生产Vault和实际部署环境仍需对应验收，私有ACME不替代公有CA域名控制 |
 
 远端Agent历史在桌面退出期间保留；新版本通过有界分页在重连后回灌，独立Vault/host/provider/node游标与数据同事务提交、CAS检查、锁库不推进，原采样时间和缺口保留。Workspace独立显示会话结果与持久进度；旧Agent不支持分页时明确unavailable，不读取无界历史。此增强仍不能替代正式签名制品和打包实机验收。
 
@@ -148,8 +150,14 @@ Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例�
 
 提交`593c938`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39110943174)/[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39110943161)共11项通过，[核对的Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39110943174/artifacts/12130376995)16项通过、零跳过、清理成功，合并检出`0779f6a07c3508001c6da9ec4861e3e83fa7c1ad`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39110943186)保留服务/首次重启及Probe既有通过项，仍在via资产刷新失败；新实际几何和受控截图确认固定横向控制条完整覆盖了原生滚动后的菜单。最终计数和Probe第二次重启仍未验收，清理和应用退出通过，不以诊断成功替代GUI成功。
 
-横向控制条避让修复保留sticky和既有滚动容器，按实际控件高度加8px为列表内交互目标设置滚动margin。组件验证49/81.25px高度变化、清零、观察器清理及原横向分页/范围/键盘操作；相关55项通过，完整前端1264项通过、17项Linux用例在macOS跳过，生产构建、编译CSS规则、修改范围ESLint和空白检查通过。新打包GUI仍须证明原生点击与剩余Probe闭环，不以jsdom布局推断代替。
+曾尝试保留sticky和既有滚动容器，按实际控件高度加8px为列表内交互目标设置滚动margin。该版本组件验证49/81.25px高度变化、清零、观察器清理及原横向分页/范围/键盘操作；相关55项通过，完整前端1264项通过、17项Linux用例在macOS跳过，生产构建、编译CSS规则、修改范围ESLint和空白检查通过。这些结果未证明原生点击与剩余Probe闭环；后续efb1b38实际GUI失败，该方案已移除。
 
 提交`efb1b38`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39112417502)/[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39112417497)共11项通过，[核对的Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39112417502/artifacts/12130858839)16项通过、零跳过、清理成功，合并检出`7e6dc376bae330191fefb1142950e2a8725e5bf0`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39112417494)通过两路服务闭环，但首次重启恢复时的direct主机Network菜单报不可交互；此处无失败像素/几何，不能推断为同一遮挡，原Probe资产刷新也未重测，清理及退出通过。
 
-当前方案将横向控制条放回正常文档流，删除上述测高和margin实现；PRD无常驻要求。已有横向viewport、分页/范围/键盘操作保留，纵向滚动后控制条不再常驻，以结构消除已证实的覆盖条件。相关55项组件、完整前端1264项（macOS跳过17项Linux用例）、生产构建和修改范围lint通过；真实点击和完整GUI仍须新运行验收。
+当前方案将横向控制条放回正常文档流，删除上述测高和margin实现；PRD无常驻要求。已有横向viewport、分页/范围/键盘操作保留，纵向滚动后控制条不再常驻，以结构消除已证实的覆盖条件。相关55项组件、完整前端1264项（macOS跳过17项Linux用例）、生产构建和修改范围lint通过；11d9f63安装包实测已通过相应原生菜单交互及完整GUI闭环。
+
+提交`11d9f6331a3214c5bb572cd1ff2786a804f6ac32`的[第17次GUI运行39113100124](https://github.com/0xJean/shellbeam/actions/runs/39113100124)完整成功，[受控artifact12131831582](https://github.com/0xJean/shellbeam/actions/runs/39113100124/artifacts/12131831582)合并检出`48d6212cfb1a8877514030171847adc0a394205c`，`success: true`、`cleanup: passed`、最终应用退出成功。报告保留161条脱敏事件、28张受控PNG：两路服务各最多3次诊断点击、2条取消零变更、2次确认各重启一次及2条恢复告警；首次重启恢复4条服务Job和2个新观察，四条真实服务系统横幅无重放。
+
+同一运行中，独立直连与保存跳板SSHD故障触发三profile的真实metrics失败和新采样恢复；六条OS开启/恢复横幅的实际窗口、完整标题/正文OCR及下载后PNG hash均已核对。两目标主机各有取消的acknowledge、已确认acknowledge和close三条metadata OperationJob，共六条；保存跳板只观察恢复，不执行告警metadata动作。jump/direct/via三个真实刷新菜单均得到原始采样时间不早于预设整秒边界且严格晚于上一样本的健康资产观察，无开放资产告警。
+
+第二次实际退出和第三次进程启动后，六条Probe metadata任务、三个新指标样本、原有四条服务任务和两个新服务观察均恢复；本地通知账本在重启前后分别观察5秒稳定且不重放。Probe阶段初始总投递数为6，最终为16，其中包含其它合法通知，不能写为仅增加六次；独立metrics daemon的历史恰为6、显示/等待均为0。`probeRecovery`与`probeNotifications`的组合证明该Linux环境中的指标故障、系统展示与重启闭环；`inventoryLifecycleVerified`、`komariLifecycleVerified`及`readReceiptVerified`仍为false，真实资产刷新成功不扩大为资产通知、Komari或已读回执验收。

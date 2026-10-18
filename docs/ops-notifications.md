@@ -15,8 +15,16 @@ transaction cannot emit a successful delivery. Publication and persistence
 failures show fixed scoped diagnostics in the host view without copying remote
 exceptions or changing Provider health. Host cards expose the existing confirmed
 local-alert actions and canonical OperationJob audit for these built-in alerts.
-Actual ProbeProvider incident/recovery OS presentation still requires its own
-live acceptance; local-service and explicit test-button cases do not prove it.
+The complete isolated Ubuntu X11 metrics incident/recovery journey passed in
+[run 39113100124](https://github.com/0xJean/shellbeam/actions/runs/39113100124),
+head `11d9f6331a3214c5bb572cd1ff2786a804f6ac32`, merge checkout
+`48d6212cfb1a8877514030171847adc0a394205c`. Its downloaded
+[artifact 12131831582](https://github.com/0xJean/shellbeam/actions/runs/39113100124/artifacts/12131831582)
+confirms actual metrics OS banners, retained metadata jobs, fresh inventory and
+both real application restarts, with cleanup and final app exit passed.
+Inventory/Komari OS delivery and other desktop environments still need their
+own evidence. This result does not claim a person read a notification;
+local-service or test-button cases alone do not establish Probe metrics delivery.
 Built-in SSH alert titles include their actual host name so different hosts'
 metrics/inventory incidents can be distinguished. Grid/List views expose the
 canonical evaluation state and original sampling time for each section even
@@ -85,16 +93,37 @@ counts are retained with controlled screenshots. Later run 39106223515 also
 verified actual direct/ProxyJump service-opening banners, direct cancellation
 without a mutation, a single confirmed restart and its real recovery banner.
 It failed at the via-host Services row click before completing that route.
-The full two-route restart journey, independent SSH Probe failure/recovery
-notifications, other Linux desktops and macOS/Windows presentation remain
-separate acceptance requirements; see `ops-ui-live-validation.md`.
+That run did not establish the full two-route restart journey or independent
+SSH Probe failure/recovery delivery; later complete evidence is recorded below
+and in `ops-ui-live-validation.md`.
 
 Run 39108730917 subsequently passed the complete direct/ProxyJump Local Service
 journey, all four lifecycle banners and no replay after the first actual app
 restart. It also observed six real independent SSH Probe failure/recovery
 banners with full OCR. The run stopped at inventory-summary readiness before
-the final Probe notification counter and second restart, so that larger journey
-is still incomplete. Platform-specific desktop/device acceptance remains open.
+the final Probe notification counter and second restart, so that run did not
+establish the larger journey.
+
+The seventeenth installed-app run, 39113100124, subsequently passed the complete
+service and independent metrics journeys together. It verified six actual
+metrics banners across the direct, via and collateral jump profiles, full
+title/body OCR and their downloaded PNG hashes; six linked target-host metadata
+OperationJobs; three real inventory refreshes with newer original sample times;
+and a second actual app restart recovering those jobs and three fresh metrics
+observations. The four original service jobs and both fresh service observations
+were rechecked after that restart.
+
+The System channel's aggregate delivered count was six at the start of the Probe
+journey and 16 after settlement, including other legitimate notifications. The
+final 16 was stable for five seconds before restart and unchanged for five seconds
+after it; this does not assert an aggregate increase of only six. The separate
+metrics daemon retained exactly six history entries, zero displayed and zero
+waiting, with no replay. The bounded report records success, cleanup passed and
+confirmed final app exit. `inventoryLifecycleVerified`, `komariLifecycleVerified`
+and `readReceiptVerified` remain false: fresh inventory does not establish visible
+inventory notifications, Komari delivery or a person's receipt. macOS/Windows,
+other Linux desktops and mobile/device presentation remain unaccepted by this
+isolated Linux result.
 
 ## Delivery diagnostics
 

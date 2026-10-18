@@ -18,6 +18,22 @@ reachability. User-controlled credential setup, actual console rendering and
 subsequent metrics/mapping checks must be recorded separately from the smoke
 below; the documented entry is not itself a completed GUI acceptance.
 
+### Observed native console entry, 2026-10-18
+
+An isolated macOS app built at `efb1b38` used a separate compiled identifier.
+After the user initialized its fresh Vault, the Settings UI saved an integration
+with an empty API key and read-only sync disabled. **Open Komari console** opened
+ShellBeam's native browser window and rendered the installation wizard of an
+authorized remote official 1.6.0 instance through an SSH local forward. The user
+completed setup there; the native window subsequently rendered its home and
+login pages. The instance's version API returned `1.6.0` and upstream hash
+`1b76b7ad5bc3de6529bb7f0577069b4ac241fec3`.
+
+This establishes the real desktop entry and first-run page rendering. Dedicated
+API credentials, authenticated sync, node mapping, alert/Workspace linkage and
+public TLS remain unaccepted. No credentials or user host addresses are part of
+this record; no Komari Agent was installed to manufacture monitoring evidence.
+
 ## Local HTTP contract smoke
 
 Run the explicit smoke with an official Komari 1.6.0 executable for the current OS:
