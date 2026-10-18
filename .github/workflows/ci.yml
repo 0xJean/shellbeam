@@ -59,7 +59,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev openssh-server dbus dunst xvfb xauth
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev openssh-server dbus dunst xvfb xauth nginx openssl busybox-static
           sudo mkdir -p /run/sshd
       - run: npm ci
       - run: npm run build
@@ -73,5 +73,28 @@ jobs:
       - name: Receive notifications through a real isolated D-Bus and dunst
         if: runner.os == 'Linux'
         run: dbus-run-session --config-file=src-tauri/tests/fixtures/notifications-session.conf -- xvfb-run -a env SHELLBEAM_NOTIFICATION_TEST_BUS=1 cargo test --manifest-path src-tauri/Cargo.toml --locked --lib real_dbus_dunst_acknowledges_delivery -- --ignored
+      - name: Verify disposable Ops runner guards
+        if: runner.os == 'Linux'
+        run: node --test scripts/run-ops-live.test.mjs
+      - name: Build native Ops IPC acceptance bridge without privileges
+        if: runner.os == 'Linux'
+        run: node scripts/run-ops-live.mjs --build "$RUNNER_TEMP/shellbeam-ops-live-bridge-path"
+      - name: Real Docker, nginx, TLS and audited direct/ProxyJump operations
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        env:
+          SHELLBEAM_OPS_LIVE: '1'
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          bridge_path="$(cat "$RUNNER_TEMP/shellbeam-ops-live-bridge-path")"
+          sudo env PATH="$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" RUNNER_TEMP="$RUNNER_TEMP" SHELLBEAM_OPS_LIVE="$SHELLBEAM_OPS_LIVE" SHELLBEAM_OPS_LIVE_REPORT="$RUNNER_TEMP/shellbeam-ops-live-report.json" bash scripts/ci-ops-live.sh "$bridge_path"
+      - name: Save the redacted real Ops acceptance result
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-ops-live-result
+          path: ${{ runner.temp }}/shellbeam-ops-live-report.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check

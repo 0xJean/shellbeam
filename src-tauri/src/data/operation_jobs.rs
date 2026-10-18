@@ -129,8 +129,13 @@ pub struct OperationAuditListQuery {
 }
 
 fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
-    let db = Connection::open(data_file_path(app, OPERATION_DB)?)
-        .map_err(|e| format!("Open operation jobs db failed: {e}"))?;
+    open_database(&data_file_path(app, OPERATION_DB)?)
+}
+
+/// The desktop commands and opt-in live fixture use the same schema and store.
+/// The caller owns path selection; this does not resolve hosts or credentials.
+pub(crate) fn open_database(path: &std::path::Path) -> Result<Connection, String> {
+    let db = Connection::open(path).map_err(|e| format!("Open operation jobs db failed: {e}"))?;
     initialize(&db)?;
     Ok(db)
 }
@@ -448,6 +453,19 @@ pub fn operation_job_create(
 ) -> Result<OperationJob, String> {
     validate_request(&request)?;
     let db = open(&app)?;
+    let mut request = request;
+    request.vault_id = request
+        .vault_id
+        .clone()
+        .or_else(|| infer_vault_id(&app, request.host_id.as_deref()));
+    create_on(&db, request)
+}
+
+pub(crate) fn create_on(
+    db: &Connection,
+    request: CreateOperationJobRequest,
+) -> Result<OperationJob, String> {
+    validate_request(&request)?;
     let now = now_unix_ms();
     let job_id = Uuid::new_v4().to_string();
     let queued_audit_id = Uuid::new_v4().to_string();
@@ -466,10 +484,7 @@ pub fn operation_job_create(
     let action = sanitize_summary(Some(&request.action)).unwrap_or_else(|| "operation".to_string());
     let target = sanitize_summary(Some(&request.target)).unwrap_or_else(|| "target".to_string());
     let params_summary = sanitize_summary(request.params_summary.as_deref());
-    let vault_id = request
-        .vault_id
-        .clone()
-        .or_else(|| infer_vault_id(&app, request.host_id.as_deref()));
+    let vault_id = request.vault_id.clone();
     let confirmation_status = if request.confirmation_required {
         "pending"
     } else {
@@ -504,7 +519,7 @@ pub fn operation_job_create(
         ],
     )
     .map_err(|e| format!("Create operation job failed: {e}"))?;
-    let job = load_job(&db, &job_id)?;
+    let job = load_job(db, &job_id)?;
     db.execute(
         "INSERT INTO operation_audit
          (audit_id,job_id,event,status,confirmation_status,source,actor,host_id,host_name,host_address,
@@ -530,7 +545,7 @@ pub fn operation_job_create(
         ],
     )
     .map_err(|e| format!("Write operation audit failed: {e}"))?;
-    prune(&db)?;
+    prune(db)?;
     Ok(job)
 }
 
@@ -564,7 +579,17 @@ pub fn operation_job_update(
         return Err("INVALID_OPERATION: unsupported status".to_string());
     }
     let db = open(&app)?;
-    let current = load_job(&db, &request.job_id)?;
+    update_on(&db, request)
+}
+
+pub(crate) fn update_on(
+    db: &Connection,
+    request: UpdateOperationJobRequest,
+) -> Result<OperationJob, String> {
+    if !valid_status(&request.status) {
+        return Err("INVALID_OPERATION: unsupported status".to_string());
+    }
+    let current = load_job(db, &request.job_id)?;
     if current.status != request.status && !legal_transition(&current.status, &request.status) {
         return Err(format!(
             "INVALID_OPERATION: illegal status transition {} -> {}",
@@ -659,7 +684,7 @@ pub fn operation_job_update(
         ],
     )
     .map_err(|e| format!("Update operation job failed: {e}"))?;
-    let updated = load_job(&db, &request.job_id)?;
+    let updated = load_job(db, &request.job_id)?;
     let event = if current.status == updated.status {
         if current.confirmation_status != updated.confirmation_status {
             "confirmation"
@@ -669,8 +694,8 @@ pub fn operation_job_update(
     } else {
         updated.status.as_str()
     };
-    let _ = audit_insert(&db, &updated, event, &actor)?;
-    prune(&db)?;
+    let _ = audit_insert(db, &updated, event, &actor)?;
+    prune(db)?;
     Ok(updated)
 }
 
@@ -681,6 +706,11 @@ pub fn operation_job_get(
 ) -> Result<Option<OperationJob>, String> {
     validate_text("jobId", &job_id, true)?;
     let db = open(&app)?;
+    get_on(&db, &job_id)
+}
+
+pub(crate) fn get_on(db: &Connection, job_id: &str) -> Result<Option<OperationJob>, String> {
+    validate_text("jobId", job_id, true)?;
     db.query_row(
         &format!("SELECT {JOB_COLUMNS} FROM operation_jobs WHERE job_id=?1"),
         [job_id],
@@ -721,8 +751,14 @@ pub fn operation_job_list(
     app: tauri::AppHandle,
     query: Option<OperationJobListQuery>,
 ) -> Result<Vec<OperationJob>, String> {
-    let query = query.unwrap_or_default();
     let db = open(&app)?;
+    list_on(&db, query.unwrap_or_default())
+}
+
+pub(crate) fn list_on(
+    db: &Connection,
+    query: OperationJobListQuery,
+) -> Result<Vec<OperationJob>, String> {
     let limit = bounded_limit(query.limit, 100, 500);
     let mut statement = db
         .prepare(&format!(
@@ -783,8 +819,14 @@ pub fn operation_audit_list(
     app: tauri::AppHandle,
     query: Option<OperationAuditListQuery>,
 ) -> Result<Vec<OperationAudit>, String> {
-    let query = query.unwrap_or_default();
     let db = open(&app)?;
+    audit_list_on(&db, query.unwrap_or_default())
+}
+
+pub(crate) fn audit_list_on(
+    db: &Connection,
+    query: OperationAuditListQuery,
+) -> Result<Vec<OperationAudit>, String> {
     let limit = bounded_limit(query.limit, 100, 500);
     let mut statement = db
         .prepare(
@@ -854,7 +896,153 @@ pub fn recover(app: &tauri::AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{legal_transition, sanitize_summary, valid_status};
+    use super::*;
+
+    struct StoreDirectory(std::path::PathBuf);
+    impl Drop for StoreDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn store_directory() -> StoreDirectory {
+        let path = std::env::temp_dir().join(format!("shellbeam-job-store-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&path).unwrap();
+        StoreDirectory(path)
+    }
+
+    fn create_request(vault: &str) -> CreateOperationJobRequest {
+        serde_json::from_value(serde_json::json!({
+            "vaultId":vault,"hostId":"same-host","hostName":"Fixture",
+            "hostAddress":"127.0.0.1","username":"fixture",
+            "source":"workspace","action":"docker.start","target":"fixture",
+            "risk":"high","confirmationRequired":true,
+            "paramsSummary":"start fixture; token=private-fixture-token"
+        }))
+        .unwrap()
+    }
+
+    fn update_request(
+        job_id: &str,
+        status: &str,
+        confirmation: Option<&str>,
+    ) -> UpdateOperationJobRequest {
+        serde_json::from_value(serde_json::json!({
+            "jobId":job_id,"status":status,"confirmationStatus":confirmation,
+            "resultSummary":"bounded status only"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn canonical_sqlite_reopens_cancelled_and_unknown_jobs_with_scoped_audits() {
+        let directory = store_directory();
+        let path = directory.0.join("jobs.sqlite3");
+        let db = open_database(&path).unwrap();
+        let cancelled = create_on(&db, create_request("vault-a")).unwrap();
+        let cancelled = update_on(
+            &db,
+            update_request(&cancelled.job_id, "cancelled", Some("rejected")),
+        )
+        .unwrap();
+        let unknown = create_on(&db, create_request("vault-a")).unwrap();
+        update_on(
+            &db,
+            update_request(&unknown.job_id, "running", Some("confirmed")),
+        )
+        .unwrap();
+        let unknown = update_on(&db, update_request(&unknown.job_id, "unknown", None)).unwrap();
+        // Same host id in another Vault must not enter either filtered result.
+        create_on(&db, create_request("vault-b")).unwrap();
+        drop(db);
+
+        let reopened = open_database(&path).unwrap();
+        let jobs = list_on(
+            &reopened,
+            OperationJobListQuery {
+                host_id: Some("same-host".into()),
+                vault_id: Some("vault-a".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(jobs.len(), 2);
+        assert!(jobs.iter().all(|job| job
+            .params_summary
+            .as_deref()
+            .unwrap()
+            .contains("<redacted>")));
+        assert!(jobs.iter().all(|job| !job
+            .params_summary
+            .as_deref()
+            .unwrap()
+            .contains("private-fixture-token")));
+        assert_eq!(
+            get_on(&reopened, &cancelled.job_id)
+                .unwrap()
+                .unwrap()
+                .confirmation_status,
+            "rejected"
+        );
+        let restored_unknown = get_on(&reopened, &unknown.job_id).unwrap().unwrap();
+        assert_eq!(restored_unknown.status, "unknown");
+        assert_eq!(restored_unknown.confirmation_status, "confirmed");
+        let audit = audit_list_on(
+            &reopened,
+            OperationAuditListQuery {
+                vault_id: Some("vault-a".into()),
+                host_id: Some("same-host".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(audit.len(), 5);
+        assert!(audit
+            .iter()
+            .all(|entry| entry.vault_id.as_deref() == Some("vault-a")));
+        assert!(audit.iter().any(|entry| entry.job_id == cancelled.job_id
+            && entry.status == "cancelled"
+            && entry.confirmation_status == "rejected"));
+        assert!(audit
+            .iter()
+            .any(|entry| entry.job_id == unknown.job_id && entry.status == "unknown"));
+    }
+
+    #[test]
+    fn shared_store_requires_confirmation_and_preserves_terminal_state() {
+        let directory = store_directory();
+        let db = open_database(&directory.0.join("jobs.sqlite3")).unwrap();
+        let queued = create_on(&db, create_request("vault-a")).unwrap();
+        assert!(
+            update_on(&db, update_request(&queued.job_id, "running", None))
+                .unwrap_err()
+                .contains("OPERATION_CONFIRMATION_REQUIRED")
+        );
+        assert_eq!(
+            get_on(&db, &queued.job_id).unwrap().unwrap().status,
+            "queued"
+        );
+        update_on(
+            &db,
+            update_request(&queued.job_id, "cancelled", Some("rejected")),
+        )
+        .unwrap();
+        assert!(update_on(
+            &db,
+            update_request(&queued.job_id, "running", Some("confirmed"))
+        )
+        .is_err());
+        let audit = audit_list_on(
+            &db,
+            OperationAuditListQuery {
+                job_id: Some(queued.job_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(audit.len(), 2);
+        assert!(!audit.iter().any(|entry| entry.status == "running"));
+    }
 
     #[test]
     fn summaries_are_redacted_and_bounded() {

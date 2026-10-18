@@ -4,6 +4,11 @@ pub mod http_proxy;
 pub mod interactive;
 pub mod transport;
 
+#[cfg(test)]
+mod ops_smoke;
+#[cfg(test)]
+mod test_fixture;
+
 pub(crate) use commands::run_ssh_command_sync;
 
 use base64;
