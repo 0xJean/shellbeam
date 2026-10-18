@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { webcrypto } from 'node:crypto'
 import type { HostProfile } from './hosts'
+import { getHostIdentity } from './host-identity'
 import { createProbeObservation, type ProbeProvider, type ProbeSnapshot } from './probe-provider'
 import { ProbeProviderRegistry, refreshProbeSnapshotFreshness } from './probe-scheduler'
 import type { PersistedProbeSnapshotRecord } from './probe-persistence'
 import { clearProbeRetrySettings, saveProbeRetrySettings } from './probe-retry-settings'
+import { currentProbeCollectionSequence, getProbeCollectionConfigRevision, subscribeProbeCollectionDiagnostics, subscribeProbeCollections, type ProbeCollectionDiagnostic, type ProbeCollectionEvent } from './probe-collection-events'
 
 afterEach(() => clearProbeRetrySettings())
 
@@ -46,9 +49,9 @@ function snapshot(provider: ProbeProvider, target: HostProfile, now: number, hea
   }
   return {
     schemaVersion: 1,
-    host: { hostId: target.id, address: target.address, port: 22, username: 'root' },
+    host: getHostIdentity(target),
     provider: provider.ref,
-    transport: 'direct',
+    transport: target.jumpHostId || target.jumpHost?.trim() ? 'proxy-jump' : 'direct',
     health,
     receivedAt: now,
     metrics: createProbeObservation({ data, source: provider.ref, sampledAt: now, receivedAt: now, ttlMs: 1_000 }),
@@ -447,5 +450,192 @@ describe('ProbeProviderRegistry', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(store.list).not.toHaveBeenCalled()
     expect(store.save).not.toHaveBeenCalled()
+  })
+})
+
+describe('actual SSH collection lifecycle events', () => {
+  let events: ProbeCollectionEvent[]
+  let stop: () => void
+  beforeEach(() => {
+    vi.stubGlobal('crypto', webcrypto)
+    events = []
+    stop = subscribeProbeCollections(event => { events.push(event) })
+  })
+  afterEach(() => { stop(); vi.unstubAllGlobals() })
+  const emptyStore = () => ({ list: vi.fn(async () => [] as PersistedProbeSnapshotRecord[]), save: vi.fn(async () => {}), remove: vi.fn(async () => {}) })
+  function sshProvider(collect: ProbeProvider['probe']): ProbeProvider {
+    return { ref: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics', 'inventory'] }, probe: vi.fn(collect) }
+  }
+
+  it('emits once for shared actual work and never for its deduplicated or cached callers', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const item = sshProvider(async request => { await gate; return snapshot(item, request.host, Date.now()) })
+    const target = { ...host('shared'), vaultId: 'vault', privateKeyRef: 'PRIVATE_REFERENCE' }
+    const registry = new ProbeProviderRegistry(2, emptyStore()).register(item)
+    const request = { host: target, vaultId: 'vault', sections: ['metrics'] as const, maxRetries: 0, resolveAuthSecret: async () => 'PRIVATE_VALUE' }
+    const boundary = currentProbeCollectionSequence()
+    const one = registry.probe(request)
+    const two = registry.probe(request)
+    release()
+    const results = await Promise.all([one, two])
+    expect(results.map(result => result.deduplicated)).toEqual([false, true])
+    expect((await registry.probe(request)).cached).toBe(true)
+    expect(item.probe).toHaveBeenCalledTimes(1)
+    expect(events).toHaveLength(1)
+    expect(currentProbeCollectionSequence()).toBe(boundary + 1)
+    expect(events[0].startedSequence).toBe(boundary + 1)
+    expect(events[0]).toMatchObject({ vaultId: 'vault', hostId: 'shared', provider: { kind: 'ssh-agentless', id: 'ssh-agentless' }, sections: [{ section: 'metrics', outcome: 'success', reason: 'observed', sampledAt: results[0].snapshot.metrics!.freshness.sampledAt }] })
+    expect(events[0].configRevision).toBe(await getProbeCollectionConfigRevision(target))
+    expect(JSON.stringify(events)).not.toContain('PRIVATE')
+  })
+
+  it('does not coalesce edited host credentials or reuse their old cached observation', async () => {
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const target = { ...host('edited'), vaultId: 'vault' }
+    const edited = { ...target, privateKeyRef: 'replacement-key', updatedAt: 1 }
+    const item = sshProvider(async request => {
+      if (request.host.privateKeyRef === target.privateKeyRef) { entered(); await gate }
+      return snapshot(item, request.host, Date.now())
+    })
+    const registry = new ProbeProviderRegistry(2, emptyStore()).register(item)
+    const request = { host: target, vaultId: 'vault', sections: ['metrics'] as const, maxRetries: 0, resolveAuthSecret: async () => '' }
+    const oldWork = registry.probe(request)
+    await started
+    expect((await registry.probe({ ...request, host: edited })).deduplicated).toBe(false)
+    release()
+    await oldWork
+    // Late old completion may occupy the shared host slot, but it cannot be
+    // used as evidence for a request made with the edited configuration.
+    expect((await registry.probe({ ...request, host: edited })).cached).toBe(false)
+    expect(item.probe).toHaveBeenCalledTimes(3)
+    expect(events.map(value => value.configRevision)).toEqual([
+      await getProbeCollectionConfigRevision(edited), await getProbeCollectionConfigRevision(target), await getProbeCollectionConfigRevision(edited),
+    ])
+  })
+
+  it('distinguishes new work across a runtime boundary within the same wall-clock millisecond', async () => {
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const item = sshProvider(async request => snapshot(item, request.host, now))
+    const registry = new ProbeProviderRegistry(1, emptyStore()).register(item)
+    const request = { host: host('same-clock'), vaultId: 'vault', sections: ['metrics'] as const, maxRetries: 0, force: true, resolveAuthSecret: async () => '' }
+    try {
+      await registry.probe(request)
+      const boundary = currentProbeCollectionSequence()
+      await registry.probe(request)
+      expect(events.map(value => value.startedAt)).toEqual([now, now])
+      expect(events[0].startedSequence).toBeLessThanOrEqual(boundary)
+      expect(events[1].startedSequence).toBeGreaterThan(boundary)
+    } finally { clock.mockRestore() }
+  })
+
+  it.each(['endpoint', 'jump', 'edited-profile'] as const)('rejects a hydrated SSH %s mismatch as both fresh cache and fallback', async changed => {
+    const target = { ...host('route'), vaultId: 'vault', ...(changed === 'jump' ? { jumpHostId: 'current-jump' } : {}) }
+    const oldHost = changed === 'endpoint' ? { ...target, address: 'old.example.com' } : changed === 'jump' ? { ...target, jumpHostId: 'old-jump' } : target
+    const item = sshProvider(async () => { throw new Error('actual network unavailable') })
+    const old = snapshot(item, oldHost, Date.now())
+    if (changed === 'edited-profile') target.updatedAt = old.receivedAt + 1
+    const store = emptyStore()
+    store.list.mockResolvedValue([{ vaultId: 'vault', providerKind: item.ref.kind, providerId: item.ref.id, hostId: target.id, snapshot: old, sampledAt: old.receivedAt, receivedAt: old.receivedAt, expiresAt: old.receivedAt + 1000, updatedAt: old.receivedAt }])
+    const registry = new ProbeProviderRegistry(1, store).register(item)
+    await expect(registry.probe({ host: target, vaultId: 'vault', sections: ['metrics'], maxRetries: 0, resolveAuthSecret: async () => '' })).rejects.toThrow('actual network unavailable')
+    expect(item.probe).toHaveBeenCalledOnce()
+    expect(events[0].sections[0].outcome).toBe('failure')
+    expect(store.save).not.toHaveBeenCalled()
+  })
+
+  it('does not publish an online success with the wrong actual SSH route identity', async () => {
+    const item = sshProvider(async request => snapshot(item, { ...request.host, jumpHostId: 'foreign-jump' }, Date.now()))
+    await expect(new ProbeProviderRegistry(1, emptyStore()).register(item).probe({ host: host('identity'), vaultId: 'vault', sections: ['metrics'], maxRetries: 0, resolveAuthSecret: async () => '' })).rejects.toThrow('PROBE_IDENTITY_MISMATCH')
+    expect(events[0].sections[0]).toMatchObject({ outcome: 'unknown', reason: 'scope-unavailable' })
+  })
+
+  it('reports real exhausted failures even when stale durable data is returned, then a new sample recovers', async () => {
+    let fail = true
+    const item = sshProvider(async request => { if (fail) throw new Error('PRIVATE_REMOTE_OUTPUT'); return snapshot(item, request.host, Date.now()) })
+    const target = { ...host('fallback'), vaultId: 'vault', jumpHostId: 'bastion' }
+    const old = snapshot(item, target, Date.now() - 5_000)
+    const store = emptyStore()
+    store.list.mockResolvedValue([{ vaultId: 'vault', providerKind: item.ref.kind, providerId: item.ref.id, hostId: target.id, snapshot: old, sampledAt: old.receivedAt, receivedAt: old.receivedAt, expiresAt: old.receivedAt + 1_000, updatedAt: old.receivedAt }])
+    const registry = new ProbeProviderRegistry(1, store).register(item)
+    const request = { host: target, vaultId: 'vault', sections: ['metrics'] as const, maxRetries: 1, retryDelayMs: 0, force: true, resolveAuthSecret: async () => '' }
+    expect((await registry.probe(request)).recovered).toBe(true)
+    expect(events[0]).toMatchObject({ transport: 'proxy-jump', sections: [{ section: 'metrics', outcome: 'failure', sampledAt: null, reason: 'collection-unavailable' }] })
+    fail = false
+    await registry.probe(request)
+    expect(events[1].sections[0]).toMatchObject({ section: 'metrics', outcome: 'success', reason: 'observed' })
+    expect(events[1].sections[0].sampledAt).not.toBe(old.receivedAt)
+    expect(JSON.stringify(events)).not.toContain('PRIVATE')
+  })
+
+  it.each([
+    ['transport unavailable', 'failure', 'collection-unavailable'],
+    ['connect vault.example refused', 'failure', 'collection-unavailable'],
+    ['connect identity.example refused', 'failure', 'collection-unavailable'],
+    ['VAULT_LOCKED', 'unknown', 'scope-unavailable'],
+    ['Connection cancelled', 'unknown', 'scope-unavailable'],
+    ['PROBE_IDENTITY_MISMATCH', 'unknown', 'scope-unavailable'],
+    ['MISSING_CREDENTIAL', 'unknown', 'scope-unavailable'],
+    ['{"code":"host_key_unknown","host":"vault.example"}', 'unknown', 'scope-unavailable'],
+  ])('classifies an initial uncached %s without inventing a successful fallback', async (message, outcome, reason) => {
+    const item = sshProvider(async () => { throw new Error(message) })
+    const registry = new ProbeProviderRegistry(1, emptyStore()).register(item)
+    await expect(registry.probe({ host: host('no-cache'), vaultId: 'vault', sections: ['metrics'], maxRetries: 0, resolveAuthSecret: async () => '' })).rejects.toThrow(message)
+    expect(events).toHaveLength(1)
+    expect(events[0].sections).toEqual([{ section: 'metrics', outcome, reason, sampledAt: null }])
+  })
+
+  it('separates fresh metrics from an inventory retry exhaustion in the same actual attempt', async () => {
+    const item = sshProvider(async request => ({ ...snapshot(item, request.host, Date.now()), inventory: null, errors: [{ section: 'inventory', message: 'inventory collection failed' }] }))
+    await new ProbeProviderRegistry(1, emptyStore()).register(item).probe({ host: host('partial'), vaultId: 'vault', sections: ['metrics', 'inventory'], maxRetries: 0, resolveAuthSecret: async () => '' })
+    expect(events[0].sections).toEqual([
+      expect.objectContaining({ section: 'metrics', outcome: 'success' }),
+      { section: 'inventory', outcome: 'failure', sampledAt: null, reason: 'collection-unavailable' },
+    ])
+  })
+
+  it.each(['paused', 'unsupported', 'stale'] as const)('never restores a provider from %s retained metrics', async health => {
+    const item = sshProvider(async request => snapshot(item, request.host, Date.now(), health))
+    await new ProbeProviderRegistry(1, emptyStore()).register(item).probe({ host: host('unavailable'), vaultId: 'vault', sections: ['metrics'], maxRetries: 0, resolveAuthSecret: async () => '' })
+    expect(events[0].sections[0].outcome).toBe('unknown')
+  })
+
+  it('keeps real success and original failure when event hashing fails, with fixed diagnostics only', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const diagnostics: ProbeCollectionDiagnostic[] = []
+    const unlisten = subscribeProbeCollectionDiagnostics(value => { diagnostics.push(value) })
+    vi.stubGlobal('crypto', { randomUUID: () => 'event', subtle: { digest: async () => { throw new Error('PRIVATE_HASH_ERROR') } } })
+    const successful = sshProvider(async request => snapshot(successful, request.host, Date.now()))
+    const failed = sshProvider(async () => { throw new Error('ORIGINAL_COLLECTION_FAILURE') })
+    const request = { host: host('hash-failed'), vaultId: 'vault', sections: ['metrics'] as const, maxRetries: 0, resolveAuthSecret: async () => '' }
+    try {
+      expect((await new ProbeProviderRegistry(1, emptyStore()).register(successful).probe(request)).snapshot.health).toBe('online')
+      await expect(new ProbeProviderRegistry(1, emptyStore()).register(failed).probe(request)).rejects.toThrow('ORIGINAL_COLLECTION_FAILURE')
+      expect(diagnostics.map(value => value.code)).toEqual(['publication-unavailable', 'publication-unavailable'])
+      expect(diagnostics.every(value => value.vaultId === 'vault' && value.hostId === 'hash-failed' && Number.isSafeInteger(value.startedAt) && value.startedAt <= Date.now() && Number.isSafeInteger(value.startedSequence) && value.startedSequence > 0)).toBe(true)
+      expect(warning.mock.calls.flat().join(' ')).not.toContain('PRIVATE')
+      expect(events).toEqual([])
+    } finally { unlisten(); warning.mockRestore() }
+  })
+
+  it('does not let one broken event listener block the other consumers or change a real collection result', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const broken = subscribeProbeCollections(() => { throw new Error('PRIVATE_LISTENER_ERROR') })
+    const delivered = vi.fn()
+    const healthy = subscribeProbeCollections(delivered)
+    const diagnostics: ProbeCollectionDiagnostic[] = []
+    const unlisten = subscribeProbeCollectionDiagnostics(value => { diagnostics.push(value) })
+    const item = sshProvider(async request => snapshot(item, request.host, Date.now()))
+    try {
+      expect((await new ProbeProviderRegistry(1, emptyStore()).register(item).probe({ host: host('listeners'), vaultId: 'vault', sections: ['metrics'], maxRetries: 0, resolveAuthSecret: async () => '' })).snapshot.health).toBe('online')
+      expect(delivered).toHaveBeenCalledOnce()
+      expect(diagnostics[0].startedSequence).toBe(events[0].startedSequence)
+      expect(warning).toHaveBeenCalledWith('probe_collection_listener_failed')
+      expect(warning.mock.calls.flat().join(' ')).not.toContain('PRIVATE')
+    } finally { broken(); healthy(); unlisten(); warning.mockRestore() }
   })
 })

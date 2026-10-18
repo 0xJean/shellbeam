@@ -3,6 +3,8 @@ import { EMPTY_LOCAL_ALERT_STATE, actOnLocalAlert, evaluateLocalAlertRules, norm
 import { clearLocalOpsMemory, dispatchLocalAlertNotifications, loadLocalAlertRules, loadLocalAlertState, localOpsStorageKey, parseLocalAlertState, saveLocalAlertRules, saveLocalAlertState } from './local-ops-store'
 const rule = normalizeLocalAlertRule({ id: 'cpu', hostId: 'host', name: 'CPU high', metric: 'cpu', threshold: 90, recoveryThreshold: 80, durationMs: 0, recoveryDurationMs: 0 })
 const firing = () => evaluateLocalAlertRules(EMPTY_LOCAL_ALERT_STATE, [rule], [{ ruleId: rule.id, value: 99, sampledAt: 1_000, source: 'ssh-agentless', transport: 'direct' }], 1_000)
+const probeRule = normalizeLocalAlertRule({ id: 'probe:ssh-agentless:hash:metrics', hostId: 'host', name: 'Probe collection unavailable', metric: 'probe-provider', target: 'ssh-agentless:hash:metrics', durationMs: 0, recoveryDurationMs: 0 })
+const probeFiring = () => evaluateLocalAlertRules(EMPTY_LOCAL_ALERT_STATE, [probeRule], [{ ruleId: probeRule.id, value: 1, sampledAt: 1_000, source: 'ssh-agentless', transport: 'proxy-jump' }], 1_000)
 beforeEach(() => { localStorage.clear(); clearLocalOpsMemory() })
 describe('local alert persistence and delivery', () => {
   it('scopes definitions and histories and strips untrusted fields', () => {
@@ -43,6 +45,58 @@ describe('local alert persistence and delivery', () => {
     saveLocalAlertRules('vault', 'host', [])
     expect(loadLocalAlertState('vault', 'host').alerts[0].status).toBe('active')
     expect(actOnLocalAlert(loadLocalAlertState('vault', 'host'), rule.id, 'close', 2_000).audit).toHaveLength(2)
+  })
+
+  it('preserves built-in ProbeProvider evaluations when user rules change without adding them to the user rule list', () => {
+    saveLocalAlertRules('vault', 'host', [rule])
+    const state = probeFiring()
+    state.evaluations[0].pendingSince = 123
+    state.evaluations.push({ ruleId: 'check:tcp', sampledAt: 1_000, pendingSince: 456, recoverySince: null, state: 'pending', value: 1 }, { ruleId: rule.id, sampledAt: 1_000, pendingSince: 789, recoverySince: null, state: 'pending', value: 99 })
+    saveLocalAlertState('vault', 'host', state)
+    saveLocalAlertRules('vault', 'host', [{ ...rule, threshold: 95 }])
+    expect(loadLocalAlertRules('vault', 'host')).toEqual([{ ...rule, threshold: 95 }])
+    expect(loadLocalAlertState('vault', 'host').evaluations).toEqual(state.evaluations.filter(({ ruleId }) => ruleId !== rule.id))
+    saveLocalAlertRules('vault', 'host', [])
+    expect(loadLocalAlertRules('vault', 'host')).toEqual([])
+    expect(loadLocalAlertState('vault', 'host').evaluations.map(({ ruleId }) => ruleId)).toEqual([probeRule.id, 'check:tcp'])
+    expect(loadLocalAlertState('vault', 'host').alerts[0]).toMatchObject({ metric: 'probe-provider', status: 'active', transport: 'proxy-jump' })
+  })
+
+  it('restores scoped ProbeProvider lifecycle and immutable job links while stripping extra payload fields', () => {
+    const state = actOnLocalAlert(probeFiring(), probeRule.id, 'acknowledge', 2_000, 'confirmed-ack-job')
+    const parsed = parseLocalAlertState({ ...state, output: 'secret', alerts: [{ ...state.alerts[0], token: 'secret', telemetry: { output: 'secret' } }] }, 'host')
+    expect(parsed.alerts).toEqual(state.alerts)
+    expect(parsed.audit).toEqual(state.audit)
+    expect(JSON.stringify(parsed)).not.toContain('secret')
+    saveLocalAlertState('vault', 'host', parsed)
+    clearLocalOpsMemory()
+    expect(loadLocalAlertState('vault', 'host').alerts).toEqual(state.alerts)
+    expect(loadLocalAlertState('vault', 'host').audit).toEqual(state.audit)
+    expect(loadLocalAlertState('vault', 'host').evaluations[0]).toMatchObject({ state: 'unknown', pendingSince: null, recoverySince: null })
+    expect(loadLocalAlertState('other-vault', 'host').alerts).toEqual([])
+    expect(loadLocalAlertState('vault', 'other-host').alerts).toEqual([])
+  })
+
+  it('does not replay ProbeProvider notifications after reload and only emits recovery for a new healthy observation', async () => {
+    const onLocal = vi.fn()
+    const options = { onLocal, policy: { channels: ['local'] as const, cooldownMs: 0, notifyOnRecovery: true } }
+    saveLocalAlertState('vault', 'host', probeFiring())
+    await dispatchLocalAlertNotifications('vault', 'host', loadLocalAlertState('vault', 'host'), { ...options, now: 1_000 })
+    clearLocalOpsMemory()
+    let restored = loadLocalAlertState('vault', 'host')
+    await dispatchLocalAlertNotifications('vault', 'host', restored, { ...options, now: 2_000 })
+    restored = evaluateLocalAlertRules(restored, [probeRule], [{ ruleId: probeRule.id, value: null, sampledAt: 2_000, source: 'ssh-agentless', transport: 'proxy-jump' }], 2_000)
+    expect(restored.alerts[0].status).toBe('active')
+    await dispatchLocalAlertNotifications('vault', 'host', restored, { ...options, now: 2_000 })
+    expect(onLocal).toHaveBeenCalledTimes(1)
+    restored = evaluateLocalAlertRules(restored, [probeRule], [{ ruleId: probeRule.id, value: 0, sampledAt: 3_000, source: 'ssh-agentless', transport: 'proxy-jump' }], 3_000)
+    saveLocalAlertState('vault', 'host', restored)
+    await dispatchLocalAlertNotifications('vault', 'host', restored, { ...options, now: 3_000 })
+    clearLocalOpsMemory()
+    await dispatchLocalAlertNotifications('vault', 'host', loadLocalAlertState('vault', 'host'), { ...options, now: 4_000 })
+    expect(onLocal).toHaveBeenCalledTimes(2)
+    expect(onLocal.mock.calls.map(([event]) => event.kind)).toEqual(['alert.opened', 'alert.resolved'])
+    expect(loadLocalAlertState('vault', 'host').alerts[0]).toMatchObject({ metric: 'probe-provider', status: 'resolved', source: 'ssh-agentless', transport: 'proxy-jump' })
   })
 })
 

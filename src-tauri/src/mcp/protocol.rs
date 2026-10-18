@@ -47,6 +47,11 @@ fn error_metadata(message: &str) -> (&'static str, bool, &'static str) {
             false,
             "Re-authorize this server for the MCP client in ShellBeam settings.",
         ),
+        "LOCAL_OPS_REVISION_CONFLICT" => (
+            "alert_revision_conflict",
+            false,
+            "Read get_server_alerts again and review the current local lifecycle; use its localOps.revision and a new requestId for a new action.",
+        ),
         _ => (
             "request_failed",
             false,
@@ -121,6 +126,21 @@ pub fn validate_arguments(tool: &str, args: &Value) -> Result<(), String> {
 }
 
 fn validate_schema(value: &Value, schema: &Value) -> bool {
+    if schema["enum"]
+        .as_array()
+        .is_some_and(|variants| !variants.contains(value))
+    {
+        return false;
+    }
+    if schema["oneOf"].as_array().is_some_and(|variants| {
+        variants
+            .iter()
+            .filter(|variant| validate_schema(value, variant))
+            .count()
+            != 1
+    }) {
+        return false;
+    }
     match schema["type"].as_str() {
         Some("string") => value
             .as_str()
@@ -181,6 +201,27 @@ pub fn tools(client: &Client) -> Value {
     json!({"tools":definitions().into_iter().filter(|tool| client.allows(tool["name"].as_str().unwrap())).collect::<Vec<_>>()})
 }
 
+fn alert_action_schema() -> Value {
+    let identity = |max| json!({"type":"string","minLength":1,"maxLength":max});
+    let komari = json!({"type":"object","properties":{
+        "hostId":identity(200),"requestId":identity(200),
+        "alertSource":{"type":"string","enum":["komari"]},
+        "integrationId":identity(240),"alertId":identity(240)
+    },"required":["hostId","requestId","integrationId","alertId"],"additionalProperties":false});
+    let local = json!({"type":"object","properties":{
+        "hostId":identity(200),"requestId":identity(200),
+        "alertSource":{"type":"string","enum":["local-ops"]},
+        "ruleId":identity(120),"expectedRevision":{"type":"integer","minimum":0,"maximum":i64::MAX}
+    },"required":["hostId","requestId","alertSource","ruleId","expectedRevision"],"additionalProperties":false});
+    let mut properties = komari["properties"].as_object().unwrap().clone();
+    properties.extend(local["properties"].as_object().unwrap().clone());
+    properties.insert(
+        "alertSource".into(),
+        json!({"type":"string","enum":["komari","local-ops"]}),
+    );
+    json!({"type":"object","properties":properties,"required":["hostId","requestId"],"additionalProperties":false,"oneOf":[komari,local]})
+}
+
 fn definitions() -> Vec<Value> {
     let string = |max| json!({"type":"string", "minLength":1, "maxLength":max});
     let integer = |min, max| json!({"type":"integer","minimum":min,"maximum":max});
@@ -223,12 +264,12 @@ fn definitions() -> Vec<Value> {
         json!({"hostId":host}), vec!["hostId"], true);
     add("get_server_probe_state", "Read the cached Komari node mapping, ProbeProvider snapshots, ShellBeam Probe lifecycle and freshness for one authorized server. Each persisted snapshot includes recoveryState/recoveryAvailable so an expired row is never mistaken for fresh health. This is observation only; it does not contact Komari or start SSH.",
         json!({"hostId":host}), vec!["hostId"], true);
-    add("get_server_alerts", "Read the persisted Komari alert lifecycle and audit events for one authorized server. The response also joins linked OperationJobs and OperationAudits across app sessions. Alert acknowledgement/closure is local metadata; use refresh_server_info with alertId to link a confirmed diagnostic OperationJob.",
+    add("get_server_alerts", "Read persisted Komari and local service/health-check/ProbeProvider alert lifecycle, canonical localOps.revision and linked OperationJobs/OperationAudits for one authorized server across sessions. Missing observations are unknown. Acknowledgement/closure changes local metadata only.",
         json!({"hostId":host}), vec!["hostId"], true);
-    add("acknowledge_server_alert", "Acknowledge one persisted Komari alert locally and append a Komari lifecycle audit event. This never calls Komari or changes the remote host. Requires the client's manageAlerts capability and a unique requestId; the returned OperationJob is the canonical local audit record.",
+    add("acknowledge_server_alert", "Acknowledge a persisted alert with manageAlerts authorization and a unique requestId. Komari uses integrationId/alertId (optional alertSource=komari for compatibility). Local service/health-check/ProbeProvider uses explicit alertSource=local-ops, ruleId and expectedRevision from get_server_alerts.localOps.revision. Returns a canonical OperationJob with MCP authorization, not simulated human confirmation. No remote operation is performed; a revision conflict requires reading and reviewing again with a new requestId.",
         json!({"hostId":host,"integrationId":string(240),"alertId":string(240),"requestId":request}),
         vec!["hostId","integrationId","alertId","requestId"], false);
-    add("close_server_alert", "Close one persisted Komari alert locally and append a Komari lifecycle audit event. This never calls Komari or changes the remote host. Requires the client's manageAlerts capability and a unique requestId; the returned OperationJob is the canonical local audit record.",
+    add("close_server_alert", "Close a persisted alert with manageAlerts authorization and a unique requestId. Komari uses integrationId/alertId (optional alertSource=komari for compatibility). Local service/health-check/ProbeProvider requires explicit alertSource=local-ops, ruleId and expectedRevision from get_server_alerts.localOps.revision. Returns a canonical OperationJob and local lifecycle audit; it does not execute remote commands, call Komari, prove recovery or simulate human confirmation.",
         json!({"hostId":host,"integrationId":string(240),"alertId":string(240),"requestId":request}),
         vec!["hostId","integrationId","alertId","requestId"], false);
     add("get_server_metrics", "Read up to 24 hours of observed metrics. Gaps are unknown, not zero. History is paginated and covers only application sampling periods.",
@@ -252,6 +293,14 @@ fn definitions() -> Vec<Value> {
         "status":string(32),"projectKind":string(80),"source":source,"dependencies":dependencies,
         "components":components,"runtime":runtime,"notes":string(2000),"lastVerifiedAt":integer(0,i64::MAX as u64)}),
         vec!["deploymentId","hostId","name","deploymentPath","status"], false);
+    for definition in &mut result {
+        if matches!(
+            definition["name"].as_str(),
+            Some("acknowledge_server_alert" | "close_server_alert")
+        ) {
+            definition["inputSchema"] = alert_action_schema();
+        }
+    }
     result
 }
 
@@ -382,6 +431,43 @@ mod tests {
         )
         .is_err());
         assert!(validate_request(&json!({"jsonrpc":"2.0","id":{},"method":"ping"})).is_err());
+    }
+
+    #[test]
+    fn alert_actions_require_explicit_local_source_revision_and_unambiguous_identity() {
+        for tool in ["acknowledge_server_alert", "close_server_alert"] {
+            let legacy = json!({"hostId":"host","integrationId":"komari","alertId":"alert","requestId":"request"});
+            assert!(validate_arguments(tool, &legacy).is_ok());
+            let mut explicit = legacy.clone();
+            explicit["alertSource"] = json!("komari");
+            assert!(validate_arguments(tool, &explicit).is_ok());
+            let local = json!({"hostId":"host","alertSource":"local-ops","ruleId":"probe:ssh-agentless:hash:metrics","expectedRevision":4,"requestId":"request"});
+            assert!(validate_arguments(tool, &local).is_ok());
+            for key in ["alertSource", "ruleId", "expectedRevision", "requestId"] {
+                let mut missing = local.clone();
+                missing.as_object_mut().unwrap().remove(key);
+                assert!(validate_arguments(tool, &missing).is_err());
+            }
+            for field in [
+                json!({"integrationId":"komari"}),
+                json!({"alertId":"other"}),
+                json!({"alertSource":"service"}),
+                json!({"expectedRevision":-1}),
+                json!({"expectedRevision":1.5}),
+                json!({"command":"restart"}),
+                json!({"password":"secret"}),
+            ] {
+                let mut invalid = local.clone();
+                invalid
+                    .as_object_mut()
+                    .unwrap()
+                    .extend(field.as_object().unwrap().clone());
+                assert!(validate_arguments(tool, &invalid).is_err());
+            }
+            let mut mixed = legacy.clone();
+            mixed["ruleId"] = json!("service");
+            assert!(validate_arguments(tool, &mixed).is_err());
+        }
     }
 
     #[test]

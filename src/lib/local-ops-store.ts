@@ -21,7 +21,7 @@ export function saveLocalAlertRules(vaultId: string | undefined, hostId: string,
   const previous = loadLocalAlertRules(vaultId, hostId)
   const state = loadLocalAlertState(vaultId, hostId)
   const unchanged = new Set(rules.filter((row) => previous.some((old) => JSON.stringify(old) === JSON.stringify(row))).map((row) => row.id))
-  state.evaluations = state.evaluations.filter((row) => row.ruleId.startsWith('check:') || unchanged.has(row.ruleId))
+  state.evaluations = state.evaluations.filter((row) => row.ruleId.startsWith('check:') || row.ruleId.startsWith('probe:') || unchanged.has(row.ruleId))
   localStorage.setItem(localOpsStorageKey(vaultId, hostId, 'rules'), JSON.stringify(rules))
   void queueLocalOpsDocument(vaultId, hostId, 'alert-rules', rules)
   saveLocalAlertState(vaultId, hostId, state)
@@ -34,7 +34,7 @@ export function parseLocalAlertState(value: unknown, hostId: string): LocalAlert
   if (!value || typeof value !== 'object') return { ...EMPTY_LOCAL_ALERT_STATE, alerts: [], evaluations: [], audit: [] }
   const raw = value as Partial<LocalAlertState>
   const alerts: LocalAlertRecord[] = Array.isArray(raw.alerts) ? raw.alerts.slice(-100).flatMap((r) => {
-    if (!r || r.hostId !== hostId || !localAlertText(r.ruleId) || !statuses.includes(r.status) || !['cpu', 'memory', 'disk', 'service', 'health-check'].includes(r.metric)) return []
+    if (!r || r.hostId !== hostId || !localAlertText(r.ruleId) || !statuses.includes(r.status) || !['cpu', 'memory', 'disk', 'service', 'health-check', 'probe-provider'].includes(r.metric)) return []
     return [{ ruleId: localAlertText(r.ruleId), hostId, name: localAlertText(r.name), metric: r.metric, status: r.status, severity: r.severity === 'critical' || r.severity === 'info' ? r.severity : 'warning', openedAt: time(r.openedAt), updatedAt: time(r.updatedAt), resolvedAt: r.resolvedAt === null ? null : time(r.resolvedAt), value: number(r.value), source: localAlertText(r.source), transport: r.transport === 'proxy-jump' ? 'proxy-jump' : 'direct', ...(localAlertText(r.operationJobId) ? { operationJobId: localAlertText(r.operationJobId) } : {}) }]
   }) : []
   const evaluations: LocalAlertEvaluation[] = Array.isArray(raw.evaluations) ? raw.evaluations.slice(-100).flatMap((r) => {

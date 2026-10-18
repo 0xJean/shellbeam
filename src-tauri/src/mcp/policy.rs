@@ -10,9 +10,9 @@ pub struct Permissions {
     pub read_files: bool,
     pub write_files: bool,
     pub refresh: bool,
-    /// Allow local Komari alert lifecycle mutations. This never grants a
-    /// remote Komari API call; it only updates ShellBeam's cached alert state
-    /// and creates an OperationJob audit row.
+    /// Allow local Komari, service/check and ProbeProvider lifecycle mutations.
+    /// This never grants a remote API/SSH call; it only updates ShellBeam's
+    /// persisted alert metadata and creates an OperationJob audit row.
     #[serde(default)]
     pub manage_alerts: bool,
     #[serde(default)]

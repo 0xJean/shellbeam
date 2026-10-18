@@ -1,5 +1,6 @@
 pub mod bridge;
 mod freshness;
+mod local_alerts;
 mod policy;
 mod protocol;
 mod remote;
@@ -581,11 +582,11 @@ fn linked_operation_job_ids(alerts: &[Value], audit: &[Value]) -> HashSet<String
         .iter()
         .filter_map(|event| event["operationJobId"].as_str().map(str::to_owned))
         .collect::<HashSet<_>>();
-    ids.extend(
-        alerts
-            .iter()
-            .filter_map(|alert| alert["relatedOperationJobId"].as_str().map(str::to_owned)),
-    );
+    ids.extend(alerts.iter().flat_map(|alert| {
+        ["relatedOperationJobId", "operationJobId"]
+            .into_iter()
+            .filter_map(|key| alert[key].as_str().map(str::to_owned))
+    }));
     ids
 }
 
@@ -1269,7 +1270,7 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                 "operationAudits": operation_audits,
                 "sync": sync,
                 "observedAt": now_unix_ms(),
-                "notice": "Alert records are local lifecycle metadata. Acknowledgement and closure do not change Komari remotely; use a linked Probe/SSH OperationJob to diagnose or recover the host.",
+                "notice": "Alert records are local lifecycle metadata. Komari actions use integrationId/alertId (alertSource=komari is optional for compatibility). Local service, health-check and ProbeProvider actions require alertSource=local-ops, ruleId and localOps.revision as expectedRevision. Neither action changes the remote host or Komari.",
             }))
         }
         "acknowledge_server_alert" | "close_server_alert" => {
@@ -1481,6 +1482,10 @@ fn submit_local_alert_action(
     tool: &str,
     args: Value,
 ) -> Result<Value, String> {
+    if args["alertSource"] == "local-ops" {
+        return local_alerts::submit(app, client, host, tool, args);
+    }
+    let _guard = local_alerts::lock_actions()?;
     let request_id = args["requestId"].as_str().ok_or("REQUEST_ID_REQUIRED")?;
     let integration_id = args["integrationId"]
         .as_str()
@@ -1490,7 +1495,7 @@ fn submit_local_alert_action(
         serde_json::to_vec(&json!([tool, args, policy::identity(host)]))
             .map_err(|error| error.to_string())?,
     );
-    recheck(app, client, host)?;
+    local_alerts::authorized(app, client, host, tool, || Ok(()))?;
     let actor = format!("mcp-client:{}", client.id);
     let action = if tool == "acknowledge_server_alert" {
         "acknowledge"
@@ -1591,15 +1596,17 @@ fn submit_local_alert_action(
         );
         return Err("MCP_OPERATION_START_FAILED".into());
     }
-    let result = mutate_komari_alert(
-        app,
-        client,
-        host,
-        integration_id,
-        alert_id,
-        action,
-        &operation_job.job_id,
-    );
+    let result = local_alerts::authorized(app, client, host, tool, || {
+        mutate_komari_alert(
+            app,
+            client,
+            host,
+            integration_id,
+            alert_id,
+            action,
+            &operation_job.job_id,
+        )
+    });
     match result {
         Ok(mut result) => {
             let summary = format!("alertId={} action={} local-only=true", alert_id, action);
@@ -2058,15 +2065,17 @@ mod tests {
             &[
                 json!({"alertId":"a1","relatedOperationJobId":"job-from-alert"}),
                 json!({"alertId":"a2","relatedOperationJobId":null}),
+                json!({"ruleId":"probe:ssh-agentless:hash:metrics","operationJobId":"job-from-local-alert"}),
             ],
             &[
                 json!({"alertId":"a1","operationJobId":"job-from-audit"}),
                 json!({"alertId":"a3","operationJobId":null}),
             ],
         );
-        assert_eq!(ids.len(), 2);
+        assert_eq!(ids.len(), 3);
         assert!(ids.contains("job-from-alert"));
         assert!(ids.contains("job-from-audit"));
+        assert!(ids.contains("job-from-local-alert"));
     }
 
     fn host_with_jump(auth_type: &str) -> HostProfile {

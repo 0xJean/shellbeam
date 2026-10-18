@@ -6,8 +6,9 @@ export interface McpPermissions {
   readFiles: boolean
   writeFiles: boolean
   recordDeployments: boolean
-  /** Allow the MCP client to acknowledge or close local Komari alerts.
-   * These actions are persisted with the originating OperationJob audit. */
+  /** Acknowledge/close Komari or local service, health-check and ProbeProvider
+   * alert metadata for this client's Vault and authorized hosts only. These
+   * actions retain the OperationJob audit and never perform remote changes. */
   manageAlerts: boolean
 }
 

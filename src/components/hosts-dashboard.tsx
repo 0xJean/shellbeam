@@ -3,6 +3,10 @@ import type { WorkspaceAppId } from '@/lib/workspace'
 import { HostOpsAdvancedFilters } from '@/components/host-ops-filters'
 import { DEFAULT_HOST_OPS_FILTERS, matchesHostOpsFilters, type HostOpsFilters } from '@/lib/host-ops-filters'
 import { LOCAL_OPS_CHANGED_EVENT, loadLocalAlertState } from '@/lib/local-ops-store'
+import { runLocalAlertAction } from '@/lib/local-alert-actions'
+import type { LocalAlertRecord } from '@/lib/local-alert-rules'
+import { LOCAL_OPS_PERSISTENCE_EVENT, localOpsPersistenceError } from '@/lib/local-ops-persistence'
+import { getProbeAlertRuntimeDiagnostic, PROBE_ALERT_RUNTIME_CHANGED } from '@/lib/probe-alert-runtime-state'
 import { HostGridCard, HostListItem, type HostOperationalSummary } from '@/components/host-card'
 import { HostListScrollArea } from '@/components/host-list-scroll-area'
 import { HostCreateDialog } from '@/components/host-create-dialog'
@@ -377,6 +381,14 @@ export function HostsDashboard({
   const komariProbeActionKey = komariProbeAction && komariProbeAction.vaultId === activeVaultId ? komariProbeAction.key : null
   const komariAlertActionKey = komariAlertAction && komariAlertAction.vaultId === activeVaultId ? komariAlertAction.key : null
   const komariActionSequence = useRef(0)
+  const localScope = useRef({ vaultId: activeVaultId, unlocked: vaultUnlocked, generation: 0, hosts })
+  if (localScope.current.vaultId !== activeVaultId || localScope.current.unlocked !== vaultUnlocked) localScope.current.generation++
+  localScope.current = { ...localScope.current, vaultId: activeVaultId, unlocked: vaultUnlocked, hosts }
+  const localActionSequence = useRef(0)
+  const localActionPending = useRef<{ generation: number; sequence: number } | null>(null)
+  const [localAlertAction, setLocalAlertAction] = useState<{ vaultId: string; generation: number; sequence: number; hostId: string; ruleId: string } | null>(null)
+  const [localAlertError, setLocalAlertError] = useState<{ vaultId: string; generation: number; hostId: string } | null>(null)
+  const visibleLocalAction = localAlertAction !== null && localAlertAction.vaultId === activeVaultId && localAlertAction.generation === localScope.current.generation ? localAlertAction : null
   const [hostOpsLoading, setHostOpsLoading] = useState(false)
   const [hostOpsRefreshStatus, setHostOpsRefreshStatus] = useState<HostOpsRefreshStatus>('idle')
   const [hostOpsLastRefreshedAt, setHostOpsLastRefreshedAt] = useState<number | null>(null)
@@ -662,6 +674,34 @@ export function HostsDashboard({
     }
   }, [activeVaultId, refreshHostOps, t])
 
+  const handleLocalAlertAction = useCallback(async (host: HostProfile, alert: LocalAlertRecord, action: 'acknowledge' | 'close') => {
+    if (!activeVaultId || !vaultUnlocked) return
+    const generation = localScope.current.generation
+    const hostKey = getWorkspaceInventoryHostKey(host)
+    const isCurrent = () => opsMounted.current && localScope.current.generation === generation
+      && localScope.current.vaultId === activeVaultId && localScope.current.unlocked
+      && localScope.current.hosts.some((candidate) => candidate.id === host.id && (!candidate.vaultId || candidate.vaultId === activeVaultId) && getWorkspaceInventoryHostKey(candidate) === hostKey)
+    if (!isCurrent() || (localActionPending.current?.generation === generation)) return
+    const current = loadLocalAlertState(activeVaultId, host.id).alerts.find((row) => row.ruleId === alert.ruleId && row.hostId === host.id)
+    // A stale card cannot act on a different incident or a replaced source.
+    if (!current || current.openedAt !== alert.openedAt || current.source !== alert.source || current.metric !== alert.metric || current.transport !== alert.transport
+      || (action === 'acknowledge' ? current.status !== 'active' : !['active', 'acknowledged', 'resolved'].includes(current.status))) return
+    const sequence = ++localActionSequence.current
+    localActionPending.current = { generation, sequence }
+    setLocalAlertAction({ vaultId: activeVaultId, generation, sequence, hostId: host.id, ruleId: current.ruleId })
+    setLocalAlertError(null)
+    try {
+      await runLocalAlertAction({ vaultId: activeVaultId, host, ruleId: current.ruleId, action,
+        confirmMessage: t(action === 'acknowledge' ? 'localOps.confirmAcknowledge' : 'localOps.confirmClose', { host: host.name, alert: current.name }), isCurrent })
+    } catch {
+      if (isCurrent()) setLocalAlertError({ vaultId: activeVaultId, generation, hostId: host.id })
+    } finally {
+      if (isCurrent()) await refreshHostOps().catch(() => undefined)
+      if (localActionPending.current?.sequence === sequence) localActionPending.current = null
+      setLocalAlertAction((pending) => pending?.sequence === sequence ? null : pending)
+    }
+  }, [activeVaultId, vaultUnlocked, refreshHostOps, t])
+
   useEffect(() => { void refreshHostOps() }, [activeVaultId, refreshHostOps])
 
   useEffect(() => {
@@ -826,17 +866,24 @@ export function HostsDashboard({
       const alertBusy = komariAlertActionKey
         ? komariAlertActionKey.slice(komariAlertActionKey.indexOf(':') + 1)
         : null
-      summaries.set(host.id, hostOpsToCardSummary(
+      const summary = hostOpsToCardSummary(
         hostOpsViews[host.id],
         link,
         link?.recommendedAction === 'install-probe' && !onOpenWorkspace ? undefined : handleKomariProbeAction,
         busy,
         (action, alert) => handleKomariAlertAction(host, action, alert),
         alertBusy,
-      ))
+      )
+      summaries.set(host.id, summary ? { ...summary,
+        onLocalAlertAction: activeVaultId && vaultUnlocked && (!host.vaultId || host.vaultId === activeVaultId) ? (alert, action) => handleLocalAlertAction(host, alert, action) : undefined,
+        localAlertBusy: visibleLocalAction ? visibleLocalAction.hostId === host.id ? visibleLocalAction.ruleId : '*' : null,
+        localAlertError: localAlertError !== null && localAlertError.vaultId === activeVaultId && localAlertError.generation === localScope.current.generation && localAlertError.hostId === host.id,
+        localAlertPersistenceError: !!localOpsPersistenceError(activeVaultId, host.id),
+        probeAlertLifecycleError: !!getProbeAlertRuntimeDiagnostic(activeVaultId, host.id),
+      } : undefined)
     })
     return summaries
-  }, [handleKomariAlertAction, handleKomariProbeAction, hostOpsViews, hosts, komariAlertActionKey, komariProbeActionKey, komariProbeLinks, onOpenWorkspace])
+  }, [handleKomariAlertAction, handleKomariProbeAction, handleLocalAlertAction, hostOpsViews, hosts, komariAlertActionKey, komariProbeActionKey, komariProbeLinks, onOpenWorkspace, activeVaultId, vaultUnlocked, visibleLocalAction, localAlertError])
 
   useEffect(() => {
     const updateLocalAlerts = () => {
@@ -851,8 +898,10 @@ export function HostsDashboard({
     }
     const clock = window.setInterval(() => setFilterNow(Date.now()), 15_000)
     window.addEventListener(LOCAL_OPS_CHANGED_EVENT, updateLocalAlerts)
+    window.addEventListener(LOCAL_OPS_PERSISTENCE_EVENT, updateLocalAlerts)
+    window.addEventListener(PROBE_ALERT_RUNTIME_CHANGED, updateLocalAlerts)
     window.addEventListener('storage', updateLocalAlerts)
-    return () => { window.clearInterval(clock); window.removeEventListener(LOCAL_OPS_CHANGED_EVENT, updateLocalAlerts); window.removeEventListener('storage', updateLocalAlerts) }
+    return () => { window.clearInterval(clock); window.removeEventListener(LOCAL_OPS_CHANGED_EVENT, updateLocalAlerts); window.removeEventListener(LOCAL_OPS_PERSISTENCE_EVENT, updateLocalAlerts); window.removeEventListener(PROBE_ALERT_RUNTIME_CHANGED, updateLocalAlerts); window.removeEventListener('storage', updateLocalAlerts) }
   }, [activeVaultId])
   const osOptions = useMemo(() => [...new Set(Object.values(hostOpsViews).map((view) => view.metrics?.os || view.resource?.os || '').filter(Boolean))].sort(), [hostOpsViews])
 

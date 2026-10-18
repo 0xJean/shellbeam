@@ -24,6 +24,7 @@ import {
   MAX_PROBE_RECOVERY_RETRY_DELAY_MS,
 } from './probe-scheduler-constants'
 import { loadProbeRetrySettings, type ProbeRetrySettings } from './probe-retry-settings'
+import { beginProbeCollectionSequence, emitProbeCollection, emitProbeCollectionDiagnostic, getProbeCollectionConfigRevision, probeCollectionConfigurationKey, type ProbeCollectionEvent, type ProbeCollectionSection } from './probe-collection-events'
 
 export const DEFAULT_PROBE_SCHEDULER_CONCURRENCY = COLLECTION_LIMITS.scheduler.concurrency
 /** Additional attempts made before returning a stale durable observation. */
@@ -68,6 +69,8 @@ export interface ProbeSnapshotPersistence {
 
 interface CachedProbe {
   snapshot: ProbeSnapshot
+  configurationKey?: string
+  collectedAt?: number
 }
 
 interface Waiter {
@@ -229,6 +232,47 @@ function cacheKey(provider: ProbeProvider, host: HostProfile, sections: ProbeSec
   return `${vaultId || '-'}:${providerKey(provider)}:${host.id}:${sections.slice().sort().join(',')}`
 }
 
+function matchesSshRoute(snapshot: ProbeSnapshot, host: HostProfile) {
+  if (snapshot.host.address !== host.address || snapshot.host.port !== (host.port || 22) || snapshot.host.username !== (host.username || 'root')) return false
+  const jump = snapshot.host.jump
+  if (host.jumpHostId) return snapshot.transport === 'proxy-jump' && jump?.hostId === host.jumpHostId
+  if (host.jumpHost?.trim()) return snapshot.transport === 'proxy-jump' && !jump?.hostId
+    && jump?.address === host.jumpHost.trim() && jump.port === (host.jumpPort || 22) && jump.username === (host.jumpUser?.trim() || host.username || 'root')
+  return snapshot.transport === 'direct' && !jump
+}
+
+function collectionScopeUnavailable(snapshot: ProbeSnapshot | undefined, error: unknown, section: ProbeCollectionSection) {
+  if (error instanceof Error && error.name === 'AbortError') return true
+  const entries = snapshot?.errors.filter(entry => entry.section === 'provider' || entry.section === section) ?? []
+  const messages = [errorMessage(error), ...entries.flatMap(entry => [entry.code ?? '', entry.message])]
+  // Names such as vault.example or identity.example can occur in a genuine
+  // network failure. Only native codes and explicit control-state phrases
+  // establish that no availability conclusion can be drawn.
+  const controlCode = /(?:^|[\s:"{,(])(?:VAULT_(?:LOCKED|NOT_INITIALIZED|UNAVAILABLE|SCOPE_MISMATCH)|PROBE_(?:IDENTITY|VAULT_SCOPE)_MISMATCH|WORKSPACE_VAULT_SCOPE_MISMATCH|HOST_VAULT_SCOPE_MISMATCH|HOST_NOT_FOUND|JUMP_HOST_NOT_FOUND|MISSING_CREDENTIAL|UNSUPPORTED_AUTH_TYPE|OBSERVATION_SOURCE_INVALID|HOST_KEY_(?:UNKNOWN|MISMATCH))(?:$|[\s:"},)])/i
+  return messages.some(message => controlCode.test(message)
+    || /^(?:cancelled|canceled|aborted|operation_cancelled|request_cancelled)$/i.test(message)
+    || /\bvault (?:is |was )?(?:locked|not initialized)\b/i.test(message)
+    || /\bSSH (?:target|jump) credential_unavailable\b/.test(message)
+    || /^(?:connection|probe|operation|request|collection) (?:was )?(?:cancelled|canceled|aborted)[.!]?$/i.test(message))
+}
+
+function completedCollectionSections(sections: ProbeSection[], snapshot: ProbeSnapshot | undefined, error: unknown, exhausted: boolean, completedAt: number): ProbeCollectionEvent['sections'] {
+  return sections.filter((section): section is ProbeCollectionSection => section === 'metrics' || section === 'inventory').map(section => {
+    const observation = snapshot?.[section]
+    const sampledAt = observation?.freshness.sampledAt ?? null
+    if (snapshot?.health === 'unsupported' || snapshot?.errors.some(entry => (entry.section === 'provider' || entry.section === section) && /unsupported/i.test(entry.code ?? ''))) return { section, outcome: 'unknown', sampledAt, reason: 'unsupported' }
+    if (snapshot?.health === 'paused') return { section, outcome: 'unknown', sampledAt, reason: 'paused' }
+    if (collectionScopeUnavailable(snapshot, error, section)) return { section, outcome: 'unknown', sampledAt, reason: 'scope-unavailable' }
+    const sectionErrors = snapshot?.errors.filter(entry => entry.section === section || entry.section === 'provider') ?? []
+    const fresh = observation && snapshot?.health === 'online' && !snapshot.telemetry?.recovered
+      && observation.freshness.sampledAt <= completedAt && completedAt <= Math.min(observation.freshness.expiresAt, observation.freshness.sampledAt + observation.freshness.ttlMs)
+      && !sectionErrors.some(entry => entry.code === 'stale-cache-fallback')
+    if (fresh && sectionErrors.length === 0) return { section, outcome: 'success', sampledAt, reason: 'observed' }
+    if (exhausted && !observation) return { section, outcome: 'failure', sampledAt: null, reason: 'collection-unavailable' }
+    return { section, outcome: 'unknown', sampledAt, reason: 'observation-unavailable' }
+  })
+}
+
 /**
  * A small process-wide registry that makes provider selection, TTL handling,
  * remote concurrency and durable observation recovery shared by monitor,
@@ -337,9 +381,9 @@ export class ProbeProviderRegistry {
           ? { ...original.inventory, freshness: { ...original.inventory.freshness, expiresAt: rowIndexesMetrics ? original.inventory.freshness.expiresAt : Math.min(original.inventory.freshness.expiresAt, record.expiresAt) } }
           : null,
       }
-      if (snapshot.metrics) this.cache.set(cacheKey(provider, host, ['metrics'], record.vaultId), { snapshot })
-      if (snapshot.inventory) this.cache.set(cacheKey(provider, host, ['inventory'], record.vaultId), { snapshot })
-      if (snapshot.metrics && snapshot.inventory) this.cache.set(cacheKey(provider, host, ['inventory', 'metrics'], record.vaultId), { snapshot })
+      if (snapshot.metrics) this.cache.set(cacheKey(provider, host, ['metrics'], record.vaultId), { snapshot, collectedAt: record.updatedAt })
+      if (snapshot.inventory) this.cache.set(cacheKey(provider, host, ['inventory'], record.vaultId), { snapshot, collectedAt: record.updatedAt })
+      if (snapshot.metrics && snapshot.inventory) this.cache.set(cacheKey(provider, host, ['inventory', 'metrics'], record.vaultId), { snapshot, collectedAt: record.updatedAt })
     }
   }
 
@@ -363,13 +407,24 @@ export class ProbeProviderRegistry {
   async probe(request: ProbeScheduleRequest): Promise<ProbeScheduleResult> {
     if (request.vaultId && request.host.vaultId && request.vaultId !== request.host.vaultId) throw new Error('PROBE_VAULT_SCOPE_MISMATCH')
     const vaultId = request.vaultId?.trim() || request.host.vaultId?.trim() || undefined
+    // Snapshot the configuration before any asynchronous hydration. A newer
+    // host edit must neither join this work nor reuse its recovery candidate.
+    const configuration = { ...request.host, vaultId }
+    const configurationKey = probeCollectionConfigurationKey(configuration)
     if (vaultId) await this.hydrate(vaultId)
     const sections = requestSections(request)
     const provider = this.get(request.providerId ?? 'ssh-agentless')
     if (!provider) throw new Error(`probe_provider_unavailable:${request.providerId ?? 'ssh-agentless'}`)
     const now = request.now ?? Date.now()
     const key = cacheKey(provider, request.host, sections, vaultId)
-    const cached = this.cache.get(key)
+    const readCached = () => {
+      const candidate = this.cache.get(key)
+      if (!candidate || candidate.configurationKey !== undefined && candidate.configurationKey !== configurationKey) return undefined
+      if (provider.ref.kind === 'ssh-agentless' && !matchesSshRoute(candidate.snapshot, configuration)) return undefined
+      if (provider.ref.kind === 'ssh-agentless' && candidate.configurationKey === undefined && configuration.updatedAt > (candidate.collectedAt ?? 0)) return undefined
+      return candidate
+    }
+    const cached = readCached()
     if (cached) {
       cached.snapshot = refreshProbeSnapshotFreshness(cached.snapshot, now)
       this.cache.set(key, cached)
@@ -377,14 +432,19 @@ export class ProbeProviderRegistry {
     if (!request.force && cached && observationFresh(cached.snapshot, sections, now)) {
       return { snapshot: cached.snapshot, cached: true, deduplicated: false }
     }
-    const existing = this.inFlight.get(key)
+    const workKey = JSON.stringify([key, configurationKey])
+    const existing = this.inFlight.get(workKey)
     if (existing) {
       const result = await existing
       return { snapshot: result.snapshot, cached: false, deduplicated: true, recovered: result.recovered, retry: result.retry }
     }
-    const providerRequest: ProbeRequest = { ...request, vaultId, sections }
+    const providerRequest: ProbeRequest = { ...request, host: configuration, vaultId, sections }
     const startedAt = Date.now()
-    const work = (async () => {
+    const startedSequence = beginProbeCollectionSequence()
+    let actualSnapshot: ProbeSnapshot | undefined
+    let actualError: unknown
+    let actualExhausted = false
+    const collection = (async () => {
       await this.acquire()
       try {
         const retrySettings = loadProbeRetrySettings()
@@ -399,13 +459,18 @@ export class ProbeProviderRegistry {
           try {
             const collected = await provider.probe(providerRequest)
             if (collected.host?.hostId !== request.host.id || collected.provider?.id !== provider.ref.id || collected.provider?.kind !== provider.ref.kind) throw new Error('PROBE_IDENTITY_MISMATCH')
+            if (provider.ref.kind === 'ssh-agentless' && !matchesSshRoute(collected, configuration)) throw new Error('PROBE_IDENTITY_MISMATCH')
             snapshot = refreshProbeSnapshotFreshness(collected, request.now ?? Date.now())
+            actualSnapshot = snapshot
+            actualError = undefined
             failed = probeNeedsRetry(snapshot, sections)
             if (!failed) break
             const latestError = snapshot.errors.find((entry) => entry.section === 'provider' || sections.includes(entry.section as ProbeSection))
             lastError = latestError?.message
             lastErrorCode = latestError?.code
           } catch (error) {
+            actualSnapshot = undefined
+            actualError = error
             lastError = error
             failed = true
           }
@@ -414,11 +479,12 @@ export class ProbeProviderRegistry {
           const delay = retryDelayMs(request, attempts, retrySettings)
           if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay))
         }
+        actualExhausted = failed
         if (!snapshot) throw lastError ?? new Error('probe_provider_failed')
         const retry = attempts > 0 || failed
           ? { attempts, exhausted: failed, ...(lastError ? { error: errorMessage(lastError) } : {}) }
           : undefined
-        const fallback = this.cache.get(key)
+        const fallback = readCached()
         if (fallback && probeCollectionFailed(snapshot, fallback.snapshot, sections)) {
           const recoveredTelemetry = collectionTelemetry({
             status: 'recovered',
@@ -445,7 +511,7 @@ export class ProbeProviderRegistry {
           // sampled data remains stale; this write never replaces it with an
           // incomplete provider envelope.
           const recoveredSnapshotWithTelemetry = { ...recoveredSnapshot, telemetry: recoveredTelemetry }
-          this.cache.set(key, { snapshot: recoveredSnapshotWithTelemetry })
+          this.cache.set(key, { snapshot: recoveredSnapshotWithTelemetry, configurationKey })
           if (vaultId) void this.persistence.save(recoveredSnapshotWithTelemetry, vaultId, now).catch(() => undefined)
           return {
             snapshot: recoveredSnapshotWithTelemetry,
@@ -472,14 +538,16 @@ export class ProbeProviderRegistry {
           ...(lastErrorCode ? { lastErrorCode } : {}),
         })
         snapshot = { ...snapshot, telemetry }
-        this.cache.set(key, { snapshot })
+        this.cache.set(key, { snapshot, configurationKey })
         // A failed envelope must not replace the durable recovery candidate;
         // stale recovery writes happen in the fallback branch above and keep
         // the last successful observation intact.
         if (vaultId && !retry?.exhausted) void this.persistence.save(snapshot, vaultId, now).catch(() => undefined)
         return { snapshot, recovered: false, retry }
       } catch (error) {
-        const fallback = this.cache.get(key)
+        actualError = error
+        actualExhausted = true
+        const fallback = readCached()
         if (!fallback) throw error
         const retrySettings = loadProbeRetrySettings()
         const retry = { attempts: maxRetries(request, retrySettings), exhausted: true, error: errorMessage(error) }
@@ -504,7 +572,7 @@ export class ProbeProviderRegistry {
             lastError: retry.error,
           }),
         }
-        this.cache.set(key, { snapshot: recoveredSnapshot })
+        this.cache.set(key, { snapshot: recoveredSnapshot, configurationKey })
         if (vaultId) void this.persistence.save(recoveredSnapshot, vaultId, now).catch(() => undefined)
         return {
           snapshot: recoveredSnapshot,
@@ -515,12 +583,31 @@ export class ProbeProviderRegistry {
         this.release()
       }
     })()
-    this.inFlight.set(key, work)
+    // Attach once to the shared work. Cache reads and coalesced callers never
+    // emit another collection or mistake recovered observations for success.
+    const publish = async () => {
+      if (!vaultId || provider.ref.kind !== 'ssh-agentless') return
+      const completedAt = Date.now()
+      const outcomes = completedCollectionSections(sections, actualSnapshot, actualError, actualExhausted, completedAt)
+      if (!outcomes.length) return
+      emitProbeCollection({
+        eventId: crypto.randomUUID(), vaultId, hostId: configuration.id,
+        configRevision: await getProbeCollectionConfigRevision(configuration),
+        provider: { kind: provider.ref.kind, id: provider.ref.id },
+        transport: configuration.jumpHostId || configuration.jumpHost?.trim() ? 'proxy-jump' : 'direct',
+        startedAt, startedSequence, completedAt, sections: outcomes,
+      })
+    }
+    const publishSafely = () => publish().catch(() => {
+      emitProbeCollectionDiagnostic({ code: 'publication-unavailable', vaultId: vaultId!, hostId: configuration.id, startedAt, startedSequence })
+    })
+    const work = collection.then(async result => { await publishSafely(); return result }, async error => { await publishSafely(); throw error })
+    this.inFlight.set(workKey, work)
     try {
       const result = await work
       return { snapshot: result.snapshot, cached: false, deduplicated: false, recovered: result.recovered, retry: result.retry }
     } finally {
-      if (this.inFlight.get(key) === work) this.inFlight.delete(key)
+      if (this.inFlight.get(workKey) === work) this.inFlight.delete(workKey)
     }
   }
 

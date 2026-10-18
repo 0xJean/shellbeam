@@ -15,7 +15,7 @@
 | 状态与主机身份一致 | `host-identity.ts`、原生route identity、unsupported采集契约 | 非Linux SSH采集明确unsupported，不当成offline；可用Agent/Komari观察可优先；身份来自实际解析端点，未解析跳板引用不复用旧复制地址；任务摘要按job最新状态统计 |
 | 跨Vault观察隔离 | `host-observation-scope.ts`、monitor/inventory/tool原生持久化、MCP缓存读取 | 内存和持久化均按Vault/host标识；显式Vault与profile冲突在采集前拒绝；MCP按授权Vault读取。旧无scope缓存保留但不猜测归属，需要重新观察；已分scope的ProbeProvider历史保留 |
 | 采集预算与架构 | `shared/collection-limits.json`、TS/Rust共享读取、统一Inventory.arch | 并发、采集timeout/输出与历史保留使用一个数值源；普通SSH命令和MCP任务各自的有界预算单独命名；架构从真实采集结果传入，缺失不猜测 |
-| 通用SSH Provider失败/恢复告警 | `probe-scheduler.ts`、`server-monitor-scan.ts`与现有local_ops告警模型 | **待实现补口**：通用SSH路径目前只记录状态、缓存回退和telemetry，没有派发持久化Provider告警。现有Probe告警/通知仍依赖Komari集成，不等于独立SSH Provider闭环；`recovered`缓存回退也不表示实际采集恢复。须补同Vault/host生命周期、真实新采样恢复、确认审计及通知，不以Local Service用例代替 |
+| 通用SSH Provider失败/恢复告警 | `probe-scheduler.ts`、`probe-collection-events.ts`、`probe-alert-lifecycle.ts`、应用级ProbeAlertRuntime与local_ops | 实际采集按Provider/metrics/inventory发布一次事件；无缓存失败可开启内置告警，unknown、缓存读取及`recovered`缓存回退不算恢复，须同配置的新成功采样。先原生持久化再通知；锁库、旧Vault/主机/跳板配置及CAS失败不得投递，主机Grid/List可确认/关闭并关联OperationJob。独立Provider真实故障/恢复的打包OS通知验收仍待完成，不以Local Service用例代替 |
 
 ## Phase 1：主机诊断与操作闭环
 
@@ -31,6 +31,7 @@
 | 真实异常到处理结果 | 实际desktop/mobile Overview的RecommendationsPanel | 流程测试：真实本地规则告警→日志诊断→确认重启→后态观察→OperationJob；取消不执行 |
 | HTTP/TCP检查与本地规则 | `health-check-scheduler.ts`、`local-alert-*.ts`、`local-ops-store.ts` | 应用级有界调度，历史、持续时间、滞回、unknown不恢复、失败与恢复通知；复用OperationJob路径判断，仅保存jumpHostId的主机在成功、失败、unknown和取消未发送结果中均保留ProxyJump，持久化历史、服务告警和恢复视图不误标直连 |
 | 跨会话告警审计 | `data/local_ops.rs`、`local-ops-persistence.ts`、`local-alert-actions.ts` | 原生按Vault/host/kind隔离、revision CAS；确认/关闭关联同scope已确认OperationJob；MCP返回安全历史和关联任务 |
+| MCP本地告警确认/关闭 | `mcp/local_alerts.rs`、协议oneOf与原生local_ops内部事务 | 保留Komari参数兼容；服务、健康检查和独立ProbeProvider告警必须显式`alertSource=local-ops`、ruleId及expectedRevision。复查manageAlerts/同Vault主机授权，规范Job记录客户端授权为not_required，不伪造人工确认；SQLite保证CAS、跨会话与并发幂等，不重放非终态任务。桌面confirmed-only入口保持独立 |
 | 超时/断线/信号/输出过量 | 原生公共command执行器、OperationJob结果映射 | 不推断远端动作已停止；不确定结果为unknown，无自动重放写操作 |
 | 工具安装与服务动作 | `workspace-tools.ts`、WorkspaceToolManagerApp | 安装/升级/卸载及服务变更先确认，展示主机/路径/命令；独立观察版本、工具存在与服务后态；同一OperationJob记录结果，无法观察为unknown |
 
@@ -119,3 +120,5 @@ Overview与移动控制台整合本地回归：前端1003项通过，16项Linux�
 提交`238536f`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39101143982)和[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39101143981)共11项通过；[下载核对报告](https://github.com/0xJean/shellbeam/actions/runs/39101143982/artifacts/12126661470)仍为16项真实Ops通过、零跳过，success/cleanup均通过，合并检出`f4aabcaa5356996009bdb6524e32ce635078d169`。同提交GUI已实际编译受校验dunst 1.7.3、通过两条服务告警的直连/跳板路径断言，并产生可见的真实系统测试横幅；自动OCR断言失败，因此[GUI结果](https://github.com/0xJean/shellbeam/actions/runs/39101144044)仍是失败，未到达后续通知状态、运维变更和重启恢复。可见截图不替代完整用例通过。
 
 提交`21187d6`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39101718700)及[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39101718699)共11项通过；[核对的原生报告](https://github.com/0xJean/shellbeam/actions/runs/39101718700/artifacts/12127470286)为16项通过、零跳过、success/cleanup均通过，合并检出`a555a88e8086ac47d770eae1219c1b2ce4b3479a`。[GUI报告](https://github.com/0xJean/shellbeam/actions/runs/39101718712)中的`notifications.passed: true`独立证明测试按钮四状态，完整GUI随后在真实策略保存/重挂载后的诊断计数读取失败；服务告警投递与重启闭环仍未通过。
+
+独立SSH Provider与MCP本地告警闭环本轮本地验证：前端1107项通过，16项真实Linux Ops和1项Linux collector在macOS跳过；TypeScript/Vite生产构建通过，修改范围ESLint通过。原生库161项通过、原Linux Ops桥1项按约定ignored，MCP stdio两项通过；50项Node UI协议/夹具/通知契约测试通过。覆盖实际work单次事件、无缓存失败、缓存不恢复、新采样恢复、跨配置缓存/任务隔离、同毫秒引用跳板变化、迟到写入不清新故障提示、原生CAS与MCP授权/幂等。最终stdio曾发现并保留WouldBlock失败，修正生产accepted socket为阻塞有界读写后，新增真实TCP延迟首帧回归及最终全量验证通过。以上不代替新提交的Linux GUI故障/通知/重启实测，也不代替正式发布。

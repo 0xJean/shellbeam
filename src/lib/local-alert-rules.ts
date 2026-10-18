@@ -1,6 +1,6 @@
 import type { NotificationEvent, NotificationSeverity } from './notification-policy'
 
-export type LocalAlertMetric = 'cpu' | 'memory' | 'disk' | 'service' | 'health-check'
+export type LocalAlertMetric = 'cpu' | 'memory' | 'disk' | 'service' | 'health-check' | 'probe-provider'
 export type LocalAlertStatus = 'active' | 'acknowledged' | 'resolved' | 'closed'
 export interface LocalAlertRule {
   id: string
@@ -65,7 +65,7 @@ export interface LocalAlertState {
   audit: LocalAlertAudit[]
 }
 export const EMPTY_LOCAL_ALERT_STATE: LocalAlertState = { version: 1, alerts: [], evaluations: [], audit: [] }
-const METRICS: LocalAlertMetric[] = ['cpu', 'memory', 'disk', 'service', 'health-check']
+const METRICS: LocalAlertMetric[] = ['cpu', 'memory', 'disk', 'service', 'health-check', 'probe-provider']
 export function localAlertText(value: unknown): string {
   return typeof value === 'string' ? [...value].map((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? ' ' : c).join('').trim().slice(0, 120) : ''
 }
@@ -76,7 +76,7 @@ export function normalizeLocalAlertRule(value: unknown): LocalAlertRule {
   const raw = value as Partial<LocalAlertRule> | null
   if (!raw || !METRICS.includes(raw.metric as LocalAlertMetric) || !localAlertText(raw.id) || !localAlertText(raw.hostId) || !localAlertText(raw.name)) throw new Error('local_alert_invalid_rule')
   const metric = raw.metric as LocalAlertMetric
-  const binary = metric === 'service' || metric === 'health-check'
+  const binary = metric === 'service' || metric === 'health-check' || metric === 'probe-provider'
   const target = localAlertText(raw.target)
   if (binary && (!target || (metric === 'service' && !/^[A-Za-z0-9@_.:-]+$/.test(target)))) throw new Error('local_alert_invalid_target')
   const threshold = binary ? 1 : bounded(raw.threshold, 90, 100)
@@ -102,7 +102,9 @@ export function evaluateLocalAlertRules(previous: LocalAlertState, rules: LocalA
     let evaluation = state.evaluations.find((row) => row.ruleId === rule.id)
     if (!evaluation) { evaluation = { ruleId: rule.id, sampledAt: 0, pendingSince: null, recoverySince: null, state: 'unknown', value: null }; state.evaluations.push(evaluation) }
     if (!rule.enabled) { Object.assign(evaluation, { state: 'disabled', pendingSince: null, recoverySince: null }); continue }
-    const known = observation && Number.isFinite(observation.value) && observation.value !== null && observation.sampledAt <= now && now - observation.sampledAt <= rule.freshnessMs
+    const known = observation && Number.isFinite(observation.value) && observation.value !== null
+      && (rule.metric !== 'probe-provider' || observation.value === 0 || observation.value === 1)
+      && observation.sampledAt <= now && now - observation.sampledAt <= rule.freshnessMs
     if (!known) { Object.assign(evaluation, { state: 'unknown', pendingSince: null, recoverySince: null, value: null }); continue }
     if (observation.sampledAt <= evaluation.sampledAt) continue
     if (observation.sampledAt - evaluation.sampledAt > rule.freshnessMs) { evaluation.pendingSince = null; evaluation.recoverySince = null }

@@ -7,6 +7,7 @@ import { VaultProvider } from '@/contexts/vault-context'
 import { ScheduledOpsRuntime } from '@/components/scheduled-ops-runtime'
 import { LocalOpsRuntime } from '@/components/local-ops-runtime'
 import { ServerMonitorRuntime } from '@/components/server-monitor-runtime'
+import { ProbeAlertRuntime } from '@/components/probe-alert-runtime'
 import { ShellbeamAgentRuntime } from '@/components/shellbeam-agent-runtime'
 import { PcLayout } from '@/layouts/pc-layout'
 import { listCommandHistory } from '@/lib/history'
@@ -75,6 +76,7 @@ function AppInnerWithVault() {
   return (
     <VaultProvider setOutput={setOutput}>
       <HostsProvider>
+        <ProbeAlertRuntime />
         <ServerMonitorRuntime />
         <LocalOpsRuntime />
         <ScheduledOpsRuntime />

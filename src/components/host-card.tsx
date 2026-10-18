@@ -95,6 +95,12 @@ export interface HostOperationalSummary {
   highestAlertSeverity?: 'info' | 'warning' | 'critical' | null
   localAlertOpen?: number
   localAlerts?: LocalAlertRecord[]
+  /** Local lifecycle actions have their own confirmed job and persistence path. */
+  onLocalAlertAction?: (alert: LocalAlertRecord, action: 'acknowledge' | 'close') => Promise<void> | void
+  localAlertBusy?: string | null
+  localAlertError?: boolean
+  localAlertPersistenceError?: boolean
+  probeAlertLifecycleError?: boolean
   transport: 'direct' | 'proxy-jump'
   agentStatus?: string
   agentHealth?: string
@@ -485,6 +491,32 @@ function formatSummaryAge(ts: number | undefined, t: TFn) {
   return formatRelativeTime(ts, t)
 }
 
+function HostLocalAlertRows({ host, summary, t }: { host: HostProfile; summary: HostOperationalSummary; t: TFn }) {
+  const alerts = (summary.localAlerts ?? []).filter((alert) => alert.hostId === host.id)
+    .sort((left, right) => Number(left.status === 'closed' || left.status === 'resolved') - Number(right.status === 'closed' || right.status === 'resolved') || right.updatedAt - left.updatedAt)
+  if (!alerts.length && !summary.localAlertError && !summary.localAlertPersistenceError && !summary.probeAlertLifecycleError) return null
+  const act = (event: React.MouseEvent, alert: LocalAlertRecord, action: 'acknowledge' | 'close') => {
+    event.stopPropagation()
+    if (summary.localAlertBusy || !summary.onLocalAlertAction || (action === 'acknowledge' ? alert.status !== 'active' : !['active', 'acknowledged', 'resolved'].includes(alert.status))) return
+    void summary.onLocalAlertAction(alert, action)
+  }
+  return <div data-testid="host-local-alerts" className="space-y-1.5 border-t border-[color:var(--workspace-border-soft)] pt-1.5">
+    <span className="font-medium">{t('hosts.localAlert.title')}</span>
+    {alerts.slice(0, 3).map((alert) => <div key={alert.ruleId} data-testid="host-local-alert" data-rule-id={alert.ruleId} data-host-id={alert.hostId} data-alert-status={alert.status} data-source={alert.source} data-transport={alert.transport} className="space-y-1">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="min-w-0 flex-1 break-words"><strong>{alert.name}</strong> · {t(`localOps.metric.${alert.metric}`)} · {t(`localOps.status.${alert.status}`)}</span>
+        {summary.onLocalAlertAction && alert.status === 'active' && <button type="button" data-testid={`local-host-alert-ack-${alert.ruleId}`} disabled={!!summary.localAlertBusy} onClick={(event) => act(event, alert, 'acknowledge')} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} className="shrink-0 rounded-md border px-1.5 py-1 disabled:opacity-50">{t('localOps.acknowledge')}</button>}
+        {summary.onLocalAlertAction && ['active', 'acknowledged', 'resolved'].includes(alert.status) && <button type="button" data-testid={`local-host-alert-close-${alert.ruleId}`} disabled={!!summary.localAlertBusy} onClick={(event) => act(event, alert, 'close')} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} className="shrink-0 rounded-md border px-1.5 py-1 disabled:opacity-50">{t('localOps.close')}</button>}
+      </div>
+      <p className="break-words text-[var(--workspace-text-subtle)]">{alert.source || t('hosts.opsNoProvider')} · {alert.transport === 'proxy-jump' ? t('hosts.opsProxyJump') : t('hosts.opsDirect')}{alert.operationJobId ? ` · job=${alert.operationJobId}` : ''}</p>
+    </div>)}
+    {alerts.length > 3 && <span>+{alerts.length - 3}</span>}
+    {summary.localAlertError && <p role="alert" className="text-[color:var(--workspace-status-bad-text)]">{t('localOps.actionFailed')}</p>}
+    {summary.localAlertPersistenceError && <p role="alert" className="text-[color:var(--workspace-status-bad-text)]">{t('localOps.persistenceFailed')}</p>}
+    {summary.probeAlertLifecycleError && <p role="alert" className="text-[color:var(--workspace-status-bad-text)]">{t('localOps.probeLifecycleUnavailable')}</p>}
+  </div>
+}
+
 function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?: HostOperationalSummary; t: TFn }) {
   if (!summary) return null
   const operations = summary
@@ -650,6 +682,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
         {summary.expiryReason === 'ttl-expired' && <span data-testid="host-ops-expiry-reason" className="rounded border border-border/50 px-1 py-0.5 text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsExpiryReason.ttl-expired')}</span>}
       </div>
       {(summary.highestAlertSeverity || summary.localAlertOpen) ? <div data-testid="host-ops-local-alerts" data-open-count={summary.localAlertOpen ?? 0} data-severity={summary.highestAlertSeverity ?? 'unknown'} className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsFilters.highest')}: {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {summary.localAlertOpen ?? 0}</div> : null}
+      <HostLocalAlertRows host={host} summary={summary} t={t} />
       {summary.komariProbe && (
         <KomariProbeOpsView
           host={host}

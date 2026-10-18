@@ -2,9 +2,21 @@
 
 ShellBeam routes Komari, integration-linked Probe and local-rule lifecycle
 transitions through local, system, and webhook channels. Standalone SSH
-ProbeProvider collection failure/recovery is not yet connected to a durable
-alert lifecycle or notification dispatch; cache fallback telemetry is not a
-recovery notification. That product gap remains in `terminal-ops-acceptance.md`.
+ProbeProvider attempts now enter the same durable local alert lifecycle,
+independently for metrics and inventory. A real failed attempt can open an alert
+without a prior cache; cached data, a cache-fallback telemetry status, locked,
+paused or unsupported observations cannot resolve it. Recovery requires a new
+successful sample from the same current Vault, host configuration, Provider and
+section. Duplicate cache reads do not create collection events.
+
+The application-level subscriber persists each transition before dispatching
+its notification. A stale configuration, late Vault switch or failed revision
+transaction cannot emit a successful delivery. Publication and persistence
+failures show fixed scoped diagnostics in the host view without copying remote
+exceptions or changing Provider health. Host cards expose the existing confirmed
+local-alert actions and canonical OperationJob audit for these built-in alerts.
+Actual ProbeProvider incident/recovery OS presentation still requires its own
+live acceptance; local-service and explicit test-button cases do not prove it.
 Recovery notifications keep their independent channel
 policy. Notification delivery is separate from alert health and OperationJob
 completion: an accepted send does not prove that the operator saw it or that a

@@ -270,7 +270,11 @@ optional error code), plus `recoveryState` and `recoveryAvailable` so a client
 can distinguish fresh, stale, failed and recovered observations after restart.
 `get_server_alerts` returns the bounded Komari alert lifecycle and audit rows,
 including any linked OperationJob id and the safe ProbeProvider telemetry that
-was present at the transition. These tools read local cache only and do not
+was present at the transition. Its `localOps` section also returns local rules,
+health-check and standalone SSH ProbeProvider alert records, their audits, and
+the canonical alert-state `revision`. Linked jobs remain discoverable from an
+alert's `operationJobId` even if its older audit event has been evicted.
+These tools read local cache only and do not
 contact Komari or start SSH work.
 
 `refresh_server_info` accepts an optional `alertId`. When supplied, the newly
@@ -281,8 +285,9 @@ source of truth for recovery, and an unknown operation must be reconciled before
 retrying.
 
 MCP clients with the `manageAlerts` capability may call
-`acknowledge_server_alert` or `close_server_alert` with `hostId`,
-`integrationId`, `alertId` and a unique `requestId`. These actions update only
+`acknowledge_server_alert` or `close_server_alert`. For Komari, pass `hostId`,
+`integrationId`, `alertId` and a unique `requestId`; an explicit
+`alertSource: "komari"` is optional for compatibility. These actions update only
 the persisted local Komari lifecycle; they never call the Komari endpoint or
 change the remote host. Each request creates a linked `OperationJob` with
 `source=mcp`, `provider=komari-local` and `transport=local`, moves through
@@ -291,3 +296,20 @@ Komari lifecycle audit event. Reusing the same request ID and payload returns
 the canonical OperationJob, while a payload conflict is rejected. Query
 `get_server_operations` or `get_server_alerts` after a restart to recover the
 operation and alert audit state.
+
+For a local service, health-check or standalone SSH ProbeProvider alert, first
+read `get_server_alerts.localOps`. Pass `hostId`, `alertSource: "local-ops"`,
+the alert's `ruleId`, that document's `revision` as `expectedRevision`, and a
+unique `requestId`. Do not mix these fields with Komari integration/alert IDs.
+A revision conflict requires rereading the alert state and a new reviewed
+request, rather than retrying a stale payload.
+
+Local-ops actions use `source=mcp`, `provider=local-ops`, `transport=local` and
+`actor=mcp-client:<id>`. The client's explicit Manage alerts grant authorizes
+the metadata action; its canonical job records `confirmationStatus=not_required`
+and never fabricates a human confirmation. The native transaction rechecks the
+current client/Vault/host grant, job identity/status and document revision.
+The desktop's separate confirmation requirement is unchanged. Identical
+concurrent requests share one durable job; after a restart, even a nonterminal
+job is returned without replaying the mutation. Neither alert source executes
+SSH, calls Komari, or grants command execution.

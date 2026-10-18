@@ -57,8 +57,10 @@ fn initialize(db: &Connection) -> Result<(), String> {
     Ok(())
 }
 fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
-    let db =
-        Connection::open(data_file_path(app, DB)?).map_err(|_| "LOCAL_OPS_DATABASE_UNAVAILABLE")?;
+    open_database(&data_file_path(app, DB)?)
+}
+pub(crate) fn open_database(path: &std::path::Path) -> Result<Connection, String> {
+    let db = Connection::open(path).map_err(|_| "LOCAL_OPS_DATABASE_UNAVAILABLE")?;
     initialize(&db)?;
     Ok(db)
 }
@@ -170,7 +172,14 @@ fn validate_document(kind: &str, payload: &Value, host: &str) -> Result<(), Stri
                 enum_field(
                     row,
                     "metric",
-                    &["cpu", "memory", "disk", "service", "health-check"],
+                    &[
+                        "cpu",
+                        "memory",
+                        "disk",
+                        "service",
+                        "health-check",
+                        "probe-provider",
+                    ],
                 )?;
                 enum_field(row, "severity", &["info", "warning", "critical"])?;
             }
@@ -278,8 +287,22 @@ fn validate_document(kind: &str, payload: &Value, host: &str) -> Result<(), Stri
                 enum_field(
                     row,
                     "metric",
-                    &["cpu", "memory", "disk", "service", "health-check"],
+                    &[
+                        "cpu",
+                        "memory",
+                        "disk",
+                        "service",
+                        "health-check",
+                        "probe-provider",
+                    ],
                 )?;
+                if row["metric"] == "probe-provider"
+                    && row["target"]
+                        .as_str()
+                        .map_or(true, |target| target.trim().is_empty())
+                {
+                    return Err("LOCAL_OPS_INVALID_DOCUMENT".into());
+                }
             }
         }
         "health-checks" => {
@@ -407,7 +430,8 @@ fn validate_action_job(
     job: &operation_jobs::OperationJob,
     request: &LocalOpsAlertAction,
 ) -> Result<(), String> {
-    if job.host_id.as_deref() != Some(&request.host_id)
+    if job.job_id != request.operation_job_id
+        || job.host_id.as_deref() != Some(&request.host_id)
         || job.vault_id.as_deref() != Some(&request.vault_id)
         || job.target != request.rule_id
         || job.action != format!("local-alert.{}", request.action)
@@ -431,17 +455,95 @@ pub fn local_ops_alert_action(
     }
     let job = operation_jobs::operation_job_get(app.clone(), payload.operation_job_id.clone())?
         .ok_or("LOCAL_OPS_CONFIRMED_JOB_REQUIRED")?;
-    validate_action_job(&job, &payload)?;
-    let mut db = open(&app)?;
+    apply_alert_action_on(&mut open(&app)?, &payload, &job, now_unix_ms())
+}
+fn apply_alert_action_on(
+    db: &mut Connection,
+    payload: &LocalOpsAlertAction,
+    job: &operation_jobs::OperationJob,
+    now: i64,
+) -> Result<LocalOpsDocument, String> {
+    validate_action_job(job, payload)?;
+    mutate_alert_on(db, payload, None, "local-user", now)
+}
+
+/// The authenticated MCP caller must hold its current permission/host grant
+/// through this call. This is deliberately not a Tauri command: UI actions
+/// continue to require their own confirmed, running OperationJob above.
+pub(crate) fn apply_authorized_mcp_alert_action(
+    app: &tauri::AppHandle,
+    client_id: &str,
+    payload: &LocalOpsAlertAction,
+    expected_revision: i64,
+) -> Result<LocalOpsDocument, String> {
+    scope(app, &payload.vault_id, &payload.host_id)?;
+    let job = operation_jobs::operation_job_get(app.clone(), payload.operation_job_id.clone())?
+        .ok_or("LOCAL_OPS_AUTHORIZED_MCP_JOB_REQUIRED")?;
+    apply_authorized_mcp_alert_action_on(
+        &mut open(app)?,
+        client_id,
+        payload,
+        &job,
+        expected_revision,
+        now_unix_ms(),
+    )
+}
+
+pub(crate) fn apply_authorized_mcp_alert_action_on(
+    db: &mut Connection,
+    client_id: &str,
+    payload: &LocalOpsAlertAction,
+    job: &operation_jobs::OperationJob,
+    expected_revision: i64,
+    now: i64,
+) -> Result<LocalOpsDocument, String> {
+    identity(client_id)?;
+    identity(&payload.rule_id)?;
+    let tool = match payload.action.as_str() {
+        "acknowledge" => "acknowledge_server_alert",
+        "close" => "close_server_alert",
+        _ => return Err("LOCAL_OPS_INVALID_ACTION".into()),
+    };
+    let actor = format!("mcp-client:{client_id}");
+    if expected_revision < 0
+        || job.job_id != payload.operation_job_id
+        || job.host_id.as_deref() != Some(&payload.host_id)
+        || job.vault_id.as_deref() != Some(&payload.vault_id)
+        || job.source != "mcp"
+        || job.actor != actor
+        || job.action != format!("mcp.{tool}")
+        || job.target != payload.rule_id
+        || job.provider != "local-ops"
+        || job.transport != "local"
+        || job.status != "running"
+        || job.confirmation_required
+        || job.confirmation_status != "not_required"
+        || job.request_id.as_deref().map_or(true, str::is_empty)
+    {
+        return Err("LOCAL_OPS_AUTHORIZED_MCP_JOB_REQUIRED".into());
+    }
+    mutate_alert_on(db, payload, Some(expected_revision), &actor, now)
+}
+
+fn mutate_alert_on(
+    db: &mut Connection,
+    payload: &LocalOpsAlertAction,
+    expected_revision: Option<i64>,
+    actor: &str,
+    now: i64,
+) -> Result<LocalOpsDocument, String> {
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| "LOCAL_OPS_DATABASE_UNAVAILABLE")?;
     let mut document = read(&tx, &payload.vault_id, &payload.host_id, "alert-state")?
         .ok_or("LOCAL_OPS_ALERT_NOT_FOUND")?;
-    apply_alert_action(&mut document.payload, &payload, now_unix_ms())?;
+    if expected_revision.is_some_and(|revision| revision != document.revision) {
+        return Err("LOCAL_OPS_REVISION_CONFLICT".into());
+    }
+    apply_alert_action(&mut document.payload, payload, now, actor)?;
     validate_document("alert-state", &document.payload, &payload.host_id)?;
     document.revision += 1;
-    document.updated_at = now_unix_ms();
+    document.updated_at = now;
     tx.execute("UPDATE local_ops_documents SET payload_json=?1,revision=?2,updated_at=?3 WHERE vault_id=?4 AND host_id=?5 AND kind='alert-state'",params![document.payload.to_string(),document.revision,document.updated_at,payload.vault_id,payload.host_id]).map_err(|_| "LOCAL_OPS_DATABASE_UNAVAILABLE")?;
     tx.commit().map_err(|_| "LOCAL_OPS_DATABASE_UNAVAILABLE")?;
     Ok(document)
@@ -450,6 +552,7 @@ fn apply_alert_action(
     state: &mut Value,
     request: &LocalOpsAlertAction,
     now: i64,
+    actor: &str,
 ) -> Result<(), String> {
     let alerts = state["alerts"]
         .as_array_mut()
@@ -472,7 +575,7 @@ fn apply_alert_action(
     alert["status"] = json!(status);
     alert["updatedAt"] = json!(now);
     alert["operationJobId"] = json!(request.operation_job_id);
-    let audit = json!({"id":uuid::Uuid::new_v4().to_string(),"hostId":request.host_id,"ruleId":request.rule_id,"event":status,"status":status,"at":now,"actor":"local-user","name":alert["name"],"severity":alert["severity"],"operationJobId":request.operation_job_id});
+    let audit = json!({"id":uuid::Uuid::new_v4().to_string(),"hostId":request.host_id,"ruleId":request.rule_id,"event":status,"status":status,"at":now,"actor":actor,"name":alert["name"],"severity":alert["severity"],"operationJobId":request.operation_job_id});
     let audits = state["audit"]
         .as_array_mut()
         .ok_or("LOCAL_OPS_INVALID_DOCUMENT")?;
@@ -490,7 +593,7 @@ pub fn read_for_mcp(app: &tauri::AppHandle, vault: &str, host: &str) -> Result<V
     let state = read(&db, vault, host, "alert-state")?;
     let history = read(&db, vault, host, "health-history")?;
     Ok(
-        json!({"source":"local-ops","alerts":state.as_ref().map(|row| &row.payload["alerts"]).unwrap_or(&Value::Null),"audit":state.as_ref().map(|row| &row.payload["audit"]).unwrap_or(&Value::Null),"healthCheckHistory":history.as_ref().map(|row| &row.payload).unwrap_or(&Value::Null),"updatedAt":state.as_ref().map_or(0,|row|row.updated_at).max(history.as_ref().map_or(0,|row|row.updated_at)),"observedAt":now_unix_ms(),"notice":"Cached observations only. Missing/stale data is unknown; no remote command or credentials are exposed."}),
+        json!({"source":"local-ops","revision":state.as_ref().map(|row|row.revision),"alerts":state.as_ref().map(|row| &row.payload["alerts"]).unwrap_or(&Value::Null),"audit":state.as_ref().map(|row| &row.payload["audit"]).unwrap_or(&Value::Null),"healthCheckHistory":history.as_ref().map(|row| &row.payload).unwrap_or(&Value::Null),"updatedAt":state.as_ref().map_or(0,|row|row.updated_at).max(history.as_ref().map_or(0,|row|row.updated_at)),"observedAt":now_unix_ms(),"notice":"Cached observations only. Missing/stale data is unknown; no remote command or credentials are exposed. Local lifecycle writes require alertSource=local-ops, ruleId and this revision as expectedRevision."}),
     )
 }
 #[cfg(test)]
@@ -503,6 +606,172 @@ mod tests {
     }
     fn state() -> Value {
         json!({"version":1,"alerts":[{"ruleId":"cpu","hostId":"host","name":"CPU","metric":"cpu","status":"active","severity":"critical","openedAt":1,"updatedAt":1,"resolvedAt":null,"value":99,"source":"ssh-agentless","transport":"proxy-jump"}],"evaluations":[],"audit":[]})
+    }
+    const PROBE_RULE: &str = "probe:ssh-agentless:hash:metrics";
+    fn probe_state() -> Value {
+        json!({"version":1,"alerts":[{"ruleId":PROBE_RULE,"hostId":"host","name":"Probe collection unavailable","metric":"probe-provider","status":"active","severity":"warning","openedAt":1,"updatedAt":1,"resolvedAt":null,"value":1,"source":"ssh-agentless","transport":"proxy-jump"}],"evaluations":[{"ruleId":PROBE_RULE,"sampledAt":1,"pendingSince":null,"recoverySince":null,"state":"firing","value":1}],"audit":[{"id":"probe-opened","ruleId":PROBE_RULE,"hostId":"host","event":"opened","at":1,"actor":"local-ops-runtime","status":"active","name":"Probe collection unavailable","severity":"warning"}]})
+    }
+    struct StoreDirectory(std::path::PathBuf);
+    impl Drop for StoreDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    fn stored_probe_job(db: &Connection, action: &str) -> operation_jobs::OperationJob {
+        operation_jobs::create_on(
+            db,
+            serde_json::from_value(json!({
+                "hostId":"host","vaultId":"vault","hostName":"Fixture",
+                "hostAddress":"127.0.0.1","username":"ops","source":"workspace",
+                "action":format!("local-alert.{action}"),"target":PROBE_RULE,
+                "risk":"low","provider":"local-ops","transport":"proxy-jump",
+                "confirmationRequired":true
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+    fn update_stored_job(
+        db: &Connection,
+        job: &operation_jobs::OperationJob,
+        status: &str,
+    ) -> operation_jobs::OperationJob {
+        operation_jobs::update_on(
+            db,
+            serde_json::from_value(json!({
+                "jobId":job.job_id,"status":status,"confirmationStatus":"confirmed",
+                "confirmedBy":"local-user","resultSummary":"local lifecycle persisted"
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn probe_rules_require_targets_without_relaxing_payload_allowlists() {
+        let rules = json!([{"id":PROBE_RULE,"hostId":"host","name":"Probe unavailable","metric":"probe-provider","target":"ssh-agentless:hash:metrics","threshold":1,"recoveryThreshold":0}]);
+        assert!(validate_document("alert-rules", &rules, "host").is_ok());
+        for target in [Value::Null, json!(""), json!("   ")] {
+            let mut invalid = rules.clone();
+            invalid[0]["target"] = target;
+            assert!(validate_document("alert-rules", &invalid, "host").is_err());
+        }
+        let mut unsafe_state = probe_state();
+        unsafe_state["alerts"][0]["telemetry"] = json!({"output":"secret"});
+        assert!(validate_document("alert-state", &unsafe_state, "host").is_err());
+        assert!(validate_document("alert-state", &probe_state(), "other-host").is_err());
+    }
+    #[test]
+    fn probe_lifecycle_reopens_sqlite_with_confirmed_canonical_job_links_and_cas() {
+        let directory = StoreDirectory(std::env::temp_dir().join(format!(
+            "shellbeam-probe-lifecycle-{}",
+            uuid::Uuid::new_v4()
+        )));
+        std::fs::create_dir(&directory.0).unwrap();
+        let state_path = directory.0.join("observations.sqlite3");
+        let jobs_path = directory.0.join("operations.sqlite3");
+        let original = LocalOpsUpsert {
+            vault_id: "vault".into(),
+            host_id: "host".into(),
+            kind: "alert-state".into(),
+            payload: probe_state(),
+            expected_revision: 0,
+        };
+        {
+            let mut db = Connection::open(&state_path).unwrap();
+            initialize(&db).unwrap();
+            upsert(&mut db, &original).unwrap();
+            let other = LocalOpsUpsert {
+                vault_id: "other-vault".into(),
+                ..original.clone()
+            };
+            upsert(&mut db, &other).unwrap();
+        }
+        let mut db = Connection::open(&state_path).unwrap();
+        initialize(&db).unwrap();
+        assert_eq!(
+            read(&db, "vault", "host", "alert-state")
+                .unwrap()
+                .unwrap()
+                .payload,
+            original.payload
+        );
+        let jobs = operation_jobs::open_database(&jobs_path).unwrap();
+        let pending = stored_probe_job(&jobs, "acknowledge");
+        let mut action = LocalOpsAlertAction {
+            vault_id: "vault".into(),
+            host_id: "host".into(),
+            rule_id: PROBE_RULE.into(),
+            action: "acknowledge".into(),
+            operation_job_id: pending.job_id.clone(),
+        };
+        assert!(apply_alert_action_on(&mut db, &action, &pending, 2).is_err());
+        let ack = update_stored_job(&jobs, &pending, "running");
+        let mut mismatched = action.clone();
+        mismatched.operation_job_id = "another-job".into();
+        assert!(apply_alert_action_on(&mut db, &mismatched, &ack, 2).is_err());
+        mismatched = action.clone();
+        mismatched.vault_id = "other-vault".into();
+        assert!(apply_alert_action_on(&mut db, &mismatched, &ack, 2).is_err());
+        mismatched = action.clone();
+        mismatched.rule_id = "probe:ssh-agentless:hash:inventory".into();
+        assert!(apply_alert_action_on(&mut db, &mismatched, &ack, 2).is_err());
+        let acked = apply_alert_action_on(&mut db, &action, &ack, 2).unwrap();
+        assert_eq!(acked.revision, 2);
+        assert_eq!(acked.payload["alerts"][0]["operationJobId"], ack.job_id);
+        update_stored_job(&jobs, &ack, "completed");
+        let close = stored_probe_job(&jobs, "close");
+        let close = update_stored_job(&jobs, &close, "running");
+        action.action = "close".into();
+        action.operation_job_id = close.job_id.clone();
+        let closed = apply_alert_action_on(&mut db, &action, &close, 3).unwrap();
+        assert_eq!(closed.revision, 3);
+        update_stored_job(&jobs, &close, "completed");
+        let stale = LocalOpsUpsert {
+            expected_revision: 1,
+            ..original.clone()
+        };
+        assert!(upsert(&mut db, &stale)
+            .unwrap_err()
+            .contains("REVISION_CONFLICT"));
+        drop(jobs);
+        drop(db);
+        let db = Connection::open(&state_path).unwrap();
+        initialize(&db).unwrap();
+        let restored = read(&db, "vault", "host", "alert-state").unwrap().unwrap();
+        assert_eq!(restored.revision, 3);
+        assert_eq!(restored.payload, closed.payload);
+        let alert = &restored.payload["alerts"][0];
+        assert_eq!(alert["metric"], "probe-provider");
+        assert_eq!(alert["status"], "closed");
+        assert_eq!(alert["source"], "ssh-agentless");
+        assert_eq!(alert["transport"], "proxy-jump");
+        assert_eq!(alert["operationJobId"], close.job_id);
+        let audits = restored.payload["audit"].as_array().unwrap();
+        assert_eq!(audits.len(), 3);
+        assert_eq!(audits[1]["event"], "acknowledged");
+        assert_eq!(audits[1]["operationJobId"], ack.job_id);
+        assert_eq!(audits[2]["event"], "closed");
+        assert_eq!(audits[2]["operationJobId"], close.job_id);
+        assert_eq!(
+            read(&db, "other-vault", "host", "alert-state")
+                .unwrap()
+                .unwrap()
+                .payload,
+            original.payload
+        );
+        assert!(read(&db, "vault", "other-host", "alert-state")
+            .unwrap()
+            .is_none());
+        let jobs = operation_jobs::open_database(&jobs_path).unwrap();
+        for job in [&ack, &close] {
+            let restored = operation_jobs::get_on(&jobs, &job.job_id).unwrap().unwrap();
+            assert_eq!(restored.status, "completed");
+            assert_eq!(restored.confirmation_status, "confirmed");
+            assert_eq!(restored.vault_id.as_deref(), Some("vault"));
+            assert_eq!(restored.host_id.as_deref(), Some("host"));
+            assert_eq!(restored.target, PROBE_RULE);
+            assert_eq!(restored.transport, "proxy-jump");
+        }
     }
     #[test]
     fn scopes_documents_and_rejects_stale_writes() {
@@ -542,8 +811,8 @@ mod tests {
             action: "acknowledge".into(),
             operation_job_id: "job".into(),
         };
-        apply_alert_action(&mut state, &request, 2).unwrap();
-        apply_alert_action(&mut state, &request, 3).unwrap();
+        apply_alert_action(&mut state, &request, 2, "local-user").unwrap();
+        apply_alert_action(&mut state, &request, 3, "local-user").unwrap();
         assert_eq!(state["alerts"][0]["status"], "acknowledged");
         assert_eq!(state["audit"].as_array().unwrap().len(), 1);
         assert_eq!(state["audit"][0]["operationJobId"], "job");
@@ -573,5 +842,85 @@ mod tests {
         job.target = "cpu".into();
         job.status = "completed".into();
         assert!(validate_action_job(&job, &request).is_err());
+    }
+
+    #[test]
+    fn authorized_mcp_mutation_keeps_ui_confirmation_strict_and_validates_job_scope_and_revision() {
+        let mut db = db();
+        upsert(
+            &mut db,
+            &LocalOpsUpsert {
+                vault_id: "vault".into(),
+                host_id: "host".into(),
+                kind: "alert-state".into(),
+                payload: probe_state(),
+                expected_revision: 0,
+            },
+        )
+        .unwrap();
+        let jobs = operation_jobs::open_database(std::path::Path::new(":memory:")).unwrap();
+        let queued = operation_jobs::create_on(&jobs, serde_json::from_value(json!({
+            "hostId":"host","vaultId":"vault","source":"mcp","actor":"mcp-client:client",
+            "action":"mcp.acknowledge_server_alert","target":PROBE_RULE,"risk":"low",
+            "provider":"local-ops","transport":"local","confirmationRequired":false,"requestId":"request"
+        })).unwrap()).unwrap();
+        let request = LocalOpsAlertAction {
+            vault_id: "vault".into(),
+            host_id: "host".into(),
+            rule_id: PROBE_RULE.into(),
+            action: "acknowledge".into(),
+            operation_job_id: queued.job_id.clone(),
+        };
+        assert!(
+            apply_authorized_mcp_alert_action_on(&mut db, "client", &request, &queued, 1, 2)
+                .is_err()
+        );
+        let running = operation_jobs::update_on(
+            &jobs,
+            serde_json::from_value(json!({"jobId":queued.job_id,"status":"running"})).unwrap(),
+        )
+        .unwrap();
+        assert!(validate_action_job(&running, &request).is_err());
+        for (field, value) in [
+            ("source", json!("workspace")),
+            ("actor", json!("mcp-client:another")),
+            ("hostId", json!("other-host")),
+            ("vaultId", json!("other-vault")),
+            ("target", json!("probe:ssh-agentless:hash:inventory")),
+            ("action", json!("mcp.close_server_alert")),
+            ("status", json!("cancelled")),
+            ("confirmationRequired", json!(true)),
+            ("confirmationStatus", json!("confirmed")),
+            ("requestId", Value::Null),
+        ] {
+            let mut invalid = serde_json::to_value(&running).unwrap();
+            invalid[field] = value;
+            let invalid = serde_json::from_value(invalid).unwrap();
+            assert!(apply_authorized_mcp_alert_action_on(
+                &mut db, "client", &request, &invalid, 1, 2
+            )
+            .is_err());
+        }
+        assert!(
+            apply_authorized_mcp_alert_action_on(&mut db, "client", &request, &running, 0, 2)
+                .unwrap_err()
+                .contains("REVISION_CONFLICT")
+        );
+        assert_eq!(
+            read(&db, "vault", "host", "alert-state")
+                .unwrap()
+                .unwrap()
+                .revision,
+            1
+        );
+        let updated =
+            apply_authorized_mcp_alert_action_on(&mut db, "client", &request, &running, 1, 2)
+                .unwrap();
+        assert_eq!(updated.revision, 2);
+        assert_eq!(updated.payload["audit"][1]["actor"], "mcp-client:client");
+        assert_eq!(
+            updated.payload["alerts"][0]["operationJobId"],
+            running.job_id
+        );
     }
 }

@@ -51,10 +51,10 @@ describe('MCP settings', () => {
     expect(screen.queryByLabelText('MCP client configuration')).not.toBeInTheDocument()
   })
 
-  it('keeps Komari alert acknowledgement and closure behind an explicit capability', async () => {
+  it('keeps Komari and local alert metadata acknowledgement and closure behind an explicit capability', async () => {
     render(<McpSettingsSection />)
     await screen.findByText('Dev Server')
-    const alertPermission = screen.getByLabelText(/Acknowledge or close local Komari alerts/)
+    const alertPermission = screen.getByLabelText(/Acknowledge or close Komari, service, health-check and ProbeProvider alert metadata/)
     expect(alertPermission).not.toBeChecked()
     fireEvent.change(screen.getByLabelText('Client name'), { target: { value: 'Alert Agent' } })
     fireEvent.click(screen.getByLabelText(/Dev Server/))
@@ -64,6 +64,23 @@ describe('MCP settings', () => {
       name: 'Alert Agent', vaultId: 'vault-a', hostIds: ['h1'],
       permissions: { refresh: false, execute: false, readFiles: false, writeFiles: false, recordDeployments: false, manageAlerts: true },
     } }))
+  })
+
+  it.each(['en', 'zh-CN'] as const)('explains the local alert scope and revision protocol in %s without enabling any capability', async (locale) => {
+    localStorage.setItem('shellbeam.locale', locale)
+    render(<McpSettingsSection />)
+    await screen.findByText('Dev Server')
+    const copy = locale === 'en' ? en : zhCN
+    const permission = screen.getByLabelText(copy['mcp.permission.manageAlerts'])
+    expect(permission).not.toBeChecked()
+    expect(permission.closest('label')).toHaveTextContent(locale === 'en' ? 'authorized hosts in this Vault' : '本 Vault 已授权主机')
+    expect(permission.closest('label')).toHaveTextContent(locale === 'en' ? 'no remote changes' : '不执行远端变更')
+    expect(permission.closest('label')).toHaveTextContent('OperationJob')
+    const guidance = screen.getByText(copy['mcp.setupVerify'])
+    for (const field of ['get_server_alerts.localOps.revision', "alertSource='local-ops'", 'ruleId', 'expectedRevision', 'acknowledge_server_alert', 'close_server_alert', 'get_server_operations']) expect(guidance).toHaveTextContent(field)
+    for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).not.toBeChecked()
+    expect(invoke).not.toHaveBeenCalledWith('mcp_create_client', expect.anything())
+    expect(invoke).not.toHaveBeenCalledWith('mcp_set_enabled', expect.anything())
   })
 
   it('requires a second click before revocation', async () => {

@@ -59,4 +59,33 @@ describe('local rule alert lifecycle', () => {
     expect(state.alerts[0].status).toBe('active')
     expect(() => normalizeLocalAlertRule({ ...service, target: 'x;rm' })).toThrow('local_alert_invalid_target')
   })
+
+  it('requires a target for built-in ProbeProvider rules and fixes their binary thresholds', () => {
+    const probe = normalizeLocalAlertRule({ id: 'probe:ssh-agentless:hash:metrics', hostId: 'host', name: 'Probe collection unavailable', metric: 'probe-provider', target: 'ssh-agentless:hash:metrics', threshold: 90, recoveryThreshold: 80, durationMs: 0, recoveryDurationMs: 0, token: 'secret' })
+    expect(probe).toMatchObject({ metric: 'probe-provider', target: 'ssh-agentless:hash:metrics', threshold: 1, recoveryThreshold: 0 })
+    expect(probe).not.toHaveProperty('token')
+    for (const target of [undefined, '', '   ']) expect(() => normalizeLocalAlertRule({ ...probe, target })).toThrow('local_alert_invalid_target')
+  })
+
+  it('keeps ProbeProvider incidents open for unknown, invalid, stale or repeated values and preserves audited recovery', () => {
+    const probe = normalizeLocalAlertRule({ id: 'probe:ssh-agentless:hash:metrics', hostId: 'host', name: 'Probe collection unavailable', metric: 'probe-provider', target: 'ssh-agentless:hash:metrics', durationMs: 0, recoveryDurationMs: 0, freshnessMs: 5_000 })
+    const observed = (value: number | null, sampledAt: number) => [{ ruleId: probe.id, value, sampledAt, source: 'ssh-agentless', transport: 'proxy-jump' as const }]
+    let state = evaluateLocalAlertRules(EMPTY_LOCAL_ALERT_STATE, [probe], observed(1, 1_000), 1_000)
+    state = actOnLocalAlert(state, probe.id, 'acknowledge', 1_001, 'confirmed-ack-job')
+    for (const value of [null, -1, 2, NaN]) {
+      state = evaluateLocalAlertRules(state, [probe], observed(value, 2_000), 2_000)
+      expect(state.alerts[0]).toMatchObject({ metric: 'probe-provider', status: 'acknowledged', source: 'ssh-agentless', transport: 'proxy-jump', operationJobId: 'confirmed-ack-job' })
+      expect(state.evaluations[0].state).toBe('unknown')
+    }
+    state = evaluateLocalAlertRules(state, [probe], observed(0, 1_000), 2_000)
+    state = evaluateLocalAlertRules(state, [probe], observed(0, 3_000), 10_000)
+    expect(state.alerts[0].status).toBe('acknowledged')
+    expect(state.audit.map(({ event }) => event)).toEqual(['opened', 'acknowledged'])
+    state = evaluateLocalAlertRules(state, [probe], observed(0, 10_001), 10_001)
+    expect(state.alerts[0]).toMatchObject({ status: 'resolved', source: 'ssh-agentless', transport: 'proxy-jump', operationJobId: 'confirmed-ack-job' })
+    state = actOnLocalAlert(state, probe.id, 'close', 10_002, 'confirmed-close-job')
+    expect(state.audit.map(({ event }) => event)).toEqual(['opened', 'acknowledged', 'resolved', 'closed'])
+    expect(state.audit.slice(1).map(({ operationJobId }) => operationJobId)).toEqual(['confirmed-ack-job', 'confirmed-ack-job', 'confirmed-close-job'])
+    expect(localAlertNotificationEvent(state.audit[2])).toMatchObject({ source: 'local-ops', kind: 'alert.resolved', metadata: { ruleId: probe.id, operationJobId: 'confirmed-ack-job', recovered: true } })
+  })
 })

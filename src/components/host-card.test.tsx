@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { HostGridCard, HostListItem } from './host-card'
+import { HostGridCard, HostListItem, type HostOperationalSummary } from './host-card'
 import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
+import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 
 const host = {
   id: 'host-1',
@@ -27,6 +28,56 @@ const sampledMetrics: ServerMonitorSnapshot = {
 const oldResource = { hostname: 'api', os: 'Linux', kernel: '', uptime: 'old uptime', cpuPercent: 95, memoryPercent: 20, memoryText: '', diskPercent: 30, diskText: '', network: 'old throughput' }
 
 describe('host list item', () => {
+  it.each(['grid', 'list'] as const)('keeps lifecycle diagnostic failures visible without any persisted alert rows in %s', (mode) => {
+    const operations: HostOperationalSummary = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct', localAlerts: [], localAlertPersistenceError: true, probeAlertLifecycleError: true }
+    const props = { host, operations, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
+    expect(screen.getByText('Native operations history could not be saved or changed in another session. Refresh before continuing.')).toBeVisible()
+    expect(screen.getByText('Probe alert recording is unavailable. The next collection will retry.')).toBeVisible()
+    expect(screen.queryByTestId('host-local-alert')).not.toBeInTheDocument()
+  })
+  it.each(['grid', 'list'] as const)('shows independent local/Probe lifecycle, source, route and job actions in %s', (mode) => {
+    const alert: LocalAlertRecord = { ruleId: 'probe-collection', hostId: host.id, name: 'Probe collection failed', metric: 'probe-provider', status: 'active', severity: 'warning', openedAt: 1000, updatedAt: 2000, resolvedAt: null, value: 1, source: 'shellbeam-agent', transport: 'proxy-jump', operationJobId: 'probe-job' }
+    const onLocalAlertAction = vi.fn()
+    const onKomariAlertAction = vi.fn()
+    const parent = vi.fn()
+    const props = { host: { ...host, jumpHostId: 'saved-bastion' }, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), operations: { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'proxy-jump' as const, localAlerts: [alert], onLocalAlertAction, onKomariAlertAction } }
+    render(<div onClick={parent} onDoubleClick={parent} onKeyDown={parent}>{mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />}</div>)
+    const row = screen.getByTestId('host-local-alert')
+    expect(row).toHaveTextContent('ProbeProvider collection')
+    expect(row).toHaveTextContent('shellbeam-agent')
+    expect(row).toHaveTextContent('ProxyJump')
+    expect(row).toHaveTextContent('job=probe-job')
+    expect(row).toHaveAttribute('data-transport', 'proxy-jump')
+    const acknowledge = screen.getByTestId('local-host-alert-ack-probe-collection')
+    fireEvent.click(acknowledge)
+    expect(onLocalAlertAction).toHaveBeenLastCalledWith(alert, 'acknowledge')
+    fireEvent.doubleClick(acknowledge)
+    fireEvent.keyDown(acknowledge, { key: 'Enter' })
+    fireEvent.click(screen.getByTestId('local-host-alert-close-probe-collection'))
+    expect(onLocalAlertAction).toHaveBeenLastCalledWith(alert, 'close')
+    expect(onKomariAlertAction).not.toHaveBeenCalled()
+    expect(parent).not.toHaveBeenCalled()
+  })
+
+  it.each(['grid', 'list'] as const)('limits %s local controls to legal statuses, handler and idle state', (mode) => {
+    const base: LocalAlertRecord = { ruleId: 'acknowledged', hostId: host.id, name: 'Acknowledged CPU', metric: 'cpu', status: 'acknowledged', severity: 'warning', openedAt: 1, updatedAt: 2, resolvedAt: null, value: 99, source: 'ssh-agentless', transport: 'direct' }
+    const onLocalAlertAction = vi.fn()
+    const operations: HostOperationalSummary = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct', localAlerts: [base, { ...base, ruleId: 'closed', status: 'closed' }, { ...base, ruleId: 'foreign', hostId: 'other-host' }], onLocalAlertAction, localAlertBusy: 'acknowledged' }
+    const props = { host, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    const card = (summary: typeof operations) => mode === 'grid' ? <HostGridCard {...props} operations={summary} /> : <HostListItem {...props} index={1} operations={summary} />
+    const view = render(card(operations))
+    expect(screen.queryByTestId('local-host-alert-ack-acknowledged')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('local-host-alert-close-closed')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('local-host-alert-close-foreign')).not.toBeInTheDocument()
+    expect(screen.getByTestId('local-host-alert-close-acknowledged')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('local-host-alert-close-acknowledged'))
+    expect(onLocalAlertAction).not.toHaveBeenCalled()
+    view.rerender(card({ ...operations, localAlertBusy: null, onLocalAlertAction: undefined }))
+    expect(screen.queryByTestId('local-host-alert-close-acknowledged')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('host-local-alert')).toHaveLength(2)
+  })
+
   it.each(['grid', 'list'] as const)('opens this host Services in one click from the %s view without bubbling', (mode) => {
     const onOpenWorkspace = vi.fn()
     const onSelect = vi.fn()
