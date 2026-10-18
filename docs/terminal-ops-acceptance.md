@@ -15,6 +15,7 @@
 | 状态与主机身份一致 | `host-identity.ts`、原生route identity、unsupported采集契约 | 非Linux SSH采集明确unsupported，不当成offline；可用Agent/Komari观察可优先；身份来自实际解析端点，未解析跳板引用不复用旧复制地址；任务摘要按job最新状态统计 |
 | 跨Vault观察隔离 | `host-observation-scope.ts`、monitor/inventory/tool原生持久化、MCP缓存读取 | 内存和持久化均按Vault/host标识；显式Vault与profile冲突在采集前拒绝；MCP按授权Vault读取。旧无scope缓存保留但不猜测归属，需要重新观察；已分scope的ProbeProvider历史保留 |
 | 采集预算与架构 | `shared/collection-limits.json`、TS/Rust共享读取、统一Inventory.arch | 并发、采集timeout/输出与历史保留使用一个数值源；普通SSH命令和MCP任务各自的有界预算单独命名；架构从真实采集结果传入，缺失不猜测 |
+| 通用SSH Provider失败/恢复告警 | `probe-scheduler.ts`、`server-monitor-scan.ts`与现有local_ops告警模型 | **待实现补口**：通用SSH路径目前只记录状态、缓存回退和telemetry，没有派发持久化Provider告警。现有Probe告警/通知仍依赖Komari集成，不等于独立SSH Provider闭环；`recovered`缓存回退也不表示实际采集恢复。须补同Vault/host生命周期、真实新采样恢复、确认审计及通知，不以Local Service用例代替 |
 
 ## Phase 1：主机诊断与操作闭环
 
@@ -73,7 +74,7 @@
 - Linux采集与user systemd生命周期由GitHub Actions真实Linux runner验收；本机macOS上的跳过不能算Linux验收通过。
 - macOS launchd smoke使用唯一测试label、临时state和真实生成plist；不会覆盖默认探针服务。本轮实际启动、重启、历史保留、卸载测试通过（`cargo test --manifest-path agent/Cargo.toml launchd_service_activates_restarts_and_stops_in_isolated_state -- --ignored --nocapture`）。
 - GitHub Actions覆盖前端、macOS/Linux/Windows原生测试与MCP stdio，以及独立Agent daemon/systemd检查。以本轮提交对应的状态为准，旧提交绿色检查不代表本轮通过。
-- 系统通知的打包展示、Windows/macOS/Linux实际通知设置仍需逐平台实机检查；helper/mock测试不能证明系统后端接收，真实Linux DBus测试仅覆盖daemon接收/拒绝，不证明可见展示。
+- 系统通知仍需逐平台与实际桌面环境检查；helper/mock测试不证明后端接收。隔离Ubuntu打包GUI现已验证测试按钮的真实展示、暂停排队、同条恢复和daemon不可用四种情况；这不证明真实告警通知、其它Linux桌面环境或macOS/Windows展示。
 - 正式Agent发布密钥配置、release draft审核和生产发布没有执行；测试签名不能替代生产信任根。
 - 本文不将多跳、团队RBAC、完整APM/Kubernetes或无人值守自愈加入首期范围。
 
@@ -102,7 +103,7 @@ Komari手动映射/控制台本轮本地回归：前端939项通过，16项Linux
 
 | 项目 | 完成证据 | 当前边界 |
 | --- | --- | --- |
-| 桌面系统通知 | 对应安装包中验证允许/拒绝/系统禁用，以及实际横幅或通知中心条目 | Linux真实daemon ACK仍不等于展示；macOS/Windows编译与helper测试不等于系统授权或可见通知 |
+| 桌面系统通知 | 对应安装包中验证允许/拒绝/系统禁用，以及实际横幅或通知中心条目 | 隔离Ubuntu X11打包应用的测试按钮四状态已通过真实窗口/计数/OCR；真实告警/恢复、其它Linux桌面及macOS/Windows授权/展示仍待验收 |
 | Komari部署 | 实际部署的TLS、token权限、节点映射、WebView请求及告警到Workspace跳转 | 已有官方1.6.0本地真实服务HTTP契约证据，尚不覆盖用户外部部署或所有版本 |
 | 正式Agent制品 | 受保护签名环境、四目标制品、审核后的HTTPS来源，真实客户端首装/第二版升级/失败回滚/卸载及ProxyJump审计 | 生产密钥来源待决定，工作流尚未进入默认分支；未生成生产信任根、未发布Agent版本 |
 | 主机运维产品指标 | 打包应用从列表发现异常到首次有效诊断不超过3步，再执行确认动作、观察后态与同主机审计 | 组件流程及隔离Linux Docker/SSL/混合多主机16项命令组合已通过；仍需真实用户桌面、生产Vault和实际部署环境，私有ACME不替代公有CA域名控制验收 |
@@ -116,3 +117,5 @@ Overview与移动控制台整合本地回归：前端1003项通过，16项Linux�
 提交`a46d341`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39100444751)及[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39100444755)共11项检查通过；下载核对的[Linux真实Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39100444751/artifacts/12126027833)为16项通过、零跳过、`success: true`、`cleanup: passed`，检出合并提交`056790fcb5a7a93f49bad64c2f4162e61cbd2c3e`。同提交的[打包GUI验收](https://github.com/0xJean/shellbeam/actions/runs/39100444727)已通过真实Vault初始化、三个独立私钥的UI完整往返、逐端点指纹确认、直连和ProxyJump连接及两条真实服务规则触发；随后在通知daemon版本检查失败，完整GUI处理和重启恢复未执行。两种验收各自保留结果，不能用原生16项通过替代GUI通过。
 
 提交`238536f`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39101143982)和[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39101143981)共11项通过；[下载核对报告](https://github.com/0xJean/shellbeam/actions/runs/39101143982/artifacts/12126661470)仍为16项真实Ops通过、零跳过，success/cleanup均通过，合并检出`f4aabcaa5356996009bdb6524e32ce635078d169`。同提交GUI已实际编译受校验dunst 1.7.3、通过两条服务告警的直连/跳板路径断言，并产生可见的真实系统测试横幅；自动OCR断言失败，因此[GUI结果](https://github.com/0xJean/shellbeam/actions/runs/39101144044)仍是失败，未到达后续通知状态、运维变更和重启恢复。可见截图不替代完整用例通过。
+
+提交`21187d6`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39101718700)及[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39101718699)共11项通过；[核对的原生报告](https://github.com/0xJean/shellbeam/actions/runs/39101718700/artifacts/12127470286)为16项通过、零跳过、success/cleanup均通过，合并检出`a555a88e8086ac47d770eae1219c1b2ce4b3479a`。[GUI报告](https://github.com/0xJean/shellbeam/actions/runs/39101718712)中的`notifications.passed: true`独立证明测试按钮四状态，完整GUI随后在真实策略保存/重挂载后的诊断计数读取失败；服务告警投递与重启闭环仍未通过。

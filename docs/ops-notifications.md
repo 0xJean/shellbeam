@@ -1,7 +1,11 @@
 # Operations notification delivery
 
-ShellBeam routes Komari and Probe lifecycle transitions through local, system,
-and webhook channels. Recovery notifications keep their independent channel
+ShellBeam routes Komari, integration-linked Probe and local-rule lifecycle
+transitions through local, system, and webhook channels. Standalone SSH
+ProbeProvider collection failure/recovery is not yet connected to a durable
+alert lifecycle or notification dispatch; cache fallback telemetry is not a
+recovery notification. That product gap remains in `terminal-ops-acceptance.md`.
+Recovery notifications keep their independent channel
 policy. Notification delivery is separate from alert health and OperationJob
 completion: an accepted send does not prove that the operator saw it or that a
 remote operation succeeded.
@@ -54,6 +58,14 @@ auto-activation, and the positive test uses Xvfb and cleans up its own daemon.
 These tests exercise the production D-Bus adapter; they do not prove visible
 desktop presentation. Helper/frontend tests separately cover permission guards,
 late backend failures, XML/text bounds and safe error codes.
+
+The installed Ubuntu X11 GUI gate additionally exercises the actual test button
+with an owned, version-pinned dunst. Run 39101718712 passed normal visibility,
+paused acceptance without display, visibility after resuming the same queued
+message, and unavailable-daemon diagnostics. Exact banner OCR and real window
+counts are retained with controlled screenshots. The overall journey failed
+later at policy diagnostic readiness; real service-alert delivery, other Linux
+desktops and macOS/Windows presentation remain separate acceptance requirements.
 
 ## Delivery diagnostics
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { JSDOM } from 'jsdom'
-import { assertSafeLocalServiceUi, localServiceNotificationConfig, localServiceNotificationScope, parseSystemDeliveryDiagnostic } from './ops-ui-alert-notifications.mjs'
+import { assertSafeLocalServiceUi, localServiceNotificationConfig, localServiceNotificationScope, parseSystemDeliveryDiagnostic, readSystemDeliveryDiagnostic } from './ops-ui-alert-notifications.mjs'
 import {
   evidencePathIsOwned,
   notificationDaemonConfig,
@@ -166,8 +166,37 @@ test('service OCR requires the separate title and the exact role/lifecycle body'
 
 test('delivery diagnostics retain the actual count and distinguish accepted from failed outcomes', () => {
   assert.deepEqual(parseSystemDeliveryDiagnostic('System: 6\nAccepted'), { delivered: 6, accepted: true })
+  assert.deepEqual(parseSystemDeliveryDiagnostic('\r\n\t System:\n\u00a0 6 \nAccepted \r\n'), { delivered: 6, accepted: true })
   assert.deepEqual(parseSystemDeliveryDiagnostic('System: 2\nFailed · System channel unavailable'), { delivered: 2, accepted: false })
-  for (const value of ['', 'System: unavailable', 'System: -1', 'System: 2extra', 'Webhooks: 4\nAccepted']) assert.throws(() => parseSystemDeliveryDiagnostic(value), /invalid_system_delivery_diagnostic/)
+  for (const value of ['', '\r\n \t', null, 'System: unavailable', 'System: -1', 'System: 1000000', 'System: 2extra', 'Webhooks: 4\nAccepted']) assert.throws(() => parseSystemDeliveryDiagnostic(value), /invalid_system_delivery_diagnostic/)
+})
+
+test('delivery diagnostic readiness scrolls the inert visible card into view and waits for a real numeric observation', async () => {
+  const card = {}
+  const events = []
+  let reads = 0
+  const driver = {
+    waitFor: async (target) => { events.push('wait'); assert.match(target, /notification-channel-system/); return card },
+    click: async (target) => { events.push('scroll'); assert.match(target, /notification-channel-system/) },
+    find: async () => card,
+    isDisplayed: async (target) => { assert.equal(target, card); events.push('visible'); return true },
+    text: async (target) => { assert.equal(target, card); events.push('read'); return reads++ === 0 ? '\r\n \t' : '\r\n System: 3\nFailed · System channel unavailable\n' },
+  }
+  assert.deepEqual(await readSystemDeliveryDiagnostic(driver, { timeoutMs: 500 }), { delivered: 3, accepted: false })
+  assert.deepEqual(events, ['wait', 'scroll', 'visible', 'read', 'visible', 'read'])
+})
+
+test('blank, hidden or malformed diagnostics fail without inventing zero deliveries or accepted status', async () => {
+  const card = {}
+  for (const [visible, text] of [[true, ''], [false, 'System: 0\nAccepted'], [true, 'System: unavailable\nAccepted']]) {
+    const driver = {
+      waitFor: async () => card, click: async () => {}, find: async () => card,
+      isDisplayed: async () => visible,
+      text: async () => { assert.equal(visible, true); return text },
+    }
+    await assert.rejects(readSystemDeliveryDiagnostic(driver, { timeoutMs: 1 }), /system_delivery_diagnostic_not_ready/)
+  }
+  await assert.rejects(readSystemDeliveryDiagnostic({}, { timeoutMs: 0 }), /invalid_diagnostic_timeout/)
 })
 
 test('Network screenshot guard requires the displayed scoped lifecycle and refuses any retained credential value', async () => {

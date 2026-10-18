@@ -148,6 +148,22 @@ application exit and one safe PNG. Paused/resumed/unavailable notifications and
 incident/restart assertions were not reached. A visible first banner does not
 make the entire notification or GUI journey pass.
 
+The sixth [UI run 39101718712](https://github.com/0xJean/shellbeam/actions/runs/39101718712),
+head `21187d635947d49574a55690b038c0e7e459b3a8`, merge checkout
+`a555a88e8086ac47d770eae1219c1b2ce4b3479a`, passed all four explicit test-button
+notification cases. The downloaded report retains `notifications.passed: true`,
+with actual daemon counts, mapped-window checks and controlled frame/crop PNGs.
+PSM 6 matched the complete title and body in one read; PSM 11 matched neither.
+Both modes confirmed absence for paused and unavailable cases. This verifies the
+bounded OCR adjustment without changing the required words.
+
+The overall run still failed at
+`ops_ui_alert_notifications_invalid_system_delivery_diagnostic` after saving and
+remounting the actual alert policy. The subsequent lifecycle, incident and
+restart cases were not reached. Cleanup and application exit passed. The next
+readiness correction scrolls the inert System diagnostic card into view and
+waits for a strictly parsed count; it never turns a missing count into zero.
+
 Host-save, trust-prompt and tab-state checkpoints remain credential-free. Local
 syntax, protocol and safety-helper tests are not substitutes for an executed
 Linux GUI pass. Exact commit CI results must be checked before counting the

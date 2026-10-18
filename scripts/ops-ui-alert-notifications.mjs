@@ -63,9 +63,28 @@ timeout = 0
 }
 
 export function parseSystemDeliveryDiagnostic(text) {
-  const match = typeof text === 'string' && text.match(/^System:\s*([0-9]{1,6})(?:\s|$)/)
+  const match = typeof text === 'string' && text.trim().match(/^System:\s*([0-9]{1,6})(?:\s|$)/)
   requireFact(match, 'invalid_system_delivery_diagnostic')
   return { delivered: Number(match[1]), accepted: /\bAccepted\b/.test(text) }
+}
+
+export async function readSystemDeliveryDiagnostic(driver, { timeoutMs = 8_000 } = {}) {
+  requireFact(Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 30_000, 'invalid_diagnostic_timeout')
+  await driver.waitFor(SYSTEM, { timeoutMs })
+  // The rendered summary is below the policy controls. A native W3C click on
+  // this inert div scrolls it into view; neither text presence nor an offscreen
+  // lookup alone is evidence that its diagnostics are visible to the user.
+  await driver.click(SYSTEM)
+  return until(async () => {
+    const card = await driver.find(SYSTEM)
+    if (!await driver.isDisplayed(card)) return false
+    const text = await driver.text(card)
+    try { return parseSystemDeliveryDiagnostic(text) }
+    catch (cause) {
+      if (cause?.message === 'ops_ui_alert_notifications_invalid_system_delivery_diagnostic') return false
+      throw cause
+    }
+  }, 'system_delivery_diagnostic_not_ready', timeoutMs)
 }
 
 export async function assertSafeLocalServiceUi(driver, { hostId, vaultId, name, status, role }) {
@@ -123,9 +142,7 @@ async function saveSystemPolicy(driver) {
   await openSettings(driver)
   await verifyPolicy(driver)
 }
-async function diagnostic(driver) {
-  return parseSystemDeliveryDiagnostic(await driver.text(SYSTEM))
-}
+const diagnostic = readSystemDeliveryDiagnostic
 
 export async function startOpsUiAlertNotifications({ driver, fixture, record, checkpoint, resumeState }) {
   const hosts = localServiceNotificationScope(resumeState)
