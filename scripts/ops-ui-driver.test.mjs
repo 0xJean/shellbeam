@@ -14,6 +14,25 @@ test('transport only accepts a loopback HTTP endpoint', () => {
   for (const endpoint of ['https://127.0.0.1:4444', 'http://example.com', 'http://127.0.0.1/a']) assert.throws(() => new OpsUiDriver(endpoint), /loopback/)
 })
 
+test('element rectangles use only the standard read-only W3C rect endpoint for selectors and retained handles', async t => {
+  const calls = [], expected = { x: 17.25, y: -12, width: 840, height: 54 }
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* No application payload is retained. */ }
+    calls.push([request.method, request.url])
+    const value = request.url.endsWith('/element') ? { 'element-6066-11e4-a52e-4f735466cecf': 'row-id' } : expected
+    response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ value }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => { server.closeAllConnections(); server.close() })
+  const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`)
+  driver.sessionId = 's'
+  assert.deepEqual(await driver.rect('[data-testid="workspace-service-row"]'), expected)
+  const row = await driver.find('[data-testid="workspace-service-row"]')
+  assert.deepEqual(await driver.rect(row), expected)
+  assert.deepEqual(calls, [['POST', '/session/s/element'], ['GET', '/session/s/element/row-id/rect'], ['POST', '/session/s/element'], ['GET', '/session/s/element/row-id/rect']])
+  assert.equal(driver.lastInteraction, null)
+})
+
 test('reports omit credentials and payloads while retaining visibility booleans', () => {
   const report = safeDetails({ password: 'synthetic', nativePayload: { credential: 'synthetic' }, endpointUrl: 'https://example.com', ocrTitleMatched: true, screenshot: 'notification-visible.png', jobId: '00000000-0000-4000-8000-000000000001' })
   assert.deepEqual(report, { ocrTitleMatched: true, screenshot: 'notification-visible.png', jobId: '00000000-0000-4000-8000-000000000001' })

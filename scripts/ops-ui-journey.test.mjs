@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { JSDOM } from 'jsdom'
-import { activateOpsUiRules, classifyOpsUiConnectionFailure, findOpsUiAuditRow, initializeOpsUiVault, OPS_UI_SELECTORS, resumeOpsUiJourney, reviewOpsUiServiceConfirmation, runOpsUiIncidents } from './ops-ui-journey.mjs'
+import { activateOpsUiRules, classifyOpsUiConnectionFailure, findOpsUiAuditRow, initializeOpsUiVault, OPS_UI_SELECTORS, readOpsUiServiceSelection, resumeOpsUiJourney, reviewOpsUiServiceConfirmation, runOpsUiIncidents, selectOpsUiServiceRow, validateOpsUiServiceRect } from './ops-ui-journey.mjs'
 
 function confirmationUnit({ problem } = {}) {
   const dom = new JSDOM('<div data-testid="workspace-services-app" data-host-id="host"><button data-testid="workspace-service-restart">Restart</button><div data-testid="workspace-services-error">INVALID_OPERATION: private credential detail</div></div>')
@@ -212,6 +212,125 @@ function journeyContext() {
   Object.defineProperty(state, 'vaultPassword', { value: 'PRIVATE_TEST_VALUE', enumerable: false })
   return { fixture, state }
 }
+
+function serviceWindows(fixture, state) {
+  return ['direct', 'via'].map(role => `<section data-testid="workspace-desktop-window-services" data-role="${role}" ${role === 'direct' ? '' : 'hidden'}><div data-testid="workspace-window-body"><div data-testid="workspace-services-app" data-vault-id="${state.vaultId}" data-host-id="${state.hostIds[role]}" data-selected-service="${fixture.hosts.direct.serviceUnit}"><div data-testid="workspace-services-list">${['direct', 'via'].map(target => `<button data-testid="workspace-service-row" data-service-unit="${fixture.hosts[target].serviceUnit}" data-active-state="failed" aria-pressed="${target === 'direct'}">Service row</button>`).join('')}</div></div></div></section>`).join('')
+}
+
+function serviceSelectionUnit({ role = 'via', problem } = {}) {
+  const { fixture, state } = journeyContext()
+  fixture.desktopDir = '/private/owned-desktop'; fixture.artifactDir = '/private/owned-desktop/artifacts'
+  const dom = new JSDOM(serviceWindows(fixture, state)), document = dom.window.document
+  const records = [], clicks = [], screenshots = [], checkpoints = []
+  for (const window of document.querySelectorAll('section')) window.hidden = window.dataset.role !== role
+  const element = value => typeof value === 'string' ? document.querySelector(value) : value
+  let reads = 0
+  const rect = row => {
+    const shifted = problem === 'moving' && reads <= 3 ? reads * 8 : 0
+    return row.dataset.testid === 'workspace-service-row' ? { x: 210, y: 510 + shifted, width: 600, height: 56 }
+      : row.dataset.testid === 'workspace-services-list' ? { x: 210, y: 440 + shifted, width: 600, height: 448 }
+      : row.dataset.testid === 'workspace-services-app' ? { x: 196, y: 190 + shifted, width: 1040, height: 1000 }
+      : row.dataset.testid === 'workspace-window-body' ? { x: 176, y: 172, width: 1080, height: 486 }
+      : { x: 176, y: 120, width: 1080, height: 540 }
+  }
+  const driver = {
+    async findAll(selector, parent = document) { return [...parent.querySelectorAll(selector)] },
+    async isDisplayed(value) { return !element(value).closest('[hidden]') },
+    async attr(value, field) { const row = element(value); return field === 'value' ? row.value : row.getAttribute(field) },
+    async rect(value) { const row = element(value); if (row.dataset.testid === 'workspace-service-row') reads++; return rect(row) },
+    async until(read) { for (let attempt = 0; attempt < 12; attempt++) { const result = await read(); if (result) return result } throw new Error('fixed_readiness_failed') },
+    async click(selector) {
+      const row = element(selector); assert(row); clicks.push(selector)
+      if (problem && !['moving', 'post-selection'].includes(problem)) throw new Error('fixed_click_failed')
+      const root = row.closest('[data-testid="workspace-services-app"]')
+      if (problem !== 'post-selection') {
+        root.dataset.selectedService = row.dataset.serviceUnit
+        for (const item of root.querySelectorAll('button')) item.setAttribute('aria-pressed', String(item === row))
+      }
+    },
+    async screenshot(filename) { screenshots.push(filename) },
+  }
+  const options = { driver, fixture, state, role, record: async (name, details) => records.push({ name, ...details }), checkpoint: async name => { checkpoints.push(name); return `${fixture.artifactDir}/${name}.png` } }
+  return { dom, document, fixture, state, driver, options, records, clicks, screenshots, checkpoints, reads: () => reads }
+}
+
+test('service rectangle evidence rejects non-finite, coerced, empty or unbounded layouts without retaining arbitrary fields', () => {
+  assert.deepEqual(validateOpsUiServiceRect({ x: 12.5, y: -100, width: 300, height: 56, privateDetail: 'discard' }), { x: 12.5, y: -100, width: 300, height: 56 })
+  for (const bad of [null, { x: NaN, y: 0, width: 30, height: 30 }, { x: 0, y: Infinity, width: 30, height: 30 }, { x: '0', y: 0, width: 30, height: 30 }, { x: 32769, y: 0, width: 30, height: 30 }, { x: 0, y: 0, width: 0, height: 30 }, { x: 0, y: 0, width: 30, height: -1 }, { x: 0, y: 0, width: 20000, height: 30 }]) assert.throws(() => validateOpsUiServiceRect(bad), /service_selection_rect_invalid/)
+})
+
+test('service selection waits for bounded stable geometry and clicks both default and second rows exactly once before verifying actual selection', async () => {
+  for (const role of ['direct', 'via']) {
+    const unit = serviceSelectionUnit({ role, problem: 'moving' })
+    try {
+      // PcLayout also mounts a hidden mobile copy for the same host. Its stale
+      // selection/geometry must neither count as ambiguity nor become evidence.
+      const mobile = unit.document.querySelector(`[data-role="${role}"] [data-testid="workspace-services-app"]`).cloneNode(true)
+      mobile.hidden = true
+      unit.document.body.append(mobile)
+      const before = await readOpsUiServiceSelection(unit.options)
+      assert.equal(before.selected, role === 'direct')
+      await selectOpsUiServiceRow(unit.options)
+      assert.equal(unit.clicks.length, 1)
+      assert(unit.reads() >= 5)
+      assert.equal(unit.screenshots.length, 0)
+      const final = unit.records.at(-1)
+      assert.equal(final.phase, 'selected'); assert.equal(final.selected, true); assert.equal(final.pressed, true)
+      assert.deepEqual(Object.keys(final).sort(), ['content', 'list', 'name', 'phase', 'pressed', 'role', 'row', 'selected', 'service', 'window'])
+      assert(!JSON.stringify(unit.records).includes(unit.fixture.hosts[role].serviceUnit))
+    } finally { unit.dom.window.close() }
+  }
+})
+
+test('selection failure reads post-failure rectangles and reserves one scoped actual screenshot without retrying the row click', async () => {
+  for (const problem of ['click', 'post-selection']) {
+    const unit = serviceSelectionUnit({ problem })
+    try {
+      await assert.rejects(selectOpsUiServiceRow(unit.options), /fixed_click_failed|fixed_readiness_failed/)
+      assert.equal(unit.clicks.length, 1)
+      assert.deepEqual(unit.checkpoints, ['service-via-selection-failed'])
+      assert.deepEqual(unit.screenshots, ['/private/owned-desktop/artifacts/service-via-selection-failed.png'])
+      assert(unit.records.some(row => row.phase === 'failed' && row.content.height > 0))
+      assert.equal(unit.records.at(-1).captured, true)
+    } finally { unit.dom.window.close() }
+  }
+})
+
+test('failure pixels are refused for dialogs, retained credentials, foreign scope or paths', async () => {
+  for (const problem of ['dialog', 'password', 'textarea', 'vault', 'host', 'path']) {
+    const unit = serviceSelectionUnit({ problem: 'click' })
+    try {
+      if (problem === 'dialog') unit.document.body.insertAdjacentHTML('beforeend', '<dialog open></dialog>')
+      if (problem === 'password' || problem === 'textarea') {
+        unit.document.body.insertAdjacentHTML('beforeend', problem === 'password' ? '<input type="password">' : '<textarea></textarea>')
+        unit.document.querySelector(problem === 'password' ? 'input' : 'textarea').value = 'SYNTHETIC_PRIVATE_INPUT'
+      }
+      if (problem === 'vault') unit.document.querySelector('[data-role="via"] [data-testid="workspace-services-app"]').dataset.vaultId = 'foreign'
+      if (problem === 'host') unit.document.querySelector('[data-role="via"] [data-testid="workspace-services-app"]').dataset.hostId = 'foreign'
+      if (problem === 'path') unit.options.checkpoint = async () => '/outside/service-via-selection-failed.png'
+      await assert.rejects(selectOpsUiServiceRow(unit.options))
+      assert.equal(unit.screenshots.length, 0)
+      assert.equal(unit.records.at(-1).captured, false)
+      assert(!JSON.stringify(unit.records).includes('SYNTHETIC'))
+      if (['vault', 'host'].includes(problem)) assert.equal(unit.clicks.length, 0)
+    } finally { unit.dom.window.close() }
+  }
+})
+
+test('a clipped row, zero-size or malformed rectangle still permits safe failure pixels of the real scoped service surface and never clicks', async () => {
+  for (const problem of ['clipped', 'zero', 'rect']) {
+    const unit = serviceSelectionUnit()
+    try {
+      if (problem === 'clipped') unit.document.querySelector('[data-role="via"] [data-service-unit$="-via.service"]').hidden = true
+      else unit.driver.rect = async () => ({ x: problem === 'rect' ? NaN : 0, y: 0, width: problem === 'zero' ? 0 : 1, height: 1 })
+      await assert.rejects(selectOpsUiServiceRow(unit.options), /service_selection_(surface_missing|rect_invalid)/)
+      assert.equal(unit.clicks.length, 0)
+      assert.equal(unit.records.at(-1).captured, true)
+      assert.equal(unit.screenshots.length, 1)
+    } finally { unit.dom.window.close() }
+  }
+})
+
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 function ruleActivationDriver() {
   let selected = null
@@ -328,6 +447,7 @@ test('recovery never passes solely on a persisted healthy cache or without a res
 test('incident recovery awaits its evidence hook only after the matching resolved route is visible', async () => {
   const { fixture, state } = journeyContext()
   const dom = new JSDOM('<section data-testid="operations-audit-center"><select data-testid="operations-source-filter"><option value="all">All</option><option value="workspace">Workspace</option></select><select data-testid="operations-filter"><option value="all">All</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page">Page 1</span><button data-testid="operations-older" disabled>Older</button></section>'), document = dom.window.document
+  document.body.insertAdjacentHTML('beforeend', serviceWindows(fixture, state))
   let role = 'direct'
   let confirmed = false
   const observed = []
@@ -340,7 +460,16 @@ test('incident recovery awaits its evidence hook only after the matching resolve
       else role = css.includes('direct-host') ? 'direct' : 'via'
     },
     async click(css) {
-      if (css.includes('host-services-open')) { role = css.includes('direct-host') ? 'direct' : 'via'; confirmed = false; diagnosed.push(role) }
+      if (css.includes('host-services-open')) {
+        role = css.includes('direct-host') ? 'direct' : 'via'; confirmed = false; diagnosed.push(role)
+        for (const window of document.querySelectorAll('[data-testid="workspace-desktop-window-services"]')) window.hidden = window.dataset.role !== role
+      }
+      else if (css.includes('workspace-service-row')) {
+        const row = document.querySelector(css); assert(row)
+        const root = row.closest('[data-testid="workspace-services-app"]')
+        root.dataset.selectedService = row.dataset.serviceUnit
+        for (const item of root.querySelectorAll('[data-testid="workspace-service-row"]')) item.setAttribute('aria-pressed', String(item === row))
+      }
       else if (css.includes('workspace-service-restart')) {
         requests.push(role)
         document.body.insertAdjacentHTML('beforeend', `<dialog open><div data-testid="user-confirmation" data-vault-id="${state.vaultId}" data-host-id="${state.hostIds[role]}"><p data-testid="user-confirmation-message">Restart ${fixture.hosts[role].serviceUnit} · ${fixture.hosts[role].name}</p><button data-testid="user-confirmation-cancel">Cancel</button><button data-testid="user-confirmation-accept">Confirm</button></div></dialog>`)
@@ -353,8 +482,9 @@ test('incident recovery awaits its evidence hook only after the matching resolve
         button.closest('dialog').remove()
       }
     },
-    async findAll(css) { return [...document.querySelectorAll(css)] },
-    async isDisplayed(row) { return !row.hidden },
+    async findAll(css, parent = document) { return [...parent.querySelectorAll(css)] },
+    async isDisplayed(row) { return !row.closest('[hidden]') },
+    async rect() { return { x: 100, y: 150, width: 600, height: 60 } },
     async attr(css, name) {
       if (typeof css !== 'string') return css.getAttribute(name)
       if (css.includes('user-confirmation')) return document.querySelector(css).getAttribute(name)
@@ -368,7 +498,7 @@ test('incident recovery awaits its evidence hook only after the matching resolve
       throw new Error('unexpected read')
     },
     async text(row) { return typeof row !== 'string' ? row.textContent : row.includes('operations-page') ? document.querySelector(row).textContent : confirmed ? 'status=completed' : `${fixture.hosts[role].serviceUnit}\nActive: failed (Result: exit-code)` },
-    async until(fn) { const result = await fn(); assert(result); return result },
+    async until(fn) { for (let attempt = 0; attempt < 12; attempt++) { const result = await fn(); if (result) return result } throw new Error('unit visible state missing') },
   }
   const first = deferred()
   const release = deferred()
@@ -379,7 +509,7 @@ test('incident recovery awaits its evidence hook only after the matching resolve
     if (current === 'direct') { first.resolve(); await release.promise }
   } })
   try {
-    await first.promise
+    await Promise.race([first.promise, work.then(() => { throw new Error('unit recovery hook never called') })])
     assert.deepEqual(recovered, ['direct'])
     assert.equal(diagnosed.includes('via'), false)
     release.resolve()

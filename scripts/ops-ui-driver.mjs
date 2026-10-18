@@ -126,6 +126,7 @@ export class OpsUiDriver {
   async isSelected(locator) { return this.request('GET', await this.elementRoute(locator, '/selected')) }
   async isDisplayed(locator) { return this.request('GET', await this.elementRoute(locator, '/displayed')) }
   async isEnabled(locator) { return this.request('GET', await this.elementRoute(locator, '/enabled')) }
+  async rect(locator) { return this.request('GET', await this.elementRoute(locator, '/rect')) }
   interactable(locator, options) {
     return this.until(async () => {
       const element = await this.find(locator)

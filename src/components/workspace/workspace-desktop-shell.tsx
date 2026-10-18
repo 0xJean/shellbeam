@@ -582,6 +582,7 @@ export function WorkspaceDesktopShell({
                     </div>
                   </div>
                   <div
+                    data-testid="workspace-window-body"
                     className={cn(
                       'min-h-0 flex-1',
                       windowState.app === 'browser'

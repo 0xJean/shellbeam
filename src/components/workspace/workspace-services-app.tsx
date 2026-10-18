@@ -255,6 +255,7 @@ export function WorkspaceServicesApp({
                   return (
                     <button
                       key={row.name}
+                      data-testid="workspace-service-row"
                       data-service-unit={row.name} data-active-state={row.active} aria-pressed={isSelected}
                       type="button"
                       onClick={() => setSelectedServiceName(row.name)}

@@ -227,6 +227,30 @@ The root controller restores each affected SSHD in `finally`. The Activity UI's
 actual native source/status filters and bounded older-page controls are used to
 find retained records instead of enlarging the latest-100 window or reading IPC.
 
+The tenth [UI run 39106223515](https://github.com/0xJean/shellbeam/actions/runs/39106223515),
+head `31f33a5abc009e2c5eeb1b0f6118f00c8d4f8578`, merge checkout
+`6ee63b32d843facf25f7a18e8ba02cc7db8959b2`, passed the actual application confirmation
+window on the direct route. Cancellation preserved the independent service
+counter at one; acceptance restarted it exactly once to counter two and a fresh
+active state. Both canonical jobs were visible in Activity, and the actual
+direct recovery OS banner passed complete title/body OCR. The journey then
+failed with `element not interactable` while selecting the exact via-host
+service row, after verifying that its service state was failed. No second-route
+diagnosis, restart or independent Probe acceptance is claimed. Cleanup and app
+exit passed. Its main/Agent CI independently passed all 11 checks, and the
+downloaded real Ops artifact reports 16 passed, zero skipped and cleanup passed.
+
+The existing Network screenshot cannot establish the failed Services row's
+clipping or geometry. The next runner records bounded real W3C element rects
+for the row, list, app, window and content area, waits for two identical layout
+reads, then performs one actual click and checks both the selected service and
+pressed row. On failure it captures only the scoped owned-fixture Services
+surface, with no open dialog or nonempty password/textarea controls. An invalid
+row rect does not suppress that safe screenshot. There are no retries, forced
+scrolls, injected clicks, changed layout or omitted diagnosis steps. This is
+readiness and diagnostic evidence; another actual GUI run must determine the
+remaining cause and establish a complete pass.
+
 Even a successful isolated Linux run does not prove macOS/Windows notification
 presentation, mobile browser/device behavior, an external Komari deployment,
 public-CA domain-control renewal or production Agent distribution. Those remain

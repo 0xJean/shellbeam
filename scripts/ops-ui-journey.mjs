@@ -3,6 +3,7 @@
 // edits storage, seeds a database, or substitutes remote results.
 import { randomBytes, createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 
 export const OPS_UI_SELECTORS = Object.freeze({
   welcome: '[data-testid="welcome-enter"]',
@@ -29,7 +30,7 @@ const q = (value) => `"${String(value).replaceAll('\\', '\\\\').replaceAll('"', 
 const testId = (id) => `[data-testid=${q(id)}]`
 const byHost = (id) => `${testId('host-card')}[data-host-id=${q(id)}]`
 const serviceRoot = (id) => `${testId('workspace-services-app')}[data-host-id=${q(id)}]`
-const serviceRow = (id, unit) => `${serviceRoot(id)} [data-service-unit=${q(unit)}]`
+const serviceRow = (id, unit) => `${serviceRoot(id)} ${testId('workspace-service-row')}[data-service-unit=${q(unit)}]`
 const ruleRoot = (id) => `${testId('local-alert-rules')}[data-host-id=${q(id)}]`
 const normalizeFingerprint = (value) => String(value).trim().replace(/^SHA256:/, '').replace(/=+$/, '')
 const hash = (value) => createHash('sha256').update(String(value)).digest('hex')
@@ -279,6 +280,116 @@ async function openServices(driver, role, state) {
   check(await driver.attr(serviceRoot(state.hostIds[role]), 'data-vault-id') === state.vaultId, 'service_vault_scope_mismatch')
 }
 
+function serviceSelectionScope(fixture, state, role) {
+  const id = state?.hostIds?.[role], unit = fixture?.hosts?.[role]?.serviceUnit
+  check(incidentRoles.includes(role) && typeof state?.vaultId === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(state.vaultId)
+    && typeof id === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(id)
+    && typeof unit === 'string' && /^00-shellbeam-ui-[A-Za-z0-9.-]+\.service$/.test(unit), 'service_selection_scope_invalid')
+  return { id, unit }
+}
+
+export function validateOpsUiServiceRect(value) {
+  check(value && typeof value === 'object' && ['x', 'y', 'width', 'height'].every(key => typeof value[key] === 'number' && Number.isFinite(value[key]))
+    && Math.abs(value.x) <= 32768 && Math.abs(value.y) <= 32768
+    && value.width > 0 && value.width <= 16384 && value.height > 0 && value.height <= 16384, 'service_selection_rect_invalid')
+  return { x: value.x, y: value.y, width: value.width, height: value.height }
+}
+
+async function visibleOpsUiServiceRoot({ driver, fixture, state, role }) {
+  const { id, unit } = serviceSelectionScope(fixture, state, role)
+  // PcLayout keeps desktop/mobile and inactive session surfaces mounted. Only
+  // the one genuinely displayed host surface is eligible for geometry/pixels.
+  const roots = []
+  for (const root of await driver.findAll(serviceRoot(id))) if (await driver.isDisplayed(root)) roots.push(root)
+  check(roots.length === 1
+    && await driver.attr(roots[0], 'data-vault-id') === state.vaultId
+    && await driver.attr(roots[0], 'data-host-id') === id, 'service_selection_scope_mismatch')
+  return { id, unit, root: roots[0] }
+}
+
+async function visibleOpsUiServiceWindow(driver, id) {
+  const windows = []
+  for (const window of await driver.findAll(testId('workspace-desktop-window-services'))) {
+    if (await driver.isDisplayed(window) && (await driver.findAll(serviceRoot(id), window)).length === 1) windows.push(window)
+  }
+  check(windows.length === 1, 'service_selection_surface_missing')
+  return windows[0]
+}
+
+export async function readOpsUiServiceSelection({ driver, fixture, state, role }) {
+  const { id, unit, root } = await visibleOpsUiServiceRoot({ driver, fixture, state, role })
+  const rows = await driver.findAll(`${testId('workspace-service-row')}[data-service-unit=${q(unit)}]`, root)
+  const lists = await driver.findAll(testId('workspace-services-list'), root)
+  const window = await visibleOpsUiServiceWindow(driver, id)
+  check(rows.length === 1 && lists.length === 1
+    && await driver.isDisplayed(rows[0]) && await driver.isDisplayed(lists[0]), 'service_selection_surface_missing')
+  const bodies = await driver.findAll(testId('workspace-window-body'), window)
+  check(bodies.length === 1 && await driver.isDisplayed(bodies[0]), 'service_selection_body_missing')
+  const pressed = await driver.attr(rows[0], 'aria-pressed')
+  check(pressed === 'true' || pressed === 'false', 'service_selection_pressed_invalid')
+  const evidence = { selected: await driver.attr(root, 'data-selected-service') === unit, pressed: pressed === 'true' }
+  // "content" is the actual window body rectangle; report redaction reserves
+  // keys named "body" for secret-bearing notification/message payloads.
+  for (const [key, element] of Object.entries({ row: rows[0], list: lists[0], service: root, window, content: bodies[0] })) {
+    evidence[key] = validateOpsUiServiceRect(await driver.rect(element))
+  }
+  return evidence
+}
+
+async function captureOpsUiServiceSelectionFailure({ driver, fixture, state, role, record, checkpoint }) {
+  check(typeof checkpoint === 'function' && (await driver.findAll('dialog[open]')).length === 0, 'service_selection_capture_refused')
+  const { id, root, unit } = await visibleOpsUiServiceRoot({ driver, fixture, state, role })
+  await visibleOpsUiServiceWindow(driver, id)
+  // A clipped row or invalid layout response is precisely what this screenshot
+  // must explain. Require its owned target to exist in the visible scoped app,
+  // but do not pretend it is interactable merely to allow failure evidence.
+  check((await driver.findAll(`${testId('workspace-service-row')}[data-service-unit=${q(unit)}]`, root)).length === 1, 'service_selection_capture_refused')
+  for (const input of await driver.findAll('input[type="password"], textarea')) {
+    const value = await driver.attr(input, 'value')
+    check(value === null || value === undefined || value === '', 'service_selection_capture_refused')
+  }
+  const name = `service-${role}-selection-failed`
+  const output = await checkpoint(name)
+  const desktop = fixture.desktopDir, artifacts = fixture.artifactDir ?? (typeof desktop === 'string' ? join(desktop, 'artifacts') : '')
+  const within = (parent, child) => { const part = relative(parent, child); return part !== '' && part !== '..' && !part.startsWith('../') && !isAbsolute(part) }
+  check(typeof desktop === 'string' && isAbsolute(desktop) && isAbsolute(artifacts) && within(desktop, artifacts)
+    && typeof output === 'string' && isAbsolute(output) && output === resolve(output) && within(artifacts, output)
+    && basename(output) === `${name}.png`, 'service_selection_capture_path_invalid')
+  // This is the actual WebDriver framebuffer, never rendered DOM or substituted
+  // pixels. Only this scoped, credential-free failure surface may be exported.
+  await driver.screenshot(output)
+  await record('ops-ui-service-selection-failure-capture', { role, captured: true, screenshot: basename(output) })
+}
+
+export async function selectOpsUiServiceRow({ driver, fixture, state, role, record, checkpoint }) {
+  serviceSelectionScope(fixture, state, role)
+  const context = { driver, fixture, state, role }
+  try {
+    await record('ops-ui-service-selection-geometry', { role, phase: 'before', ...await readOpsUiServiceSelection(context) })
+    let previous
+    await driver.until(async () => {
+      const evidence = await readOpsUiServiceSelection(context), signature = JSON.stringify(evidence)
+      const stable = signature === previous
+      previous = signature
+      return stable ? evidence : false
+    }, { timeoutMs: 5000 })
+    // One real click, including a default-selected row. Geometry readiness is
+    // read-only; no scroll, keyboard action, retry or automatic consent occurs.
+    await driver.click(serviceRow(state.hostIds[role], fixture.hosts[role].serviceUnit))
+    const selected = await driver.until(async () => {
+      const evidence = await readOpsUiServiceSelection(context)
+      return evidence.selected && evidence.pressed ? evidence : false
+    }, { timeoutMs: 5000 })
+    await record('ops-ui-service-selection-geometry', { role, phase: 'selected', ...selected })
+  } catch (cause) {
+    try { await record('ops-ui-service-selection-geometry', { role, phase: 'failed', ...await readOpsUiServiceSelection(context) }) }
+    catch { await record('ops-ui-service-selection-geometry-unavailable', { role, available: false }) }
+    try { await captureOpsUiServiceSelectionFailure({ ...context, record, checkpoint }) }
+    catch { await record('ops-ui-service-selection-failure-capture', { role, captured: false }) }
+    throw cause
+  }
+}
+
 /** Traverse the real, source/status-filtered Activity journal. Background
  * monitor reads can fill its latest page; no enlarged query or direct IPC is
  * used to retrieve an old consent record. Native audit retention is 10k and
@@ -412,7 +523,7 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await driver.waitFor(serviceRow(id, unit), { timeoutMs: 60000 })
     check(await driver.attr(serviceRoot(id), 'data-vault-id') === state.vaultId, 'diagnostic_vault_scope_mismatch')
     check(await driver.attr(serviceRow(id, unit), 'data-active-state') === 'failed', 'fixture_service_not_failed')
-    await driver.click(serviceRow(id, unit)); steps++
+    await selectOpsUiServiceRow({ driver, fixture, state, role, record, checkpoint }); steps++
     await waitEnabled(driver, `${serviceRoot(id)} ${testId('workspace-service-status')}`)
     await driver.click(`${serviceRoot(id)} ${testId('workspace-service-status')}`); steps++
     const output = `${serviceRoot(id)} ${testId('workspace-services-output')}`
@@ -430,7 +541,7 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await record(`ops-ui-${role}-cancelled`, { passed: true, jobId: cancelled, mutations: 0 })
     await openServices(driver, role, state)
     await driver.waitFor(serviceRow(id, unit))
-    await driver.click(serviceRow(id, unit))
+    await selectOpsUiServiceRow({ driver, fixture, state, role, record, checkpoint })
     await reviewOpsUiServiceConfirmation({ driver, css: `${serviceRoot(id)} ${testId('workspace-service-restart')}`, unit, hostName: fixture.hosts[role].name, hostId: id, vaultId: state.vaultId, accept: true, record, role })
     await driver.until(async () => (await driver.text(output)).includes('status=completed'), { timeoutMs: 60000 })
     await driver.waitFor(`${serviceRow(id, unit)}[data-active-state="active"]`, { timeoutMs: 30000 })
