@@ -7,6 +7,7 @@ mod collection_limits;
 mod data;
 mod error;
 mod keys;
+mod komari_console;
 mod mcp;
 mod net;
 mod notifications;
@@ -73,6 +74,7 @@ pub fn run() {
         .plugin(tauri_plugin_biometry::init())
         .manage(InteractiveSessionState::default())
         .manage(VaultState::default())
+        .manage(komari_console::KomariConsoleState::default())
         .manage(SshSessionPool::default())
         .manage(mcp::McpState::default())
         .invoke_handler(tauri::generate_handler![
@@ -88,6 +90,10 @@ pub fn run() {
             notifications::system_notification_permission,
             notifications::request_system_notification_permission,
             notifications::send_system_notification,
+            komari_console::komari_console_mode,
+            komari_console::prepare_mobile_komari_console,
+            komari_console::cancel_mobile_komari_console,
+            komari_console::open_mobile_komari_console,
             mcp::mcp_status,
             mcp::mcp_list_project_deployments,
             mcp::mcp_set_enabled,

@@ -38,7 +38,7 @@
 | 要求 | 实现证据 | 验证与状态 |
 | --- | --- | --- |
 | endpoint/token、节点发现和映射 | `komari.ts`、`komari-mapping.ts`、KomariMappingsPanel、原生映射revision | 主机运维视图可发现节点、选择同Vault主机、解决地址歧义和显式恢复自动匹配；手动绑定缺席节点仍保留，后台同步不得覆盖。SQLite重开、revision冲突、跨Vault拒绝及原子清除旧latest缓存有回归；新同步同时写专用/canonical缓存且旧sample不回退。真实外部部署仍待验收 |
-| Komari Web控制台入口 | `komari-console.ts`、Komari设置页 | 从已保存同Vault地址打开桌面浏览器窗口，保留反代basepath、移除query/hash且不传API密钥；拒绝危险协议/内嵌凭据，迟到旧Vault请求不能导航或继续保存。行为/双语测试通过；实际外部部署与桌面页面仍待验收，移动端沿用浏览器窗口不支持的明确错误 |
+| Komari Web控制台入口 | `komari-console.ts`、Komari设置页、原生`komari_console.rs` | 桌面保留原浏览器窗口，移动端交给系统浏览器；均使用已保存同Vault地址，保留反代basepath、移除query/hash且不传API密钥。移动端仅main WebView可准备/打开/取消短期单次请求，原生在实际OS交接前检查取消、TTL和锁库；切换Vault/集成或迟到prepare不能继续旧导航。请求最多16个、TTL30秒、等待OS回调最多10秒；交接后不声称可撤销或页面已加载。行为/双语/原生状态测试和iOS/Android目标编译检查通过；移动设备实际浏览器展示及外部部署仍待验收 |
 | 映射编辑后的运维入口 | HostsDashboard、`komari-probe-link.ts` | 重绑立即失效旧来源视图/按钮，迟到旧Vault刷新不得取消新Vault刷新；检查探针前重新核对最新映射并创建同Vault只读OperationJob。安装入口打开同主机Overview的签名制品审核面板，无Workspace入口时隐藏，不直接执行已有远端binary的legacy安装命令；安装Job由实际签名流程确认后建立 |
 | 同步TTL、并发、快照和告警 | `komari-sync.ts`、原生Komari persistence | 保留既有告警去重、确认/关闭、恢复通知和OperationJob跨会话关联 |
 | 历史时序、范围查询和可视化 | `data/provider_history.rs`、`provider-history.ts`、ProviderHistoryPanel | Vault/provider/host/node隔离；7天/每series10080点/总计100000点；1h/6h/24h/7d视图，来源选择、null/停采断线、原始采样时间和TTL |
@@ -110,3 +110,5 @@ Komari手动映射/控制台本轮本地回归：前端939项通过，16项Linux
 远端Agent历史在桌面退出期间保留；新版本通过有界分页在重连后回灌，独立Vault/host/provider/node游标与数据同事务提交、CAS检查、锁库不推进，原采样时间和缺口保留。Workspace独立显示会话结果与持久进度；旧Agent不支持分页时明确unavailable，不读取无界历史。此增强仍不能替代正式签名制品和打包实机验收。
 
 Overview统一Provider来源本地回归：8个定向测试文件、86项通过，15个修改范围TS/TSX文件ESLint零错误/警告。覆盖桌面资源卡与实际MobileShell挂载、Komari-only/失败SSH旁的健康Komari、TTL回退、跨Vault迟到读取、映射即时失效、后台缓存刷新，以及资产成功/失败不得更改指标来源、采样时间或遥测。该记录证明数据投影与组件契约，不替代打包应用的真实操作流程与系统通知展示验收；本轮提交对应CI以PR记录为准。
+
+Overview与移动控制台整合本地回归：前端1003项通过，16项Linux真实Ops与1项Linux collector在macOS跳过；TypeScript/Vite生产构建通过，21个修改范围TS/TSX文件ESLint零错误/警告。原生148项库测试及2项MCP stdio通过，既有真实Ops桥1项按约定ignored；原生状态回归包含取消/单次使用/过期/有界注册表及慢OS调用不阻塞取消。iOS真机`aarch64-apple-ios`、模拟器`aarch64-apple-ios-sim`和Android NDK27.1/API24 `aarch64-linux-android`编译检查通过，既有移动browser/notification警告保留，未新增JS opener权限或外部webview能力。编译检查不证明设备上的系统浏览器交接与页面展示，本轮精确提交CI结果另见PR。

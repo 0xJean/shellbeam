@@ -6,17 +6,21 @@ import { closeBrowserWindow, loadBrowserSource, openBrowserWindow } from '@/lib/
 import { I18nProvider } from '@/lib/i18n'
 import en from '@/lib/locales/en'
 import zhCN from '@/lib/locales/zh-CN'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 
 const vault = vi.hoisted(() => ({ id: 'vault-a', unlocked: false, saveSecret: vi.fn() }))
 vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: vault.id, vaultStatusState: { unlocked: vault.unlocked }, handleSaveSecret: vault.saveSecret }) }))
 vi.mock('@/lib/komari-config', () => ({ listKomariIntegrations: vi.fn(), upsertKomariIntegration: vi.fn(), deleteKomariIntegration: vi.fn(), komariCredentialKey: (id: string) => `komari.${id}.api-key` }))
 vi.mock('@/lib/browser', () => ({ openBrowserWindow: vi.fn(), loadBrowserSource: vi.fn(), closeBrowserWindow: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }))
 
 const integration = (patch: Partial<KomariIntegration> = {}): KomariIntegration => ({ id: 'same-id', vaultId: 'vault-a', name: 'Saved Komari', endpoint: 'http://192.168.1.10:25774/komari', credentialRef: 'komari.same-id.api-key', enabled: false, createdAt: 1, updatedAt: 1, ...patch })
 const section = () => <I18nProvider><KomariSettingsSection /></I18nProvider>
+const requestId = '11111111-1111-4111-8111-111111111111'
 beforeEach(() => {
   vault.id = 'vault-a'
   vault.unlocked = false
+  vi.mocked(isTauri).mockReturnValue(false)
   localStorage.setItem('shellbeam.locale', 'en')
   vi.mocked(listKomariIntegrations).mockResolvedValue([integration()])
   vi.mocked(openBrowserWindow).mockResolvedValue(undefined)
@@ -26,6 +30,187 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear() })
 
 describe('saved Komari console entry', () => {
+  it('retains the desktop window adapter on a native desktop build', async () => {
+    vi.mocked(isTauri).mockReturnValue(true)
+    vi.mocked(invoke).mockResolvedValueOnce('desktop')
+    render(section())
+    const button = screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    await waitFor(() => expect(loadBrowserSource).toHaveBeenCalledTimes(1))
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('komari_console_mode')
+    expect(openBrowserWindow).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['en', 'zh-CN'] as const)('opens a mobile saved integration through native scope only, without credentials or desktop windows (%s)', async (locale) => {
+    localStorage.setItem('shellbeam.locale', locale)
+    const copy = locale === 'en' ? en : zhCN
+    vi.mocked(isTauri).mockReturnValue(true)
+    vi.mocked(invoke).mockResolvedValueOnce('mobile').mockResolvedValueOnce(requestId).mockResolvedValue(undefined)
+    vi.mocked(listKomariIntegrations).mockResolvedValueOnce([integration({ endpoint: 'http://192.168.1.10:25774/komari?token=legacy-secret#private-state' })])
+    render(section())
+    const button = screen.getByRole('button', { name: copy['settings.komariConsoleOpen'] })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.change(screen.getByLabelText(copy['settings.komariEndpoint']), { target: { value: 'https://unsaved.example' } })
+    fireEvent.change(screen.getByLabelText(copy['settings.komariApiKey']), { target: { value: 'never-forward-token' } })
+    fireEvent.click(button)
+    await waitFor(() => expect(button).toBeEnabled())
+    expect(invoke).toHaveBeenNthCalledWith(1, 'komari_console_mode')
+    expect(invoke).toHaveBeenNthCalledWith(2, 'prepare_mobile_komari_console', { vaultId: 'vault-a', integrationId: 'same-id' })
+    expect(invoke).toHaveBeenNthCalledWith(3, 'open_mobile_komari_console', { requestId })
+    expect(invoke).toHaveBeenNthCalledWith(4, 'cancel_mobile_komari_console', { requestId })
+    expect(invoke).toHaveBeenCalledTimes(4)
+    expect(JSON.stringify(vi.mocked(invoke).mock.calls)).not.toMatch(/legacy-secret|private-state|unsaved|never-forward|http|credentialRef/)
+    expect(openBrowserWindow).not.toHaveBeenCalled()
+    expect(loadBrowserSource).not.toHaveBeenCalled()
+    expect(closeBrowserWindow).not.toHaveBeenCalled()
+    await waitFor(() => expect(button).toBeEnabled())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it.each(['open-failed', 'locked'] as const)('shows the fixed mobile %s error without falling back to a desktop window', async (failure) => {
+    vi.mocked(isTauri).mockReturnValue(true)
+    vi.mocked(invoke).mockResolvedValueOnce('mobile')
+    if (failure === 'locked') vi.mocked(invoke).mockRejectedValueOnce('VAULT_LOCKED')
+    else vi.mocked(invoke).mockResolvedValueOnce(requestId).mockRejectedValueOnce(new Error('secret http://user:password@internal.example')).mockResolvedValue(undefined)
+    render(section())
+    const button = screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(en[failure === 'locked' ? 'settings.komariConsoleUnlock' : 'settings.komariConsoleOpenFailed']))
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/secret|password|internal\.example/)
+    expect(openBrowserWindow).not.toHaveBeenCalled()
+    expect(loadBrowserSource).not.toHaveBeenCalled()
+    expect(closeBrowserWindow).not.toHaveBeenCalled()
+    expect(button).toBeEnabled()
+  })
+
+  it('does not dispatch an old-Vault mobile open after a late native capability reply', async () => {
+    vi.mocked(isTauri).mockReturnValue(true)
+    let finishMode!: (mode: string) => void
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise((resolve) => { finishMode = resolve }))
+    const view = render(section())
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledExactlyOnceWith('komari_console_mode'))
+    vi.mocked(listKomariIntegrations).mockResolvedValueOnce([integration({ vaultId: 'vault-b' })])
+    vault.id = 'vault-b'
+    view.rerender(section())
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled())
+    await act(async () => { finishMode('mobile') })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(openBrowserWindow).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it.each(['select', 'new', 'remove'] as const)('invalidates a pending mobile mode lookup when the same-Vault integration changes via %s', async (action) => {
+    vi.mocked(isTauri).mockReturnValue(true)
+    let finishMode!: (mode: string) => void
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise((resolve) => { finishMode = resolve }))
+    vi.mocked(listKomariIntegrations).mockResolvedValueOnce([integration(), integration({ id: 'other-id', name: 'Other Komari' })])
+    // Keep deletion pending: invalidation must occur on the user's action,
+    // rather than waiting for native persistence to finish.
+    vi.mocked(deleteKomariIntegration).mockImplementationOnce(() => new Promise(() => {}))
+    render(section())
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledExactlyOnceWith('komari_console_mode'))
+    fireEvent.click(screen.getByRole('button', { name: action === 'select' ? 'Other Komari' : en[action === 'new' ? 'settings.komariNew' : 'settings.komariRemove'] }))
+    await act(async () => { finishMode('mobile') })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(openBrowserWindow).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it.each(['vault', 'selection'] as const)('cancels a late native prepare after a %s change without opening its token', async (change) => {
+    vi.mocked(isTauri).mockReturnValue(true)
+    let finishPrepare!: (token: string) => void
+    vi.mocked(invoke).mockResolvedValueOnce('mobile')
+      .mockImplementationOnce(() => new Promise((resolve) => { finishPrepare = resolve })).mockResolvedValue(undefined)
+    vi.mocked(listKomariIntegrations).mockResolvedValueOnce([integration(), integration({ id: 'other-id', name: 'Other Komari' })])
+    const view = render(section())
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('prepare_mobile_komari_console', { vaultId: 'vault-a', integrationId: 'same-id' }))
+    if (change === 'vault') {
+      vi.mocked(listKomariIntegrations).mockResolvedValueOnce([integration({ vaultId: 'vault-b' })])
+      vault.id = 'vault-b'
+      view.rerender(section())
+    } else fireEvent.click(screen.getByRole('button', { name: 'Other Komari' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled())
+    await act(async () => { finishPrepare(requestId) })
+    expect(invoke).toHaveBeenCalledWith('cancel_mobile_komari_console', { requestId })
+    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === 'open_mobile_komari_console')).toBe(false)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it.each(['select', 'new', 'remove', 'save', 'unmount'] as const)('cancels a known queued native request on %s', async (action) => {
+    vault.unlocked = true
+    vi.mocked(isTauri).mockReturnValue(true)
+    let finishOpen!: () => void
+    vi.mocked(invoke).mockResolvedValueOnce('mobile').mockResolvedValueOnce(requestId)
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishOpen = resolve })).mockResolvedValue(undefined)
+    vi.mocked(listKomariIntegrations).mockResolvedValueOnce([integration(), integration({ id: 'other-id', name: 'Other Komari' })])
+    vi.mocked(deleteKomariIntegration).mockImplementationOnce(() => new Promise(() => {}))
+    vi.mocked(upsertKomariIntegration).mockImplementationOnce(() => new Promise(() => {}))
+    const view = render(section())
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('open_mobile_komari_console', { requestId }))
+    if (action === 'unmount') view.unmount()
+    else fireEvent.click(screen.getByRole('button', { name: action === 'select' ? 'Other Komari' : en[action === 'new' ? 'settings.komariNew' : action === 'remove' ? 'settings.komariRemove' : 'settings.komariSave'] }))
+    expect(invoke).toHaveBeenCalledWith('cancel_mobile_komari_console', { requestId })
+    await act(async () => { finishOpen() })
+    expect(openBrowserWindow).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('closes an old same-Vault desktop window without clearing the newer mobile request busy state', async () => {
+    vi.mocked(isTauri).mockReturnValue(true)
+    let finishOldWindow!: () => void
+    let finishNewMobile!: () => void
+    vi.mocked(invoke).mockResolvedValueOnce('desktop').mockResolvedValueOnce('mobile').mockResolvedValueOnce(requestId)
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishNewMobile = resolve }))
+      .mockResolvedValue(undefined)
+    vi.mocked(openBrowserWindow).mockImplementationOnce(() => new Promise<void>((resolve) => { finishOldWindow = resolve }))
+    vi.mocked(listKomariIntegrations).mockResolvedValueOnce([integration(), integration({ id: 'other-id', name: 'Other Komari' })])
+    render(section())
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] }))
+    await waitFor(() => expect(openBrowserWindow).toHaveBeenCalledTimes(1))
+    const old = vi.mocked(openBrowserWindow).mock.calls[0][0]
+    fireEvent.click(screen.getByRole('button', { name: 'Other Komari' }))
+    fireEvent.click(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('prepare_mobile_komari_console', { vaultId: 'vault-a', integrationId: 'other-id' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('open_mobile_komari_console', { requestId }))
+    await act(async () => { finishOldWindow() })
+    expect(closeBrowserWindow).toHaveBeenCalledExactlyOnceWith(old.browserId, old.sessionId)
+    expect(loadBrowserSource).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: en['settings.komariConsoleOpening'] })).toBeDisabled()
+    await act(async () => { finishNewMobile() })
+    expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled()
+  })
+
+  it('ignores an old-Vault mobile failure after handoff without blocking the new scope', async () => {
+    vi.mocked(isTauri).mockReturnValue(true)
+    let failOpen!: (cause: string) => void
+    vi.mocked(invoke).mockResolvedValueOnce('mobile').mockResolvedValueOnce(requestId)
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { failOpen = reject })).mockResolvedValue(undefined)
+    const view = render(section())
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('open_mobile_komari_console', { requestId }))
+    vi.mocked(listKomariIntegrations).mockResolvedValueOnce([integration({ vaultId: 'vault-b' })])
+    vault.id = 'vault-b'
+    view.rerender(section())
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled())
+    expect(invoke).toHaveBeenCalledWith('cancel_mobile_komari_console', { requestId })
+    await act(async () => { failOpen('VAULT_LOCKED') })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: en['settings.komariConsoleOpen'] })).toBeEnabled()
+    expect(openBrowserWindow).not.toHaveBeenCalled()
+  })
+
   it.each(['en', 'zh-CN'] as const)('opens only the saved base URL without API credentials or draft input (%s)', async (locale) => {
     localStorage.setItem('shellbeam.locale', locale)
     const copy = locale === 'en' ? en : zhCN

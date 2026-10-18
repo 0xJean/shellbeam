@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useT } from '@/lib/i18n'
 import { closeBrowserWindow, loadBrowserSource, openBrowserWindow } from '@/lib/browser'
-import { komariConsoleUrl } from '@/lib/komari-console'
+import { cancelMobileKomariConsole, komariConsoleMode, komariConsoleUrl, openMobileKomariConsole, prepareMobileKomariConsole } from '@/lib/komari-console'
 import { ExternalLink, Eye, EyeOff, RefreshCw, Server, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -34,14 +34,27 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [consoleBusy, setConsoleBusy] = useState(false)
-  const [consoleError, setConsoleError] = useState<'invalid-endpoint' | 'open-failed' | null>(null)
+  const [consoleError, setConsoleError] = useState<'invalid-endpoint' | 'open-failed' | 'locked' | null>(null)
   const alive = useRef(true)
   const loadSequence = useRef(0)
+  const consoleSequence = useRef(0)
+  const mobileRequest = useRef<string | null>(null)
   const selected = useRef<string | null>(null)
   const unlocked = vaultStatusState?.unlocked === true
   const savedIntegration = integrations.find((item) => item.vaultId === vaultId && item.id === selectedId)
 
+  const invalidateConsole = useCallback(() => {
+    consoleSequence.current += 1
+    const requestId = mobileRequest.current
+    mobileRequest.current = null
+    // The native token remains cancellable inside the actual platform queue.
+    // This cleanup never opens a browser, and expired tokens also fail closed.
+    if (requestId) void cancelMobileKomariConsole(requestId).catch(() => {})
+  }, [])
+
   const resetForm = useCallback(() => {
+    invalidateConsole()
+    setConsoleBusy(false)
     selected.current = null
     setSelectedId(null)
     setName('')
@@ -50,7 +63,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     setEnabled(true)
     setShowApiKey(false)
     setConsoleError(null)
-  }, [])
+  }, [invalidateConsole])
 
   const load = useCallback(async () => {
     if (!alive.current) return
@@ -63,6 +76,8 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
       if (next.some((item) => item.id === selected.current)) return
       const first = next[0]
       if (first) {
+        invalidateConsole()
+        setConsoleBusy(false)
         selected.current = first.id
         setSelectedId(first.id)
         setName(first.name)
@@ -72,15 +87,17 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     } catch (cause) {
       if (alive.current && request === loadSequence.current) setError(cause instanceof Error ? cause.message : String(cause))
     }
-  }, [vaultId, resetForm])
+  }, [vaultId, resetForm, invalidateConsole])
 
   useEffect(() => {
     alive.current = true
     void load()
-    return () => { alive.current = false; loadSequence.current += 1 }
-  }, [load])
+    return () => { alive.current = false; loadSequence.current += 1; invalidateConsole() }
+  }, [load, invalidateConsole])
 
   const selectIntegration = (integration: KomariIntegration) => {
+    invalidateConsole()
+    setConsoleBusy(false)
     selected.current = integration.id
     setSelectedId(integration.id)
     setName(integration.name)
@@ -94,24 +111,49 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
 
   const openConsole = async () => {
     if (!savedIntegration) return
+    const integrationId = savedIntegration.id
+    const request = ++consoleSequence.current
+    const isCurrent = () => alive.current && consoleSequence.current === request && selected.current === integrationId
     let url: string
     try { url = komariConsoleUrl(savedIntegration.endpoint) }
     catch { setConsoleError('invalid-endpoint'); return }
-    const browserId = `komari-console-${crypto.randomUUID()}`
-    const sessionId = browserId
-    const closeNewWindow = async () => { try { await closeBrowserWindow(browserId, sessionId) } catch { /* Preserve the fixed opening error. */ } }
+    let openedWindow: { browserId: string; sessionId: string } | null = null
+    let preparedMobile: string | null = null
+    const closeNewWindow = async () => {
+      if (!openedWindow) return
+      try { await closeBrowserWindow(openedWindow.browserId, openedWindow.sessionId) } catch { /* Preserve the fixed opening error. */ }
+    }
     setConsoleBusy(true)
     setConsoleError(null)
     try {
+      const mode = await komariConsoleMode()
+      if (!isCurrent()) return
+      if (mode === 'mobile') {
+        preparedMobile = await prepareMobileKomariConsole(vaultId, integrationId)
+        // A prepare reply may arrive after selection/unmount, before we knew its
+        // token. Cancel that late token instead of ever sending an open request.
+        if (!isCurrent()) { await cancelMobileKomariConsole(preparedMobile); preparedMobile = null; return }
+        mobileRequest.current = preparedMobile
+        await openMobileKomariConsole(preparedMobile)
+        return
+      }
+      const browserId = `komari-console-${crypto.randomUUID()}`
+      const sessionId = browserId
+      openedWindow = { browserId, sessionId }
       await openBrowserWindow({ browserId, sessionId })
-      if (!alive.current) { await closeNewWindow(); return }
+      if (!isCurrent()) { await closeNewWindow(); return }
       await loadBrowserSource({ browserId, sessionId, source: { kind: 'url', url } })
-      if (!alive.current) await closeNewWindow()
-    } catch {
+      if (!isCurrent()) await closeNewWindow()
+    } catch (cause) {
       await closeNewWindow()
-      if (alive.current) setConsoleError('open-failed')
+      const code = cause instanceof Error ? cause.message : cause
+      if (isCurrent()) setConsoleError(code === 'VAULT_LOCKED' ? 'locked' : code === 'KOMARI_CONSOLE_INVALID_ENDPOINT' ? 'invalid-endpoint' : 'open-failed')
     } finally {
-      if (alive.current) setConsoleBusy(false)
+      if (preparedMobile) {
+        if (mobileRequest.current === preparedMobile) mobileRequest.current = null
+        try { await cancelMobileKomariConsole(preparedMobile) } catch { /* Native TTL also bounds abandoned tokens. */ }
+      }
+      if (isCurrent()) setConsoleBusy(false)
     }
   }
 
@@ -121,6 +163,9 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
       setError(t('settings.komariUnlockToSave'))
       return
     }
+    invalidateConsole()
+    setConsoleBusy(false)
+    setConsoleError(null)
     setBusy(true)
     setError('')
     try {
@@ -160,6 +205,9 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
 
   const remove = async () => {
     if (!alive.current || !selectedId) return
+    invalidateConsole()
+    setConsoleBusy(false)
+    setConsoleError(null)
     setBusy(true)
     setError('')
     try {
@@ -228,7 +276,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
           <Button variant="outline" size="sm" onClick={() => void openConsole()} disabled={busy || consoleBusy || !savedIntegration}><ExternalLink className="mr-1.5 h-3.5 w-3.5" />{t(consoleBusy ? 'settings.komariConsoleOpening' : 'settings.komariConsoleOpen')}</Button>
         </div>
         <p className="text-xs text-muted-foreground">{t('settings.komariConsoleHint')}</p>
-        {consoleError && <p role="alert" className="text-xs text-red-500">{t(consoleError === 'invalid-endpoint' ? 'settings.komariConsoleInvalidEndpoint' : 'settings.komariConsoleOpenFailed')}</p>}
+        {consoleError && <p role="alert" className="text-xs text-red-500">{t(consoleError === 'invalid-endpoint' ? 'settings.komariConsoleInvalidEndpoint' : consoleError === 'locked' ? 'settings.komariConsoleUnlock' : 'settings.komariConsoleOpenFailed')}</p>}
       </div>
     </section>
   )
