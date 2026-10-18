@@ -9,11 +9,11 @@ on:
       channel:
         type: choice
         options: [stable, preview, canary]
-        default: stable
+        default: preview
       rollout_percentage:
         description: Signed rollout percentage (integer 0-100; installation still requires confirmation)
         type: number
-        default: 100
+        default: 5
       previous_hashes:
         description: Optional JSON object mapping artifact IDs to their previous executable SHA-256
         type: string
@@ -21,7 +21,33 @@ on:
 permissions:
   contents: read
 jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require a manual dispatch from the default branch
+        env:
+          AGENT_RELEASE_EVENT: ${{ github.event_name }}
+          AGENT_RELEASE_REF_TYPE: ${{ github.ref_type }}
+          AGENT_RELEASE_REF_NAME: ${{ github.ref_name }}
+          AGENT_RELEASE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          if [ "$AGENT_RELEASE_EVENT" != workflow_dispatch ] ||
+             [ "$AGENT_RELEASE_REF_TYPE" != branch ] ||
+             [ -z "$AGENT_RELEASE_DEFAULT_BRANCH" ] ||
+             [ "$AGENT_RELEASE_REF_NAME" != "$AGENT_RELEASE_DEFAULT_BRANCH" ]; then
+            echo 'Agent release requires a manual dispatch from the default branch.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test publisher without production signing keys
+        run: node --test agent/scripts/publish-release.test.mjs
   build:
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch
     strategy:
       matrix:
         include:
@@ -62,7 +88,8 @@ jobs:
           name: agent-${{ matrix.platform }}-${{ matrix.architecture }}
           path: agent/dist/*
   sign-draft:
-    needs: build
+    needs: [validate, build]
+    if: github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -77,7 +104,7 @@ jobs:
           pattern: agent-*
           merge-multiple: true
           path: agent/dist
-      - name: Test publisher and sign catalog
+      - name: Sign catalog
         env:
           AGENT_ARTIFACT_SIGNING_KEY_PEM: ${{ secrets.AGENT_ARTIFACT_SIGNING_KEY_PEM }}
           AGENT_RELEASE_SIGNING_KEY_PEM: ${{ secrets.AGENT_RELEASE_SIGNING_KEY_PEM }}
@@ -85,9 +112,7 @@ jobs:
           AGENT_RELEASE_CHANNEL: ${{ inputs.channel }}
           AGENT_ROLLOUT_PERCENTAGE: ${{ inputs.rollout_percentage }}
           AGENT_PREVIOUS_HASHES: ${{ inputs.previous_hashes }}
-        run: |
-          node --test agent/scripts/publish-release.test.mjs
-          node agent/scripts/publish-release.mjs --input-dir agent/dist --output agent/dist/release-catalog.json --version "$AGENT_RELEASE_VERSION" --channel "$AGENT_RELEASE_CHANNEL" --rollout-percentage "$AGENT_ROLLOUT_PERCENTAGE" --previous-hashes "$AGENT_PREVIOUS_HASHES" --base-url "https://github.com/${{ github.repository }}/releases/download/agent-v$AGENT_RELEASE_VERSION"
+        run: node agent/scripts/publish-release.mjs --input-dir agent/dist --output agent/dist/release-catalog.json --version "$AGENT_RELEASE_VERSION" --channel "$AGENT_RELEASE_CHANNEL" --rollout-percentage "$AGENT_ROLLOUT_PERCENTAGE" --previous-hashes "$AGENT_PREVIOUS_HASHES" --base-url "https://github.com/${{ github.repository }}/releases/download/agent-v$AGENT_RELEASE_VERSION"
       - name: Create reviewable release draft
         env:
           GH_TOKEN: ${{ github.token }}
