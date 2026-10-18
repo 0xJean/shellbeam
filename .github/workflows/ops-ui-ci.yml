@@ -37,7 +37,7 @@ jobs:
       - run: npm ci
       - name: Verify transport, report and fixture guards
         run: |
-          node --test scripts/ops-ui-driver.test.mjs scripts/ops-ui-journey.test.mjs scripts/ops-ui-notifications.test.mjs scripts/ci-ops-ui-live.test.mjs
+          node --test scripts/ops-ui-driver.test.mjs scripts/ops-ui-journey.test.mjs scripts/ops-ui-notifications.test.mjs scripts/ci-ops-ui-live.test.mjs scripts/ops-ui-probe-fixture.test.mjs scripts/ops-ui-probe-journey.test.mjs scripts/ops-ui-probe-notifications.test.mjs
           bash -n scripts/ci-ops-ui-live.sh
           bash -n scripts/install-ops-ui-dunst.sh
       - name: Build checksum-pinned upstream dunst 1.7.3 for the real X11/count contract
@@ -50,7 +50,7 @@ jobs:
       - name: Build real release Debian package with a distinct test binary filename
         run: npx tauri build --ci --bundles deb --no-sign --config src-tauri/tauri.ops-ui.conf.json
       - name: Install package and exercise native UI as ordinary runner user
-        timeout-minutes: 12
+        timeout-minutes: 20
         env:
           SHELLBEAM_OPS_UI_LIVE: '1'
           SHELLBEAM_OPS_UI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

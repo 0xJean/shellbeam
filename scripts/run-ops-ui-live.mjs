@@ -70,6 +70,8 @@ async function readFixture(env) {
     assert(host.privateKeyPath === path.join(fixture.desktopDir, 'keys', `${role}.pem`), 'fixture credential scope')
     await privateFile(host.privateKeyPath)
     assert(/^SHA256:[A-Za-z0-9+/]{43}=$/.test(host.expectedFingerprint), 'exact fingerprint')
+    assert(host.sshdUnit === `shellbeam-ui-ssh-${fixture.fixtureId.slice('shellbeam-ops-ui-live-'.length)}-${role}.service`
+      && /^[a-f0-9]{64}$/.test(host.sshdUnitSha256 ?? ''), 'owned SSHD unit identity')
     if (role !== 'jump') {
       assert(/^00-shellbeam-ui-[a-z0-9-]+-(direct|via)\.service$/.test(host.serviceUnit), 'owned service unit')
       assert(host.serviceStartCountPath === path.join(fixture.rootFixtureDir, 'root', 'services', role, 'start-count'), 'owned service counter')
@@ -158,6 +160,8 @@ export async function main(env = process.env) {
   let child
   let log
   let alertNotifications
+  let probeNotifications
+  let probeFixture
   const baselines = new Map()
   const screenshots = new Set()
   const checkpoint = async (name, details) => {
@@ -169,6 +173,10 @@ export async function main(env = process.env) {
       return destination
     }
     const { role, unit, baseline } = details
+    if (name === 'probe-stop' || name === 'probe-restore') {
+      assert(probeFixture && ['direct', 'via'].includes(role) && Object.keys(details).length === 1, 'owned Probe fixture control')
+      return name === 'probe-stop' ? probeFixture.stop(role) : probeFixture.start(role)
+    }
     assert(['direct', 'via'].includes(role) && unit === fixture.hosts[role].serviceUnit, 'owned observation target')
     const current = await observe(fixture, role)
     if (name === 'before-cancel') {
@@ -228,6 +236,9 @@ export async function main(env = process.env) {
     assert(commit.trim() === env.GITHUB_SHA, 'exact checked-out commit')
     const { setupOpsUiJourney, activateOpsUiRules, runOpsUiIncidents, resumeOpsUiJourney } = await import('./ops-ui-journey.mjs')
     const { runOpsUiNotifications, startOpsUiAlertNotifications } = await import('./ops-ui-notifications.mjs')
+    const { createOpsUiProbeFixture } = await import('./ops-ui-probe-fixture.mjs')
+    const { runOpsUiProbeJourney, resumeOpsUiProbeJourney, settleOpsUiProbeInventory } = await import('./ops-ui-probe-journey.mjs')
+    const { startOpsUiProbeNotifications } = await import('./ops-ui-probe-notifications.mjs')
     stage = 'fixture-authentication'
     await verifyFixtureAuthentication(fixture, record)
     stage = 'launch'
@@ -261,16 +272,58 @@ export async function main(env = process.env) {
     assert(report.recovery.freshObservations === 2, 'both rules require real post-restart observations')
     stage = 'alert-delivery-after-restart'
     report.alertNotifications = safeDetails(await alertNotifications.afterRestart({ driver }))
+    await alertNotifications.stop()
+    alertNotifications = null
+    // A new owned daemon distinguishes the metrics lifecycle from the service
+    // rules. The actual saved jump profile is also monitored: stopping its
+    // SSHD affects both that profile and the host routed through it.
+    stage = 'probe-fixture-setup'
+    probeFixture = await createOpsUiProbeFixture({ fixture, record })
+    await probeFixture.verify('direct'); await probeFixture.verify('via')
+    stage = 'probe-notification-policy'
+    probeNotifications = await startOpsUiProbeNotifications({ driver, fixture, record, checkpoint, resumeState })
+    stage = 'probe-failure-and-recovery'
+    const probeState = await runOpsUiProbeJourney({ driver, fixture, record, checkpoint, resumeState,
+      onOpened: role => probeNotifications.verifyOpened(role), onResolved: role => probeNotifications.verifyResolved(role) })
+    stage = 'probe-inventory-settle'
+    report.probeInventory = safeDetails(await settleOpsUiProbeInventory({ driver, fixture, record, resumeState, probeState }))
+    assert(report.probeInventory.passed === true && report.probeInventory.freshObservations === 3, 'all inventory observations must settle before restart')
+    stage = 'probe-delivery-before-restart'
+    await probeNotifications.beforeRestart()
+    stage = 'probe-application-restart'
+    await stop()
+    record('probe-application-exit-confirmed')
+    const probeRestartedAfter = Date.now()
+    await launch()
+    // This performs the real Vault unlock and also reconfirms that fault
+    // injection did not restart either independent business service again.
+    stage = 'probe-unlock-and-service-audit-recovery'
+    report.postProbeServiceRecovery = safeDetails(await resumeOpsUiJourney({ driver, fixture, record, checkpoint, resumeState, restartedAfter: probeRestartedAfter }))
+    stage = 'probe-scoped-audit-recovery'
+    report.probeRecovery = safeDetails(await resumeOpsUiProbeJourney({ driver, fixture, record, resumeState, probeState, restartedAfter: probeRestartedAfter }))
+    assert(report.probeRecovery.freshObservations === 3 && report.probeRecovery.restoredJobs === 6, 'all Probe profiles and jobs require real restart evidence')
+    stage = 'probe-delivery-after-restart'
+    report.probeNotifications = safeDetails(await probeNotifications.afterRestart({ driver }))
     for (const role of ['direct', 'via']) assert(report.events.some(event => event.name === 'service-confirmed-once' && event.role === role), 'both routes exercised')
     assert(report.notifications?.passed === true, 'all real notification cases must pass')
     assert(report.rules?.passed === true && report.alertNotifications?.passed === true, 'real alert notification lifecycle must pass')
     assert(report.journey?.passed === true && report.recovery?.passed === true, 'incident and recovery assertions must pass')
+    assert(report.probeRecovery?.passed === true && report.probeNotifications?.passed === true
+      && report.probeNotifications.metricsVisible === 6 && report.probeNotifications.profiles === 3, 'real Probe lifecycle and visible notifications must pass')
     report.success = true
   } catch (error) {
     report.failure = { stage, code: error?.code && /^[a-z ]{1,64}$/.test(error.code) ? error.code : /^ops_ui_[a-z0-9_]{1,100}$/.test(error?.message ?? '') ? error.message : 'acceptance-failed' }
     report.lastInteraction = safeDetails(driver?.lastInteraction)
     console.error(`ShellBeam UI: ${stage} failed`)
   } finally {
+    if (probeNotifications) {
+      try { await probeNotifications.stop() }
+      catch { report.success = false; record('probe-notification-daemon-cleanup-failed') }
+    }
+    if (probeFixture) {
+      try { await probeFixture.restore() }
+      catch { report.success = false; record('probe-fixture-cleanup-failed') }
+    }
     if (alertNotifications) {
       try { await alertNotifications.stop() }
       catch { report.success = false; record('alert-notification-daemon-cleanup-failed') }

@@ -216,6 +216,17 @@ journey reads the real same-Vault/host dialog and clicks its response once; it
 does not inject consent or treat a missing dialog as success. New CI must prove
 this correction and all subsequent steps.
 
+The next installed-app journey preserves the complete service flow and its
+first actual process restart, then independently stops/restores the owned direct
+SSHD and saved jump SSHD. It requires three profiles' actual metrics failure and
+new-sample recovery, six fully visible metrics lifecycle OS banners, confirmed
+local-alert metadata jobs, fresh inventory observations before capturing final
+delivery counters, and a second real app restart with retained audit IDs and no
+notification replay. These are pending acceptance assertions, not live results.
+The root controller restores each affected SSHD in `finally`. The Activity UI's
+actual native source/status filters and bounded older-page controls are used to
+find retained records instead of enlarging the latest-100 window or reading IPC.
+
 Even a successful isolated Linux run does not prove macOS/Windows notification
 presentation, mobile browser/device behavior, an external Komari deployment,
 public-CA domain-control renewal or production Agent distribution. Those remain

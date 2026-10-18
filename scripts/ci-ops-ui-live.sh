@@ -54,6 +54,7 @@ ui_session_unit=
 ui_session_created=0
 ui_units=()
 ui_unit_hashes=()
+ui_sshd_hashes=()
 ui_cleanup_failed=0
 
 ui_unit_owned() {
@@ -374,6 +375,7 @@ KillMode=control-group
 TimeoutStopSec=5
 EOF
   ui_write_unit "$ui_unit" "$ui_secret/$ui_role/unit"
+  ui_sshd_hashes+=("$(sha256sum "/etc/systemd/system/$ui_unit" | cut -d' ' -f1)")
 done
 timeout 15 systemctl daemon-reload
 for ui_role in direct via; do
@@ -410,11 +412,11 @@ for value in sys.argv[1:]:
 PY
 
 ui_manifest=$ui_desktop/fixture.json
-python3 - "$ui_manifest" "$ui_root" "$ui_desktop" "$ui_runtime" "$ui_fixture_id" "$ui_app" "$ui_driver" "$ui_report" "$ui_observer_hosts" "$ui_jump_port" "$ui_direct_port" "$ui_via_port" "$ui_direct_service" "$ui_via_service" <<'PY'
+python3 - "$ui_manifest" "$ui_root" "$ui_desktop" "$ui_runtime" "$ui_fixture_id" "$ui_app" "$ui_driver" "$ui_report" "$ui_observer_hosts" "$ui_jump_port" "$ui_direct_port" "$ui_via_port" "$ui_direct_service" "$ui_via_service" "${ui_sshd_hashes[@]}" <<'PY'
 import base64, hashlib, json, os, sys
-path, root, desktop, runtime, fixture, app, driver, report, known, jump, direct, via, direct_unit, via_unit = sys.argv[1:]
+path, root, desktop, runtime, fixture, app, driver, report, known, jump, direct, via, direct_unit, via_unit, jump_sha, direct_sha, via_sha = sys.argv[1:]
 hosts = {}
-for role, port, service in [('jump', jump, None), ('direct', direct, direct_unit), ('via', via, via_unit)]:
+for role, port, service, ssh_sha in [('jump', jump, None, jump_sha), ('direct', direct, direct_unit, direct_sha), ('via', via, via_unit, via_sha)]:
     public_path = os.path.join(desktop, 'keys', role + '-host.pub')
     with open(public_path, encoding='ascii') as stream:
         key = stream.read().split()
@@ -422,6 +424,7 @@ for role, port, service in [('jump', jump, None), ('direct', direct, direct_unit
     hosts[role] = dict(name='ShellBeam UI ' + role + ' ' + fixture, address='127.0.0.1', port=int(port), user='root',
         privateKeyPath=os.path.join(desktop, 'keys', role + '.pem'), expectedFingerprint=fingerprint,
         hostPublicKeyPath=public_path, observerKnownHostsPath=known, serviceUnit=service,
+        sshdUnit='shellbeam-ui-ssh-' + fixture.removeprefix('shellbeam-ops-ui-live-') + '-' + role + '.service', sshdUnitSha256=ssh_sha,
         serviceStartCountPath=os.path.join(root, 'root', 'services', role, 'start-count') if service else None,
         initialServiceStartCount=1 if service else None)
 hosts['via']['jumpHostName'] = hosts['jump']['name']
@@ -442,9 +445,9 @@ cd -- "$ui_project"
 # runuser supplies the normal target-user environment; HOME is never overridden.
 # Private DBus has no service autoactivation. xvfb-run alone supplies DISPLAY and
 # XAUTHORITY. The actual WebKit sandbox remains enabled, under an ordinary UID.
-timeout --foreground --kill-after=15 660 systemd-run --quiet --wait --pipe --collect --service-type=exec --unit="$ui_session_unit" \
+timeout --foreground --kill-after=15 960 systemd-run --quiet --wait --pipe --collect --service-type=exec --unit="$ui_session_unit" \
   --description="ShellBeam disposable UI $ui_fixture_id" \
-  --property=KillMode=control-group --property=TimeoutStopSec=10 --property=RuntimeMaxSec=600 \
+  --property=KillMode=control-group --property=TimeoutStopSec=10 --property=RuntimeMaxSec=900 \
   --property="WorkingDirectory=$ui_project" \
   runuser -u "$ui_user" -- env -u SSH_AUTH_SOCK -u SSH_AGENT_PID -u GH_TOKEN -u GITHUB_TOKEN \
     -u DISPLAY -u XAUTHORITY -u DBUS_SESSION_BUS_ADDRESS -u WAYLAND_DISPLAY \

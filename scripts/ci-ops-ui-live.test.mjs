@@ -2,7 +2,7 @@
 // They never bypass the Linux guard or start systemd, SSH, Xvfb or an app.
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -19,6 +19,29 @@ test('shell syntax and embedded Python compile without executing the fixture', (
   for (const body of pythonBlocks) {
     execFileSync('python3', ['-c', 'import sys; compile(sys.stdin.read(), "fixture-helper", "exec")'], { input: body, stdio: 'pipe' })
   }
+})
+
+test('the actual manifest builder records independent generated SSHD units and their root-provided checksums', () => {
+  const builder = pythonBlocks.find(body => body.includes("hosts['via']['jumpHostName']"))
+  assert(builder)
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'shellbeam-ui-manifest-test-')))
+  try {
+    const desktop = path.join(root, 'desktop'), keys = path.join(desktop, 'keys')
+    mkdirSync(keys, { recursive: true })
+    for (const role of ['jump', 'direct', 'via']) writeFileSync(path.join(keys, `${role}-host.pub`), `ssh-rsa ${Buffer.from('fixture public bytes').toString('base64')} fixture\n`)
+    const fixtureId = 'shellbeam-ops-ui-live-123-1-a1b2c3d4'
+    const filename = path.join(desktop, 'fixture.json')
+    const hashes = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)]
+    execFileSync('python3', ['-c', builder, filename, root, desktop, '/run/fixture', fixtureId, '/usr/bin/app', '/usr/bin/driver',
+      path.join(root, 'report.json'), path.join(desktop, 'observer-known-hosts'), '22001', '22002', '22003',
+      '00-shellbeam-ui-123-1-a1b2c3d4-direct.service', '00-shellbeam-ui-123-1-a1b2c3d4-via.service', ...hashes], { stdio: 'pipe' })
+    const manifest = JSON.parse(readFileSync(filename, 'utf8'))
+    for (const [index, role] of ['jump', 'direct', 'via'].entries()) {
+      assert.equal(manifest.hosts[role].sshdUnit, `shellbeam-ui-ssh-123-1-a1b2c3d4-${role}.service`)
+      assert.equal(manifest.hosts[role].sshdUnitSha256, hashes[index])
+    }
+    assert.equal(lstatSync(filename).mode & 0o777, 0o600)
+  } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
 for (const [name, values, reason] of [
