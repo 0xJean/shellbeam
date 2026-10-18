@@ -4,22 +4,16 @@ import { HostListScrollArea } from './host-list-scroll-area'
 
 describe('host list scroll area', () => {
   let contentWidth = 1000
-  let controlsHeight = 49
   const observers: Array<{ observed: Set<Element>; disconnect: ReturnType<typeof vi.fn>; notify: () => void }> = []
 
   beforeEach(() => {
     contentWidth = 1000
-    controlsHeight = 49
     observers.length = 0
     vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
       return this.dataset.testid === 'host-list-scroll-viewport' ? contentWidth : 0
     })
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
       return this.dataset.testid === 'host-list-scroll-viewport' ? 300 : 0
-    })
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      const height = this.dataset.testid === 'host-list-scroll-controls' ? controlsHeight : 0
-      return { x: 0, y: 0, width: 300, height, top: 0, bottom: height, left: 0, right: 300, toJSON: () => ({}) }
     })
     vi.stubGlobal('ResizeObserver', class {
       observed = new Set<Element>()
@@ -34,19 +28,16 @@ describe('host list scroll area', () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   const content = (onChange = vi.fn()) => <HostListScrollArea><select aria-label="Host operation" defaultValue="" onChange={onChange}><option value="">Operations</option><option value="refresh">Refresh</option></select></HostListScrollArea>
-  const clearance = () => screen.getByTestId('host-list-scroll-viewport').parentElement!.style.getPropertyValue('--host-list-scroll-clearance')
-
-  it('measures the actual sticky control height and updates clearance on resize without selecting or scrolling a host', () => {
+  it('observes viewport and content resizing without selecting or scrolling a host', () => {
     const onChange = vi.fn()
     render(content(onChange))
-    const controls = screen.getByTestId('host-list-scroll-controls')
     const viewport = screen.getByTestId('host-list-scroll-viewport')
-    expect(clearance()).toBe('57px')
-    const observer = [...observers].reverse().find(entry => entry.observed.has(controls))!
-    expect(observer).toBeDefined()
-    controlsHeight = 81.25
+    const observer = observers[0]
+    expect(observer.observed.has(viewport)).toBe(true)
+    expect(observer.observed.has(viewport.firstElementChild!)).toBe(true)
+    contentWidth = 1300
     act(() => observer.notify())
-    expect(clearance()).toBe('90px')
+    expect(screen.getByRole('slider')).toHaveAttribute('max', '1000')
     expect(onChange).not.toHaveBeenCalled()
     expect(screen.getByRole('combobox', { name: 'Host operation' })).toHaveValue('')
     expect(viewport.scrollTop).toBe(0)
@@ -68,19 +59,19 @@ describe('host list scroll area', () => {
     expect(viewport.scrollTop).toBe(0)
   })
 
-  it('clears the reserved space when overflow disappears and disconnects observers after controls remount and unmount', () => {
+  it('shows controls only for actual overflow, handles its return and clears its observer and resize listener on unmount', () => {
+    const removeListener = vi.spyOn(window, 'removeEventListener')
     const view = render(content())
-    expect(clearance()).toBe('57px')
+    expect(screen.getByRole('slider')).toHaveAttribute('max', '700')
     contentWidth = 300
     act(() => window.dispatchEvent(new Event('resize')))
     expect(screen.queryByTestId('host-list-scroll-controls')).not.toBeInTheDocument()
-    expect(clearance()).toBe('0px')
     contentWidth = 1000
-    controlsHeight = 60
     act(() => window.dispatchEvent(new Event('resize')))
-    expect(clearance()).toBe('68px')
-    expect(observers.at(-1)!.observed.has(screen.getByTestId('host-list-scroll-controls'))).toBe(true)
+    expect(screen.getByRole('slider')).toHaveAttribute('max', '700')
+    expect(observers).toHaveLength(1)
     view.unmount()
     expect(observers.every(observer => observer.disconnect.mock.calls.length === 1)).toBe(true)
+    expect(removeListener).toHaveBeenCalledWith('resize', expect.any(Function))
   })
 })

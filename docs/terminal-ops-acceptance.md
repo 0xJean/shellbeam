@@ -149,3 +149,7 @@ Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例�
 提交`593c938`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39110943174)/[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39110943161)共11项通过，[核对的Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39110943174/artifacts/12130376995)16项通过、零跳过、清理成功，合并检出`0779f6a07c3508001c6da9ec4861e3e83fa7c1ad`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39110943186)保留服务/首次重启及Probe既有通过项，仍在via资产刷新失败；新实际几何和受控截图确认固定横向控制条完整覆盖了原生滚动后的菜单。最终计数和Probe第二次重启仍未验收，清理和应用退出通过，不以诊断成功替代GUI成功。
 
 横向控制条避让修复保留sticky和既有滚动容器，按实际控件高度加8px为列表内交互目标设置滚动margin。组件验证49/81.25px高度变化、清零、观察器清理及原横向分页/范围/键盘操作；相关55项通过，完整前端1264项通过、17项Linux用例在macOS跳过，生产构建、编译CSS规则、修改范围ESLint和空白检查通过。新打包GUI仍须证明原生点击与剩余Probe闭环，不以jsdom布局推断代替。
+
+提交`efb1b38`的[主CI](https://github.com/0xJean/shellbeam/actions/runs/39112417502)/[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39112417497)共11项通过，[核对的Ops报告](https://github.com/0xJean/shellbeam/actions/runs/39112417502/artifacts/12130858839)16项通过、零跳过、清理成功，合并检出`7e6dc376bae330191fefb1142950e2a8725e5bf0`。[GUI](https://github.com/0xJean/shellbeam/actions/runs/39112417494)通过两路服务闭环，但首次重启恢复时的direct主机Network菜单报不可交互；此处无失败像素/几何，不能推断为同一遮挡，原Probe资产刷新也未重测，清理及退出通过。
+
+当前方案将横向控制条放回正常文档流，删除上述测高和margin实现；PRD无常驻要求。已有横向viewport、分页/范围/键盘操作保留，纵向滚动后控制条不再常驻，以结构消除已证实的覆盖条件。相关55项组件、完整前端1264项（macOS跳过17项Linux用例）、生产构建和修改范围lint通过；真实点击和完整GUI仍须新运行验收。

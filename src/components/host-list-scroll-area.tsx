@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { ArrowLeftRight, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 
@@ -7,18 +7,14 @@ export function HostListScrollArea({ children }: { children: ReactNode }) {
   const viewportId = useId()
   const viewportRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const controlsRef = useRef<HTMLDivElement>(null)
-  const [position, setPosition] = useState({ left: 0, max: 0, clearance: 0 })
-  const hasHorizontalOverflow = position.max > 1
+  const [position, setPosition] = useState({ left: 0, max: 0 })
 
   function readPosition() {
     const viewport = viewportRef.current
     if (!viewport) return
     const max = Math.max(0, viewport.scrollWidth - viewport.clientWidth)
     const left = Math.max(0, Math.min(max, viewport.scrollLeft))
-    const controlsHeight = controlsRef.current?.getBoundingClientRect().height ?? 0
-    const clearance = max > 1 && Number.isFinite(controlsHeight) && controlsHeight > 0 ? Math.ceil(controlsHeight) + 8 : 0
-    setPosition((previous) => previous.left === left && previous.max === max && previous.clearance === clearance ? previous : { left, max, clearance })
+    setPosition((previous) => previous.left === left && previous.max === max ? previous : { left, max })
   }
 
   useLayoutEffect(() => {
@@ -31,13 +27,12 @@ export function HostListScrollArea({ children }: { children: ReactNode }) {
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(readPosition)
     observer?.observe(viewport)
     observer?.observe(content)
-    if (controlsRef.current) observer?.observe(controlsRef.current)
     window.addEventListener('resize', readPosition)
     return () => {
       observer?.disconnect()
       window.removeEventListener('resize', readPosition)
     }
-  }, [hasHorizontalOverflow])
+  }, [])
 
   function scrollTo(left: number) {
     const viewport = viewportRef.current
@@ -63,9 +58,9 @@ export function HostListScrollArea({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="relative min-w-0" style={{ '--host-list-scroll-clearance': `${position.clearance}px` } as CSSProperties}>
-      {hasHorizontalOverflow && (
-        <div ref={controlsRef} data-testid="host-list-scroll-controls" className="sticky top-0 z-10 flex items-center gap-3 border-b border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-950)] px-4 py-2 shadow-sm">
+    <div className="relative min-w-0">
+      {position.max > 1 && (
+        <div data-testid="host-list-scroll-controls" className="flex items-center gap-3 border-b border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-950)] px-4 py-2 shadow-sm">
           <div className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[var(--workspace-accent-text)]">
             <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />
             <span className="hidden sm:inline">{t('hosts.horizontalScrollHint')}</span>
@@ -91,7 +86,7 @@ export function HostListScrollArea({ children }: { children: ReactNode }) {
         </div>
       )}
       <div ref={viewportRef} id={viewportId} data-testid="host-list-scroll-viewport" onScroll={readPosition} className="workspace-scrollbar-hidden workspace-horizontal-scroll min-w-0 overflow-x-auto overscroll-x-contain rounded-b-2xl">
-        <div ref={contentRef} className="host-list-scroll-content xl:min-w-[86rem]">{children}</div>
+        <div ref={contentRef} className="xl:min-w-[86rem]">{children}</div>
       </div>
     </div>
   )

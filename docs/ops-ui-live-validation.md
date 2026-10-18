@@ -397,3 +397,24 @@ scrolling its ancestors; setting padding only on the horizontal viewport would
 not protect the outer vertical scroller. Component checks can establish measured
 clearance and observer cleanup, but a new installed-app run must still prove
 the one native selection, final inventory settlement and second restart.
+
+The sixteenth [UI run 39112417494](https://github.com/0xJean/shellbeam/actions/runs/39112417494),
+head `efb1b386be06b7e762efe334efee80582bbb6b4f`, merge checkout
+`7e6dc376bae330191fefb1142950e2a8725e5bf0`, passed both complete service
+journeys but failed earlier in first-restart recovery. After checking the two
+direct-host audit records and unchanged active-service start count, its native
+Network menu selection returned `element not interactable`. This position had
+no failure-time geometry or scoped screenshot, so its cause is not established.
+The Probe journey and original via inventory selection were not reached;
+cleanup and application exit passed. The margin change is not accepted as a
+working native fix.
+
+The current product instead keeps the horizontal toolbar in normal document
+flow. The PRD does not require it to remain sticky. Removing the overlay also
+removes the measured-clearance variable and content scroll margins; it does
+not add another scrollport or modify the driver. Horizontal range, paging and
+keyboard controls remain available, but the toolbar scrolls away vertically
+with the list. The viewport still supports native horizontal scrolling. This
+removes the established toolbar-overlap condition structurally; completion of
+native menu interactions and the full restart journey still requires a new
+installed-app run.
