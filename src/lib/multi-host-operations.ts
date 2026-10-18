@@ -10,6 +10,9 @@ import {
 } from './operation-job'
 import type { CommandRunResult } from './sessions'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
+import { remoteOperationStatus, verifiedOperationAudit, type VerifiedOperationResult } from './operation-verification'
+import { executeVerifiedServiceAction, safeDiagnosticService } from './workspace-diagnostics'
+import { buildDockerCommand, buildDockerVerificationCommand, dockerPostState } from './docker-ops'
 
 /**
  * Multi-host work is deliberately bounded.  A batch is a convenience for a
@@ -21,7 +24,7 @@ export const MAX_BATCH_HOSTS = 32
 export const MAX_BATCH_CONCURRENCY = 4
 export const DEFAULT_BATCH_CONCURRENCY = 2
 
-export type BatchOperationStatus = 'completed' | 'partial' | 'failed' | 'cancelled'
+export type BatchOperationStatus = 'completed' | 'partial' | 'failed' | 'unknown' | 'cancelled'
 export type BatchHostOperationStatus = OperationJob['status']
 
 export interface BatchHostOutcome<T> {
@@ -61,6 +64,8 @@ export interface BatchConfirmationContext {
 }
 
 export interface RunBatchOperationOptions<T> {
+  /** Explicit scope; contextual hosts may supply the same scope themselves. */
+  vaultId?: string
   /** Hosts are expected to be the user's explicit selection. */
   hosts: HostProfile[]
   /** Optional IDs make it possible to pass an entire host list safely. */
@@ -79,6 +84,7 @@ export interface RunBatchOperationOptions<T> {
     resultSummary?: string
     errorCode?: string
     errorSummary?: string
+    errorType?: CommandRunResult['errorType']
   }
   onOutcome?: (outcome: BatchHostOutcome<T>) => void
   provider?: string
@@ -105,6 +111,9 @@ export function selectBatchHosts(hosts: readonly HostProfile[], selectedHostIds?
   if (ids.length > MAX_BATCH_HOSTS) throw new Error(`batch_selection_too_large:max=${MAX_BATCH_HOSTS}`)
 
   const byId = new Map(hosts.map((host) => [host.id, host]))
+  for (const id of ids) {
+    if (new Set(hosts.filter((host) => host.id === id).map((host) => host.vaultId ?? '')).size > 1) throw new Error('batch_selection_ambiguous_host')
+  }
   const missing = ids.filter((id) => !byId.has(id))
   if (missing.length > 0) throw new Error(`batch_selection_unknown_host:${missing.join(',').slice(0, 240)}`)
   return {
@@ -139,7 +148,7 @@ function initialOutcome<T>(host: HostProfile): BatchHostOutcome<T> {
 function summarizeResult<T>(value: T, getResult?: RunBatchOperationOptions<T>['getResult']) {
   const result = getResult?.(value)
   if (!result) return { result, status: 'completed' as const, resultSummary: 'completed' }
-  const status = result.exitCode === 0 ? 'completed' as const : 'failed' as const
+  const status = remoteOperationStatus(result)
   return {
     result,
     status,
@@ -158,7 +167,7 @@ function aggregateStatus<T>(outcomes: BatchHostOutcome<T>[], confirmed: boolean)
   const completed = outcomes.filter((outcome) => outcome.status === 'completed').length
   const unknown = outcomes.filter((outcome) => outcome.status === 'unknown').length
   if (completed === outcomes.length) return 'completed'
-  if (unknown === outcomes.length) return 'failed'
+  if (unknown === outcomes.length) return 'unknown'
   if (failed === outcomes.length) return 'failed'
   if (completed > 0) return 'partial'
   return unknown > 0 ? 'partial' : 'failed'
@@ -192,7 +201,9 @@ export function isBatchActionAllowed(action: string): action is BatchAllowedActi
  * and uses the existing workspace transport callback supplied by the caller.
  */
 export async function runBatchOperation<T>(options: RunBatchOperationOptions<T>): Promise<BatchOperationResult<T>> {
-  const { hosts, selectedHostIds } = selectBatchHosts(options.hosts, options.selectedHostIds)
+  const selection = selectBatchHosts(options.hosts, options.selectedHostIds)
+  const hosts = selection.hosts.map((host) => ({ ...host, vaultId: batchVaultId(host, options.vaultId) }))
+  const selectedHostIds = selection.selectedHostIds
   const now = options.now ?? (() => Date.now())
   const startedAt = now()
   const action = safeOperationTarget(options.action, 120)
@@ -216,6 +227,7 @@ export async function runBatchOperation<T>(options: RunBatchOperationOptions<T>)
     try {
       outcomes[index]!.job = await createJob({
         hostId: host.id,
+        vaultId: host.vaultId,
         hostName: host.name,
         hostAddress: host.address,
         username: host.username,
@@ -295,18 +307,18 @@ export async function runBatchOperation<T>(options: RunBatchOperationOptions<T>)
         outcome.value = value
         outcome.resultSummary = summary.resultSummary
         outcome.status = summary.status
-        if (summary.result && summary.result.exitCode !== 0) {
-          outcome.errorCode = summary.result.errorCode ?? `exit_${summary.result.exitCode}`
-          outcome.errorSummary = summary.result.errorSummary ?? 'Remote command exited with a non-zero status'
+        if (summary.result && summary.status !== 'completed') {
+          outcome.errorCode = summary.result.errorCode ?? (summary.status === 'unknown' ? 'remote_state_unknown' : `exit_${summary.result.exitCode}`)
+          outcome.errorSummary = summary.result.errorSummary ?? (summary.status === 'unknown' ? 'Remote result is unknown; verify before retrying' : 'Remote command exited with a non-zero status')
         }
         outcome.job = await updateJob({
           jobId: outcome.job.jobId,
           status: summary.status,
           resultSummary: outcome.resultSummary,
-          ...(outcome.status === 'failed' ? { errorCode: outcome.errorCode, errorSummary: outcome.errorSummary } : {}),
+          ...(outcome.status !== 'completed' ? { errorCode: outcome.errorCode, errorSummary: outcome.errorSummary } : {}),
         })
       } catch (error) {
-        const unknown = isUnknownOperationError(error)
+        const unknown = outcome.status === 'unknown' || isUnknownOperationError(error)
         outcome.status = unknown ? 'unknown' : 'failed'
         outcome.errorCode = unknown ? 'remote_state_unknown' : 'operation_failed'
         outcome.errorSummary = boundedError(error)
@@ -366,8 +378,13 @@ function finalizeResult<T>(input: {
 export type BatchServiceAction = 'status' | 'start' | 'stop' | 'restart'
 export type BatchDockerAction = 'start' | 'stop' | 'restart'
 
-function safeServiceName(name: string) {
-  return /^[A-Za-z0-9_.@:-]+\.service$/.test(name) && name.length <= 160
+function batchVaultId(host: HostProfile, explicitVaultId?: string) {
+  const explicit = explicitVaultId?.trim()
+  const contextual = host.vaultId?.trim()
+  if (explicit && contextual && explicit !== contextual) throw new Error('batch_vault_scope_mismatch')
+  const vaultId = explicit || contextual
+  if (!vaultId) throw new Error('batch_vault_scope_required')
+  return vaultId
 }
 
 function shellQuote(value: string) {
@@ -385,17 +402,41 @@ export function runBatchServiceOperation(options: Omit<RunBatchOperationOptions<
   serviceAction: BatchServiceAction
   resolveAuthSecret: (host: HostProfile) => Promise<string>
 }) {
-  if (!safeServiceName(options.serviceName)) throw new Error('batch_service_name_invalid')
+  if (!safeDiagnosticService(options.serviceName)) throw new Error('batch_service_name_invalid')
   const command = options.serviceAction === 'status'
-    ? `systemctl status --no-pager ${options.serviceName}`
-    : `systemctl ${options.serviceAction} ${options.serviceName} && systemctl status --no-pager ${options.serviceName}`
+    ? `systemctl show --property=LoadState --property=ActiveState --property=UnitFileState -- ${options.serviceName}`
+    : `systemctl ${options.serviceAction} -- ${options.serviceName}`
   return runBatchOperation({
     ...options,
     action: `service.${options.serviceAction}`,
     target: options.serviceName,
     risk: serviceRisk(options.serviceAction),
     paramsSummary: command,
-    execute: (host) => runWorkspaceRemoteCommand({ host, resolveAuthSecret: options.resolveAuthSecret, command }),
+    execute: async (host) => {
+      const run = (command: string) => runWorkspaceRemoteCommand({ host, vaultId: batchVaultId(host, options.vaultId), resolveAuthSecret: options.resolveAuthSecret, command })
+      if (options.serviceAction === 'status') {
+        const result = await run(command)
+        if (remoteOperationStatus(result) !== 'completed') return result
+        const active = result.stdout.match(/^ActiveState=([a-z-]+)$/m)?.[1]
+        return active ? { ...result, resultSummary: `status=observed; active=${active}` } : { ...result, exitCode: -1, errorCode: 'remote_state_unknown', resultSummary: 'status=unobservable', errorSummary: 'Service state could not be observed' }
+      }
+      let mutation: CommandRunResult | undefined
+      let observation: CommandRunResult | undefined
+      try {
+        const verified = await executeVerifiedServiceAction(async (next) => {
+          const result = await run(next)
+          if (!mutation) mutation = result
+          else observation = result
+          return result
+        }, options.serviceName, options.serviceAction)
+        return verified.errorCode === 'remote_state_unknown' && observation && remoteOperationStatus(observation) === 'unknown'
+          ? { ...verified, errorCode: observation.errorCode ?? 'remote_state_unknown', errorType: 'unknown' as const }
+          : verified
+      } catch (error) {
+        if (!mutation || mutation.exitCode !== 0) throw error
+        return { ...mutation, exitCode: -1, errorCode: 'remote_state_unknown', resultSummary: `action=${options.serviceAction}; verification=unknown`, errorSummary: 'Service action was sent but its post-state is unavailable; verify before retrying' }
+      }
+    },
     getResult: (result) => result,
   })
 }
@@ -416,14 +457,33 @@ export function runBatchDockerOperation(options: Omit<RunBatchOperationOptions<C
 }) {
   if (!safeDockerTarget(options.containerName)) throw new Error('batch_docker_target_invalid')
   const quoted = shellQuote(options.containerName)
-  const command = `docker ${options.dockerAction} ${quoted} && docker inspect --format '__SB_DOCKER={{.ID}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.State.Status}}' ${quoted}`
+  const command = `resolve container id; docker ${options.dockerAction}; verify state`
   return runBatchOperation({
     ...options,
     action: `docker.${options.dockerAction}`,
     target: options.containerName,
     risk: dockerRisk(options.dockerAction),
     paramsSummary: command,
-    execute: (host) => runWorkspaceRemoteCommand({ host, resolveAuthSecret: options.resolveAuthSecret, command }),
-    getResult: (result) => result,
+    execute: async (host): Promise<VerifiedOperationResult> => {
+      const run = (command: string) => runWorkspaceRemoteCommand({ host, vaultId: batchVaultId(host, options.vaultId), resolveAuthSecret: options.resolveAuthSecret, command })
+      // Resolution happens only after the one batch confirmation. A stable
+      // full id prevents later name reuse from redirecting the accepted write.
+      const resolved = await run(`docker inspect --format '__SB_DOCKER_ID={{.Id}}' ${quoted}`)
+      if (remoteOperationStatus(resolved) !== 'completed') return { ...resolved, verification: { status: 'not-run', summary: 'Container identity could not be resolved; no mutation executed.' } }
+      const ids = resolved.stdout.split('\n').filter((line) => line.startsWith('__SB_DOCKER_ID=')).map((line) => line.slice('__SB_DOCKER_ID='.length).trim())
+      if (ids.length !== 1 || !/^[a-f0-9]{64}$/.test(ids[0])) return { ...resolved, verification: { status: 'unknown', summary: 'Container immutable identity is unavailable; no mutation executed.' } }
+      const id = ids[0]
+      const result = await run(buildDockerCommand(options.dockerAction, id))
+      if (remoteOperationStatus(result) !== 'completed') return { ...result, durationMs: resolved.durationMs + result.durationMs, verification: { status: 'not-run', summary: 'Docker command did not complete; no post-state was claimed.' } }
+      try {
+        const observed = await run(buildDockerVerificationCommand(id))
+        const state = remoteOperationStatus(observed) === 'completed' ? dockerPostState(observed.stdout, { id, name: options.containerName, image: '', status: '', ports: '', running: false }) : null
+        const verified = state && !state.paused && !state.restarting && (options.dockerAction === 'stop' ? !state.running && ['exited', 'created'].includes(state.status) : state.running && state.status === 'running')
+        return { ...result, ...(remoteOperationStatus(observed) === 'unknown' ? { errorCode: observed.errorCode, errorType: observed.errorType } : {}), durationMs: resolved.durationMs + result.durationMs + observed.durationMs, verification: { status: verified ? 'verified' : 'unknown', summary: state ? `action=${options.dockerAction}; observed=${state.status}; running=${state.running}; paused=${state.paused}; restarting=${state.restarting}` : 'Docker post-state is unavailable; verify before retrying.' } }
+      } catch {
+        return { ...result, verification: { status: 'unknown', summary: 'Docker command returned successfully, but its post-state is unavailable; verify before retrying.' } }
+      }
+    },
+    getResult: verifiedOperationAudit,
   })
 }

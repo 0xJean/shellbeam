@@ -1,3 +1,4 @@
+import { observationVaultIds, scopeObservationHosts } from './host-observation-scope'
 import type { HostProfile } from '@/lib/hosts'
 import {
   getServerMonitorHostKey,
@@ -16,6 +17,7 @@ import {
   type ServerMonitorHostState,
 } from './server-monitor-state'
 import { getProbeProviderRegistry } from './probe-scheduler'
+import { isUnsupportedProbeError } from './unified-probe'
 
 export const SERVER_MONITOR_INTERVAL_MS = 60 * 1000
 export const SERVER_MONITOR_HISTORY_MS = 24 * 60 * 60 * 1000
@@ -72,7 +74,7 @@ export async function loadPersistedServerMonitorStates(
 ) {
   if (!isCurrent()) return
   pruneServerMonitorStates(hosts)
-  const latest = await listServerMonitorLatest()
+  const latest = await listServerMonitorLatest(observationVaultIds(hosts))
   if (!isCurrent()) return
   const hostKeys = new Set(hosts.map(getServerMonitorHostKey))
   const latestByKey = latest.filter((entry) => hostKeys.has(entry.hostKey))
@@ -110,6 +112,7 @@ export async function scanServerMonitorHosts({
     return { scannedHosts: [], skippedHosts: hosts }
   }
 
+  hosts = scopeObservationHosts(hosts, vaultId)
   pruneServerMonitorStates(hosts)
   const pending = hosts.slice()
   const scannedHosts: HostProfile[] = []
@@ -150,6 +153,16 @@ export async function scanServerMonitorHosts({
           force: true,
         })
         const probe = scheduled.snapshot
+        if (probe.health === 'unsupported') {
+          if (!isCurrent()) return
+          const latest = createServerMonitorLatest(host, 'unsupported', attemptAt, previous?.latest, {
+            snapshot: null, error: probe.errors[0]?.message ?? 'unsupported_os', probeTelemetry: probe.telemetry ?? null,
+          })
+          await saveServerMonitorResult({ latest }).catch(() => undefined)
+          mergeServerMonitorStates({ [key]: { latest, history: historyForState(previous) } })
+          scannedHosts.push(host)
+          continue
+        }
         if (!probe.metrics || (scheduled.recovered && !vaultId)) {
           throw new Error(probe.errors[0]?.message || 'server monitor returned no usable Linux metrics')
         }
@@ -198,11 +211,12 @@ export async function scanServerMonitorHosts({
       } catch (error) {
         if (!isCurrent()) return
 
-        const status = isServerMonitorVaultUnavailableError(error)
+        const status = isUnsupportedProbeError(error) ? 'unsupported' : isServerMonitorVaultUnavailableError(error)
           ? 'paused'
           : getServerMonitorFailureStatus(previous?.latest, Date.now())
         const latest = createServerMonitorLatest(host, status, attemptAt, previous?.latest, {
           error: errorMessage(error),
+          ...(status === 'unsupported' ? { snapshot: null } : {}),
         })
         try {
           await saveServerMonitorResult({ latest })

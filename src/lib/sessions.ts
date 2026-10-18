@@ -1,6 +1,7 @@
 import type { AuthType } from '@/lib/ssh'
 import { invoke } from '@tauri-apps/api/core'
 import { toInvokeErrorMessage } from '@/lib/invoke-error'
+import type { HostIdentity } from './host-identity'
 
 export type CommandRunStatus = 'success' | 'failed'
 
@@ -37,6 +38,7 @@ export interface VerifiedHostKey {
 }
 
 export interface CommandRunResult {
+  hostIdentity?: HostIdentity
   verifiedHostKeys?: VerifiedHostKey[]
   stdout: string
   stderr: string

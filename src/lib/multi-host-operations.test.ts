@@ -4,13 +4,19 @@ import {
   MAX_BATCH_HOSTS,
   normalizeBatchConcurrency,
   runBatchOperation,
+  runBatchServiceOperation,
+  runBatchDockerOperation,
   selectBatchHosts,
 } from './multi-host-operations'
 import type { HostProfile } from './hosts'
 import type { CreateOperationJobRequest, OperationJob, UpdateOperationJobRequest } from './operation-job'
+import { runWorkspaceRemoteCommand } from './workspace-remote'
+
+vi.mock('./workspace-remote', () => ({ runWorkspaceRemoteCommand: vi.fn() }))
 
 const host = (id: string, jumpHost?: string): HostProfile => ({
   id,
+  vaultId: 'vault-1',
   name: id,
   address: `${id}.example.test`,
   port: 22,
@@ -21,6 +27,115 @@ const host = (id: string, jumpHost?: string): HostProfile => ({
   ...(jumpHost ? { jumpHost, jumpPort: 2200, jumpUser: 'jump' } : {}),
   createdAt: 0,
   updatedAt: 0,
+})
+
+function batchAudit() {
+  const rows = new Map<string, OperationJob>()
+  const createJob = vi.fn(async (request: CreateOperationJobRequest) => {
+    const row = { ...request, jobId: `job-${request.hostId}`, auditId: `audit-${request.hostId}`, status: 'queued', confirmationStatus: 'pending', queuedAt: 1, updatedAt: 1 } as OperationJob
+    rows.set(row.jobId, row)
+    return row
+  })
+  const updateJob = vi.fn(async (request: UpdateOperationJobRequest) => {
+    const row = { ...rows.get(request.jobId), ...request } as OperationJob
+    rows.set(row.jobId, row)
+    return row
+  })
+  return { createJob, updateJob }
+}
+const remoteResult = (stdout = '', exitCode = 0) => ({ stdout, stderr: '', exitCode, durationMs: 1 })
+
+describe('batch canonical result closure', () => {
+  beforeEach(() => { vi.mocked(runWorkspaceRemoteCommand).mockReset() })
+
+  it.each(['target_timeout', 'target_disconnected', 'output_limit', 'remote_state_unknown'])('retains native %s as unknown in each job and the aggregate', async (errorCode) => {
+    const audit = batchAudit()
+    const execute = vi.fn(async () => ({ ...remoteResult('', -1), errorCode, errorType: 'network' as const }))
+    const result = await runBatchOperation({ hosts: [host('a')], action: 'service.restart', target: 'nginx.service', risk: 'high', confirmMessage: 'Confirm?', confirm: () => true, execute, getResult: (value) => value, ...audit })
+    expect(result).toMatchObject({ status: 'unknown', unknownCount: 1, failedCount: 0 })
+    expect(result.outcomes[0].job).toMatchObject({ status: 'unknown', errorCode, vaultId: 'vault-1' })
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(audit.updateJob).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'unknown', errorCode }))
+  })
+
+  it('keeps pre-exec timeout known failed and keeps exact vault scope on the remote call and audit', async () => {
+    const audit = batchAudit()
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce({ ...remoteResult('', -1), errorCode: 'target_timeout_before_execution', errorType: 'network' })
+    const result = await runBatchServiceOperation({ hosts: [{ ...host('a'), vaultId: undefined }], vaultId: 'explicit-vault', serviceName: 'nginx.service', serviceAction: 'restart', resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', confirm: () => true, ...audit })
+    expect(result.outcomes[0].job).toMatchObject({ status: 'failed', errorCode: 'target_timeout_before_execution', vaultId: 'explicit-vault' })
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledWith(expect.objectContaining({ vaultId: 'explicit-vault', host: expect.objectContaining({ vaultId: 'explicit-vault' }) }))
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects missing, conflicting and ambiguous vault scope before creating jobs or executing', async () => {
+    const audit = batchAudit()
+    const options = { hosts: [host('a')], serviceName: 'nginx.service', serviceAction: 'restart' as const, resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', confirm: vi.fn(() => true), ...audit }
+    await expect(runBatchServiceOperation({ ...options, vaultId: 'other' })).rejects.toThrow('batch_vault_scope_mismatch')
+    await expect(runBatchServiceOperation({ ...options, hosts: [{ ...host('a'), vaultId: undefined }] })).rejects.toThrow('batch_vault_scope_required')
+    await expect(runBatchServiceOperation({ ...options, hosts: [host('a'), { ...host('a'), vaultId: 'other' }] })).rejects.toThrow('batch_selection_ambiguous_host')
+    expect(audit.createJob).not.toHaveBeenCalled()
+    expect(options.confirm).not.toHaveBeenCalled()
+    expect(runWorkspaceRemoteCommand).not.toHaveBeenCalled()
+  })
+
+  it('verifies a successfully stopped service as inactive without systemctl status exit 3', async () => {
+    const audit = batchAudit()
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce(remoteResult()).mockResolvedValueOnce(remoteResult('ActiveState=inactive\nUnitFileState=enabled'))
+    const result = await runBatchServiceOperation({ hosts: [host('a')], serviceName: 'nginx.service', serviceAction: 'stop', resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', confirm: () => true, ...audit })
+    expect(result.outcomes[0].job).toMatchObject({ status: 'completed', resultSummary: expect.stringContaining('active=inactive') })
+    expect(vi.mocked(runWorkspaceRemoteCommand).mock.calls.map(([request]) => request.command)).toEqual(['systemctl stop -- nginx.service', 'systemctl show --property=ActiveState --property=UnitFileState -- nginx.service'])
+  })
+
+  it('does not complete a service restart when the observed state is failed', async () => {
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce(remoteResult()).mockResolvedValueOnce(remoteResult('ActiveState=failed\nUnitFileState=enabled'))
+    const result = await runBatchServiceOperation({ hosts: [host('a')], serviceName: 'nginx.service', serviceAction: 'restart', resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', confirm: () => true, ...batchAudit() })
+    expect(result.outcomes[0].job).toMatchObject({ status: 'unknown', errorCode: 'post_state_unverified' })
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps any unavailable post-service observation unknown and never replays the write', async () => {
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce(remoteResult()).mockRejectedValueOnce(new Error('permission denied to read service status'))
+    const result = await runBatchServiceOperation({ hosts: [host('a')], serviceName: 'nginx.service', serviceAction: 'restart', resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', confirm: () => true, ...batchAudit() })
+    expect(result.outcomes[0].job).toMatchObject({ status: 'unknown', errorCode: 'remote_state_unknown' })
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledTimes(2)
+  })
+
+  it('resolves each host container after one confirmation and writes/verifies only its immutable id', async () => {
+    const ids = { a: 'a'.repeat(64), b: 'b'.repeat(64) }
+    const confirm = vi.fn(() => true)
+    const audit = batchAudit()
+    vi.mocked(runWorkspaceRemoteCommand).mockImplementation(async ({ host, command }) => {
+      expect(confirm).toHaveBeenCalledTimes(1)
+      const id = ids[host.id as keyof typeof ids]
+      if (command.includes('__SB_DOCKER_ID=')) return remoteResult(`__SB_DOCKER_ID=${id}`)
+      if (command.includes('__SB_DOCKER_VERIFY=')) return remoteResult(`__SB_DOCKER_VERIFY=${id}|${host.id === 'a' ? 'running|true' : 'exited|false'}|false|false`)
+      expect(command).toBe(`docker restart '${id}'`)
+      return remoteResult()
+    })
+    const result = await runBatchDockerOperation({ hosts: [host('a', 'jump'), host('b')], containerName: 'api', dockerAction: 'restart', resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', confirm, ...audit })
+    expect(result).toMatchObject({ status: 'partial', completedCount: 1, unknownCount: 1 })
+    expect(result.outcomes[0].job?.status).toBe('completed')
+    expect(result.outcomes[1].job?.status).toBe('unknown')
+    expect(audit.createJob).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(runWorkspaceRemoteCommand).mock.calls.filter(([request]) => request.command.startsWith('docker restart '))).toHaveLength(2)
+    expect(vi.mocked(runWorkspaceRemoteCommand).mock.calls.every(([request]) => request.vaultId === 'vault-1')).toBe(true)
+  })
+
+  it('does not execute Docker writes after rejected confirmation or unparseable identity', async () => {
+    const options = { hosts: [host('a')], containerName: 'api', dockerAction: 'start' as const, resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', ...batchAudit() }
+    expect((await runBatchDockerOperation({ ...options, confirm: () => false })).status).toBe('cancelled')
+    expect(runWorkspaceRemoteCommand).not.toHaveBeenCalled()
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce(remoteResult('__SB_DOCKER_ID=api'))
+    expect((await runBatchDockerOperation({ ...options, confirm: () => true })).outcomes[0].job?.status).toBe('unknown')
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves native Docker action timeout and does not inspect or replay after it', async () => {
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce(remoteResult(`__SB_DOCKER_ID=${'a'.repeat(64)}`)).mockResolvedValueOnce({ ...remoteResult('', -1), errorCode: 'target_timeout', errorType: 'network' })
+    const result = await runBatchDockerOperation({ hosts: [host('a')], containerName: 'api', dockerAction: 'restart', resolveAuthSecret: async () => '', confirmMessage: 'Confirm?', confirm: () => true, ...batchAudit() })
+    expect(result.outcomes[0].job).toMatchObject({ status: 'unknown', errorCode: 'target_timeout' })
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('multi-host operations', () => {

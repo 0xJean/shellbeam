@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { authorizeScheduledTask, clearScheduledTaskAuthorizations, isScheduledTaskDue, loadScheduledTasks, normalizeScheduledTask, runScheduledTaskOperation, saveScheduledTasks } from './scheduled-tasks'
+import { authorizeScheduledTask, clearScheduledTaskAuthorizations, isScheduledTaskAuthorized, isScheduledTaskDue, loadScheduledTasks, normalizeScheduledTask, runScheduledTaskOperation, saveScheduledTasks } from './scheduled-tasks'
 
 describe('scheduled tasks', () => {
   beforeEach(() => { localStorage.clear(); clearScheduledTaskAuthorizations() })
@@ -22,10 +22,11 @@ describe('scheduled tasks', () => {
 
 
   it('records scheduled executions with the host transport and bounded summaries', async () => {
-    const task = authorizeScheduledTask(undefined, normalizeScheduledTask({ id: 'host-1:task', hostId: 'host-1', name: 'check', command: 'systemctl is-active nginx', intervalMinutes: 5 }, 10), 'enable-job', 10)
+    const task = authorizeScheduledTask('vault-1', normalizeScheduledTask({ id: 'host-1:task', hostId: 'host-1', name: 'check', command: 'systemctl is-active nginx', intervalMinutes: 5 }, 10), 'enable-job', 10)
     const createJob = vi.fn().mockResolvedValue({ jobId: 'job-1', auditId: 'audit-1' })
     const updateJob = vi.fn().mockImplementation(async (request) => ({ jobId: 'job-1', auditId: 'audit-1', ...request }))
     const result = await runScheduledTaskOperation({
+      vaultId: 'vault-1',
       task,
       host: { id: 'host-1', name: 'jumped', address: '10.0.0.4', port: 22, username: 'ops', group: 'Custom', authType: 'privateKey', jumpHost: 'bastion', jumpPort: 2222, jumpUser: 'jump', tags: [], createdAt: 0, updatedAt: 0 },
       resolveAuthSecret: async () => 'secret',
@@ -36,6 +37,30 @@ describe('scheduled tasks', () => {
     expect(createJob).toHaveBeenCalledWith(expect.objectContaining({ action: 'scheduled-task.run', transport: 'proxy-jump', confirmationRequired: false }))
     expect(updateJob).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'completed' }))
     expect(result.job.jobId).toBe('job-1')
+  })
+
+  it.each(['target_timeout', 'target_disconnected', 'output_limit', 'remote_state_unknown'])('preserves %s as unknown, revokes authorization and never reruns it', async (errorCode) => {
+    const task = authorizeScheduledTask('vault', normalizeScheduledTask({ id: 'task', hostId: 'host', name: 'write', command: 'systemctl restart nginx', intervalMinutes: 1 }, 1000), 'enable-job', 1000)
+    saveScheduledTasks('vault', 'host', [task], 1000)
+    const runCommand = vi.fn(async () => ({ stdout: '', stderr: 'private output', exitCode: -1, durationMs: 30000, errorCode, errorType: 'unknown' as const }))
+    const createJob = vi.fn().mockResolvedValue({ jobId: 'job', auditId: 'audit' })
+    const updateJob = vi.fn().mockImplementation(async (request) => ({ jobId: 'job', auditId: 'audit', ...request }))
+    const options = { vaultId: 'vault', task, host: { id: 'host', vaultId: 'vault', name: 'edge', address: '10.0.0.1', port: 22, username: 'ops', authType: 'password' as const, group: 'Custom', tags: [], createdAt: 0, updatedAt: 0 }, resolveAuthSecret: async () => '', runCommand, createJob, updateJob }
+    const result = await runScheduledTaskOperation(options)
+    expect(result.job).toMatchObject({ status: 'unknown', errorCode })
+    expect(isScheduledTaskAuthorized('vault', task)).toBe(false)
+    expect(loadScheduledTasks('vault', 'host')[0]).toMatchObject({ enabled: false, nextRunAt: null, lastStatus: 'unknown', pausedReason: 'interrupted' })
+    await expect(runScheduledTaskOperation(options)).rejects.toThrow('confirmed session authorization')
+    expect(runCommand).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(loadScheduledTasks('vault', 'host'))).not.toContain('private output')
+  })
+
+  it('retains pre-exec timeout as known not executed and keeps its precise error code', async () => {
+    const task = authorizeScheduledTask('vault', normalizeScheduledTask({ id: 'task', hostId: 'host', name: 'write', command: 'true', intervalMinutes: 1 }, 1000), 'enable-job', 1000)
+    const updateJob = vi.fn().mockImplementation(async (request) => ({ jobId: 'job', auditId: 'audit', ...request }))
+    const result = await runScheduledTaskOperation({ vaultId: 'vault', task, host: { id: 'host', name: 'edge', address: '10.0.0.1', port: 22, username: 'ops', authType: 'password', group: 'Custom', tags: [], createdAt: 0, updatedAt: 0 }, resolveAuthSecret: async () => '', runCommand: async () => ({ stdout: '', stderr: '', exitCode: -1, durationMs: 30000, errorCode: 'target_timeout_before_execution', errorType: 'network' }), createJob: vi.fn().mockResolvedValue({ jobId: 'job', auditId: 'audit' }), updateJob })
+    expect(result.job).toMatchObject({ status: 'failed', errorCode: 'target_timeout_before_execution' })
+    expect(isScheduledTaskAuthorized('vault', task)).toBe(true)
   })
 
   it('supports a bounded scheduler callback', async () => {

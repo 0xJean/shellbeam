@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createAgentlessSshProbeProvider,
   createDelegatingProbeProvider,
@@ -7,6 +7,7 @@ import {
   getProbeTransport,
   type ProbeRequest,
 } from './probe-provider'
+import { UnsupportedProbeError } from './unified-probe'
 
 const host = {
   id: 'host-1',
@@ -46,6 +47,16 @@ describe('ProbeProvider contract', () => {
     const referenced = { ...host, jumpHostId: 'jump-profile', jumpHost: undefined }
     expect(getProbeTransport(referenced)).toBe('proxy-jump')
     expect(getProbeHostIdentity(referenced).jump?.hostId).toBe('jump-profile')
+  })
+
+  it('preserves a definite non-Linux result without invented metrics or offline state', async () => {
+    const identity = { ...getProbeHostIdentity(host), jump: { hostId: 'jump', address: 'edited-bastion', port: 2200, username: 'current' } }
+    const collect = vi.fn(async () => { throw new UnsupportedProbeError('Darwin', identity) })
+    const snapshot = await createAgentlessSshProbeProvider({ dependencies: { collect } }).probe(request)
+    expect(collect).toHaveBeenCalledTimes(1)
+    expect(snapshot).toMatchObject({ health: 'unsupported', metrics: null, inventory: null, host: identity })
+    expect(snapshot.errors).toHaveLength(2)
+    expect(snapshot.errors.every((error) => error.code === 'unsupported_os')).toBe(true)
   })
 
   it('marks observation freshness from the remote sample timestamp', () => {

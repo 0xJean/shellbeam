@@ -125,6 +125,7 @@ function observationFresh(snapshot: ProbeSnapshot, sections: ProbeSection[], now
 }
 
 function probeCollectionFailed(snapshot: ProbeSnapshot, fallback: ProbeSnapshot, sections: ProbeSection[]) {
+  if (snapshot.health === 'unsupported') return false
   if (snapshot.errors.length === 0) return false
   return sections.some((section) => (
     (section === 'metrics' || section === 'inventory') && snapshot[section] === null && fallback[section] !== null
@@ -132,6 +133,7 @@ function probeCollectionFailed(snapshot: ProbeSnapshot, fallback: ProbeSnapshot,
 }
 
 function probeNeedsRetry(snapshot: ProbeSnapshot, sections: ProbeSection[]) {
+  if (snapshot.health === 'unsupported') return false
   if (snapshot.errors.length === 0) return false
   return sections.some((section) => (
     (section === 'metrics' || section === 'inventory') && snapshot[section] === null

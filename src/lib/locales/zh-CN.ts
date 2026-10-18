@@ -1,4 +1,8 @@
 const zhCN: Record<string, string> = {
+  'workspace.docker.observationUnavailable': '容器状态无法确认，请刷新后再操作。',
+  'workspace.operation.hostReview': '主机：{host}\n连接路径：{route}\n命令摘要：{command}',
+  'workspace.operation.route.direct': '直连',
+  'workspace.operation.route.reference': 'ProxyJump 主机引用 {id}',
   'mcp.title': 'Agent 访问（MCP）',
   'mcp.enabled': '启用本地 MCP',
   'mcp.description': '为本机 Agent 提供服务器信息和可选的 SSH / SFTP 访问。需要保持 ShellBeam 运行，不规划或接管部署，也不需要在服务器安装 Agent。',
@@ -415,6 +419,7 @@ const zhCN: Record<string, string> = {
   'multiHost.operations.serviceRestart': '重启 systemd 服务',
   'multiHost.operations.serviceRestartDescription': '在每台选中主机上重启同名 systemd 服务。',
   'multiHost.confirm': '确认在 {count} 台选中主机（{hosts}）上对 {target} 执行“{operation}”吗？每台主机都会创建可审计的 OperationJob。',
+  'multiHost.commandPreview': '命令摘要：{command}\n目标主机和连接路径：\n{routes}',
   'multiHost.cancelled': '批量操作已取消。',
   'multiHost.run': '执行操作',
   'multiHost.running': '执行中…',
@@ -1410,9 +1415,11 @@ const zhCN: Record<string, string> = {
   'workspace.tools.action.disable': '禁用',
   'workspace.tools.action.logs': '日志',
   'workspace.tools.confirmAction': '要{action} {name} 吗？',
+  'workspace.tools.operationReview': '主机：{host}\n连接路径：{route}\n操作：{action} {target}\n风险：{risk}\n命令摘要：{command}\n软件包和服务变更可能使用 root 或免密 sudo，并影响依赖服务。操作和独立后态检查均会记录审计。是否继续？',
   'workspace.tools.actionCompleted': '{action} 完成',
   'workspace.tools.noHostSelected': '未选择主机',
   'workspace.tools.remoteCommandExited': '远程命令退出码 {code}',
+  'workspace.tools.persistenceUnavailable': '无法读取或保存工具状态，请刷新后再继续。',
   'workspace.tools.command.noPackageRecipe': '此工具没有 {manager} 包安装配方',
   'workspace.tools.command.rootRequired': '需要 root 权限，且 sudo 不可用',
   'workspace.tools.command.noSupportedPackageManager': '未找到支持的包管理器',
@@ -2243,6 +2250,15 @@ const zhCN: Record<string, string> = {
 
   'provider.history.partial': '本次有界查询仅显示较新的数据来源。请缩小 Provider 或时间范围以查看其他历史。',
   'workspace.sessionVaultMismatch': '此会话属于其他 Vault。请切回原 Vault 后使用主机运维功能，终端仍可继续使用。',
+  'hosts.statusUnsupported': '监控不支持',
+  'hostCard.unsupported': '监控不支持',
+  'workspace.monitor.status.unsupported': '监控不支持',
+
+  'hostOps.open': '运维入口',
+  'hostOps.openForHost': '打开 {host} 的运维页面',
+  'hostOps.alertsAndChecks': '告警与健康检查',
+  'hostOps.refreshProbe': '刷新探测',
+  'hostOps.refreshFailed': '探测刷新失败，已保留之前的数据。',
 
 }
 

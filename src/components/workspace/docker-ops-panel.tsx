@@ -1,10 +1,12 @@
+import { getHostIdentity } from '@/lib/host-identity'
+import { remoteOperationStatus } from '@/lib/operation-verification'
 import { Button } from '@/components/ui/button'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { buildDockerCommand, DOCKER_LIST_COMMAND, parseDockerContainers, runDockerContainerAction, type DockerContainer } from '@/lib/docker-ops'
 import { Box, CircleAlert, FileText, Play, RefreshCw, RotateCcw, Square } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 interface DockerOpsPanelProps {
   host: HostProfile
@@ -24,18 +26,31 @@ export function DockerOpsPanel({ host, resolveAuthSecret }: DockerOpsPanelProps)
   const [selectedName, setSelectedName] = useState<string | null>(null)
   const [output, setOutput] = useState('')
   const [action, setAction] = useState<'start' | 'stop' | 'restart' | 'logs' | null>(null)
+  const scope = JSON.stringify([host.vaultId, getHostIdentity(host)])
+  const currentScope = useRef(scope)
+  currentScope.current = scope
+  const loadGeneration = useRef(0)
+  const loadErrorMessage = t('workspace.docker.observationUnavailable')
   const selected = useMemo(() => rows.find((row) => row.name === selectedName) ?? rows[0] ?? null, [rows, selectedName])
 
-  async function loadContainers() {
+  const loadContainers = useCallback(async () => {
+    const generation = ++loadGeneration.current
+    const isCurrent = () => generation === loadGeneration.current && scope === currentScope.current
     setLoading(true)
     setError('')
     setUnsupported(false)
     try {
-      const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: DOCKER_LIST_COMMAND })
+      const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: DOCKER_LIST_COMMAND, audit: { action: 'docker.list', target: 'docker containers' } })
+      if (!isCurrent()) return
       const combined = [result.stdout, result.stderr].filter(Boolean).join('\n')
       if (/__SB_DOCKER_UNAVAILABLE|command not found/i.test(combined) || result.exitCode === 127) {
         setUnsupported(true)
         setRows([])
+        return
+      }
+      if (remoteOperationStatus(result) !== 'completed') {
+        setRows([])
+        setError(loadErrorMessage)
         return
       }
       const parsed = parseDockerContainers(combined)
@@ -43,21 +58,25 @@ export function DockerOpsPanel({ host, resolveAuthSecret }: DockerOpsPanelProps)
       setSelectedName((current) => current && parsed.some((row) => row.name === current) ? current : parsed[0]?.name ?? null)
       if (parsed.length === 0 && combined) setOutput(combined)
     } catch (caught) {
+      if (!isCurrent()) return
       setError(caught instanceof Error ? caught.message : String(caught))
       setRows([])
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
-  }
+  }, [host, resolveAuthSecret, scope, loadErrorMessage])
 
   async function execute(actionName: 'start' | 'stop' | 'restart' | 'logs') {
     if (!selected) return
+    const actionScope = scope
     setAction(actionName)
     setError('')
     try {
       if (actionName === 'logs') {
-        const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: buildDockerCommand('logs', selected.name) })
-        setOutput([result.stdout, result.stderr].filter(Boolean).join('\n') || t('workspace.docker.actionCompleted'))
+        const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: buildDockerCommand('logs', selected.id), audit: { action: 'docker.logs', target: selected.name } })
+        if (actionScope !== currentScope.current) return
+        if (remoteOperationStatus(result) !== 'completed') setError(t('workspace.docker.observationUnavailable'))
+        setOutput([result.stdout, result.stderr].filter(Boolean).join('\n') || (remoteOperationStatus(result) === 'completed' ? t('workspace.docker.actionCompleted') : t('workspace.docker.observationUnavailable')))
         return
       }
       const execution = await runDockerContainerAction({
@@ -67,21 +86,28 @@ export function DockerOpsPanel({ host, resolveAuthSecret }: DockerOpsPanelProps)
         container: selected,
         confirmMessage: t('workspace.docker.confirm', { action: t(`workspace.docker.action.${actionName}`), target: selected.name }),
       })
+      if (actionScope !== currentScope.current) return
       if (!execution) {
         setOutput(t('workspace.operation.cancelled'))
         return
       }
       const result = execution.value
-      setOutput(`job=${execution.job.jobId} audit=${execution.job.auditId} status=${execution.job.status}\n${[result.stdout, result.stderr].filter(Boolean).join('\n')}`)
-      await loadContainers()
+      setOutput(`job=${execution.job.jobId} audit=${execution.job.auditId} status=${execution.job.status}\nverification=${result.verification.status}; ${result.verification.summary}\n${[result.stdout, result.stderr].filter(Boolean).join('\n')}`)
+      const observedContainer = result.container
+      if (observedContainer) setRows((current) => current.map((row) => row.id === observedContainer.id ? observedContainer : row))
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      if (actionScope === currentScope.current) setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setAction(null)
+      if (actionScope === currentScope.current) setAction(null)
     }
   }
 
-  useEffect(() => { void loadContainers() }, [host.id])
+  useEffect(() => {
+    const generations = loadGeneration
+    setRows([]); setSelectedName(null); setOutput(''); setAction(null)
+    void loadContainers()
+    return () => { generations.current++ }
+  }, [loadContainers])
 
   return (
     <section data-testid="docker-ops-panel" className="space-y-3 rounded-xl border border-border/60 bg-card px-4 py-4">

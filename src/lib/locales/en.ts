@@ -1,4 +1,8 @@
 const en: Record<string, string> = {
+  'workspace.docker.observationUnavailable': 'Container state could not be observed. Refresh before acting.',
+  'workspace.operation.hostReview': 'Host: {host}\nRoute: {route}\nCommand summary: {command}',
+  'workspace.operation.route.direct': 'Direct',
+  'workspace.operation.route.reference': 'ProxyJump host reference {id}',
   'mcp.title': 'Agent Access (MCP)',
   'mcp.enabled': 'Enable local MCP',
   'mcp.description': 'Give local agents server context and optional SSH / SFTP access. ShellBeam must remain open; it does not plan or manage deployments. No remote agent installation is needed.',
@@ -415,6 +419,7 @@ const en: Record<string, string> = {
   'multiHost.operations.serviceRestart': 'Restart systemd service',
   'multiHost.operations.serviceRestartDescription': 'Restarts the same systemd service on each selected host.',
   'multiHost.confirm': 'Confirm {operation} for {target} on {count} selected hosts ({hosts})? Each host will create an auditable OperationJob.',
+  'multiHost.commandPreview': 'Command summary: {command}\nTargets and connection routes:\n{routes}',
   'multiHost.cancelled': 'Batch operation cancelled.',
   'multiHost.run': 'Run operation',
   'multiHost.running': 'Running…',
@@ -1410,9 +1415,11 @@ const en: Record<string, string> = {
   'workspace.tools.action.disable': 'disable',
   'workspace.tools.action.logs': 'logs',
   'workspace.tools.confirmAction': '{action} {name}?',
+  'workspace.tools.operationReview': 'Host: {host}\nRoute: {route}\nAction: {action} {target}\nRisk: {risk}\nCommand summary: {command}\nPackage and service changes may use root or passwordless sudo and affect dependent services. The operation and independent post-state check will be audited. Continue?',
   'workspace.tools.actionCompleted': '{action} completed',
   'workspace.tools.noHostSelected': 'No host selected',
   'workspace.tools.remoteCommandExited': 'Remote command exited with {code}',
+  'workspace.tools.persistenceUnavailable': 'Tool status could not be loaded or saved. Refresh before continuing.',
   'workspace.tools.command.noPackageRecipe': 'No {manager} package recipe is available for this tool',
   'workspace.tools.command.rootRequired': 'Root privileges are required and sudo is not available',
   'workspace.tools.command.noSupportedPackageManager': 'No supported package manager found',
@@ -2243,6 +2250,15 @@ const en: Record<string, string> = {
 
   'provider.history.partial': 'Only the newest sources fit this bounded result. Narrow the provider or time range to inspect more history.',
   'workspace.sessionVaultMismatch': 'This session belongs to another Vault. Switch back to its Vault to use host operations; its terminal remains available.',
+  'hosts.statusUnsupported': 'Unsupported monitoring',
+  'hostCard.unsupported': 'Unsupported monitoring',
+  'workspace.monitor.status.unsupported': 'Unsupported monitoring',
+
+  'hostOps.open': 'Operations',
+  'hostOps.openForHost': 'Open operations for {host}',
+  'hostOps.alertsAndChecks': 'Alerts and health checks',
+  'hostOps.refreshProbe': 'Refresh probe',
+  'hostOps.refreshFailed': 'Probe refresh failed; previous observations retained.',
 
 }
 

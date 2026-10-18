@@ -1,3 +1,4 @@
+import { getHostIdentity } from '@/lib/host-identity'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/lib/i18n'
 import type { HostProfile } from '@/lib/hosts'
@@ -10,7 +11,7 @@ import {
   type SiteSslScanResult,
 } from '@/lib/sites-ssl'
 import { BadgeCheck, CircleAlert, ExternalLink, RefreshCw, RotateCw, ShieldCheck, Wrench } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 export interface SitesSslPanelProps {
   host: HostProfile
@@ -41,24 +42,36 @@ export function SitesSslPanel({ host, resolveAuthSecret }: SitesSslPanelProps) {
   const [action, setAction] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [output, setOutput] = useState('')
+  const scope = JSON.stringify([host.vaultId, getHostIdentity(host)])
+  const currentScope = useRef(scope)
+  currentScope.current = scope
+  const scanGeneration = useRef(0)
 
-  async function scan() {
+  const scan = useCallback(async () => {
+    const generation = ++scanGeneration.current
+    const isCurrent = () => generation === scanGeneration.current && scope === currentScope.current
     setLoading(true)
     setError('')
     try {
-      setResult(await runSiteSslScan({ host, resolveAuthSecret }))
+      const snapshot = await runSiteSslScan({ host, resolveAuthSecret })
+      if (isCurrent()) setResult(snapshot)
     } catch (cause) {
+      if (!isCurrent()) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
-  }
+  }, [host, resolveAuthSecret, scope])
 
   useEffect(() => {
+    const generations = scanGeneration
+    setResult(null); setOutput(''); setAction(null)
     void scan()
-  }, [host.id])
+    return () => { generations.current++ }
+  }, [scan])
 
   async function siteAction(site: SiteRecord, operation: 'config-test' | 'reload') {
+    const actionScope = scope
     setAction(`${operation}:${site.id}`)
     setError('')
     try {
@@ -69,20 +82,22 @@ export function SitesSslPanel({ host, resolveAuthSecret }: SitesSslPanelProps) {
         operation,
         confirmMessage: t(`workspace.sitesSsl.confirm.${operation}`),
       })
+      if (actionScope !== currentScope.current) return
       if (!execution) {
         setOutput(t('workspace.sitesSsl.cancelled'))
         return
       }
-      setOutput(operationSummary(execution.job, [execution.value.stdout, execution.value.stderr].filter(Boolean).join('\n')))
-      if (operation === 'reload') await scan()
+      setOutput(operationSummary(execution.job, [`verification=${execution.value.verification.status}; ${execution.value.verification.summary}`, execution.value.stdout, execution.value.stderr].filter(Boolean).join('\n')))
+      if (execution.value.snapshot) setResult(execution.value.snapshot)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      if (actionScope === currentScope.current) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setAction(null)
+      if (actionScope === currentScope.current) setAction(null)
     }
   }
 
   async function certificateAction(operation: 'renew-dry-run' | 'renew') {
+    const actionScope = scope
     setAction(operation)
     setError('')
     try {
@@ -92,16 +107,17 @@ export function SitesSslPanel({ host, resolveAuthSecret }: SitesSslPanelProps) {
         operation,
         confirmMessage: t(`workspace.sitesSsl.confirm.${operation}`),
       })
+      if (actionScope !== currentScope.current) return
       if (!execution) {
         setOutput(t('workspace.sitesSsl.cancelled'))
         return
       }
-      setOutput(operationSummary(execution.job, [execution.value.stdout, execution.value.stderr].filter(Boolean).join('\n')))
-      if (operation === 'renew') await scan()
+      setOutput(operationSummary(execution.job, [`verification=${execution.value.verification.status}; ${execution.value.verification.summary}`, execution.value.stdout, execution.value.stderr].filter(Boolean).join('\n')))
+      if (execution.value.snapshot) setResult(execution.value.snapshot)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      if (actionScope === currentScope.current) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setAction(null)
+      if (actionScope === currentScope.current) setAction(null)
     }
   }
 

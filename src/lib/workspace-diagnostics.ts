@@ -1,4 +1,5 @@
 import type { CommandRunResult } from './sessions'
+import { isRemoteOperationOutcomeUnknown, remoteOperationStatus } from './operation-verification'
 
 export const PROCESS_LIMIT = 5000
 export const PROCESS_PAGE_SIZE = 50
@@ -31,16 +32,16 @@ export type DiagnosticServiceAction = 'start' | 'stop' | 'restart' | 'enable' | 
 export type VerifiedDiagnosticResult = CommandRunResult & { resultSummary: string; errorCode?: string; errorSummary?: string }
 type RunCommand = (command: string) => Promise<CommandRunResult>
 function unverifiable(result: CommandRunResult, check: CommandRunResult, summary: string): VerifiedDiagnosticResult {
-  return { ...result, durationMs: result.durationMs + check.durationMs, exitCode: check.exitCode || 125, errorCode: 'remote_state_unknown', resultSummary: `${summary}; verification=unknown`, errorSummary: 'The action was sent but its resulting state could not be observed; inspect the host before retrying' }
+  return { ...result, durationMs: result.durationMs + check.durationMs, exitCode: check.exitCode || 125, errorCode: isRemoteOperationOutcomeUnknown(check) ? check.errorCode ?? 'remote_state_unknown' : 'remote_state_unknown', errorType: 'unknown', resultSummary: `${summary}; verification=unknown`, errorSummary: 'The action was sent but its resulting state could not be observed; inspect the host before retrying' }
 }
 export async function executeVerifiedServiceAction(run: RunCommand, service: string, action: DiagnosticServiceAction): Promise<VerifiedDiagnosticResult> {
   if (!safeDiagnosticService(service)) throw new Error('invalid_service_name')
   const result = await run(`systemctl ${action} -- ${service}`)
-  if (result.exitCode !== 0) return { ...result, resultSummary: `action=${action}; verification=not-run; exit=${result.exitCode}` }
+  if (remoteOperationStatus(result) !== 'completed') return { ...result, resultSummary: `action=${action}; verification=not-run; exit=${result.exitCode}` }
   const check = await run(`systemctl show --property=ActiveState --property=UnitFileState -- ${service}`)
   const active = check.stdout.match(/^ActiveState=([a-z-]+)$/m)?.[1]
   const enabled = check.stdout.match(/^UnitFileState=([a-z-]+)$/m)?.[1]
-  if (check.exitCode !== 0 || ((action === 'enable' || action === 'disable') ? !enabled : !active)) return unverifiable(result, check, `action=${action}`)
+  if (remoteOperationStatus(check) !== 'completed' || ((action === 'enable' || action === 'disable') ? !enabled : !active)) return unverifiable(result, check, `action=${action}`)
   const passed = check.exitCode === 0 && (action === 'stop' ? active === 'inactive' : action === 'enable' ? enabled === 'enabled' || enabled === 'enabled-runtime' : action === 'disable' ? enabled === 'disabled' : active === 'active')
   return {
     ...result, stdout: check.stdout, stderr: check.stderr, durationMs: result.durationMs + check.durationMs,
@@ -52,13 +53,13 @@ export async function executeVerifiedServiceAction(run: RunCommand, service: str
 export async function executeVerifiedProcessTermination(run: RunCommand, pid: string): Promise<VerifiedDiagnosticResult> {
   if (!safeDiagnosticPid(pid)) throw new Error('invalid_process_id')
   const result = await run(`kill -TERM -- ${pid}`)
-  if (result.exitCode !== 0) return { ...result, resultSummary: `signal=TERM; verification=not-run; exit=${result.exitCode}` }
+  if (remoteOperationStatus(result) !== 'completed') return { ...result, resultSummary: `signal=TERM; verification=not-run; exit=${result.exitCode}` }
   let durationMs = result.durationMs
   for (let attempt = 0; attempt < 3; attempt++) {
     const check = await run(`ps -p ${pid} -o pid=,state=`)
     durationMs += check.durationMs
-    if (check.exitCode === 1 && !check.stdout.trim() && !check.stderr.trim() && !check.errorCode) return { ...result, durationMs, resultSummary: 'signal=TERM; verification=passed; process=absent' }
-    if (check.exitCode !== 0 || !new RegExp(`^\\s*${pid}\\s+[A-Za-z]`, 'm').test(check.stdout)) return unverifiable({ ...result, durationMs: durationMs - check.durationMs }, check, 'signal=TERM')
+    if (check.exitCode === 1 && !check.stdout.trim() && !check.stderr.trim() && !isRemoteOperationOutcomeUnknown(check) && (!check.errorType || check.errorType === 'command') && (!check.errorCode || check.errorCode === 'remote_command_failed')) return { ...result, durationMs, resultSummary: 'signal=TERM; verification=passed; process=absent' }
+    if (remoteOperationStatus(check) !== 'completed' || !new RegExp(`^\\s*${pid}\\s+[A-Za-z]`, 'm').test(check.stdout)) return unverifiable({ ...result, durationMs: durationMs - check.durationMs }, check, 'signal=TERM')
     if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250))
   }
   return { ...result, durationMs, exitCode: 125, resultSummary: 'signal=TERM; verification=failed; process=present-or-unverified', errorCode: 'post_state_unverified', errorSummary: 'Process termination was not verified; inspect current state before retrying' }

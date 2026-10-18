@@ -8,17 +8,17 @@ use std::time::{Duration, Instant};
 pub const REMOTE_OUTPUT_LIMIT: usize = 256 * 1024;
 pub const REMOTE_COMMAND_TIMEOUT_SECS: u64 = 90;
 
-fn route(app: &tauri::AppHandle, payload: &SshRequest) -> Result<Route, String> {
+fn route(app: &tauri::AppHandle, payload: &SshRequest) -> Result<(Route, Value), String> {
     if let Some(host_id) = payload
         .host_id
         .as_deref()
         .filter(|id| !id.trim().is_empty())
     {
         if let Some(vault_id) = payload.vault_id.as_deref() {
-            return transport::resolve_host_route(app, vault_id, host_id);
+            return transport::resolve_host_route_with_identity(app, vault_id, host_id);
         }
     }
-    Ok(transport::legacy_route(
+    let route = transport::legacy_route(
         &payload.host,
         payload.port,
         &payload.username,
@@ -29,7 +29,13 @@ fn route(app: &tauri::AppHandle, payload: &SshRequest) -> Result<Route, String> 
         payload.jump_host.as_deref(),
         payload.jump_port,
         payload.jump_user.as_deref(),
-    ))
+    );
+    let id = payload
+        .host_id
+        .clone()
+        .unwrap_or_else(|| format!("{}@{}:{}", payload.username, payload.host, payload.port));
+    let identity = transport::route_identity(&route, &id, None);
+    Ok((route, identity))
 }
 
 fn connection_failure(start: Instant, error: String) -> CommandRunResult {
@@ -63,7 +69,7 @@ pub async fn test_ssh_connection(
 ) -> Result<ConnectionTestResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let start = Instant::now();
-        match route(&app, &payload).and_then(|route| transport::connect(&app, &route)) {
+        match route(&app, &payload).and_then(|(route, _)| transport::connect(&app, &route)) {
             Ok(_) => ConnectionTestResult {
                 connected: true,
                 duration_ms: start.elapsed().as_millis(),
@@ -113,17 +119,26 @@ pub(crate) fn run_ssh_command_sync(app: tauri::AppHandle, payload: SshRequest) -
             false,
         );
     }
-    let result = match route(&app, &payload).and_then(|route| transport::connect(&app, &route)) {
-        Ok(connection) => match transport::ensure_vault_unlocked(&app, payload.vault_id.as_deref())
-        {
-            Ok(()) => execute(
-                connection,
-                &payload.command,
-                start,
-                Duration::from_secs(REMOTE_COMMAND_TIMEOUT_SECS),
-            ),
-            Err(error) => connection_failure(start, error),
-        },
+    let result = match route(&app, &payload).and_then(|(route, identity)| {
+        transport::connect(&app, &route).map(|connection| (connection, identity))
+    }) {
+        Ok((connection, identity)) => {
+            match transport::ensure_vault_unlocked(&app, payload.vault_id.as_deref()) {
+                Ok(()) => {
+                    let mut result = execute(
+                        connection,
+                        &payload.command,
+                        start,
+                        Duration::from_secs(REMOTE_COMMAND_TIMEOUT_SECS),
+                    );
+                    if result.verified_host_keys.is_some() {
+                        result.host_identity = Some(identity);
+                    }
+                    result
+                }
+                Err(error) => connection_failure(start, error),
+            }
+        }
         Err(error) => connection_failure(start, error),
     };
     // Saved-host operations have their own bounded OperationJob journal. Do
@@ -278,6 +293,7 @@ pub fn execute(
         }
     };
     CommandRunResult {
+        host_identity: None,
         verified_host_keys: Some(connection.verified_host_keys.clone()),
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
         stderr: String::from_utf8_lossy(&stderr).into_owned(),

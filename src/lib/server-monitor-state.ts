@@ -113,5 +113,6 @@ export function getServerMonitorStatusLabel(status: ServerMonitorStatus | undefi
   if (status === 'stale') return 'stale'
   if (status === 'offline') return 'offline'
   if (status === 'paused') return 'paused'
+  if (status === 'unsupported') return 'unsupported'
   return 'checking'
 }

@@ -122,4 +122,25 @@ describe('operation jobs', () => {
     expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({ status: 'unknown', errorCode: 'target_timeout' }) })
   })
 
+  it.each([
+    { exitCode: -1, errorCode: 'target_timeout', errorType: 'network' as const, status: 'unknown' },
+    { exitCode: -1, errorCode: 'target_disconnected', errorType: 'network' as const, status: 'unknown' },
+    { exitCode: -1, errorCode: 'output_limit', errorType: 'unknown' as const, status: 'unknown' },
+    { exitCode: -1, errorCode: 'remote_state_unknown', errorType: 'unknown' as const, status: 'unknown' },
+    { exitCode: -1, errorCode: 'target_timeout_before_execution', errorType: 'network' as const, status: 'failed' },
+    { exitCode: 0, errorCode: undefined, errorType: 'unknown' as const, status: 'unknown' },
+  ])('uses native outcome metadata instead of guessing from exitCode ($errorCode)', async ({ status, ...result }) => {
+    invoke.mockImplementation(async (_command, args) => ({ jobId: 'native-job', auditId: 'native-audit', ...(args as { request: object }).request }))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const execution = await runConfirmedOperation({ host, action: 'service.restart', target: 'nginx', risk: 'high', confirmMessage: 'Restart?', execute: async () => ({ ...result, durationMs: 1 }), getResult: (value) => value })
+    expect(execution?.job.status).toBe(status)
+    expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({ status, errorCode: result.errorCode ?? 'remote_state_unknown' }) })
+  })
+
+  it('attaches the canonical job to thrown errors for schedule recovery', async () => {
+    invoke.mockImplementation(async (_command, args) => ({ jobId: 'throw-job', auditId: 'throw-audit', ...(args as { request: object }).request }))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await expect(runConfirmedOperation({ host, action: 'service.restart', target: 'nginx', risk: 'high', confirmMessage: 'Restart?', execute: async () => { throw new Error('transport connection lost') } })).rejects.toMatchObject({ operationJob: { jobId: 'throw-job', status: 'unknown' } })
+  })
+
 })

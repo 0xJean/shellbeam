@@ -150,6 +150,17 @@ describe('ShellBeam Probe lifecycle', () => {
     } finally { clock.mockRestore() }
   })
 
+  it('uses the shared partial referenced identity until native SSH supplies the verified current route', async () => {
+    const target = { ...host, jumpHostId: 'jump' }
+    const record = normalizeShellbeamAgentRecord({ hostId: host.id, status: 'installed', health: 'online', transport: 'proxy-jump' }, 100)
+    expect(shellbeamAgentRecordToProbeSnapshot(record, target, 100).host.jump).toEqual({ hostId: 'jump' })
+    const hostIdentity = { hostId: host.id, address: host.address, port: host.port, username: host.username, jump: { hostId: 'jump', address: 'edited-bastion', port: 2200, username: 'current-user' } }
+    const now = Date.now()
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce({ stdout: JSON.stringify({ schemaVersion: 1, status: 'installed', health: 'online', lastHeartbeatAt: now, sampledAt: now, metrics: { cpuPercent: 20 } }), stderr: '', exitCode: 0, durationMs: 1, hostIdentity })
+    const result = await checkShellbeamAgent(target, async () => '', now)
+    expect(result.snapshot?.host).toEqual(hostIdentity)
+  })
+
   it('rejects oversized, future and incompatible daemon observations', () => {
     const record = normalizeShellbeamAgentRecord({ hostId: host.id, status: 'unknown', health: 'unknown', transport: 'direct' }, 100)
     for (const payload of [{ schemaVersion: 2, sampledAt: 100, metrics: { cpuPercent: 2 } }, { schemaVersion: 1, sampledAt: 9999999999999, metrics: { cpuPercent: 2 } }]) {

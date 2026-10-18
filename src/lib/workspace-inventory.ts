@@ -1,3 +1,4 @@
+import { getHostObservationKey, observationVaultIds, type ObservationHost } from './host-observation-scope'
 import type { HostProfile } from '@/lib/hosts'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { invoke } from '@tauri-apps/api/core'
@@ -94,7 +95,7 @@ export interface WorkspaceInventoryHostStateSnapshot {
   jumpHost?: string
   jumpPort?: number
   jumpUser?: string
-  status: 'ready' | 'error'
+  status: 'ready' | 'error' | 'unsupported'
   error?: string
   updatedAt: number
 }
@@ -117,9 +118,7 @@ const DEFAULT_RESOURCE: WorkspaceInventoryResource = {
 
 export const WORKSPACE_INVENTORY_COMMAND = buildUnifiedProbeCommand('inventory')
 
-export function getWorkspaceInventoryHostKey(host: Pick<HostProfile, 'id' | 'address' | 'port' | 'username'>) {
-  return host.id || `${host.username}@${host.address}:${host.port || 22}`
-}
+export const getWorkspaceInventoryHostKey = (host: ObservationHost) => getHostObservationKey(host)
 
 function isWorkspaceInventory(value: unknown): value is WorkspaceInventory {
   if (!value || typeof value !== 'object') return false
@@ -209,7 +208,7 @@ function isWorkspaceInventoryHostStateSnapshot(value: unknown): value is Workspa
     && typeof record.hostGroup === 'string'
     && Array.isArray(record.tags)
     && typeof record.authType === 'string'
-    && (record.status === 'ready' || record.status === 'error')
+    && (record.status === 'ready' || record.status === 'error' || record.status === 'unsupported')
     && typeof record.updatedAt === 'number'
 }
 
@@ -258,7 +257,7 @@ export function loadWorkspaceInventoryCache(hosts: HostProfile[]): WorkspaceInve
 }
 
 export async function loadWorkspaceInventoryHostStateSnapshots(hosts: HostProfile[]) {
-  const snapshots = await invokeWorkspaceInventoryCommand<unknown[]>('list_workspace_inventory_host_states')
+  const snapshots = await invokeWorkspaceInventoryCommand<unknown[]>('list_workspace_inventory_host_states', { vaultIds: observationVaultIds(hosts) })
   if (!snapshots) return {}
 
   const hostByKey = new Map(hosts.map((host) => [getWorkspaceInventoryHostKey(host), host]))
@@ -283,7 +282,7 @@ export async function saveWorkspaceInventoryHostStateSnapshot(
 
 export async function loadWorkspaceInventoryPersistedCache(hosts: HostProfile[]): Promise<WorkspaceInventoryCache> {
   const fallbackCache = loadWorkspaceInventoryCache(hosts)
-  const snapshots = await invokeWorkspaceInventoryCommand<unknown[]>('list_workspace_inventory_snapshots')
+  const snapshots = await invokeWorkspaceInventoryCommand<unknown[]>('list_workspace_inventory_snapshots', { vaultIds: observationVaultIds(hosts) })
   if (!snapshots) return fallbackCache
 
   const hostByKey = new Map(hosts.map((host) => [getWorkspaceInventoryHostKey(host), host]))

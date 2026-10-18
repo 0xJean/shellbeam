@@ -13,7 +13,8 @@ LC_ALL=C
 PATH=/usr/sbin:/usr/bin:/sbin:/bin:${PATH}
 export LC_ALL PATH
 SB_PROBE_STARTED=$(date +%s)
-[ "$(uname -s)" = Linux ] || { printf 'Linux is required\n' >&2; exit 2; }
+SB_PROBE_OS=$(uname -s)
+[ "$SB_PROBE_OS" = Linux ] || { printf '__SB_PROBE_UNSUPPORTED_OS=%s\n' "$SB_PROBE_OS"; printf 'PROBE_UNSUPPORTED_OS: %s\n' "$SB_PROBE_OS" >&2; exit 2; }
 printf '__SB_PROBE_BEGIN\n__SB_PROBE_SCHEMA=1\n'
 printf '__SB_PROBE_SAMPLED_AT=%s000\n' "$(date +%s)"
 cpu_before=$(awk '/^cpu / {for (i=2;i<=9;i++) total+=$i; print total,$5+$6; exit}' /proc/stat 2>/dev/null)

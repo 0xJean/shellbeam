@@ -1,3 +1,4 @@
+import type { WorkspaceAppId } from '@/lib/workspace'
 import { HostOpsAdvancedFilters } from '@/components/host-ops-filters'
 import { DEFAULT_HOST_OPS_FILTERS, matchesHostOpsFilters, type HostOpsFilters } from '@/lib/host-ops-filters'
 import { LOCAL_OPS_CHANGED_EVENT, loadLocalAlertState } from '@/lib/local-ops-store'
@@ -38,7 +39,7 @@ import MultiHostOperationsPanel, { type MultiHostOperationRequest, type MultiHos
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
 type SortMode = 'az' | 'za' | 'newest' | 'oldest'
-type HostStatusFilter = 'all' | 'online' | 'stale' | 'checking' | 'offline' | 'paused' | 'unknown' | 'jump-unavailable'
+type HostStatusFilter = 'all' | 'online' | 'stale' | 'checking' | 'offline' | 'paused' | 'unsupported' | 'unknown' | 'jump-unavailable'
 type HostHealthStatus = Exclude<HostStatusFilter, 'all'>
 export type HostOpsRefreshStatus = 'idle' | 'refreshing' | 'fresh' | 'recovered' | 'error'
 const SORT_KEY = 'shellbeam.hostSortMode'
@@ -54,6 +55,7 @@ function formatHostOpsRefreshTime(timestamp: number | null): string {
 }
 
 function getHostHealthStatus(view: HostOpsView | undefined, fallback: HostHealthStatus, loading: boolean): HostHealthStatus {
+  if (view?.health.state === 'unsupported') return 'unsupported'
   if (view?.health.state === 'paused') return 'paused'
   if (view?.health.state === 'jump-unavailable') return 'jump-unavailable'
   if (view?.health.state === 'online' || view?.health.state === 'stale' || view?.health.state === 'offline' || view?.health.state === 'checking' || view?.health.state === 'unknown') return view.health.state
@@ -223,6 +225,7 @@ interface HostsDashboardProps {
   defaultUsername?: string
   onSelectHost: (hostId: string) => void
   onConnectHost?: (hostId: string) => void
+  onOpenWorkspace?: (hostId: string, app: WorkspaceAppId) => void
   onCreateHost: (draft: HostProfileDraft) => Promise<void>
   onUpdateHost: (host: HostProfile, draft: HostProfileDraft) => Promise<void>
   onDeleteHost: (hostId: string) => Promise<void>
@@ -308,6 +311,9 @@ function hostOpsToCardSummary(
     localAlerts: view.localAlerts,
     transport: view.health.transport,
     jumpHostName: view.route.jumpHostName,
+    jumpHost: view.route.jumpHost,
+    jumpPort: view.route.jumpPort,
+    jumpUser: view.route.jumpUser,
     ...(view.health.agent ? {
       agentStatus: view.health.agent.status,
       agentHealth: view.health.agent.health,
@@ -321,7 +327,7 @@ function hostOpsToCardSummary(
 export function HostsDashboard({
   activeVaultId,
   hosts, selectedHostId, loading, defaultUsername = 'root',
-  onSelectHost, onConnectHost, onCreateHost, onUpdateHost, onDeleteHost,
+  onSelectHost, onConnectHost, onOpenWorkspace, onCreateHost, onUpdateHost, onDeleteHost,
   openAddForm = false, onAddFormClose,
     externalSearch, onExternalSearchChange, onScanHosts, onRefreshHosts,
     vaultKeys = [], vaultUnlocked = false, onSaveToVault, onLoadVaultSecret, vaultName = 'Vault',
@@ -660,35 +666,47 @@ export function HostsDashboard({
       : request.operation === 'service.restart'
         ? t('multiHost.operations.serviceRestart')
         : t('multiHost.operations.healthCheck')
-    const confirmMessage = t('multiHost.confirm', {
+    const confirmation = t('multiHost.confirm', {
       operation: operationLabel,
       target: request.target ?? t('multiHost.operations.healthCheck'),
       count: selectedHosts.length,
       hosts: selectedHosts.map((host) => host.name).join(', '),
     })
+    const routes = selectedHosts.map((host) => {
+      const jump = host.jumpHostId ? hosts.find((profile) => profile.id === host.jumpHostId) : null
+      const path = host.jumpHostId
+        ? `ProxyJump ${jump ? `${jump.username}@${jump.address}:${jump.port || 22}` : host.jumpHostId}`
+        : host.jumpHost ? `ProxyJump ${host.jumpUser || host.username}@${host.jumpHost}:${host.jumpPort || 22}` : 'direct'
+      return `${host.name} · ${host.username}@${host.address}:${host.port || 22} · ${path}`
+    }).join('\n')
+    const command = request.operation === 'docker.restart' ? `docker restart ${request.target}` : request.operation === 'service.restart' ? `systemctl restart ${request.target}` : 'uptime'
+    const confirmMessage = `${confirmation}\n\n${t('multiHost.commandPreview', { command, routes })}`
     let batch: BatchOperationResult<unknown>
     if (request.operation === 'docker.restart') {
       if (!request.target) throw new Error('A Docker container name is required')
       batch = await runBatchDockerOperation({
+        vaultId: activeVaultId,
         hosts: selectedHosts,
         containerName: request.target,
         dockerAction: 'restart',
         resolveAuthSecret: resolveKomariHostSecret,
         confirmMessage,
-        confirm: () => request.confirmationRequired ? window.confirm(confirmMessage) : true,
+        confirm: () => window.confirm(confirmMessage),
       })
     } else if (request.operation === 'service.restart') {
       if (!request.target) throw new Error('A systemd service name is required')
       batch = await runBatchServiceOperation({
+        vaultId: activeVaultId,
         hosts: selectedHosts,
         serviceName: request.target,
         serviceAction: 'restart',
         resolveAuthSecret: resolveKomariHostSecret,
         confirmMessage,
-        confirm: () => request.confirmationRequired ? window.confirm(confirmMessage) : true,
+        confirm: () => window.confirm(confirmMessage),
       })
     } else if (request.operation === 'health-check') {
       batch = await runBatchOperation({
+        vaultId: activeVaultId,
         hosts: selectedHosts,
         action: 'health.refresh',
         target: 'remote-health',
@@ -697,6 +715,7 @@ export function HostsDashboard({
         confirm: () => true,
         execute: (host) => runWorkspaceRemoteCommand({
           host,
+          vaultId: activeVaultId,
           resolveAuthSecret: resolveKomariHostSecret,
           command: "printf '__SHELLBEAM_HEALTH=ok\n'; uptime -p 2>/dev/null || true",
         }),
@@ -722,7 +741,7 @@ export function HostsDashboard({
       startedAt: batch.startedAt,
       finishedAt: batch.finishedAt,
     }
-  }, [hosts, refreshHostOps, resolveKomariHostSecret, t])
+  }, [activeVaultId, hosts, refreshHostOps, resolveKomariHostSecret, t])
 
 
   useEffect(() => {
@@ -814,6 +833,13 @@ export function HostsDashboard({
     onConnectHost?.(hostId)
   }
 
+  function handleRefreshHost(hostId: string) {
+    const host = hosts.find((item) => item.id === hostId)
+    if (!host || !onScanHosts) return
+    setHostOpsRefreshError(null)
+    void onScanHosts([host]).then(() => refreshHostOps()).catch(() => setHostOpsRefreshError(t('hostOps.refreshFailed')))
+  }
+
   async function handleCheckAllStatus() {
     if (!onScanHosts || filteredHosts.length === 0) return
     setCheckingStatus(true)
@@ -873,7 +899,7 @@ export function HostsDashboard({
     const status = getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)
     counts[status] += 1
     return counts
-  }, { online: 0, stale: 0, checking: 0, offline: 0, paused: 0, unknown: 0, 'jump-unavailable': 0 }), [hosts, sharedStates, hostOpsLoading, hostOpsViews])
+  }, { online: 0, stale: 0, checking: 0, offline: 0, paused: 0, unsupported: 0, unknown: 0, 'jump-unavailable': 0 }), [hosts, sharedStates, hostOpsLoading, hostOpsViews])
 
   const allGroupCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -898,6 +924,7 @@ export function HostsDashboard({
     checking: t('hosts.statusChecking'),
     offline: t('hosts.statusOffline'),
     paused: t('hosts.statusPaused'),
+    unsupported: t('hosts.statusUnsupported'),
     unknown: t('hosts.statusUnknown'),
     'jump-unavailable': t('hosts.statusJumpUnavailable'),
   }
@@ -1069,7 +1096,7 @@ export function HostsDashboard({
         }
       >
           <MultiHostOperationsPanel hosts={filteredHosts} onRunOperation={handleMultiHostOperation} />
-          <KomariAlertsDashboardPanel activeVaultId={activeVaultId} hosts={hosts} onOpenHost={onSelectHost} />
+          <KomariAlertsDashboardPanel activeVaultId={activeVaultId} hosts={hosts} onOpenHost={(hostId) => { onSelectHost(hostId); onOpenWorkspace?.(hostId, 'overview') }} />
           <KomariProbeMappingNotice links={komariProbeLinks} />
           <HostCreateDialog availableHosts={hosts}
             open={showAddForm}
@@ -1134,6 +1161,8 @@ export function HostsDashboard({
                     agentDeploymentCount={agentDeploymentsByHost.get(host.id)?.length ?? 0}
                     agentDeploymentStatus={agentDeploymentsByHost.get(host.id)?.[0]?.status}
                     onConnect={handleConnect}
+                    onOpenWorkspace={onOpenWorkspace}
+                    onRefresh={onScanHosts ? handleRefreshHost : undefined}
                     onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                     onDelete={(id) => void onDeleteHost(id)}
                     onSelect={onSelectHost}
@@ -1171,7 +1200,7 @@ export function HostsDashboard({
                   </div>
                 </div>
                 <HostListScrollArea>
-                    <div className="hidden border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)] xl:grid xl:grid-cols-[3.25rem_minmax(14rem,1.14fr)_minmax(12rem,0.92fr)_minmax(10rem,0.75fr)_7rem_minmax(15rem,1.02fr)_minmax(14rem,1fr)_7rem_6.5rem] xl:items-center xl:gap-4">
+                    <div className="hidden border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)] xl:grid xl:grid-cols-[3.25rem_minmax(14rem,1.14fr)_minmax(12rem,0.92fr)_minmax(10rem,0.75fr)_7rem_minmax(15rem,1.02fr)_minmax(14rem,1fr)_7rem_14rem] xl:items-center xl:gap-4">
                       <span>{t('hosts.columnIndex')}</span>
                       <span>{t('hosts.columnHost')}</span>
                       <span>{t('hosts.columnLocation')}</span>
@@ -1197,6 +1226,8 @@ export function HostsDashboard({
                           agentDeploymentStatus={agentDeploymentsByHost.get(host.id)?.[0]?.status}
                           onSelect={onSelectHost}
                           onConnect={handleConnect}
+                          onOpenWorkspace={onOpenWorkspace}
+                          onRefresh={onScanHosts ? handleRefreshHost : undefined}
                           onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                           onDelete={(id) => void onDeleteHost(id)}
                         />

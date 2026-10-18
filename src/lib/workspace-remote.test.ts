@@ -60,4 +60,11 @@ describe('workspace remote transport', () => {
     expect(JSON.stringify(runSshCommand.mock.calls)).not.toContain('must-not-cross-the-bridge')
   })
 
+  it('rejects a foreign host profile before resolving credentials or sending a command', async () => {
+    const resolve = vi.fn(async () => 'private')
+    await expect(runWorkspaceRemoteCommand({ host: { ...host, vaultId: 'vault-a' }, vaultId: 'vault-b', resolveAuthSecret: resolve, command: 'systemctl restart nginx' })).rejects.toThrow('WORKSPACE_VAULT_SCOPE_MISMATCH')
+    expect(resolve).not.toHaveBeenCalled()
+    expect(runSshCommand).not.toHaveBeenCalled()
+  })
+
 })

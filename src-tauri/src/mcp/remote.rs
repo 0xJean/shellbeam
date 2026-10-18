@@ -25,19 +25,21 @@ fn connect(
     app: &tauri::AppHandle,
     client: &Client,
     host: &HostProfile,
-) -> Result<(Connection, Vec<String>), String> {
+) -> Result<(Connection, Vec<String>, Value), String> {
     let hosts = crate::data::hosts::load_hosts(app, Some(&client.vault_id))?;
     let route = crate::ssh::transport::route_for_host(app, &client.vault_id, host, &hosts)?;
     let mut secrets = vec![route.target.secret.clone()];
     if let Some(jump) = &route.jump {
         secrets.push(jump.secret.clone());
     }
+    let identity =
+        crate::ssh::transport::route_identity(&route, &host.id, host.jump_host_id.as_deref());
     let connection = crate::ssh::transport::connect(app, &route)?;
     super::recheck(app, client, host)?;
     if !app.state::<VaultState>().is_unlocked(&client.vault_id) {
         return Err("VAULT_LOCKED".into());
     }
-    Ok((connection, secrets))
+    Ok((connection, secrets, identity))
 }
 
 fn quote(value: &str) -> String {
@@ -194,7 +196,7 @@ pub fn run(
         }
     }
     let started_at = Instant::now();
-    let (connection, secrets) = connect(app, client, host)?;
+    let (connection, secrets, identity) = connect(app, client, host)?;
     let session = &connection.session;
     let result = match tool {
         "run_command" => command(
@@ -204,6 +206,9 @@ pub fn run(
         ),
         "refresh_server_info" => command(&session, &format!("/bin/sh -c {}", quote(PROBE)), 60)
             .and_then(|output| {
+                if let Some(os) = unsupported_probe_os(&output) {
+                    return Ok(json!({"status":"completed","unsupportedOs":os}));
+                }
                 if output["status"] != "completed" || output["truncated"] == true {
                     return Err(
                         "PROBE_FAILED: missing or truncated inventory; previous data retained"
@@ -226,6 +231,7 @@ pub fn run(
                 // clients can continue reading `capacity`, `filesystems`,
                 // and `projects` without a migration.
                 attach_probe_contract(&mut value, host);
+                value["host"] = identity.clone();
                 value["host"]["verifiedHostKeys"] = json!(connection.verified_host_keys);
             }
             secrets
@@ -259,6 +265,19 @@ fn redact(value: Value, secret: &str) -> Value {
         ),
         other => other,
     }
+}
+
+fn unsupported_probe_os(output: &Value) -> Option<String> {
+    if output["exitCode"] != 2 || output["truncated"] == true {
+        return None;
+    }
+    output["stdout"].as_str()?.lines().find_map(|line| {
+        let os = line.strip_prefix("__SB_PROBE_UNSUPPORTED_OS=")?;
+        if os.is_empty() || os.len() > 80 || os.chars().any(char::is_control) {
+            return None;
+        }
+        Some(os.to_owned())
+    })
 }
 
 fn parse_probe(output: &str) -> Result<Value, String> {
@@ -498,14 +517,15 @@ fn probe_host_identity(host: &HostProfile) -> Value {
         "port": host.port,
         "username": host.username,
     });
-    if host.jump_host_id.is_some()
-        || host
-            .jump_host
-            .as_deref()
-            .is_some_and(|address| !address.trim().is_empty())
+    if let Some(id) = &host.jump_host_id {
+        // Only the native resolver can supply current referenced endpoints.
+        identity["jump"] = json!({"hostId":id});
+    } else if let Some(address) = host
+        .jump_host
+        .as_deref()
+        .filter(|address| !address.trim().is_empty())
     {
-        let address = host.jump_host.as_deref().unwrap_or("");
-        identity["jump"] = json!({"hostId":host.jump_host_id,"address":address,"port":host.jump_port.unwrap_or(22),"username":host.jump_user.as_deref().unwrap_or("")});
+        identity["jump"] = json!({"address":address.trim(),"port":host.jump_port.unwrap_or(22),"username":host.jump_user.as_deref().filter(|user| !user.trim().is_empty()).unwrap_or(&host.username)});
     }
     identity
 }
@@ -697,6 +717,22 @@ fn has_capacity_data(probe: &Value) -> bool {
 /// while `receivedAt` records when ShellBeam accepted the result.
 fn attach_probe_contract(value: &mut Value, host: &HostProfile) {
     let received_at = crate::storage::now_unix_ms();
+    if let Some(os) = value["unsupportedOs"].as_str().map(str::to_owned) {
+        value["schemaVersion"] = json!(1);
+        value["host"] = probe_host_identity(host);
+        value["provider"] = probe_provider_ref();
+        value["transport"] = json!(if has_jump_host(host) {
+            "proxy-jump"
+        } else {
+            "direct"
+        });
+        value["health"] = json!("unsupported");
+        value["receivedAt"] = json!(received_at);
+        value["metrics"] = Value::Null;
+        value["inventory"] = Value::Null;
+        value["errors"] = json!([{"section":"provider","code":"unsupported_os","message":format!("Linux metrics are unsupported on {os}")}]);
+        return;
+    }
     let sampled_at = value["sampledAt"].as_i64().unwrap_or(received_at);
     let provider = probe_provider_ref();
     let metrics = monitor_snapshot(value);
@@ -785,6 +821,37 @@ mod tests {
         assert_eq!(inventory["projects"][0]["kind"], "node");
         assert_eq!(inventory["listeningPorts"].as_array().unwrap().len(), 1);
         assert_eq!(inventory["pm2"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn non_linux_probe_has_no_observations_and_preserves_unsupported_health() {
+        let output = json!({"exitCode":2,"stdout":"__SB_PROBE_UNSUPPORTED_OS=Darwin\n","status":"failed","truncated":false});
+        let os = unsupported_probe_os(&output).unwrap();
+        let mut value = json!({"unsupportedOs":os});
+        attach_probe_contract(&mut value, &host_with_jump("privateKey"));
+        assert_eq!(value["health"], "unsupported");
+        assert!(value["metrics"].is_null());
+        assert!(value["inventory"].is_null());
+        assert!(value.get("sampledAt").is_none());
+        assert_eq!(value["errors"][0]["code"], "unsupported_os");
+        assert!(unsupported_probe_os(
+            &json!({"exitCode":1,"stdout":"__SB_PROBE_UNSUPPORTED_OS=Darwin"})
+        )
+        .is_none());
+        assert!(unsupported_probe_os(
+            &json!({"exitCode":2,"stdout":"__SB_PROBE_UNSUPPORTED_OS=Darwin","truncated":true})
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn referenced_jump_display_never_reuses_stale_copied_fields() {
+        let mut host = host_with_jump("privateKey");
+        host.jump_host_id = Some("edited-jump".into());
+        assert_eq!(
+            probe_host_identity(&host)["jump"],
+            json!({"hostId":"edited-jump"})
+        );
     }
 
     #[test]

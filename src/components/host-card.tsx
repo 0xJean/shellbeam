@@ -1,3 +1,4 @@
+import type { WorkspaceAppId } from '@/lib/workspace'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
@@ -34,6 +35,7 @@ function formatRelativeTime(ts: number, t: TFn): string {
 }
 
 function statusConfig(status: string | undefined, t: TFn) {
+  if (status === 'unsupported') return { label: t('hostCard.unsupported'), dot: 'bg-[color:var(--workspace-text-subtle)]', text: 'text-[var(--workspace-text-muted)]', bg: 'bg-[var(--workspace-surface-800)]', border: 'border-[color:var(--workspace-border-soft)]' }
   if (status === 'online') return { label: t('hostCard.online'), dot: 'bg-[color:var(--workspace-status-good)]', text: 'text-[color:var(--workspace-status-good-text)]', bg: 'bg-[var(--workspace-status-good-bg)]', border: 'border-[color:var(--workspace-status-good-border)]' }
   if (status === 'stale') return { label: t('hostCard.stale'), dot: 'bg-[color:var(--workspace-status-warn)]', text: 'text-[color:var(--workspace-status-warn-text)]', bg: 'bg-[var(--workspace-status-warn-bg)]', border: 'border-[color:var(--workspace-status-warn-border)]' }
   if (status === 'offline') return { label: t('hostCard.offline'), dot: 'bg-[color:var(--workspace-status-bad)]', text: 'text-[color:var(--workspace-status-bad-text)]', bg: 'bg-[var(--workspace-status-bad-bg)]', border: 'border-[color:var(--workspace-status-bad-border)]' }
@@ -43,7 +45,7 @@ function statusConfig(status: string | undefined, t: TFn) {
   return null
 }
 
-type HostHealthStatus = 'online' | 'stale' | 'offline' | 'checking' | 'unknown' | 'paused' | 'jump-unavailable'
+type HostHealthStatus = 'online' | 'stale' | 'offline' | 'checking' | 'unknown' | 'paused' | 'unsupported' | 'jump-unavailable'
 
 export interface HostOperationalSummary {
   serviceTotal: number | null
@@ -76,6 +78,9 @@ export interface HostOperationalSummary {
   audits?: OperationAuditEntry[]
   provider?: string
   jumpHostName?: string
+  jumpHost?: string
+  jumpPort?: number
+  jumpUser?: string
   probeProviderId?: string
   probeState?: 'fresh' | 'stale' | 'recovered' | 'error' | 'unknown'
   probeError?: string
@@ -117,11 +122,33 @@ function getDisplayGroupLabel(group: string | undefined, t: TFn) {
   return translated !== `group.${group}` ? translated : group
 }
 
-function formatJumpHost(host: HostProfile) {
+function formatJumpHost(host: HostProfile, route?: Pick<HostOperationalSummary, 'jumpHost' | 'jumpPort' | 'jumpUser'>) {
+  if (host.jumpHostId) {
+    if (!route?.jumpHost) return host.jumpHostId
+    return `${route.jumpUser ? `${route.jumpUser}@` : ''}${route.jumpHost}${route.jumpPort ? `:${route.jumpPort}` : ''}`
+  }
   if (!host.jumpHost?.trim()) return ''
   const user = host.jumpUser?.trim() ? `${host.jumpUser.trim()}@` : ''
   const port = host.jumpPort ? `:${host.jumpPort}` : ''
   return `${user}${host.jumpHost.trim()}${port}`
+}
+
+function HostOpsQuickActions({ host, onOpenWorkspace, onRefresh }: { host: HostProfile; onOpenWorkspace?: (id: string, app: WorkspaceAppId) => void; onRefresh?: (id: string) => void }) {
+  const { t } = useT()
+  if (!onOpenWorkspace) return null
+  return <select aria-label={t('hostOps.openForHost', { host: host.name })} value="" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={(event) => {
+    event.stopPropagation()
+    if (event.target.value === 'refresh') onRefresh?.(host.id)
+    else if (event.target.value) onOpenWorkspace(host.id, event.target.value as WorkspaceAppId)
+  }} className="h-9 max-w-28 rounded-lg border border-border bg-background px-2 text-xs text-foreground md:h-8">
+    <option value="">{t('hostOps.open')}</option>
+    <option value="overview">{t('workspace.app.overview')}</option>
+    <option value="fileSystem">{t('workspace.app.fileSystem')}</option>
+    <option value="services">{t('workspace.app.services')}</option>
+    <option value="logs">{t('workspace.app.logs')}</option>
+    <option value="network">{t('hostOps.alertsAndChecks')}</option>
+    {onRefresh && <option value="refresh">{t('hostOps.refreshProbe')}</option>}
+  </select>
 }
 
 interface HostGridCardProps {
@@ -134,18 +161,20 @@ interface HostGridCardProps {
   agentDeploymentCount?: number
   agentDeploymentStatus?: string
   onConnect: (id: string) => void
+  onOpenWorkspace?: (id: string, app: WorkspaceAppId) => void
+  onRefresh?: (id: string) => void
   onEdit: (id: string) => void
   onDelete: (id: string) => void
   onSelect: (id: string) => void
 }
 
-export function HostGridCard({ host, isSelected, status, resource, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onEdit, onDelete }: HostGridCardProps) {
+export function HostGridCard({ host, isSelected, status, resource, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete }: HostGridCardProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const groupLabel = getDisplayGroupLabel(host.group, t)
-  const jumpHost = formatJumpHost(host)
+  const jumpHost = formatJumpHost(host, operations)
 
   return (
     <>
@@ -261,6 +290,7 @@ export function HostGridCard({ host, isSelected, status, resource, operations, n
 
         <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
           <div className="flex items-center gap-2">
+            <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
             <Button size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => onConnect(host.id)}>
               <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{t('hostCard.connect')}
             </Button>
@@ -292,6 +322,8 @@ interface HostListItemProps {
   agentDeploymentStatus?: string
   onSelect: (id: string) => void
   onConnect: (id: string) => void
+  onOpenWorkspace?: (id: string, app: WorkspaceAppId) => void
+  onRefresh?: (id: string) => void
   onEdit: (id: string) => void
   onDelete: (id: string) => void
 }
@@ -577,10 +609,10 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
   )
 }
 
-function HostGroupTagsMeta({ host, t, agentDeploymentCount = 0, agentDeploymentStatus }: { host: HostProfile; t: TFn; agentDeploymentCount?: number; agentDeploymentStatus?: string }) {
+function HostGroupTagsMeta({ host, t, operations, agentDeploymentCount = 0, agentDeploymentStatus }: { host: HostProfile; t: TFn; operations?: HostOperationalSummary; agentDeploymentCount?: number; agentDeploymentStatus?: string }) {
   const groupLabel = getDisplayGroupLabel(host.group, t)
   const tags = host.tags ?? []
-  const jumpHost = formatJumpHost(host)
+  const jumpHost = formatJumpHost(host, operations)
 
   if (!groupLabel && tags.length === 0 && agentDeploymentCount === 0 && !jumpHost) return null
 
@@ -658,7 +690,7 @@ function getNetworkScopeLabel(network: HostNetworkDisplay | undefined, t: TFn) {
   return t('hosts.networkUnknown')
 }
 
-export function HostListItem({ index, host, isSelected, status, resource, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onEdit, onDelete }: HostListItemProps) {
+export function HostListItem({ index, host, isSelected, status, resource, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete }: HostListItemProps) {
   const { t } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
@@ -685,7 +717,7 @@ export function HostListItem({ index, host, isSelected, status, resource, operat
         className={cn(
           'group grid w-full cursor-pointer gap-4 rounded-2xl border px-4 py-5 text-left transition-[background-color,border-color,box-shadow]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-border-glow)]',
-          'xl:grid-cols-[3.25rem_minmax(14rem,1.14fr)_minmax(12rem,0.92fr)_minmax(10rem,0.75fr)_7rem_minmax(15rem,1.02fr)_minmax(14rem,1fr)_7rem_6.5rem] xl:items-center xl:gap-4',
+          'xl:grid-cols-[3.25rem_minmax(14rem,1.14fr)_minmax(12rem,0.92fr)_minmax(10rem,0.75fr)_7rem_minmax(15rem,1.02fr)_minmax(14rem,1fr)_7rem_14rem] xl:items-center xl:gap-4',
           isSelected
             ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-row-selected)] shadow-[inset_3px_0_0_var(--workspace-primary-500),var(--workspace-shadow-card)]'
             : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] shadow-[var(--workspace-shadow-card)] hover:border-[color:var(--workspace-border-strong)] hover:bg-[var(--workspace-surface-800)]',
@@ -706,7 +738,7 @@ export function HostListItem({ index, host, isSelected, status, resource, operat
             <p className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">
               {resource?.os || `${host.username || 'root'}@${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
             </p>
-            <HostGroupTagsMeta host={host} t={t} agentDeploymentCount={agentDeploymentCount} agentDeploymentStatus={agentDeploymentStatus} />
+            <HostGroupTagsMeta operations={operations} host={host} t={t} agentDeploymentCount={agentDeploymentCount} agentDeploymentStatus={agentDeploymentStatus} />
           </div>
         </div>
 
@@ -742,7 +774,8 @@ export function HostListItem({ index, host, isSelected, status, resource, operat
           <HostStatusPill status={status} sc={sc} t={t} />
         </div>
 
-        <div className="flex items-center justify-start gap-1 xl:justify-end xl:opacity-0 xl:transition-opacity xl:group-hover:opacity-100">
+        <div className="flex items-center justify-start gap-1 xl:justify-end [&>button]:shrink-0">
+          <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
           <button
             type="button"
             className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)] md:h-8 md:w-8"

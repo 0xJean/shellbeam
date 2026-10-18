@@ -1535,6 +1535,10 @@ export function PcLayout() {
                       defaultUsername={hostsCtx.defaultUsername}
                       onSelectHost={hostsCtx.setSelectedHostId}
                       onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
+                      onOpenWorkspace={(hostId, workspaceApp) => {
+                        void sessions.openHostWorkspace(hostId, workspaceApp)
+                        app.setPcSidebarNav('terminal')
+                      }}
                       onCreateHost={hostsCtx.handleCreateHost}
                       onUpdateHost={hostsCtx.handleUpdateHost}
                       onDeleteHost={hostsCtx.handleDeleteHost}

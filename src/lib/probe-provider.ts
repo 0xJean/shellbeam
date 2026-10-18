@@ -1,5 +1,5 @@
-import type { VerifiedHostKey } from './sessions'
-import { fetchUnifiedProbe } from './unified-probe'
+import { fetchUnifiedProbe, UnsupportedProbeError, isUnsupportedProbeError } from './unified-probe'
+import { getHostIdentity, type HostIdentity, type JumpHostIdentity } from './host-identity'
 import type { HostProfile } from './hosts'
 import type { KomariAlertSummary } from './komari'
 import {
@@ -30,21 +30,8 @@ export type ProbeHealthState = 'online' | 'stale' | 'offline' | 'paused' | 'unsu
 export type ProbeConfidence = 'observed' | 'partial' | 'inferred'
 export type ProbeCollectionStatus = 'success' | 'recovered' | 'failed'
 
-export interface ProbeJumpRoute {
-  hostId?: string
-  address: string
-  port: number
-  username: string
-}
-
-export interface ProbeHostIdentity {
-  verifiedHostKeys?: VerifiedHostKey[]
-  hostId: string
-  address: string
-  port: number
-  username: string
-  jump?: ProbeJumpRoute
-}
+export type ProbeJumpRoute = JumpHostIdentity
+export type ProbeHostIdentity = HostIdentity
 
 export interface ProbeProviderRef {
   kind: ProbeProviderKind
@@ -152,25 +139,7 @@ export interface AgentlessProbeOptions {
 export const DEFAULT_AGENTLESS_METRICS_TTL_MS = 2 * 60 * 1000
 export const DEFAULT_AGENTLESS_INVENTORY_TTL_MS = 10 * 60 * 1000
 
-export function getProbeHostIdentity(host: HostProfile): ProbeHostIdentity {
-  const jumpHost = host.jumpHost?.trim()
-  const jump = jumpHost || host.jumpHostId
-    ? {
-        ...(host.jumpHostId ? { hostId: host.jumpHostId } : {}),
-        address: jumpHost ?? '',
-        port: host.jumpPort || 22,
-        username: host.jumpUser?.trim() || host.username || 'root',
-      }
-    : undefined
-
-  return {
-    hostId: host.id || `${host.username}@${host.address}:${host.port || 22}`,
-    address: host.address,
-    port: host.port || 22,
-    username: host.username || 'root',
-    ...(jump ? { jump } : {}),
-  }
-}
+export function getProbeHostIdentity(host: HostProfile, profiles: readonly HostProfile[] = []): ProbeHostIdentity { return getHostIdentity(host, profiles) }
 
 export function getProbeTransport(host: HostProfile): ProbeTransport {
   return host.jumpHostId || host.jumpHost?.trim() ? 'proxy-jump' : 'direct'
@@ -207,6 +176,7 @@ function errorFromUnknown(error: unknown): ProbeError {
   return {
     section: 'provider',
     message: error instanceof Error ? error.message : String(error),
+    ...(isUnsupportedProbeError(error) ? { code: 'unsupported_os' } : {}),
   }
 }
 
@@ -300,12 +270,14 @@ export function createAgentlessSshProbeProvider(options: AgentlessProbeOptions =
         errors.push({ ...errorFromUnknown(inventoryResult.error), section: 'inventory' })
       }
 
+      const unsupportedError = [metricsResult, inventoryResult].flatMap((result) => result.status === 'rejected' && result.error instanceof UnsupportedProbeError ? [result.error] : [])[0]
+      const unsupported = !metrics && !inventory && errors.some((error) => error.code === 'unsupported_os')
       return {
         schemaVersion: PROBE_PROVIDER_SCHEMA_VERSION,
-        host: { ...host, ...(shared?.verifiedHostKeys ? { verifiedHostKeys: shared.verifiedHostKeys } : {}) },
+        host: { ...(shared?.hostIdentity ?? unsupportedError?.hostIdentity ?? host), ...((shared?.verifiedHostKeys ?? unsupportedError?.verifiedHostKeys) ? { verifiedHostKeys: shared?.verifiedHostKeys ?? unsupportedError?.verifiedHostKeys } : {}) },
         provider: ref,
         transport,
-        health: healthFromObservations([metrics, inventory]),
+        health: unsupported ? 'unsupported' : healthFromObservations([metrics, inventory]),
         receivedAt,
         metrics,
         inventory,

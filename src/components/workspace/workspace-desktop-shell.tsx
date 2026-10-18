@@ -235,7 +235,7 @@ export function WorkspaceDesktopShell({
     }
     if (activeApp === 'toolManager') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
+        return <WorkspaceToolManagerApp vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -379,7 +379,7 @@ export function WorkspaceDesktopShell({
     }
     if (app === 'toolManager') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
+        return <WorkspaceToolManagerApp vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
       }
       return <WorkspaceEmptyApp app={app} />
     }

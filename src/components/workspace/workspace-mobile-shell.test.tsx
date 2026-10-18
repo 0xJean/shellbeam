@@ -19,7 +19,7 @@ vi.mock('./workspace-file-system-app', () => ({
 }))
 
 vi.mock('./workspace-tool-manager-app', () => ({
-  WorkspaceToolManagerApp: () => <div data-testid="workspace-tool-manager-app">tool manager app</div>,
+  WorkspaceToolManagerApp: ({ vaultId }: { vaultId?: string }) => <div data-testid="workspace-tool-manager-app" data-vault={vaultId}>tool manager app</div>,
 }))
 
 const workspaceAssetInventorySpy = vi.fn()
@@ -130,6 +130,7 @@ describe('workspace mobile shell', () => {
     render(
       <WorkspaceMobileShell
         sessionId={sessionId}
+        activeVaultId="tools-vault"
         hostName="Production API"
         hostAddress="10.0.0.15"
         hostId="host-1"
@@ -154,7 +155,7 @@ describe('workspace mobile shell', () => {
     )
 
     expect(screen.getByTestId('workspace-mobile-app-frame')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-tool-manager-app')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tool-manager-app')).toHaveAttribute('data-vault', 'tools-vault')
   })
 
   it('renders the asset inventory app in the mobile app frame', () => {

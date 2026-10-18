@@ -514,16 +514,19 @@ fn mcp_operation_error(output: &Value, tool: &str) -> (Option<String>, Option<St
     )
 }
 
-fn latest(app: &tauri::AppHandle, host: &HostProfile) -> Result<Value, String> {
+fn latest(app: &tauri::AppHandle, client: &Client, host: &HostProfile) -> Result<Value, String> {
     let now = now_unix_ms();
-    let result = server_monitor::list_server_monitor_latest(app.clone())?
-        .into_iter()
-        .find(|entry| {
-            entry.host_key == host.id
-                && entry.host_address == host.address
-                && entry.port == host.port
-                && entry.username == host.username
-        });
+    let result = server_monitor::list_server_monitor_latest(
+        app.clone(),
+        Some(vec![client.vault_id.clone()]),
+    )?
+    .into_iter()
+    .find(|entry| {
+        entry.host_key == server_monitor::scoped_host_key(&client.vault_id, &host.id)
+            && entry.host_address == host.address
+            && entry.port == host.port
+            && entry.username == host.username
+    });
     let Some(mut result) = result else {
         return Ok(Value::Null);
     };
@@ -562,6 +565,7 @@ fn probe_recovery_state(snapshot: &Value, expired: bool) -> &'static str {
         return "recovered";
     }
     match snapshot.get("health").and_then(Value::as_str) {
+        Some("unsupported") => "unsupported",
         Some("offline") => "offline",
         Some("unknown") => "unknown",
         Some("stale") => "stale",
@@ -1119,7 +1123,7 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                     && item["authorizationValid"] == true
             );
             item["monitor"] = if client.authorize_host(host).is_ok() {
-                latest(app, host)?
+                latest(app, client, host)?
             } else {
                 Value::Null
             };
@@ -1139,14 +1143,17 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
     client.authorize_host(host)?;
     match tool {
         "get_server_inventory" => {
-            let cached = workspace_inventory::list_workspace_inventory_snapshots(app.clone())?
-                .into_iter()
-                .find(|entry| {
-                    entry.host_key == host.id
-                        && entry.host_address == host.address
-                        && entry.username == host.username
-                        && entry.port == host.port
-                });
+            let cached = workspace_inventory::list_workspace_inventory_snapshots(
+                app.clone(),
+                Some(vec![client.vault_id.clone()]),
+            )?
+            .into_iter()
+            .find(|entry| {
+                entry.host_key == server_monitor::scoped_host_key(&client.vault_id, &host.id)
+                    && entry.host_address == host.address
+                    && entry.username == host.username
+                    && entry.port == host.port
+            });
             Ok(
                 json!({"server":public_host(host,client),"inventory":cached,"vaultUnlocked":vault_unlocked,
                 "latestProbe":store::read_probe(app,&client.vault_id,&host.id,&policy::identity(host))?,
@@ -1323,14 +1330,14 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
             if from > to {
                 return Err("INVALID_TIME_RANGE".into());
             }
-            let latest = latest(app, host)?;
+            let latest = latest(app, client, host)?;
             let points = if latest.is_null() {
                 Vec::new()
             } else {
                 server_monitor::list_server_monitor_history(
                     app.clone(),
                     server_monitor::ServerMonitorHistoryQuery {
-                        host_key: host.id.clone(),
+                        host_key: server_monitor::scoped_host_key(&client.vault_id, &host.id),
                         from: Some(from),
                         to: Some(to),
                     },
@@ -1365,7 +1372,10 @@ fn workspace_snapshot(
         .collect::<Vec<_>>();
     let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     let limit = args["limit"].as_u64().unwrap_or(50).clamp(1, 100) as usize;
-    let inventory = workspace_inventory::list_workspace_inventory_snapshots(app.clone())?;
+    let inventory = workspace_inventory::list_workspace_inventory_snapshots(
+        app.clone(),
+        Some(vec![client.vault_id.clone()]),
+    )?;
     let mut servers = Vec::new();
     let mut warnings = Vec::new();
     if !vault_unlocked {
@@ -1373,11 +1383,11 @@ fn workspace_snapshot(
     }
     for host in authorized.iter().skip(offset).take(limit) {
         let server = public_host(host, client);
-        let monitor = latest(app, host)?;
+        let monitor = latest(app, client, host)?;
         let cached_inventory = inventory
             .iter()
             .find(|entry| {
-                entry.host_key == host.id
+                entry.host_key == server_monitor::scoped_host_key(&client.vault_id, &host.id)
                     && entry.host_address == host.address
                     && entry.username == host.username
                     && entry.port == host.port
@@ -1848,24 +1858,32 @@ fn submit(
                 output["persistenceError"] = json!(error);
             }
             let sampled_at = output["sampledAt"].as_i64().unwrap_or_else(now_unix_ms);
+            let unsupported = output["health"] == "unsupported";
             let snapshot = remote::monitor_snapshot(&output);
             let result = server_monitor::ServerMonitorResultPayload {
                 latest: server_monitor::ServerMonitorLatest {
-                    host_key: host.id.clone(),
+                    host_key: server_monitor::scoped_host_key(&client.vault_id, &host.id),
                     host_id: host.id.clone(),
                     host_name: host.name.clone(),
                     host_address: host.address.clone(),
                     username: host.username.clone(),
                     port: host.port,
-                    status: "online".into(),
-                    snapshot: Some(snapshot.clone()),
+                    status: if unsupported {
+                        "unsupported"
+                    } else if output["health"] == "online" {
+                        "online"
+                    } else {
+                        "unknown"
+                    }
+                    .into(),
+                    snapshot: (!unsupported).then(|| snapshot.clone()),
                     last_attempt_at: sampled_at,
-                    last_success_at: Some(sampled_at),
+                    last_success_at: (!unsupported).then_some(sampled_at),
                     error: None,
                     updated_at: sampled_at,
                 },
-                history: Some(server_monitor::ServerMonitorHistoryPoint {
-                    host_key: host.id.clone(),
+                history: (!unsupported).then(|| server_monitor::ServerMonitorHistoryPoint {
+                    host_key: server_monitor::scoped_host_key(&client.vault_id, &host.id),
                     sampled_at,
                     snapshot,
                 }),
@@ -1978,6 +1996,14 @@ mod tests {
         assert_eq!(
             probe_recovery_state(&json!({"health":"unknown"}), false),
             "unknown"
+        );
+        assert_eq!(
+            probe_recovery_state(&json!({"health":"unsupported"}), false),
+            "unsupported"
+        );
+        assert_eq!(
+            probe_recovery_state(&json!({"health":"unsupported"}), true),
+            "unsupported"
         );
         assert_eq!(probe_recovery_state(&json!({}), false), "unknown");
     }

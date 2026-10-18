@@ -42,6 +42,8 @@ pub struct SshRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CommandRunResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_identity: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_host_keys: Option<Vec<transport::VerifiedHostKey>>,
     pub stdout: String,
     pub stderr: String,
@@ -74,6 +76,7 @@ pub fn failed_result(
     retryable: bool,
 ) -> CommandRunResult {
     CommandRunResult {
+        host_identity: None,
         verified_host_keys: None,
         stdout: String::new(),
         stderr: message,

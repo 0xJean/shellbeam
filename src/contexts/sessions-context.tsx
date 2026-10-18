@@ -234,6 +234,7 @@ interface SessionsContextValue {
   rightPaneSessionId: string | null
   setRightPaneSessionId: (id: string | null) => void
   handleConnectHost: (hostId: string) => Promise<void>
+  openHostWorkspace: (hostId: string, app: WorkspaceAppId) => Promise<void>
   handleOpenLocalTerminal: () => Promise<void>
   handleCloseSessionTab: (sessionId: string) => void
   sendRaw: (sessionId: string, data: string) => void
@@ -1372,7 +1373,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
   }
 
-  async function openHostConnection(hostId: string, placeholderId?: string) {
+  async function openHostConnection(hostId: string, placeholderId?: string, workspaceApp?: WorkspaceAppId) {
     const host = hosts.find((h) => h.id === hostId)
     if (!host) return
     setSelectedHostId(hostId)
@@ -1386,8 +1387,8 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       hostAddress: host.address,
       status: 'connecting',
       errorMessage: undefined,
-      mode: 'terminal',
-      workspaceApp: 'overview',
+      mode: workspaceApp ? 'workspace' : 'terminal',
+      workspaceApp: workspaceApp ?? 'overview',
     }
     if (placeholderId) {
       setPcSessionTabs((prev) => prev.map((tab) => (
@@ -1411,6 +1412,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       setLeftPaneSessionId(session.sessionId)
       appendPaneEvent('left', 'info', `Connected: ${host.username || defaultUsername}@${host.address}`, session.sessionId)
       initializeInteractiveSessionState(session.sessionId, { hostId: host.id, connectionKind: 'host' })
+      if (workspaceApp) setWorkspaceBySession((previous) => setSessionWorkspaceAppState(setSessionWorkspaceModeState(previous, session.sessionId, 'workspace'), session.sessionId, workspaceApp))
       setPcSessionTabs((prev) => prev.map((t) => t.sessionId === targetSessionId ? {
         ...t,
         sessionId: session.sessionId,
@@ -1419,8 +1421,8 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         connectionStage: undefined,
         status: 'connected',
         errorMessage: undefined,
-        mode: 'terminal',
-        workspaceApp: 'overview',
+        mode: workspaceApp ? 'workspace' : 'terminal',
+        workspaceApp: workspaceApp ?? 'overview',
       } : t))
       setWorkspaceAuthBySession((prev) => ({ ...prev, [session.sessionId]: resolvedSecret ?? '' }))
       setPcActiveSessionId(session.sessionId)
@@ -1446,6 +1448,29 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
   async function handleConnectHost(hostId: string) {
     await openHostConnection(hostId)
+  }
+
+  async function openHostWorkspace(hostId: string, app: WorkspaceAppId) {
+    const host = hosts.find((profile) => profile.id === hostId)
+    if (!host) return
+    const existing = interactiveSessionsRef.current.find((session) => session.hostId === hostId && session.vaultId === activeVaultId && session.status === 'running')
+    if (!existing) { await openHostConnection(hostId, undefined, app); return }
+    setPcSessionTabs((previous) => previous.some((tab) => tab.sessionId === existing.sessionId) ? previous : [...previous, {
+      sessionId: existing.sessionId,
+      hostId,
+      connectionKind: 'host',
+      hostName: host.name,
+      hostAddress: host.address,
+      status: 'connected',
+      mode: 'workspace',
+      workspaceApp: app,
+    }])
+    setSelectedHostId(hostId)
+    setPcActiveSessionId(existing.sessionId)
+    if (rightPaneSessionIdRef.current === existing.sessionId) setRightPaneSessionId(null)
+    setLeftPaneSessionId(existing.sessionId)
+    setSessionMode(existing.sessionId, 'workspace')
+    setSessionWorkspaceApp(existing.sessionId, app)
   }
 
   async function openLocalConnection(placeholderId?: string) {
@@ -1573,7 +1598,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       syncSessionBrowserUrl, setSessionBrowserLoading, setSessionBrowserError, setSessionBrowserNavigation, closeSessionBrowser, rebuildSessionBrowserTransport,
       pcChunkEmitterRef, leftPaneSessionId, setLeftPaneSessionId,
       rightPaneSessionId, setRightPaneSessionId,
-      handleConnectHost, handleOpenLocalTerminal, handleCloseSessionTab, sendRaw, refreshInteractiveSessions,
+      handleConnectHost, openHostWorkspace, handleOpenLocalTerminal, handleCloseSessionTab, sendRaw, refreshInteractiveSessions,
       initializeInteractiveSessionState, cleanupClosedSession,
       interactiveInputBySession, setInteractiveInputBySession,
       interactiveHistoryBySession, setInteractiveHistoryBySession,

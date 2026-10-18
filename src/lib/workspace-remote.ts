@@ -27,6 +27,9 @@ export async function runWorkspaceRemoteCommand(options: {
   audit?: { action: string; target: string }
 }): Promise<CommandRunResult> {
   const { host, resolveAuthSecret, command } = options
+  if (options.vaultId && host.vaultId && options.vaultId !== host.vaultId) {
+    throw new Error('WORKSPACE_VAULT_SCOPE_MISMATCH')
+  }
   const vaultId = options.vaultId ?? host.vaultId
   if (options.audit && host.id && vaultId) {
     const execution = await runConfirmedOperation({

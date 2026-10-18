@@ -66,7 +66,8 @@ import { WorkspaceOsIcon } from './workspace-os-icon'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup, type WorkspaceResourceHeaderTab } from './workspace-resource-overview-header'
 import { WorkspaceServiceIcon } from './workspace-service-icon'
 import { WorkspaceServerList, workspaceServerMatchesSearch, type WorkspaceServerSearchData } from './workspace-server-list'
-import { WorkspaceToolManagerApp, TOOL_CATALOG } from './workspace-tool-manager-app'
+import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
+import { TOOL_CATALOG } from '@/lib/workspace-tools'
 
 interface WorkspaceAssetInventoryAppProps {
   activeVaultId?: string
@@ -85,7 +86,7 @@ interface WorkspaceAssetInventoryAppProps {
 }
 
 interface HostInventoryState {
-  status: 'idle' | 'scanning' | 'ready' | 'error'
+  status: 'idle' | 'scanning' | 'ready' | 'error' | 'unsupported'
   inventory?: WorkspaceInventory
   updatedAt?: number
   error?: string
@@ -279,6 +280,7 @@ function HostStatusDot({ state }: { state: HostInventoryState }) {
 }
 
 function getHostScanLabel(state: HostInventoryState, t: TFunction) {
+  if (state.status === 'unsupported') return t('workspace.monitor.status.unsupported')
   if (state.status === 'scanning') return t('workspace.asset.scanning')
   if (state.status === 'error') return t('workspace.asset.inaccessible')
   return t('workspace.asset.notScanned')
@@ -353,6 +355,7 @@ function formatUptime(seconds: number | null, t: TFunction) {
 }
 
 function monitorStatusLabel(status: ServerMonitorStatus | undefined, t: TFunction) {
+  if (status === 'unsupported') return t('workspace.monitor.status.unsupported')
   if (status === 'online') return t('workspace.monitor.status.online')
   if (status === 'stale') return t('workspace.monitor.status.stale')
   if (status === 'offline') return t('workspace.monitor.status.offline')
@@ -931,7 +934,7 @@ export function WorkspaceAssetInventoryApp({
   }, [initialHost, managedToolHostId])
 
   useEffect(() => {
-    setStates((prev) => ({ ...prev, ...selectWorkspaceInventoryStatesForHosts(hosts, sharedStates) }))
+    setStates((prev) => ({ ...selectWorkspaceInventoryStatesForHosts(hosts, prev), ...selectWorkspaceInventoryStatesForHosts(hosts, sharedStates) }))
   }, [hosts, sharedStates])
 
   const hostRows = useMemo(() => {
@@ -1165,6 +1168,7 @@ export function WorkspaceAssetInventoryApp({
             if (monitor) {
               return { label: monitorStatusLabel(monitor.status, t), tone: monitorStatusTone(monitor.status) }
             }
+            if (state.status === 'unsupported') return { label: t('workspace.monitor.status.unsupported'), tone: 'default' }
             if (state.status === 'error') return { label: t('workspace.asset.inaccessible'), tone: 'bad' }
             if (state.status === 'scanning') return { label: t('workspace.monitor.status.checking'), tone: 'info' }
             return { label: t('workspace.monitor.status.checking'), tone: 'info' }
@@ -1235,6 +1239,7 @@ export function WorkspaceAssetInventoryApp({
         >
           {view === 'tools' ? (
             <WorkspaceToolManagerApp
+              vaultId={activeVaultId}
               selectedHostId={selectedHost?.id ?? managedToolHostId ?? selectedHostId}
               hostAddress={hostAddress}
               hosts={hosts}

@@ -1,3 +1,4 @@
+import { scopeObservationHosts } from './host-observation-scope'
 import type { HostProfile } from './hosts'
 import {
   getWorkspaceInventoryHostKey,
@@ -15,6 +16,7 @@ import {
   type WorkspaceInventoryHostState,
 } from './workspace-inventory-state'
 import { getProbeProviderRegistry } from './probe-scheduler'
+import { isUnsupportedProbeError } from './unified-probe'
 
 export const WORKSPACE_INVENTORY_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
@@ -67,6 +69,7 @@ export async function scanWorkspaceInventoryHosts({
 }: WorkspaceInventoryScanOptions): Promise<WorkspaceInventoryScanResult> {
   if (hosts.length === 0 || !isCurrent()) return { scannedHosts: [], skippedHosts: [] }
 
+  hosts = scopeObservationHosts(hosts, vaultId)
   const cache = await loadWorkspaceInventoryPersistedCache(hosts)
   if (!isCurrent()) return { scannedHosts: [], skippedHosts: hosts }
 
@@ -111,6 +114,14 @@ export async function scanWorkspaceInventoryHosts({
           force: true,
         })
         const probe = scheduled.snapshot
+        if (probe.health === 'unsupported') {
+          if (!isCurrent()) return
+          const updatedAt = Date.now()
+          const error = probe.errors[0]?.message ?? 'unsupported_os'
+          void saveWorkspaceInventoryHostStateSnapshot(host, 'unsupported', updatedAt, error)
+          mergeWorkspaceInventoryStates({ [key]: { status: 'unsupported', updatedAt, error } })
+          continue
+        }
         if (!probe.inventory || (scheduled.recovered && !vaultId)) {
           throw new Error(probe.errors[0]?.message || 'workspace inventory returned no usable data')
         }
@@ -151,10 +162,11 @@ export async function scanWorkspaceInventoryHosts({
         const message = error instanceof Error ? error.message : String(error)
         const previousState = getWorkspaceInventoryStates()[key]
         const updatedAt = Date.now()
-        void saveWorkspaceInventoryHostStateSnapshot(host, 'error', updatedAt, message)
+        const status = isUnsupportedProbeError(error) ? 'unsupported' : 'error'
+        void saveWorkspaceInventoryHostStateSnapshot(host, status, updatedAt, message)
         const nextState: WorkspaceInventoryHostState = {
-          status: 'error',
-          inventory: previousState?.inventory,
+          status,
+          inventory: status === 'unsupported' ? undefined : previousState?.inventory,
           updatedAt,
           error: message,
         }

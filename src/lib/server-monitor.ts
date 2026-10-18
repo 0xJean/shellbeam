@@ -1,10 +1,11 @@
 import type { HostProfile } from '@/lib/hosts'
+import { getHostObservationKey, type ObservationHost } from './host-observation-scope'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { invoke } from '@tauri-apps/api/core'
 import { buildUnifiedProbeCommand, parseUnifiedProbeOutput } from './unified-probe'
 import type { ProbeProviderTelemetry } from './probe-provider'
 
-export type ServerMonitorStatus = 'checking' | 'online' | 'stale' | 'offline' | 'paused'
+export type ServerMonitorStatus = 'checking' | 'online' | 'stale' | 'offline' | 'paused' | 'unsupported'
 
 export interface ServerMonitorSnapshot {
   hostname: string
@@ -209,9 +210,7 @@ export function isUsableServerMonitorSnapshot(snapshot: ServerMonitorSnapshot) {
   )
 }
 
-export function getServerMonitorHostKey(host: Pick<HostProfile, 'id' | 'address' | 'port' | 'username'>) {
-  return host.id || `${host.username}@${host.address}:${host.port || 22}`
-}
+export const getServerMonitorHostKey = (host: ObservationHost) => getHostObservationKey(host)
 
 export async function fetchServerMonitorSnapshot(options: {
   vaultId?: string
@@ -247,8 +246,9 @@ export async function fetchServerMonitorSnapshot(options: {
   return snapshot
 }
 
-export async function listServerMonitorLatest() {
-  return invoke<ServerMonitorLatest[]>('list_server_monitor_latest')
+export async function listServerMonitorLatest(vaultIds?: string[]) {
+  if (!vaultIds?.length) return []
+  return invoke<ServerMonitorLatest[]>('list_server_monitor_latest', { vaultIds })
 }
 
 export async function listServerMonitorHistory(query: ServerMonitorHistoryQuery) {

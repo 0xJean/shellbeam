@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { CommandRunResult } from './sessions'
 import type { HostProfile } from './hosts'
+import { remoteOperationStatus } from './operation-verification'
 
 export type OperationJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'unknown' | 'cancelled'
 export type OperationRisk = 'read-only' | 'low' | 'high'
@@ -175,7 +176,7 @@ export interface RunConfirmedOperationOptions<T> {
     resultSummary?: string
     errorCode?: string
     errorSummary?: string
-    errorType?: string
+    errorType?: CommandRunResult['errorType']
   }
   onJob?: (job: OperationJob) => void
   provider?: string
@@ -250,14 +251,15 @@ export async function runConfirmedOperation<T>({
   try {
     const value = await execute()
     const result = getResult?.(value)
+    const status = result ? remoteOperationStatus(result) : 'completed'
     const completed = await updateOperationJob({
       jobId: job.jobId,
-      status: result && /^(target_timeout|target_disconnected|output_limit|remote_state_unknown)$/.test(result.errorCode ?? '') ? 'unknown' : result && result.exitCode !== 0 ? 'failed' : 'completed',
+      status,
       actor: actor ?? 'local-user',
       resultSummary: result?.resultSummary ?? (result ? summarizeRemoteResult(result) : 'completed'),
-      ...(result && result.exitCode !== 0 ? {
-        errorCode: result.errorCode ?? `exit_${result.exitCode}`,
-        errorSummary: result.errorSummary ?? 'Remote command exited with a non-zero status',
+      ...(result && status !== 'completed' ? {
+        errorCode: result.errorCode ?? (status === 'unknown' ? 'remote_state_unknown' : `exit_${result.exitCode}`),
+        errorSummary: result.errorSummary ?? (status === 'unknown' ? 'Remote operation outcome is unknown; verify before retrying' : 'Remote command exited with a non-zero status'),
       } : {}),
     })
     onJob?.(completed)
@@ -272,6 +274,6 @@ export async function runConfirmedOperation<T>({
       actor: actor ?? 'local-user',
     })
     onJob?.(failed)
-    throw error
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { operationJob: failed })
   }
 }

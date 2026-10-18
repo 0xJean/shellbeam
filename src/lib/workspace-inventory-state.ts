@@ -4,14 +4,14 @@ import type { WorkspaceInventory, WorkspaceInventoryHostStateSnapshot } from './
 import { getWorkspaceInventoryHostKey } from './workspace-inventory'
 
 export interface WorkspaceInventoryHostState {
-  status: 'idle' | 'scanning' | 'ready' | 'error'
+  status: 'idle' | 'scanning' | 'ready' | 'error' | 'unsupported'
   inventory?: WorkspaceInventory
   updatedAt?: number
   error?: string
   scanId?: number
 }
 
-export type WorkspaceInventoryDisplayStatus = 'online' | 'stale' | 'offline' | 'checking' | 'unknown'
+export type WorkspaceInventoryDisplayStatus = 'online' | 'stale' | 'offline' | 'checking' | 'unknown' | 'unsupported'
 
 /**
  * A host can still have a successful inventory snapshot while the data is no
@@ -25,6 +25,7 @@ export function getWorkspaceInventoryHealthStatus(
 ): WorkspaceInventoryDisplayStatus {
   if (!state) return 'unknown'
   if (state.status === 'scanning') return 'checking'
+  if (state.status === 'unsupported') return 'unsupported'
   if (state.status === 'error') return 'offline'
   if (state.status !== 'ready' && state.status !== 'idle') return 'unknown'
   if (!state.inventory) return 'unknown'
@@ -148,7 +149,7 @@ export function restoreWorkspaceInventoryStatesFromScan(
 export function createReadyWorkspaceInventoryStates(cache: Record<string, { inventory: WorkspaceInventory; updatedAt: number }>, current = states) {
   return Object.entries(cache).reduce<Record<string, WorkspaceInventoryHostState>>((next, [key, entry]) => {
     const existing = current[key]
-    if (existing?.status === 'error') {
+    if (existing?.status === 'error' || existing?.status === 'unsupported') {
       next[key] = { ...existing, inventory: existing.inventory ?? entry.inventory, updatedAt: existing.updatedAt ?? entry.updatedAt }
       return next
     }
@@ -185,7 +186,7 @@ export function createPersistedWorkspaceInventoryStates(
     if (persisted.status === 'ready') {
       next[key] = { status: 'ready', inventory, updatedAt: persisted.updatedAt }
     } else {
-      next[key] = { status: 'error', inventory, updatedAt: persisted.updatedAt, error: persisted.error }
+      next[key] = { status: persisted.status, inventory: persisted.status === 'unsupported' ? undefined : inventory, updatedAt: persisted.updatedAt, error: persisted.error }
     }
     return next
   }, {})

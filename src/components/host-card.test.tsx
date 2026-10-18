@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { HostListItem } from './host-card'
+import { HostGridCard, HostListItem } from './host-card'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
@@ -19,6 +19,35 @@ const host = {
 }
 
 describe('host list item', () => {
+  it.each(['grid', 'list'] as const)('routes %s shortcuts to the exact host and keeps keyboard navigation inside the control', (view) => {
+    const onOpenWorkspace = vi.fn()
+    const onRefresh = vi.fn()
+    const onSelect = vi.fn()
+    const onConnect = vi.fn()
+    const props = { host, isSelected: false, onOpenWorkspace, onRefresh, onSelect, onConnect, onEdit: vi.fn(), onDelete: vi.fn() }
+    render(view === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
+    const shortcuts = screen.getByRole('combobox', { name: 'Open operations for Production API' })
+    for (const app of ['overview', 'fileSystem', 'services', 'logs', 'network']) {
+      fireEvent.change(shortcuts, { target: { value: app } })
+      expect(onOpenWorkspace).toHaveBeenLastCalledWith(host.id, app)
+    }
+    fireEvent.change(shortcuts, { target: { value: 'refresh' } })
+    expect(onRefresh).toHaveBeenCalledWith(host.id)
+    expect(onOpenWorkspace).toHaveBeenCalledTimes(5)
+    fireEvent.click(shortcuts)
+    fireEvent.doubleClick(shortcuts)
+    fireEvent.keyDown(shortcuts, { key: ' ' })
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(onConnect).not.toHaveBeenCalled()
+  })
+
+  it.each(['grid', 'list'] as const)('shows unsupported distinctly in the %s operations card', (mode) => {
+    const props = { host, isSelected: false, status: 'unsupported' as const, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
+    expect(screen.getByText('Unsupported monitoring')).toBeInTheDocument()
+    expect(screen.queryByText('Offline')).not.toBeInTheDocument()
+  })
+
   it('renders cached region and system icons in list mode', () => {
     render(
       <HostListItem
@@ -115,6 +144,12 @@ describe('host list item', () => {
 
     expect(document.querySelector('[data-host-jump-pill]')).toBeTruthy()
     expect(screen.getByText(/bastion\.example\.com:2200/)).toBeInTheDocument()
+  })
+
+  it('shows resolved reference metadata and never copies old jump endpoints', () => {
+    render(<HostListItem index={1} host={{ ...host, jumpHostId: 'jump-1', jumpHost: 'old-bastion', jumpPort: 22, jumpUser: 'old-user' }} isSelected={false} operations={{ serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'proxy-jump', jumpHost: 'edited-bastion', jumpPort: 2200, jumpUser: 'current-user' }} onSelect={vi.fn()} onConnect={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.getByText(/current-user@edited-bastion:2200/)).toBeInTheDocument()
+    expect(screen.queryByText(/old-bastion|old-user/)).not.toBeInTheDocument()
   })
 
   it('shows service, process and operation summaries for the ops view', () => {

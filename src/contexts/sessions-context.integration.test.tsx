@@ -128,7 +128,8 @@ describe('sessions context integration', () => {
     listenToInteractiveOutputEventsMock.mockClear()
     listenToInteractiveProgressEventsMock.mockClear()
     listenToInteractiveStatusEventsMock.mockClear()
-    listInteractiveSessionsMock.mockClear()
+    listInteractiveSessionsMock.mockReset().mockResolvedValue([])
+    createInteractiveSessionMock.mockReset()
     prepareBrowserPortForwardMock.mockClear()
     startBrowserHttpProxyMock.mockClear()
     startBrowserSocksProxyMock.mockClear()
@@ -157,6 +158,45 @@ describe('sessions context integration', () => {
       keepAliveIntervalSecs: 30,
       setSelectedHostId: vi.fn(),
     })
+  })
+
+  it('opens a host operation in its existing same-Vault session and promotes the right pane without duplicating it', async () => {
+    useVaultMock.mockReturnValue({ activeVaultId: 'vault-a', resolveAuthSecret: vi.fn() })
+    renderSessionsProvider()
+    await waitFor(() => expect(listenToInteractiveStatusEventsMock).toHaveBeenCalled())
+    await act(async () => {
+      sessionsApi!.setInteractiveSessions([{ sessionId: 'existing', hostId: 'host-1', vaultId: 'vault-a', host: '10.0.0.8', username: 'root', createdAt: 1, lastActiveAt: 1, status: 'running' }])
+      sessionsApi!.setRightPaneSessionId('existing')
+    })
+    await act(async () => { await sessionsApi!.openHostWorkspace('host-1', 'logs') })
+    expect(sessionsApi!.workspaceBySession.existing).toEqual({ mode: 'workspace', activeApp: 'logs' })
+    expect(sessionsApi!.leftPaneSessionId).toBe('existing')
+    expect(sessionsApi!.rightPaneSessionId).toBeNull()
+    expect(sessionsApi!.pcActiveSessionId).toBe('existing')
+    expect(sessionsApi!.pcSessionTabs).toEqual([expect.objectContaining({ sessionId: 'existing', hostId: 'host-1', mode: 'workspace', workspaceApp: 'logs', status: 'connected' })])
+    await act(async () => { await sessionsApi!.openHostWorkspace('host-1', 'fileSystem') })
+    expect(sessionsApi!.pcSessionTabs).toHaveLength(1)
+    expect(sessionsApi!.pcSessionTabs[0].workspaceApp).toBe('fileSystem')
+    expect(createInteractiveSessionMock).not.toHaveBeenCalled()
+  })
+
+  it('creates a saved host session for an operation instead of reusing a foreign-Vault session with the same host ID', async () => {
+    const resolveAuthSecret = vi.fn()
+    useVaultMock.mockReturnValue({ activeVaultId: 'vault-b', resolveAuthSecret })
+    renderSessionsProvider()
+    await waitFor(() => expect(listenToInteractiveStatusEventsMock).toHaveBeenCalled())
+    const created: InteractiveSessionInfo = { sessionId: 'new-session', hostId: 'host-1', vaultId: 'vault-b', host: '10.0.0.8', username: 'root', createdAt: 2, lastActiveAt: 2, status: 'running' }
+    createInteractiveSessionMock.mockResolvedValueOnce(created)
+    listInteractiveSessionsMock.mockResolvedValue([created])
+    await act(async () => {
+      sessionsApi!.setInteractiveSessions([{ ...created, sessionId: 'foreign-session', vaultId: 'vault-a' }])
+    })
+    await act(async () => { await sessionsApi!.openHostWorkspace('host-1', 'services') })
+    expect(createInteractiveSessionMock).toHaveBeenCalledWith(expect.objectContaining({ vaultId: 'vault-b', hostId: 'host-1', password: undefined, privateKey: undefined }))
+    expect(resolveAuthSecret).not.toHaveBeenCalled()
+    expect(sessionsApi!.workspaceBySession['new-session']).toEqual({ mode: 'workspace', activeApp: 'services' })
+    expect(sessionsApi!.pcSessionTabs.find((tab) => tab.sessionId === 'new-session')).toMatchObject({ mode: 'workspace', workspaceApp: 'services', status: 'connected' })
+    expect(sessionsApi!.leftPaneSessionId).toBe('new-session')
   })
 
   it('blocks a foreign Vault session from routing through an identically named current host', async () => {

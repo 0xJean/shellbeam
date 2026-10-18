@@ -5,6 +5,20 @@ import type { WorkspaceInventory } from './workspace-inventory'
 import type { HostProfile } from './hosts'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
 import { normalizeWorkspaceInventory } from './workspace-projects'
+import type { HostIdentity } from './host-identity'
+
+export class UnsupportedProbeError extends Error {
+  readonly code = 'unsupported_os'
+  readonly hostIdentity?: HostIdentity
+  readonly verifiedHostKeys?: VerifiedHostKey[]
+  constructor(os: string, hostIdentity?: HostIdentity, verifiedHostKeys?: VerifiedHostKey[]) {
+    super(`unsupported_os: ${os.slice(0, 80)}`)
+    this.hostIdentity = hostIdentity; this.verifiedHostKeys = verifiedHostKeys
+  }
+}
+export function isUnsupportedProbeError(error: unknown) {
+  return error instanceof UnsupportedProbeError || /unsupported_os|PROBE_UNSUPPORTED_OS/.test(error instanceof Error ? error.message : String(error))
+}
 
 export const UNIFIED_PROBE_SCHEMA_VERSION = 1
 export const UNIFIED_PROBE_OUTPUT_LIMIT = 256 * 1024
@@ -14,6 +28,7 @@ export function buildUnifiedProbeCommand(section: 'metrics' | 'inventory' | 'all
   return `sh -c ${quote(collectorScript)} shellbeam-probe ${section}`
 }
 export interface UnifiedProbeResult {
+  hostIdentity?: HostIdentity
   verifiedHostKeys?: VerifiedHostKey[]
   metrics: ServerMonitorSnapshot
   inventory: WorkspaceInventory
@@ -94,6 +109,8 @@ export function parseUnifiedProbeOutput(output: string, receivedAt = Date.now())
 
 export async function fetchUnifiedProbe(options: { vaultId?: string; host: HostProfile; resolveAuthSecret: (host: HostProfile) => Promise<string>; section?: 'metrics' | 'inventory' | 'all' }): Promise<UnifiedProbeResult> {
   const result = await runWorkspaceRemoteCommand({ ...options, command: buildUnifiedProbeCommand(options.section ?? 'all'), audit: { action: 'probe.collect', target: `host ${options.section ?? 'metrics and inventory'}` } })
+  const unsupported = result.stdout.match(/^__SB_PROBE_UNSUPPORTED_OS=([^\r\n]{1,80})$/m)?.[1]
+  if (result.exitCode === 2 && unsupported) throw new UnsupportedProbeError(unsupported, result.hostIdentity, result.verifiedHostKeys)
   if (result.exitCode !== 0) throw new Error(result.errorCode || result.errorType || 'PROBE_COLLECTION_FAILED')
   let parsed: UnifiedProbeResult
   if (!result.stdout.includes('__SB_PROBE_') && /__SB_(?:MON_|HOSTNAME=|TOOL=|PROJECT=)/.test(result.stdout)) {
@@ -108,6 +125,7 @@ export async function fetchUnifiedProbe(options: { vaultId?: string; host: HostP
     parsed = { metrics, inventory, capacity: {}, filesystems: [], inodes: [], listeningPorts: [] }
   } else parsed = parseUnifiedProbeOutput(result.stdout)
   parsed.verifiedHostKeys = result.verifiedHostKeys
+  parsed.hostIdentity = result.hostIdentity
   parsed.metrics.latencyMs = result.durationMs
   return parsed
 }

@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostProfile } from './hosts'
 import { createScheduledOpsScheduler } from './scheduled-ops-runtime'
 import { authorizeScheduledTask, clearScheduledTaskAuthorizations, isScheduledTaskAuthorized, loadScheduledTasks, normalizeScheduledTask, saveScheduledTasks, type ScheduledTask, type ScheduledTaskRunResult } from './scheduled-tasks'
+import { invoke } from '@tauri-apps/api/core'
+import { runWorkspaceRemoteCommand } from './workspace-remote'
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+vi.mock('./workspace-remote', () => ({ runWorkspaceRemoteCommand: vi.fn() }))
 const host: HostProfile = { id: 'host', name: 'edge', address: '10.0.0.1', port: 22, username: 'ops', authType: 'password', group: 'Custom', tags: [], createdAt: 1, updatedAt: 1 }
 const makeTask = (id = 'task', hostId = host.id) => normalizeScheduledTask({ id, hostId, name: 'refresh', command: 'systemctl restart nginx', intervalMinutes: 1, enabled: true }, 1_000)
 function runResult(task: ScheduledTask): ScheduledTaskRunResult { return { task, job: { jobId: 'run-job', auditId: 'run-audit', status: 'completed' } as ScheduledTaskRunResult['job'], stdout: 'private output', stderr: '', exitCode: 0, durationMs: 1 } }
@@ -67,6 +71,48 @@ describe('app-level scheduled operations', () => {
     await scheduler.tick()
     expect(loadScheduledTasks('vault', host.id)[0]).toMatchObject({ enabled: false, lastStatus: 'unknown', nextRunAt: null })
     expect(JSON.stringify(loadScheduledTasks('vault', host.id))).not.toContain('secret')
+    scheduler.stop()
+  })
+
+  it.each(['target_timeout', 'target_disconnected', 'output_limit', 'remote_state_unknown'])('pauses structured %s returned by the native executor and does not issue the next periodic write', async (errorCode) => {
+    const task = authorizeScheduledTask('vault', makeTask(), 'enable-job', 1000)
+    saveScheduledTasks('vault', host.id, [task], 1000)
+    let now = 61000
+    const runTask = vi.fn(async (_: HostProfile, current: ScheduledTask): Promise<ScheduledTaskRunResult> => ({ ...runResult(current), exitCode: -1, errorType: 'network', errorCode, job: { ...runResult(current).job, status: 'unknown', errorCode } }))
+    const scheduler = createScheduledOpsScheduler({ vaultId: 'vault', getHosts: () => [host], resolveAuthSecret: vi.fn(), now: () => now, runTask })
+    await scheduler.tick()
+    expect(loadScheduledTasks('vault', host.id)[0]).toMatchObject({ enabled: false, nextRunAt: null, lastStatus: 'unknown', pausedReason: 'interrupted' })
+    expect(isScheduledTaskAuthorized('vault', task)).toBe(false)
+    now += 10 * 60000
+    await scheduler.tick()
+    expect(runTask).toHaveBeenCalledTimes(1)
+    scheduler.stop()
+  })
+
+  it('preserves canonical unknown even if the command has exit code zero', async () => {
+    const task = authorizeScheduledTask('vault', makeTask(), 'enable-job', 1000)
+    saveScheduledTasks('vault', host.id, [task], 1000)
+    const scheduler = createScheduledOpsScheduler({ vaultId: 'vault', getHosts: () => [host], resolveAuthSecret: vi.fn(), now: () => 61000, runTask: async (_host, current) => ({ ...runResult(current), job: { ...runResult(current).job, status: 'unknown' } }) })
+    await scheduler.tick()
+    expect(loadScheduledTasks('vault', host.id)[0]).toMatchObject({ enabled: false, nextRunAt: null, lastStatus: 'unknown' })
+    scheduler.stop()
+  })
+
+  it('runs the native-returned timeout through the real canonical task executor and pauses before another tick', async () => {
+    const task = authorizeScheduledTask('vault', makeTask(), 'enable-job', 1000)
+    saveScheduledTasks('vault', host.id, [task], 1000)
+    vi.mocked(invoke).mockImplementation(async (_command, args) => ({ jobId: 'native-job', auditId: 'native-audit', ...(args as { request: object }).request }))
+    vi.mocked(runWorkspaceRemoteCommand).mockReset().mockResolvedValue({ stdout: '', stderr: 'Remote command outcome is unknown after timeout', exitCode: -1, durationMs: 30000, errorCode: 'target_timeout', errorType: 'network' })
+    let now = 61000
+    const scheduler = createScheduledOpsScheduler({ vaultId: 'vault', getHosts: () => [host], resolveAuthSecret: vi.fn(), now: () => now })
+    await scheduler.tick()
+    expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({ status: 'unknown', errorCode: 'target_timeout' }) })
+    expect(loadScheduledTasks('vault', host.id)[0]).toMatchObject({ enabled: false, nextRunAt: null, lastStatus: 'unknown' })
+    expect(isScheduledTaskAuthorized('vault', task)).toBe(false)
+    now += 600000
+    await scheduler.tick()
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledTimes(1)
+    expect(runWorkspaceRemoteCommand).toHaveBeenCalledWith(expect.objectContaining({ vaultId: 'vault', host }))
     scheduler.stop()
   })
 })

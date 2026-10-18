@@ -97,6 +97,7 @@ pub struct WorkspaceInventoryHostStatePayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceToolStatusSnapshot {
+    pub vault_id: String,
     pub host_key: String,
     pub host_id: String,
     pub host_name: String,
@@ -112,7 +113,7 @@ pub struct WorkspaceToolStatusSnapshot {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceToolStatusPayload {
-    pub host_key: String,
+    pub vault_id: String,
     pub host_id: String,
     pub host_name: String,
     pub host_address: String,
@@ -197,7 +198,12 @@ fn open_workspace_inventory_db(app: &tauri::AppHandle) -> Result<Connection, Str
 #[tauri::command]
 pub fn list_workspace_inventory_snapshots(
     app: tauri::AppHandle,
+    vault_ids: Option<Vec<String>>,
 ) -> Result<Vec<WorkspaceInventorySnapshot>, String> {
+    let vault_ids = vault_ids.unwrap_or_default();
+    if vault_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let conn = open_workspace_inventory_db(&app)?;
     let mut stmt = conn
         .prepare(
@@ -217,6 +223,11 @@ pub fn list_workspace_inventory_snapshots(
         .next()
         .map_err(|err| format!("Read workspace inventory snapshot failed: {err}"))?
     {
+        let scope_key: String = row.get(0).map_err(|error| error.to_string())?;
+        let scope_host: String = row.get(1).map_err(|error| error.to_string())?;
+        if !super::server_monitor::observation_matches_vaults(&scope_key, &scope_host, &vault_ids) {
+            continue;
+        }
         let inventory_json: String = row
             .get(6)
             .map_err(|err| format!("Read workspace inventory json failed: {err}"))?;
@@ -259,6 +270,9 @@ pub fn upsert_workspace_inventory_snapshot(
     app: tauri::AppHandle,
     payload: WorkspaceInventorySnapshotPayload,
 ) -> Result<(), String> {
+    if super::server_monitor::scoped_host_vault(&payload.host_key, &payload.host_id).is_none() {
+        return Err("OBSERVATION_VAULT_SCOPE_REQUIRED".into());
+    }
     let conn = open_workspace_inventory_db(&app)?;
     let inventory_json = serde_json::to_string(&payload.inventory)
         .map_err(|err| format!("Serialize workspace inventory failed: {err}"))?;
@@ -415,7 +429,12 @@ pub fn clear_public_ip_locations(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn list_workspace_inventory_host_states(
     app: tauri::AppHandle,
+    vault_ids: Option<Vec<String>>,
 ) -> Result<Vec<WorkspaceInventoryHostStateSnapshot>, String> {
+    let vault_ids = vault_ids.unwrap_or_default();
+    if vault_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let conn = open_workspace_inventory_db(&app)?;
     let mut stmt = conn
         .prepare(
@@ -436,6 +455,11 @@ pub fn list_workspace_inventory_host_states(
         .next()
         .map_err(|err| format!("Read workspace inventory host state failed: {err}"))?
     {
+        let scope_key: String = row.get(0).map_err(|error| error.to_string())?;
+        let scope_host: String = row.get(1).map_err(|error| error.to_string())?;
+        if !super::server_monitor::observation_matches_vaults(&scope_key, &scope_host, &vault_ids) {
+            continue;
+        }
         let tags_json: String = row
             .get(7)
             .map_err(|err| format!("Read workspace inventory host state tags failed: {err}"))?;
@@ -500,6 +524,9 @@ pub fn upsert_workspace_inventory_host_state(
     app: tauri::AppHandle,
     payload: WorkspaceInventoryHostStatePayload,
 ) -> Result<(), String> {
+    if super::server_monitor::scoped_host_vault(&payload.host_key, &payload.host_id).is_none() {
+        return Err("OBSERVATION_VAULT_SCOPE_REQUIRED".into());
+    }
     let conn = open_workspace_inventory_db(&app)?;
     let tags_json = serde_json::to_string(&payload.tags)
         .map_err(|err| format!("Serialize workspace inventory host state tags failed: {err}"))?;
@@ -560,20 +587,70 @@ pub fn clear_workspace_inventory_host_states(app: tauri::AppHandle) -> Result<()
 #[tauri::command]
 pub fn list_workspace_tool_statuses(
     app: tauri::AppHandle,
+    vault_id: String,
+    host_id: String,
 ) -> Result<Vec<WorkspaceToolStatusSnapshot>, String> {
+    let host = tool_status_scope(&app, &vault_id, &host_id)?;
     let conn = open_workspace_inventory_db(&app)?;
+    let mut rows = list_scoped_tool_statuses(&conn, &vault_id, &host_id)?;
+    rows.retain(|row| {
+        row.host_address == host.address && row.port == host.port && row.username == host.username
+    });
+    Ok(rows)
+}
+
+fn initialize_scoped_tool_statuses(conn: &Connection) -> Result<(), String> {
+    // Legacy host-key-only rows have ambiguous ownership and are never claimed
+    // by a newly opened vault. Fresh observations populate this scoped table.
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS workspace_tool_statuses_scoped(vault_id TEXT NOT NULL,host_id TEXT NOT NULL,tool_id TEXT NOT NULL,host_key TEXT NOT NULL,host_name TEXT NOT NULL,host_address TEXT NOT NULL,username TEXT NOT NULL,port INTEGER NOT NULL,tool_name TEXT NOT NULL,status_json TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(vault_id,host_id,tool_id));")
+        .map_err(|_| "tool_status_schema_failed".to_string())
+}
+
+fn valid_tool_scope(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.trim() != value
+        || value.len() > 240
+        || value.chars().any(char::is_control)
+    {
+        return Err("tool_status_scope_invalid".into());
+    }
+    Ok(())
+}
+
+fn tool_status_scope(
+    app: &tauri::AppHandle,
+    vault: &str,
+    host: &str,
+) -> Result<super::hosts::HostProfile, String> {
+    valid_tool_scope(vault)?;
+    valid_tool_scope(host)?;
+    super::hosts::load_hosts(app, Some(vault))?
+        .into_iter()
+        .find(|row| row.id == host)
+        .ok_or_else(|| "tool_status_host_not_found".into())
+}
+
+fn list_scoped_tool_statuses(
+    conn: &Connection,
+    vault: &str,
+    host: &str,
+) -> Result<Vec<WorkspaceToolStatusSnapshot>, String> {
+    valid_tool_scope(vault)?;
+    valid_tool_scope(host)?;
+    initialize_scoped_tool_statuses(conn)?;
     let mut stmt = conn
         .prepare(
             r#"
             SELECT host_key, host_id, host_name, host_address, username, port,
                    tool_id, tool_name, status_json, updated_at
-            FROM workspace_tool_statuses
+            FROM workspace_tool_statuses_scoped WHERE vault_id=?1 AND host_id=?2
             ORDER BY updated_at DESC
+            LIMIT 256
             "#,
         )
         .map_err(|err| format!("Prepare workspace tool statuses query failed: {err}"))?;
     let mut rows = stmt
-        .query([])
+        .query(params![vault, host])
         .map_err(|err| format!("Query workspace tool statuses failed: {err}"))?;
     let mut snapshots = Vec::new();
 
@@ -592,6 +669,7 @@ pub fn list_workspace_tool_statuses(
             .map_err(|err| format!("Parse workspace tool status json failed: {err}"))?;
 
         snapshots.push(WorkspaceToolStatusSnapshot {
+            vault_id: vault.to_string(),
             host_key: row
                 .get(0)
                 .map_err(|err| format!("Read workspace tool status host key failed: {err}"))?,
@@ -627,20 +705,74 @@ pub fn list_workspace_tool_statuses(
 #[tauri::command]
 pub fn upsert_workspace_tool_status(
     app: tauri::AppHandle,
-    payload: WorkspaceToolStatusPayload,
+    mut payload: WorkspaceToolStatusPayload,
 ) -> Result<(), String> {
+    let host = tool_status_scope(&app, &payload.vault_id, &payload.host_id)?;
+    // Connection metadata is resolved from the exact saved host, never accepted
+    // from another vault's in-flight renderer state.
+    payload.host_name = host.name;
+    payload.host_address = host.address;
+    payload.username = host.username;
+    payload.port = host.port;
     let conn = open_workspace_inventory_db(&app)?;
-    let status_json = serde_json::to_string(&payload.status)
+    write_scoped_tool_status(&conn, &payload)
+}
+
+fn normalized_tool_status(status: &Value) -> Result<Value, String> {
+    let object = status.as_object().ok_or("tool_status_invalid")?;
+    let installed = object.get("installed").ok_or("tool_status_invalid")?;
+    if !installed.is_boolean() && !installed.is_null() {
+        return Err("tool_status_invalid".into());
+    }
+    let mut safe = serde_json::Map::new();
+    safe.insert("installed".into(), installed.clone());
+    for (key, limit) in [
+        ("path", 1024),
+        ("version", 512),
+        ("serviceActive", 64),
+        ("serviceEnabled", 64),
+        ("checkedAt", 64),
+    ] {
+        if let Some(value) = object.get(key) {
+            let text = value.as_str().ok_or("tool_status_invalid")?;
+            safe.insert(
+                key.into(),
+                Value::String(
+                    text.chars()
+                        .filter(|character| !character.is_control())
+                        .take(limit)
+                        .collect(),
+                ),
+            );
+        }
+    }
+    if let Some(value) = object.get("checkedAtMs") {
+        if value.as_i64().map_or(true, |at| at < 0) {
+            return Err("tool_status_invalid".into());
+        }
+        safe.insert("checkedAtMs".into(), value.clone());
+    }
+    Ok(Value::Object(safe))
+}
+
+fn write_scoped_tool_status(
+    conn: &Connection,
+    payload: &WorkspaceToolStatusPayload,
+) -> Result<(), String> {
+    valid_tool_scope(&payload.vault_id)?;
+    valid_tool_scope(&payload.host_id)?;
+    valid_tool_scope(&payload.tool_id)?;
+    initialize_scoped_tool_statuses(conn)?;
+    let status_json = serde_json::to_string(&normalized_tool_status(&payload.status)?)
         .map_err(|err| format!("Serialize workspace tool status failed: {err}"))?;
 
     conn.execute(
         r#"
-        INSERT INTO workspace_tool_statuses
-          (host_key, tool_id, host_id, host_name, host_address, username, port,
+        INSERT INTO workspace_tool_statuses_scoped
+          (vault_id, host_key, tool_id, host_id, host_name, host_address, username, port,
            tool_name, status_json, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-        ON CONFLICT(host_key, tool_id) DO UPDATE SET
-          host_id = excluded.host_id,
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        ON CONFLICT(vault_id,host_id,tool_id) DO UPDATE SET
           host_name = excluded.host_name,
           host_address = excluded.host_address,
           username = excluded.username,
@@ -648,9 +780,11 @@ pub fn upsert_workspace_tool_status(
           tool_name = excluded.tool_name,
           status_json = excluded.status_json,
           updated_at = excluded.updated_at
+        WHERE excluded.updated_at >= workspace_tool_statuses_scoped.updated_at
         "#,
         params![
-            payload.host_key,
+            payload.vault_id,
+            super::server_monitor::scoped_host_key(&payload.vault_id, &payload.host_id),
             payload.tool_id,
             payload.host_id,
             payload.host_name,
@@ -668,9 +802,100 @@ pub fn upsert_workspace_tool_status(
 }
 
 #[tauri::command]
-pub fn clear_workspace_tool_statuses(app: tauri::AppHandle) -> Result<(), String> {
+pub fn clear_workspace_tool_statuses(
+    app: tauri::AppHandle,
+    vault_id: String,
+    host_id: String,
+) -> Result<(), String> {
+    tool_status_scope(&app, &vault_id, &host_id)?;
     let conn = open_workspace_inventory_db(&app)?;
-    conn.execute("DELETE FROM workspace_tool_statuses", [])
-        .map_err(|err| format!("Clear workspace tool statuses failed: {err}"))?;
+    clear_scoped_tool_statuses(&conn, &vault_id, &host_id)
+}
+
+fn clear_scoped_tool_statuses(conn: &Connection, vault: &str, host: &str) -> Result<(), String> {
+    valid_tool_scope(vault)?;
+    valid_tool_scope(host)?;
+    initialize_scoped_tool_statuses(conn)?;
+    conn.execute(
+        "DELETE FROM workspace_tool_statuses_scoped WHERE vault_id=?1 AND host_id=?2",
+        params![vault, host],
+    )
+    .map_err(|err| format!("Clear workspace tool statuses failed: {err}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tool_status_scope_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn payload(vault: &str, host: &str, installed: bool, at: i64) -> WorkspaceToolStatusPayload {
+        WorkspaceToolStatusPayload {
+            vault_id: vault.into(),
+            host_id: host.into(),
+            host_name: "edge".into(),
+            host_address: "192.0.2.1".into(),
+            username: "ops".into(),
+            port: 22,
+            tool_id: "nginx".into(),
+            tool_name: "Nginx".into(),
+            status: json!({"installed":installed,"checkedAtMs":at,"stdout":"private-output","token":"secret"}),
+            updated_at: at,
+        }
+    }
+
+    #[test]
+    fn same_host_id_and_tool_are_isolated_by_vault_including_clear() {
+        let conn = Connection::open_in_memory().unwrap();
+        write_scoped_tool_status(&conn, &payload("a", "same-host", true, 100)).unwrap();
+        write_scoped_tool_status(&conn, &payload("b", "same-host", false, 200)).unwrap();
+        write_scoped_tool_status(&conn, &payload("a", "other-host", false, 200)).unwrap();
+        let a = list_scoped_tool_statuses(&conn, "a", "same-host").unwrap();
+        let b = list_scoped_tool_statuses(&conn, "b", "same-host").unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].status["installed"], true);
+        assert_eq!(b[0].status["installed"], false);
+        assert_eq!(a[0].vault_id, "a");
+        assert_eq!(a[0].host_key, "vault:[\"a\",\"same-host\"]");
+        clear_scoped_tool_statuses(&conn, "a", "same-host").unwrap();
+        assert!(list_scoped_tool_statuses(&conn, "a", "same-host")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            list_scoped_tool_statuses(&conn, "b", "same-host")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            list_scoped_tool_statuses(&conn, "a", "other-host")
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn stale_tool_observations_cannot_overwrite_newer_scoped_results() {
+        let conn = Connection::open_in_memory().unwrap();
+        write_scoped_tool_status(&conn, &payload("a", "h", true, 200)).unwrap();
+        write_scoped_tool_status(&conn, &payload("a", "h", false, 100)).unwrap();
+        let rows = list_scoped_tool_statuses(&conn, "a", "h").unwrap();
+        assert_eq!(rows[0].status["installed"], true);
+        assert_eq!(rows[0].updated_at, 200);
+        assert!(rows[0].status.get("stdout").is_none());
+        assert!(rows[0].status.get("token").is_none());
+    }
+
+    #[test]
+    fn legacy_unscoped_rows_are_not_silently_adopted_and_empty_scopes_are_rejected() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE workspace_tool_statuses(host_key TEXT,tool_id TEXT); INSERT INTO workspace_tool_statuses VALUES('h','nginx');").unwrap();
+        assert!(list_scoped_tool_statuses(&conn, "new-vault", "h")
+            .unwrap()
+            .is_empty());
+        assert!(list_scoped_tool_statuses(&conn, "", "h").is_err());
+        assert!(clear_scoped_tool_statuses(&conn, "a", "").is_err());
+        assert!(write_scoped_tool_status(&conn, &payload("", "h", true, 1)).is_err());
+    }
 }

@@ -1,6 +1,7 @@
 import { flushLocalOpsHost, hydrateLocalOpsHost } from './local-ops-persistence'
 import type { HostProfile } from './hosts'
 import { isUnknownOperationError, type OperationJob } from './operation-job'
+import { isRemoteOperationOutcomeUnknown, remoteOperationStatus } from './operation-verification'
 import { createScheduledTaskScheduler, isScheduledTaskAuthorized, isScheduledTaskDue, isScheduledTaskRunning, loadScheduledTasks, pauseScheduledTasks, revokeScheduledTaskAuthorization, runScheduledTaskOperation, saveScheduledTasks, withScheduledTaskLock, type ScheduledTask, type ScheduledTaskRunResult } from './scheduled-tasks'
 
 export interface ScheduledOpsOptions {
@@ -15,6 +16,7 @@ export interface ScheduledOpsOptions {
 /** Persist running intent and a future due time before sending the command.
  * A terminated app therefore cannot silently replay a possibly-applied write. */
 export async function runScopedScheduledTask(options: ScheduledOpsOptions, host: HostProfile, task: ScheduledTask) {
+  if (host.vaultId && host.vaultId !== options.vaultId) throw new Error('Scheduled task vault mismatch')
   return withScheduledTaskLock(options.vaultId, task, async () => {
     const now = options.now ?? Date.now
     await hydrateLocalOpsHost(options.vaultId, host.id)
@@ -27,9 +29,12 @@ export async function runScopedScheduledTask(options: ScheduledOpsOptions, host:
       saveScheduledTasks(options.vaultId, host.id, tasks.map((row) => row.id === task.id ? running : row), startedAt)
       await flushLocalOpsHost(options.vaultId, host.id)
       const result = options.runTask ? await options.runTask(host, running) : await runScheduledTaskOperation({ vaultId: options.vaultId, host, task: running, resolveAuthSecret: options.resolveAuthSecret, now })
+      const status = result.job.status === 'unknown' || isRemoteOperationOutcomeUnknown(result) ? 'unknown' : remoteOperationStatus(result)
+      if (status === 'unknown') revokeScheduledTaskAuthorization(options.vaultId, current)
       if (options.isCurrent?.() === false) return result
       tasks = loadScheduledTasks(options.vaultId, host.id)
-      saveScheduledTasks(options.vaultId, host.id, tasks.map((row) => row.id === task.id ? { ...row, lastRunAt: startedAt, nextRunAt: row.enabled ? now() + row.intervalMinutes * 60_000 : null, lastStatus: result.exitCode === 0 ? 'completed' : 'failed', lastResultSummary: `job=${result.job.jobId} audit=${result.job.auditId} exit=${result.exitCode}`, lastErrorSummary: result.exitCode === 0 ? null : 'Scheduled command exited with a non-zero status', updatedAt: now() } : row), now())
+      saveScheduledTasks(options.vaultId, host.id, tasks.map((row) => row.id === task.id ? { ...row, ...(status === 'unknown' ? { enabled: false, pausedReason: 'interrupted' as const } : {}), lastRunAt: startedAt, nextRunAt: status === 'unknown' ? null : row.enabled ? now() + row.intervalMinutes * 60_000 : null, lastStatus: status, lastResultSummary: `job=${result.job.jobId} audit=${result.job.auditId} status=${result.job.status} exit=${result.exitCode}`, lastErrorSummary: status === 'unknown' ? 'Remote result is unknown; verify before resuming' : status === 'completed' ? null : 'Scheduled command exited with a non-zero status', updatedAt: now() } : row), now())
+      await flushLocalOpsHost(options.vaultId, host.id)
       return result
     } catch (error) {
       if (options.isCurrent?.() !== false) {

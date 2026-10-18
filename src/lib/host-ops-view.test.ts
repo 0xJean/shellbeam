@@ -120,6 +120,45 @@ describe('buildHostOpsViews', () => {
     expect(view.operationSummary).toMatchObject({ total: 1, active: 0, failed: 0, unknown: 0, latestStatus: 'completed' })
   })
 
+  it('summarizes current jobs once and prefers terminal events at the same millisecond', () => {
+    const audits: OperationAuditEntry[] = [
+      { ...audit, auditId: 'queued', status: 'queued', createdAt: 1001 },
+      { ...audit, auditId: 'running', status: 'running', createdAt: 1001 },
+      { ...audit, auditId: 'done', status: 'completed', createdAt: 1001 },
+      { ...audit, auditId: 'failed', jobId: 'job-2', status: 'failed', createdAt: 1000 },
+    ]
+    const view = buildHostOpsViews({ hosts: [host], audits, now: 1100 })[host.id]
+    expect(view.operationSummary).toMatchObject({ total: 2, active: 0, failed: 1, latestStatus: 'completed' })
+    expect(view.latestAudit?.auditId).toBe('done')
+    expect(view.audits).toHaveLength(4)
+  })
+
+  it('shows the actual edited jump route and keeps unresolved referenced metadata partial', () => {
+    const target = { ...host, jumpHostId: 'jump-profile' }
+    const jump = { ...host, id: 'jump-profile', name: 'Current jump', address: 'new-bastion', port: 2200, username: 'new-user', jumpHost: undefined }
+    expect(buildHostOpsViews({ hosts: [target, jump] })[host.id].route).toEqual({ transport: 'proxy-jump', jumpHost: 'new-bastion', jumpHostName: 'Current jump', jumpPort: 2200, jumpUser: 'new-user' })
+    expect(buildHostOpsViews({ hosts: [target] })[host.id].route).toEqual({ transport: 'proxy-jump' })
+  })
+
+  it('keeps unsupported Linux collection distinct from offline and stale previous metrics', () => {
+    const probe: ProbeSnapshot = { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username }, provider: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics', 'inventory'] }, transport: 'proxy-jump', health: 'unsupported', receivedAt: 1100, metrics: null, inventory: null, errors: [{ section: 'provider', code: 'unsupported_os', message: 'Darwin' }] }
+    const view = buildHostOpsViews({ hosts: [host], monitorLatest: [monitor], probeSnapshots: [probe], now: 1200 })[host.id]
+    expect(view.health.state).toBe('unsupported')
+    expect(view.capabilities).toEqual(['files'])
+    const newer = buildHostOpsViews({ hosts: [host], monitorLatest: [{ ...monitor, updatedAt: 1300 }], probeSnapshots: [probe], now: 1350 })[host.id]
+    expect(newer.health.state).toBe('online')
+  })
+
+  it.each(['shellbeam-agent', 'komari'] as const)('prefers current %s observations over unsupported SSH collection', (kind) => {
+    const source = { kind, id: kind, capabilities: ['metrics'] as const }
+    const probe: ProbeSnapshot = { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username }, provider: { ...source, capabilities: ['metrics'] }, transport: 'proxy-jump', health: 'online', receivedAt: 1100, metrics: createProbeObservation({ data: { ...monitor.snapshot!, sampledAt: 1100 }, source: { ...source, capabilities: ['metrics'] }, sampledAt: 1100, receivedAt: 1100, ttlMs: 5000 }), inventory: null, errors: [] }
+    const view = buildHostOpsViews({ hosts: [host], monitorLatest: [{ ...monitor, status: 'unsupported', snapshot: null, updatedAt: 1200 }], probeSnapshots: [...(kind === 'komari' ? [] : [probe]), { ...probe, provider: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics'] }, health: 'unsupported', receivedAt: 1200, metrics: null }], komariSnapshots: kind === 'komari' ? [probe] : [], now: 1250 })[host.id]
+    expect(view.health).toMatchObject({ state: 'online', provider: kind })
+    expect(view.metrics?.sampledAt).toBe(1100)
+    expect(view.capabilities).toContain('metrics')
+    expect(view.capabilities).not.toContain('services')
+  })
+
   it('keeps missing probe values unknown instead of reporting zero or online', () => {
     const views = buildHostOpsViews({ hosts: [host], now: 1000 })
     const view = views['host-1']

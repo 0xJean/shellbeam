@@ -34,6 +34,26 @@ describe('Versioned official Komari HTTP contract and history', () => {
     expect(JSON.stringify(points)).not.toContain(config.token)
     expect(fetchImpl.mock.calls.map(([input]) => String(input))).toContain('https://komari.example/api/records/load?uuid=node-fixture&load_type=all&hours=24')
   })
+  it('reads a real hot-minute window when the broad retention tier is still empty, without fabricating timestamps', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => response(String(input).endsWith('hours=24') ? fixtures.emptyCoarseHistory : fixtures.warmMinuteHistory))
+    const records = await getKomariHistoryRecords(config, 'node-fixture', { hours: 24 }, fetchImpl)
+    expect(records).toEqual(fixtures.warmMinuteHistory.data.records)
+    expect(fetchImpl.mock.calls.map(([input]) => String(input))).toEqual(['https://komari.example/api/records/load?uuid=node-fixture&load_type=all&hours=24', 'https://komari.example/api/records/load?uuid=node-fixture&load_type=all&hours=1'])
+    const complete = vi.fn<typeof fetch>(async () => response(fixtures.history))
+    await getKomariHistoryRecords(config, 'node-fixture', {}, complete)
+    expect(complete).toHaveBeenCalledTimes(1)
+  })
+  it('bounds the empty-tier fallback and propagates permission failures from either window', async () => {
+    const empty = vi.fn<typeof fetch>(async () => response(fixtures.emptyCoarseHistory))
+    expect(await getKomariHistoryRecords(config, 'new-node', { hours: 1 }, empty)).toEqual([])
+    expect(empty).toHaveBeenCalledTimes(1)
+    const denied = vi.fn<typeof fetch>(async () => response(fixtures.permission, 401))
+    await expect(getKomariHistoryRecords(config, 'node-fixture', {}, denied)).rejects.toMatchObject({ code: 'permission' })
+    expect(denied).toHaveBeenCalledTimes(1)
+    const deniedFallback = vi.fn<typeof fetch>(async (input) => String(input).endsWith('hours=24') ? response(fixtures.emptyCoarseHistory) : response(fixtures.permission, 403))
+    await expect(getKomariHistoryRecords(config, 'node-fixture', {}, deniedFallback)).rejects.toMatchObject({ code: 'permission' })
+    expect(deniedFallback).toHaveBeenCalledTimes(2)
+  })
   it('keeps denied, future, undated and all-missing data unknown', async () => {
     await expect(getKomariHistoryRecords(config, 'hidden', {}, vi.fn(async () => response(fixtures.permission, 403)))).rejects.toMatchObject({ code: 'permission' })
     const node = { uuid: 'node-fixture', name: 'fixture-host', hostname: null, ipv4: null, ipv6: null, os: null, kernel: null, version: null, raw: {} }

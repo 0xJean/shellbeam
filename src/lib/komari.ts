@@ -271,8 +271,17 @@ export function normalizeKomariMetricRecords(payload: unknown, depth = 0): Komar
 export async function getKomariHistoryRecords(config: KomariConnectionConfig, nodeId: string, options: { hours?: number } = {}, fetchImpl?: KomariFetch): Promise<KomariMetricRecord[]> {
   if (!nodeId.trim()) throw new Error('Komari node id is required')
   const hours = Math.max(1, Math.min(168, Math.floor(options.hours ?? 24)))
-  const query = new URLSearchParams({ uuid: nodeId.trim(), load_type: 'all', hours: String(hours) })
-  return normalizeKomariMetricRecords(await requestKomari(config, { path: `/api/records/load?${query}` }, fetchImpl))
+  const readWindow = async (windowHours: number) => {
+    const query = new URLSearchParams({ uuid: nodeId.trim(), load_type: 'all', hours: String(windowHours) })
+    return normalizeKomariMetricRecords(await requestKomari(config, { path: `/api/records/load?${query}` }, fetchImpl))
+  }
+  const records = await readWindow(hours)
+  if (records.length || hours === 1) return records
+  // Komari 1.6 selects a retention tier from the full query window. A new
+  // node's 24h request can read an empty coarse tier while its 1h hot-minute
+  // tier already contains real reports. Make at most one narrower request;
+  // retain its original times and never turn an empty/denied result into data.
+  return readWindow(1)
 }
 
 export async function getKomariServerVersion(config: KomariConnectionConfig, fetchImpl?: KomariFetch): Promise<{ version: string; hash: string; apiKeySupported: boolean | null }> {

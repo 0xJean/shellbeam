@@ -86,6 +86,20 @@ describe('ProbeProviderRegistry', () => {
     expect(calls).toBe(1)
   })
 
+  it('persists unsupported OS once without retrying or reviving a previous Linux sample', async () => {
+    const target = host('changed-os')
+    const probe = vi.fn(async () => ({ ...snapshot(item, target, 500, 'unsupported'), metrics: null, inventory: null, errors: [{ section: 'provider' as const, code: 'unsupported_os', message: 'Darwin' }] }))
+    const item = provider('os-check', probe)
+    const old = snapshot(item, target, 100)
+    const store = { list: vi.fn(async () => [{ vaultId: 'vault', providerKind: item.ref.kind, providerId: item.ref.id, hostId: target.id, snapshot: old, sampledAt: 100, receivedAt: 100, expiresAt: 200, updatedAt: 100 }]), save: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) }
+    const result = await new ProbeProviderRegistry(1, store).register(item).probe({ host: target, vaultId: 'vault', providerId: item.ref.id, sections: ['metrics'], resolveAuthSecret: async () => '', maxRetries: 3, retryDelayMs: 0, now: 500 })
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(result.recovered).toBe(false)
+    expect(result.retry).toBeUndefined()
+    expect(result.snapshot).toMatchObject({ health: 'unsupported', metrics: null, inventory: null })
+    expect(store.save).toHaveBeenCalledWith(expect.objectContaining({ health: 'unsupported', metrics: null }), 'vault', 500)
+  })
+
   it('retries a transient provider failure with a bounded budget', async () => {
     let calls = 0
     const item = provider('retry-agent', async (request) => {

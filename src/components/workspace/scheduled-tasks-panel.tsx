@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { isUnknownOperationError, operationTransport, runConfirmedOperation, type OperationJob } from '@/lib/operation-job'
+import { hostOperationReview } from '@/lib/operation-review'
 import {
   authorizeScheduledTask,
   revokeScheduledTaskAuthorization,
@@ -96,7 +97,7 @@ export function ScheduledTasksPanel({ activeVaultId, host, resolveAuthSecret }: 
     setRunningId(task.id)
     try {
       let authorizationJob: OperationJob | undefined
-      await runConfirmedOperation({ vaultId: activeVaultId, host, action: 'scheduled-task.enable', target: task.name, risk: 'high', paramsSummary: `task=${task.id}; intervalMinutes=${task.intervalMinutes}`, confirmMessage: t('scheduledOps.confirmEnable', { host: `${host.name} (${host.username}@${host.address}:${host.port})`, path: host.jumpHost ? `ProxyJump ${host.jumpHost}` : 'direct', target: task.name, interval: task.intervalMinutes, command: task.command }), source: 'workspace', provider: 'ssh-agentless', transport: operationTransport(host),
+      await runConfirmedOperation({ vaultId: activeVaultId, host, action: 'scheduled-task.enable', target: task.name, risk: 'high', paramsSummary: `task=${task.id}; intervalMinutes=${task.intervalMinutes}`, confirmMessage: t('scheduledOps.confirmEnable', { host: `${host.name} (${host.username}@${host.address}:${host.port})`, path: host.jumpHostId ? `ProxyJump ${host.jumpHostId}` : host.jumpHost ? `ProxyJump ${host.jumpHost}` : 'direct', target: task.name, interval: task.intervalMinutes, command: task.command }), source: 'workspace', provider: 'ssh-agentless', transport: operationTransport(host),
         onJob: (job) => { if (job.status === 'running' && job.confirmationStatus === 'confirmed') authorizationJob = job },
         execute: async () => {
           if (!authorizationJob) throw new Error('SCHEDULE_CONFIRMED_JOB_REQUIRED')
@@ -125,7 +126,7 @@ export function ScheduledTasksPanel({ activeVaultId, host, resolveAuthSecret }: 
         target: task.name,
         risk: 'high',
         paramsSummary: `task=${task.id}; manual=true`,
-        confirmMessage: t('workspace.scheduledTasks.confirm', { target: task.name }),
+        confirmMessage: `${t('workspace.scheduledTasks.confirm', { target: task.name })}\n\n${hostOperationReview(host, task.command, t)}`,
         source: 'workspace',
         provider: 'ssh-agentless',
         transport: operationTransport(host),
@@ -144,18 +145,26 @@ export function ScheduledTasksPanel({ activeVaultId, host, resolveAuthSecret }: 
       }
       const result = execution.value
       const now = Date.now()
-      persist(loadScheduledTasks(activeVaultId, host.id).map((item) => item.id === task.id ? {
-        ...item,
-        lastRunAt: now,
-        nextRunAt: item.enabled ? now + item.intervalMinutes * 60_000 : null,
-        lastStatus: result.exitCode === 0 ? 'completed' : 'failed',
-        lastResultSummary: `job=${execution.job.jobId} audit=${execution.job.auditId} exit=${result.exitCode}`,
-        lastErrorSummary: result.exitCode === 0 ? null : t('workspace.scheduledTasks.failed'),
-        updatedAt: now,
-      } : item))
+      const status = execution.job.status === 'completed' ? 'completed' : execution.job.status === 'failed' ? 'failed' : 'unknown'
+      persist(loadScheduledTasks(activeVaultId, host.id).map((item) => {
+        if (item.id !== task.id || item.command !== task.command || item.intervalMinutes !== task.intervalMinutes) return item
+        if (status === 'unknown') revokeScheduledTaskAuthorization(activeVaultId, item)
+        return {
+          ...item,
+          ...(status === 'unknown' ? { enabled: false, pausedReason: 'interrupted' as const } : {}),
+          lastRunAt: now,
+          nextRunAt: item.enabled && status !== 'unknown' ? now + item.intervalMinutes * 60_000 : null,
+          lastStatus: status,
+          lastResultSummary: `job=${execution.job.jobId} audit=${execution.job.auditId} status=${status} exit=${result.exitCode}`,
+          lastErrorSummary: status === 'completed' ? null : t(status === 'unknown' ? 'scheduledOps.unknown' : 'workspace.scheduledTasks.failed'),
+          updatedAt: now,
+        }
+      }), true)
+      await flushLocalOpsHost(activeVaultId, host.id)
       setOutput([`job=${execution.job.jobId} audit=${execution.job.auditId} status=${execution.job.status}`, result.stdout, result.stderr].filter(Boolean).join('\n'))
     } catch (caught) {
-      const unknown = isUnknownOperationError(caught)
+      const job = (caught as { operationJob?: OperationJob })?.operationJob
+      const unknown = job ? job.status === 'unknown' : isUnknownOperationError(caught)
       persist(loadScheduledTasks(activeVaultId, host.id).map((item) => {
         if (item.id !== task.id || item.command !== task.command || item.intervalMinutes !== task.intervalMinutes) return item
         revokeScheduledTaskAuthorization(activeVaultId, item)

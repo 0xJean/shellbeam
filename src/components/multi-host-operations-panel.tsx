@@ -19,7 +19,7 @@ export interface MultiHostOperationRequest {
 }
 
 export type MultiHostOperationHostStatus = 'queued' | 'running' | 'completed' | 'failed' | 'unknown' | 'cancelled'
-export type MultiHostOperationStatus = 'completed' | 'partial' | 'failed' | 'cancelled'
+export type MultiHostOperationStatus = 'completed' | 'partial' | 'failed' | 'unknown' | 'cancelled'
 
 export interface MultiHostOperationHostResult {
   hostId: string
@@ -173,7 +173,7 @@ export function MultiHostOperationsPanel({
                   <input type="checkbox" checked={selected} onChange={() => toggleHost(host.id)} disabled={disabled || running || atLimit} className="h-3.5 w-3.5 accent-primary" />
                   <Server className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate font-medium">{host.name}</span>
-                  <span className="max-w-40 truncate text-[11px] text-muted-foreground">{host.address}{host.jumpHost ? ` · ${t('multiHost.proxyJump')}` : ''}</span>
+                  <span className="max-w-40 truncate text-[11px] text-muted-foreground">{host.address}{host.jumpHostId || host.jumpHost ? ` · ${t('multiHost.proxyJump')}` : ''}</span>
                 </label>
               )
             })}

@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { HostProfile } from './hosts'
-import { getWorkspaceInventoryHostKey } from './workspace-inventory'
 
 export interface WorkspaceToolStatus {
   installed: boolean | null
@@ -13,6 +12,7 @@ export interface WorkspaceToolStatus {
 }
 
 export interface WorkspaceToolStatusSnapshot {
+  vaultId: string
   hostKey: string
   hostId: string
   hostName: string
@@ -25,12 +25,19 @@ export interface WorkspaceToolStatusSnapshot {
   updatedAt: number
 }
 
-async function invokeWorkspaceToolStatusCommand<T>(command: string, args?: Record<string, unknown>) {
-  try {
-    return await invoke<T>(command, args)
-  } catch {
-    return null
-  }
+function toolScope(host: HostProfile, vaultId?: string) {
+  const explicit = vaultId?.trim()
+  const contextual = host.vaultId?.trim()
+  if (explicit && contextual && explicit !== contextual) throw new Error('tool_status_vault_mismatch')
+  const vault = explicit || contextual
+  // Unscoped browser previews are ephemeral. Never query a global native cache
+  // or assign ambiguous legacy observations to whichever vault happens to open.
+  return vault && host.id.trim() ? { vaultId: vault, hostId: host.id } : null
+}
+
+export function getWorkspaceToolStatusHostKey(host: HostProfile, vaultId?: string) {
+  const scope = toolScope(host, vaultId)
+  return scope ? `vault:${JSON.stringify([scope.vaultId, scope.hostId])}` : null
 }
 
 function isWorkspaceToolStatus(value: unknown): value is WorkspaceToolStatus {
@@ -48,7 +55,8 @@ function isWorkspaceToolStatus(value: unknown): value is WorkspaceToolStatus {
 function isWorkspaceToolStatusSnapshot(value: unknown): value is WorkspaceToolStatusSnapshot {
   if (!value || typeof value !== 'object') return false
   const record = value as Partial<WorkspaceToolStatusSnapshot>
-  return typeof record.hostKey === 'string'
+  return typeof record.vaultId === 'string'
+    && typeof record.hostKey === 'string'
     && typeof record.hostId === 'string'
     && typeof record.hostName === 'string'
     && typeof record.hostAddress === 'string'
@@ -65,9 +73,11 @@ function toWorkspaceToolStatusSnapshot(
   tool: { id: string; name: string },
   status: WorkspaceToolStatus,
   updatedAt: number,
+  vaultId: string,
 ): WorkspaceToolStatusSnapshot {
   return {
-    hostKey: getWorkspaceInventoryHostKey(host),
+    vaultId,
+    hostKey: getWorkspaceToolStatusHostKey(host, vaultId)!,
     hostId: host.id,
     hostName: host.name,
     hostAddress: host.address,
@@ -80,26 +90,27 @@ function toWorkspaceToolStatusSnapshot(
   }
 }
 
-export async function loadWorkspaceToolStatusSnapshots(hosts: HostProfile[]) {
-  const snapshots = await invokeWorkspaceToolStatusCommand<unknown[]>('list_workspace_tool_statuses')
-  if (!snapshots) return {}
-
-  const hostKeys = new Set(hosts.map(getWorkspaceInventoryHostKey))
-  return snapshots.reduce<Record<string, Record<string, WorkspaceToolStatusSnapshot>>>((next, snapshot) => {
-    if (!isWorkspaceToolStatusSnapshot(snapshot)) return next
-    if (!hostKeys.has(snapshot.hostKey)) return next
-    next[snapshot.hostKey] = {
-      ...(next[snapshot.hostKey] ?? {}),
-      [snapshot.toolId]: snapshot,
+export async function loadWorkspaceToolStatusSnapshots(hosts: HostProfile[], vaultId?: string) {
+  const next: Record<string, Record<string, WorkspaceToolStatusSnapshot>> = {}
+  for (const host of hosts) {
+    const scope = toolScope(host, vaultId)
+    if (!scope) continue
+    const key = getWorkspaceToolStatusHostKey(host, vaultId)!
+    const snapshots = await invoke<unknown[]>('list_workspace_tool_statuses', scope)
+    for (const snapshot of snapshots) {
+      if (!isWorkspaceToolStatusSnapshot(snapshot) || snapshot.vaultId !== scope.vaultId || snapshot.hostId !== scope.hostId || snapshot.hostKey !== key) continue
+      next[key] = { ...(next[key] ?? {}), [snapshot.toolId]: snapshot }
     }
-    return next
-  }, {})
+  }
+  return next
 }
 
-export async function loadWorkspaceToolStatuses(host: HostProfile | null | undefined) {
+export async function loadWorkspaceToolStatuses(host: HostProfile | null | undefined, vaultId?: string) {
   if (!host) return {}
-  const snapshotsByHost = await loadWorkspaceToolStatusSnapshots([host])
-  const hostSnapshots = snapshotsByHost[getWorkspaceInventoryHostKey(host)] ?? {}
+  const key = getWorkspaceToolStatusHostKey(host, vaultId)
+  if (!key) return {}
+  const snapshotsByHost = await loadWorkspaceToolStatusSnapshots([host], vaultId)
+  const hostSnapshots = snapshotsByHost[key] ?? {}
   return Object.entries(hostSnapshots).reduce<Record<string, WorkspaceToolStatus>>((next, [toolId, snapshot]) => {
     next[toolId] = snapshot.status
     return next
@@ -110,9 +121,12 @@ export async function saveWorkspaceToolStatus(
   host: HostProfile,
   tool: { id: string; name: string },
   status: WorkspaceToolStatus,
+  vaultId?: string,
 ) {
+  const scope = toolScope(host, vaultId)
+  if (!scope) return null
   const updatedAt = status.checkedAtMs ?? Date.now()
-  const payload = toWorkspaceToolStatusSnapshot(host, tool, status, updatedAt)
-  await invokeWorkspaceToolStatusCommand<void>('upsert_workspace_tool_status', { payload })
+  const payload = toWorkspaceToolStatusSnapshot(host, tool, status, updatedAt, scope.vaultId)
+  await invoke<void>('upsert_workspace_tool_status', { payload })
   return payload
 }

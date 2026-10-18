@@ -56,7 +56,7 @@ interface ProjectDeploymentsPanelProps {
 }
 
 interface HostInventoryState {
-  status: 'idle' | 'scanning' | 'ready' | 'error'
+  status: 'idle' | 'scanning' | 'ready' | 'error' | 'unsupported'
   inventory?: WorkspaceInventory
   updatedAt?: number
   error?: string
@@ -311,7 +311,7 @@ export function ProjectDeploymentsPanel({
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   useEffect(() => {
-    setStates((prev) => ({ ...prev, ...selectWorkspaceInventoryStatesForHosts(hosts, sharedStates) }))
+    setStates((prev) => ({ ...selectWorkspaceInventoryStatesForHosts(hosts, prev), ...selectWorkspaceInventoryStatesForHosts(hosts, sharedStates) }))
   }, [hosts, sharedStates])
 
   const filteredRows = useMemo(() => {

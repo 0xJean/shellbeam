@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
-import { buildUnifiedProbeCommand, parseUnifiedProbeOutput } from './unified-probe'
+import { buildUnifiedProbeCommand, parseUnifiedProbeOutput, fetchUnifiedProbe, UnsupportedProbeError } from './unified-probe'
 import { createAgentlessSshProbeProvider } from './probe-provider'
 import { parseServerMonitorOutput } from './server-monitor'
 import { parseWorkspaceInventory } from './workspace-inventory'
+import { runWorkspaceRemoteCommand } from './workspace-remote'
+vi.mock('./workspace-remote', () => ({ runWorkspaceRemoteCommand: vi.fn() }))
 const fixture = readFileSync('shared/fixtures/linux-probe-v1.txt', 'utf8')
 describe('One shared Linux collector wire contract', () => {
   it('retains rich inventory and missing-value semantics through both consumer adapters', () => {
@@ -42,6 +44,22 @@ describe('One shared Linux collector wire contract', () => {
     expect(sample.inventory.tools).toHaveLength(0)
     expect(result.stderr).not.toMatch(/\+ (?:sb_probe_tool|docker|find|systemctl) /)
   }, 20_000)
+  it.skipIf(process.platform === 'win32')('the actual collector reports unsupported OS before producing any Linux sample', () => {
+    const script = readFileSync('shared/probe-collector.sh', 'utf8')
+    const result = spawnSync('/bin/sh', ['-c', `uname() { printf 'Darwin\\n'; }\n${script}`], { encoding: 'utf8', timeout: 5000 })
+    expect(result.status).toBe(2)
+    expect(result.stdout).toBe('__SB_PROBE_UNSUPPORTED_OS=Darwin\n')
+    expect(result.stdout).not.toContain('__SB_PROBE_BEGIN')
+    expect(result.stderr).toContain('PROBE_UNSUPPORTED_OS: Darwin')
+  })
+  it('turns only a definite collector rejection into a typed unsupported result carrying the verified identity', async () => {
+    const host = { id: 'edge', address: 'target', port: 22, username: 'ops', name: 'edge', authType: 'password' as const, group: '', tags: [], createdAt: 1, updatedAt: 1 }
+    const hostIdentity = { hostId: 'edge', address: 'target', port: 22, username: 'ops', jump: { hostId: 'jump', address: 'edited', port: 2200, username: 'current' } }
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce({ stdout: '__SB_PROBE_UNSUPPORTED_OS=Darwin\n', stderr: 'PROBE_UNSUPPORTED_OS: Darwin', exitCode: 2, durationMs: 4, hostIdentity })
+    await expect(fetchUnifiedProbe({ host, resolveAuthSecret: async () => '' })).rejects.toMatchObject({ code: 'unsupported_os', hostIdentity })
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce({ stdout: '__SB_PROBE_UNSUPPORTED_OS=Darwin\n', stderr: '', exitCode: -1, durationMs: 4, errorType: 'unknown' })
+    await expect(fetchUnifiedProbe({ host, resolveAuthSecret: async () => '' })).rejects.not.toBeInstanceOf(UnsupportedProbeError)
+  })
   it('all wrappers carry the same versioned script and choose the requested sections', () => {
     expect(buildUnifiedProbeCommand('metrics')).toContain('__SB_PROBE_SCHEMA=1')
     expect(buildUnifiedProbeCommand('metrics')).toMatch(/shellbeam-probe metrics$/)

@@ -37,6 +37,7 @@ function formatBytesPerSecond(value: number | null) {
 }
 
 function statusLabel(status: ServerMonitorStatus | undefined) {
+  if (status === 'unsupported') return t('workspace.monitor.status.unsupported')
   if (status === 'online') return t('workspace.monitor.status.online')
   if (status === 'stale') return t('workspace.monitor.status.stale')
   if (status === 'offline') return t('workspace.monitor.status.offline')
@@ -45,6 +46,7 @@ function statusLabel(status: ServerMonitorStatus | undefined) {
 }
 
 function statusTone(status: ServerMonitorStatus | undefined) {
+  if (status === 'unsupported') return 'idle'
   if (status === 'online') return 'online'
   if (status === 'stale') return 'stale'
   if (status === 'offline') return 'offline'

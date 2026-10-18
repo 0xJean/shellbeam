@@ -117,12 +117,40 @@ pub fn resolve_host_route(
     vault_id: &str,
     host_id: &str,
 ) -> Result<Route, String> {
+    resolve_host_route_with_identity(app, vault_id, host_id).map(|(route, _)| route)
+}
+
+pub fn resolve_host_route_with_identity(
+    app: &tauri::AppHandle,
+    vault_id: &str,
+    host_id: &str,
+) -> Result<(Route, serde_json::Value), String> {
     let hosts = load_hosts(app, Some(vault_id))?;
     let host = hosts
         .iter()
         .find(|host| host.id == host_id)
         .ok_or("HOST_NOT_FOUND")?;
-    route_for_host(app, vault_id, host, &hosts)
+    let route = route_for_host(app, vault_id, host, &hosts)?;
+    let identity = route_identity(&route, &host.id, host.jump_host_id.as_deref());
+    Ok((route, identity))
+}
+
+/// Safe metadata from the endpoints actually selected by the native resolver.
+/// Never serialize Endpoint itself: it also holds in-memory credentials.
+pub fn route_identity(
+    route: &Route,
+    host_id: &str,
+    jump_host_id: Option<&str>,
+) -> serde_json::Value {
+    let mut identity = serde_json::json!({"hostId":host_id,"address":route.target.host,"port":route.target.port,"username":route.target.username});
+    if let Some(jump) = &route.jump {
+        identity["jump"] =
+            serde_json::json!({"address":jump.host,"port":jump.port,"username":jump.username});
+        if let Some(id) = jump_host_id {
+            identity["jump"]["hostId"] = id.into();
+        }
+    }
+    identity
 }
 
 pub fn route_for_host(
@@ -950,5 +978,49 @@ mod tests {
             Some("target_timeout_before_execution")
         );
         assert!(!path.exists());
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    #[test]
+    fn route_identity_uses_resolved_endpoints_without_credentials() {
+        let target = Endpoint {
+            host: "target.internal".into(),
+            port: 2222,
+            username: "ops".into(),
+            auth_type: "password".into(),
+            secret: "target-secret".into(),
+            passphrase: Some("phrase".into()),
+        };
+        let jump = Endpoint {
+            host: "edited-bastion.internal".into(),
+            port: 2200,
+            username: "new-jump-user".into(),
+            auth_type: "privateKey".into(),
+            secret: "jump-private-key".into(),
+            passphrase: None,
+        };
+        let route = Route {
+            target,
+            jump: Some(jump),
+        };
+        let identity = route_identity(&route, "host-1", Some("jump-1"));
+        assert_eq!(
+            identity["jump"],
+            serde_json::json!({"hostId":"jump-1","address":"edited-bastion.internal","port":2200,"username":"new-jump-user"})
+        );
+        assert_eq!(identity["port"], 2222);
+        let serialized = identity.to_string();
+        for secret in [
+            "target-secret",
+            "phrase",
+            "jump-private-key",
+            "authType",
+            "passphrase",
+        ] {
+            assert!(!serialized.contains(secret));
+        }
     }
 }

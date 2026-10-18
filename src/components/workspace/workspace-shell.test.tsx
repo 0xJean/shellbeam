@@ -20,7 +20,7 @@ vi.mock('./workspace-file-system-app', () => ({
 }))
 
 vi.mock('./workspace-tool-manager-app', () => ({
-  WorkspaceToolManagerApp: () => <div data-testid="workspace-tool-manager-app">Mock Tool Manager App</div>,
+  WorkspaceToolManagerApp: ({ vaultId }: { vaultId?: string }) => <div data-testid="workspace-tool-manager-app" data-vault={vaultId}>Mock Tool Manager App</div>,
 }))
 
 vi.mock('./workspace-asset-inventory-app', () => ({
@@ -169,6 +169,7 @@ describe('workspace shell', () => {
     render(
       <WorkspaceShell
         sessionId={sessionId}
+        activeVaultId="tools-vault"
         mobile={false}
         hostName="Production API"
         hostAddress="10.0.0.15"
@@ -194,7 +195,7 @@ describe('workspace shell', () => {
     )
 
     expect(screen.getByTestId('workspace-desktop-window-toolManager')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-tool-manager-app')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tool-manager-app')).toHaveAttribute('data-vault', 'tools-vault')
     expect(screen.getByRole('button', { name: /close tool manager window/i })).toBeInTheDocument()
   })
 

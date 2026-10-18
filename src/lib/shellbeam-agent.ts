@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { HostProfile } from './hosts'
+import { getHostIdentity } from './host-identity'
 import { operationTransport, type OperationJob, runConfirmedOperation } from './operation-job'
 import type { ProbeCapability, ProbeProvider, ProbeProviderRef, ProbeSnapshot } from './probe-provider'
 import { createProbeObservation, getProbeTransport } from './probe-provider'
@@ -286,7 +287,9 @@ export async function checkShellbeamAgent(host: HostProfile, resolveAuthSecret: 
   const record = result.exitCode === 0
     ? parseShellbeamAgentProbeOutput(result.stdout, host, receivedAt)
     : normalizeShellbeamAgentRecord({ hostId: host.id, status: 'unknown', health: 'unknown', transport: getProbeTransport(host), lastCheckedAt: now, lastErrorCode: `agent_check_exit_${result.exitCode}`, lastError: 'Agent probe command did not complete successfully' }, receivedAt)
-  return { record, snapshot: parseShellbeamAgentObservation(result.stdout, record, host, receivedAt), stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, durationMs: result.durationMs }
+  const observation = parseShellbeamAgentObservation(result.stdout, record, host, receivedAt)
+  const snapshot = observation ? { ...observation, host: { ...(result.hostIdentity ?? observation.host), ...(result.verifiedHostKeys ? { verifiedHostKeys: result.verifiedHostKeys } : {}) } } : undefined
+  return { record, snapshot, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, durationMs: result.durationMs }
 }
 
 export async function runShellbeamAgentOperation(options: {
@@ -346,10 +349,6 @@ export function shellbeamAgentRecordToProbeSnapshot(record: ShellbeamAgentRecord
     errors: record.lastError ? [{ section: 'provider', message: record.lastError, code: record.lastErrorCode ?? undefined }] : [],
     agent: { status: record.status, version: record.version ?? null, nodeId: record.agentId ?? null, capabilities: record.capabilities, lastHeartbeat: record.lastHeartbeatAt ?? null, checkedAt: record.lastCheckedAt ?? null },
   }
-}
-
-function getHostIdentity(host: HostProfile) {
-  return { hostId: host.id, address: host.address, port: host.port || 22, username: host.username || 'root', ...(host.jumpHost?.trim() ? { jump: { address: host.jumpHost.trim(), port: host.jumpPort || 22, username: host.jumpUser?.trim() || host.username || 'root' } } : {}) }
 }
 
 export function createShellbeamAgentProbeProvider(options: { check?: (host: HostProfile, resolveAuthSecret: (host: HostProfile) => Promise<string>, now: number) => Promise<ShellbeamAgentCommandResult> } = {}): ProbeProvider {

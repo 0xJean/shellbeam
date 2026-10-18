@@ -1,5 +1,7 @@
+import { observationVaultIds, scopeObservationHosts } from './host-observation-scope'
 import { hydrateLocalOpsHost } from './local-ops-persistence'
 import type { HostProfile } from './hosts'
+import { getHostIdentity } from './host-identity'
 import {
   getServerMonitorHostKey,
   listServerMonitorLatest,
@@ -254,10 +256,11 @@ export function hostOpsConnectionFailureStage(value: unknown): 'jump' | 'target'
   }
   return /proxy[ -]?jump|jump host|jump tunnel|bastion|ssh jump [a-z_]+/i.test(value) ? 'jump' : null
 }
-function observedCapabilities(inventory: WorkspaceInventory | null, snapshot: ProbeSnapshot | undefined, hasSsh: boolean): HostOpsCapability[] {
+function observedCapabilities(inventory: WorkspaceInventory | null, snapshot: ProbeSnapshot | undefined, hasSsh: boolean, linuxSsh: boolean): HostOpsCapability[] {
   const result = new Set<HostOpsCapability>()
   for (const capability of snapshot?.provider.capabilities ?? []) if (['metrics', 'processes', 'services', 'logs'].includes(capability)) result.add(capability as HostOpsCapability)
-  if (hasSsh) for (const capability of ['files', 'processes', 'logs', 'port-checks', 'metrics'] as const) result.add(capability)
+  if (hasSsh) result.add('files')
+  if (linuxSsh) for (const capability of ['processes', 'logs', 'port-checks', 'metrics'] as const) result.add(capability)
   if (inventory?.services.length || inventory?.tools.some((tool) => tool.binary === 'systemctl')) result.add('services')
   if (inventory?.containers.length || inventory?.tools.some((tool) => tool.binary === 'docker' || tool.id === 'docker')) result.add('docker')
   return [...result].sort()
@@ -271,12 +274,14 @@ function healthState(
 ): HostOpsHealthState {
   const stages = [monitor?.error, state?.error, ...(probeSnapshot?.errors.map((error) => error.message) ?? [])].map(hostOpsConnectionFailureStage)
   const jumpUnavailable = stages.includes('jump') && !stages.includes('target')
+  if (probeSnapshot?.health === 'unsupported' && (!monitor || probeSnapshot.receivedAt >= monitor.updatedAt)) return 'unsupported'
   if (monitor?.status) {
     if (monitor.status === 'checking') return 'checking'
     if ((monitor.status === 'offline' || monitor.status === 'stale') && jumpUnavailable) return 'jump-unavailable'
     if (monitor.status === 'online' && freshnessValue.stale) return 'stale'
     return monitor.status
   }
+  if (state?.status === 'unsupported') return 'unsupported'
   if (state?.status === 'error') return jumpUnavailable ? 'jump-unavailable' : 'offline'
   if (state?.status === 'ready') return freshnessValue.stale ? 'stale' : 'online'
   if (probeSnapshot) {
@@ -415,7 +420,27 @@ function freshestSnapshot(current: ProbeSnapshot | undefined, candidate: ProbeSn
   return (candidate.receivedAt || 0) >= (current.receivedAt || 0) ? candidate : current
 }
 
+/** A platform rejection in one collector cannot hide a current observation
+ * supplied by another provider for the same host. */
+function preferredHostProbe(current: ProbeSnapshot | undefined, candidate: ProbeSnapshot) {
+  if (!current) return candidate
+  const freshMetrics = (snapshot: ProbeSnapshot) => snapshot.health === 'online' && snapshot.metrics && !snapshot.metrics.freshness.expired
+  if (current.health === 'unsupported' && freshMetrics(candidate)) return candidate
+  if (candidate.health === 'unsupported' && freshMetrics(current)) return current
+  return freshestSnapshot(current, candidate)
+}
+
+const auditStatusRank = (status: OperationAuditEntry['status']) => status === 'queued' ? 0 : status === 'running' ? 1 : 2
+const compareAudits = (left: OperationAuditEntry, right: OperationAuditEntry) => right.createdAt - left.createdAt || auditStatusRank(right.status) - auditStatusRank(left.status)
+
 function operationSummary(audits: OperationAuditEntry[]): HostOpsOperationSummary {
+  // Audit events are immutable transitions; counts describe current jobs.
+  const latest = new Map<string, OperationAuditEntry>()
+  for (const audit of audits) {
+    const previous = latest.get(audit.jobId)
+    if (!previous || audit.createdAt > previous.createdAt || (audit.createdAt === previous.createdAt && auditStatusRank(audit.status) > auditStatusRank(previous.status))) latest.set(audit.jobId, audit)
+  }
+  audits = [...latest.values()].sort(compareAudits)
   return {
     total: audits.length,
     active: audits.filter((audit) => audit.status === 'queued' || audit.status === 'running').length,
@@ -455,7 +480,7 @@ export function buildHostOpsViews({
   }, [])
   const komariByHostId = new Map(refreshedKomariSnapshots.map((snapshot) => [snapshot.host.hostId, snapshot]))
   const probeByHostId = new Map<string, ProbeSnapshot>()
-  for (const snapshot of allProbeSnapshots) probeByHostId.set(snapshot.host.hostId, freshestSnapshot(probeByHostId.get(snapshot.host.hostId), snapshot))
+  for (const snapshot of allProbeSnapshots) probeByHostId.set(snapshot.host.hostId, preferredHostProbe(probeByHostId.get(snapshot.host.hostId), snapshot))
   const agentByHostId = new Map(shellbeamAgents.map((record) => [record.hostId, record]))
 
   return hosts.reduce<Record<string, HostOpsView>>((result, host) => {
@@ -463,30 +488,34 @@ export function buildHostOpsViews({
     const sshMonitor = monitorByKey.get(hostKey)
     const komariSnapshot = komariByHostId.get(host.id)
     const probeSnapshot = probeByHostId.get(host.id)
-    const selectedProbeSnapshot = komariSnapshot ?? probeSnapshot
+    const selectedProbeSnapshot = probeSnapshot && komariSnapshot ? preferredHostProbe(komariSnapshot, probeSnapshot) : komariSnapshot ?? probeSnapshot
     const shellbeamAgent = agentByHostId.get(host.id)
     const komariMonitor = komariMonitorForHost(host, komariSnapshot)
     const genericMonitor = komariMonitorForHost(host, probeSnapshot)
     const komariFresh = Boolean(komariSnapshot?.metrics && !komariSnapshot.metrics.freshness.expired)
-    const monitor = komariMonitor && (komariFresh || !sshMonitor?.snapshot)
+    const genericFresh = Boolean(probeSnapshot?.metrics && !probeSnapshot.metrics.freshness.expired)
+    const monitor = komariMonitor && komariFresh
       ? komariMonitor
-      : sshMonitor ?? genericMonitor
+      : genericMonitor && genericFresh && (!sshMonitor?.snapshot || sshMonitor.status === 'unsupported')
+        ? genericMonitor
+        : sshMonitor ?? komariMonitor ?? genericMonitor
     const inventoryEntry = inventoryCache[hostKey]
     const probeInventory = selectedProbeSnapshot?.inventory?.data ?? null
     const inventory = inventoryEntry?.inventory ?? probeInventory
     const inventoryUpdatedAt = inventoryEntry?.updatedAt ?? selectedProbeSnapshot?.inventory?.freshness.receivedAt ?? null
     const state = inventoryStates[hostKey]
     const jumpProfile = host.jumpHostId ? hosts.find((candidate) => candidate.id === host.jumpHostId) : undefined
+    const jump = getHostIdentity(host, hosts).jump
     const route: HostOpsRoute = {
       transport: operationTransport(host),
-      ...(host.jumpHost?.trim() ? { jumpHost: host.jumpHost.trim() } : jumpProfile ? { jumpHost: jumpProfile.address } : {}),
+      ...(jump?.address ? { jumpHost: jump.address } : {}),
       ...(jumpProfile ? { jumpHostName: jumpProfile.name } : {}),
-      ...(host.jumpPort ? { jumpPort: host.jumpPort } : {}),
-      ...(host.jumpUser?.trim() ? { jumpUser: host.jumpUser.trim() } : {}),
+      ...(jump?.port ? { jumpPort: jump.port } : {}),
+      ...(jump?.username ? { jumpUser: jump.username } : {}),
     }
     const allHostAudits = audits
       .filter((audit) => audit.hostId === host.id || (!audit.hostId && audit.hostAddress === host.address))
-      .sort((a, b) => b.createdAt - a.createdAt)
+      .sort(compareAudits)
     const hostAudits = allHostAudits.slice(0, 10)
     const selectedProvider: HostOpsProvider = monitor === komariMonitor && komariMonitor
       ? 'komari'
@@ -542,7 +571,7 @@ export function buildHostOpsViews({
       inventory,
       serviceSummary: serviceSummary(inventory, inventoryUpdatedAt),
       processSummary: processSummary(inventory, inventoryUpdatedAt),
-      operationSummary: operationSummary(hostAudits),
+      operationSummary: operationSummary(allHostAudits),
       audits: hostAudits,
       latestAudit: hostAudits[0] ?? null,
       komariAlerts: alertState?.alerts ?? [],
@@ -551,7 +580,7 @@ export function buildHostOpsViews({
       localAlertOpen: openLocal.length,
       alertOpenCount: komariOpenCount === null ? null : komariOpenCount + openLocal.length,
       highestAlertSeverity,
-      capabilities: observedCapabilities(inventory, selectedProbeSnapshot, Boolean(sshMonitor || inventoryEntry || state?.status === 'ready')),
+      capabilities: healthState(monitor, state, freshnessValue, selectedProbeSnapshot) === 'unsupported' ? ['files'] : observedCapabilities(inventory, selectedProbeSnapshot, Boolean(sshMonitor || inventoryEntry || state?.status === 'ready'), sshMonitor?.status !== 'unsupported' && Boolean(sshMonitor?.snapshot || inventoryEntry || state?.status === 'ready')),
     }
     result[host.id] = view
     return result
@@ -564,9 +593,10 @@ export async function loadHostOpsViews(
   options: { auditLimit?: number; staleAfterMs?: number; now?: number; komariSnapshots?: ProbeSnapshot[]; komariAlertStates?: KomariAlertState[]; shellbeamAgents?: ShellbeamAgentRecord[]; vaultId?: string } = {},
 ) {
   if (hosts.length === 0) return {}
+  hosts = scopeObservationHosts(hosts, options.vaultId)
   await Promise.allSettled(hosts.map((host) => hydrateLocalOpsHost(options.vaultId, host.id, true)))
   const [monitorLatest, inventoryCache, inventoryStates, audits, persistedAgents, persistedProbeRows] = await Promise.all([
-    listServerMonitorLatest(),
+    listServerMonitorLatest(observationVaultIds(hosts)),
     loadWorkspaceInventoryPersistedCache(hosts),
     loadWorkspaceInventoryHostStateSnapshots(hosts),
     listOperationAudit({
