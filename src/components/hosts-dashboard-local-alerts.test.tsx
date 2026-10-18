@@ -5,7 +5,7 @@ import { HostsDashboard } from './hosts-dashboard'
 import { I18nProvider } from '@/lib/i18n'
 import type { HostProfile } from '@/lib/hosts'
 import { buildHostOpsViews, loadHostOpsViews } from '@/lib/host-ops-view'
-import { actOnLocalAlert, type LocalAlertRecord, type LocalAlertState } from '@/lib/local-alert-rules'
+import { actOnLocalAlert, type LocalAlertEvaluation, type LocalAlertRecord, type LocalAlertState } from '@/lib/local-alert-rules'
 import { clearLocalOpsMemory, loadLocalAlertState, saveLocalAlertState } from '@/lib/local-ops-store'
 import { applyLocalOpsDocument, flushLocalOpsHost, queueLocalOpsDocument, resetLocalOpsPersistenceMemory, type LocalOpsDocument } from '@/lib/local-ops-persistence'
 import { clearProbeAlertRuntimeDiagnostic, setProbeAlertRuntimeDiagnostic } from '@/lib/probe-alert-runtime-state'
@@ -47,6 +47,14 @@ beforeEach(() => {
       const document = documents.get(query.vaultId)
       return document && (!query.kind || query.kind === document.kind) ? [document] : []
     }
+    if (command === 'local_ops_upsert') {
+      const payload = (args as { payload: LocalOpsDocument & { expectedRevision: number } }).payload
+      const previous = documents.get(payload.vaultId)
+      if (previous && previous.revision !== payload.expectedRevision) throw new Error('LOCAL_OPS_REVISION_CONFLICT')
+      const document = { ...payload, revision: (previous?.revision ?? 0) + 1, updatedAt: Date.now() }
+      documents.set(payload.vaultId, document)
+      return document
+    }
     if (command === 'operation_job_create') {
       const job = { ...request, jobId: `job-${jobs.size + 1}`, auditId: `audit-${jobs.size + 1}`, status: 'queued', confirmationStatus: 'pending', queuedAt: Date.now(), updatedAt: Date.now() } as OperationJob
       jobs.set(job.jobId, job); return job
@@ -76,6 +84,86 @@ beforeEach(() => {
 afterEach(() => { Reflect.deleteProperty(window, '__TAURI_INTERNALS__'); vi.restoreAllMocks(); clearLocalOpsMemory(); resetLocalOpsPersistenceMemory(); clearProbeAlertRuntimeDiagnostic('vault-a', host.id); clearProbeAlertRuntimeDiagnostic('vault-b', host.id) })
 
 describe('host card canonical local alert actions', () => {
+  it.each(['grid', 'list'] as const)('accepts a real collection newer than the last 15-second display tick in %s', async (mode) => {
+    const initialTime = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(initialTime)
+    render(element())
+    if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
+    await screen.findByTestId('host-local-alert')
+    const sampledAt = initialTime + 1_000
+    clock.mockReturnValue(sampledAt)
+    await act(async () => {
+      applyLocalOpsDocument(documents.get('vault-a')!)
+      saveLocalAlertState('vault-a', host.id, { version: 1, alerts: [], audit: [], evaluations: [{ ruleId: `probe:ssh-agentless:${'a'.repeat(32)}:metrics`, sampledAt, state: 'healthy', value: 0, pendingSince: null, recoverySince: null }] })
+      await flushLocalOpsHost('vault-a', host.id)
+    })
+    const row = await screen.findByTestId('host-probe-evaluation')
+    expect(row).toHaveAttribute('data-state', 'healthy')
+    expect(row).toHaveAttribute('data-sampled-at', String(sampledAt))
+    expect(row).toHaveTextContent('Just now')
+  })
+
+  it.each(['grid', 'list'] as const)('projects live healthy evaluations without alerts, resolved sample and cross-session unknown evidence in %s', async (mode) => {
+    const ruleId = `probe:ssh-agentless:${'a'.repeat(32)}:metrics`
+    const sampledAt = Date.now() - 60_000
+    const evaluation: LocalAlertEvaluation = { ruleId, sampledAt, pendingSince: null, recoverySince: null, state: 'healthy', value: 0 }
+    const state: LocalAlertState = { version: 1, alerts: [], audit: [], evaluations: [evaluation] }
+    applyLocalOpsDocument(documents.get('vault-a')!)
+    saveLocalAlertState('vault-a', host.id, state)
+    await flushLocalOpsHost('vault-a', host.id)
+    const view = render(element())
+    if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
+    const row = await screen.findByTestId('host-probe-evaluation')
+    expect(row).toBeVisible()
+    expect(row).toHaveTextContent('Healthy')
+    expect(row).toHaveAttribute('data-sampled-at', String(sampledAt))
+    expect(screen.queryByTestId('host-local-alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('host-ops-summary')).toHaveAttribute('data-vault-id', 'vault-a')
+    expect(screen.getByTestId('host-ops-summary')).toHaveAttribute('data-host-id', host.id)
+    const resolvedAt = Date.now() - 1_000
+    await act(async () => {
+      saveLocalAlertState('vault-a', host.id, { ...state, alerts: [{ ...((documents.get('vault-b')!.payload as LocalAlertState).alerts[0]), ruleId, status: 'resolved', value: 0, updatedAt: resolvedAt, resolvedAt, operationJobId: 'ack-before-recovery' }] })
+      await flushLocalOpsHost('vault-a', host.id)
+    })
+    expect(screen.getByTestId('host-local-alert')).toHaveAttribute('data-job-id', 'ack-before-recovery')
+    expect(screen.getByTestId('host-local-alert')).toHaveAttribute('data-resolved-at', String(resolvedAt))
+    expect(screen.getByTestId('host-probe-evaluation')).toHaveAttribute('data-sampled-at', String(sampledAt))
+    // Reopening persisted evidence resets health to unknown but retains its
+    // original sample; the journal's newer update is never a sample.
+    act(() => { clearLocalOpsMemory(); window.dispatchEvent(new StorageEvent('storage')) })
+    expect(screen.getByTestId('host-probe-evaluation')).toHaveAttribute('data-state', 'unknown')
+    expect(screen.getByTestId('host-probe-evaluation')).toHaveAttribute('title', new Date(sampledAt).toISOString())
+    view.unmount()
+  })
+
+  it.each(['grid', 'list'] as const)('keeps same-id Probe evaluations isolated by active Vault, supports validated legacy hosts and drops foreign host scope in %s', async (mode) => {
+    const ruleId = `probe:ssh-agentless:${'a'.repeat(32)}:metrics`
+    const samples = { 'vault-a': Date.now() - 50_000, 'vault-b': Date.now() - 20_000 }
+    for (const vault of ['vault-a', 'vault-b'] as const) {
+      applyLocalOpsDocument(documents.get(vault)!)
+      saveLocalAlertState(vault, host.id, { version: 1, alerts: [], audit: [], evaluations: [{ ruleId, sampledAt: samples[vault], state: vault === 'vault-a' ? 'firing' : 'healthy', value: vault === 'vault-a' ? 1 : 0, pendingSince: null, recoverySince: null }] })
+      await flushLocalOpsHost(vault, host.id)
+    }
+    const view = render(element('vault-a', { hosts: [{ ...host, vaultId: undefined }] }))
+    if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
+    let row = await screen.findByTestId('host-probe-evaluation')
+    expect(row).toHaveAttribute('data-vault-id', 'vault-a')
+    expect(row).toHaveAttribute('data-state', 'firing')
+    expect(row).toHaveAttribute('data-sampled-at', String(samples['vault-a']))
+    view.rerender(element('vault-b', { hosts: [{ ...host, vaultId: undefined }] }))
+    await waitFor(() => expect(screen.getByTestId('host-probe-evaluation')).toHaveAttribute('data-vault-id', 'vault-b'))
+    row = screen.getByTestId('host-probe-evaluation')
+    expect(row).toHaveAttribute('data-state', 'healthy')
+    expect(row).toHaveAttribute('data-sampled-at', String(samples['vault-b']))
+    await act(async () => {
+      saveLocalAlertState('vault-a', host.id, { version: 1, alerts: [], audit: [], evaluations: [{ ruleId, sampledAt: Date.now(), state: 'firing', value: 1, pendingSince: null, recoverySince: null }] })
+      await flushLocalOpsHost('vault-a', host.id)
+    })
+    expect(row).toHaveAttribute('data-sampled-at', String(samples['vault-b']))
+    view.rerender(element('vault-b', { hosts: [{ ...host, vaultId: 'vault-a' }] }))
+    await waitFor(() => expect(screen.queryByTestId('host-probe-evaluation')).not.toBeInTheDocument())
+  })
+
   it('shows scope-specific lifecycle and persistence failures from real events without changing provider health or exposing exceptions', async () => {
     const view = render(element())
     await screen.findByTestId('host-local-alert')

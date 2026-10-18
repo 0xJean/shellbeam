@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HostProfile } from './hosts'
-import { buildHostOpsViews } from './host-ops-view'
+import { buildHostOpsViews, hostProbeEvaluations } from './host-ops-view'
+import type { LocalAlertEvaluation } from './local-alert-rules'
 import type { ServerMonitorLatest } from './server-monitor'
 import type { OperationAuditEntry } from './operation-job'
 import type { WorkspaceInventoryCache } from './workspace-inventory'
@@ -24,6 +25,34 @@ const host: HostProfile = {
   createdAt: 1,
   updatedAt: 1,
 }
+
+const probeEvaluation = (section: 'metrics' | 'inventory', sampledAt = 1_000): LocalAlertEvaluation => ({ ruleId: `probe:ssh-agentless:${'a'.repeat(32)}:${section}`, sampledAt, state: 'healthy', value: 0, pendingSince: null, recoverySince: null })
+
+describe('canonical probe evaluation projection', () => {
+  it('keeps initial healthy sections visible without an incident and never substitutes a newer metric or journal time', () => {
+    const evaluations = [probeEvaluation('metrics'), probeEvaluation('inventory', 900)]
+    const view = buildHostOpsViews({ hosts: [{ ...host, vaultId: 'vault-a' }], monitorLatest: [monitor], now: 1_100,
+      localAlertStates: { [host.id]: { version: 1, alerts: [], audit: [], evaluations } },
+    })[host.id]
+    expect(view.localAlerts).toEqual([])
+    expect(view.localAlertEvaluations).toEqual(evaluations.map(({ ruleId, sampledAt, state }, index) => ({ ruleId, sampledAt, state, section: index ? 'inventory' : 'metrics' })))
+  })
+
+  it('expires old evidence to unknown while retaining the original sample, including restored unknown state', () => {
+    expect(hostProbeEvaluations([probeEvaluation('metrics'), { ...probeEvaluation('inventory', 1_050), state: 'unknown' }], 181_001)).toEqual([
+      { ruleId: probeEvaluation('metrics').ruleId, section: 'metrics', sampledAt: 1_000, state: 'unknown' },
+      { ruleId: probeEvaluation('inventory').ruleId, section: 'inventory', sampledAt: 1_050, state: 'unknown' },
+    ])
+  })
+
+  it.each([undefined, 0, -1, NaN, Infinity, 1_101, 1.5])('leaves an invalid or missing sample %s unknown without inventing a timestamp', (sampledAt) => {
+    expect(hostProbeEvaluations([{ ...probeEvaluation('metrics'), sampledAt }], 1_100)[0]).toMatchObject({ state: 'unknown', sampledAt: null })
+  })
+
+  it('does not project user rules, health checks or noncanonical probe identities as built-in probes', () => {
+    expect(hostProbeEvaluations(['check:health', 'cpu', 'probe:unknown', `probe:ssh-agentless:${'a'.repeat(32)}:logs`].map(ruleId => ({ ...probeEvaluation('metrics'), ruleId })), 1_100)).toEqual([])
+  })
+})
 
 const monitor: ServerMonitorLatest = {
   hostKey: 'host-1',

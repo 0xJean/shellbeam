@@ -283,11 +283,19 @@ describe('durable SSH probe alert lifecycle', () => {
     await lifecycle.consume(await event('failure'))
     const first = loadLocalAlertState('vault-a', 'edge')
     const id = first.alerts[0].ruleId
-    expect(first.audit[0].name).toBe('探针采集不可用 · metrics')
+    expect(first.audit[0].name).toBe('edge · 探针采集不可用 · metrics')
     label = 'Probe collection unavailable'
     await lifecycle.consume(await event('success', 100))
     const recovered = loadLocalAlertState('vault-a', 'edge')
     expect(recovered.alerts[0].ruleId).toBe(id)
-    expect(recovered.audit[0].name).toBe('探针采集不可用 · metrics')
+    expect(recovered.audit[0].name).toBe('edge · 探针采集不可用 · metrics')
+  })
+
+  it('identifies the host in OS notification titles without exposing credential references', async () => {
+    const host = { ...target, name: 'API\nedge', privateKeyRef: 'DO_NOT_DISCLOSE_REFERENCE' }
+    await consumer(host).consume(await event('failure', 0, 'metrics', host))
+    expect(notices).toHaveLength(1)
+    expect(notices[0].title).toBe('API edge · SSH probe unavailable · metrics')
+    expect(JSON.stringify(notices)).not.toContain('DO_NOT_DISCLOSE_REFERENCE')
   })
 })

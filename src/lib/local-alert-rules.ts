@@ -2,6 +2,7 @@ import type { NotificationEvent, NotificationSeverity } from './notification-pol
 
 export type LocalAlertMetric = 'cpu' | 'memory' | 'disk' | 'service' | 'health-check' | 'probe-provider'
 export type LocalAlertStatus = 'active' | 'acknowledged' | 'resolved' | 'closed'
+export const PROBE_ALERT_EVALUATION_FRESHNESS_MS = 180_000
 export interface LocalAlertRule {
   id: string
   hostId: string

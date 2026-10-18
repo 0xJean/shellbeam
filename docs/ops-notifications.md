@@ -17,6 +17,12 @@ exceptions or changing Provider health. Host cards expose the existing confirmed
 local-alert actions and canonical OperationJob audit for these built-in alerts.
 Actual ProbeProvider incident/recovery OS presentation still requires its own
 live acceptance; local-service and explicit test-button cases do not prove it.
+Built-in SSH alert titles include their actual host name so different hosts'
+metrics/inventory incidents can be distinguished. Grid/List views expose the
+canonical evaluation state and original sampling time for each section even
+when no incident is open. Evidence older than the shared 180-second evaluation
+freshness window becomes unknown; missing, invalid or future timestamps never
+borrow a current UI refresh time.
 Recovery notifications keep their independent channel
 policy. Notification delivery is separate from alert health and OperationJob
 completion: an accepted send does not prove that the operator saw it or that a

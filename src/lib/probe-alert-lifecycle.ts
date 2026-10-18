@@ -1,5 +1,5 @@
 import type { HostProfile } from './hosts'
-import { evaluateLocalAlertRules, normalizeLocalAlertRule, type LocalAlertObservation, type LocalAlertRule } from './local-alert-rules'
+import { evaluateLocalAlertRules, localAlertText, normalizeLocalAlertRule, PROBE_ALERT_EVALUATION_FRESHNESS_MS, type LocalAlertObservation, type LocalAlertRule } from './local-alert-rules'
 import { hydrateLocalOpsHost, flushLocalOpsHost } from './local-ops-persistence'
 import { dispatchLocalAlertNotifications, loadLocalAlertState, saveLocalAlertState } from './local-ops-store'
 import { getProbeCollectionConfigRevision, probeCollectionDigest, type ProbeCollectionEvent, type ProbeCollectionSection } from './probe-collection-events'
@@ -65,6 +65,9 @@ export function createProbeAlertLifecycleConsumer(options: ProbeAlertLifecycleOp
       const rules: LocalAlertRule[] = []
       const observations: LocalAlertObservation[] = []
       const previous = loadLocalAlertState(event.vaultId, event.hostId)
+      const host = options.getCurrentHost(event)
+      if (!host) return { status: 'ignored' }
+      const hostLabel = localAlertText(host.name).slice(0, 48) || localAlertText(host.id).slice(0, 48)
       const accepted: string[] = []
       for (const row of event.sections) {
         const ruleId = await probeAlertRuleId(event.provider, row.section)
@@ -77,8 +80,8 @@ export function createProbeAlertLifecycleConsumer(options: ProbeAlertLifecycleOp
           || row.outcome === 'unknown' && event.completedAt <= (evaluation?.sampledAt ?? 0)) continue
         accepted.push(sectionKey)
         rules.push(normalizeLocalAlertRule({ id: ruleId, hostId: event.hostId, metric: 'probe-provider', target: ruleId,
-          name: options.ruleName?.(row.section) ?? `SSH probe unavailable · ${row.section}`, threshold: 1, recoveryThreshold: 0, durationMs: 0, recoveryDurationMs: 0,
-          freshnessMs: 180_000, severity: 'warning', enabled: true }))
+          name: `${hostLabel} · ${options.ruleName?.(row.section) ?? `SSH probe unavailable · ${row.section}`}`, threshold: 1, recoveryThreshold: 0, durationMs: 0, recoveryDurationMs: 0,
+          freshnessMs: PROBE_ALERT_EVALUATION_FRESHNESS_MS, severity: 'warning', enabled: true }))
         observations.push({ ruleId, value: row.outcome === 'failure' ? 1 : row.outcome === 'success' ? 0 : null,
           sampledAt: row.outcome === 'success' ? row.sampledAt! : event.completedAt, source: event.provider.kind, transport: event.transport })
       }

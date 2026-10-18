@@ -12,7 +12,7 @@ import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
 import type { LocalAlertRecord } from '@/lib/local-alert-rules'
-import type { HostOpsCapability } from '@/lib/host-ops-view'
+import { hostProbeEvaluations, validHostOpsSampleTime, type HostOpsCapability, type HostOpsProbeEvaluation } from '@/lib/host-ops-view'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
 import { AlertTriangle, Activity, Bot, Check, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Network, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
@@ -49,6 +49,8 @@ function statusConfig(status: string | undefined, t: TFn) {
 type HostHealthStatus = 'online' | 'stale' | 'offline' | 'checking' | 'unknown' | 'paused' | 'unsupported' | 'jump-unavailable'
 
 export interface HostOperationalSummary {
+  /** Vault verified by the active dashboard's observation scope. */
+  vaultId?: string
   serviceTotal: number | null
   serviceActive: number | null
   serviceFailed: number | null
@@ -95,6 +97,7 @@ export interface HostOperationalSummary {
   highestAlertSeverity?: 'info' | 'warning' | 'critical' | null
   localAlertOpen?: number
   localAlerts?: LocalAlertRecord[]
+  localAlertEvaluations?: HostOpsProbeEvaluation[]
   /** Local lifecycle actions have their own confirmed job and persistence path. */
   onLocalAlertAction?: (alert: LocalAlertRecord, action: 'acknowledge' | 'close') => Promise<void> | void
   localAlertBusy?: string | null
@@ -492,6 +495,7 @@ function formatSummaryAge(ts: number | undefined, t: TFn) {
 }
 
 function HostLocalAlertRows({ host, summary, t }: { host: HostProfile; summary: HostOperationalSummary; t: TFn }) {
+  if (summary.vaultId && host.vaultId && summary.vaultId !== host.vaultId) return null
   const alerts = (summary.localAlerts ?? []).filter((alert) => alert.hostId === host.id)
     .sort((left, right) => Number(left.status === 'closed' || left.status === 'resolved') - Number(right.status === 'closed' || right.status === 'resolved') || right.updatedAt - left.updatedAt)
   if (!alerts.length && !summary.localAlertError && !summary.localAlertPersistenceError && !summary.probeAlertLifecycleError) return null
@@ -502,7 +506,7 @@ function HostLocalAlertRows({ host, summary, t }: { host: HostProfile; summary: 
   }
   return <div data-testid="host-local-alerts" className="space-y-1.5 border-t border-[color:var(--workspace-border-soft)] pt-1.5">
     <span className="font-medium">{t('hosts.localAlert.title')}</span>
-    {alerts.slice(0, 3).map((alert) => <div key={alert.ruleId} data-testid="host-local-alert" data-rule-id={alert.ruleId} data-host-id={alert.hostId} data-alert-status={alert.status} data-source={alert.source} data-transport={alert.transport} className="space-y-1">
+    {alerts.slice(0, 3).map((alert) => <div key={alert.ruleId} data-testid="host-local-alert" data-rule-id={alert.ruleId} data-vault-id={summary.vaultId} data-host-id={alert.hostId} data-alert-status={alert.status} data-metric={alert.metric} data-job-id={alert.operationJobId} data-updated-at={validHostOpsSampleTime(alert.updatedAt)} data-resolved-at={validHostOpsSampleTime(alert.resolvedAt)} data-source={alert.source} data-transport={alert.transport} className="space-y-1">
       <div className="flex min-w-0 items-center gap-1.5">
         <span className="min-w-0 flex-1 break-words"><strong>{alert.name}</strong> · {t(`localOps.metric.${alert.metric}`)} · {t(`localOps.status.${alert.status}`)}</span>
         {summary.onLocalAlertAction && alert.status === 'active' && <button type="button" data-testid={`local-host-alert-ack-${alert.ruleId}`} disabled={!!summary.localAlertBusy} onClick={(event) => act(event, alert, 'acknowledge')} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} className="shrink-0 rounded-md border px-1.5 py-1 disabled:opacity-50">{t('localOps.acknowledge')}</button>}
@@ -517,9 +521,24 @@ function HostLocalAlertRows({ host, summary, t }: { host: HostProfile; summary: 
   </div>
 }
 
+function HostProbeEvaluationRows({ host, summary, t }: { host: HostProfile; summary: HostOperationalSummary; t: TFn }) {
+  if (!summary.vaultId || host.vaultId && host.vaultId !== summary.vaultId) return null
+  const evaluations = hostProbeEvaluations(summary.localAlertEvaluations ?? [])
+  if (!evaluations.length) return null
+  return <div className="space-y-1 border-t border-[color:var(--workspace-border-soft)] pt-1.5">
+    {evaluations.map((evaluation) => <div key={evaluation.ruleId} data-testid="host-probe-evaluation" data-rule-id={evaluation.ruleId} data-vault-id={summary.vaultId} data-host-id={host.id} data-state={evaluation.state} data-sampled-at={evaluation.sampledAt ?? undefined} title={evaluation.sampledAt === null ? undefined : new Date(evaluation.sampledAt).toISOString()} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+      <ShieldCheck className="h-3 w-3 shrink-0" aria-hidden="true" />
+      <span>{t('localOps.metric.probe-provider')} · {t(`localOps.probeSection.${evaluation.section}`)}</span>
+      <strong>{t(`localOps.state.${evaluation.state}`)}</strong>
+      <span className="ml-auto text-[var(--workspace-text-subtle)]">{formatSummaryAge(evaluation.sampledAt ?? undefined, t)}</span>
+    </div>)}
+  </div>
+}
+
 function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?: HostOperationalSummary; t: TFn }) {
   if (!summary) return null
   const operations = summary
+  const scopeVault = summary.vaultId && (!host.vaultId || host.vaultId === summary.vaultId) ? summary.vaultId : undefined
 
   const latest = summary.latestAudit
   const latestLabel = latest
@@ -542,7 +561,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
   }
 
   return (
-    <div data-testid="host-ops-summary" data-host-ops-summary className="mt-2 space-y-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 text-[10px] text-[var(--workspace-text-muted)]">
+    <div data-testid="host-ops-summary" data-host-ops-summary data-vault-id={scopeVault} data-host-id={host.id} data-sampled-at={validHostOpsSampleTime(summary.sampledAt)} className="mt-2 space-y-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 text-[10px] text-[var(--workspace-text-muted)]">
       <div className="flex min-w-0 items-center gap-2">
         <span className="inline-flex shrink-0 items-center gap-1" title={t('hosts.opsServices')}>
           <Wrench className="h-3 w-3 text-[var(--workspace-accent-text)]" />
@@ -682,6 +701,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
         {summary.expiryReason === 'ttl-expired' && <span data-testid="host-ops-expiry-reason" className="rounded border border-border/50 px-1 py-0.5 text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsExpiryReason.ttl-expired')}</span>}
       </div>
       {(summary.highestAlertSeverity || summary.localAlertOpen) ? <div data-testid="host-ops-local-alerts" data-open-count={summary.localAlertOpen ?? 0} data-severity={summary.highestAlertSeverity ?? 'unknown'} className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsFilters.highest')}: {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {summary.localAlertOpen ?? 0}</div> : null}
+      <HostProbeEvaluationRows host={host} summary={summary} t={t} />
       <HostLocalAlertRows host={host} summary={summary} t={t} />
       {summary.komariProbe && (
         <KomariProbeOpsView

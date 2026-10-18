@@ -25,7 +25,7 @@ import { listPersistedProbeSnapshots, type PersistedProbeSnapshotRecord } from '
 import type { KomariAlertSummary } from './komari'
 import type { KomariAlertAuditEntry, KomariAlertRecord, KomariAlertState } from './komari-alerts'
 import type { ShellbeamAgentRecord } from './shellbeam-agent'
-import type { LocalAlertRecord, LocalAlertState } from './local-alert-rules'
+import { PROBE_ALERT_EVALUATION_FRESHNESS_MS, type LocalAlertEvaluation, type LocalAlertRecord, type LocalAlertState } from './local-alert-rules'
 import { loadLocalAlertState } from './local-ops-store'
 import type { NotificationSeverity } from './notification-policy'
 import { listShellbeamAgents } from './shellbeam-agent'
@@ -131,6 +131,30 @@ export interface HostOpsAlertLifecycleSummary {
   latestOperationJobId: string | null
 }
 
+export interface HostOpsProbeEvaluation {
+  ruleId: string
+  section: 'metrics' | 'inventory'
+  state: LocalAlertEvaluation['state']
+  /** Original collection sample, never a journal update or cache receipt time. */
+  sampledAt: number | null
+}
+
+export function validHostOpsSampleTime(value: unknown, now = Date.now()): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= now && value <= 8_640_000_000_000_000 ? value : undefined
+}
+
+/** Only canonical built-in SSH collection evaluations belong in this view.
+ * The journal's live state can outlast its evidence while the dashboard is open. */
+export function hostProbeEvaluations(evaluations: ReadonlyArray<Pick<LocalAlertEvaluation, 'ruleId' | 'state'> & { sampledAt?: number | null }>, now = Date.now()): HostOpsProbeEvaluation[] {
+  return evaluations.flatMap((evaluation) => {
+    const section = /^probe:ssh-agentless:[a-f0-9]{32}:(metrics|inventory)$/.exec(evaluation.ruleId)?.[1]
+    if (section !== 'metrics' && section !== 'inventory') return []
+    const sampledAt = validHostOpsSampleTime(evaluation.sampledAt, now) ?? null
+    const state = evaluation.state === 'disabled' ? 'disabled' : sampledAt !== null && now - sampledAt <= PROBE_ALERT_EVALUATION_FRESHNESS_MS ? evaluation.state : 'unknown'
+    return [{ ruleId: evaluation.ruleId, section, sampledAt, state }]
+  })
+}
+
 export interface HostOpsView {
   host: HostProfile
   hostKey: string
@@ -148,6 +172,7 @@ export interface HostOpsView {
   komariAlerts: KomariAlertRecord[]
   komariAlertAudits: KomariAlertAuditEntry[]
   localAlerts?: LocalAlertRecord[]
+  localAlertEvaluations?: HostOpsProbeEvaluation[]
   localAlertOpen?: number
   highestAlertSeverity?: NotificationSeverity | null
   alertOpenCount?: number | null
@@ -615,6 +640,7 @@ export function buildHostOpsViews({
       komariAlerts: alertState?.alerts ?? [],
       komariAlertAudits: alertState?.audits ?? [],
       localAlerts,
+      localAlertEvaluations: hostProbeEvaluations(localAlertStates[host.id]?.evaluations ?? [], now),
       localAlertOpen: openLocal.length,
       alertOpenCount: komariOpenCount === null ? null : komariOpenCount + openLocal.length,
       highestAlertSeverity,
@@ -632,7 +658,7 @@ export async function loadHostOpsViews(
 ) {
   if (hosts.length === 0) return {}
   hosts = scopeObservationHosts(hosts, options.vaultId)
-  await Promise.allSettled(hosts.map((host) => hydrateLocalOpsHost(options.vaultId, host.id, true)))
+  await Promise.allSettled(hosts.map((host) => hydrateLocalOpsHost(options.vaultId ?? host.vaultId, host.id, true)))
   const [monitorLatest, inventoryCache, inventoryStates, audits, persistedAgents, persistedProbeRows] = await Promise.all([
     listServerMonitorLatest(observationVaultIds(hosts)),
     loadWorkspaceInventoryPersistedCache(hosts),
@@ -654,7 +680,7 @@ export async function loadHostOpsViews(
     probeSnapshots: persistedProbeRows.map((row) => refreshProbeSnapshotFreshness(row.snapshot, options.now ?? Date.now())),
     komariAlertStates: options.komariAlertStates,
     shellbeamAgents: persistedAgents,
-    localAlertStates: Object.fromEntries(hosts.map((host) => [host.id, loadLocalAlertState(options.vaultId, host.id)])),
+    localAlertStates: Object.fromEntries(hosts.map((host) => [host.id, loadLocalAlertState(options.vaultId ?? host.vaultId, host.id)])),
     now: options.now,
     staleAfterMs: options.staleAfterMs,
   })

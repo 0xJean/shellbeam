@@ -6,6 +6,7 @@ import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
 import type { LocalAlertRecord } from '@/lib/local-alert-rules'
+import type { HostOpsProbeEvaluation } from '@/lib/host-ops-view'
 
 const host = {
   id: 'host-1',
@@ -28,6 +29,62 @@ const sampledMetrics: ServerMonitorSnapshot = {
 const oldResource = { hostname: 'api', os: 'Linux', kernel: '', uptime: 'old uptime', cpuPercent: 95, memoryPercent: 20, memoryText: '', diskPercent: 30, diskText: '', network: 'old throughput' }
 
 describe('host list item', () => {
+  it.each(['grid', 'list'] as const)('visibly shows healthy Probe sections without an alert, then retains the real sample after resolution in %s', (mode) => {
+    const sampledAt = Date.now() - 60_000
+    const evaluation: HostOpsProbeEvaluation = { ruleId: `probe:ssh-agentless:${'a'.repeat(32)}:metrics`, section: 'metrics', state: 'healthy', sampledAt }
+    const operations: HostOperationalSummary = { vaultId: 'vault-a', serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'proxy-jump', localAlerts: [], localAlertEvaluations: [evaluation, { ...evaluation, ruleId: evaluation.ruleId.replace('metrics', 'inventory'), section: 'inventory' }], sampledAt: Date.now() }
+    const props = { host, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    const card = (summary: HostOperationalSummary) => mode === 'grid' ? <HostGridCard {...props} operations={summary} /> : <HostListItem {...props} index={1} operations={summary} />
+    const view = render(card(operations))
+    const [metrics, inventory] = screen.getAllByTestId('host-probe-evaluation')
+    expect(metrics).toBeVisible()
+    expect(metrics).toHaveTextContent('Metrics')
+    expect(metrics).toHaveTextContent('Healthy')
+    expect(metrics).toHaveTextContent('1m ago')
+    expect(inventory).toHaveTextContent('Inventory')
+    expect(metrics).toHaveAttribute('data-state', 'healthy')
+    expect(metrics).toHaveAttribute('data-rule-id', evaluation.ruleId)
+    expect(metrics).toHaveAttribute('data-vault-id', 'vault-a')
+    expect(metrics).toHaveAttribute('data-host-id', host.id)
+    expect(metrics).toHaveAttribute('data-sampled-at', String(sampledAt))
+    expect(metrics).toHaveAttribute('title', new Date(sampledAt).toISOString())
+    expect(screen.queryByTestId('host-local-alert')).not.toBeInTheDocument()
+    const resolvedAt = Date.now() - 1_000
+    const alert: LocalAlertRecord = { ruleId: evaluation.ruleId, hostId: host.id, name: 'Probe recovered', metric: 'probe-provider', status: 'resolved', severity: 'warning', openedAt: sampledAt - 10_000, updatedAt: resolvedAt, resolvedAt, value: 0, source: 'ssh-agentless', transport: 'proxy-jump', operationJobId: 'ack-job' }
+    view.rerender(card({ ...operations, localAlerts: [alert] }))
+    const row = screen.getByTestId('host-local-alert')
+    expect(row).toHaveTextContent('Recovered')
+    expect(row).toHaveAttribute('data-metric', 'probe-provider')
+    expect(row).toHaveAttribute('data-job-id', 'ack-job')
+    expect(row).toHaveAttribute('data-vault-id', 'vault-a')
+    expect(row).toHaveAttribute('data-updated-at', String(resolvedAt))
+    expect(row).toHaveAttribute('data-resolved-at', String(resolvedAt))
+    expect(screen.getAllByTestId('host-probe-evaluation')[0]).toHaveAttribute('data-sampled-at', String(sampledAt))
+  })
+
+  it.each(['grid', 'list'] as const)('shows expired and missing Probe evidence as unknown, with no made-up sample, in %s', (mode) => {
+    const oldSample = Date.now() - 180_001
+    const evaluation: HostOpsProbeEvaluation = { ruleId: `probe:ssh-agentless:${'a'.repeat(32)}:metrics`, section: 'metrics', state: 'healthy', sampledAt: oldSample }
+    const operations: HostOperationalSummary = { vaultId: 'vault-a', serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct', localAlertEvaluations: [evaluation, { ...evaluation, ruleId: evaluation.ruleId.replace('metrics', 'inventory'), section: 'inventory', sampledAt: null }] }
+    const props = { host: { ...host, vaultId: 'vault-a' }, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    const card = (summary: HostOperationalSummary) => mode === 'grid' ? <HostGridCard {...props} operations={summary} /> : <HostListItem {...props} index={1} operations={summary} />
+    const view = render(card(operations))
+    const [old, missing] = screen.getAllByTestId('host-probe-evaluation')
+    expect(old).toHaveAttribute('data-state', 'unknown')
+    expect(old).toHaveTextContent('Unknown')
+    expect(old).toHaveAttribute('data-sampled-at', String(oldSample))
+    expect(old).toHaveAttribute('title', new Date(oldSample).toISOString())
+    expect(missing).toHaveTextContent('Unknown')
+    expect(missing).toHaveTextContent('No sample')
+    expect(missing).not.toHaveAttribute('data-sampled-at')
+    expect(missing).not.toHaveAttribute('title')
+    expect(screen.getByTestId('host-ops-summary')).not.toHaveAttribute('data-sampled-at')
+    view.rerender(card({ ...operations, vaultId: 'vault-b' }))
+    expect(screen.queryByTestId('host-probe-evaluation')).not.toBeInTheDocument()
+    view.rerender(card({ ...operations, vaultId: undefined }))
+    expect(screen.queryByTestId('host-probe-evaluation')).not.toBeInTheDocument()
+  })
+
   it.each(['grid', 'list'] as const)('keeps lifecycle diagnostic failures visible without any persisted alert rows in %s', (mode) => {
     const operations: HostOperationalSummary = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct', localAlerts: [], localAlertPersistenceError: true, probeAlertLifecycleError: true }
     const props = { host, operations, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }

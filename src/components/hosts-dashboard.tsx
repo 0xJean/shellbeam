@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils'
 import { getWorkspaceInventoryHealthStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { listMcpDeploymentRecords, type McpDeploymentRecord } from '@/lib/mcp'
-import { loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
+import { hostProbeEvaluations, loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
 import { buildKomariProbeLinks, checkKomariLinkedProbe, type KomariProbeLink } from '@/lib/komari-probe-link'
 import { runConfirmedOperation } from '@/lib/operation-job'
 import { runKomariAlertAction, type KomariAlertAction } from '@/lib/komari-alert-actions'
@@ -317,6 +317,7 @@ function hostOpsToCardSummary(
     highestAlertSeverity: view.highestAlertSeverity,
     localAlertOpen: view.localAlertOpen,
     localAlerts: view.localAlerts,
+    localAlertEvaluations: view.localAlertEvaluations,
     transport: view.health.transport,
     jumpHostName: view.route.jumpHostName,
     jumpHost: view.route.jumpHost,
@@ -872,26 +873,35 @@ export function HostsDashboard({
         (action, alert) => handleKomariAlertAction(host, action, alert),
         alertBusy,
       )
+      const viewVault = hostOpsViews[host.id]?.host.vaultId
+      const sameVault = !!activeVaultId && (!host.vaultId || host.vaultId === activeVaultId) && (!viewVault || viewVault === activeVaultId)
       summaries.set(host.id, summary ? { ...summary,
-        onLocalAlertAction: activeVaultId && vaultUnlocked && (!host.vaultId || host.vaultId === activeVaultId) ? (alert, action) => handleLocalAlertAction(host, alert, action) : undefined,
+        vaultId: sameVault ? activeVaultId : undefined,
+        localAlerts: sameVault ? summary.localAlerts : [],
+        // The interval triggers ageing; a just-completed sample may be newer
+        // than that tick, so validate it against the current wall clock.
+        localAlertEvaluations: sameVault ? hostProbeEvaluations(summary.localAlertEvaluations ?? [], Math.max(filterNow, Date.now())) : [],
+        onLocalAlertAction: sameVault && vaultUnlocked ? (alert, action) => handleLocalAlertAction(host, alert, action) : undefined,
         localAlertBusy: visibleLocalAction ? visibleLocalAction.hostId === host.id ? visibleLocalAction.ruleId : '*' : null,
         localAlertError: localAlertError !== null && localAlertError.vaultId === activeVaultId && localAlertError.generation === localScope.current.generation && localAlertError.hostId === host.id,
-        localAlertPersistenceError: !!localOpsPersistenceError(activeVaultId, host.id),
-        probeAlertLifecycleError: !!getProbeAlertRuntimeDiagnostic(activeVaultId, host.id),
+        localAlertPersistenceError: sameVault && !!localOpsPersistenceError(activeVaultId, host.id),
+        probeAlertLifecycleError: sameVault && !!getProbeAlertRuntimeDiagnostic(activeVaultId, host.id),
       } : undefined)
     })
     return summaries
-  }, [handleKomariAlertAction, handleKomariProbeAction, handleLocalAlertAction, hostOpsViews, hosts, komariAlertActionKey, komariProbeActionKey, komariProbeLinks, onOpenWorkspace, activeVaultId, vaultUnlocked, visibleLocalAction, localAlertError])
+  }, [handleKomariAlertAction, handleKomariProbeAction, handleLocalAlertAction, hostOpsViews, hosts, komariAlertActionKey, komariProbeActionKey, komariProbeLinks, onOpenWorkspace, activeVaultId, vaultUnlocked, visibleLocalAction, localAlertError, filterNow])
 
   useEffect(() => {
     const updateLocalAlerts = () => {
       setScopedHostOpsViews((current) => current.vaultId !== activeVaultId ? current : { ...current, views: Object.fromEntries(Object.entries(current.views).map(([id, view]) => {
-        const localAlerts = loadLocalAlertState(activeVaultId, id).alerts
+        if (view.host.vaultId && view.host.vaultId !== activeVaultId) return [id, { ...view, localAlerts: [], localAlertEvaluations: [], localAlertOpen: 0 }]
+        const state = loadLocalAlertState(activeVaultId, id)
+        const localAlerts = state.alerts.filter((alert) => alert.hostId === id)
         const open = localAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
         const komari = view.komariAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
         const rank = ['info', 'warning', 'critical']
         const highestAlertSeverity = [...open, ...komari].map((alert) => alert.severity).sort((a, b) => rank.indexOf(b) - rank.indexOf(a))[0] ?? null
-        return [id, { ...view, localAlerts, localAlertOpen: open.length, highestAlertSeverity, alertOpenCount: view.alertOpenCount == null ? null : view.alertOpenCount - (view.localAlertOpen ?? 0) + open.length }]
+        return [id, { ...view, localAlerts, localAlertEvaluations: hostProbeEvaluations(state.evaluations), localAlertOpen: open.length, highestAlertSeverity, alertOpenCount: view.alertOpenCount == null ? null : view.alertOpenCount - (view.localAlertOpen ?? 0) + open.length }]
       })) })
     }
     const clock = window.setInterval(() => setFilterNow(Date.now()), 15_000)
