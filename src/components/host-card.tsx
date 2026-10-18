@@ -9,6 +9,8 @@ import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
+import type { LocalAlertRecord } from '@/lib/local-alert-rules'
+import type { HostOpsCapability } from '@/lib/host-ops-view'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
 import { AlertTriangle, Activity, Bot, Check, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
@@ -31,7 +33,7 @@ function formatRelativeTime(ts: number, t: TFn): string {
   return new Date(ts).toLocaleDateString()
 }
 
-export function statusConfig(status: string | undefined, t: TFn) {
+function statusConfig(status: string | undefined, t: TFn) {
   if (status === 'online') return { label: t('hostCard.online'), dot: 'bg-[color:var(--workspace-status-good)]', text: 'text-[color:var(--workspace-status-good-text)]', bg: 'bg-[var(--workspace-status-good-bg)]', border: 'border-[color:var(--workspace-status-good-border)]' }
   if (status === 'stale') return { label: t('hostCard.stale'), dot: 'bg-[color:var(--workspace-status-warn)]', text: 'text-[color:var(--workspace-status-warn-text)]', bg: 'bg-[var(--workspace-status-warn-bg)]', border: 'border-[color:var(--workspace-status-warn-border)]' }
   if (status === 'offline') return { label: t('hostCard.offline'), dot: 'bg-[color:var(--workspace-status-bad)]', text: 'text-[color:var(--workspace-status-bad-text)]', bg: 'bg-[var(--workspace-status-bad-bg)]', border: 'border-[color:var(--workspace-status-bad-border)]' }
@@ -73,12 +75,19 @@ export interface HostOperationalSummary {
   latestAudit?: Pick<OperationAuditEntry, 'action' | 'target' | 'status' | 'createdAt' | 'transport' | 'provider'> & Partial<Pick<OperationAuditEntry, 'auditId' | 'jobId' | 'source'>>
   audits?: OperationAuditEntry[]
   provider?: string
+  jumpHostName?: string
   probeProviderId?: string
   probeState?: 'fresh' | 'stale' | 'recovered' | 'error' | 'unknown'
   probeError?: string
   probeErrorCode?: string
   probeTelemetry?: ProbeProviderTelemetry | null
   sampledAt?: number
+  ttlMs?: number | null
+  expiresAt?: number | null
+  capabilities?: HostOpsCapability[]
+  highestAlertSeverity?: 'info' | 'warning' | 'critical' | null
+  localAlertOpen?: number
+  localAlerts?: LocalAlertRecord[]
   transport: 'direct' | 'proxy-jump'
   agentStatus?: string
   agentHealth?: string
@@ -89,7 +98,7 @@ export interface HostOperationalSummary {
   komariProbeBusy?: boolean
 }
 
-export function groupIconConfig(group: string) {
+function groupIconConfig(group: string) {
   switch (group) {
     case 'Production':
       return { icon: <Server className="h-5 w-5 text-[color:var(--workspace-group-foreground)]" />, bg: 'bg-[color:var(--workspace-group-production)]' }
@@ -547,9 +556,14 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
           <ShieldCheck className="h-3 w-3 shrink-0" />
           <span className="truncate">{summary.provider || t('hosts.opsNoProvider')}</span>
         </span>
-        <span className="shrink-0">{transportLabel}</span>
+        <span className="shrink-0">{transportLabel}{summary.jumpHostName ? ` · ${summary.jumpHostName}` : ''}</span>
         <span className="ml-auto shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
       </div>
+      <div data-testid="host-ops-capabilities" className="flex flex-wrap gap-1" title={t('hosts.opsFilters.capabilitiesHint')}>
+        {(summary.capabilities ?? []).map((capability) => <span key={capability} className="rounded border border-border/50 px-1 py-0.5">{t(`hosts.opsFilters.capability.${capability}`)}</span>)}
+        {summary.ttlMs != null && <span className="rounded border border-border/50 px-1 py-0.5" title={summary.expiresAt ? new Date(summary.expiresAt).toLocaleString() : undefined}>TTL {Math.round(summary.ttlMs / 1_000)}s</span>}
+      </div>
+      {(summary.highestAlertSeverity || summary.localAlertOpen) ? <div data-testid="host-ops-local-alerts" className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsFilters.highest')}: {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {summary.localAlertOpen ?? 0}</div> : null}
       {summary.komariProbe && (
         <KomariProbeOpsView
           host={host}

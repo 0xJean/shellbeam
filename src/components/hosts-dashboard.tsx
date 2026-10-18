@@ -1,3 +1,6 @@
+import { HostOpsAdvancedFilters } from '@/components/host-ops-filters'
+import { DEFAULT_HOST_OPS_FILTERS, matchesHostOpsFilters, type HostOpsFilters } from '@/lib/host-ops-filters'
+import { LOCAL_OPS_CHANGED_EVENT, loadLocalAlertState } from '@/lib/local-ops-store'
 import { HostGridCard, HostListItem, type HostOperationalSummary } from '@/components/host-card'
 import { HostListScrollArea } from '@/components/host-list-scroll-area'
 import { HostCreateDialog } from '@/components/host-create-dialog'
@@ -297,7 +300,14 @@ function hostOpsToCardSummary(
       probeTelemetry: view.health.probe.telemetry,
     } : {}),
     sampledAt: view.health.freshness.sampledAt ?? undefined,
+    ttlMs: view.health.freshness.ttlMs,
+    expiresAt: view.health.freshness.expiresAt,
+    capabilities: view.capabilities,
+    highestAlertSeverity: view.highestAlertSeverity,
+    localAlertOpen: view.localAlertOpen,
+    localAlerts: view.localAlerts,
     transport: view.health.transport,
+    jumpHostName: view.route.jumpHostName,
     ...(view.health.agent ? {
       agentStatus: view.health.agent.status,
       agentHealth: view.health.agent.health,
@@ -328,6 +338,8 @@ export function HostsDashboard({
   const [showSshImport, setShowSshImport] = useState(false)
   const [editingHost, setEditingHost] = useState<HostProfile | null>(null)
   const [sortMode, setSortMode] = useState<SortMode>(() => (localStorage.getItem(SORT_KEY) as SortMode) || 'newest')
+  const [advancedFilters, setAdvancedFilters] = useState<HostOpsFilters>({ ...DEFAULT_HOST_OPS_FILTERS })
+  const [filterNow, setFilterNow] = useState(Date.now)
   const [statusFilter, setStatusFilter] = useState<HostStatusFilter>('all')
   const [sortOpen, setSortOpen] = useState(false)
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set())
@@ -757,6 +769,24 @@ export function HostsDashboard({
     return summaries
   }, [handleKomariAlertAction, handleKomariProbeAction, hostOpsViews, hosts, komariAlertActionKey, komariProbeActionKey, komariProbeLinks])
 
+  useEffect(() => {
+    const updateLocalAlerts = () => {
+      setHostOpsViews((current) => Object.fromEntries(Object.entries(current).map(([id, view]) => {
+        const localAlerts = loadLocalAlertState(activeVaultId, id).alerts
+        const open = localAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
+        const komari = view.komariAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
+        const rank = ['info', 'warning', 'critical']
+        const highestAlertSeverity = [...open, ...komari].map((alert) => alert.severity).sort((a, b) => rank.indexOf(b) - rank.indexOf(a))[0] ?? null
+        return [id, { ...view, localAlerts, localAlertOpen: open.length, highestAlertSeverity, alertOpenCount: view.alertOpenCount == null ? null : view.alertOpenCount - (view.localAlertOpen ?? 0) + open.length }]
+      })))
+    }
+    const clock = window.setInterval(() => setFilterNow(Date.now()), 15_000)
+    window.addEventListener(LOCAL_OPS_CHANGED_EVENT, updateLocalAlerts)
+    window.addEventListener('storage', updateLocalAlerts)
+    return () => { window.clearInterval(clock); window.removeEventListener(LOCAL_OPS_CHANGED_EVENT, updateLocalAlerts); window.removeEventListener('storage', updateLocalAlerts) }
+  }, [activeVaultId])
+  const osOptions = useMemo(() => [...new Set(Object.values(hostOpsViews).map((view) => view.metrics?.os || view.resource?.os || '').filter(Boolean))].sort(), [hostOpsViews])
+
   function hostKey(host: HostProfile) {
     return getWorkspaceInventoryHostKey(host)
   }
@@ -828,6 +858,7 @@ export function HostsDashboard({
     if (statusFilter !== 'all') {
       filtered = filtered.filter((h) => getHostHealthStatus(hostOpsViews[h.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(h)]), hostOpsLoading) === statusFilter)
     }
+    filtered = filtered.filter((host) => matchesHostOpsFilters(hostOpsViews[host.id], advancedFilters, filterNow))
     const sorted = [...filtered]
     switch (sortMode) {
       case 'az': sorted.sort((a, b) => a.name.localeCompare(b.name)); break
@@ -836,7 +867,7 @@ export function HostsDashboard({
       case 'oldest': sorted.sort((a, b) => (a.updatedAt || a.createdAt) - (b.updatedAt || b.createdAt)); break
     }
     return sorted
-  }, [agentDeploymentsByHost, hosts, effectiveSearch, groupFilter, sharedStates, statusFilter, tagFilter, sortMode, hostOpsLoading, hostOpsViews])
+  }, [agentDeploymentsByHost, hosts, effectiveSearch, groupFilter, sharedStates, statusFilter, tagFilter, sortMode, hostOpsLoading, hostOpsViews, advancedFilters, filterNow])
 
   const statusCounts = useMemo(() => hosts.reduce<Record<Exclude<HostStatusFilter, 'all'>, number>>((counts, host) => {
     const status = getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)
@@ -882,6 +913,7 @@ export function HostsDashboard({
           groups={resourceGroups}
         />
       )}
+      <HostOpsAdvancedFilters value={advancedFilters} onChange={setAdvancedFilters} osOptions={osOptions} />
       <WorkspaceResourceOverviewHeader
         title={t('hosts.title')}
         description={t('hosts.subtitle')}
@@ -1039,7 +1071,7 @@ export function HostsDashboard({
           <MultiHostOperationsPanel hosts={filteredHosts} onRunOperation={handleMultiHostOperation} />
           <KomariAlertsDashboardPanel activeVaultId={activeVaultId} hosts={hosts} onOpenHost={onSelectHost} />
           <KomariProbeMappingNotice links={komariProbeLinks} />
-          <HostCreateDialog
+          <HostCreateDialog availableHosts={hosts}
             open={showAddForm}
             defaultUsername={defaultUsername}
             vaultKeys={vaultKeys}
@@ -1053,7 +1085,7 @@ export function HostsDashboard({
             onCancel={() => { setShowAddForm(false); onAddFormClose?.() }}
           />
 
-          <HostEditorDialog
+          <HostEditorDialog availableHosts={hosts.filter((host) => host.id !== editingHost?.id)}
             host={editingHost}
             defaultUsername={defaultUsername}
             vaultKeys={vaultKeys}

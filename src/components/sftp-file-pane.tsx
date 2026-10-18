@@ -24,7 +24,7 @@ export type UnifiedEntry = {
   modifiedAt?: number
 }
 
-export function formatSize(bytes?: number) {
+function formatSize(bytes?: number) {
   if (bytes == null) return '-'
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -32,7 +32,7 @@ export function formatSize(bytes?: number) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
-export function formatTime(ms?: number) {
+function formatTime(ms?: number) {
   if (!ms) return '-'
   return new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
@@ -55,17 +55,19 @@ export interface FilePaneProps {
   onFilterChange: (v: string) => void
   placeholder?: React.ReactNode
   onDelete?: (path: string) => void
+  onDeletePaths?: (paths: string[]) => void
   onRename?: (oldPath: string, newName: string) => void
   onCreateDir?: (name: string) => void
   onChmod?: (path: string, mode: number) => void
   onDropFiles?: (files: FileList) => void
+  mutationsDisabled?: boolean
 }
 
 export function FilePane({
   title, icon, entries, currentDir, loading, selectedPaths,
   onDirChange, onRefresh, onGoUp, onEnterDir, onToggleSelect,
   onSelectAll, onClearSelection, filter, onFilterChange, placeholder,
-  onDelete, onRename, onCreateDir, onChmod, onDropFiles,
+  onDelete, onDeletePaths, onRename, onCreateDir, onChmod, onDropFiles, mutationsDisabled = false,
 }: FilePaneProps) {
   const { t } = useT()
   const filtered = useMemo(() => {
@@ -82,7 +84,7 @@ export function FilePane({
   const [chmodValue, setChmodValue] = useState('755')
   const [dragging, setDragging] = useState(false)
 
-  const hasActions = !!(onDelete || onRename || onCreateDir || onChmod)
+  const hasActions = !!(onDelete || onDeletePaths || onRename || onCreateDir || onChmod)
   const selectedEntry = selectedPaths.size === 1
     ? entries.find((e) => selectedPaths.has(e.path)) ?? null
     : null
@@ -143,27 +145,30 @@ export function FilePane({
           <div className="ml-auto flex items-center gap-0.5">
             {onCreateDir && (
               <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title={t('sftpPane.newFolder')}
-                onClick={() => { setCreatingDir(true); setNewDirName('') }}>
+                disabled={mutationsDisabled} onClick={() => { setCreatingDir(true); setNewDirName('') }}>
                 <FolderPlus className="h-3.5 w-3.5" />
               </Button>
             )}
             {onRename && (
               <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title={t('sftpPane.rename')}
-                disabled={!selectedEntry} onClick={startRename}>
+                disabled={!selectedEntry || mutationsDisabled} onClick={startRename}>
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
             )}
             {onChmod && (
               <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title={t('sftpPane.chmod')}
-                disabled={!selectedEntry}
+                disabled={!selectedEntry || mutationsDisabled}
                 onClick={() => { if (selectedEntry) { setChmodPath(selectedEntry.path); setChmodValue('755') } }}>
                 <Shield className="h-3.5 w-3.5" />
               </Button>
             )}
-            {onDelete && (
+            {(onDelete || onDeletePaths) && (
               <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" title={t('sftpPane.delete')}
-                disabled={selectedPaths.size === 0}
-                onClick={() => { for (const p of selectedPaths) onDelete(p) }}>
+                disabled={selectedPaths.size === 0 || mutationsDisabled}
+                onClick={() => {
+                  if (onDeletePaths) onDeletePaths([...selectedPaths])
+                  else for (const p of selectedPaths) onDelete?.(p)
+                }}>
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             )}
@@ -208,7 +213,7 @@ export function FilePane({
         <input
           type="checkbox"
           checked={filtered.length > 0 && selectedPaths.size === filtered.length}
-          onChange={() => { selectedPaths.size === filtered.length ? onClearSelection() : onSelectAll() }}
+          onChange={() => { if (selectedPaths.size === filtered.length) onClearSelection(); else onSelectAll() }}
           className="h-3 w-3 shrink-0"
         />
         <span className="min-w-0 flex-1">{t('sftpPane.name')}</span>
@@ -217,9 +222,9 @@ export function FilePane({
       </div>
 
       <div className={cn('min-h-0 flex-1 overflow-auto', dragging && 'ring-2 ring-inset ring-primary/50 bg-primary/5')}
-        onDragOver={(e) => { if (onDropFiles) { e.preventDefault(); setDragging(true) } }}
+        onDragOver={(e) => { if (onDropFiles && !mutationsDisabled) { e.preventDefault(); setDragging(true) } }}
         onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); if (onDropFiles && e.dataTransfer.files.length) onDropFiles(e.dataTransfer.files) }}>
+        onDrop={(e) => { e.preventDefault(); setDragging(false); if (onDropFiles && !mutationsDisabled && e.dataTransfer.files.length) onDropFiles(e.dataTransfer.files) }}>
         {chmodPath && onChmod && (
           <div className="flex items-center gap-1.5 border-b bg-primary/5 px-3 py-1.5">
             <Shield className="h-3.5 w-3.5 shrink-0 text-primary" />

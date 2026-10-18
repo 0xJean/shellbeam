@@ -27,6 +27,8 @@ pub struct HostProfile {
     pub jump_port: Option<u16>,
     #[serde(default)]
     pub jump_user: Option<String>,
+    #[serde(default)]
+    pub jump_host_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -47,6 +49,7 @@ pub struct HostProfileDraft {
     jump_host: Option<String>,
     jump_port: Option<u16>,
     jump_user: Option<String>,
+    jump_host_id: Option<String>,
 }
 
 fn hosts_file_name(vault_id: Option<&str>) -> String {
@@ -162,6 +165,22 @@ fn open_hosts_db(app: &tauri::AppHandle) -> Result<Connection, String> {
         "#,
     )
     .map_err(|err| format!("Initialize hosts db failed: {err}"))?;
+    let has_jump_id = conn
+        .prepare("PRAGMA table_info(workspace_hosts)")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| format!("Inspect hosts schema failed: {error}"))?
+        .iter()
+        .any(|name| name == "jump_host_id");
+    if !has_jump_id {
+        conn.execute(
+            "ALTER TABLE workspace_hosts ADD COLUMN jump_host_id TEXT",
+            [],
+        )
+        .map_err(|error| format!("Migrate jump profile failed: {error}"))?;
+    }
     Ok(conn)
 }
 
@@ -193,8 +212,8 @@ fn insert_host_row(conn: &Connection, vault_id: &str, host: &HostProfile) -> Res
         INSERT INTO workspace_hosts
           (vault_id, id, name, address, port, username, host_group, auth_type,
            secret_key_ref, password_key_ref, private_key_ref, tags_json,
-           jump_host, jump_port, jump_user, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+           jump_host, jump_port, jump_user, created_at, updated_at, jump_host_id)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         ON CONFLICT(vault_id, id) DO UPDATE SET
           name = excluded.name,
           address = excluded.address,
@@ -209,6 +228,7 @@ fn insert_host_row(conn: &Connection, vault_id: &str, host: &HostProfile) -> Res
           jump_host = excluded.jump_host,
           jump_port = excluded.jump_port,
           jump_user = excluded.jump_user,
+          jump_host_id = excluded.jump_host_id,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
         "#,
@@ -230,6 +250,7 @@ fn insert_host_row(conn: &Connection, vault_id: &str, host: &HostProfile) -> Res
             host.jump_user,
             host.created_at,
             host.updated_at,
+            host.jump_host_id,
         ],
     )
     .map_err(|err| format!("Save host profile failed: {err}"))?;
@@ -334,6 +355,7 @@ fn host_from_row(row: &rusqlite::Row<'_>) -> Result<HostProfile, rusqlite::Error
         jump_user: row.get(13)?,
         created_at: row.get(14)?,
         updated_at: row.get(15)?,
+        jump_host_id: row.get(16)?,
     })
 }
 
@@ -350,7 +372,7 @@ pub fn load_hosts(
             r#"
             SELECT id, name, address, port, username, host_group, auth_type,
                    secret_key_ref, password_key_ref, private_key_ref, tags_json,
-                   jump_host, jump_port, jump_user, created_at, updated_at
+                   jump_host, jump_port, jump_user, created_at, updated_at, jump_host_id
             FROM workspace_hosts
             WHERE vault_id = ?1
             ORDER BY created_at ASC, updated_at ASC
@@ -437,6 +459,7 @@ pub fn create_host(
             .jump_user
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty()),
+        jump_host_id: payload.jump_host_id.filter(|id| !id.trim().is_empty()),
         created_at: now,
         updated_at: now,
     };

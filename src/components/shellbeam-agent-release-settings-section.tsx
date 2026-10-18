@@ -124,6 +124,12 @@ export function ShellbeamAgentReleaseSettingsSection() {
         </div>
 
         <div>
+          <label className="text-sm text-muted-foreground" htmlFor="agent-release-manifest-url">{t('settings.agentRelease.manifestUrl')}</label>
+          <Input id="agent-release-manifest-url" value={settings.releaseManifestUrl} onChange={(event) => update({ releaseManifestUrl: event.target.value })} placeholder="https://example.com/release-catalog.json" className="mt-1" />
+          <p className="mt-1 text-xs text-muted-foreground">{t('settings.agentRelease.manifestUrlDesc')}</p>
+        </div>
+
+        <div>
           <label className="text-sm text-muted-foreground" htmlFor="agent-release-hosts">{t('settings.agentRelease.allowedHosts')}</label>
           <Input id="agent-release-hosts" value={hostText} onChange={(event) => { setHostText(event.target.value); setSaved(false) }} placeholder={t('settings.agentRelease.allowedHostsPlaceholder')} className="mt-1" />
           <p className="mt-1 text-xs text-muted-foreground">{t('settings.agentRelease.allowedHostsDesc')}</p>

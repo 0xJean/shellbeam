@@ -1,10 +1,11 @@
 import { act, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useEffect } from 'react'
 import { SessionsProvider, useSessions } from './sessions-context'
 import type { InteractiveSessionInfo, InteractiveStatusEventPayload } from '@/lib/interactive-session'
 
-const listenToInteractiveOutputEventsMock = vi.hoisted(() => vi.fn(async (_handler: unknown) => () => {}))
-const listenToInteractiveProgressEventsMock = vi.hoisted(() => vi.fn(async (_handler: unknown) => () => {}))
+const listenToInteractiveOutputEventsMock = vi.hoisted(() => vi.fn(async (handler: unknown) => { void handler; return () => {} }))
+const listenToInteractiveProgressEventsMock = vi.hoisted(() => vi.fn(async (handler: unknown) => { void handler; return () => {} }))
 const interactiveStatusHandlers = vi.hoisted(() => [] as Array<(payload: InteractiveStatusEventPayload) => void>)
 const listenToInteractiveStatusEventsMock = vi.hoisted(() => vi.fn(async (handler: (payload: InteractiveStatusEventPayload) => void) => {
   interactiveStatusHandlers.push(handler)
@@ -103,7 +104,8 @@ vi.mock('./vault-context', () => ({
 let sessionsApi: ReturnType<typeof useSessions> | null = null
 
 function SessionsProbe() {
-  sessionsApi = useSessions()
+  const value = useSessions()
+  useEffect(() => { sessionsApi = value }, [value])
   return null
 }
 
@@ -155,6 +157,53 @@ describe('sessions context integration', () => {
       keepAliveIntervalSecs: 30,
       setSelectedHostId: vi.fn(),
     })
+  })
+
+  it('blocks a foreign Vault session from routing through an identically named current host', async () => {
+    useVaultMock.mockReturnValue({ activeVaultId: 'vault-b', resolveAuthSecret: vi.fn() })
+    renderSessionsProvider()
+    await waitFor(() => expect(listenToInteractiveStatusEventsMock).toHaveBeenCalled())
+    const api = sessionsApi as ReturnType<typeof useSessions>
+    await act(async () => {
+      api.initializeInteractiveSessionState('vault-a-session', { hostId: 'host-1', connectionKind: 'host' })
+      api.setInteractiveSessions([{ sessionId: 'vault-a-session', vaultId: 'vault-a', hostId: 'host-1', host: 'old-host', username: 'ops', createdAt: 0, lastActiveAt: 0, status: 'running' }])
+    })
+    await act(async () => { api.openSessionBrowserUrl('vault-a-session', 'https://example.com', 'embedded') })
+    await waitFor(() => expect(sessionsApi?.browserBySession['vault-a-session']?.error).toContain('Vault'))
+    expect(startBrowserHttpProxyMock).not.toHaveBeenCalled()
+    expect(startBrowserSocksProxyMock).not.toHaveBeenCalled()
+    expect(prepareBrowserPortForwardMock).not.toHaveBeenCalled()
+  })
+
+  it('bounds automatic browser recovery when proxy setup repeatedly fails', async () => {
+    startBrowserHttpProxyMock.mockRejectedValueOnce(new Error('proxy failed')).mockRejectedValueOnce(new Error('proxy still failed'))
+    renderSessionsProvider()
+    await waitFor(() => expect(listenToInteractiveStatusEventsMock).toHaveBeenCalled())
+    const api = sessionsApi as ReturnType<typeof useSessions>
+    await act(async () => {
+      api.initializeInteractiveSessionState('failing-session', { hostId: 'host-1', connectionKind: 'host' })
+      api.setInteractiveSessions([{ sessionId: 'failing-session', hostId: 'host-1', host: '10.0.0.8', username: 'ops', createdAt: 0, lastActiveAt: 0, status: 'running' }])
+    })
+    await act(async () => { api.openSessionBrowserUrl('failing-session', 'https://example.com', 'embedded') })
+    await waitFor(() => expect(sessionsApi?.browserBySession['failing-session']?.transportStatus).toBe('failed'))
+    expect(startBrowserHttpProxyMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not reconnect an old Vault session using current Vault host credentials', async () => {
+    createInteractiveSessionMock.mockClear()
+    useVaultMock.mockReturnValue({ activeVaultId: 'vault-b', resolveAuthSecret: vi.fn() })
+    renderSessionsProvider()
+    await waitFor(() => expect(listenToInteractiveStatusEventsMock).toHaveBeenCalled())
+    const api = sessionsApi as ReturnType<typeof useSessions>
+    await act(async () => {
+      api.initializeInteractiveSessionState('vault-a-session', { hostId: 'host-1', connectionKind: 'host' })
+      api.setInteractiveSessions([{ sessionId: 'vault-a-session', vaultId: 'vault-a', hostId: 'host-1', host: 'old-host', username: 'ops', createdAt: 0, lastActiveAt: 0, status: 'closed' }])
+      api.setLeftPaneSessionId('vault-a-session')
+      api.setReconnectSettings({ enabled: false, maxRetries: 1, intervalMs: 1 })
+    })
+    await act(async () => { sessionsApi?.manualReconnect('vault-a-session') })
+    await waitFor(() => expect(sessionsApi?.reconnectingSessionIds.has('vault-a-session')).toBe(false))
+    expect(createInteractiveSessionMock).not.toHaveBeenCalled()
   })
 
   it('allocates remote loopback transports per browser tab id', async () => {

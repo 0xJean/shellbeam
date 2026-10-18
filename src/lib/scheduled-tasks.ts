@@ -1,3 +1,4 @@
+import { queueLocalOpsDocument, registerLocalOpsAdapter } from './local-ops-persistence'
 import type { HostProfile } from './hosts'
 import {
   createOperationJob,
@@ -8,6 +9,9 @@ import {
   type OperationJob,
 } from './operation-job'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
+
+export const SCHEDULED_TASK_CHANGED_EVENT = 'shellbeam:scheduled-tasks-changed'
+export function notifyScheduledTasksChanged() { if (typeof window !== 'undefined') window.dispatchEvent(new Event(SCHEDULED_TASK_CHANGED_EVENT)) }
 
 export const SCHEDULED_TASK_STORAGE_PREFIX = 'shellbeam.scheduled-tasks.v1'
 export const SCHEDULED_TASK_MIN_INTERVAL_MINUTES = 1
@@ -30,6 +34,8 @@ export interface ScheduledTask {
   lastErrorSummary: string | null
   createdAt: number
   updatedAt: number
+  authorizationJobId?: string | null
+  pausedReason?: 'restart' | 'vault-locked' | 'interrupted' | 'user' | null
 }
 
 export interface ScheduledTaskRunResult {
@@ -92,6 +98,8 @@ export function normalizeScheduledTask(input: Partial<ScheduledTask> & Pick<Sche
     lastStatus: input.lastStatus === 'running' || input.lastStatus === 'completed' || input.lastStatus === 'failed' || input.lastStatus === 'unknown' ? input.lastStatus : 'idle',
     lastResultSummary: input.lastResultSummary ? cleanText(input.lastResultSummary, 240) : null,
     lastErrorSummary: input.lastErrorSummary ? cleanText(input.lastErrorSummary, 240) : null,
+    authorizationJobId: input.authorizationJobId ? cleanText(input.authorizationJobId, 128) : null,
+    pausedReason: input.pausedReason === 'restart' || input.pausedReason === 'vault-locked' || input.pausedReason === 'interrupted' || input.pausedReason === 'user' ? input.pausedReason : null,
     createdAt: Number.isFinite(input.createdAt) && Number(input.createdAt) > 0 ? Number(input.createdAt) : now,
     updatedAt: Number.isFinite(input.updatedAt) && Number(input.updatedAt) > 0 ? Number(input.updatedAt) : now,
   }
@@ -102,8 +110,8 @@ export function loadScheduledTasks(vaultId: string | undefined, hostId: string):
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey(vaultId, hostId)) || '[]')
     if (!Array.isArray(parsed)) return []
-    return parsed.flatMap((item) => {
-      try { return [normalizeScheduledTask({ ...item, hostId }, Number(item?.updatedAt) || Date.now())] } catch { return [] }
+    return parsed.slice(0, 32).flatMap((item) => {
+      try { if (item?.hostId !== hostId) return []; return [normalizeScheduledTask(item, Number(item?.updatedAt) || Date.now())] } catch { return [] }
     })
   } catch {
     return []
@@ -111,13 +119,18 @@ export function loadScheduledTasks(vaultId: string | undefined, hostId: string):
 }
 
 export function saveScheduledTasks(vaultId: string | undefined, hostId: string, tasks: ScheduledTask[], now = Date.now()) {
-  const normalized = tasks.map((task) => normalizeScheduledTask({ ...task, hostId, updatedAt: now }, now))
+  if (tasks.some((task) => task.hostId !== hostId)) throw new Error('Scheduled task host mismatch')
+  const normalized = tasks.slice(0, 32).map((task) => normalizeScheduledTask({ ...task, updatedAt: now }, now))
+  if (new Set(normalized.map((task) => task.id)).size !== normalized.length) throw new Error('Scheduled task ids must be unique')
   if (typeof localStorage !== 'undefined') localStorage.setItem(storageKey(vaultId, hostId), JSON.stringify(normalized))
+  void queueLocalOpsDocument(vaultId, hostId, 'scheduled-tasks', normalized)
+  notifyScheduledTasksChanged()
   return normalized
 }
 
 export function clearScheduledTasks(vaultId: string | undefined, hostId: string) {
-  if (typeof localStorage !== 'undefined') localStorage.removeItem(storageKey(vaultId, hostId))
+  for (const task of loadScheduledTasks(vaultId, hostId)) revokeScheduledTaskAuthorization(vaultId, task)
+  saveScheduledTasks(vaultId, hostId, [])
 }
 
 export function isScheduledTaskDue(task: ScheduledTask, now = Date.now()) {
@@ -129,6 +142,7 @@ export function scheduledTaskSummary(task: ScheduledTask) {
 }
 
 interface ScheduledTaskOperationOptions {
+  vaultId?: string
   host: HostProfile
   task: ScheduledTask
   resolveAuthSecret: (host: HostProfile) => Promise<string>
@@ -142,11 +156,14 @@ interface ScheduledTaskOperationOptions {
 /** Executes an enabled task without a prompt. Enabling the schedule is the
  * explicit authorization; every execution still creates a durable audit job. */
 export async function runScheduledTaskOperation(options: ScheduledTaskOperationOptions): Promise<ScheduledTaskRunResult> {
+  if (options.task.hostId !== options.host.id) throw new Error('Scheduled task host mismatch')
+  if (!isScheduledTaskAuthorized(options.vaultId, options.task)) throw new Error('Scheduled task requires a confirmed session authorization')
   const createJob = options.createJob ?? createOperationJob
   const updateJob = options.updateJob ?? updateOperationJob
   const { host, task } = options
   const job = await createJob({
     hostId: host.id,
+    vaultId: options.vaultId,
     hostName: host.name,
     hostAddress: host.address,
     username: host.username,
@@ -157,14 +174,14 @@ export async function runScheduledTaskOperation(options: ScheduledTaskOperationO
     risk: 'high',
     provider: 'ssh-agentless',
     transport: operationTransport(host),
-    paramsSummary: safeOperationTarget(task.command),
+    paramsSummary: `task=${task.id}; intervalMinutes=${task.intervalMinutes}; authorizationJob=${task.authorizationJobId || 'unknown'}`,
     confirmationRequired: false,
   })
   await updateJob({ jobId: job.jobId, status: 'running', confirmationStatus: 'not_required', actor: 'scheduled-task' })
   try {
     const result = await withTimeout((options.runCommand
       ? options.runCommand(task)
-      : runWorkspaceRemoteCommand({ host, resolveAuthSecret: options.resolveAuthSecret, command: task.command })), options.timeoutMs ?? 120_000)
+      : runWorkspaceRemoteCommand({ vaultId: options.vaultId, host, resolveAuthSecret: options.resolveAuthSecret, command: task.command })), options.timeoutMs ?? 120_000)
     const completed = await updateJob({
       jobId: job.jobId,
       status: result.exitCode === 0 ? 'completed' : 'failed',
@@ -179,7 +196,7 @@ export async function runScheduledTaskOperation(options: ScheduledTaskOperationO
       jobId: job.jobId,
       status: unknown ? 'unknown' : 'failed',
       errorCode: unknown ? 'remote_state_unknown' : 'scheduled_task_failed',
-      errorSummary: safeOperationTarget(error instanceof Error ? error.message : String(error), 240),
+      errorSummary: unknown ? 'Scheduled command result is unknown; verify the remote host before resuming' : 'Scheduled command could not be executed',
       actor: 'scheduled-task',
     })
     throw Object.assign(error instanceof Error ? error : new Error(String(error)), { operationJob: failed })
@@ -195,6 +212,9 @@ export interface ScheduledTaskScheduler {
 
 export function createScheduledTaskScheduler(options: {
   tasks: ScheduledTask[]
+  getTasks?: () => ScheduledTask[]
+  vaultId?: string
+  isCurrent?: () => boolean
   host: HostProfile
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   intervalMs?: number
@@ -210,19 +230,24 @@ export function createScheduledTaskScheduler(options: {
   const inFlight = new Set<string>()
   let timer: ReturnType<typeof setInterval> | undefined
   let running = false
+  let stopped = false
+  let ticking: Promise<void> | undefined
 
   async function tick(at = now()) {
-    const due = options.tasks.filter((task) => isScheduledTaskDue(task, at) && !inFlight.has(task.id))
-    const queue = due.slice()
+    if (stopped || options.isCurrent?.() === false) return
+    if (ticking) return ticking
+    const work = Promise.resolve().then(async () => {
+    const due = (options.getTasks?.() ?? options.tasks).filter((task) => isScheduledTaskDue(task, at) && !inFlight.has(task.id))
+    const queue = due.slice(0, 32)
     async function worker() {
-      while (queue.length) {
+      while (!stopped && options.isCurrent?.() !== false && queue.length) {
         const task = queue.shift()
         if (!task || inFlight.has(task.id)) continue
         inFlight.add(task.id)
         try {
           const result = await (options.runTask
             ? options.runTask(task)
-            : runScheduledTaskOperation({ host: options.host, task, resolveAuthSecret: options.resolveAuthSecret, now }))
+            : runScheduledTaskOperation({ vaultId: options.vaultId, host: options.host, task, resolveAuthSecret: options.resolveAuthSecret, now }))
           options.onTaskRun?.(result)
         } catch (error) {
           options.onTaskError?.(error, task)
@@ -232,17 +257,22 @@ export function createScheduledTaskScheduler(options: {
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, due.length)) }, () => worker()))
+    })
+    ticking = work
+    try { await work } finally { if (ticking === work) ticking = undefined }
   }
 
   return {
     start() {
       if (running) return
       running = true
+      stopped = false
       void tick().catch(() => undefined)
       timer = setInterval(() => { if (running) void tick().catch(() => undefined) }, intervalMs)
     },
     stop() {
       running = false
+      stopped = true
       if (timer) clearInterval(timer)
       timer = undefined
     },
@@ -250,3 +280,55 @@ export function createScheduledTaskScheduler(options: {
     isRunning: () => running,
   }
 }
+
+
+const sessionAuthorizations = new Map<string, { signature: string; jobId: string }>()
+function authorizationKey(vaultId: string | undefined, task: Pick<ScheduledTask, 'hostId' | 'id'>) { return JSON.stringify([vaultId || 'local', task.hostId, task.id]) }
+function taskSignature(task: ScheduledTask) { return JSON.stringify([task.hostId, task.id, task.command, task.intervalMinutes]) }
+/** Called only after the enabling OperationJob has completed confirmation. The
+ * durable job id explains authorization; the permission itself is memory-only. */
+export function authorizeScheduledTask(vaultId: string | undefined, task: ScheduledTask, authorizationJobId: string, now = Date.now()) {
+  if (!authorizationJobId.trim()) throw new Error('Schedule authorization job is required')
+  sessionAuthorizations.set(authorizationKey(vaultId, task), { signature: taskSignature(task), jobId: authorizationJobId })
+  return { ...task, enabled: true, authorizationJobId, pausedReason: null, nextRunAt: now + task.intervalMinutes * 60_000, updatedAt: now }
+}
+export function isScheduledTaskAuthorized(vaultId: string | undefined, task: ScheduledTask) {
+  const permission = sessionAuthorizations.get(authorizationKey(vaultId, task))
+  return task.enabled && permission?.signature === taskSignature(task) && permission.jobId === task.authorizationJobId
+}
+export function revokeScheduledTaskAuthorization(vaultId: string | undefined, task: ScheduledTask) { sessionAuthorizations.delete(authorizationKey(vaultId, task)) }
+export function clearScheduledTaskAuthorizations() { sessionAuthorizations.clear() }
+export function pauseScheduledTasks(vaultId: string | undefined, hostId: string, reason: 'restart' | 'vault-locked', now = Date.now()) {
+  const tasks = loadScheduledTasks(vaultId, hostId)
+  let changed = false
+  const paused = tasks.map((task) => {
+    if (!task.enabled && task.lastStatus !== 'running') return task
+    if (reason === 'restart' && isScheduledTaskAuthorized(vaultId, task)) return task
+    changed = true
+    revokeScheduledTaskAuthorization(vaultId, task)
+    return { ...task, enabled: false, nextRunAt: null, pausedReason: task.lastStatus === 'running' ? 'interrupted' as const : reason, lastStatus: task.lastStatus === 'running' ? 'unknown' as const : task.lastStatus, lastErrorSummary: task.lastStatus === 'running' ? 'Interrupted execution: verify the remote result before resuming' : task.lastErrorSummary, updatedAt: now }
+  })
+  return changed ? saveScheduledTasks(vaultId, hostId, paused, now) : paused
+}
+const taskLocks = new Set<string>()
+const taskWaiters: Array<() => void> = []
+let taskActive = 0
+/** A global two-command gate shared by background execution and manual runs. */
+export async function withScheduledTaskLock<T>(vaultId: string | undefined, task: ScheduledTask, run: () => Promise<T>): Promise<T> {
+  const key = authorizationKey(vaultId, task)
+  if (taskLocks.has(key)) throw new Error('Scheduled task is already running')
+  taskLocks.add(key)
+  if (taskActive >= 2) await new Promise<void>((resolve) => taskWaiters.push(resolve)); else taskActive++
+  try { return await run() } finally { taskLocks.delete(key); const next = taskWaiters.shift(); if (next) next(); else taskActive-- }
+}
+export function isScheduledTaskRunning(vaultId: string | undefined, task: ScheduledTask) { return taskLocks.has(authorizationKey(vaultId, task)) }
+
+registerLocalOpsAdapter('scheduled-tasks', {
+  readCache: (vault, host) => { try { return JSON.parse(localStorage.getItem(storageKey(vault, host)) || 'null') } catch { return null } },
+  writeCache: (vault, host, payload) => {
+    if (!Array.isArray(payload)) throw new Error('LOCAL_OPS_INVALID_TASKS')
+    const tasks = payload.slice(0, 32).map((row) => normalizeScheduledTask(row, Number(row?.updatedAt) || Date.now()))
+    if (tasks.some((task) => task.hostId !== host)) throw new Error('LOCAL_OPS_HOST_MISMATCH')
+    localStorage.setItem(storageKey(vault, host), JSON.stringify(tasks)); notifyScheduledTasksChanged()
+  },
+})

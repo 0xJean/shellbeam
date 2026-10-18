@@ -1,5 +1,6 @@
 #![allow(unexpected_cfgs)]
 
+mod agent_release;
 mod biometric_store;
 mod browser;
 mod data;
@@ -74,6 +75,13 @@ pub fn run() {
         .manage(SshSessionPool::default())
         .manage(mcp::McpState::default())
         .invoke_handler(tauri::generate_handler![
+            agent_release::download_shellbeam_agent_release,
+            data::local_ops::local_ops_list,
+            data::local_ops::local_ops_upsert,
+            data::local_ops::local_ops_alert_action,
+            data::provider_history::append_provider_metric_history,
+            data::provider_history::list_provider_metric_history,
+            data::provider_history::clear_provider_metric_history,
             notifications::system_notification_permission,
             notifications::request_system_notification_permission,
             notifications::send_system_notification,
@@ -138,6 +146,7 @@ pub fn run() {
             ssh::commands::run_ssh_command,
             net::sftp::sftp_home_dir,
             net::sftp::sftp_list_dir,
+            net::sftp::sftp_stat_path,
             net::sftp::sftp_download_file,
             net::sftp::sftp_upload_file,
             net::sftp::sftp_delete_path,

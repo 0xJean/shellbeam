@@ -42,6 +42,12 @@ describe('ProbeProvider contract', () => {
     expect(getProbeTransport(host)).toBe('proxy-jump')
   })
 
+  it('retains a referenced jump route even without cached display metadata', () => {
+    const referenced = { ...host, jumpHostId: 'jump-profile', jumpHost: undefined }
+    expect(getProbeTransport(referenced)).toBe('proxy-jump')
+    expect(getProbeHostIdentity(referenced).jump?.hostId).toBe('jump-profile')
+  })
+
   it('marks observation freshness from the remote sample timestamp', () => {
     const observation = createProbeObservation({
       data: { value: 1 },

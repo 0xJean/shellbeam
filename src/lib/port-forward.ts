@@ -53,11 +53,11 @@ export async function deletePortForwardRule(ruleId: string, vaultId?: string | n
 
 export async function startPortForwardTunnel(
   ruleId: string,
-  privateKey: string,
+  _privateKey: string | undefined,
   vaultId?: string | null
 ): Promise<void> {
   try {
-    await invoke('start_port_forward_tunnel', { ruleId, privateKey, vaultId: vaultId ?? undefined })
+    await invoke('start_port_forward_tunnel', { ruleId, vaultId: vaultId ?? undefined })
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))
   }

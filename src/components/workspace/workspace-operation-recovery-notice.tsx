@@ -1,7 +1,7 @@
 import { AlertTriangle, RefreshCw, Route } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
-import { listOperationAudit, type OperationAuditEntry, type OperationJobStatus } from '@/lib/operation-job'
+import { listOperationJobs, type OperationJob, type OperationJobStatus } from '@/lib/operation-job'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
@@ -9,28 +9,46 @@ const RECOVERABLE: OperationJobStatus[] = ['unknown', 'queued', 'running']
 
 /**
  * Shows durable jobs which may have outlived the terminal or Workspace window.
- * It only reads the local audit journal; the operator still decides whether a
+ * It only reads the local job journal; the operator still decides whether a
  * follow-up check is safe. This keeps MCP and UI jobs visible after a restart
  * without replaying a remote command automatically.
  */
-export function WorkspaceOperationRecoveryNotice({ host }: { host: HostProfile }) {
+export function WorkspaceOperationRecoveryNotice({ host, vaultId }: { host: HostProfile; vaultId?: string }) {
   const { t } = useT()
-  const [audits, setAudits] = useState<OperationAuditEntry[]>([])
-  const [loading, setLoading] = useState(false)
+  const scopedVaultId = vaultId ?? host.vaultId
+  const scope = JSON.stringify([scopedVaultId, host.id])
+  const [state, setState] = useState<{ scope: string; audits: OperationJob[]; loading: boolean } | null>(null)
+  const generation = useRef(0)
+  const audits = state?.scope === scope ? state.audits : []
+  const loading = state?.scope === scope && state.loading
 
   const load = useCallback(async () => {
-    setLoading(true)
+    // A host id is only meaningful within its Vault. Never query the global
+    // journal when a legacy/unsaved host has no scope.
+    if (!scopedVaultId?.trim() || !host.id.trim()) return
+    const request = ++generation.current
+    setState({ scope, audits: [], loading: true })
     try {
-      const entries = await listOperationAudit({ hostId: host.id, limit: 20 })
-      setAudits(entries.filter((entry) => RECOVERABLE.includes(entry.status)).slice(0, 5))
+      // Audit events retain queued/running history even after a job finishes.
+      // Read canonical current statuses, so old events cannot suggest a replay.
+      const entries = (await Promise.all(RECOVERABLE.map((status) =>
+        listOperationJobs({ vaultId: scopedVaultId, hostId: host.id, status, limit: 5 }),
+      ))).flat()
+      if (request !== generation.current) return
+      setState({ scope, loading: false, audits: entries.filter((entry) =>
+        entry.vaultId === scopedVaultId && entry.hostId === host.id && RECOVERABLE.includes(entry.status),
+      ).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 5) })
     } catch {
-      setAudits([])
-    } finally {
-      setLoading(false)
+      if (request === generation.current) setState({ scope, audits: [], loading: false })
     }
-  }, [host.id])
+  }, [host.id, scopedVaultId, scope])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    const requests = generation
+    let active = true
+    queueMicrotask(() => { if (active) void load() })
+    return () => { active = false; requests.current++ }
+  }, [load])
   if (audits.length === 0 && !loading) return null
 
   return (

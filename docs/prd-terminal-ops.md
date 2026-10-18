@@ -1,0 +1,341 @@
+# Terminal + Ops 产品 PRD
+
+状态：实施中，按验收清单核对交付
+版本：0.2
+日期：2026-10-18
+
+实施与验收状态见 [Terminal + Ops 验收矩阵](./terminal-ops-acceptance.md)。功能存在、自动测试通过、平台实机验收和正式发布分别记录，不互相代替。
+产品：ShellBeam
+
+## 1. 产品判断
+
+ShellBeam 不再只定位为 SSH 终端，而是定位为 **Terminal + Personal Ops Control Plane**：用户连接服务器后，可以在同一个主机上下文中完成观察、诊断、操作和验证。
+
+Terminal 仍然是通用入口，Workspace 是面向常见运维任务的可视化层。两者共享主机、Vault、连接状态、探测结果和操作记录。
+
+ShellBeam 不在第一阶段复制完整的 Komari/RMM 平台，也不把 Komari 探针强制安装到用户服务器。Komari 作为可选数据源和集成对象；需要持续采集时，再通过明确授权接入 Komari Server 或可选常驻探针。
+
+## 2. 立项时背景与现状（2026-10-16）
+
+当前代码已经具备运维控制台的基础：
+
+- 通过 SSH 采集 Linux 的 CPU、内存、磁盘、网络、负载和 uptime，并在本地保留 24 小时历史。
+- 资产盘点可以发现系统工具、systemd 服务、Docker 容器和项目清单。
+- Workspace 已有资产、文件、进程、服务、日志、工具管理和终端跳转入口。
+- MCP 已提供服务器资产、指标、一次性探测、SSH 命令和 SFTP 能力。
+
+当前实现仍有明确边界：
+
+- 没有真正的 Komari API、Server 或 Agent 集成。
+- 监控依赖 ShellBeam 进程运行，应用退出后停止采样。
+- 监控、资产盘点和 MCP 探针存在重复采集逻辑。
+- 没有统一告警、通知、持久化操作任务或服务健康模型。
+- ProxyJump 已覆盖终端、SFTP 和端口转发，但 Workspace 运维命令和 MCP 探针尚未全链路支持。
+- 当前探测和运维能力以 Linux 为主，Windows、macOS、FreeBSD 的数据缺失不能直接解释为离线。
+
+相关实现：
+
+- [`server-monitor.ts`](../src/lib/server-monitor.ts)
+- [`server-monitor-scan.ts`](../src/lib/server-monitor-scan.ts)
+- [`workspace-inventory.ts`](../src/lib/workspace-inventory.ts)
+- [`统一采集脚本`](../shared/probe-collector.sh)
+- [`mcp/remote.rs`](../src-tauri/src/mcp/remote.rs)
+- [`Workspace Mode 设计草案`](./superpowers/specs/2026-03-16-workspace-mode-design.md)
+
+## 3. 目标用户与核心场景
+
+### 目标用户
+
+- 管理个人 VPS、家庭服务器和小型实验环境的开发者。
+- 需要在桌面和移动端快速排查服务器问题的个人运维者。
+- 使用 SSH、SFTP、端口转发和 AI 辅助命令完成部署与维护的用户。
+
+### 核心场景
+
+1. **发现问题**：从主机列表看到磁盘、内存、服务或探测状态异常。
+2. **定位问题**：打开 Workspace 查看进程、服务、端口、日志和最近指标。
+3. **执行处理**：跳转终端、SFTP 或执行带确认的运维动作。
+4. **验证结果**：重新采样、查看服务状态和操作结果，确认问题是否缓解。
+5. **跨网络管理**：目标主机通过 ProxyJump 连接时，所有上述能力仍然可用。
+
+## 4. 产品范围
+
+### 本期范围
+
+- Terminal 与 Workspace 双模式。
+- 统一的远程连接传输层，覆盖直连和 ProxyJump。
+- 统一 ProbeProvider 抽象，整合 SSH Agentless 和 Komari 数据。
+- 主机列表运维视图。
+- Linux 主机的资源、资产、进程、服务、日志和端口观察。
+- 受确认、幂等和审计约束的常见运维动作。
+- 本地告警规则和通知入口。
+
+### 明确不在首期范围
+
+- 团队协作、RBAC、审批流和企业合规控制台。
+- 自动安装软件、自动发布、自动回滚和无人值守自愈。
+- 完整日志分析平台、APM、SLO 管理或 Kubernetes 控制面。
+- 默认在服务器安装 ShellBeam 或 Komari 常驻 Agent。
+- 将用户 SSH 凭据上传到云端。
+
+## 5. 产品结构
+
+每个主机上下文包含两个一级模式：
+
+- **Terminal**：交互式 SSH、命令历史、AI 命令、会话日志。
+- **Workspace**：Overview、Files、Processes、Services、Logs，以及返回 Terminal 的入口。
+
+Workspace 的每个操作都必须映射到可解释的 SSH、SFTP 或端口转发能力。用户可以从任意页面回到 Terminal，不能被可视化流程锁住。
+
+### Workspace 首期页面
+
+| 页面 | 职责 | 首期能力 |
+| --- | --- | --- |
+| Overview | 判断主机状态和推荐下一步 | CPU、内存、磁盘、负载、网络、探测来源、告警摘要 |
+| Files | 文件查看和维护 | 浏览、上传、下载、重命名、权限、跳转终端 |
+| Processes | 进程观察 | 搜索、排序、资源占用、查看详情、确认后终止 |
+| Services | systemd 服务管理 | 状态、启动、停止、重启、启用、日志 |
+| Logs | 日志排查 | journalctl、文件日志、搜索、过滤、跟随、复制 |
+| Terminal | 通用处理入口 | 复用现有终端和会话上下文 |
+
+后续再增加 Docker、Network、Sites、SSL 和 Scheduled Tasks。
+
+## 6. 统一 ProbeProvider
+
+### 6.1 设计目标
+
+所有指标、资产和健康数据都通过统一 Provider 获取，避免 server monitor、workspace inventory 和 MCP probe 各自维护一套脚本、解析器和状态机。
+
+Provider 必须返回来源、采样时间、数据新鲜度和可信程度。缺失值表示未知，不得自动转换成零或健康。
+
+### 6.2 Provider 类型
+
+| Provider | 连接方式 | 适用场景 | 首期策略 |
+| --- | --- | --- | --- |
+| `ssh-agentless` | ShellBeam 通过 SSH 执行只读探测 | 无需安装、临时主机、个人用户 | 保留并统一 |
+| `komari` | Komari API/Server | 已经使用 Komari 的用户 | 只读适配器优先 |
+| `shellbeam-agent` | 可选常驻探针 | 应用关闭后仍要采集 | 后续评估，不默认安装 |
+
+### 6.3 统一数据模型
+
+核心实体至少包含：
+
+- `HostIdentity`：hostId、地址、端口、用户名、跳板链、主机密钥身份。
+- `ProviderRef`：provider 类型、远端节点 ID、endpoint、能力列表。
+- `MetricSnapshot`：CPU、内存、磁盘、网络、load、uptime、采样时间。
+- `InventorySnapshot`：OS、架构、工具、服务、容器、监听端口、项目发现结果。
+- `HealthState`：online、stale、offline、paused、unsupported、unknown。
+- `Freshness`：sampledAt、receivedAt、TTL、过期原因。
+- `Confidence`：observed、partial、inferred；默认使用 observed 或 partial。
+- `Alert`：规则、状态、首次触发、最近触发、确认状态和关联主机。
+- `OperationJob`：动作、参数摘要、状态、开始结束时间、结果摘要、审计 ID。
+
+### 6.4 采集调度
+
+- Agentless 默认 60 秒采集资源指标，资产盘点使用较低频率或按需刷新。
+- 同一主机同一时间只允许一个相同类型的采集任务。
+- 采集并发、超时、输出大小和历史保留时间必须集中配置。
+- Provider 失败时保存失败原因和最后成功时间，不覆盖较新的成功数据。
+- 采集结果可被 UI、MCP 和命令面板共同读取。
+
+## 7. Komari 集成
+
+### 7.1 集成定位
+
+Komari 集成是可选能力，不改变 ShellBeam 的本地优先设计。ShellBeam 首先消费 Komari 的节点、指标和告警，再决定是否打开 SSH 进行诊断或修复。
+
+### 7.2 首期功能
+
+- 添加 Komari Server endpoint。
+- 使用 token 或用户明确提供的 API 凭据访问。
+- 拉取节点列表、节点状态、指标时间序列和告警摘要。
+- 将 Komari 节点映射到 ShellBeam 主机，可手动确认或按地址匹配。
+- 在主机列表和 Overview 显示 `Komari` 数据来源、最后同步时间和可用能力。
+- Komari 数据不可用时，允许回退到 SSH Agentless；回退必须显示来源变化。
+- 支持跳转 Komari Web 控制台，但不隐藏原始来源。
+
+### 7.3 首期不做
+
+- 通过 ShellBeam 自动部署 Komari Server。
+- 自动在远端安装、升级或卸载 Komari Agent。
+- 把 Komari 指标直接当作 SSH 操作成功的证明。
+- 通过 Komari API 执行重启、发布或任意命令。
+
+### 7.4 后续常驻探针策略
+
+如果用户需要 ShellBeam 关闭后仍保持采集，应提供明确的“安装探针”流程：展示安装命令、权限、版本、网络访问、卸载方式和风险；安装前要求用户确认，安装后记录版本、节点 ID、最后心跳和能力。探针更新必须支持版本检查、失败回退和卸载。
+
+## 8. ProxyJump 全链路
+
+### 8.1 支持范围
+
+同一份主机连接配置必须适用于：
+
+- Terminal 交互会话。
+- SFTP 文件操作。
+- 本地、远程和 SOCKS 端口转发。
+- Server Monitor 指标采集。
+- Workspace 资产、进程、服务、日志和工具动作。
+- MCP inventory、metrics、probe、command 和 SFTP 工具。
+
+### 8.2 连接模型
+
+- 目标主机和跳板机分别解析认证凭据与 known_hosts。
+- 前端只传递主机引用和操作参数，凭据在 Rust/Vault 层解析。
+- 默认支持一个跳板；多跳链路作为后续扩展。
+- 跳板或目标主机密钥变化时，连接必须失败并给出明确原因。
+- 所有失败都区分目标不可达、跳板不可达、认证失败、主机密钥失败和操作超时。
+- MCP、Workspace 和后台采集不能绕过跳板配置直接连接目标地址。
+
+### 8.3 验收标准
+
+- 配置了跳板的主机可以从主机列表启动监控、资产盘点、服务查看和日志查看。
+- 同一主机从 Terminal、SFTP、端口转发和 Workspace 看到一致的连接状态。
+- 跳板凭据不出现在日志、MCP 参数、UI 状态或操作结果中。
+- 跳板断开时，主机显示“跳板不可用”，不能错误显示为目标主机离线。
+- 自动化测试覆盖直连、单跳、认证失败和主机密钥变化。
+
+## 9. 主机列表运维视图
+
+主机列表从“连接配置列表”升级为“连接与运维资产列表”，保留快速打开 Terminal 的效率。
+
+### 9.1 每个主机显示
+
+- 主机名、地址、端口、用户和分组/标签。
+- 连接路径：直连或 ProxyJump，显示跳板名称。
+- 运维状态：在线、数据陈旧、离线、等待解锁、不支持、未知。
+- 资源摘要：CPU、内存、磁盘、网络和 uptime。
+- 探测来源：SSH Agentless、Komari、ShellBeam Probe 或无数据。
+- 最后成功采样时间、数据 TTL 和最近错误。
+- 告警数量和最高严重级别。
+- 能力标签：Files、Processes、Services、Logs、Docker、Port checks。
+
+### 9.2 搜索与筛选
+
+- 名称、地址、用户、分组、标签、跳板机。
+- Provider、操作系统、状态、告警级别和能力。
+- 资源阈值，例如磁盘大于 80%。
+- 数据新鲜度，例如超过 5 分钟未采样。
+
+### 9.3 快速动作
+
+- 打开 Terminal。
+- 打开 Workspace Overview。
+- 刷新探测。
+- 打开 Files、Services、Logs。
+- 查看告警。
+- 执行经过确认的常见动作。
+
+首期不提供无确认的跨主机批量重启、批量删除或批量写入。
+
+## 10. 运维动作与安全
+
+### 动作分级
+
+| 级别 | 示例 | 规则 |
+| --- | --- | --- |
+| 只读 | 查看状态、进程、服务、日志、端口 | 默认允许，结果持久化摘要 |
+| 低风险写入 | 创建目录、上传文件、启动服务 | 明确目标，用户确认 |
+| 高风险变更 | 删除文件、停止/重启服务、安装/升级 | 强确认，显示影响范围和命令摘要 |
+| 自动化 | 定时任务、批量动作、自愈 | 首期不做 |
+
+所有动作都使用 `OperationJob`：queued、running、completed、failed、unknown、cancelled。超时或断开时显示 unknown，不能假设远端动作已经停止或失败。
+
+MCP 沿用按客户端、Vault、主机和能力授权的模型。SSH 账号权限不是安全沙箱；文档和 UI 都应建议使用最小权限账号。
+
+## 11. 分阶段开发计划
+
+### Phase 0：统一基础（P0）
+
+目标：先把所有运维入口建立在同一连接和数据语义上。
+
+- 统一 SSH/SFTP/ProxyJump transport。
+- Workspace 和 MCP 全链路传递跳板配置。
+- 抽象 `ProbeProvider` 和统一数据模型。
+- 合并重复的监控、资产和 MCP 探测解析逻辑。
+- 统一状态、采样时间、来源、错误和能力字段。
+- 完成直连、单跳、Vault 锁定和主机密钥错误测试。
+
+验收：配置跳板的主机可以完成监控、资产、服务、日志、MCP 查询和终端操作；不同入口不再出现连接能力不一致。
+
+### Phase 1：Ops 闭环（P1）
+
+目标：从“看指标”升级为“发现问题并处理”。
+
+- 完成主机列表运维视图。
+- 增加 Processes、Services、Logs 的稳定只读能力。
+- 增加端口和 HTTP/TCP 健康检查。
+- 增加本地规则告警、去重、确认和恢复状态。
+- 增加操作任务、结果摘要和本地审计。
+- 每个异常提供 Terminal、Files、Services 或 Logs 的下一步入口。
+
+验收：用户能够从主机列表发现一个异常，进入诊断页面，执行确认后的动作，并看到重新采样后的结果。
+
+### Phase 2：Komari Adapter（P1/P2）
+
+目标：兼容已有 Komari 用户，减少重复部署和数据孤岛。
+
+- 配置 Komari Server 和 token。
+- 节点发现、主机映射、指标和告警同步。
+- 主机列表显示数据来源和同步时间。
+- SSH Agentless 与 Komari 数据并列展示并可回退。
+- Komari API 错误、权限错误和节点映射冲突提供可解释状态。
+
+验收：用户可以在不安装新 Agent 的情况下，把已有 Komari 节点导入 ShellBeam，并从告警跳转到 SSH/Workspace 处理。
+
+### Phase 3：可选常驻探针（P2）
+
+目标：支持应用关闭后的持续采集和更丰富的远端能力。
+
+- 明确授权的探针安装、升级、卸载和版本检查。
+- 心跳、离线、能力和版本状态。
+- 本地缓存或 Komari Server 继续接收历史数据。
+- 探针权限说明、最小权限模式和卸载验证。
+
+验收：用户能看到探针生命周期和最后心跳；探针不可用时不会伪装成 SSH 在线或健康。
+
+### Phase 4：扩展运维（P3）
+
+- Docker/容器管理。
+- Sites、SSL 和 Scheduled Tasks。
+- Webhook、系统通知和更丰富的通知策略。
+- 多主机编排和有限批量操作。
+- 在实际用户需求稳定后，再评估团队权限、远端服务和云同步。
+
+## 12. 质量与成功指标
+
+### 质量门槛
+
+- 所有 Provider 都返回来源、采样时间和 freshness。
+- 监控数据缺失不会显示为零。
+- 运维动作有确认、超时、unknown 状态和审计摘要。
+- ProxyJump 与直连使用同一套功能测试。
+- 不记录密码、私钥、token、完整命令输出或敏感文件内容。
+
+### 产品指标
+
+- 主机列表到首次有效诊断的步骤数不超过 3 步。
+- 发生告警后能在同一主机上下文打开 Terminal、Logs 或 Services。
+- 配置跳板的主机与直连主机拥有相同的运维功能覆盖率。
+- 采样失败原因可理解，且不把过期数据误报为在线。
+- Agentless、Komari 和未来 ShellBeam Probe 的来源可被用户清楚区分。
+
+## 13. 主要风险与决策点
+
+- **范围膨胀**：继续保持个人运维工作台定位，暂不进入企业 RMM、RBAC 和全自动发布。
+- **权限风险**：所有写操作默认确认；推荐专用低权限 SSH 用户；不把 Agent 安装做成隐式行为。
+- **数据可信度**：展示来源、新鲜度和 partial/unknown 状态，避免把资产发现当作应用健康证明。
+- **连接复杂度**：ProxyJump 必须先在统一 transport 中解决，否则每增加一个运维模块都会重复出现连接分叉。
+- **持续监控成本**：先支持 Komari Adapter，再根据用户需求决定是否维护自己的常驻探针和后台服务。
+
+## 14. 首个实现切片
+
+建议第一个开发切片只包含：
+
+1. `RemoteTransport` 支持 direct/ProxyJump。
+2. `ProbeProvider` 接口和 `ssh-agentless` 实现。
+3. Workspace monitor、inventory 和 MCP 迁移到统一 Provider。
+4. 主机列表增加 Provider、freshness、alert、capability 字段。
+5. 补齐单跳主机的监控、资产、服务、日志和 MCP 测试。
+
+完成这个切片后，再进入 Komari Adapter，避免在连接和数据模型尚未统一时直接叠加第三套探测协议。

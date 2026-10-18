@@ -76,6 +76,7 @@ describe('Probe persistence adapter', () => {
     expect(invoke).toHaveBeenCalledWith('upsert_probe_snapshot', {
       payload: toPersistedProbeSnapshotPayload(snapshot, 'vault-1', 1_200),
     })
+    expect(invoke).toHaveBeenCalledWith('append_provider_metric_history', { payload: { vaultId: 'vault-1', points: [expect.objectContaining({ providerKind: 'ssh-agentless', hostId: 'host-1', sampledAt: 1_000, expiresAt: 61_000 })] } })
   })
 
   it('rejects missing provider and host identity before writing', () => {

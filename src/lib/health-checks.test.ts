@@ -70,3 +70,10 @@ describe('health checks', () => {
     expect(localStorage.getItem('shellbeam.healthChecks.v1:vault-1:host-1')).not.toContain('private-key')
   })
 })
+
+it('keeps transport failures and missing check tooling unknown instead of opening endpoint failures', async () => {
+  const check = defaultHealthCheck(host)
+  for (const result of [{ stdout: '', stderr: 'tool missing', exitCode: 127, durationMs: 1 }, { stdout: '', stderr: 'transport', exitCode: 255, durationMs: 1, errorType: 'auth' }]) {
+    expect(await runHealthCheck({ host, check, resolveAuthSecret: vi.fn(), runCommand: vi.fn().mockResolvedValue(result) })).toMatchObject({ status: 'unknown' })
+  }
+})

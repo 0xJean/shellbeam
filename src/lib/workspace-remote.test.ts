@@ -52,4 +52,12 @@ describe('workspace remote transport', () => {
       command: 'uname -a',
     })
   })
+  it('resolves saved-host credentials only inside the selected native vault', async () => {
+    const resolve = vi.fn(async () => 'must-not-cross-the-bridge')
+    await runWorkspaceRemoteCommand({ host, vaultId: 'team', resolveAuthSecret: resolve, command: 'uname -a' })
+    expect(resolve).not.toHaveBeenCalled()
+    expect(runSshCommand).toHaveBeenCalledWith(expect.objectContaining({ hostId: host.id, vaultId: 'team', command: 'uname -a' }))
+    expect(JSON.stringify(runSshCommand.mock.calls)).not.toContain('must-not-cross-the-bridge')
+  })
+
 })

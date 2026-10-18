@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import type { HostProfileDraft } from '@/lib/hosts'
+import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { validateHostDraft } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import type { AuthType } from '@/lib/ssh'
@@ -22,6 +22,7 @@ interface HostFormProps {
   vaultName?: string
   existingGroups?: string[]
   existingTags?: string[]
+  availableHosts?: HostProfile[]
 }
 
 export function HostForm({
@@ -36,6 +37,7 @@ export function HostForm({
   vaultName = 'Vault',
   existingGroups = [],
   existingTags = [],
+  availableHosts = [],
 }: HostFormProps) {
   const [address, setAddress] = useState(initial?.address ?? '')
   const [name, setName] = useState(initial?.name ?? '')
@@ -53,6 +55,7 @@ export function HostForm({
   const [groupDraft, setGroupDraft] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [jumpHostId, setJumpHostId] = useState(initial?.jumpHostId ?? '')
   const [jumpHost, setJumpHost] = useState(initial?.jumpHost ?? '')
   const [jumpPort, setJumpPort] = useState(String(initial?.jumpPort ?? ''))
   const [jumpUser, setJumpUser] = useState(initial?.jumpUser ?? '')
@@ -109,6 +112,7 @@ export function HostForm({
       passwordKeyRef: authType === 'password' ? passwordKeyRef : undefined,
       privateKeyRef: authType === 'privateKey' ? privateKeyRef : undefined,
       secretKeyRef: undefined,
+      jumpHostId: jumpHostId || undefined,
       jumpHost: jumpHost.trim() || undefined,
       jumpPort: jumpPort.trim() ? parseInt(jumpPort, 10) || undefined : undefined,
       jumpUser: jumpUser.trim() || undefined,
@@ -314,20 +318,33 @@ export function HostForm({
           {showAdvanced && (
             <div className="space-y-3 rounded-lg border border-border/50 bg-muted/20 p-3">
               <p className="text-xs text-muted-foreground">{t('hostForm.jumpHostDesc')}</p>
+              <label className="block space-y-1 text-xs text-muted-foreground">
+                <span>{t('hostForm.jumpProfile')}</span>
+                <select aria-label={t('hostForm.jumpProfile')} value={jumpHostId} className="h-8 w-full rounded border bg-background px-2" onChange={(event) => {
+                  const id = event.target.value
+                  setJumpHostId(id)
+                  const profile = availableHosts.find((host) => host.id === id)
+                  if (profile) { setJumpHost(profile.address); setJumpPort(String(profile.port)); setJumpUser(profile.username) }
+                }}>
+                  <option value="">{t('hostForm.jumpProfileLegacy')}</option>
+                  {availableHosts.filter((host) => !host.jumpHost?.trim() && !host.jumpHostId).map((host) => <option key={host.id} value={host.id}>{host.name} · {host.username}@{host.address}</option>)}
+                </select>
+                <span>{t('hostForm.jumpProfileHelp')}</span>
+              </label>
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">{t('hostForm.jumpAddress')}</label>
-                  <Input value={jumpHost} onChange={(e) => setJumpHost(e.target.value)}
+                  <Input disabled={Boolean(jumpHostId)} value={jumpHost} onChange={(e) => setJumpHost(e.target.value)}
                     placeholder={t('hostForm.jumpAddressPlaceholder')} className="h-8 text-sm" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">{t('hostForm.jumpPort')}</label>
-                  <Input value={jumpPort} onChange={(e) => setJumpPort(e.target.value)}
+                  <Input disabled={Boolean(jumpHostId)} value={jumpPort} onChange={(e) => setJumpPort(e.target.value)}
                     placeholder="22" className="h-8 text-sm" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">{t('hostForm.jumpUser')}</label>
-                  <Input value={jumpUser} onChange={(e) => setJumpUser(e.target.value)}
+                  <Input disabled={Boolean(jumpHostId)} value={jumpUser} onChange={(e) => setJumpUser(e.target.value)}
                     placeholder={t('hostForm.jumpUserPlaceholder')} className="h-8 text-sm" />
                 </div>
               </div>

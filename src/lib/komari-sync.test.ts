@@ -20,7 +20,7 @@ describe('Komari sync orchestration', () => {
       if (url.endsWith('/api/admin/client/list')) {
         return new Response(JSON.stringify([{ uuid: 'node-1', name: 'prod', ipv4: '10.0.0.1' }]), { status: 200 })
       }
-      return new Response(JSON.stringify([{ time: 1_710_000_000, cpu: 33 }]), { status: 200 })
+      return new Response(JSON.stringify([{ time: 1.9, cpu: 33 }]), { status: 200 })
     })
     const result = await syncKomariIntegration({
       integrationId: 'komari-prod',
@@ -47,7 +47,7 @@ describe('Komari sync orchestration', () => {
       }
       if (url.includes('/api/admin/notification/')) return new Response('[]', { status: 200 })
       if (metricFailure) return new Response('temporarily unavailable', { status: 503 })
-      return new Response(JSON.stringify([{ time: 1_710_000_000, cpu: 33 }]), { status: 200 })
+      return new Response(JSON.stringify([{ time: 1.9, cpu: 33 }]), { status: 200 })
     })
 
     const failed = await syncKomariIntegration({
@@ -67,6 +67,49 @@ describe('Komari sync orchestration', () => {
     expect(recovered.snapshots[0]?.health).toBe('online')
     expect(recovered.alertState?.alerts.find((alert) => alert.kind === 'probe-error:metrics')?.status).toBe('resolved')
     expect(recovered.alertAudit.map((entry) => entry.event)).toContain('resolved')
+  })
+
+  it('does not recover prior alerts from future-only reports even when the aggregate summary is complete', async () => {
+    const now = Date.parse('2026-10-17T08:30:00Z')
+    const integrationId = 'komari-future-alert-regression'
+    const previous = reconcileKomariAlerts([], [
+      { integrationId, nodeId: 'node-1', hostId: host.id, kind: 'probe-offline', count: 1, updatedAt: now - 1000 },
+      { integrationId, nodeId: 'node-1', hostId: host.id, kind: 'probe-stale', count: 1, updatedAt: now - 1000 },
+      { integrationId, nodeId: 'node-1', hostId: host.id, kind: 'probe-error:inventory', count: 1, updatedAt: now - 1000 },
+    ], { now: now - 1000 })
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/admin/client/list')) return new Response(JSON.stringify([{ uuid: 'node-1', name: 'prod', ipv4: host.address }]))
+      if (url.includes('/api/admin/notification/')) return new Response('[]')
+      return new Response(JSON.stringify([{ time: now + 1, cpu: 25 }]))
+    })
+    const result = await syncKomariIntegration({ integrationId, config: { endpoint: 'https://komari.example' }, hosts: [host], now, fetchImpl,
+      alertState: { schemaVersion: 1, alerts: previous.alerts, audit: previous.audit, summary: previous.summary },
+    })
+    expect(result.snapshots[0]).toMatchObject({ health: 'unknown', metrics: null })
+    expect(result.snapshots[0].errors).toContainEqual(expect.objectContaining({ code: 'invalid-sample-time' }))
+    expect(result.history).toHaveLength(0)
+    for (const kind of ['probe-offline', 'probe-stale', 'probe-error:inventory']) {
+      expect(result.alertState?.alerts.find((alert) => alert.kind === kind)?.status).toBe('active')
+    }
+    expect(result.alertAudit.some((entry) => entry.event === 'resolved')).toBe(false)
+  })
+
+  it('does not pass the sync start time as the reception clock for live requests', async () => {
+    let now = Date.parse('2026-10-17T08:30:00Z')
+    const startedAt = now
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+        if (String(input).endsWith('/api/admin/client/list')) return new Response(JSON.stringify([{ uuid: 'node-1', name: 'prod', ipv4: host.address }]))
+        now += 1000
+        return new Response(JSON.stringify([{ time: now, cpu: 25 }]))
+      })
+      const result = await syncKomariIntegration({ integrationId: 'komari-reception-clock-regression', config: { endpoint: 'https://komari.example' }, hosts: [host], fetchImpl, includeAlerts: false })
+      expect(result.syncedAt).toBe(startedAt)
+      expect(result.snapshots[0]).toMatchObject({ health: 'online', receivedAt: now })
+      expect(result.snapshots[0].metrics?.freshness.sampledAt).toBe(now)
+    } finally { clock.mockRestore() }
   })
 
 
@@ -218,7 +261,7 @@ describe('Komari sync orchestration', () => {
       peak = Math.max(peak, active)
       await new Promise((resolve) => setTimeout(resolve, 5))
       active -= 1
-      return new Response(JSON.stringify([{ time: 1_710_000_000, cpu: 33 }]), { status: 200 })
+      return new Response(JSON.stringify([{ time: 1.9, cpu: 33 }]), { status: 200 })
     })
     const result = await syncKomariIntegration({
       integrationId: 'komari-prod',

@@ -137,7 +137,7 @@ export async function listOperationAudit(query: OperationAuditListQuery | number
 }
 
 export function operationTransport(host: HostProfile): 'direct' | 'proxy-jump' {
-  return host.jumpHost?.trim() ? 'proxy-jump' : 'direct'
+  return host.jumpHostId || host.jumpHost?.trim() ? 'proxy-jump' : 'direct'
 }
 
 export function summarizeRemoteResult(result: Pick<CommandRunResult, 'exitCode' | 'durationMs'>) {
@@ -175,6 +175,7 @@ export interface RunConfirmedOperationOptions<T> {
     resultSummary?: string
     errorCode?: string
     errorSummary?: string
+    errorType?: string
   }
   onJob?: (job: OperationJob) => void
   provider?: string
@@ -207,7 +208,7 @@ export async function runConfirmedOperation<T>({
 }: RunConfirmedOperationOptions<T>): Promise<{ value: T; job: OperationJob } | null> {
   const job = await createOperationJob({
     hostId: host.id,
-    vaultId,
+    vaultId: vaultId ?? host.vaultId,
     hostName: host.name,
     hostAddress: host.address,
     username: host.username,
@@ -219,12 +220,12 @@ export async function runConfirmedOperation<T>({
     provider: provider ?? 'ssh-agentless',
     transport: transport ?? operationTransport(host),
     paramsSummary: paramsSummary ? safeOperationTarget(paramsSummary) : undefined,
-    confirmationRequired: true,
+    confirmationRequired: risk !== 'read-only',
     requestId,
   })
   onJob?.(job)
 
-  if (!window.confirm(confirmMessage)) {
+  if (risk !== 'read-only' && !window.confirm(confirmMessage)) {
     const cancelled = await updateOperationJob({
       jobId: job.jobId,
       status: 'cancelled',
@@ -240,7 +241,7 @@ export async function runConfirmedOperation<T>({
   const running = await updateOperationJob({
     jobId: job.jobId,
     status: 'running',
-    confirmationStatus: 'confirmed',
+    confirmationStatus: risk === 'read-only' ? 'not_required' : 'confirmed',
     confirmedBy: actor ?? 'local-user',
     actor: actor ?? 'local-user',
   })
@@ -251,7 +252,7 @@ export async function runConfirmedOperation<T>({
     const result = getResult?.(value)
     const completed = await updateOperationJob({
       jobId: job.jobId,
-      status: result && result.exitCode !== 0 ? 'failed' : 'completed',
+      status: result && /^(target_timeout|target_disconnected|output_limit|remote_state_unknown)$/.test(result.errorCode ?? '') ? 'unknown' : result && result.exitCode !== 0 ? 'failed' : 'completed',
       actor: actor ?? 'local-user',
       resultSummary: result?.resultSummary ?? (result ? summarizeRemoteResult(result) : 'completed'),
       ...(result && result.exitCode !== 0 ? {

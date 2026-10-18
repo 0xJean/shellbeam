@@ -133,13 +133,16 @@ function safeMessage(value: unknown, token?: string): string {
 }
 
 async function parseResponse(response: Response): Promise<unknown> {
-  const text = await response.text()
+  const maxBytes = 4 * 1024 * 1024
+  if (Number(response.headers.get('content-length')) > maxBytes) throw new KomariApiError('Komari response exceeds the size limit', { code: 'response-too-large' })
+  let text: string
+  if (response.body) {
+    const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0
+    try { while (true) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.length; if (size > maxBytes) { await reader.cancel(); throw new KomariApiError('Komari response exceeds the size limit', { code: 'response-too-large' }) } chunks.push(chunk.value) } } finally { reader.releaseLock() }
+    const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length } text = new TextDecoder().decode(bytes)
+  } else { text = await response.text(); if (text.length > maxBytes) throw new KomariApiError('Komari response exceeds the size limit', { code: 'response-too-large' }) }
   if (!text.trim()) return null
-  try {
-    return JSON.parse(text) as unknown
-  } catch {
-    return text
-  }
+  try { return JSON.parse(text) as unknown } catch { return text }
 }
 
 export async function requestKomari<T = unknown>(
@@ -152,6 +155,9 @@ export async function requestKomari<T = unknown>(
   const controller = new AbortController()
   const timeoutMs = config.requestTimeoutMs ?? 15_000
   const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs))
+  const onAbort = () => controller.abort()
+  if (options.signal?.aborted) controller.abort()
+  options.signal?.addEventListener('abort', onAbort, { once: true })
   const headers = new Headers({ Accept: 'application/json' })
   if (config.token?.trim()) headers.set('Authorization', `Bearer ${config.token.trim()}`)
   if (options.body !== undefined) headers.set('Content-Type', 'application/json')
@@ -161,7 +167,7 @@ export async function requestKomari<T = unknown>(
       method: options.method ?? 'GET',
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: options.signal ?? controller.signal,
+      signal: controller.signal,
       redirect: 'error',
       credentials: 'omit',
     })
@@ -178,6 +184,7 @@ export async function requestKomari<T = unknown>(
     throw new KomariApiError('Komari endpoint is unavailable', { code: 'unavailable' })
   } finally {
     clearTimeout(timeout)
+    options.signal?.removeEventListener('abort', onAbort)
   }
 }
 
@@ -247,11 +254,32 @@ export async function getKomariRecentRecords(
     { path: `/api/recent/${encodeURIComponent(nodeId.trim())}` },
     fetchImpl,
   )
-  const unwrapped = unwrapPayload(payload)
-  if (Array.isArray(unwrapped)) return unwrapped.filter((item): item is KomariMetricRecord => Boolean(asRecord(item)))
-  const record = asRecord(unwrapped)
-  if (record) return [record as KomariMetricRecord]
-  return []
+  return normalizeKomariMetricRecords(payload)
+}
+
+/** HTTP v1.0.3+ and v1.6 RPC-bound HTTP routes use nested data/records
+ * envelopes; report objects may be flat stored records or nested live reports. */
+export function normalizeKomariMetricRecords(payload: unknown, depth = 0): KomariMetricRecord[] {
+  if (depth > 5) return []
+  if (Array.isArray(payload)) return payload.filter((item): item is KomariMetricRecord => Boolean(asRecord(item) && ['cpu', 'ram', 'memory', 'disk', 'network', 'net', 'load'].some((key) => key in (item as object)))).sort((left, right) => (komariRecordSampleTime(right) ?? 0) - (komariRecordSampleTime(left) ?? 0)).slice(0, 10000).sort((left, right) => (komariRecordSampleTime(left) ?? 0) - (komariRecordSampleTime(right) ?? 0))
+  const record = asRecord(payload)
+  if (!record) return []
+  for (const key of ['records', 'reports', 'data', 'result']) if (key in record) return normalizeKomariMetricRecords(record[key], depth + 1)
+  return ['cpu', 'ram', 'memory', 'disk', 'network', 'net', 'load'].some((key) => key in record) ? [record] : []
+}
+
+export async function getKomariHistoryRecords(config: KomariConnectionConfig, nodeId: string, options: { hours?: number } = {}, fetchImpl?: KomariFetch): Promise<KomariMetricRecord[]> {
+  if (!nodeId.trim()) throw new Error('Komari node id is required')
+  const hours = Math.max(1, Math.min(168, Math.floor(options.hours ?? 24)))
+  const query = new URLSearchParams({ uuid: nodeId.trim(), load_type: 'all', hours: String(hours) })
+  return normalizeKomariMetricRecords(await requestKomari(config, { path: `/api/records/load?${query}` }, fetchImpl))
+}
+
+export async function getKomariServerVersion(config: KomariConnectionConfig, fetchImpl?: KomariFetch): Promise<{ version: string; hash: string; apiKeySupported: boolean | null }> {
+  const value = asRecord(await requestKomari(config, { path: '/api/version' }, fetchImpl))
+  const version = typeof value?.version === 'string' ? value.version.slice(0, 80) : 'unknown'
+  const parsed = version.match(/^v?(\d+)\.(\d+)\.(\d+)/)
+  return { version, hash: typeof value?.hash === 'string' ? value.hash.slice(0, 80) : '', apiKeySupported: parsed ? Number(parsed[1]) > 1 || Number(parsed[1]) === 1 && (Number(parsed[2]) > 0 || Number(parsed[3]) >= 3) : null }
 }
 
 function countKomariNotifications(value: unknown): number | null {
@@ -351,10 +379,10 @@ export function createKomariProbeClient(
 }
 
 function numeric(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value
   if (typeof value === 'string' && value.trim()) {
-    const parsed = Number.parseFloat(value)
-    return Number.isFinite(parsed) ? parsed : null
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
   }
   return null
 }
@@ -408,12 +436,14 @@ export function komariRecordToServerMonitorSnapshot(
   const memoryTotal = objectNumber(ramValue, ['total', 'total_bytes', 'bytes_total'])
     ?? numeric(record.ram_total)
     ?? numeric(record.memory_total)
+    ?? numeric(client?.raw.mem_total)
   const memoryUsed = objectNumber(ramValue, ['used', 'used_bytes', 'bytes_used'])
     ?? numeric(record.ram_used)
     ?? numeric(record.memory_used)
     ?? numeric(record.ram)
   const diskTotal = objectNumber(record.disk, ['total', 'total_bytes', 'bytes_total'])
     ?? numeric(record.disk_total)
+    ?? numeric(client?.raw.disk_total)
   const diskUsed = objectNumber(record.disk, ['used', 'used_bytes', 'bytes_used'])
     ?? numeric(record.disk_used)
     ?? numeric(record.disk)
@@ -441,9 +471,14 @@ export function komariRecordToServerMonitorSnapshot(
     diskUsedBytes: diskUsed,
     diskTotalBytes: diskTotal,
     diskPercent: diskPercent ?? (diskUsed !== null && diskTotal ? clampPercent(diskUsed / diskTotal * 100) : null),
-    networkRxBytesPerSec: nestedNumber(record.net ?? record.network, ['rx', 'in', 'receive', 'download']) ?? numeric(netRecord?.rx) ?? numeric(record.net_in),
-    networkTxBytesPerSec: nestedNumber(record.net ?? record.network, ['tx', 'out', 'send', 'upload']) ?? numeric(netRecord?.tx) ?? numeric(record.net_out),
+    networkRxBytesPerSec: nestedNumber(record.net ?? record.network, ['rx', 'in', 'receive', 'download', 'down']) ?? numeric(netRecord?.rx) ?? numeric(record.net_in),
+    networkTxBytesPerSec: nestedNumber(record.net ?? record.network, ['tx', 'out', 'send', 'upload', 'up']) ?? numeric(netRecord?.tx) ?? numeric(record.net_out),
     latencyMs: null,
-    sampledAt: timestamp(record.time, receivedAt),
+    sampledAt: timestamp(record.time ?? record.updated_at ?? record.updatedAt, receivedAt),
   }
+}
+
+export function komariRecordSampleTime(record: KomariMetricRecord): number | null {
+  const value = timestamp(record.time ?? record.updated_at ?? record.updatedAt, Number.NaN)
+  return Number.isFinite(value) && value > 0 ? value : null
 }

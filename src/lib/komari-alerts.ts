@@ -329,8 +329,11 @@ export function komariAlertObservationsFromProbeSnapshot(
   const stale = snapshot.health === 'stale' || metricExpired || inventoryExpired
   const offline = snapshot.health === 'offline'
   const unknown = snapshot.health === 'unknown'
-  add('probe-offline', offline ? 1 : 0, 'Komari Probe offline', 'critical')
-  add('probe-stale', stale && !offline ? 1 : 0, 'Komari Probe data is stale', 'warning')
+  const invalidSampleTime = snapshot.errors.some((error) => error.code === 'invalid-sample-time')
+  // An invalid timestamp proves neither reachability nor recovery. Retain
+  // existing health/error alerts until a dated observation can verify them.
+  if (!invalidSampleTime || offline) add('probe-offline', offline ? 1 : 0, 'Komari Probe offline', 'critical')
+  if (!invalidSampleTime || stale) add('probe-stale', stale && !offline ? 1 : 0, 'Komari Probe data is stale', 'warning')
   add('probe-unknown', unknown ? 1 : 0, 'Komari Probe health is unknown', 'warning')
 
   const errorSections = new Set(snapshot.errors.map((error) => error.section))
@@ -339,6 +342,7 @@ export function komariAlertObservationsFromProbeSnapshot(
   for (const section of new Set(['provider', 'metrics', 'inventory', ...errorSections])) {
     const kind = `probe-error:${section}` as KomariProbeAlertKind
     const error = snapshot.errors.find((candidate) => candidate.section === section)
+    if (invalidSampleTime && !error) continue
     add(
       kind,
       error ? 1 : 0,

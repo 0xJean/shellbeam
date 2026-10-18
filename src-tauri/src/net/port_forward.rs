@@ -2,50 +2,15 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
-use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::thread;
 use uuid::Uuid;
 
-use crate::error::standard_error_from_raw;
-use crate::hosts::load_hosts;
 use crate::storage::{data_file_path, now_unix_ms, read_json_or_default, write_json};
 use crate::vaults_meta;
 
 fn port_forward_rules_file(vault_id: Option<&str>) -> String {
     let suffix = vaults_meta::vault_storage_suffix(vault_id);
     format!("port_forward_rules{suffix}.json")
-}
-
-fn write_temp_private_key(
-    app: &tauri::AppHandle,
-    private_key: &str,
-) -> Result<std::path::PathBuf, String> {
-    let key_path = data_file_path(app, &format!("port_forward_{}.key", Uuid::new_v4()))?;
-    fs::write(&key_path, private_key).map_err(|e| format!("Write temp key failed: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let permissions = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&key_path, permissions)
-            .map_err(|e| format!("Set key permissions failed: {e}"))?;
-    }
-    Ok(key_path)
-}
-
-fn format_jump_proxy(
-    jump_host: Option<&str>,
-    jump_port: Option<u16>,
-    jump_user: Option<&str>,
-    target_user: &str,
-) -> Option<String> {
-    let host = jump_host.map(str::trim).filter(|value| !value.is_empty())?;
-    let user = jump_user
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(target_user);
-    Some(format!("{user}@{host}:{}", jump_port.unwrap_or(22)))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,7 +43,7 @@ pub struct PortForwardRuleDraft {
 }
 
 lazy_static::lazy_static! {
-    static ref RUNNING_TUNNELS: Mutex<HashMap<String, (Child, std::path::PathBuf)>> = Mutex::new(HashMap::new());
+    static ref RUNNING_TUNNELS: Mutex<HashMap<String, crate::ssh::forward::ForwardLease>> = Mutex::new(HashMap::new());
 }
 
 fn load_rules(
@@ -155,167 +120,48 @@ pub fn delete_port_forward_rule(
 pub fn start_port_forward_tunnel(
     app: tauri::AppHandle,
     rule_id: String,
-    private_key: String,
+    private_key: Option<String>,
     vault_id: Option<String>,
 ) -> Result<(), String> {
-    let vid = vault_id.as_deref();
-    let rules = load_rules(&app, vid)?;
+    let _ = private_key; // Legacy clients may send it; saved routes use Vault references exclusively.
+    let vid = vault_id
+        .as_deref()
+        .unwrap_or(crate::vaults_meta::DEFAULT_VAULT_ID);
+    let rules = load_rules(&app, Some(vid))?;
     let rule = rules
         .iter()
-        .find(|r| r.id == rule_id)
-        .ok_or_else(|| "Rule not found".to_string())?;
-
-    let hosts = load_hosts(&app, vid)
-        .map_err(|e| standard_error_from_raw("port_forward", "load hosts", e))?;
-    let host = hosts
-        .iter()
-        .find(|h| h.id == rule.host_id)
-        .ok_or_else(|| "Host not found".to_string())?;
-
-    if host.auth_type != "privateKey" {
-        return Err("Port forwarding requires private key authentication".to_string());
-    }
-
-    if private_key.trim().is_empty() {
-        return Err("Private key is required".to_string());
-    }
-
-    let (ssh_flag, spec) = match rule.rule_type.as_str() {
-        "local" => (
-            "-L",
-            format!(
-                "{}:{}:{}:{}",
-                rule.bind_host, rule.bind_port, rule.target_host, rule.target_port
-            ),
-        ),
-        "remote" => (
-            "-R",
-            format!(
-                "{}:{}:{}:{}",
-                rule.bind_host, rule.bind_port, rule.target_host, rule.target_port
-            ),
-        ),
-        "dynamic" => ("-D", format!("{}:{}", rule.bind_host, rule.bind_port)),
-        _ => return Err("Invalid rule type".to_string()),
+        .find(|rule| rule.id == rule_id)
+        .ok_or("Rule not found")?;
+    let route = crate::ssh::transport::resolve_host_route(&app, vid, &rule.host_id)?;
+    let connection = crate::ssh::transport::connect(&app, &route)?;
+    crate::ssh::transport::ensure_vault_unlocked(&app, Some(vid))?;
+    let kind = match rule.rule_type.as_str() {
+        "local" => crate::ssh::forward::ForwardKind::Local {
+            host: rule.target_host.clone(),
+            port: rule.target_port,
+        },
+        "remote" => crate::ssh::forward::ForwardKind::Remote {
+            host: rule.target_host.clone(),
+            port: rule.target_port,
+        },
+        "dynamic" => crate::ssh::forward::ForwardKind::Socks,
+        _ => return Err("Invalid rule type".into()),
     };
-
-    let key_path = write_temp_private_key(&app, &private_key)
-        .map_err(|e| standard_error_from_raw("port_forward", "write temp key", e))?;
-
-    let host_addr = host.address.clone();
-    let host_port = host.port;
-    let username = host.username.clone();
-    let jump_proxy = format_jump_proxy(
-        host.jump_host.as_deref(),
-        host.jump_port,
-        host.jump_user.as_deref(),
-        &username,
-    );
-    let rule_id_clone = rule_id.clone();
-
-    thread::spawn(move || {
-        let mut command = Command::new("ssh");
-        command
-            .arg("-N")
-            .arg(ssh_flag)
-            .arg(&spec)
-            .arg("-p")
-            .arg(host_port.to_string())
-            .arg("-i")
-            .arg(&key_path)
-            .arg("-o")
-            .arg("StrictHostKeyChecking=no")
-            .arg("-o")
-            .arg("UserKnownHostsFile=/dev/null");
-        if let Some(jump_proxy) = jump_proxy.as_deref() {
-            command.arg("-J").arg(jump_proxy);
-        }
-        let child = match command
-            .arg(format!("{}@{}", username, host_addr))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                log::error!("Port forward spawn failed: {e}");
-                let _ = std::fs::remove_file(&key_path);
-                return;
-            }
-        };
-
-        if let Ok(mut map) = RUNNING_TUNNELS.lock() {
-            map.insert(rule_id_clone.clone(), (child, key_path.clone()));
-        }
-
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            if let Ok(mut map) = RUNNING_TUNNELS.lock() {
-                if let Some((ref mut c, _)) = map.get_mut(&rule_id_clone) {
-                    if c.try_wait().ok().flatten().is_some() {
-                        map.remove(&rule_id_clone);
-                        drop(map);
-                        let _ = std::fs::remove_file(&key_path);
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-        }
-    });
-
+    let lease = crate::ssh::forward::start(connection, &rule.bind_host, rule.bind_port, kind)?;
+    RUNNING_TUNNELS
+        .lock()
+        .map_err(|_| "Tunnel registry unavailable")?
+        .insert(rule_id, lease);
     Ok(())
 }
 
 #[tauri::command]
 pub fn stop_port_forward_tunnel(rule_id: String) -> Result<(), String> {
-    let mut map = RUNNING_TUNNELS
+    RUNNING_TUNNELS
         .lock()
-        .map_err(|_| "Failed to lock tunnel map".to_string())?;
-    if let Some((mut child, key_path)) = map.remove(&rule_id) {
-        let _ = child.kill();
-        let _ = std::fs::remove_file(&key_path);
-        Ok(())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::format_jump_proxy;
-
-    #[test]
-    fn omits_empty_jump_host() {
-        assert_eq!(format_jump_proxy(Some("  "), None, None, "target"), None);
-        assert_eq!(
-            format_jump_proxy(None, Some(2200), Some("jump"), "target"),
-            None
-        );
-    }
-
-    #[test]
-    fn formats_jump_proxy_with_defaults() {
-        assert_eq!(
-            format_jump_proxy(Some(" bastion.example.com "), None, None, "target"),
-            Some("target@bastion.example.com:22".to_string())
-        );
-    }
-
-    #[test]
-    fn formats_jump_proxy_with_custom_user_and_port() {
-        assert_eq!(
-            format_jump_proxy(
-                Some("bastion.example.com"),
-                Some(2200),
-                Some("jump-user"),
-                "target"
-            ),
-            Some("jump-user@bastion.example.com:2200".to_string())
-        );
-    }
+        .map_err(|_| "Tunnel registry unavailable")?
+        .remove(&rule_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -323,5 +169,5 @@ pub fn port_forward_tunnel_status(rule_id: String) -> Result<bool, String> {
     let map = RUNNING_TUNNELS
         .lock()
         .map_err(|_| "Failed to lock tunnel map".to_string())?;
-    Ok(map.contains_key(&rule_id))
+    Ok(map.get(&rule_id).is_some_and(|lease| lease.is_running()))
 }

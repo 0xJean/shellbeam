@@ -4,7 +4,6 @@ import { t } from '@/lib/i18n'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import {
-  getWorkspaceRecommendations,
   type WorkspaceRecommendation,
 } from '@/lib/workspace-recommendations'
 import { WorkspaceActivityFeed, type WorkspaceActivityItem } from './workspace-activity-feed'
@@ -15,6 +14,7 @@ import { DockerOpsPanel } from './docker-ops-panel'
 import { ScheduledTasksPanel } from './scheduled-tasks-panel'
 import SitesSslPanel from '../sites-ssl-panel'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
+import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
 
 interface WorkspaceOverviewProps {
   activeVaultId?: string
@@ -41,7 +41,6 @@ export function WorkspaceOverview({
   activityItems = [],
   recommendations,
 }: WorkspaceOverviewProps) {
-  const resolvedRecommendations = recommendations ?? getWorkspaceRecommendations({})
   const activeHost = resolveHostForDisplay(hosts, hostId, hostAddress)
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
@@ -101,27 +100,7 @@ export function WorkspaceOverview({
         <WorkspaceActivityFeed items={activityItems} />
       </section>
 
-      <section className="space-y-3">
-        <div className="text-sm font-semibold">{t('workspace.section.recommendations')}</div>
-        <div className="space-y-2">
-          {resolvedRecommendations.map((item) => (
-            <div key={item.id} className="flex items-center justify-between rounded-2xl border border-border/60 bg-card/80 px-4 py-3">
-              <div className="text-sm font-medium">{item.title}</div>
-              <button
-                type="button"
-                onClick={() => onSelectApp(item.targetApp)}
-                className="rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium hover:bg-muted/50"
-              >
-                {item.targetApp === 'fileTransfer'
-                  ? t('workspace.action.openFiles')
-                  : item.targetApp === 'services'
-                    ? t('workspace.action.openServices')
-                    : t('workspace.action.openTerminal')}
-              </button>
-            </div>
-          ))}
-        </div>
-      </section>
+      <WorkspaceRecommendationsPanel host={activeHost ?? null} vaultId={activeVaultId} onSelectApp={onSelectApp} recommendations={recommendations} />
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import { DEFAULT_VAULT_ID } from './vaults'
 import type { AuthType } from '@/lib/ssh'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -5,6 +6,8 @@ export type HostGroup = string
 export const DEFAULT_GROUPS = ['Production', 'Development', 'Staging', 'Custom'] as const
 
 export interface HostProfile {
+  /** Runtime Vault scope supplied by the native host registry. */
+  vaultId?: string
   id: string
   name: string
   address: string
@@ -16,6 +19,7 @@ export interface HostProfile {
   passwordKeyRef?: string
   privateKeyRef?: string
   tags: string[]
+  jumpHostId?: string
   jumpHost?: string
   jumpPort?: number
   jumpUser?: string
@@ -34,6 +38,7 @@ export interface HostProfileDraft {
   passwordKeyRef?: string
   privateKeyRef?: string
   tags?: string[]
+  jumpHostId?: string
   jumpHost?: string
   jumpPort?: number
   jumpUser?: string
@@ -84,15 +89,18 @@ export function validateHostDraft(draft: HostProfileDraft): HostValidationResult
 }
 
 export async function listHosts(vaultId?: string | null) {
-  return invoke<HostProfile[]>('list_hosts', { vaultId: vaultId ?? undefined })
+  const hosts = await invoke<HostProfile[]>('list_hosts', { vaultId: vaultId ?? undefined })
+  return hosts.map((host) => ({ ...host, vaultId: vaultId ?? DEFAULT_VAULT_ID }))
 }
 
 export async function createHost(payload: HostProfileDraft, vaultId?: string | null) {
-  return invoke<HostProfile>('create_host', { payload: normalizeHostDraft(payload), vaultId: vaultId ?? undefined })
+  const host = await invoke<HostProfile>('create_host', { payload: normalizeHostDraft(payload), vaultId: vaultId ?? undefined })
+  return { ...host, vaultId: vaultId ?? DEFAULT_VAULT_ID }
 }
 
 export async function updateHost(payload: HostProfile, vaultId?: string | null) {
-  return invoke<HostProfile>('update_host', { payload, vaultId: vaultId ?? undefined })
+  const host = await invoke<HostProfile>('update_host', { payload, vaultId: vaultId ?? undefined })
+  return { ...host, vaultId: vaultId ?? DEFAULT_VAULT_ID }
 }
 
 export async function deleteHost(id: string, vaultId?: string | null) {

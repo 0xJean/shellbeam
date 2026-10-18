@@ -5,6 +5,7 @@ import { WorkspaceMobileShell } from './workspace-mobile-shell'
 
 interface WorkspaceShellProps {
   activeVaultId?: string
+  sessionVaultId?: string
   sessionId: string
   mobile: boolean
   hostName: string

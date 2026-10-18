@@ -1,7 +1,10 @@
+import type { VerifiedHostKey } from './sessions'
+import { fetchUnifiedProbe } from './unified-probe'
 import type { HostProfile } from './hosts'
 import type { KomariAlertSummary } from './komari'
 import {
   fetchServerMonitorSnapshot,
+  isUsableServerMonitorSnapshot,
   type ServerMonitorSnapshot,
 } from './server-monitor'
 import {
@@ -28,12 +31,14 @@ export type ProbeConfidence = 'observed' | 'partial' | 'inferred'
 export type ProbeCollectionStatus = 'success' | 'recovered' | 'failed'
 
 export interface ProbeJumpRoute {
+  hostId?: string
   address: string
   port: number
   username: string
 }
 
 export interface ProbeHostIdentity {
+  verifiedHostKeys?: VerifiedHostKey[]
   hostId: string
   address: string
   port: number
@@ -120,6 +125,7 @@ export interface ProbeSnapshot {
 }
 
 export interface ProbeRequest {
+  vaultId?: string
   host: HostProfile
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   sections?: readonly ProbeSection[]
@@ -132,6 +138,7 @@ export interface ProbeProvider {
 }
 
 export interface AgentlessProbeDependencies {
+  collect?: typeof fetchUnifiedProbe
   collectMetrics?: (request: ProbeRequest) => Promise<ServerMonitorSnapshot>
   collectInventory?: (request: ProbeRequest) => Promise<WorkspaceInventory>
 }
@@ -147,9 +154,10 @@ export const DEFAULT_AGENTLESS_INVENTORY_TTL_MS = 10 * 60 * 1000
 
 export function getProbeHostIdentity(host: HostProfile): ProbeHostIdentity {
   const jumpHost = host.jumpHost?.trim()
-  const jump = jumpHost
+  const jump = jumpHost || host.jumpHostId
     ? {
-        address: jumpHost,
+        ...(host.jumpHostId ? { hostId: host.jumpHostId } : {}),
+        address: jumpHost ?? '',
         port: host.jumpPort || 22,
         username: host.jumpUser?.trim() || host.username || 'root',
       }
@@ -165,7 +173,7 @@ export function getProbeHostIdentity(host: HostProfile): ProbeHostIdentity {
 }
 
 export function getProbeTransport(host: HostProfile): ProbeTransport {
-  return host.jumpHost?.trim() ? 'proxy-jump' : 'direct'
+  return host.jumpHostId || host.jumpHost?.trim() ? 'proxy-jump' : 'direct'
 }
 
 function createFreshness(sampledAt: number, receivedAt: number, ttlMs: number): ProbeFreshness {
@@ -210,7 +218,7 @@ function sectionList(request: ProbeRequest): ProbeSection[] {
 }
 
 function healthFromObservations(observations: Array<ProbeObservation<unknown> | null>): ProbeHealthState {
-  const available = observations.filter((observation): observation is ProbeObservation<unknown> => Boolean(observation))
+  const available = observations.filter((observation): observation is ProbeObservation<unknown> => Boolean(observation && observation.freshness.sampledAt <= observation.freshness.receivedAt))
   if (available.length === 0) return 'unknown'
   return available.some((observation) => !observation.freshness.expired) ? 'online' : 'stale'
 }
@@ -236,21 +244,33 @@ export function createAgentlessSshProbeProvider(options: AgentlessProbeOptions =
   return {
     ref,
     async probe(request) {
-      const receivedAt = request.now ?? Date.now()
+      let receivedAt = request.now ?? Date.now()
       const host = getProbeHostIdentity(request.host)
       const transport = getProbeTransport(request.host)
       const sections = sectionList(request)
       const metricsEnabled = sections.includes('metrics')
       const inventoryEnabled = sections.includes('inventory')
+      // The default implementation has one script, one remote command and one
+      // read-only audit job even when both observations are requested.
+      let shared: Awaited<ReturnType<typeof fetchUnifiedProbe>> | undefined
+      let sharedError: unknown
+      const useShared = !options.dependencies?.collectMetrics && !options.dependencies?.collectInventory
+      if (useShared && (metricsEnabled || inventoryEnabled)) {
+        try { shared = await (options.dependencies?.collect ?? fetchUnifiedProbe)({ ...request, section: metricsEnabled && inventoryEnabled ? 'all' : metricsEnabled ? 'metrics' : 'inventory' }) }
+        catch (error) { sharedError = error }
+      }
+      const sharedMetrics = () => shared && isUsableServerMonitorSnapshot(shared.metrics) ? Promise.resolve(shared.metrics) : Promise.reject(sharedError ?? new Error('PROBE_METRICS_UNAVAILABLE'))
+      const sharedInventory = () => shared ? Promise.resolve(shared.inventory) : Promise.reject(sharedError ?? new Error('PROBE_COLLECTION_FAILED'))
       const [metricsResult, inventoryResult] = await Promise.all([
         metricsEnabled
-          ? collectMetrics(request).then((data) => ({ status: 'fulfilled' as const, data })).catch((error: unknown) => ({ status: 'rejected' as const, error }))
+          ? (useShared ? sharedMetrics() : collectMetrics(request)).then((data) => ({ status: 'fulfilled' as const, data })).catch((error: unknown) => ({ status: 'rejected' as const, error }))
           : Promise.resolve({ status: 'disabled' as const }),
         inventoryEnabled
-          ? collectInventory(request).then((data) => ({ status: 'fulfilled' as const, data })).catch((error: unknown) => ({ status: 'rejected' as const, error }))
+          ? (useShared ? sharedInventory() : collectInventory(request)).then((data) => ({ status: 'fulfilled' as const, data })).catch((error: unknown) => ({ status: 'rejected' as const, error }))
           : Promise.resolve({ status: 'disabled' as const }),
       ])
 
+      if (request.now === undefined) receivedAt = Date.now()
       const errors: ProbeError[] = []
       const metrics = metricsResult.status === 'fulfilled'
         ? createProbeObservation({
@@ -259,7 +279,7 @@ export function createAgentlessSshProbeProvider(options: AgentlessProbeOptions =
             sampledAt: metricsResult.data.sampledAt,
             receivedAt,
             ttlMs: metricsTtlMs,
-            confidence: 'observed',
+            confidence: Object.values(metricsResult.data).some((value) => value === null) ? 'partial' : 'observed',
           })
         : null
       if (metricsResult.status === 'rejected') {
@@ -282,7 +302,7 @@ export function createAgentlessSshProbeProvider(options: AgentlessProbeOptions =
 
       return {
         schemaVersion: PROBE_PROVIDER_SCHEMA_VERSION,
-        host,
+        host: { ...host, ...(shared?.verifiedHostKeys ? { verifiedHostKeys: shared.verifiedHostKeys } : {}) },
         provider: ref,
         transport,
         health: healthFromObservations([metrics, inventory]),

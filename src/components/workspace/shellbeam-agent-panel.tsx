@@ -4,11 +4,15 @@ import { useT } from '@/lib/i18n'
 import {
   SHELLBEAM_AGENT_HEARTBEAT_TTL_MS,
   checkShellbeamAgent,
+  buildShellbeamAgentPlan,
   listShellbeamAgents,
   runShellbeamAgentOperation,
   upsertShellbeamAgent,
   type ShellbeamAgentRecord,
 } from '@/lib/shellbeam-agent'
+import { loadShellbeamAgentCatalogRelease } from '@/lib/shellbeam-agent-catalog'
+import { loadShellbeamAgentReleaseSettings } from '@/lib/shellbeam-agent-release-settings'
+import { shellbeamAgentReleaseParamsSummary, type ValidatedShellbeamAgentRelease } from '@/lib/shellbeam-agent-release'
 import { runShellbeamAgentArtifactOperation, type ShellbeamAgentArtifactPolicy } from '@/lib/shellbeam-agent-artifact'
 import { AlertTriangle, Bot, CheckCircle2, CircleDashed, RefreshCw, ShieldAlert, Trash2, Upload } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -17,9 +21,8 @@ interface ShellbeamAgentPanelProps {
   host: HostProfile | null
   vaultId?: string
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
-  /** Optional trusted release channel. When present, install/upgrade uses the
-   * signed artifact flow; without it the existing explicit CLI operation is
-   * retained for manually managed environments. */
+  /** Optional embedded trusted artifact for controlled distributions. The
+   * production panel loads signed release catalogs from saved release policy. */
   artifactManifest?: unknown
   artifactPolicy?: ShellbeamAgentArtifactPolicy
 }
@@ -33,10 +36,17 @@ function statusTone(status: ShellbeamAgentRecord['status']) {
 
 export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret, artifactManifest, artifactPolicy }: ShellbeamAgentPanelProps) {
   const { t } = useT()
-  const [record, setRecord] = useState<ShellbeamAgentRecord | null>(null)
+  const [storedRecord, setRecord] = useState<ShellbeamAgentRecord | null>(null)
+  const record = storedRecord?.hostId === host?.id ? storedRecord : null
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState<'install' | 'upgrade' | 'uninstall' | null>(null)
   const [error, setError] = useState('')
+  const [releaseLoading, setReleaseLoading] = useState(false)
+  const [releaseState, setReleaseState] = useState<{ hostId: string; release: ValidatedShellbeamAgentRelease; policy: ShellbeamAgentArtifactPolicy } | null>(null)
+  const release = releaseState?.hostId === host?.id ? releaseState : null
+  const selectedManifest = release?.release.manifest.artifact ?? artifactManifest
+  const selectedPolicy = release?.policy ?? artifactPolicy
+  const artifactReady = Boolean(selectedManifest && selectedPolicy)
 
   useEffect(() => {
     let cancelled = false
@@ -59,14 +69,14 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
     if (!record?.lastHeartbeatAt) return null
     return Math.max(0, Date.now() - record.lastHeartbeatAt)
   }, [record])
-  const canOperate = Boolean(host && resolveAuthSecret && !running)
+  const canOperate = Boolean(host && resolveAuthSecret && !running && !releaseLoading)
 
   async function refresh() {
     if (!host || !resolveAuthSecret) return
     setLoading(true)
     setError('')
     try {
-      const checked = await checkShellbeamAgent(host, resolveAuthSecret)
+      const checked = await checkShellbeamAgent(host, resolveAuthSecret, Date.now(), vaultId)
       const next = { ...checked.record, vaultId }
       setRecord(next)
       await upsertShellbeamAgent(next)
@@ -82,18 +92,21 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
     setRunning(action)
     setError('')
     try {
-      if ((action === 'install' || action === 'upgrade') && artifactManifest && artifactPolicy) {
+      if ((action === 'install' || action === 'upgrade') && selectedManifest && selectedPolicy) {
         await runShellbeamAgentArtifactOperation({
           host,
           vaultId,
           resolveAuthSecret,
-          manifest: artifactManifest,
-          policy: artifactPolicy,
+          manifest: selectedManifest,
+          policy: selectedPolicy,
+          previousSha256: action === 'upgrade' ? release?.release.manifest.previousSha256 : undefined,
+          releaseSummary: release ? shellbeamAgentReleaseParamsSummary({ release: release.release }) : undefined,
           action,
           confirmMessage: t(`workspace.agentProbe.confirm.${action}`),
           onRecord: setRecord,
         })
       } else {
+        if (action !== 'uninstall') throw new Error('release_catalog_not_configured')
         await runShellbeamAgentOperation({
           host,
           vaultId,
@@ -108,6 +121,18 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
     } finally {
       setRunning(null)
     }
+  }
+
+  async function loadRelease() {
+    if (!host || !resolveAuthSecret) return
+    setReleaseLoading(true)
+    setError('')
+    try {
+      const settings = loadShellbeamAgentReleaseSettings()
+      const selected = await loadShellbeamAgentCatalogRelease({ host, vaultId, resolveAuthSecret, currentVersion: record?.version, settings })
+      setReleaseState({ hostId: host.id, release: selected, policy: { allowedHosts: settings.artifactAllowedHosts, trustedPublicKeyBase64: settings.artifactTrustedPublicKeyBase64 } })
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { setReleaseLoading(false) }
   }
 
   if (!host) return null
@@ -153,14 +178,24 @@ export function ShellbeamAgentPanel({ host, vaultId = 'local', resolveAuthSecret
       {record?.transport === 'proxy-jump' && <div className="mt-3 text-xs text-muted-foreground">{t('workspace.agentProbe.proxyJump')}</div>}
       {error && <div className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />{error}</div>}
       <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
-        {artifactManifest && artifactPolicy ? t('workspace.agentProbe.artifactVerified') : t('workspace.agentProbe.artifactUnavailable')}
+        {artifactReady ? t('workspace.agentProbe.artifactVerified') : t('workspace.agentProbe.releaseMissing')}
       </p>
 
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => void loadRelease()} disabled={!canOperate}>{releaseLoading ? <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />}{t('workspace.agentProbe.releaseLoad')}</Button>
+        {release && <span className="text-xs text-muted-foreground">{t('workspace.agentProbe.releaseReady')}: {release.release.manifest.channel} / {release.release.manifest.artifact.version} / {release.release.manifest.artifact.sha256.slice(0, 12)}</span>}
+      </div>
+      <details className="mt-3 rounded-lg border border-border/50 p-3 text-xs">
+        <summary className="cursor-pointer font-medium">{t('workspace.agentProbe.commandPreview')}</summary>
+        <p className="mt-2 leading-5 text-muted-foreground">{t('workspace.agentProbe.runtimeNote')}</p>
+        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all">{['install', 'upgrade', 'uninstall'].map((action) => buildShellbeamAgentPlan(action as 'install' | 'upgrade' | 'uninstall').command).join('\n')}</pre>
+      </details>
+
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button type="button" size="sm" variant="outline" disabled={!canOperate || record?.status === 'installed'} onClick={() => void operate('install')}>
+        <Button type="button" size="sm" variant="outline" disabled={!canOperate || !artifactReady || record?.status === 'installed'} onClick={() => void operate('install')}>
           <Upload className="mr-1.5 h-3.5 w-3.5" />{t('workspace.agentProbe.install')}
         </Button>
-        <Button type="button" size="sm" variant="outline" disabled={!canOperate || record?.status !== 'installed'} onClick={() => void operate('upgrade')}>
+        <Button type="button" size="sm" variant="outline" disabled={!canOperate || !artifactReady || record?.status !== 'installed'} onClick={() => void operate('upgrade')}>
           <Upload className="mr-1.5 h-3.5 w-3.5" />{t('workspace.agentProbe.upgrade')}
         </Button>
         <Button type="button" size="sm" variant="outline" disabled={!canOperate || record?.status !== 'installed'} onClick={() => void operate('uninstall')}>

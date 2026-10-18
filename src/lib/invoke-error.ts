@@ -48,5 +48,6 @@ export function normalizeInvokeError(error: unknown): InvokeStandardError {
 
 export function toInvokeErrorMessage(error: unknown) {
   const normalized = normalizeInvokeError(error)
+  if (normalized.code === 'host_key_unknown' || normalized.code === 'host_key_mismatch') return normalized.raw
   return normalized.detail ? `${normalized.message}: ${normalized.detail}` : normalized.message
 }

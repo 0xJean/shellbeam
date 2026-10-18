@@ -1,3 +1,4 @@
+import type { HostKeyAcceptance } from './known-hosts'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -140,6 +141,9 @@ export async function hideBrowserWebview(browserId: string) {
 export async function startBrowserPortForward(params: {
   browserId: string
   sessionId: string
+  vaultId?: string
+  hostId?: string
+  acceptedHostKey?: HostKeyAcceptance
   host: string
   port: number
   username: string
@@ -163,6 +167,9 @@ export async function startBrowserPortForward(params: {
 export async function prepareBrowserPortForward(params: {
   browserId: string
   sessionId: string
+  vaultId?: string
+  hostId?: string
+  acceptedHostKey?: HostKeyAcceptance
   host: string
   port: number
   username: string
@@ -180,6 +187,8 @@ export async function prepareBrowserPortForward(params: {
     const localPort = await invoke<number>('start_browser_port_forward', {
       request: {
         sessionId: params.sessionId,
+        ...(params.vaultId ? { vaultId: params.vaultId, hostId: params.hostId } : {}),
+        ...(params.acceptedHostKey ? { acceptedHostKey: params.acceptedHostKey } : {}),
         browserId: params.browserId,
         host: params.host,
         port: params.port,
@@ -214,6 +223,9 @@ export async function stopBrowserPortForward(browserId: string) {
 
 export async function startBrowserSocksProxy(params: {
   sessionId: string
+  vaultId?: string
+  hostId?: string
+  acceptedHostKey?: HostKeyAcceptance
   host: string
   port: number
   username: string
@@ -234,6 +246,9 @@ export async function startBrowserSocksProxy(params: {
 
 export async function startBrowserHttpProxy(params: {
   sessionId: string
+  vaultId?: string
+  hostId?: string
+  acceptedHostKey?: HostKeyAcceptance
   host: string
   port: number
   username: string

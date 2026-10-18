@@ -444,16 +444,9 @@ pub(super) fn dispatch(app: &tauri::AppHandle, client: &Client, request: Value) 
 }
 
 fn public_host(host: &HostProfile, client: &Client) -> Value {
-    // MCP ProxyJump uses the same private-key credential for the destination
-    // and the single jump host. Password-authenticated jump chains remain
-    // unsupported until separate jump-host credentials are modelled.
-    let connection_supported = host
-        .jump_host
-        .as_deref()
-        .map(|value| value.trim().is_empty() || host.auth_type == "privateKey")
-        .unwrap_or(true);
+    let connection_supported = host.auth_type == "password" || host.auth_type == "privateKey";
     json!({"hostId":host.id,"name":host.name,"address":host.address,"port":host.port,"username":host.username,
-        "group":host.group,"tags":host.tags,"authType":host.auth_type,"jumpHost":host.jump_host,
+        "group":host.group,"tags":host.tags,"authType":host.auth_type,"jumpHost":host.jump_host,"jumpHostId":host.jump_host_id,
         "connectionSupported":connection_supported,
         "authorizationValid":client.authorize_host(host).is_ok()})
 }
@@ -467,10 +460,11 @@ fn mcp_operation_risk(tool: &str) -> &'static str {
 }
 
 fn mcp_operation_transport(host: &HostProfile) -> &'static str {
-    if host
-        .jump_host
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
+    if host.jump_host_id.is_some()
+        || host
+            .jump_host
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
     {
         "proxy-jump"
     } else {
@@ -1164,6 +1158,7 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
         "get_server_probe_state" => Ok(json!({
             "server": public_host(host, client),
             "probeState": komari_probe_state(app, client, host)?,
+            "localOps": crate::data::local_ops::read_for_mcp(app, &client.vault_id, &host.id)?,
             "vaultUnlocked": vault_unlocked,
             "notice": "Komari and ShellBeam Probe observations are cached provider data. Check source, freshness and mapping status before starting a remote operation.",
         })),
@@ -1204,7 +1199,18 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
             // the durable job and audit rows back into this response so a
             // fresh MCP session can render the complete lifecycle without
             // relying on in-memory command results.
-            let linked_job_ids = linked_operation_job_ids(&alerts, &audit);
+            let local_ops = crate::data::local_ops::read_for_mcp(app, &client.vault_id, &host.id)?;
+            let mut linked_job_ids = linked_operation_job_ids(&alerts, &audit);
+            linked_job_ids.extend(linked_operation_job_ids(
+                local_ops["alerts"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                local_ops["audit"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+            ));
             let mut operation_jobs = operation_jobs::operation_job_list(
                 app.clone(),
                 Some(operation_jobs::OperationJobListQuery {
@@ -1230,6 +1236,7 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
             operation_audits.retain(|entry| linked_job_ids.contains(&entry.job_id));
             Ok(json!({
                 "server": public_host(host, client),
+                "localOps": local_ops,
                 "alerts": alerts,
                 "audit": audit,
                 "operationJobs": operation_jobs,
@@ -1395,7 +1402,7 @@ fn workspace_snapshot(
             host_warnings.push("probe_snapshot_missing".to_string());
         }
         if server["connectionSupported"] != true {
-            host_warnings.push("proxy_jump_requires_private_key_auth".to_string());
+            host_warnings.push("unsupported_auth_type".to_string());
         }
         let mut capabilities = vec!["monitoring".to_string(), "probe-observations".to_string()];
         if cached_inventory.is_some() {
@@ -2033,6 +2040,7 @@ mod tests {
             jump_host: Some("jump.example.com".into()),
             jump_port: Some(2200),
             jump_user: Some("bastion".into()),
+            jump_host_id: None,
             created_at: 0,
             updated_at: 0,
         }
@@ -2051,7 +2059,7 @@ mod tests {
     }
 
     #[test]
-    fn public_host_marks_private_key_proxy_jump_as_supported() {
+    fn public_host_marks_independent_password_and_key_jump_routes_as_supported() {
         let client = test_client();
         assert_eq!(
             public_host(&host_with_jump("privateKey"), &client)["connectionSupported"],
@@ -2059,7 +2067,7 @@ mod tests {
         );
         assert_eq!(
             public_host(&host_with_jump("password"), &client)["connectionSupported"],
-            false
+            true
         );
     }
 

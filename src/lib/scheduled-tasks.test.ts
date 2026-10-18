@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { isScheduledTaskDue, loadScheduledTasks, normalizeScheduledTask, runScheduledTaskOperation, saveScheduledTasks } from './scheduled-tasks'
+import { authorizeScheduledTask, clearScheduledTaskAuthorizations, isScheduledTaskDue, loadScheduledTasks, normalizeScheduledTask, runScheduledTaskOperation, saveScheduledTasks } from './scheduled-tasks'
 
 describe('scheduled tasks', () => {
-  beforeEach(() => localStorage.clear())
+  beforeEach(() => { localStorage.clear(); clearScheduledTaskAuthorizations() })
 
   it('normalizes intervals and schedules the next run', () => {
     const task = normalizeScheduledTask({ hostId: 'host-1', name: 'backup', command: 'tar -czf /tmp/backup.tgz /srv', intervalMinutes: 0 }, 1000)
@@ -22,7 +22,7 @@ describe('scheduled tasks', () => {
 
 
   it('records scheduled executions with the host transport and bounded summaries', async () => {
-    const task = normalizeScheduledTask({ id: 'host-1:task', hostId: 'host-1', name: 'check', command: 'systemctl is-active nginx', intervalMinutes: 5 }, 10)
+    const task = authorizeScheduledTask(undefined, normalizeScheduledTask({ id: 'host-1:task', hostId: 'host-1', name: 'check', command: 'systemctl is-active nginx', intervalMinutes: 5 }, 10), 'enable-job', 10)
     const createJob = vi.fn().mockResolvedValue({ jobId: 'job-1', auditId: 'audit-1' })
     const updateJob = vi.fn().mockImplementation(async (request) => ({ jobId: 'job-1', auditId: 'audit-1', ...request }))
     const result = await runScheduledTaskOperation({

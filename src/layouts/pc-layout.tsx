@@ -1281,6 +1281,7 @@ export function PcLayout() {
                       ) : browserPageMode ? null : (
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            sessionVaultId={sessionInfo?.vaultId}
                             activeVaultId={vault.activeVaultId}
                             sessionId={tab.sessionId}
                             mobile={false}
@@ -1428,6 +1429,7 @@ export function PcLayout() {
                       ) : browserPageMode ? null : (
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            sessionVaultId={sessionInfo?.vaultId}
                             activeVaultId={vault.activeVaultId}
                             sessionId={tab.sessionId}
                             mobile
@@ -1644,6 +1646,7 @@ export function PcLayout() {
                 <Suspense fallback={<DashboardSectionFallback fullHeight />}>
                   <div className="absolute inset-0">
                     <SftpDualPane
+                      vaultId={vault.activeVaultId}
                       hosts={hostsCtx.hosts}
                       selectedHostId={hostsCtx.selectedHostId}
                       resolveAuthSecret={async (host) => {

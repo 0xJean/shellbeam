@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
-import { createShellbeamAgentProbeProvider, buildShellbeamAgentPlan, deriveShellbeamAgentHealth, normalizeShellbeamAgentRecord, parseShellbeamAgentProbeOutput, recordShellbeamAgentHeartbeat, shellbeamAgentRecordToProbeSnapshot } from './shellbeam-agent'
+import { checkShellbeamAgent, createShellbeamAgentProbeProvider, buildShellbeamAgentPlan, deriveShellbeamAgentHealth, normalizeShellbeamAgentRecord, parseShellbeamAgentProbeOutput, recordShellbeamAgentHeartbeat, shellbeamAgentRecordToProbeSnapshot, parseShellbeamAgentObservation } from './shellbeam-agent'
 import type { HostProfile } from './hosts'
+import { runWorkspaceRemoteCommand } from './workspace-remote'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+vi.mock('./workspace-remote', () => ({ runWorkspaceRemoteCommand: vi.fn() }))
 
 const host: HostProfile = {
   id: 'host-1',
@@ -107,11 +109,71 @@ describe('ShellBeam Probe lifecycle', () => {
     expect(snapshot.agent?.status).toBe('offline')
   })
 
-  it('keeps persistence wrappers scoped to host and vault', async () => {
+  it('uses real daemon metrics and inventory with original timestamps and unknown values', () => {
+    const record = normalizeShellbeamAgentRecord({ hostId: host.id, status: 'installed', health: 'online', transport: 'proxy-jump', lastHeartbeatAt: 100_000, heartbeatTtlMs: 5_000, capabilities: ['metrics', 'inventory', 'heartbeat'] }, 102_000)
+    const output = JSON.stringify({ schemaVersion: 1, sampledAt: 100_000, metrics: { hostname: 'edge', os: 'Linux', memoryTotalBytes: 4096, memoryUsedBytes: 2048, memoryPercent: 50, diskPercent: null, cpuPercent: 12 }, inventory: { tools: [{ id: 'git', name: 'git', binary: 'git', path: '/usr/bin/git', secret: 'not-persisted' }], services: [{ name: 'app.service', active: 'active' }] }, secret: 'not-persisted' })
+    const snapshot = parseShellbeamAgentObservation(output, record, host, 102_000)
+    expect(snapshot.metrics?.data).toMatchObject({ cpuPercent: 12, memoryPercent: 50, diskPercent: null })
+    expect(snapshot.metrics?.freshness).toMatchObject({ sampledAt: 100_000, receivedAt: 102_000, expiresAt: 105_000, expired: false })
+    expect(snapshot.inventory?.data.tools[0]).toMatchObject({ id: 'git' })
+    expect(snapshot.inventory?.data.services[0]).toMatchObject({ enabled: 'unknown' })
+    expect(JSON.stringify(snapshot)).not.toContain('not-persisted')
+    expect(parseShellbeamAgentObservation(output, record, host, 106_000).health).toBe('stale')
+    expect(normalizeShellbeamAgentRecord({ ...record, status: 'unknown', health: 'unknown' }, 102_000).health).toBe('unknown')
+  })
+
+  it('never accepts a heartbeat or metric sample one minute ahead as healthy, including explicit online records', () => {
+    const now = 1_800_000_000_000
+    const future = now + 60000
+    const record = normalizeShellbeamAgentRecord({ hostId: host.id, status: 'installed', health: 'online', transport: 'direct', lastHeartbeatAt: future }, now)
+    expect(record.health).toBe('unknown')
+    expect(deriveShellbeamAgentHealth(record, now)).toBe('unknown')
+    expect(parseShellbeamAgentProbeOutput(JSON.stringify({ status: 'installed', health: 'online', lastHeartbeatAt: future }), host, now).health).toBe('unknown')
+    const observed = normalizeShellbeamAgentRecord({ ...record, lastHeartbeatAt: now, health: 'online' }, now)
+    const snapshot = parseShellbeamAgentObservation(JSON.stringify({ schemaVersion: 1, sampledAt: future, metrics: { cpuPercent: 99, memoryPercent: 99 }, inventory: { tools: [], services: [] } }), observed, host, now)
+    expect(snapshot.health).toBe('unknown')
+    expect(snapshot.metrics).toBeNull()
+    expect(snapshot.inventory).toBeNull()
+    expect(snapshot.errors).toEqual([expect.objectContaining({ code: 'agent_sample_in_future' })])
+  })
+
+  it('compares live samples with request completion so a sample created during collection remains valid', async () => {
+    const startedAt = 1_800_000_000_000
+    const completedAt = startedAt + 2000
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(completedAt)
+    try {
+      vi.mocked(runWorkspaceRemoteCommand).mockResolvedValueOnce({ stdout: JSON.stringify({ schemaVersion: 1, status: 'installed', health: 'online', lastHeartbeatAt: startedAt + 1000, sampledAt: startedAt + 1000, metrics: { cpuPercent: 20 } }), stderr: '', exitCode: 0, durationMs: 2000 })
+      const result = await checkShellbeamAgent(host, async () => '', startedAt)
+      expect(result.record.health).toBe('online')
+      expect(result.snapshot?.metrics?.freshness).toMatchObject({ sampledAt: startedAt + 1000, receivedAt: completedAt })
+      expect(result.snapshot?.health).toBe('online')
+    } finally { clock.mockRestore() }
+  })
+
+  it('rejects oversized, future and incompatible daemon observations', () => {
+    const record = normalizeShellbeamAgentRecord({ hostId: host.id, status: 'unknown', health: 'unknown', transport: 'direct' }, 100)
+    for (const payload of [{ schemaVersion: 2, sampledAt: 100, metrics: { cpuPercent: 2 } }, { schemaVersion: 1, sampledAt: 9999999999999, metrics: { cpuPercent: 2 } }]) {
+      expect(parseShellbeamAgentObservation(JSON.stringify(payload), record, host, 100).metrics).toBeNull()
+    }
+  })
+
+  it('keeps persistence wrappers scoped to host and vault' , async () => {
     vi.mocked(invoke).mockResolvedValueOnce([])
     const { listShellbeamAgents } = await import('./shellbeam-agent')
     await listShellbeamAgents({ vaultId: 'vault-1', hostId: host.id })
     expect(invoke).toHaveBeenCalledWith('list_shellbeam_agents', { vaultId: 'vault-1', hostId: host.id })
+  })
+
+  it('never upgrades persisted unknown or offline daemon health from a cached fresh heartbeat', async () => {
+    const { listShellbeamAgents } = await import('./shellbeam-agent')
+    const now = Date.now()
+    const statuses = ['unknown', 'offline', 'online', 'stale'] as const
+    vi.mocked(invoke).mockResolvedValueOnce(statuses.map((health) => normalizeShellbeamAgentRecord({ vaultId: 'vault-1', hostId: health, status: 'installed', health, transport: 'direct', lastHeartbeatAt: now, heartbeatTtlMs: 300000 }, now)))
+    expect((await listShellbeamAgents({ vaultId: 'vault-1' })).map((record) => record.health)).toEqual(statuses)
+    vi.mocked(invoke).mockResolvedValueOnce([normalizeShellbeamAgentRecord({ vaultId: 'vault-1', hostId: 'expired', status: 'installed', health: 'online', transport: 'direct', lastHeartbeatAt: now - 600000, heartbeatTtlMs: 300000 }, now)])
+    expect((await listShellbeamAgents({ vaultId: 'vault-1' }))[0].health).toBe('offline')
+    vi.mocked(invoke).mockResolvedValueOnce([normalizeShellbeamAgentRecord({ vaultId: 'vault-1', hostId: 'future', status: 'installed', health: 'online', transport: 'direct', lastHeartbeatAt: now + 60000 }, now + 60000)])
+    expect((await listShellbeamAgents({ vaultId: 'vault-1' }))[0].health).toBe('unknown')
   })
 
   it('maps heartbeat timestamps to the heartbeat command payload', async () => {

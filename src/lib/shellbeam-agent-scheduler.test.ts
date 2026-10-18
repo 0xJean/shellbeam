@@ -182,4 +182,33 @@ describe('ShellBeam Probe background scheduler', () => {
     expect(scheduler.isRunning()).toBe(false)
     expect(persisted).toHaveLength(0)
   })
+  it.each(['lifecycle', 'snapshot'] as const)('suppresses post-stop writes and callbacks while %s persistence is deferred', async (stage) => {
+    let release: (() => void) | undefined
+    const deferred = new Promise<void>((resolve) => { release = resolve })
+    const record = normalizeShellbeamAgentRecord({ vaultId: 'vault-1', hostId: hosts[0].id, status: 'installed', health: 'online', transport: 'direct', lastHeartbeatAt: 900 }, 1000)
+    const persist = vi.fn(() => stage === 'lifecycle' ? deferred : Promise.resolve())
+    const persistSnapshot = vi.fn(() => stage === 'snapshot' ? deferred : Promise.resolve())
+    const onRecord = vi.fn(); const onError = vi.fn()
+    const scheduler = createShellbeamAgentScheduler(baseOptions({ hosts: [hosts[0]], timeoutMs: 0, check: async () => ({ record, stdout: JSON.stringify({ schemaVersion: 1, sampledAt: 900, metrics: { cpuPercent: 20 } }), stderr: '', exitCode: 0, durationMs: 1 }), persist, persistSnapshot, onRecord, onError }))
+    scheduler.start()
+    const scan = scheduler.scanNow()
+    await vi.waitFor(() => expect(stage === 'lifecycle' ? persist : persistSnapshot).toHaveBeenCalledTimes(1))
+    scheduler.stop()
+    release?.()
+    expect((await scan).records).toEqual([])
+    if (stage === 'lifecycle') expect(persistSnapshot).not.toHaveBeenCalled()
+    expect(onRecord).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('imports actual daemon observations into canonical persistence without retaining raw command output', async () => {
+    const persistSnapshot = vi.fn(async () => undefined)
+    const payload = JSON.stringify({ schemaVersion: 1, sampledAt: 900, metrics: { hostname: 'edge', cpuPercent: 20, memoryPercent: 42 }, inventory: { tools: [], services: [] }, commandOutput: 'do not store this' })
+    const record = normalizeShellbeamAgentRecord({ hostId: hosts[0].id, status: 'installed', health: 'online', transport: 'direct', lastHeartbeatAt: 900, capabilities: ['metrics', 'inventory', 'heartbeat'] }, 1000)
+    const scheduler = createShellbeamAgentScheduler(baseOptions({ hosts: [hosts[0]], check: vi.fn(async () => ({ record, stdout: payload, stderr: '', exitCode: 0, durationMs: 1 })), persist: vi.fn(async () => undefined), persistSnapshot }))
+    await scheduler.scanNow()
+    expect(persistSnapshot).toHaveBeenCalledWith(expect.objectContaining({ provider: expect.objectContaining({ kind: 'shellbeam-agent' }), metrics: expect.objectContaining({ data: expect.objectContaining({ cpuPercent: 20, memoryPercent: 42 }) }) }), 'vault-1')
+    expect(JSON.stringify(persistSnapshot.mock.calls)).not.toContain('do not store this')
+  })
+
 })

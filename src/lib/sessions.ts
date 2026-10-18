@@ -13,6 +13,7 @@ export type CommandErrorType =
   | 'unknown'
 
 export interface CommandRunRequest {
+  vaultId?: string
   hostId?: string
   host: string
   port: number
@@ -27,7 +28,16 @@ export interface CommandRunRequest {
   command: string
 }
 
+export interface VerifiedHostKey {
+  stage: 'jump' | 'target'
+  host: string
+  port: number
+  fingerprintSha256: string
+  keyType: string
+}
+
 export interface CommandRunResult {
+  verifiedHostKeys?: VerifiedHostKey[]
   stdout: string
   stderr: string
   exitCode: number

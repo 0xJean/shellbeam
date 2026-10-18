@@ -1,7 +1,9 @@
+import { appendProviderMetricHistory, observationToMetricHistoryPoint, type ProviderMetricHistoryPoint } from './provider-history'
 import type { HostProfile } from './hosts'
 import {
   createKomariProbeClient,
   getKomariAlertSummary,
+  getKomariHistoryRecords,
   listKomariClients,
   type KomariAlertSummary,
   type KomariConnectionConfig,
@@ -30,12 +32,17 @@ export interface KomariSyncResult {
   /** Local lifecycle state derived from the aggregate Komari alert summary. */
   alertState: KomariAlertState | null
   alertAudit: KomariAlertAuditEntry[]
+  history?: ProviderMetricHistoryPoint[]
+  historyErrors?: string[]
+  historyImportedCount?: number
   skipped?: boolean
   skipReason?: 'ttl'
 }
 
 export const DEFAULT_KOMARI_SYNC_TTL_MS = 60 * 1000
 export const DEFAULT_KOMARI_SYNC_CONCURRENCY = 4
+
+const lastHistoryFetch = new Map<string, number>()
 
 const emptyMapping = (): KomariMappingResult => ({
   mappings: [],
@@ -132,6 +139,8 @@ export async function syncKomariIntegration(options: {
   config: KomariConnectionConfig
   hosts: HostProfile[]
   explicitMappings?: Record<string, string>
+  /** Fixed evaluation clock for deterministic imports/tests. Live requests use
+   * their actual reception time rather than the beginning of the sync. */
   now?: number
   fetchImpl?: KomariFetch
   lastSyncedAt?: number | null
@@ -173,9 +182,35 @@ export async function syncKomariIntegration(options: {
     ? null
     : await getKomariAlertSummary(options.config, options.fetchImpl, syncedAt)
   let alertAudit: KomariAlertAuditEntry[] = []
+  const history: ProviderMetricHistoryPoint[] = []
+  const historyErrors: string[] = []
+  let historyImportedCount = 0
+  const recentClient = createKomariProbeClient(options.config, options.fetchImpl)
   const provider = createKomariProbeProvider({
     endpoint: options.config.endpoint,
-    client: createKomariProbeClient(options.config, options.fetchImpl),
+    client: {
+      ...recentClient,
+      fetchHistoryRecords: async (nodeId) => {
+        const key = `${options.vaultId ?? 'ephemeral'}:${options.integrationId}:${nodeId}`
+        const lastFetched = lastHistoryFetch.get(key)
+        if (!options.force && lastFetched !== undefined && syncedAt >= lastFetched && syncedAt - lastFetched < 300_000) return []
+        const records = await getKomariHistoryRecords(options.config, nodeId, { hours: 24 }, options.fetchImpl)
+        lastHistoryFetch.set(key, syncedAt)
+        if (lastHistoryFetch.size > 1000) lastHistoryFetch.delete(lastHistoryFetch.keys().next().value as string)
+        return records
+      },
+    },
+    onHistory: async (observations, request) => {
+      const points = observations.map((observation) => observationToMetricHistoryPoint(observation, request.host.id))
+      // Keep one bounded preview in the sync result; import each host before
+      // releasing its concurrency slot instead of accumulating a whole fleet.
+      history.push(...points.slice(0, Math.max(0, 10000 - history.length)))
+      if (options.vaultId) {
+        try { await appendProviderMetricHistory(options.vaultId, points); historyImportedCount += points.length }
+        catch { historyErrors.push('history-persistence-failed') }
+      }
+    },
+    onHistoryError: (error) => historyErrors.push(error && typeof error === 'object' && 'code' in error ? String(error.code).slice(0, 80) : 'history-unavailable'),
     nodeForHost: (host) => nodeByHostId.get(host.id) ?? null,
     id: options.integrationId,
     metricsTtlMs: ttlMs,
@@ -198,16 +233,17 @@ export async function syncKomariIntegration(options: {
         // when a sync is explicitly due while the registry still coalesces
         // overlapping calls for the same integration and host.
         force: true,
-        now: syncedAt,
+        ...(options.now === undefined ? {} : { now: options.now }),
       })
       return scheduled.snapshot
     },
   )
   const normalizedSnapshots = snapshots.filter((snapshot): snapshot is ProbeSnapshot => snapshot !== null)
+  const completedAt = options.now ?? Date.now()
   const probeAlertObservations = normalizedSnapshots.flatMap((snapshot) => komariAlertObservationsFromProbeSnapshot(
     snapshot,
     { integrationId: options.integrationId },
-    syncedAt,
+    completedAt,
   ))
   const alertObservations = [
     ...(alerts ? komariAlertObservationsFromSummary(alerts, { integrationId: options.integrationId }) : []),
@@ -222,7 +258,7 @@ export async function syncKomariIntegration(options: {
       options.alertState?.alerts ?? [],
       alertObservations,
       {
-        now: syncedAt,
+        now: completedAt,
         actor: options.alertActor ?? 'komari-sync',
         // A complete Komari summary may resolve rows absent from this sync,
         // but only when every mapped host produced a sample. Unsupported
@@ -232,7 +268,8 @@ export async function syncKomariIntegration(options: {
           && alerts.unsupported !== true
           && alerts.load !== null
           && alerts.offline !== null
-          && normalizedSnapshots.length >= mapping.mappings.length,
+          && normalizedSnapshots.length >= mapping.mappings.length
+          && !normalizedSnapshots.some((snapshot) => snapshot.errors.some((error) => error.code === 'invalid-sample-time')),
         ),
         baseSummary: alerts ?? options.alertState?.summary ?? null,
       },
@@ -254,5 +291,8 @@ export async function syncKomariIntegration(options: {
     alertState,
     alertAudit,
     snapshots: normalizedSnapshots,
+    history,
+    historyErrors,
+    historyImportedCount,
   }
 }

@@ -287,7 +287,11 @@ pub fn sanitize_summary(value: Option<&str>) -> Option<String> {
     }
     redacted = parts.join(" ");
     if redacted.len() > MAX_SUMMARY_LEN {
-        redacted.truncate(MAX_SUMMARY_LEN);
+        let mut end = MAX_SUMMARY_LEN.saturating_sub('…'.len_utf8());
+        while !redacted.is_char_boundary(end) {
+            end -= 1;
+        }
+        redacted.truncate(end);
         redacted.push('…');
     }
     Some(redacted)
@@ -859,6 +863,15 @@ mod tests {
         assert!(value.contains("<redacted>"));
         assert!(!value.contains("top-secret"));
         assert!(!value.contains('\n'));
+    }
+
+    #[test]
+    fn chinese_and_emoji_summaries_do_not_panic_at_byte_boundaries() {
+        for text in ["运".repeat(86), "🔐".repeat(100)] {
+            let summary = sanitize_summary(Some(&text)).unwrap();
+            assert!(summary.len() <= super::MAX_SUMMARY_LEN);
+            assert!(summary.ends_with('…'));
+        }
     }
 
     #[test]

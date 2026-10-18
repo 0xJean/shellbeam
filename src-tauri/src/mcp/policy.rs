@@ -51,21 +51,24 @@ pub fn digest(value: impl AsRef<[u8]>) -> String {
 }
 
 pub fn identity(host: &HostProfile) -> String {
-    digest(
-        serde_json::to_vec(&serde_json::json!([
-            host.address,
-            host.port,
-            host.username,
-            host.auth_type,
-            host.password_key_ref,
-            host.private_key_ref,
-            host.secret_key_ref,
-            host.jump_host,
-            host.jump_port,
-            host.jump_user
-        ]))
-        .expect("serialize host identity"),
-    )
+    // Keep identities of legacy/direct profiles stable. Selecting an
+    // independently authenticated jump profile changes the authorized route.
+    let mut fields = vec![
+        serde_json::json!(host.address),
+        serde_json::json!(host.port),
+        serde_json::json!(host.username),
+        serde_json::json!(host.auth_type),
+        serde_json::json!(host.password_key_ref),
+        serde_json::json!(host.private_key_ref),
+        serde_json::json!(host.secret_key_ref),
+        serde_json::json!(host.jump_host),
+        serde_json::json!(host.jump_port),
+        serde_json::json!(host.jump_user),
+    ];
+    if let Some(id) = &host.jump_host_id {
+        fields.push(serde_json::json!(id));
+    }
+    digest(serde_json::to_vec(&fields).expect("serialize host identity"))
 }
 
 impl Client {

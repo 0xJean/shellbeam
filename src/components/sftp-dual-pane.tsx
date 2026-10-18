@@ -19,14 +19,10 @@ import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import {
   localListDir,
   localHomeDir,
-  sftpDownloadFile,
-  sftpUploadFile,
-  sftpChmod,
   localReadFileB64,
   localWriteFileB64,
 } from '@/lib/sftp'
-import { createRemoteFsClient, resolveRemoteFsAuth } from '@/lib/remote-fs'
-import { fetchAndAddKnownHost } from '@/lib/known-hosts'
+import { createRemoteFsClient } from '@/lib/remote-fs'
 import { FilePane, type UnifiedEntry } from './sftp-file-pane'
 import { SftpConnectPlaceholder } from './sftp-connect-placeholder'
 import { getHostInventoryResource, HostMetadataLine } from './host-display-meta'
@@ -54,11 +50,12 @@ function useContainerWidth(ref: React.RefObject<HTMLElement | null>) {
 interface SftpDualPaneProps {
   hosts: HostProfile[]
   selectedHostId: string | null
+  vaultId?: string
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   className?: string
 }
 
-export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, className }: SftpDualPaneProps) {
+export function SftpDualPane({ hosts, selectedHostId, vaultId, resolveAuthSecret, className }: SftpDualPaneProps) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
   const containerWidth = useContainerWidth(containerRef)
@@ -89,8 +86,8 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
 
   const remoteHost = hosts.find((h) => h.id === selectedRemoteHostId) ?? null
   const remoteFs = useMemo(
-    () => (remoteHost ? createRemoteFsClient(remoteHost, resolveAuthSecret) : null),
-    [remoteHost, resolveAuthSecret],
+    () => (remoteHost ? createRemoteFsClient(remoteHost, resolveAuthSecret, { vaultId }) : null),
+    [remoteHost, resolveAuthSecret, vaultId],
   )
 
   useEffect(() => {
@@ -136,7 +133,6 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
         size: e.size, modifiedAt: e.modifiedAt,
       })))
       setRemoteConnected(true)
-      void fetchAndAddKnownHost(remoteHost.address, remoteHost.port || 22).catch(() => {})
     } catch (err) {
       setTransferStatus(`Remote error: ${err}`)
     } finally {
@@ -164,21 +160,21 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
   }
 
   async function transferToRemote() {
-    if (!remoteHost || localSelected.size === 0) return
+    if (!remoteFs || localSelected.size === 0 || transferring) return
     setTransferring(true)
     setTransferStatus('')
     let done = 0
     try {
-      const auth = await resolveRemoteFsAuth(remoteHost, resolveAuthSecret)
-      for (const localPath of localSelected) {
+      const files = [...localSelected].flatMap((localPath) => {
         const entry = localEntries.find((e) => e.path === localPath)
-        if (!entry || entry.isDir) continue
-        setTransferStatus(`Uploading ${entry.fileName}... (${done + 1}/${localSelected.size})`)
-        const contentB64 = await localReadFileB64(localPath)
+        if (!entry || entry.isDir) return []
         const targetPath = remoteDir.endsWith('/') ? `${remoteDir}${entry.fileName}` : `${remoteDir}/${entry.fileName}`
-        await sftpUploadFile({ ...auth, remotePath: targetPath, contentB64 })
-        done++
-      }
+        return [{ remotePath: targetPath, readContent: async () => {
+          setTransferStatus(`Uploading ${entry.fileName}... (${++done}/${localSelected.size})`)
+          return localReadFileB64(localPath)
+        } }]
+      })
+      if (!await remoteFs.uploadFiles(files)) { setTransferStatus(t('files.operation.cancelled')); return }
       setTransferStatus(`Uploaded ${done} file(s)`)
       await loadRemoteDir()
     } catch (err) {
@@ -189,17 +185,16 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
   }
 
   async function transferToLocal() {
-    if (!remoteHost || remoteSelected.size === 0) return
+    if (!remoteFs || remoteSelected.size === 0) return
     setTransferring(true)
     setTransferStatus('')
     let done = 0
     try {
-      const auth = await resolveRemoteFsAuth(remoteHost, resolveAuthSecret)
       for (const remotePath of remoteSelected) {
         const entry = remoteEntries.find((e) => e.path === remotePath)
         if (!entry || entry.isDir) continue
         setTransferStatus(`Downloading ${entry.fileName}... (${done + 1}/${remoteSelected.size})`)
-        const data = await sftpDownloadFile({ ...auth, remotePath })
+        const data = await remoteFs.readFile(remotePath)
         const targetPath = localDir.endsWith('/') ? `${localDir}${entry.fileName}` : `${localDir}/${entry.fileName}`
         await localWriteFileB64(targetPath, data.contentB64)
         done++
@@ -243,64 +238,69 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
     void loadRemoteDir(path)
   }
 
-  async function handleRemoteDelete(path: string) {
-    if (!remoteFs) return
+  async function handleRemoteDelete(paths: string[]) {
+    if (!remoteFs || transferring) return
+    setTransferring(true)
     try {
-      await remoteFs.deletePath(path)
-      setTransferStatus(`Deleted: ${path.split('/').pop()}`)
+      if (!await remoteFs.deletePaths(paths)) { setTransferStatus(t('files.operation.cancelled')); return }
+      setTransferStatus(`Deleted ${paths.length} item(s)`)
       await loadRemoteDir()
     } catch (err) { setTransferStatus(`Delete error: ${err}`) }
+    finally { setTransferring(false) }
   }
 
   async function handleRemoteRename(oldPath: string, newName: string) {
-    if (!remoteFs) return
+    if (!remoteFs || transferring) return
+    setTransferring(true)
     const dir = oldPath.substring(0, oldPath.lastIndexOf('/') + 1)
     try {
-      await remoteFs.renamePath(oldPath, `${dir}${newName}`)
+      if (!await remoteFs.renamePath(oldPath, `${dir}${newName}`)) { setTransferStatus(t('files.operation.cancelled')); return }
       setTransferStatus(`Renamed to: ${newName}`)
       await loadRemoteDir()
     } catch (err) { setTransferStatus(`Rename error: ${err}`) }
+    finally { setTransferring(false) }
   }
 
   async function handleRemoteCreateDir(name: string) {
-    if (!remoteFs) return
+    if (!remoteFs || transferring) return
+    setTransferring(true)
     const path = remoteDir.endsWith('/') ? `${remoteDir}${name}` : `${remoteDir}/${name}`
     try {
-      await remoteFs.createDir(path)
+      if (!await remoteFs.createDir(path)) { setTransferStatus(t('files.operation.cancelled')); return }
       setTransferStatus(`Created folder: ${name}`)
       await loadRemoteDir()
     } catch (err) { setTransferStatus(`Create dir error: ${err}`) }
+    finally { setTransferring(false) }
   }
 
   async function handleRemoteChmod(path: string, mode: number) {
-    if (!remoteHost) return
+    if (!remoteFs || transferring) return
+    setTransferring(true)
     try {
-      const auth = await resolveRemoteFsAuth(remoteHost, resolveAuthSecret)
-      await sftpChmod({ ...auth, remotePath: path, mode })
+      if (!await remoteFs.chmod(path, mode)) { setTransferStatus(t('files.operation.cancelled')); return }
       setTransferStatus(`chmod ${mode.toString(8)} → ${path.split('/').pop()}`)
       await loadRemoteDir()
     } catch (err) { setTransferStatus(`chmod error: ${err}`) }
+    finally { setTransferring(false) }
   }
 
   async function handleDropUpload(files: FileList) {
-    if (!remoteHost || !remoteConnected || files.length === 0) return
+    if (!remoteFs || !remoteConnected || files.length === 0 || transferring) return
     setTransferring(true)
     setTransferStatus('')
     let done = 0
     try {
-      const auth = await resolveRemoteFsAuth(remoteHost, resolveAuthSecret)
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        setTransferStatus(`Uploading ${file.name}... (${i + 1}/${files.length})`)
-        const buf = await file.arrayBuffer()
-        const bytes = new Uint8Array(buf)
-        let binary = ''
-        for (let j = 0; j < bytes.length; j++) binary += String.fromCharCode(bytes[j])
-        const contentB64 = btoa(binary)
+      const uploads = Array.from(files).map((file) => {
         const targetPath = remoteDir.endsWith('/') ? `${remoteDir}${file.name}` : `${remoteDir}/${file.name}`
-        await sftpUploadFile({ ...auth, remotePath: targetPath, contentB64 })
-        done++
-      }
+        return { remotePath: targetPath, readContent: async () => {
+          setTransferStatus(`Uploading ${file.name}... (${++done}/${files.length})`)
+          const bytes = new Uint8Array(await file.arrayBuffer())
+          let binary = ''
+          for (let j = 0; j < bytes.length; j++) binary += String.fromCharCode(bytes[j])
+          return btoa(binary)
+        } }
+      })
+      if (!await remoteFs.uploadFiles(uploads)) { setTransferStatus(t('files.operation.cancelled')); return }
       setTransferStatus(`Uploaded ${done} file(s) via drag & drop`)
       await loadRemoteDir()
     } catch (err) { setTransferStatus(`Upload error: ${err}`) }
@@ -332,7 +332,8 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
       onEnterDir={handleLocalEnter}
       onToggleSelect={(p) => setLocalSelected((prev) => {
         const next = new Set(prev)
-        next.has(p) ? next.delete(p) : next.add(p)
+        if (next.has(p)) next.delete(p)
+        else next.add(p)
         return next
       })}
       onSelectAll={() => setLocalSelected(new Set(localEntries.map((e) => e.path)))}
@@ -359,7 +360,8 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
       onEnterDir={handleRemoteEnter}
       onToggleSelect={(p) => setRemoteSelected((prev) => {
         const next = new Set(prev)
-        next.has(p) ? next.delete(p) : next.add(p)
+        if (next.has(p)) next.delete(p)
+        else next.add(p)
         return next
       })}
       onSelectAll={() => setRemoteSelected(new Set(remoteEntries.map((e) => e.path)))}
@@ -367,7 +369,8 @@ export function SftpDualPane({ hosts, selectedHostId, resolveAuthSecret, classNa
       filter={remoteFilter}
       onFilterChange={setRemoteFilter}
       placeholder={remotePlaceholder}
-      onDelete={remoteConnected ? (p) => void handleRemoteDelete(p) : undefined}
+      mutationsDisabled={transferring}
+      onDeletePaths={remoteConnected ? (paths) => void handleRemoteDelete(paths) : undefined}
       onRename={remoteConnected ? (o, n) => void handleRemoteRename(o, n) : undefined}
       onCreateDir={remoteConnected ? (n) => void handleRemoteCreateDir(n) : undefined}
       onChmod={remoteConnected ? (p, m) => void handleRemoteChmod(p, m) : undefined}

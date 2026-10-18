@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 
@@ -28,7 +28,7 @@ describe('workspace processes app', () => {
 
   it('shows a process list from the connected host', async () => {
     runSshCommand.mockResolvedValue({
-      stdout: '412 nginx 12.4 3.1 S\n278 node 8.2 6.3 S',
+      stdout: '412 12.4 3.1 S nginx\n278 8.2 6.3 S node',
       stderr: '',
       exitCode: 0,
       durationMs: 15,
@@ -55,7 +55,7 @@ describe('workspace processes app', () => {
 
   it('shows a terminal fallback command for process inspection', async () => {
     runSshCommand.mockResolvedValue({
-      stdout: '412 nginx 12.4 3.1 S',
+      stdout: '412 12.4 3.1 S nginx',
       stderr: '',
       exitCode: 0,
       durationMs: 15,
@@ -77,7 +77,7 @@ describe('workspace processes app', () => {
 
   it('falls back to the active host address when host id is missing', async () => {
     runSshCommand.mockResolvedValue({
-      stdout: '412 nginx 12.4 3.1 S',
+      stdout: '412 12.4 3.1 S nginx',
       stderr: '',
       exitCode: 0,
       durationMs: 15,
@@ -99,5 +99,23 @@ describe('workspace processes app', () => {
       hostId: 'host-1',
       host: '10.0.0.15',
     }))
+  })
+
+  it('paginates the bounded process snapshot, sorts locally and opens safe process details', async () => {
+    runSshCommand.mockImplementation(async (payload) => ({
+      stdout: payload.command.includes(' -p ') ? 'PID PPID USER ELAPSED RSS VSZ CPU MEM STAT COMMAND\n1 0 root 01:00 2 4 0 0 S worker-1' : Array.from({ length: 60 }, (_, index) => `${index + 1} ${index + 1}.0 1.0 S worker-${index + 1}`).join('\n'),
+      stderr: '', exitCode: 0, durationMs: 1,
+    }))
+    render(<WorkspaceProcessesApp selectedHostId="host-1" hosts={[host]} resolveAuthSecret={async () => 'secret'} />)
+    await screen.findByText('worker-60')
+    expect(screen.queryByText('worker-1')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText('worker-1')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Sort processes'), { target: { value: 'pid' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Descending' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect PID 1' }))
+    await screen.findByText(/PID PPID USER ELAPSED/)
+    expect(runSshCommand).toHaveBeenCalledWith(expect.objectContaining({ command: 'ps -p 1 -o pid,ppid,user,etime,rss,vsz,pcpu,pmem,stat,comm' }))
+    expect(runSshCommand.mock.calls.some(([payload]) => payload.command.includes('args'))).toBe(false)
   })
 })

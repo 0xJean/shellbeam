@@ -1,3 +1,4 @@
+import type { ServerMonitorSnapshot } from './server-monitor'
 import type { HostProfile } from './hosts'
 import {
   createProbeObservation,
@@ -7,9 +8,11 @@ import {
   type ProbeProvider,
   type ProbeRequest,
   type ProbeSnapshot,
+  type ProbeObservation,
 } from './probe-provider'
 import {
   komariRecordToServerMonitorSnapshot,
+  komariRecordSampleTime,
   type KomariAlertSummary,
   type KomariClient,
   type KomariMetricRecord,
@@ -17,6 +20,7 @@ import {
 
 export interface KomariProbeClient {
   fetchRecentRecords(nodeId: string): Promise<KomariMetricRecord[]>
+  fetchHistoryRecords?(nodeId: string): Promise<KomariMetricRecord[]>
 }
 
 export interface KomariProbeProviderOptions {
@@ -26,6 +30,8 @@ export interface KomariProbeProviderOptions {
   id?: string
   metricsTtlMs?: number
   alertSummary?: KomariAlertSummary | null
+  onHistory?: (observations: ProbeObservation<ServerMonitorSnapshot>[], request: ProbeRequest) => unknown
+  onHistoryError?: (error: unknown, request: ProbeRequest) => void
 }
 
 export const DEFAULT_KOMARI_METRICS_TTL_MS = 2 * 60 * 1000
@@ -52,7 +58,7 @@ export function createKomariProbeProvider(options: KomariProbeProviderOptions): 
   return {
     ref,
     async probe(request: ProbeRequest): Promise<ProbeSnapshot> {
-      const receivedAt = request.now ?? Date.now()
+      let receivedAt = request.now ?? Date.now()
       const base = {
         schemaVersion: PROBE_PROVIDER_SCHEMA_VERSION,
         host: getProbeHostIdentity(request.host),
@@ -78,24 +84,40 @@ export function createKomariProbeProvider(options: KomariProbeProviderOptions): 
 
       try {
         const records = await options.client.fetchRecentRecords(node.uuid)
-        const record = records[records.length - 1]
-        if (!record) {
-          return {
-            ...base,
-            health: 'unknown',
-            errors: [{ section: 'metrics', message: 'Komari returned no recent metrics', code: 'empty' }],
-          }
+        let historical: KomariMetricRecord[] = []
+        if (options.client.fetchHistoryRecords) {
+          try { historical = await options.client.fetchHistoryRecords(node.uuid) }
+          catch (error) { options.onHistoryError?.(error, request) }
         }
-        const snapshot = komariRecordToServerMonitorSnapshot(record, node, receivedAt)
+        // A report may be collected while either request is in flight. Compare
+        // its original sample time with reception, not the sync's start time.
+        // An explicit request.now remains a fixed clock for deterministic callers.
+        receivedAt = request.now ?? Date.now()
+        base.receivedAt = receivedAt
         const source = { ...ref, nodeId: node.uuid }
-        const metrics = createProbeObservation({
-          data: snapshot,
-          source,
-          sampledAt: snapshot.sampledAt,
-          receivedAt,
-          ttlMs,
-          confidence: 'partial',
-        })
+        const byTime = new Map<number, ProbeObservation<ServerMonitorSnapshot>>()
+        let invalidSampleTime = false
+        // Recent reports win same-timestamp duplicates, and ordering from a
+        // server/mirror never allows an older row to become the latest.
+        for (const item of [...historical, ...records]) {
+          const sampledAt = komariRecordSampleTime(item)
+          if (sampledAt === null || sampledAt > receivedAt) {
+            invalidSampleTime = true
+            continue
+          }
+          const data = komariRecordToServerMonitorSnapshot(item, node, receivedAt)
+          if ([data.cpuPercent, data.memoryPercent, data.diskPercent, data.uptimeSeconds, data.load1, data.networkRxBytesPerSec, data.networkTxBytesPerSec].every((value) => value === null)) continue
+          byTime.set(sampledAt, createProbeObservation({ data, source, sampledAt, receivedAt, ttlMs, confidence: 'partial' }))
+        }
+        const observations = [...byTime.values()].sort((left, right) => left.freshness.sampledAt - right.freshness.sampledAt)
+        const metrics = observations[observations.length - 1]
+        if (!metrics) return {
+          ...base,
+          provider: source,
+          health: 'unknown',
+          errors: [{ section: 'metrics', message: invalidSampleTime ? 'Komari reports have missing or future sample times' : 'Komari returned no dated metric observations', code: invalidSampleTime ? 'invalid-sample-time' : 'empty' }],
+        }
+        await options.onHistory?.(observations, request)
         return {
           ...base,
           provider: source,
@@ -104,6 +126,7 @@ export function createKomariProbeProvider(options: KomariProbeProviderOptions): 
           errors: [],
         }
       } catch (error) {
+        base.receivedAt = request.now ?? Date.now()
         return { ...base, health: 'unknown', errors: [providerError(error)] }
       }
     },

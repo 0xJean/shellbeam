@@ -1,5 +1,6 @@
+import { runConfirmedOperation } from './operation-job'
 import type { HostProfile } from '@/lib/hosts'
-import { runSshCommand } from '@/lib/sessions'
+import { runSshCommand, type CommandRunResult } from '@/lib/sessions'
 
 export function resolveWorkspaceHost(
   hosts: HostProfile[],
@@ -22,8 +23,24 @@ export async function runWorkspaceRemoteCommand(options: {
   host: HostProfile
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   command: string
-}) {
+  vaultId?: string
+  audit?: { action: string; target: string }
+}): Promise<CommandRunResult> {
   const { host, resolveAuthSecret, command } = options
+  const vaultId = options.vaultId ?? host.vaultId
+  if (options.audit && host.id && vaultId) {
+    const execution = await runConfirmedOperation({
+      host, vaultId, action: options.audit.action, target: options.audit.target,
+      risk: 'read-only', confirmMessage: '',
+      execute: () => runWorkspaceRemoteCommand({ ...options, audit: undefined }),
+      getResult: (value) => value,
+    })
+    if (!execution) throw new Error('Read operation could not be journaled')
+    return execution.value
+  }
+  if (host.id && vaultId) {
+    return runSshCommand({ vaultId, hostId: host.id, host: '', port: 22, username: '', authType: host.authType, command })
+  }
   const secret = await resolveAuthSecret(host)
 
   return runSshCommand({

@@ -175,6 +175,7 @@ pub async fn run_snippet_command(
 
         let request = SshRequest {
             host_id: payload.host_id,
+            vault_id: vault_id.clone(),
             host: payload.host,
             port: payload.port,
             username: payload.username,

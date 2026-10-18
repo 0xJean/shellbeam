@@ -1,3 +1,4 @@
+import { appendProviderMetricHistory, observationToMetricHistoryPoint } from './provider-history'
 import { invoke } from '@tauri-apps/api/core'
 import type { ProbeSnapshot } from './probe-provider'
 
@@ -79,9 +80,10 @@ export async function upsertPersistedProbeSnapshot(
   vaultId: string,
   updatedAt = Date.now(),
 ): Promise<void> {
-  return invoke<void>('upsert_probe_snapshot', {
+  await invoke<void>('upsert_probe_snapshot', {
     payload: toPersistedProbeSnapshotPayload(snapshot, vaultId, updatedAt),
   })
+  if (snapshot.metrics) await appendProviderMetricHistory(vaultId, [observationToMetricHistoryPoint(snapshot.metrics, snapshot.host.hostId)])
 }
 
 export async function deletePersistedProbeSnapshots(

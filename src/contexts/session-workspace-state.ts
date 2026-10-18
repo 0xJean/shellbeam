@@ -30,7 +30,8 @@ export function setSessionWorkspaceAppState(
     ...state,
     [sessionId]: {
       ...(state[sessionId] ?? getInitialWorkspaceSessionState()),
-      activeApp: app,
+      activeApp: app === 'terminal' ? (state[sessionId]?.activeApp ?? 'overview') : app,
+      ...(app === 'terminal' ? { mode: 'terminal' as const } : {}),
     },
   }
 }

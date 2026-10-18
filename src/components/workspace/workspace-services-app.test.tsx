@@ -1,8 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceServicesApp } from './workspace-services-app'
 
 const runSshCommand = vi.fn()
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 
 vi.mock('@/lib/sessions', () => ({
   runSshCommand: (payload: unknown) => runSshCommand(payload),
@@ -24,6 +26,8 @@ const host = {
 describe('workspace services app', () => {
   beforeEach(() => {
     runSshCommand.mockReset()
+    invoke.mockReset()
+    invoke.mockImplementation(async (command, payload) => command === 'operation_job_create' ? { ...payload.request, jobId: 'service-job', auditId: 'audit', status: 'queued' } : command === 'operation_job_update' ? payload.request : [])
   })
 
   it('renders a systemd-focused services workspace app', async () => {
@@ -93,5 +97,18 @@ describe('workspace services app', () => {
       hostId: 'host-1',
       host: '10.0.0.15',
     }))
+  })
+
+  it('links a verified stop to the durable job and opens logs for the same selected service', async () => {
+    const onOpenLogs = vi.fn()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    runSshCommand.mockImplementation(async (payload) => ({ stdout: payload.command.startsWith('systemctl show') ? 'ActiveState=inactive\nUnitFileState=enabled' : payload.command.startsWith('systemctl stop') ? '' : 'nginx.service loaded active running Web server', stderr: '', exitCode: 0, durationMs: 1 }))
+    render(<WorkspaceServicesApp selectedHostId="host-1" hosts={[host]} resolveAuthSecret={async () => 'secret'} vaultId="team" onOpenLogs={onOpenLogs} />)
+    await screen.findByRole('button', { name: 'Stop nginx.service' })
+    fireEvent.click(screen.getByRole('button', { name: 'Stop nginx.service' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operation_job_update', { request: expect.objectContaining({ jobId: 'service-job', status: 'completed', resultSummary: expect.stringContaining('verification=passed; active=inactive') }) }))
+    expect(invoke).toHaveBeenCalledWith('operation_job_create', { request: expect.objectContaining({ vaultId: 'team', action: 'service.stop' }) })
+    fireEvent.click(screen.getByRole('button', { name: 'Open logs for nginx.service' }))
+    expect(onOpenLogs).toHaveBeenCalledWith('nginx.service')
   })
 })

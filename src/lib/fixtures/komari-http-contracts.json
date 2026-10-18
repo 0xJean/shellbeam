@@ -1,0 +1,16 @@
+{
+  "provenance": {
+    "documentation": "https://komari-document.pages.dev/en/dev/api",
+    "versionedRoutes": "https://github.com/komari-monitor/komari/blob/1.6.0/web/router/router.go",
+    "versionedResponseImplementation": "https://github.com/komari-monitor/komari/blob/1.6.0/web/rpc/jsonrpc/public.go",
+    "note": "Synthetic values following official HTTP flat-record and nested live-report schemas. No captured credentials or production data. API key support starts at server 1.0.3."
+  },
+  "version103": { "status": "success", "data": { "version": "1.0.3", "hash": "fixture103" } },
+  "version160": { "status": "success", "data": { "version": "1.6.0", "hash": "fixture160" } },
+  "oldVersion": { "status": "success", "data": { "version": "1.0.2", "hash": "fixture102" } },
+  "nodes": { "status": "success", "data": [{ "uuid": "node-fixture", "name": "fixture-host", "ipv4": "192.0.2.10", "os": "Ubuntu 24.04", "kernel_version": "6.8.0", "mem_total": 8192, "disk_total": 100000 }] },
+  "recent": { "status": "success", "data": [{ "updated_at": "2026-10-17T08:30:00Z", "cpu": { "usage": 25 }, "ram": { "total": 8192, "used": 4096 }, "disk": { "total": 100000, "used": 20000 }, "network": { "up": 2048, "down": 1024 }, "uptime": 3600 }] },
+  "history": { "status": "success", "data": { "count": 3, "records": [{ "client": "node-fixture", "time": "2026-10-17T08:29:00Z", "cpu": 10, "ram": 2048, "ram_total": 8192, "disk": 20000, "disk_total": 100000, "net_in": 100, "net_out": 200 }, { "client": "node-fixture", "time": "2026-10-17T08:28:00Z", "cpu": 5, "ram": null, "ram_total": 8192 }, { "client": "node-fixture", "time": "2026-10-17T08:29:00Z", "cpu": 10, "ram": 2048, "ram_total": 8192 }] } },
+  "permission": { "status": "error", "message": "permission denied" },
+  "partial": { "status": "success", "data": [{ "time": "2026-10-17T08:31:00Z", "cpu": null, "ram": null, "disk": null }] }
+}

@@ -367,3 +367,29 @@ describe('buildHostOpsViews', () => {
     expect(view.health.state).toBe('stale')
   })
 })
+
+it('shows canonical TTL, capability evidence and highest open severity across local and Komari alerts', () => {
+  const snapshot: ProbeSnapshot = { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: 22, username: 'ops' }, provider: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics', 'inventory'] }, transport: 'proxy-jump', health: 'online', receivedAt: 1_000, metrics: createProbeObservation({ data: monitor.snapshot!, source: { kind: 'ssh-agentless', id: 'ssh-agentless', capabilities: ['metrics'] }, sampledAt: 1_000, receivedAt: 1_000, ttlMs: 2_000 }), inventory: null, errors: [] }
+  const view = buildHostOpsViews({ hosts: [host], monitorLatest: [monitor], inventoryCache, probeSnapshots: [snapshot], now: 4_000, localAlertStates: { [host.id]: { version: 1, evaluations: [], audit: [], alerts: [{ ruleId: 'cpu', hostId: host.id, name: 'CPU', metric: 'cpu', status: 'acknowledged', severity: 'critical', openedAt: 1_000, updatedAt: 1_000, resolvedAt: null, value: 99, source: 'ssh-agentless', transport: 'proxy-jump' }] } } })[host.id]
+  expect(view.health.freshness).toMatchObject({ ttlMs: 2_000, expiresAt: 3_000, stale: true })
+  expect(view.health.state).toBe('stale')
+  expect(view.capabilities).toEqual(expect.arrayContaining(['files', 'services', 'processes', 'logs', 'port-checks', 'metrics']))
+  expect(view.highestAlertSeverity).toBe('critical')
+  expect(view.localAlertOpen).toBe(1)
+})
+
+it('keeps native structured jump and target failures distinct, including host key errors', () => {
+  for (const error of [JSON.stringify({ code: 'jump_auth_failed', source: 'jump', message: 'SSH jump auth_failed' }), JSON.stringify({ code: 'host_key_mismatch', routeStage: 'jump' })]) {
+    expect(buildHostOpsViews({ hosts: [host], monitorLatest: [{ ...monitor, status: 'offline', error }], now: 1_100 })[host.id].health.state).toBe('jump-unavailable')
+  }
+  for (const error of [JSON.stringify({ code: 'target_auth_failed', source: 'target' }), JSON.stringify({ code: 'host_key_mismatch', routeStage: 'target', message: 'via bastion' })]) {
+    expect(buildHostOpsViews({ hosts: [host], monitorLatest: [{ ...monitor, status: 'offline', error }], now: 1_100 })[host.id].health.state).toBe('offline')
+  }
+})
+
+it('shows a referenced jump profile name only when that profile exists in the active host scope', () => {
+  const target = { ...host, jumpHost: undefined, jumpHostId: 'jump-profile' }
+  const jump = { ...host, id: 'jump-profile', name: 'Production bastion', address: '203.0.113.10', jumpHost: undefined, jumpHostId: undefined }
+  expect(buildHostOpsViews({ hosts: [target, jump] })[target.id].route).toMatchObject({ transport: 'proxy-jump', jumpHostName: 'Production bastion', jumpHost: '203.0.113.10' })
+  expect(buildHostOpsViews({ hosts: [target] })[target.id].route.jumpHostName).toBeUndefined()
+})

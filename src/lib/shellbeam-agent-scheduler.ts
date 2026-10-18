@@ -7,6 +7,9 @@ import {
   upsertShellbeamAgent,
 } from './shellbeam-agent'
 import { operationTransport } from './operation-job'
+import { upsertPersistedProbeSnapshot } from './probe-persistence'
+import { parseShellbeamAgentObservation } from './shellbeam-agent'
+import type { ProbeSnapshot } from './probe-provider'
 
 /**
  * Agent lifecycle polling is deliberately a read-only scheduler. Installing,
@@ -35,6 +38,7 @@ export interface ShellbeamAgentScheduleOptions {
   check?: (host: HostProfile, resolveAuthSecret: (host: HostProfile) => Promise<string>, now: number) => Promise<ShellbeamAgentCommandResult>
   persist?: (record: ShellbeamAgentRecord) => Promise<unknown>
   onRecord?: (record: ShellbeamAgentRecord) => void
+  persistSnapshot?: (snapshot: ProbeSnapshot, vaultId: string) => Promise<unknown>
   onError?: (error: unknown, host: HostProfile) => void
 }
 
@@ -58,7 +62,7 @@ function errorMessage(error: unknown) {
 function redactedError(error: unknown) {
   const message = errorMessage(error)
     .replace(/(password|passwd|private[_-]?key|secret|token|credential|authorization|bearer)(\s*[=:]\s*|\s+)[^\s,;]+/gi, '$1=<redacted>')
-    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .split('').map((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 ? ' ' : character).join('')
     .trim()
     .slice(0, 240) || 'ShellBeam Probe scheduler failed'
   const safe = new Error(message)
@@ -123,9 +127,9 @@ export function createShellbeamAgentScheduler(options: ShellbeamAgentScheduleOpt
   const concurrency = Math.max(1, Math.min(16, Math.floor(options.concurrency ?? SHELLBEAM_AGENT_SCHEDULE_CONCURRENCY)))
   const timeoutMs = Math.max(0, options.timeoutMs ?? SHELLBEAM_AGENT_CHECK_TIMEOUT_MS)
   const now = options.now ?? (() => Date.now())
-  const check = options.check ?? checkShellbeamAgent
-  const persist = options.persist ?? upsertShellbeamAgent
-  const previousRecordsByHost = new Map((options.previousRecords ?? []).map((record) => [record.hostId, record]))
+  const check = options.check ?? ((host: HostProfile, resolve: (host: HostProfile) => Promise<string>, checkedAt: number) => checkShellbeamAgent(host, resolve, checkedAt, vaultId))
+  const persist = options.persist ?? ((record: ShellbeamAgentRecord) => upsertShellbeamAgent(record, { notifyChange: false }))
+  const previousRecordsByHost = new Map((options.previousRecords ?? []).filter((record) => record.vaultId === vaultId).map((record) => [record.hostId, record]))
   const lastAttemptAt = new Map<string, number>()
   const inFlight = new Set<string>()
   let timer: number | undefined
@@ -161,19 +165,22 @@ export function createShellbeamAgentScheduler(options: ShellbeamAgentScheduleOpt
           lastAttemptAt.set(key, now())
           const checkedAt = now()
           let record: ShellbeamAgentRecord
+          let observation: ProbeSnapshot | undefined
           try {
             const result = await withTimeout(check(host, options.resolveAuthSecret, checkedAt), timeoutMs)
+            const receivedAt = now()
+            observation = result.snapshot ?? parseShellbeamAgentObservation(result.stdout, result.record, host, receivedAt)
             record = normalizeShellbeamAgentRecord({
               ...result.record,
               vaultId,
               hostId: host.id,
-              lastCheckedAt: checkedAt,
-              updatedAt: now(),
+              lastCheckedAt: receivedAt,
+              updatedAt: receivedAt,
               transport: operationTransport(host),
-            }, checkedAt)
+            }, receivedAt)
           } catch (error) {
             record = unknownRecord(host, vaultId, checkedAt, error, previousRecordsByHost.get(host.id))
-            options.onError?.(redactedError(error), host)
+            if (generation === scanGeneration) options.onError?.(redactedError(error), host)
           }
 
           // stop() invalidates the scan generation. Do not write results or
@@ -187,9 +194,12 @@ export function createShellbeamAgentScheduler(options: ShellbeamAgentScheduleOpt
           // material stay in the transport result and never enter SQLite.
           try {
             await withTimeout(Promise.resolve(persist(record)), timeoutMs)
+            if (generation !== scanGeneration) { inFlight.delete(key); continue }
+            if (observation?.metrics || observation?.inventory) await withTimeout(Promise.resolve((options.persistSnapshot ?? upsertPersistedProbeSnapshot)(observation, vaultId)), timeoutMs)
           } catch (error) {
-            options.onError?.(redactedError(error), host)
+            if (generation === scanGeneration) options.onError?.(redactedError(error), host)
           }
+          if (generation !== scanGeneration) { inFlight.delete(key); continue }
           records.push(record)
           checkedHosts.push(host)
           options.onRecord?.(record)
@@ -231,7 +241,6 @@ export function createShellbeamAgentScheduler(options: ShellbeamAgentScheduleOpt
       tick()
     },
     stop() {
-      if (!running) return
       running = false
       generation += 1
       if (timer !== undefined && typeof window !== 'undefined') window.clearInterval(timer)

@@ -335,7 +335,7 @@ fn insert_snapshot(tx: &Transaction<'_>, payload: &KomariSnapshotPayload) -> Res
           received_at = excluded.received_at,
           expires_at = excluded.expires_at,
           updated_at = excluded.updated_at
-        WHERE excluded.updated_at >= komari_snapshots.updated_at
+        WHERE excluded.updated_at >= komari_snapshots.updated_at AND excluded.sampled_at >= komari_snapshots.sampled_at
         "#,
         params![
             integration_id,
@@ -620,5 +620,32 @@ mod tests {
             snapshot_json(&json!({"health": "online"})).expect("json"),
             r#"{"health":"online"}"#
         );
+    }
+    #[test]
+    fn newer_sync_does_not_replace_a_newer_metric_with_old_backfill() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE komari_snapshots(integration_id TEXT NOT NULL,node_id TEXT NOT NULL,host_id TEXT NOT NULL,snapshot_json TEXT NOT NULL,sampled_at INTEGER NOT NULL,received_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(integration_id,node_id));").unwrap();
+        let tx = conn.transaction().unwrap();
+        let mut value = super::KomariSnapshotPayload {
+            integration_id: "integration".into(),
+            node_id: "node".into(),
+            host_id: "host".into(),
+            snapshot: json!({"metrics":{"data":{"cpuPercent":20}}}),
+            sampled_at: 200,
+            received_at: 300,
+            expires_at: 1200,
+            updated_at: Some(300),
+        };
+        super::insert_snapshot(&tx, &value).unwrap();
+        value.sampled_at = 100;
+        value.updated_at = Some(400);
+        value.snapshot = json!({"metrics":{"data":{"cpuPercent":99}}});
+        super::insert_snapshot(&tx, &value).unwrap();
+        let sampled: i64 = tx
+            .query_row("SELECT sampled_at FROM komari_snapshots", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(sampled, 200);
     }
 }

@@ -112,4 +112,14 @@ describe('operation jobs', () => {
       query: { hostId: 'host-1', limit: 8 },
     })
   })
+  it('does not claim a timed-out remote write failed with a known outcome', async () => {
+    const queued = { jobId: 'timeout-job', auditId: 'timeout-audit', status: 'queued' }
+    invoke.mockResolvedValueOnce(queued).mockResolvedValueOnce({ ...queued, status: 'running' }).mockResolvedValueOnce({ ...queued, status: 'unknown' })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const result = await runConfirmedOperation({ host, action: 'service.restart', target: 'nginx.service', risk: 'high', confirmMessage: 'Restart?',
+      execute: async () => ({ exitCode: -1, durationMs: 100, errorCode: 'target_timeout' }), getResult: (value) => value })
+    expect(result?.job.status).toBe('unknown')
+    expect(invoke).toHaveBeenLastCalledWith('operation_job_update', { request: expect.objectContaining({ status: 'unknown', errorCode: 'target_timeout' }) })
+  })
+
 })

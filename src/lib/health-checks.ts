@@ -1,6 +1,8 @@
+import { queueLocalOpsDocument, registerLocalOpsAdapter } from './local-ops-persistence'
 import type { HostProfile } from './hosts'
 import type { CommandRunResult } from './sessions'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
+import { loadLocalAlertState, saveLocalAlertState, notifyLocalOpsChanged } from './local-ops-store'
 
 export type HealthCheckKind = 'tcp' | 'http'
 export type HealthCheckStatus = 'passing' | 'failing' | 'unknown'
@@ -18,6 +20,8 @@ export interface HealthCheckDefinition {
   timeoutMs: number
   intervalMs: number
   enabled: boolean
+  alertAfterMs?: number
+  recoveryAfterMs?: number
 }
 
 export interface HealthCheckResult {
@@ -37,10 +41,11 @@ export interface HealthCheckResult {
 
 export interface HealthCheckRunOptions {
   host: HostProfile
+  vaultId?: string
   check: HealthCheckDefinition
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   now?: number
-  runCommand?: (options: { host: HostProfile; resolveAuthSecret: (host: HostProfile) => Promise<string>; command: string }) => Promise<CommandRunResult>
+  runCommand?: (options: { vaultId?: string; host: HostProfile; resolveAuthSecret: (host: HostProfile) => Promise<string>; command: string }) => Promise<CommandRunResult>
 }
 
 export interface HealthCheckBatchOptions {
@@ -109,14 +114,19 @@ function normalizeHttpTarget(check: HealthCheckDefinition) {
 export function normalizeHealthCheck(check: HealthCheckDefinition): HealthCheckDefinition {
   if (check.kind !== 'tcp' && check.kind !== 'http') throw new Error('health_check_invalid_kind')
   const normalized: HealthCheckDefinition = {
-    ...check,
-    id: check.id.trim(),
+    id: check.id.trim().slice(0, 120),
+    kind: check.kind,
+    ...(check.port !== undefined ? { port: check.port } : {}),
+    ...(check.path !== undefined ? { path: check.path } : {}),
+    ...(check.expectedStatus !== undefined ? { expectedStatus: check.expectedStatus } : {}),
     hostId: check.hostId.trim(),
     name: check.name.trim().slice(0, 120),
     target: check.target.trim(),
     timeoutMs: clampInt(check.timeoutMs, DEFAULT_TIMEOUT_MS, 500, MAX_TIMEOUT_MS),
     intervalMs: clampInt(check.intervalMs, DEFAULT_INTERVAL_MS, 5_000, MAX_INTERVAL_MS),
     enabled: check.enabled !== false,
+    alertAfterMs: clampInt(check.alertAfterMs, 0, 0, MAX_INTERVAL_MS),
+    recoveryAfterMs: clampInt(check.recoveryAfterMs, 0, 0, MAX_INTERVAL_MS),
   }
   if (!normalized.id || !normalized.hostId || !normalized.name) throw new Error('health_check_missing_identity')
   if (normalized.kind === 'tcp') {
@@ -200,6 +210,7 @@ export async function runHealthCheck(options: HealthCheckRunOptions): Promise<He
   let check: HealthCheckDefinition
   try {
     check = normalizeHealthCheck(options.check)
+    if (check.hostId !== options.host.id) throw new Error('health_check_invalid_scope')
   } catch (error) {
     return { ...baseResult(options.check, options.host, now, 'unknown'), errorCode: 'invalid-target', errorSummary: redactError(error) }
   }
@@ -207,10 +218,14 @@ export async function runHealthCheck(options: HealthCheckRunOptions): Promise<He
   try {
     const result = await (options.runCommand ?? runWorkspaceRemoteCommand)({
       host: options.host,
+      vaultId: options.vaultId,
       resolveAuthSecret: options.resolveAuthSecret,
       command: buildHealthCheckCommand(check),
     })
     const durationMs = Math.max(0, result.durationMs || Date.now() - startedAt)
+    if ((result.errorType && result.errorType !== 'command') || result.exitCode === 126 || result.exitCode === 127) {
+      return { ...baseResult(check, options.host, now, 'unknown'), durationMs, errorCode: result.errorType === 'auth' ? 'auth' : result.errorType === 'network' ? 'network' : 'command', errorSummary: 'health_check_collection_unavailable' }
+    }
     if (check.kind === 'http') {
       const marker = result.stdout.match(/__SB_CHECK_HTTP=(\d{3})\|([0-9.]+)/)
       const statusCode = marker ? Number(marker[1]) : null
@@ -218,7 +233,7 @@ export async function runHealthCheck(options: HealthCheckRunOptions): Promise<He
       const expected = check.expectedStatus ?? 200
       const passing = result.exitCode === 0 && statusCode !== null && statusCode === expected
       return {
-        ...baseResult(check, options.host, now, passing ? 'passing' : 'failing'),
+        ...baseResult(check, options.host, now, passing ? 'passing' : marker ? 'failing' : 'unknown'),
         durationMs,
         latencyMs,
         statusCode,
@@ -230,7 +245,7 @@ export async function runHealthCheck(options: HealthCheckRunOptions): Promise<He
       ...baseResult(check, options.host, now, passing ? 'passing' : 'failing'),
       durationMs,
       latencyMs: durationMs,
-      ...(passing ? {} : { errorCode: result.errorType === 'network' ? 'network' as const : 'command' as const, errorSummary: redactError(result.stderr || `exit=${result.exitCode}`) }),
+      ...(passing ? {} : { errorCode: 'command' as const, errorSummary: redactError(result.stderr || `exit=${result.exitCode}`) }),
     }
   } catch (error) {
     const errorCode = classifyError(error)
@@ -275,17 +290,86 @@ export function loadHealthChecks(vaultId: string | undefined, host: HostProfile)
     if (!raw) return [defaultHealthCheck(host)]
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return [defaultHealthCheck(host)]
-    const checks = parsed.flatMap((item) => {
-      try { return [normalizeHealthCheck(item as HealthCheckDefinition)] } catch { return [] }
+    const checks = parsed.slice(0, 32).flatMap((item) => {
+      try { const check = normalizeHealthCheck(item as HealthCheckDefinition); return check.hostId === host.id ? [check] : [] } catch { return [] }
     })
-    return checks.length > 0 ? checks : [defaultHealthCheck(host)]
+    return checks
   } catch {
     return [defaultHealthCheck(host)]
   }
 }
 
 export function saveHealthChecks(vaultId: string | undefined, hostId: string, checks: HealthCheckDefinition[]) {
-  const normalized = checks.map(normalizeHealthCheck)
+  const normalized = checks.slice(0, 32).map(normalizeHealthCheck)
+  if (normalized.some((check) => check.hostId !== hostId) || new Set(normalized.map((check) => check.id)).size !== normalized.length) throw new Error('health_check_invalid_scope')
+  let previous: HealthCheckDefinition[] = normalized
+  try { const raw: unknown = JSON.parse(localStorage.getItem(healthCheckStorageKey(vaultId, hostId)) || 'null'); if (Array.isArray(raw)) previous = raw.flatMap((row) => { try { return [normalizeHealthCheck(row)] } catch { return [] } }) } catch { previous = [] }
+  const unchanged = new Set(normalized.filter((row) => previous.some((old) => JSON.stringify(old) === JSON.stringify(row))).map((row) => `check:${row.id}`))
+  const state = loadLocalAlertState(vaultId, hostId)
+  state.evaluations = state.evaluations.filter((row) => !row.ruleId.startsWith('check:') || unchanged.has(row.ruleId))
   localStorage.setItem(healthCheckStorageKey(vaultId, hostId), JSON.stringify(normalized))
+  void queueLocalOpsDocument(vaultId, hostId, 'health-checks', normalized)
+  saveLocalAlertState(vaultId, hostId, state)
+  notifyLocalOpsChanged()
   return normalized
 }
+
+
+/** Bounded, allowlisted result history. URLs, credentials and remote output are
+ * deliberately absent; configuration is stored separately from observations. */
+export function healthCheckHistoryStorageKey(vaultId: string | undefined, hostId: string) {
+  return `shellbeam.healthCheckHistory.v1:${encodeURIComponent(vaultId || 'default')}:${encodeURIComponent(hostId)}`
+}
+export function normalizeHealthCheckResult(value: unknown, hostId: string): HealthCheckResult | null {
+  if (!value || typeof value !== 'object') return null
+  const row = value as Partial<HealthCheckResult>
+  if (row.hostId !== hostId || typeof row.checkId !== 'string' || !row.checkId.trim() || !['passing', 'failing', 'unknown'].includes(row.status || '') || !Number.isFinite(row.checkedAt) || !Number.isFinite(row.nextCheckAt)) return null
+  const duration = (n: unknown) => typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.min(86_400_000, n)) : null
+  const errors: HealthCheckErrorCode[] = ['invalid-target', 'timeout', 'jump-unavailable', 'auth', 'network', 'http-status', 'command', 'unknown']
+  return {
+    checkId: row.checkId.trim().slice(0, 120), hostId, status: row.status as HealthCheckStatus,
+    checkedAt: Math.max(0, row.checkedAt!), nextCheckAt: Math.max(0, row.nextCheckAt!),
+    durationMs: duration(row.durationMs), latencyMs: duration(row.latencyMs),
+    transport: row.transport === 'proxy-jump' ? 'proxy-jump' : 'direct', provider: 'ssh-agentless',
+    ...(typeof row.statusCode === 'number' && row.statusCode >= 100 && row.statusCode <= 599 ? { statusCode: row.statusCode } : {}),
+    ...(errors.includes(row.errorCode as HealthCheckErrorCode) ? { errorCode: row.errorCode } : {}),
+    // Persist fixed failure categories instead of arbitrary transport output.
+    ...(row.status !== 'passing' ? { errorSummary: errors.includes(row.errorCode as HealthCheckErrorCode) ? row.errorCode! : 'unknown' } : {}),
+  }
+}
+export function loadHealthCheckHistory(vaultId: string | undefined, hostId: string): HealthCheckResult[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(healthCheckHistoryStorageKey(vaultId, hostId)) || '[]')
+    return Array.isArray(raw) ? raw.slice(-500).flatMap((row) => { const normalized = normalizeHealthCheckResult(row, hostId); return normalized ? [normalized] : [] }).sort((a, b) => a.checkedAt - b.checkedAt) : []
+  } catch { return [] }
+}
+export function latestHealthCheckResults(history: HealthCheckResult[]) {
+  return Object.fromEntries([...history].sort((a, b) => a.checkedAt - b.checkedAt).map((row) => [row.checkId, row])) as Record<string, HealthCheckResult>
+}
+export function persistHealthCheckResult(vaultId: string | undefined, result: HealthCheckResult) {
+  const normalized = normalizeHealthCheckResult(result, result.hostId)
+  if (!normalized) throw new Error('health_check_invalid_result')
+  const history = [...loadHealthCheckHistory(vaultId, result.hostId).filter((row) => row.checkId !== normalized.checkId || row.checkedAt !== normalized.checkedAt), normalized].sort((a, b) => a.checkedAt - b.checkedAt).slice(-500)
+  localStorage.setItem(healthCheckHistoryStorageKey(vaultId, result.hostId), JSON.stringify(history))
+  void queueLocalOpsDocument(vaultId, result.hostId, 'health-history', history)
+  notifyLocalOpsChanged()
+  return normalized
+}
+
+registerLocalOpsAdapter('health-checks', {
+  readCache: (vault, host) => { try { return JSON.parse(localStorage.getItem(healthCheckStorageKey(vault, host)) || 'null') } catch { return null } },
+  writeCache: (vault, host, payload) => {
+    if (!Array.isArray(payload)) throw new Error('LOCAL_OPS_INVALID_CHECKS')
+    const checks = payload.slice(0, 32).map(normalizeHealthCheck)
+    if (checks.some((check) => check.hostId !== host)) throw new Error('LOCAL_OPS_HOST_MISMATCH')
+    localStorage.setItem(healthCheckStorageKey(vault, host), JSON.stringify(checks)); notifyLocalOpsChanged()
+  },
+})
+registerLocalOpsAdapter('health-history', {
+  readCache: (vault, host) => { const history = loadHealthCheckHistory(vault, host); return history.length ? history : null },
+  writeCache: (vault, host, payload) => {
+    if (!Array.isArray(payload)) throw new Error('LOCAL_OPS_INVALID_HISTORY')
+    const history = payload.slice(-500).flatMap((row) => { const safe = normalizeHealthCheckResult(row, host); return safe ? [safe] : [] })
+    localStorage.setItem(healthCheckHistoryStorageKey(vault, host), JSON.stringify(history)); notifyLocalOpsChanged()
+  },
+})

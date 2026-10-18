@@ -12,6 +12,7 @@ interface HostEditorDialogProps {
   vaultName?: string
   existingGroups?: string[]
   existingTags?: string[]
+  availableHosts?: HostProfile[]
   onSubmit: (host: HostProfile, draft: HostProfileDraft) => Promise<void>
   onCancel: () => void
 }
@@ -26,6 +27,7 @@ export function HostEditorDialog({
   vaultName,
   existingGroups,
   existingTags,
+  availableHosts,
   onSubmit,
   onCancel,
 }: HostEditorDialogProps) {
@@ -43,6 +45,7 @@ export function HostEditorDialog({
             vaultName={vaultName}
             existingGroups={existingGroups}
             existingTags={existingTags}
+          availableHosts={availableHosts}
             onSubmit={(draft) => onSubmit(host, draft)}
             onCancel={onCancel}
           />

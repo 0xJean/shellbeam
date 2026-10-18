@@ -11,6 +11,7 @@ import type { ShellbeamAgentArtifactPolicy } from './shellbeam-agent-artifact'
  */
 export interface ShellbeamAgentReleaseSettings {
   enabled: boolean
+  releaseManifestUrl: string
   channel: ShellbeamAgentReleaseChannel
   allowedChannels: ShellbeamAgentReleaseChannel[]
   allowPreview: boolean
@@ -37,6 +38,7 @@ export interface ShellbeamAgentReleaseSettingsSummary {
 export const SHELLBEAM_AGENT_RELEASE_SETTINGS_KEY = 'shellbeam.agentReleaseSettings'
 export const DEFAULT_SHELLBEAM_AGENT_RELEASE_SETTINGS: ShellbeamAgentReleaseSettings = {
   enabled: false,
+  releaseManifestUrl: '',
   channel: 'stable',
   allowedChannels: ['stable'],
   allowPreview: false,
@@ -79,6 +81,12 @@ function normalizeKey(value: unknown): string {
   return BASE64.test(key) ? key : ''
 }
 
+function normalizeManifestUrl(value: unknown): string {
+  const url = cleanText(value, 2048)
+  if (!url) return ''
+  try { const parsed = new URL(url); return parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.hash ? parsed.toString() : '' } catch { return '' }
+}
+
 function normalizeSalt(value: unknown): string {
   const salt = cleanText(value, 120)
   return SAFE_SALT.test(salt) ? salt : 'default'
@@ -99,6 +107,7 @@ export function normalizeShellbeamAgentReleaseSettings(input: unknown): Shellbea
   const allowPreview = raw.allowPreview === true && allowedChannels.some((item) => item === 'preview' || item === 'canary')
   return {
     enabled: raw.enabled === true,
+    releaseManifestUrl: normalizeManifestUrl(raw.releaseManifestUrl),
     channel,
     allowedChannels,
     allowPreview,

@@ -1,302 +1,72 @@
 use super::policy::Client;
 use crate::data::hosts::HostProfile;
-use crate::vault::secrets::{get_secret_value, VaultState};
+use crate::vault::secrets::VaultState;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Map, Value};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use tauri::Manager;
-use uuid::Uuid;
 
 const OUTPUT_LIMIT: usize = 256 * 1024;
-const PROBE: &str = include_str!("probe.sh");
+const PROBE: &str = include_str!("../../../shared/probe-collector.sh");
 
-/// A short-lived local forwarding process used to route libssh2 through a
-/// configured single-hop ProxyJump. The SSH session below talks to the local
-/// endpoint, while this process keeps the target route alive for the lifetime
-/// of the MCP operation.
-struct JumpTunnel {
-    child: Child,
-    key_path: std::path::PathBuf,
-}
-
-impl Drop for JumpTunnel {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_file(&self.key_path);
-    }
-}
-
-struct Connection {
-    session: ssh2::Session,
-    // Keep the forwarding process alive until the libssh2 session is dropped.
-    _jump_tunnel: Option<JumpTunnel>,
-}
+type Connection = crate::ssh::transport::Connection;
 
 fn has_jump_host(host: &HostProfile) -> bool {
-    host.jump_host
-        .as_deref()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
-}
-
-fn start_jump_tunnel(host: &HostProfile, private_key: &str) -> Result<(JumpTunnel, u16), String> {
-    if !has_jump_host(host) {
-        return Err("Jump host is not configured".into());
-    }
-    if host.auth_type != "privateKey" {
-        return Err(
-            "MCP ProxyJump currently requires privateKey authentication for the target and jump host"
-                .into(),
-        );
-    }
-    if private_key.trim().is_empty() {
-        return Err("MCP ProxyJump requires a private key".into());
-    }
-    let jump_host = host.jump_host.as_deref().unwrap_or_default().trim();
-    let local_port = TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|error| format!("Failed to reserve MCP ProxyJump port: {error}"))?
-        .local_addr()
-        .map_err(|error| format!("Failed to read MCP ProxyJump port: {error}"))?
-        .port();
-    let key_path = std::env::temp_dir().join(format!("shellbeam-mcp-jump-{}.key", Uuid::new_v4()));
-    std::fs::write(&key_path, private_key)
-        .map_err(|error| format!("Failed to write temporary MCP ProxyJump key: {error}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(error) =
-            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
-        {
-            let _ = std::fs::remove_file(&key_path);
-            return Err(format!(
-                "Failed to protect temporary MCP ProxyJump key: {error}"
-            ));
-        }
-    }
-
-    let jump_user = host
-        .jump_user
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(&host.username);
-    let forward = format!("127.0.0.1:{local_port}:{}:{}", host.address, host.port);
-    let destination = format!("{}@{}", host.username, host.address);
-    let mut command = Command::new("ssh");
-    command
-        .arg("-N")
-        .arg("-L")
-        .arg(&forward)
-        .arg("-p")
-        .arg(host.port.to_string())
-        .arg("-i")
-        .arg(&key_path)
-        .arg("-J")
-        .arg(format!(
-            "{jump_user}@{jump_host}:{}",
-            host.jump_port.unwrap_or(22)
-        ))
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
-        .arg("ExitOnForwardFailure=yes")
-        .arg("-o")
-        .arg("ConnectTimeout=10")
-        // Host keys are verified by libssh2 against ShellBeam's known_hosts
-        // store after the local tunnel is established. OpenSSH must not write
-        // to the user's global known_hosts as a side effect of an MCP call.
-        .arg("-o")
-        .arg("StrictHostKeyChecking=no")
-        .arg("-o")
-        .arg("UserKnownHostsFile=/dev/null")
-        .arg(destination)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-
-    let mut child = command.spawn().map_err(|error| {
-        let _ = std::fs::remove_file(&key_path);
-        format!("Failed to start system ssh for MCP ProxyJump: {error}")
-    })?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("Failed to inspect MCP ProxyJump process: {error}"))?
-        {
-            let _ = std::fs::remove_file(&key_path);
-            return Err(format!(
-                "System ssh ProxyJump exited before becoming ready ({status})"
-            ));
-        }
-        if TcpStream::connect(("127.0.0.1", local_port)).is_ok() {
-            break;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = std::fs::remove_file(&key_path);
-            return Err("Timed out waiting for MCP ProxyJump tunnel".into());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    Ok((JumpTunnel { child, key_path }, local_port))
+    host.jump_host_id.is_some()
+        || host
+            .jump_host
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn connect(
     app: &tauri::AppHandle,
     client: &Client,
     host: &HostProfile,
-) -> Result<(Connection, String), String> {
-    let vault = app.state::<VaultState>();
-    if !vault.is_unlocked(&client.vault_id) {
-        return Err("VAULT_LOCKED: unlock this vault in ShellBeam".into());
+) -> Result<(Connection, Vec<String>), String> {
+    let hosts = crate::data::hosts::load_hosts(app, Some(&client.vault_id))?;
+    let route = crate::ssh::transport::route_for_host(app, &client.vault_id, host, &hosts)?;
+    let mut secrets = vec![route.target.secret.clone()];
+    if let Some(jump) = &route.jump {
+        secrets.push(jump.secret.clone());
     }
-    let secret_ref = match host.auth_type.as_str() {
-        "password" => host.password_key_ref.as_deref(),
-        "privateKey" => host.private_key_ref.as_deref(),
-        _ => return Err("UNSUPPORTED_AUTH_TYPE".into()),
-    }
-    .filter(|s| !s.trim().is_empty())
-    .or(host.secret_key_ref.as_deref())
-    .ok_or("MISSING_CREDENTIAL")?;
-    let secret =
-        get_secret_value(app, &vault, &client.vault_id, secret_ref)?.ok_or("MISSING_CREDENTIAL")?;
-    let (jump_tunnel, connect_host, connect_port) = if has_jump_host(host) {
-        let (tunnel, local_port) = start_jump_tunnel(host, &secret)?;
-        (Some(tunnel), "127.0.0.1".to_string(), local_port)
-    } else {
-        (None, host.address.clone(), host.port)
-    };
-    // The target is verified against its configured identity before
-    // authentication, even when the TCP socket is a local ProxyJump endpoint.
-    let session = if jump_tunnel.is_some() {
-        let tcp = TcpStream::connect_timeout(
-            &(connect_host.clone(), connect_port)
-                .to_socket_addrs()
-                .map_err(|error| format!("MCP ProxyJump DNS resolve failed: {error}"))?
-                .next()
-                .ok_or("MCP ProxyJump DNS resolve returned no addresses")?,
-            Duration::from_secs(10),
-        )
-        .map_err(|error| format!("MCP ProxyJump TCP connect failed: {error}"))?;
-        crate::ssh::authenticate_tcp_stream(
-            tcp,
-            &host.address,
-            host.port,
-            &host.username,
-            &host.auth_type,
-            (host.auth_type == "password").then_some(secret.as_str()),
-            (host.auth_type == "privateKey").then_some(secret.as_str()),
-            None,
-            Some(app),
-            false,
-        )?
-    } else {
-        crate::ssh::connect_and_authenticate(
-            &connect_host,
-            connect_port,
-            &host.username,
-            &host.auth_type,
-            (host.auth_type == "password").then_some(secret.as_str()),
-            (host.auth_type == "privateKey").then_some(secret.as_str()),
-            None,
-            Some(app),
-            false,
-        )?
-    };
-    // A lock/revocation during the handshake must not permit starting an operation.
+    let connection = crate::ssh::transport::connect(app, &route)?;
     super::recheck(app, client, host)?;
-    if !vault.is_unlocked(&client.vault_id) {
+    if !app.state::<VaultState>().is_unlocked(&client.vault_id) {
         return Err("VAULT_LOCKED".into());
     }
-    Ok((
-        Connection {
-            session,
-            _jump_tunnel: jump_tunnel,
-        },
-        secret,
-    ))
+    Ok((connection, secrets))
 }
 
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn bounded_append(target: &mut Vec<u8>, bytes: &[u8]) -> bool {
-    let remaining = OUTPUT_LIMIT.saturating_sub(target.len());
-    target.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
-    bytes.len() > remaining
-}
-
-fn would_block(error: &std::io::Error) -> bool {
-    error.kind() == std::io::ErrorKind::WouldBlock
-}
-
 fn command(session: &ssh2::Session, text: &str, timeout: u64) -> Result<Value, String> {
-    let start = Instant::now();
-    let mut channel = session.channel_session().map_err(|e| e.to_string())?;
-    channel
-        .exec(text)
-        .map_err(|e| format!("EXECUTION_UNKNOWN: {e}; verify before retrying"))?;
-    session.set_blocking(false);
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut truncated = false;
-    let mut buffer = [0u8; 8192];
-    loop {
-        if start.elapsed() >= Duration::from_secs(timeout) {
-            return Ok(
-                json!({"status":"unknown","reason":"TIMEOUT", "stdout":String::from_utf8_lossy(&stdout),
-                "stderr":String::from_utf8_lossy(&stderr),"truncated":truncated,
-                "notice":"SSH channel closed; the remote command may still be running. Verify before retrying."}),
-            );
-        }
-        // Drain both streams on each pass so a full stderr window cannot deadlock stdout.
-        let mut got_data = false;
-        let mut disconnected = false;
-        for (stream, bytes) in [(0, &mut stdout), (1, &mut stderr)] {
-            match channel.stream(stream).read(&mut buffer) {
-                Ok(0) => {}
-                Ok(count) => {
-                    got_data = true;
-                    truncated |= bounded_append(bytes, &buffer[..count]);
-                }
-                Err(e) if would_block(&e) => {}
-                Err(_) => {
-                    disconnected = true;
-                    break;
-                }
-            }
-        }
-        if disconnected {
-            return Ok(json!({"status":"unknown","reason":"CONNECTION_LOST",
-            "stdout":String::from_utf8_lossy(&stdout),"stderr":String::from_utf8_lossy(&stderr),"truncated":truncated}));
-        }
-        if channel.eof() && !got_data {
-            break;
-        }
-        if !got_data {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-    session.set_blocking(true);
-    session.set_timeout(3000);
-    channel
-        .wait_close()
-        .map_err(|_| "EXECUTION_UNKNOWN: cannot confirm command completion")?;
-    let exit = channel
-        .exit_status()
-        .map_err(|_| "EXECUTION_UNKNOWN: exit status unavailable")?;
+    let result = crate::ssh::commands::execute(
+        Connection {
+            session: session.clone(),
+            tunnel: None,
+            verified_host_keys: Vec::new(),
+        },
+        text,
+        Instant::now(),
+        Duration::from_secs(timeout),
+    );
+    let uncertain = result.error_type.as_deref() == Some("unknown")
+        || matches!(
+            result.error_code.as_deref(),
+            Some(
+                "target_timeout" | "target_disconnected" | "output_limit" | "remote_state_unknown"
+            )
+        );
     Ok(
-        json!({"status":if exit == 0 {"completed"} else {"failed"}, "exitCode":exit,
-        "stdout":String::from_utf8_lossy(&stdout),"stderr":String::from_utf8_lossy(&stderr),
-        "durationMs":start.elapsed().as_millis() as u64,"truncated":truncated}),
+        json!({"status":if uncertain {"unknown"} else if result.exit_code == 0 {"completed"} else {"failed"},
+        "exitCode":result.exit_code,"stdout":result.stdout,"stderr":result.stderr,
+        "durationMs":result.duration_ms as u64,"truncated":result.error_code.as_deref()==Some("output_limit"),
+        "reason":result.error_code,"notice":if uncertain {"Remote outcome is unknown; verify before retrying."} else {""}}),
     )
 }
 
@@ -315,7 +85,7 @@ fn file_operation(
     session: &ssh2::Session,
     tool: &str,
     args: &Value,
-    secret: &str,
+    secrets: &[String],
 ) -> Result<Value, String> {
     let path = args["path"].as_str().ok_or("INVALID_PATH")?;
     validate_path(path)?;
@@ -339,11 +109,12 @@ fn file_operation(
         file.take(length)
             .read_to_end(&mut data)
             .map_err(|e| e.to_string())?;
-        if !secret.is_empty()
-            && data
-                .windows(secret.len())
-                .any(|window| window == secret.as_bytes())
-        {
+        if secrets.iter().any(|secret| {
+            !secret.is_empty()
+                && data
+                    .windows(secret.len())
+                    .any(|window| window == secret.as_bytes())
+        }) {
             return Err("SENSITIVE_CONTENT: file contains the connection credential".into());
         }
         let next = offset + data.len() as u64;
@@ -423,7 +194,7 @@ pub fn run(
         }
     }
     let started_at = Instant::now();
-    let (connection, secret) = connect(app, client, host)?;
+    let (connection, secrets) = connect(app, client, host)?;
     let session = &connection.session;
     let result = match tool {
         "run_command" => command(
@@ -441,7 +212,7 @@ pub fn run(
                 }
                 parse_probe(output["stdout"].as_str().unwrap_or(""))
             }),
-        _ => file_operation(&session, tool, args, &secret),
+        _ => file_operation(&session, tool, args, &secrets),
     };
     // Mask known credential values; arbitrary application output is not a secret-free sandbox.
     result
@@ -455,15 +226,17 @@ pub fn run(
                 // clients can continue reading `capacity`, `filesystems`,
                 // and `projects` without a migration.
                 attach_probe_contract(&mut value, host);
+                value["host"]["verifiedHostKeys"] = json!(connection.verified_host_keys);
             }
-            redact(value, &secret)
+            secrets
+                .iter()
+                .fold(value, |value, secret| redact(value, secret))
         })
         .map_err(|error| {
-            if secret.is_empty() {
-                error
-            } else {
-                error.replace(&secret, "[REDACTED]")
-            }
+            secrets
+                .iter()
+                .filter(|secret| !secret.is_empty())
+                .fold(error, |error, secret| error.replace(secret, "[REDACTED]"))
         })
 }
 
@@ -489,6 +262,18 @@ fn redact(value: Value, secret: &str) -> Value {
 }
 
 fn parse_probe(output: &str) -> Result<Value, String> {
+    if output.len() > OUTPUT_LIMIT {
+        return Err("PROBE_OUTPUT_LIMIT".into());
+    }
+    let canonical = output.lines().any(|line| line == "__SB_PROBE_BEGIN");
+    if canonical && !output.lines().any(|line| line == "__SB_PROBE_SCHEMA=1") {
+        return Err("PROBE_SCHEMA_UNSUPPORTED".into());
+    }
+    let output = if canonical {
+        output.replace("__SB_PROBE_", "__SB_MCP_")
+    } else {
+        output.to_owned()
+    };
     if !output.lines().any(|line| line == "__SB_MCP_BEGIN")
         || !output.lines().any(|line| line == "__SB_MCP_END")
     {
@@ -502,6 +287,10 @@ fn parse_probe(output: &str) -> Result<Value, String> {
     let mut containers = Vec::new();
     let mut services = Vec::new();
     let mut projects = Vec::new();
+    let mut service_details = std::collections::BTreeMap::new();
+    let mut pm2 = Vec::new();
+    let mut sampled_at = crate::storage::now_unix_ms();
+    let mut valid_sample_time = false;
     for line in output.lines() {
         let Some((key, value)) = line
             .strip_prefix("__SB_MCP_")
@@ -511,6 +300,46 @@ fn parse_probe(output: &str) -> Result<Value, String> {
         };
         let parts: Vec<_> = value.split_whitespace().collect();
         match key {
+            "SAMPLED_AT" => {
+                if let Ok(value) = value.parse::<i64>() {
+                    if value > 0 && value <= crate::storage::now_unix_ms() {
+                        sampled_at = value;
+                        valid_sample_time = true;
+                    }
+                }
+            }
+            "TOOLDETAIL" => {
+                let fields: Vec<_> = value.split('|').collect();
+                if fields.len() >= 6 && tools.len() < 100 {
+                    tools.push(json!({"id":fields[0],"displayName":fields[1],"category":fields[2],"name":fields[3],"path":fields[4],"version":fields[5]}));
+                }
+            }
+            "SERVICEDETAIL" => {
+                let fields: Vec<_> = value.split('|').collect();
+                if fields.len() >= 3 && service_details.len() < 225 {
+                    service_details.insert(
+                        fields[0].to_string(),
+                        json!({"name":fields[0],"active":fields[1],"enabled":fields[2]}),
+                    );
+                }
+            }
+            "DOCKERDETAIL" => {
+                let fields: Vec<_> = value.split('|').collect();
+                if fields.len() >= 4 && containers.len() < 100 {
+                    containers.push(json!({"name":fields[0],"image":fields[1],"status":fields[2],"ports":fields[3],"id":fields.get(4)}));
+                }
+            }
+            "PROJECTDETAIL" => {
+                let fields: Vec<_> = value.split('|').collect();
+                if fields.len() >= 4 && projects.len() < 100 {
+                    projects.push(json!({"path":fields[0],"kind":fields[1],"name":fields[2],"modifiedAt":fields[3],"manifestPath":fields.get(4).unwrap_or(&fields[0]),"status":"detected","verified":false}));
+                }
+            }
+            "PM2" => {
+                if pm2.len() < 25 {
+                    pm2.push(json!({"raw":value}));
+                }
+            }
             "ARCH" | "HOSTNAME" | "OS" | "KERNEL" => {
                 capacity.insert(key.to_ascii_lowercase(), json!(value.trim_matches('"')));
             }
@@ -605,17 +434,29 @@ fn parse_probe(output: &str) -> Result<Value, String> {
                     containers.push(container);
                 }
             }
-            "SERVICE" => services.push(json!(value)),
+            "SERVICE" => {
+                if services.len() < 200 {
+                    services.push(json!(value));
+                    if parts.len() >= 3 {
+                        service_details.entry(parts[0].to_string()).or_insert_with(
+                            || json!({"name":parts[0],"active":parts[2],"enabled":"unknown"}),
+                        );
+                    }
+                }
+            }
             "PROJECT" => {
                 projects.push(json!({"manifestPath":value,"status":"detected","verified":false}))
             }
             _ => {}
         }
     }
+    if canonical && !valid_sample_time {
+        return Err("PROBE_INVALID_SAMPLE_TIME".into());
+    }
     Ok(
-        json!({"status":"completed","source":"ssh-on-demand","sampledAt":crate::storage::now_unix_ms(),
+        json!({"status":"completed","source":"ssh-on-demand","sampledAt":sampled_at,
         "capacity":capacity,"filesystems":disks,"inodes":inodes,"listeningPorts":ports,"tools":tools,
-        "containers":containers,"services":services,"projects":projects,"untrustedContent":true,
+        "containers":containers,"services":services,"serviceDetails":service_details.into_values().collect::<Vec<_>>(),"pm2":pm2,"projects":projects,"untrustedContent":true,
         "completeness":"partial", "limitations":["Optional tools or permissions may be unavailable; empty lists do not prove absence.",
         "At most 100 filesystems, 200 listening sockets/services, 100 containers/manifests; project depth limited to 3.",
         "Runtime versions and project health must be verified separately; this scan does not execute project code."]}),
@@ -657,16 +498,14 @@ fn probe_host_identity(host: &HostProfile) -> Value {
         "port": host.port,
         "username": host.username,
     });
-    if let Some(address) = host
-        .jump_host
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
+    if host.jump_host_id.is_some()
+        || host
+            .jump_host
+            .as_deref()
+            .is_some_and(|address| !address.trim().is_empty())
     {
-        identity["jump"] = json!({
-            "address": address,
-            "port": host.jump_port.unwrap_or(22),
-            "username": host.jump_user.as_deref().filter(|value| !value.trim().is_empty()).unwrap_or(&host.username),
-        });
+        let address = host.jump_host.as_deref().unwrap_or("");
+        identity["jump"] = json!({"hostId":host.jump_host_id,"address":address,"port":host.jump_port.unwrap_or(22),"username":host.jump_user.as_deref().unwrap_or("")});
     }
     identity
 }
@@ -736,23 +575,25 @@ fn inventory_snapshot(probe: &Value, sampled_at: i64) -> Value {
         .filter_map(|tool| {
             let name = tool["name"].as_str()?.to_string();
             Some(json!({
-                "id": name,
-                "name": name,
-                "category": "system",
+                "id": tool["id"].as_str().unwrap_or(&name),
+                "name": tool["displayName"].as_str().unwrap_or(&name),
+                "category": tool["category"].as_str().unwrap_or("system"),
                 "binary": tool["name"].clone(),
                 "path": tool["path"].clone(),
                 "version": tool.get("version").cloned().unwrap_or(Value::Null),
             }))
         })
         .collect::<Vec<_>>();
-    let services = probe["services"]
+    let services = probe.get("serviceDetails").filter(|value| value.as_array().is_some_and(|values| !values.is_empty())).unwrap_or(&probe["services"])
         .as_array()
         .cloned()
         .unwrap_or_default()
         .into_iter()
         .filter_map(|service| {
-            let name = service.as_str()?.to_string();
-            Some(json!({"name": name, "active": "unknown", "enabled": "unknown"}))
+            if service.is_object() { return Some(service.clone()); }
+            let value = service.as_str()?;
+            let fields: Vec<_> = value.split_whitespace().collect();
+            Some(json!({"name": fields.first().copied().unwrap_or_default(), "active": fields.get(2).copied().unwrap_or("unknown"), "enabled": "unknown"}))
         })
         .collect::<Vec<_>>();
     let containers = probe["containers"]
@@ -788,7 +629,10 @@ fn inventory_snapshot(probe: &Value, sampled_at: i64) -> Value {
         .unwrap_or_default()
         .into_iter()
         .filter_map(|project| {
-            let path = project["manifestPath"].as_str()?.to_string();
+            let path = project["path"]
+                .as_str()
+                .or_else(|| project["manifestPath"].as_str())?
+                .to_string();
             let name = Path::new(&path)
                 .file_name()
                 .and_then(|value| value.to_str())
@@ -796,9 +640,9 @@ fn inventory_snapshot(probe: &Value, sampled_at: i64) -> Value {
                 .to_string();
             Some(json!({
                 "path": path,
-                "kind": "detected",
-                "name": name,
-                "modifiedAt": "",
+                "kind": project["kind"].as_str().unwrap_or("detected"),
+                "name": project["name"].as_str().unwrap_or(&name),
+                "modifiedAt": project["modifiedAt"].as_str().unwrap_or_default(),
             }))
         })
         .collect::<Vec<_>>();
@@ -818,7 +662,10 @@ fn inventory_snapshot(probe: &Value, sampled_at: i64) -> Value {
         "tools": tools,
         "services": services,
         "containers": containers,
-        "pm2": [],
+        "pm2": probe["pm2"].as_array().cloned().unwrap_or_default(),
+        "listeningPorts": probe["listeningPorts"],
+        "filesystems": probe["filesystems"],
+        "inodes": probe["inodes"],
         "projects": projects,
         "scannedAt": sampled_at,
     })
@@ -913,19 +760,31 @@ mod tests {
             jump_host: Some("jump.example.com".into()),
             jump_port: Some(2200),
             jump_user: Some("bastion".into()),
+            jump_host_id: None,
             created_at: 0,
             updated_at: 0,
         }
     }
 
     #[test]
-    fn proxy_jump_requires_private_key_authentication() {
-        let host = host_with_jump("password");
-        let result = start_jump_tunnel(&host, "password");
-        assert_eq!(
-            result.err().as_deref(),
-            Some("MCP ProxyJump currently requires privateKey authentication for the target and jump host")
-        );
+    fn shared_collector_fixture_retains_metrics_and_rich_inventory() {
+        let value =
+            parse_probe(include_str!("../../../shared/fixtures/linux-probe-v1.txt")).unwrap();
+        assert_eq!(value["sampledAt"], 1792281600000_i64);
+        let metrics = monitor_snapshot(&value);
+        assert_eq!(metrics["cpuPercent"], 25.5);
+        assert_eq!(metrics["memoryPercent"], 75.0);
+        let inventory = inventory_snapshot(&value, 1792281600000);
+        assert_eq!(inventory["tools"][0]["version"], "v22.0.0");
+        assert!(inventory["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["name"] == "nginx.service" && row["active"] == "active"));
+        assert_eq!(inventory["containers"][0]["image"], "nginx:stable");
+        assert_eq!(inventory["projects"][0]["kind"], "node");
+        assert_eq!(inventory["listeningPorts"].as_array().unwrap().len(), 1);
+        assert_eq!(inventory["pm2"].as_array().unwrap().len(), 1);
     }
 
     #[test]
@@ -953,9 +812,6 @@ mod tests {
         for path in ["config.json", "/", "/srv/../etc/passwd", "/tmp/\0"] {
             assert!(validate_path(path).is_err());
         }
-        let mut output = vec![0; OUTPUT_LIMIT - 1];
-        assert!(bounded_append(&mut output, b"abcd"));
-        assert_eq!(output.len(), OUTPUT_LIMIT);
         assert_eq!(
             redact(json!({"stdout":"my secret"}), "secret")["stdout"],
             "my [REDACTED]"

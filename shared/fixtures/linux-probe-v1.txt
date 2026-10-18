@@ -1,0 +1,26 @@
+__SB_PROBE_BEGIN
+__SB_PROBE_SCHEMA=1
+__SB_PROBE_SAMPLED_AT=1792281600000
+__SB_PROBE_ARCH=x86_64
+__SB_PROBE_HOSTNAME=prod-api
+__SB_PROBE_OS="Ubuntu 24.04 LTS"
+__SB_PROBE_KERNEL=Linux 6.8
+__SB_PROBE_CORES=4
+__SB_PROBE_CPU=25.5
+__SB_PROBE_UPTIME=900
+__SB_PROBE_LOAD=0.1 0.2 0.3 1/45 1234
+__SB_PROBE_NETWORK=1024 2048
+__SB_PROBE_MEM=MemTotal: 8192
+__SB_PROBE_MEM=MemAvailable: 2048
+__SB_PROBE_DISK=/dev/sda1 100000 20000 80000 20% /
+__SB_PROBE_INODE=/dev/sda1 1000 200 800 20% /
+__SB_PROBE_PORT=tcp LISTEN 0 4096 0.0.0.0:443 0.0.0.0:*
+__SB_PROBE_TOOLDETAIL=node|Node.js|runtime|node|/usr/bin/node|v22.0.0
+__SB_PROBE_TOOLDETAIL=nginx|Nginx|web|nginx|/usr/sbin/nginx|nginx/1.24
+__SB_PROBE_SERVICE=nginx.service loaded active running Nginx server
+__SB_PROBE_SERVICEDETAIL=nginx.service|active|enabled
+__SB_PROBE_DOCKERDETAIL=web|nginx:stable|Up 3 hours|0.0.0.0:443->443/tcp|aabbcc
+__SB_PROBE_PM2=PM2 saved process definitions present (live state unknown)
+__SB_PROBE_PROJECTDETAIL=/srv/api|node|api|2026-10-17 10:30|/srv/api/current/package.json
+__SB_PROBE_PROJECTDETAIL=/srv/api|compose|api|2026-10-17 10:31|/srv/api/compose.yml
+__SB_PROBE_END

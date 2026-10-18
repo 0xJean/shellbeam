@@ -37,7 +37,6 @@ export function PortForwardPanel({
   vaultId,
   onOutput,
   onError,
-  resolvePrivateKey,
 }: PortForwardPanelProps) {
   const { t } = useT()
   const [rules, setRules] = useState<PortForwardRule[]>([])
@@ -125,13 +124,8 @@ export function PortForwardPanel({
   }
 
   async function handleStart(rule: PortForwardRule) {
-    const key = await resolvePrivateKey?.(rule.hostId)
-    if (!key?.trim()) {
-      onError?.('Private key required. Unlock Vault and ensure host has privateKeyRef.')
-      return
-    }
     try {
-      await startPortForwardTunnel(rule.id, key, vaultId)
+      await startPortForwardTunnel(rule.id, undefined, vaultId)
       setRunningIds((prev) => new Set([...prev, rule.id]))
       onOutput?.(`Tunnel started: ${rule.name}`)
     } catch (e) {
@@ -359,7 +353,7 @@ export function PortForwardPanel({
                           <Square className="h-3 w-3" /> {t('portForward.stop')}
                         </Button>
                       ) : (
-                        <Button size="sm" variant="ghost" className="h-8 gap-1 px-2 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" onClick={() => void handleStart(rule)} disabled={!resolvePrivateKey}>
+                        <Button size="sm" variant="ghost" className="h-8 gap-1 px-2 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" onClick={() => void handleStart(rule)} disabled={false}>
                           <Play className="h-3 w-3" /> {t('portForward.start')}
                         </Button>
                       )}
