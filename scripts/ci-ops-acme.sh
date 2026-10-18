@@ -316,11 +316,23 @@ os.chmod(path,0o644)
 PY
   [[ $? == 0 ]] || return 1
   nginx -t >"$ops_acme_dir/nginx-managed-check.log" 2>&1 && systemctl reload nginx.service || return 1
-  local domain response
+  local domain response deadline ready
   for domain in "$ops_site_name" "$ops_second_domain"; do
-    response=$(curl -q --noproxy '*' --fail --silent --show-error --proto '=https' --max-time 8 \
-      --cacert "$ops_acme_issuer_ca" --resolve "$domain:$ops_https_port:127.0.0.1" "https://$domain:$ops_https_port/") || return 1
-    [[ $response == "$ops_expected_body" ]] || { _ops_acme_error 'issued certificate HTTPS content did not match fixture'; return 1; }
+    # systemd's reload returns after HUP, before nginx's new TLS workers are
+    # necessarily serving. Observe readiness without repeating any issuance or
+    # reload; every attempt still verifies the new issuer and hostname.
+    deadline=$((SECONDS + 15))
+    ready=0
+    while (( SECONDS < deadline )); do
+      if response=$(curl -q --noproxy '*' --fail --silent --show-error --proto '=https' --max-time 2 \
+        --cacert "$ops_acme_issuer_ca" --resolve "$domain:$ops_https_port:127.0.0.1" "https://$domain:$ops_https_port/" 2>>"$ops_acme_dir/nginx-tls-ready.log") \
+        && [[ $response == "$ops_expected_body" ]]; then
+        ready=1
+        break
+      fi
+      sleep 0.1
+    done
+    [[ $ready == 1 ]] || { _ops_acme_error 'issued certificate HTTPS readiness did not match fixture'; return 1; }
   done
   python3 - "$ops_acme_metadata_json" "$ops_acme_dir" "$ops_fixture_id" "$ops_site_name" "$ops_second_domain" "$directory_url" "$ops_https_port" <<'PY'
 import datetime, json, os, re, subprocess, sys
