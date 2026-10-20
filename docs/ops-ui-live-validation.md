@@ -510,3 +510,33 @@ different-frame/crop rejection and existing physical journey/restart/metadata
 contracts. The three attempts and 120 ms pixel retry interval are unchanged.
 These checks validate the capture logic; only a subsequent complete installed
 GUI run can accept the new current head.
+
+### Compact-row disclosure and notification capture ordering
+
+The compact host-row head `dca690195f112fdcac0472abe49bfb00d41e110b`
+passed eleven checks, but [installed GUI run 39388360720](https://github.com/0xJean/shellbeam/actions/runs/39388360720)
+failed with `ops_ui_notifications_visible_text_missing` during the via/jump
+opened group. Its [report artifact 12248583032](https://github.com/0xJean/shellbeam/actions/runs/39388360720/artifacts/12248583032)
+used merge `21ea6e2cd81e58a07401aac9f816914a678b97bd`, whose parents include
+that exact head. Both members failed their title and body checks in both OCR
+modes across all three frames. The final notification rectangle contains the
+App background rather than visible notifications. Cleanup and App exit passed.
+
+The screenshot guard could click a collapsed host disclosure, and recovery
+readers could also expand rows after restoring the fixture. These native
+interactions can change window focus/stacking while a notification is being
+verified. The report's last interaction is `host-ops-details-toggle`, but has
+no timestamp; it does not establish which call caused the absent pixels.
+
+The journey now prepares all participating disclosures before stopping or
+restoring fixture services, including both via and jump. Baseline and
+post-boundary readers use a read-only visibility check; notification guards
+are also read-only. Missing or collapsed details cannot trigger a fallback
+click during capture. All existing scope, source, original-sample, alert,
+audit, full-title/body OCR and immutable same-frame group checks remain.
+The three screenshot attempts and pixel retry interval remain unchanged.
+All 126 related Node checks pass, including remounted disclosures, both
+affected hosts prepared before each boundary, and refusal to click when
+details collapse after a trigger. Syntax and diff checks also pass.
+Only a complete installed GUI run on the resulting head can verify this fix;
+the earlier green Komari head is not evidence for it.

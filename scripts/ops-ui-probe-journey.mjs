@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto'
 import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { findOpsUiAuditRow, respondOpsUiConfirmation, validateOpsUiServiceRect, waitForOpsUiConfirmation } from './ops-ui-journey.mjs'
-import { ensureOpsUiHostDetails } from './ops-ui-host-details.mjs'
+import { ensureOpsUiHostDetails, isOpsUiHostDetailsVisible } from './ops-ui-host-details.mjs'
 
 const ROLES = Object.freeze(['direct', 'via'])
 const route = (role) => role === 'via' ? 'proxy-jump' : 'direct'
@@ -44,10 +44,10 @@ const alertSelector = (state, role) => `${card(state, role)} ${tid('host-local-a
 
 /** The marker displays the canonical builtin evaluation and its original
  * sample time. Host health alone, relative age and cached metrics never count. */
-export async function readOpsUiProbeEvaluation(driver, state, role, section = 'metrics') {
+export async function readOpsUiProbeEvaluation(driver, state, role, section = 'metrics', { reveal = true } = {}) {
   check([...ROLES, 'jump'].includes(role), 'invalid_role')
   check(section === 'metrics' || section === 'inventory', 'invalid_section')
-  if (!await ensureOpsUiHostDetails(driver, { hostId: state.hostIds[role], vaultId: state.vaultId })) return null
+  if (!await (reveal ? ensureOpsUiHostDetails : isOpsUiHostDetailsVisible)(driver, { hostId: state.hostIds[role], vaultId: state.vaultId })) return null
   const rows = await driver.findAll(evaluationSelector(state, role, section))
   if (rows.length !== 1 || !await driver.isDisplayed(rows[0])) return null
   const sampledAt = sample(await driver.attr(rows[0], 'data-sampled-at'))
@@ -56,10 +56,10 @@ export async function readOpsUiProbeEvaluation(driver, state, role, section = 'm
   return { sampledAt, state: status }
 }
 
-export async function waitForOpsUiProbeEvaluation(driver, state, role, { status, boundary, after = 0, timeoutMs = 240_000, section = 'metrics' }) {
+export async function waitForOpsUiProbeEvaluation(driver, state, role, { status, boundary, after = 0, timeoutMs = 240_000, section = 'metrics', reveal = true }) {
   check(Number.isSafeInteger(boundary) && boundary > 0 && boundary <= Date.now() && Number.isSafeInteger(after) && after >= 0, 'invalid_sample_boundary')
   return driver.until(async () => {
-    const observation = await readOpsUiProbeEvaluation(driver, state, role, section)
+    const observation = await readOpsUiProbeEvaluation(driver, state, role, section, { reveal })
     return observation && observation.state === status && observation.sampledAt >= boundary && observation.sampledAt > after ? observation : false
   }, { timeoutMs })
 }
@@ -217,9 +217,9 @@ export async function settleOpsUiProbeInventory({ driver, fixture, resumeState, 
   return { passed: true, profiles: 3, freshObservations: 3 }
 }
 
-export async function readOpsUiProbeAlert(driver, state, role, expectedStatus) {
+export async function readOpsUiProbeAlert(driver, state, role, expectedStatus, { reveal = true } = {}) {
   check([...ROLES, 'jump'].includes(role), 'invalid_role')
-  if (!await ensureOpsUiHostDetails(driver, { hostId: state.hostIds[role], vaultId: state.vaultId })) return null
+  if (!await (reveal ? ensureOpsUiHostDetails : isOpsUiHostDetailsVisible)(driver, { hostId: state.hostIds[role], vaultId: state.vaultId })) return null
   const rows = await driver.findAll(alertSelector(state, role))
   if (rows.length !== 1 || !await driver.isDisplayed(rows[0])) return null
   const row = rows[0]
@@ -235,8 +235,8 @@ export async function readOpsUiProbeAlert(driver, state, role, expectedStatus) {
   return { jobId: jobId || null, updatedAt: sample(await driver.attr(row, 'data-updated-at')), resolvedAt: sample(await driver.attr(row, 'data-resolved-at')) }
 }
 
-async function waitForAlert(driver, state, role, status) {
-  return driver.until(() => readOpsUiProbeAlert(driver, state, role, status), { timeoutMs: 240_000 })
+async function waitForAlert(driver, state, role, status, options) {
+  return driver.until(() => readOpsUiProbeAlert(driver, state, role, status, options), { timeoutMs: 240_000 })
 }
 async function enabled(driver, selector) {
   const disabled = await driver.attr(selector, 'disabled')
@@ -282,12 +282,31 @@ export async function runOpsUiProbeJourney({ driver, fixture, resumeState, recor
   const identity = JSON.stringify([resumeState.vaultId, resumeState.hostIds])
   const state = { vaultId: resumeState.vaultId, hostIds: { ...resumeState.hostIds }, hostNames: Object.fromEntries(['jump', ...ROLES].map((role) => [role, fixture.hosts[role].name])), section: 'metrics', ruleId: RULE, hosts: {} }
   const assertScope = () => check(JSON.stringify([resumeState.vaultId, resumeState.hostIds]) === identity, 'scope_changed')
+  const prepareDetails = async (role, phase) => {
+    const profiles = role === 'via' ? ['via', 'jump'] : ['direct']
+    // Navigation from Activity remounts collapsed list rows. Complete every
+    // genuine disclosure click before the fixture emits either lifecycle.
+    await driver.until(async () => {
+      assertScope()
+      for (const profile of profiles) {
+        if (!await ensureOpsUiHostDetails(driver, { hostId: state.hostIds[profile], vaultId: state.vaultId })) return false
+      }
+      for (const profile of profiles) {
+        if (!await isOpsUiHostDetailsVisible(driver, { hostId: state.hostIds[profile], vaultId: state.vaultId })) return false
+      }
+      assertScope()
+      return true
+    }, { timeoutMs: 60_000 })
+    await record(`ops-ui-probe-${role}-details-prepared`, { passed: true, phase, profiles: profiles.length })
+  }
+  const readOnly = { reveal: false }
   const baselineBoundary = Date.now()
   for (const role of ROLES) {
     assertScope()
     await openPage(driver, 'hosts')
-    const baseline = await waitForOpsUiProbeEvaluation(driver, state, role, { status: 'healthy', boundary: baselineBoundary })
-    const jumpBaseline = role === 'via' ? await waitForOpsUiProbeEvaluation(driver, state, 'jump', { status: 'healthy', boundary: baselineBoundary }) : null
+    await prepareDetails(role, 'before-stop')
+    const baseline = await waitForOpsUiProbeEvaluation(driver, state, role, { status: 'healthy', boundary: baselineBoundary, ...readOnly })
+    const jumpBaseline = role === 'via' ? await waitForOpsUiProbeEvaluation(driver, state, 'jump', { status: 'healthy', boundary: baselineBoundary, ...readOnly }) : null
     await record(`ops-ui-probe-${role}-baseline`, { passed: true, section: 'metrics', originalSampleAt: baseline.sampledAt })
     let restorationNeeded = true
     try {
@@ -295,10 +314,10 @@ export async function runOpsUiProbeJourney({ driver, fixture, resumeState, recor
       const stopped = await checkpoint('probe-stop', { role })
       const faultBoundary = validateBoundary(stopped, role, 'stop', stopAt)
       assertScope()
-      const failed = await waitForOpsUiProbeEvaluation(driver, state, role, { status: 'firing', boundary: faultBoundary, after: baseline.sampledAt })
-      const active = await waitForAlert(driver, state, role, 'active')
-      const jumpFailed = role === 'via' ? await waitForOpsUiProbeEvaluation(driver, state, 'jump', { status: 'firing', boundary: faultBoundary, after: jumpBaseline.sampledAt }) : null
-      if (role === 'via') await waitForAlert(driver, state, 'jump', 'active')
+      const failed = await waitForOpsUiProbeEvaluation(driver, state, role, { status: 'firing', boundary: faultBoundary, after: baseline.sampledAt, ...readOnly })
+      const active = await waitForAlert(driver, state, role, 'active', readOnly)
+      const jumpFailed = role === 'via' ? await waitForOpsUiProbeEvaluation(driver, state, 'jump', { status: 'firing', boundary: faultBoundary, after: jumpBaseline.sampledAt, ...readOnly }) : null
+      if (role === 'via') await waitForAlert(driver, state, 'jump', 'active', readOnly)
       await record(`ops-ui-probe-${role}-opened`, { passed: true, route: route(role), freshFailure: true, cachedRecoveryRefused: true })
       if (onOpened) await onOpened(role)
       assertScope()
@@ -314,17 +333,18 @@ export async function runOpsUiProbeJourney({ driver, fixture, resumeState, recor
       check(acknowledged.jobId && acknowledged.jobId !== active.jobId && acknowledged.jobId !== cancelled, 'ack_job_not_linked')
       await verifyOpsUiProbeAudit(driver, state, role, { action: 'acknowledge', status: 'completed', jobId: acknowledged.jobId })
       await openPage(driver, 'hosts')
+      await prepareDetails(role, 'before-restore')
       const restoreAt = Date.now()
       const restored = await checkpoint('probe-restore', { role })
       const recoveryBoundary = validateBoundary(restored, role, 'restore', restoreAt)
       restorationNeeded = false
       assertScope()
-      const recovery = await waitForOpsUiProbeEvaluation(driver, state, role, { status: 'healthy', boundary: recoveryBoundary, after: failed.sampledAt })
-      const resolved = await waitForAlert(driver, state, role, 'resolved')
+      const recovery = await waitForOpsUiProbeEvaluation(driver, state, role, { status: 'healthy', boundary: recoveryBoundary, after: failed.sampledAt, ...readOnly })
+      const resolved = await waitForAlert(driver, state, role, 'resolved', readOnly)
       check(resolved.resolvedAt !== null && resolved.resolvedAt >= recoveryBoundary && resolved.jobId === acknowledged.jobId, 'recovery_without_new_observation')
       if (role === 'via') {
-        const jumpRecovery = await waitForOpsUiProbeEvaluation(driver, state, 'jump', { status: 'healthy', boundary: recoveryBoundary, after: jumpFailed.sampledAt })
-        const jumpResolved = await waitForAlert(driver, state, 'jump', 'resolved')
+        const jumpRecovery = await waitForOpsUiProbeEvaluation(driver, state, 'jump', { status: 'healthy', boundary: recoveryBoundary, after: jumpFailed.sampledAt, ...readOnly })
+        const jumpResolved = await waitForAlert(driver, state, 'jump', 'resolved', readOnly)
         check(jumpResolved.resolvedAt !== null && jumpResolved.resolvedAt >= recoveryBoundary, 'jump_recovery_without_new_observation')
         state.hosts.jump = { failedSampleAt: jumpFailed.sampledAt, recoverySampleAt: jumpRecovery.sampledAt, recoveryBoundary, resolvedJobId: jumpResolved.jobId }
         await record('ops-ui-probe-jump-collateral-resolved', { passed: true, freshObservation: true, route: 'direct', lifecycleActions: 0 })

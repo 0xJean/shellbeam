@@ -3,6 +3,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
+import { ensureOpsUiHostDetails } from './ops-ui-host-details.mjs'
 import { OPS_UI_PROBE_RULE_IDS } from './ops-ui-probe-journey.mjs'
 import {
   assertSafeProbeNotificationUi, createOpsUiProbeNotificationOwner,
@@ -99,7 +100,7 @@ test('pixel safety requires each actual metrics host/Vault/source/route/state an
   } finally { unit.dom.window.close() }
 })
 
-test('notification capture opens each requested host through its visible disclosure and still refuses hidden or foreign evidence', async () => {
+test('notification capture only reads prepared host details, never expands them, and still refuses hidden or foreign evidence', async () => {
   const unit = ui(), context = { state: unit.resumeState, titles: unit.titles, profiles: ['via', 'jump'], event: 'opened' }
   const clicks = []
   try {
@@ -121,6 +122,12 @@ test('notification capture opens each requested host through its visible disclos
       card.querySelector('[data-testid="host-ops-details"]').hidden = false
     }
     unit.driver.until = async predicate => { const value = await predicate(); assert(value, 'unit disclosure not visible'); return value }
+    await assert.rejects(assertSafeProbeNotificationUi(unit.driver, context), /unsafe_host_scope/)
+    assert.equal(clicks.length, 0, 'capture must not change native focus by expanding a collapsed host')
+    await ensureOpsUiHostDetails(unit.driver, { hostId: unit.resumeState.hostIds.via, vaultId: unit.resumeState.vaultId })
+    await assert.rejects(assertSafeProbeNotificationUi(unit.driver, context), /unsafe_host_scope/)
+    assert.deepEqual(clicks, [unit.resumeState.hostIds.via], 'capture must not expand the other group member')
+    await ensureOpsUiHostDetails(unit.driver, { hostId: unit.resumeState.hostIds.jump, vaultId: unit.resumeState.vaultId })
     await assertSafeProbeNotificationUi(unit.driver, context)
     await assertSafeProbeNotificationUi(unit.driver, context)
     assert.deepEqual(clicks, [unit.resumeState.hostIds.via, unit.resumeState.hostIds.jump])
