@@ -159,6 +159,34 @@ describe('Workspace provider projection', () => {
     expect(result.source).toMatchObject({ kind: 'ssh-agentless', fallbackProvider: 'komari' })
     expect(result.sources.find((source) => source.kind === 'komari')).toMatchObject({ health: 'unknown', sampledAt: null, lastSyncedAt: now - 50, capabilities: [] })
   })
+
+  it('distinguishes first report from interruption using the same endpoint, integration, node and host baseline', () => {
+    const snapshot: ProbeSnapshot = { ...probe(), provider: { ...probe().provider, endpoint: 'https://example.test' }, metrics: null, health: 'unknown', errors: [{ section: 'metrics', code: 'empty', message: 'Komari returned no dated metric observations' }] }
+    const current = data([row(snapshot)])
+    const project = () => buildWorkspaceProviderState({ host, vaultId: 'vault-a', data: current, runtimeMonitor: monitor(), now })
+    let result = project()
+    expect(result.source).toMatchObject({ kind: 'ssh-agentless', health: 'online' })
+    expect(result.sources.find((source) => source.kind === 'komari')).toMatchObject({ health: 'unknown', waitingForFirstReport: true, sampledAt: null })
+    const baseline = { integrationId: 'integration-a', endpoint: 'https://example.test', nodeId: 'node-a', hostId: host.id, lastHealthySampledAt: now - 1000 }
+    const setBaseline = (value: typeof baseline) => { current.komari[0].state!.syncState!.alertSummary = { schemaVersion: 1, alerts: [], audit: [], probeBaselines: [value] } }
+    setBaseline(baseline)
+    expect(project().sources.find((source) => source.kind === 'komari')?.waitingForFirstReport).toBe(false)
+    for (const key of ['integrationId', 'endpoint', 'nodeId', 'hostId'] as const) {
+      setBaseline({ ...baseline, [key]: 'other-scope' })
+      expect(project().sources.find((source) => source.kind === 'komari')?.waitingForFirstReport).toBe(true)
+    }
+    current.komari[0].integration.endpoint = 'https://replacement.test'
+    result = project()
+    expect(result.sources.some((source) => source.kind === 'komari')).toBe(false)
+    expect(result.source?.kind).toBe('ssh-agentless')
+  })
+
+  it('does not turn an empty first report into an offline host without another source', () => {
+    const snapshot: ProbeSnapshot = { ...probe(), provider: { ...probe().provider, endpoint: 'https://example.test' }, metrics: null, health: 'unknown', errors: [{ section: 'metrics', code: 'empty', message: 'Komari returned no dated metric observations' }] }
+    const result = buildWorkspaceProviderState({ host, vaultId: 'vault-a', data: data([row(snapshot)]), now })
+    expect(result.source).toMatchObject({ kind: 'komari', health: 'unknown', waitingForFirstReport: true })
+    expect(result.view?.health.state).toBe('unknown')
+  })
 })
 
 describe('useWorkspaceProviderState', () => {

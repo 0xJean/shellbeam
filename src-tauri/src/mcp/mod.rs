@@ -1,5 +1,6 @@
 pub mod bridge;
 mod freshness;
+mod komari_incidents;
 mod local_alerts;
 mod policy;
 mod protocol;
@@ -772,7 +773,7 @@ fn scoped_komari_alert_state(
         .remove("alerts")
         .and_then(|value| value.as_array().cloned())
         .unwrap_or_default();
-    let alerts = alerts
+    let mut alerts = alerts
         .into_iter()
         .filter(|alert| {
             alert["hostId"].as_str() == Some(host_id)
@@ -781,6 +782,7 @@ fn scoped_komari_alert_state(
                     .is_some_and(|node_id| mapped_nodes.contains(node_id))
         })
         .collect::<Vec<_>>();
+    komari_incidents::normalize(&mut alerts);
     let alert_ids = alerts
         .iter()
         .filter_map(|alert| alert["alertId"].as_str().map(str::to_owned))
@@ -796,6 +798,37 @@ fn scoped_komari_alert_state(
                 .is_some_and(|alert_id| alert_ids.contains(alert_id))
         })
         .collect::<Vec<_>>();
+    let incidents = komari_incidents::project(&alerts);
+    if let Some(baselines) = object
+        .get_mut("probeBaselines")
+        .and_then(Value::as_array_mut)
+    {
+        baselines.retain(|baseline| {
+            baseline["hostId"].as_str() == Some(host_id)
+                || baseline["nodeId"]
+                    .as_str()
+                    .is_some_and(|node| mapped_nodes.contains(node))
+        });
+    }
+    if let Some(summary) = object.get_mut("summary").and_then(Value::as_object_mut) {
+        summary.insert(
+            "open".into(),
+            json!(incidents
+                .iter()
+                .filter(|row| { row["status"] == "active" || row["status"] == "acknowledged" })
+                .count()),
+        );
+        for status in ["acknowledged", "resolved", "closed"] {
+            summary.insert(
+                status.into(),
+                json!(incidents
+                    .iter()
+                    .filter(|row| row["status"] == status)
+                    .count()),
+            );
+        }
+    }
+    object.insert("incidents".into(), Value::Array(incidents));
     object.insert("alerts".into(), Value::Array(alerts));
     object.insert("audit".into(), Value::Array(audit));
     Value::Object(object)
@@ -846,7 +879,8 @@ fn link_komari_alert_operation(
         else {
             continue;
         };
-        let Some(alert) = alerts.iter_mut().find(|alert| {
+        komari_incidents::normalize(alerts);
+        let Some(selected) = alerts.iter().position(|alert| {
             alert["alertId"] == alert_id
                 && (alert["hostId"] == host.id
                     || alert["nodeId"]
@@ -855,26 +889,33 @@ fn link_komari_alert_operation(
         }) else {
             continue;
         };
-        if alert["relatedOperationJobId"] == operation_job_id {
+        let mut events = Vec::new();
+        for index in komari_incidents::member_indices(alerts, selected) {
+            let alert = &mut alerts[index];
+            if alert["relatedOperationJobId"] == operation_job_id {
+                continue;
+            }
+            alert["relatedOperationJobId"] = json!(operation_job_id);
+            events.push(json!({
+                "auditId": format!("komari-link-{}", uuid::Uuid::new_v4()),
+                "alertId": alert["alertId"],
+                "fingerprint": alert["fingerprint"],
+                "event": "operation-linked",
+                "status": alert["status"],
+                "actor": format!("mcp-client:{}", client.id),
+                "operationJobId": operation_job_id,
+                "at": now,
+            }));
+        }
+        if events.is_empty() {
             return Ok(true);
         }
-        alert["relatedOperationJobId"] = json!(operation_job_id);
-        let event = json!({
-            "auditId": format!("komari-link-{}", uuid::Uuid::new_v4()),
-            "alertId": alert_id,
-            "fingerprint": alert["fingerprint"].clone(),
-            "event": "operation-linked",
-            "status": alert["status"].clone(),
-            "actor": format!("mcp-client:{}", client.id),
-            "operationJobId": operation_job_id,
-            "at": now,
-        });
         let audit = summary_object
             .entry("audit")
             .or_insert_with(|| json!([]))
             .as_array_mut();
         if let Some(audit) = audit {
-            audit.push(event);
+            audit.extend(events);
             if audit.len() > 1_000 {
                 let drain = audit.len() - 1_000;
                 audit.drain(0..drain);
@@ -926,7 +967,7 @@ fn mutate_komari_alert(
         .ok_or("KOMARI_ALERT_NOT_FOUND")?;
     let mut summary = state.alert_summary.ok_or("KOMARI_ALERT_NOT_FOUND")?;
     let now = now_unix_ms();
-    let (alert, audit_event) = {
+    let (alert, member_ids, audit_events) = {
         let summary_object = summary
             .as_object_mut()
             .ok_or("KOMARI_ALERT_STATE_INVALID")?;
@@ -934,9 +975,9 @@ fn mutate_komari_alert(
             .get_mut("alerts")
             .and_then(Value::as_array_mut)
             .ok_or("KOMARI_ALERT_NOT_FOUND")?;
-        let alert = alerts
-            .iter_mut()
-            .find(|alert| {
+        let selected = alerts
+            .iter()
+            .position(|alert| {
                 alert["alertId"].as_str() == Some(alert_id)
                     && alert["integrationId"]
                         .as_str()
@@ -947,31 +988,15 @@ fn mutate_komari_alert(
                             .is_some_and(|node_id| mapped_nodes.contains(node_id)))
             })
             .ok_or("KOMARI_ALERT_NOT_FOUND")?;
-        if action == "acknowledge" && alert["status"].as_str() == Some("active") {
-            alert["status"] = json!("acknowledged");
-            alert["acknowledgedAt"] = json!(now);
-            alert["acknowledgedBy"] = json!(format!("mcp-client:{}", client.id));
-        } else if action == "close" {
-            alert["status"] = json!("closed");
-            alert["closedAt"] = json!(now);
-        }
-        // Keep the first confirmed MCP lifecycle operation discoverable from
-        // the alert row. A prior diagnostic/remediation link remains intact;
-        // every subsequent action is still represented in the audit event.
-        if alert["relatedOperationJobId"].is_null() {
-            alert["relatedOperationJobId"] = json!(operation_job_id);
-        }
-        let event = json!({
-            "auditId": format!("komari-{}-{}", action, uuid::Uuid::new_v4()),
-            "alertId": alert_id,
-            "fingerprint": alert["fingerprint"].clone(),
-            "event": if action == "acknowledge" { "acknowledged" } else { "closed" },
-            "status": alert["status"].clone(),
-            "actor": format!("mcp-client:{}", client.id),
-            "operationJobId": operation_job_id,
-            "at": now,
-        });
-        (alert.clone(), event)
+        let (ids, events) = komari_incidents::apply_action(
+            alerts,
+            selected,
+            action,
+            &format!("mcp-client:{}", client.id),
+            operation_job_id,
+            now,
+        );
+        (alerts[selected].clone(), ids, events)
     };
     let summary_object = summary
         .as_object_mut()
@@ -981,7 +1006,7 @@ fn mutate_komari_alert(
         .or_insert_with(|| json!([]))
         .as_array_mut()
         .ok_or("KOMARI_ALERT_STATE_INVALID")?;
-    audit_rows.push(audit_event.clone());
+    audit_rows.extend(audit_events.iter().cloned());
     if audit_rows.len() > 1_000 {
         let drain = audit_rows.len() - 1_000;
         audit_rows.drain(0..drain);
@@ -991,8 +1016,9 @@ fn mutate_komari_alert(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let incidents = komari_incidents::project(&alert_rows);
     let count_status = |status: &str| {
-        alert_rows
+        incidents
             .iter()
             .filter(|alert| alert["status"].as_str() == Some(status))
             .count() as i64
@@ -1027,7 +1053,9 @@ fn mutate_komari_alert(
     Ok(json!({
         "integrationId": integration_id,
         "alert": alert,
-        "audit": audit_event,
+        "audit": audit_events.iter().find(|event| event["alertId"] == alert_id).or(audit_events.first()),
+        "memberAlertIds": member_ids,
+        "memberAudit": audit_events,
         "localOnly": true,
         "observedAt": now,
     }))
@@ -2003,6 +2031,45 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(alert_ids, vec!["host-alert", "node-alert"]);
         assert_eq!(scoped["audit"].as_array().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn komari_incidents_and_baselines_respect_host_scope_without_dropping_member_audits() {
+        let summary = json!({
+            "alerts": [
+                {"alertId":"a","hostId":"h1","nodeId":"n1","integrationId":"i",
+                 "incidentKey":"incident","kind":"probe-unknown","status":"active"},
+                {"alertId":"b","hostId":"h1","nodeId":"n1","integrationId":"i",
+                 "incidentKey":"incident","kind":"probe-error:metrics","status":"active"},
+                {"alertId":"c","hostId":"h2","nodeId":"n2","integrationId":"i",
+                 "incidentKey":"incident","status":"active"}
+            ],
+            "audit": [
+                {"auditId":"old-audit-a","alertId":"a","operationJobId":"old-job"},
+                {"auditId":"old-audit-b","alertId":"b","operationJobId":"old-job"},
+                {"auditId":"foreign","alertId":"c"}
+            ],
+            "probeBaselines": [
+                {"hostId":"h1","nodeId":"n1","lastHealthySampledAt":100},
+                {"hostId":"h2","nodeId":"n2","lastHealthySampledAt":200}
+            ],
+            "summary":{"open":3}
+        });
+        let scoped = scoped_komari_alert_state(summary, "h1", &HashSet::from(["n1".to_string()]));
+        assert_eq!(scoped["alerts"].as_array().unwrap().len(), 2);
+        assert_eq!(scoped["incidents"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            scoped["incidents"][0]["memberAlertIds"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(scoped["summary"]["open"], 1);
+        assert_eq!(scoped["audit"].as_array().unwrap().len(), 2);
+        assert_eq!(scoped["audit"][0]["operationJobId"], "old-job");
+        assert_eq!(scoped["probeBaselines"].as_array().unwrap().len(), 1);
+        assert_eq!(scoped["probeBaselines"][0]["lastHealthySampledAt"], 100);
     }
 
     #[test]

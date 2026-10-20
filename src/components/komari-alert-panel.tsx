@@ -1,3 +1,4 @@
+import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
 import { AlertTriangle, Check, CheckCircle2, ChevronRight, CircleAlert, Clock3, ExternalLink, History, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useT } from '@/lib/i18n'
@@ -74,9 +75,10 @@ export function KomariAlertPanel({
   const { t, locale } = useT()
   const [expanded, setExpanded] = useState<string | null>(null)
   const [pending, setPending] = useState<string | null>(null)
-  const alerts = useMemo(() => sortAlerts(state?.alerts ?? []), [state?.alerts])
-  const summary = state?.summary
-  const open = summary?.open ?? alerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length
+  const incidents = useMemo(() => groupKomariAlertIncidents(state?.alerts ?? []), [state?.alerts])
+  const alerts = useMemo(() => sortAlerts(incidents.map((incident) => incident.alert)), [incidents])
+  const localOnly = locale === 'zh-CN' ? '确认和关闭仅更新 ShellBeam 本地记录，不会修改 Komari 服务器。' : 'Acknowledging or closing updates ShellBeam records only; Komari server state is unchanged.'
+  const open = alerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length
   const audit = state?.audit ?? []
 
   async function runAction(alert: KomariAlertRecord, action: 'acknowledge' | 'close') {
@@ -98,9 +100,9 @@ export function KomariAlertPanel({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-semibold text-[var(--workspace-text-strong)]">
             <AlertTriangle className="h-4 w-4 text-[color:var(--workspace-status-warn-text)]" />
-            {t('komariAlerts.title')}
+            {locale === 'zh-CN' ? '告警' : 'Alerts'}
           </div>
-          <p className="mt-1 text-xs text-[var(--workspace-text-muted)]">{t('komariAlerts.description')}</p>
+          <p className="mt-1 text-xs text-[var(--workspace-text-muted)]">{localOnly}</p>
         </div>
         <div className="flex items-center gap-2 text-xs">
           <span className="rounded-full border border-[color:var(--workspace-status-bad)]/40 bg-[var(--workspace-status-bad-bg)] px-2 py-1 font-medium text-[color:var(--workspace-status-bad-text)]">
@@ -127,6 +129,7 @@ export function KomariAlertPanel({
           {alerts.map((alert) => {
             const Icon = severityIcon(alert.severity)
             const isExpanded = expanded === alert.alertId
+            const members = incidents.find((incident) => incident.alert.alertId === alert.alertId)?.members ?? [alert]
             const canAcknowledge = alert.status === 'active' && !!onAcknowledge
             const canClose = (alert.status === 'active' || alert.status === 'acknowledged' || alert.status === 'resolved') && !!onClose
             return (
@@ -137,7 +140,8 @@ export function KomariAlertPanel({
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-medium text-[var(--workspace-text-strong)]">{alert.title}</span>
                       <span className={cn('rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide', statusColor(alert.status))}>{statusLabel(t, alert.status)}</span>
-                      {alert.count != null && <span className="text-xs text-[var(--workspace-text-muted)]">×{alert.count}</span>}
+                      {members.length > 1 && <span className="text-xs text-[var(--workspace-text-muted)]">{locale === 'zh-CN' ? `${members.length} 条关联诊断` : `${members.length} related diagnostics`}</span>}
+                      {alert.count != null && members.length === 1 && <span className="text-xs text-[var(--workspace-text-muted)]">×{alert.count}</span>}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--workspace-text-subtle)]">
                       <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatTime(alert.lastSeenAt, locale)}</span>
@@ -172,6 +176,7 @@ export function KomariAlertPanel({
                     {alert.acknowledgedBy && <div className="flex justify-between gap-3"><span>{t('komariAlerts.acknowledgedBy')}</span><span>{alert.acknowledgedBy}</span></div>}
                     {alert.resolvedAt && <div className="flex justify-between gap-3"><span>{t('komariAlerts.recoveredAt')}</span><span className="font-mono">{formatTime(alert.resolvedAt, locale)}</span></div>}
                     {alert.closedAt && <div className="flex justify-between gap-3"><span>{t('komariAlerts.closedAt')}</span><span className="font-mono">{formatTime(alert.closedAt, locale)}</span></div>}
+                    {members.length > 1 && members.map((member) => <div key={member.alertId} className="border-t border-[color:var(--workspace-border-soft)] pt-1.5"><div>{member.title}</div><div className="break-all font-mono text-[10px]">{member.alertId} · {statusLabel(t, member.status)}</div></div>)}
                     <div className="break-all pt-1 font-mono text-[10px] text-[var(--workspace-text-subtle)]">{alert.fingerprint}</div>
                   </div>
                 )}

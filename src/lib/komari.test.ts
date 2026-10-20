@@ -5,6 +5,7 @@ import {
   getKomariAlertSummary,
   komariRecordToServerMonitorSnapshot,
   listKomariClients,
+  verifyKomariConnection,
   normalizeKomariEndpoint,
   requestKomari,
 } from './komari'
@@ -178,5 +179,30 @@ describe('Komari API adapter', () => {
       .rejects.toBeInstanceOf(KomariApiError)
     await expect(requestKomari({ endpoint: 'https://komari.example' }, { path: '/api/nodes' }, fetchImpl))
       .rejects.toMatchObject({ code: 'endpoint-version' })
+  })
+})
+
+
+describe('authenticated Komari connection verification', () => {
+  it.each([401, 403, 404])('does not accept public discovery after protected API rejection %s', async (status) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(response({ message: 'rejected' }, { status })).mockResolvedValue(response([{ uuid: 'public-node' }]))
+    await expect(verifyKomariConnection({ endpoint: 'https://komari.example', token: 'synthetic-key' }, fetchImpl)).rejects.toBeInstanceOf(KomariApiError)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://komari.example/api/admin/client/list')
+  })
+  it('accepts a protected empty node list and sends only the saved bearer credential', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response({ data: [] }))
+    await expect(verifyKomariConnection({ endpoint: 'https://komari.example/base', token: 'synthetic-key' }, fetchImpl)).resolves.toEqual([])
+    const [url, options] = fetchImpl.mock.calls[0]
+    expect(url).toBe('https://komari.example/base/api/admin/client/list')
+    expect((options?.headers as Headers).get('Authorization')).toBe('Bearer synthetic-key')
+    expect(options).toMatchObject({ credentials: 'omit', redirect: 'error' })
+  })
+  it('rejects a missing key and a console HTML response without trying public discovery', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('<html>console</html>', { status: 200 }))
+    await expect(verifyKomariConnection({ endpoint: 'https://komari.example' }, fetchImpl)).rejects.toMatchObject({ code: 'permission' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+    await expect(verifyKomariConnection({ endpoint: 'https://komari.example', token: 'synthetic-key' }, fetchImpl)).rejects.toMatchObject({ code: 'endpoint-version' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,8 +1,8 @@
 # Terminal + Ops 验收矩阵
 
-对应 [产品 PRD](./prd-terminal-ops.md)，核查日期 2026-10-18。本文记录实现证据和剩余验收，不以阶段名称或已有页面数量作为完成证明。
+对应 [产品 PRD](./prd-terminal-ops.md)，核查日期 2026-10-20。本文记录实现证据和剩余验收，不以阶段名称或已有页面数量作为完成证明。
 
-当前隔离 Ubuntu X11 安装包完整 GUI 验收已通过：[第17次运行 39113100124](https://github.com/0xJean/shellbeam/actions/runs/39113100124)，head `11d9f6331a3214c5bb572cd1ff2786a804f6ac32`、合并检出 `48d6212cfb1a8877514030171847adc0a394205c`。[下载核对的报告与受控截图](https://github.com/0xJean/shellbeam/actions/runs/39113100124/artifacts/12131831582)确认服务闭环、独立 Probe 指标告警、三主机资产刷新及两次真实应用重启均通过，清理和最终退出成功。下文历史失败记录保持原结果；其它平台、外部 Komari、正式 Agent 分发和公有 CA 仍按各自边界验收。
+历史隔离 Ubuntu X11 安装包完整 GUI 验收已通过（不代表本次体验收敛已完成实机验收）：[第17次运行 39113100124](https://github.com/0xJean/shellbeam/actions/runs/39113100124)，head `11d9f6331a3214c5bb572cd1ff2786a804f6ac32`、合并检出 `48d6212cfb1a8877514030171847adc0a394205c`。[下载核对的报告与受控截图](https://github.com/0xJean/shellbeam/actions/runs/39113100124/artifacts/12131831582)确认服务闭环、独立 Probe 指标告警、三主机资产刷新及两次真实应用重启均通过，清理和最终退出成功。下文历史失败记录保持原结果；其它平台、外部 Komari、正式 Agent 分发和公有 CA 仍按各自边界验收。
 
 ## Phase 0：连接与采集底座
 
@@ -28,7 +28,7 @@
 | 资源摘要与跳板搜索 | HostCard Grid/List、`host-search.ts` | 显式展示RX/TX与uptime，选中Provider仅有metrics时仍可展示；缺失unknown、实际0保持0；跳板引用按同Vault当前配置搜索，编辑/删除不继续匹配旧复制字段 |
 | 主机快捷诊断入口 | HostCard/HostsDashboard、SessionsContext、PcLayout | 卡片/列表提供可见的一键Services按钮，避免将原生菜单打开/选择少计为一次；打开Services、选择服务、读取真实status为三次实际点击，11d9f63打包GUI已验证直连/跳板两路诊断，后续两次真实重启均恢复原审计与新观察。保留Overview、Files、Logs、健康检查和刷新；同Vault复用会话、补齐UI标签页，右侧会话提升后不重复挂载；跨Vault同名ID不得复用 |
 | Workspace观察范围 | `workspace-provider-state.ts`、WorkspaceStatusCards、WorkspaceRecommendationsPanel | 桌面/移动Overview指标与资源建议复用主机列表的Provider选择规则；读取同Vault/host的canonical与Komari持久化，切换Vault/路由拒绝迟到读取，映射重绑立即失效旧来源；未绑定引用按明确活动Vault解析，冲突引用不展示 |
-| Overview来源与回退 | WorkspaceProviderSummary、共用`buildHostOpsViews` | 并列显示当前/其他Provider的健康、原始采样/接收/Komari同步时间、TTL、可信程度与实际能力；缺失时间显示未知，不借资产扫描或缓存写入伪造指标时间。Komari过期/不可用时明确显示SSH回退，遥测只属于实际选中的指标观察；资源建议独立检查该指标deadline |
+| Overview来源与回退 | WorkspaceProviderSummary、共用`buildHostOpsViews` | 默认显示选中来源、健康和原始采样时间；其他Provider、接收/Komari同步时间、TTL、可信程度与实际能力折叠到数据源详情；缺失时间显示未知，不借资产扫描或缓存写入伪造指标时间。Komari过期/不可用时明确显示SSH回退，遥测只属于实际选中的指标观察；资源建议独立检查该指标deadline |
 | 文件写操作确认和审计 | `file-operation.ts`、`remote-fs.ts`、Files/SFTP组件 | 只读亦有审计；创建/上传/覆盖/删除/重命名/权限统一确认，后态stat验证；高风险强确认；路径哈希，无内容入审计；取消零执行 |
 | 进程、服务和日志稳定诊断 | `workspace-diagnostics.ts` 和相应Workspace应用 | 有界读取/分页/筛选；进程终止、服务启停及enable/disable后态验证；无法观察结果记unknown；日志跟随可停止且有时限 |
 | Services窄屏字段展示 | `WorkspaceServicesApp` | 窄屏使用Service/Active/Sub三弹性列，Load字段名和值保留在名称附行；sm恢复原四列。容器允许缩小，长名称/状态可断行，完整选中unit保留。只使用窗口正文纵向滚动；组件验证第二行身份、同Vault status审计及Logs目标，未替代320/375/390px实际渲染或移动设备验收 |
@@ -46,14 +46,28 @@
 
 | 要求 | 实现证据 | 验证与状态 |
 | --- | --- | --- |
-| endpoint/token、节点发现和映射 | `komari.ts`、`komari-mapping.ts`、KomariMappingsPanel、原生映射revision | 主机运维视图可发现节点、选择同Vault主机、解决地址歧义和显式恢复自动匹配；手动绑定缺席节点仍保留，后台同步不得覆盖。SQLite重开、revision冲突、跨Vault拒绝及原子清除旧latest缓存有回归；新同步同时写专用/canonical缓存且旧sample不回退。真实外部部署仍待验收 |
-| Komari Web控制台入口 | `komari-console.ts`、Komari设置页、原生`komari_console.rs` | 桌面保留原浏览器窗口，移动端交给系统浏览器；均使用已保存同Vault地址，保留反代basepath、移除query/hash且不传API密钥。移动端仅main WebView可准备/打开/取消短期单次请求，原生在实际OS交接前检查取消、TTL和锁库；切换Vault/集成或迟到prepare不能继续旧导航。请求最多16个、TTL30秒、等待OS回调最多10秒；交接后不声称可撤销或页面已加载。行为/双语/原生状态测试和iOS/Android目标编译检查通过；移动设备实际浏览器展示及外部部署仍待验收 |
+| endpoint/token、节点发现和映射 | `komari.ts`、`komari-mapping.ts`、KomariMappingsPanel、原生映射revision | 设置中的监控数据源接入/管理流程可发现节点、选择同Vault主机、解决地址歧义和显式恢复自动匹配；手动绑定缺席节点仍保留，后台同步不得覆盖。SQLite重开、revision冲突、跨Vault拒绝及原子清除旧latest缓存有回归；新同步同时写专用/canonical缓存且旧sample不回退。真实外部部署仍待验收 |
+| Komari Web控制台入口 | `komari-console.ts`、Komari设置页、原生`komari_console.rs` | 桌面高级管理使用主窗口子WebView面板，按Vault/集成稳定标识，关闭/锁库/切库清理；移动端高级管理仍交给系统浏览器；均使用已保存同Vault地址，保留反代basepath、移除query/hash且不传API密钥。移动端仅main WebView可准备/打开/取消短期单次请求，原生在实际OS交接前检查取消、TTL和锁库；切换Vault/集成或迟到prepare不能继续旧导航。请求最多16个、TTL30秒、等待OS回调最多10秒；交接后不声称可撤销或页面已加载。行为/双语/原生状态测试和iOS/Android目标编译检查通过；移动设备实际浏览器展示及外部部署仍待验收 |
 | 映射编辑后的运维入口 | HostsDashboard、`komari-probe-link.ts` | 重绑立即失效旧来源视图/按钮，迟到旧Vault刷新不得取消新Vault刷新；检查探针前重新核对最新映射并创建同Vault只读OperationJob。安装入口打开同主机Overview的签名制品审核面板，无Workspace入口时隐藏，不直接执行已有远端binary的legacy安装命令；安装Job由实际签名流程确认后建立 |
 | 同步TTL、并发、快照和告警 | `komari-sync.ts`、原生Komari persistence | 主机卡片Grid/List及Overview使用同一成功同步来源：原生`lastSuccessfulSyncAt`仅由完整同步事务设置，普通告警写入不能创建/推进，旧行迁移为NULL、映射变更清空。历史推断时间保持未知，直到真实同步成功；不借采样、映射更新时间或全局刷新时间，不改变既有调度兼容字段或指标TTL。保留既有告警去重、确认/关闭、恢复通知和OperationJob跨会话关联 |
 | 历史时序、范围查询和可视化 | `data/provider_history.rs`、`provider-history.ts`、ProviderHistoryPanel | Vault/provider/host/node隔离；7天/每series10080点/总计100000点；1h/6h/24h/7d视图，来源选择、null/停采断线、原始采样时间和TTL |
 | API契约兼容 | `src/lib/fixtures/komari-http-contracts.json` 和Komari契约测试 | 依据官方Komari源码记录支持的endpoint/版本；测试权限、flat/nested记录、乱序/重复/无时间/未来时间；不宣称所有版本兼容 |
-| 凭据保存与发现反馈 | `VaultProvider`、Komari设置、`KomariMappingsPanel` | 原生凭据写入或随后状态刷新失败必须reject，设置页显示固定双语错误并保留掩码输入；重试复用已创建集成ID，编辑保留已有凭据引用。新建、选择或输入使旧列表失效；保存后离开设置仍完成同一Vault generation的写入，切库/A→B→A/Provider卸载阻断后续阶段，不承诺已发送写入回滚或跨存储原子性。完成持久化及当前列表重载后才显示成功，双语文案区分服务器配置、Vault保存与实际认证。旧Vault刷新在status/keys每次await后核对scope。发现区分缺失凭据、读取失败、权限、连接和超时；只有有效列表可显示成功空态，HTML/非法200响应不转换为零节点。56项聚焦回归及本地官方实例控制台保存路由/受保护认证通过。外部验收随后实际确认服务器保存POST200、有效Key布尔true，75fb7c7新版App保存提示及主窗口受保护admin-list GET200、1真实节点发现；早先失败原因不归为用户漏操作。测试Vault为0主机，映射/实际遥测仍待验收 |
+| 凭据保存与发现反馈 | `VaultProvider`、Komari设置、`KomariMappingsPanel` | 原生凭据写入或随后状态刷新失败必须reject，设置页显示固定双语错误并保留掩码输入；重试复用已创建集成ID，编辑保留已有凭据引用。新建、选择或输入使旧列表失效；保存后离开设置仍完成同一Vault generation的写入，切库/A→B→A/Provider卸载阻断后续阶段，不承诺已发送写入回滚或跨存储原子性。完成持久化及当前列表重载后才显示成功，双语文案区分服务器配置、Vault保存与实际认证。旧Vault刷新在status/keys每次await后核对scope。发现区分缺失凭据、读取失败、权限、连接和超时；只有有效列表可显示成功空态，HTML/非法200响应不转换为零节点。56项聚焦回归及本地官方实例控制台保存路由/受保护认证通过。外部验收随后实际确认服务器保存POST200、有效Key布尔true，75fb7c7新版App保存提示及主窗口受保护admin-list GET200、1真实节点发现；早先失败原因不归为用户漏操作。该轮测试Vault为0主机；后续经用户授权迁入1台主机并验证SSH指标、资产和服务审计，再保存并重新读取手动Komari映射。实际Komari Agent遥测和恢复仍待验收 |
 | 真实Komari实例 | `scripts/komari-live-smoke.mjs`、`docs/komari-live-validation.md` | 未修改的官方1.6.0源码构建：节点/recent、非空真实历史、映射Provider、错误token与桌面Origin CORS头均通过；新节点coarse层为空时最多补查一次1h，保留真实时间，不声称完整24h覆盖；外部部署和实际WebView仍需对应环境验收 |
+
+### 2026-10-20：Komari 集成体验收敛
+
+本轮按 PRD 0.3 调整产品入口，不删除已有集成、Vault 凭据、手动映射、快照或 OperationJob。此前的服务器初始化与独立验收 App 操作保留为历史证据，不作为普通用户接入步骤。
+
+- 主机首页移除映射管理；未接入或无告警时不显示厂商空告警面板。主机和 Overview 的诊断动作、关键健康和真实采样时间保留，技术详情按需展开。
+- 设置中提供连接、受保护 API 验证/发现、关联主机和完成流程；读取现有凭据引用，不回显 Key。公开节点列表回退不能作为 Key 认证通过的证据。
+- 桌面原站管理降为高级入口并在主窗口展示；正常接入不依赖原站。移动平台的原站浏览器交接边界保留。
+- 首次无样本表示等待首报；旧 unknown/metrics-empty/retry-exhausted 三件套以成员保留的事件聚合展示、通知和处理。没有实际新观测不能恢复。
+- UI 与 MCP 的旧 alertId 继续可用，同一事件的成员变化关联同一 OperationJob；原始成员审计和通知投递账本保留，升级不因聚合重新投递历史通知。
+- 配置版本变化会作废旧认证结果；桌面管理打开前按指定 Vault 核验原生解锁状态。主机告警动作、迟到读取和排队通知覆盖切库/锁库的失效检查；显式归属于旧主机的历史审计仍可处理，只有节点身份的旧记录必须有当前映射。
+- 本地完整前端回归 **1,375 passed / 17 skipped**（macOS 跳过 16 项 Linux Ops 与 1 项 Linux collector）；TypeScript/Vite 生产构建、43 个改动 TS/TSX 文件的 ESLint、Rust formatting 和差异检查通过。新增 host action 用例在最终类型调整后单独复验 **19/19**。Rust 库测试 **170 passed / 1 ignored**，MCP stdio **2/2**，运维脚本 **120/120** 通过；本机忽略项为需独立 Linux 环境的原生 bridge。
+- 旧三成员升级、历史有效样本基线、真实 critical、独立认证故障、恢复成员兼容、单次恢复通知和跨会话审计均有自动回归。原有安装包 GUI 断言依赖的健康、诊断与告警行仍在折叠区域外，未修改验收脚本或放宽断言。
+- 此前 head 的 CI 和实机结果不自动延伸至本轮。真实外部 Komari Agent 上报/恢复、新主窗口管理面板实机交互、移动设备及其他系统通知展示仍按原边界待验收。
 
 ## Phase 3：明确授权的常驻探针
 

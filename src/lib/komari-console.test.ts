@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { invoke, isTauri } from '@tauri-apps/api/core'
-import { cancelMobileKomariConsole, komariConsoleMode, komariConsoleUrl, openMobileKomariConsole, prepareMobileKomariConsole } from './komari-console'
+import { cancelMobileKomariConsole, komariConsoleBrowserId, komariConsoleMode, komariConsoleUrl, openMobileKomariConsole, prepareMobileKomariConsole } from './komari-console'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn(() => false) }))
 afterEach(() => { vi.mocked(isTauri).mockReturnValue(false); vi.mocked(invoke).mockReset() })
@@ -58,5 +58,15 @@ describe('Komari console native handoff', () => {
     expect(invoke).toHaveBeenNthCalledWith(3, 'cancel_mobile_komari_console', { requestId })
     vi.mocked(invoke).mockResolvedValueOnce('https://unsafe.example?token=private')
     await expect(prepareMobileKomariConsole('vault-a', 'saved-id')).rejects.toThrow('KOMARI_CONSOLE_UNAVAILABLE')
+  })
+})
+
+
+describe('scoped Komari main-window identity', () => {
+  it('is stable for a pair, separates Vaults and integrations, and only uses safe label characters', () => {
+    expect(komariConsoleBrowserId('vault-a', 'same')).toBe(komariConsoleBrowserId('vault-a', 'same'))
+    expect(komariConsoleBrowserId('vault-a', 'same')).not.toBe(komariConsoleBrowserId('vault-b', 'same'))
+    expect(komariConsoleBrowserId('ab', 'c')).not.toBe(komariConsoleBrowserId('a', 'bc'))
+    expect(komariConsoleBrowserId('测试 / Vault', 'id:1')).toMatch(/^[a-z0-9-]+$/)
   })
 })

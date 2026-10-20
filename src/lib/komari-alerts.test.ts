@@ -65,7 +65,8 @@ describe('Komari alert lifecycle', () => {
       },
     } as unknown as ProbeSnapshot
     const observations = komariAlertObservationsFromProbeSnapshot(unhealthy, { integrationId: 'prod' }, 2_000)
-    expect(observations.find((item) => item.kind === 'probe-unknown')).toMatchObject({ count: 1, severity: 'warning' })
+    expect(observations.filter((item) => (item.count ?? 0) > 0)).toHaveLength(1)
+    expect(observations.some((item) => item.kind === 'probe-unknown')).toBe(false)
     expect(observations.find((item) => item.kind === 'probe-error:metrics')).toMatchObject({
       count: 1,
       severity: 'warning',
@@ -84,7 +85,7 @@ describe('Komari alert lifecycle', () => {
       },
     } as unknown as ProbeSnapshot
     expect(komariAlertObservationsFromProbeSnapshot(stale, { integrationId: 'prod' }, 2_000)
-      .find((item) => item.kind === 'probe-stale')).toMatchObject({ count: 1 })
+      .find((item) => item.kind === 'probe-error:metrics')).toMatchObject({ count: 1, title: 'Komari monitoring data is stale' })
 
     const opened = reconcileKomariAlerts([], observations, { now: 2_000 })
     expect(opened.audit.find((entry) => entry.event === 'opened')?.probeTelemetry).toMatchObject({
@@ -97,7 +98,7 @@ describe('Komari alert lifecycle', () => {
       ...unhealthy,
       health: 'online',
       errors: [],
-      metrics: null,
+      metrics: { ...stale.metrics!, freshness: { ...stale.metrics!.freshness, sampledAt: 2_050, expiresAt: 5_000, expired: false } },
       telemetry: {
         status: 'success', startedAt: 2_050, completedAt: 2_100, durationMs: 50,
         attempts: 0, maxRetries: 2, retryDelayMs: 50, recovered: false, exhausted: false,
@@ -108,7 +109,7 @@ describe('Komari alert lifecycle', () => {
       komariAlertObservationsFromProbeSnapshot(healthy, { integrationId: 'prod' }, 2_100),
       { now: 2_100 },
     )
-    expect(recovered.alerts.filter((alert) => alert.status === 'resolved')).toHaveLength(2)
+    expect(recovered.alerts.filter((alert) => alert.status === 'resolved')).toHaveLength(1)
     expect(recovered.alerts.find((alert) => alert.kind === 'probe-error:metrics')?.probeTelemetry).toMatchObject({
       status: 'success', attempts: 0, exhausted: false,
     })

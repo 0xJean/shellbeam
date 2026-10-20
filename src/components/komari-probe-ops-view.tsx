@@ -2,9 +2,11 @@ import type { HostProfile } from '@/lib/hosts'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import { komariHostSyncCopy } from '@/lib/locales/komari-host-sync'
+import { monitoringSourcesCopy } from '@/lib/locales/monitoring-sources'
+import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
-import { AlertTriangle, Bot, CheckCircle2, Clock3, Route, ShieldAlert, Wrench } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock3, Route, ShieldAlert, Wrench } from 'lucide-react'
 
 type TFn = (key: string, params?: Record<string, string | number>) => string
 
@@ -81,10 +83,11 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
     : null
   const alertSummary = link.komari.alerts
   const scopedAlerts = link.alertState?.alerts.filter((alert) => alert.nodeId === link.nodeId || alert.hostId === host.id) ?? []
-  const openAlerts = scopedAlerts.filter((alert) => (alert.status === 'active' || alert.status === 'acknowledged')
+  const incidents = groupKomariAlertIncidents(scopedAlerts).map(({ alert }) => alert)
+  const openAlerts = incidents.filter((alert) => (alert.status === 'active' || alert.status === 'acknowledged')
     && (alert.nodeId === link.nodeId || alert.hostId === host.id)) ?? []
-  const acknowledgedAlerts = scopedAlerts.filter((alert) => alert.status === 'acknowledged')
-  const closedAlerts = scopedAlerts.filter((alert) => alert.status === 'closed')
+  const acknowledgedAlerts = incidents.filter((alert) => alert.status === 'acknowledged')
+  const closedAlerts = incidents.filter((alert) => alert.status === 'closed')
   const alertIds = new Set(scopedAlerts.map((alert) => alert.alertId))
   const latestAlertAudit = [...(link.alertState?.audit ?? [])]
     .filter((entry) => alertIds.has(entry.alertId) && entry.operationJobId)
@@ -101,8 +104,7 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
   return (
     <div data-testid="komari-probe-ops-view" className="mt-2 space-y-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 text-[10px] text-[var(--workspace-text-muted)]">
       <div className="flex min-w-0 items-center gap-1.5">
-        <Bot className="h-3 w-3 shrink-0 text-[var(--workspace-accent-text)]" />
-        <span className="shrink-0 font-semibold text-[var(--workspace-text-strong)]">{t('workspace.komariProbe.title')}</span>
+        <span className="shrink-0 font-semibold text-[var(--workspace-text-strong)]">{monitoringSourcesCopy[locale].komariSource}</span>
         <span className={cn('truncate font-medium', statusClass(link.status))}>{mappingLabel(link.status, t)}</span>
         <span className="ml-auto inline-flex shrink-0 items-center gap-1" title={routeLabel(host, t)}>
           <Route className="h-3 w-3" />
@@ -114,16 +116,16 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
         <span className="inline-flex min-w-0 items-center gap-1" title={t('workspace.komariProbe.sourceHint')}>
           {link.komari.state === 'online' ? <CheckCircle2 className="h-3 w-3 text-[color:var(--workspace-status-good-text)]" /> : <ShieldAlert className="h-3 w-3 text-[color:var(--workspace-status-warn-text)]" />}
           <span className="shrink-0">{t('workspace.komariProbe.komari')}</span>
-          <strong className={cn('truncate font-medium', statusClass(link.komari.state))}>{stateLabel(link.komari.state, t)}</strong>
+          <strong className={cn('truncate font-medium', statusClass(link.komari.state))}>{link.komari.waitingForFirstReport ? monitoringSourcesCopy[locale].waitingForFirstReport : stateLabel(link.komari.state, t)}</strong>
         </span>
         <span className="inline-flex min-w-0 items-center gap-1" title={t('workspace.komariProbe.sampledAt')}>
           <Clock3 className="h-3 w-3 shrink-0" />
           <span className="truncate">{formatAge(link.komari.sampledAt, t)}</span>
         </span>
         {alertSummary && (
-          <span className={cn('inline-flex shrink-0 items-center gap-1', (alertSummary.active ?? 0) > 0 && 'text-[color:var(--workspace-status-bad-text)]')} title={t('hosts.opsAlerts')}>
+          <span data-testid="komari-remote-alert-summary" className={cn('inline-flex shrink-0 items-center gap-1', (alertSummary.active ?? 0) > 0 && 'text-[color:var(--workspace-status-bad-text)]')} title={monitoringSourcesCopy[locale].remoteAlerts}>
             <AlertTriangle className="h-3 w-3" />
-            <span>{alertSummary.active}/{alertSummary.total}</span>
+            <span>{monitoringSourcesCopy[locale].remoteAlerts}: {alertSummary.unsupported ? t('hosts.opsUnsupported') : `${alertSummary.active ?? '—'}/${alertSummary.total ?? '—'}`}</span>
           </span>
         )}
         {scopedAlerts.length > 0 && (
@@ -143,7 +145,7 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
         {validSync ? <time dateTime={new Date(syncAt).toISOString()}>{new Date(syncAt).toLocaleString(locale)}</time> : <span>{syncCopy.unknown}</span>}
       </div>
 
-      <div className="flex min-w-0 items-center gap-2">
+      {link.probe.record && <div className="flex min-w-0 items-center gap-2">
         <span className="inline-flex min-w-0 items-center gap-1" title={t('workspace.agentProbe.description')}>
           <Wrench className="h-3 w-3 shrink-0 text-[var(--workspace-accent-text)]" />
           <span className="shrink-0">{t('workspace.agentProbe.title')}</span>
@@ -152,12 +154,12 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
         </span>
         {link.probe.version && <span className="shrink-0 font-mono">v{link.probe.version}</span>}
         <span className="ml-auto shrink-0">{formatAge(link.probe.lastHeartbeatAt, t)}</span>
-      </div>
+      </div>}
 
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="truncate" title={link.probe.record?.capabilities.join(', ') || t('workspace.agentProbe.none')}>
-          {t('workspace.agentProbe.capabilities')}: {link.probe.record?.capabilities.length ? link.probe.record.capabilities.slice(0, 4).join(', ') : t('workspace.agentProbe.none')}
-        </span>
+      {(link.probe.record || action && onAction) && <div className="flex min-w-0 items-center gap-1.5">
+        {link.probe.record && <span className="truncate" title={link.probe.record.capabilities.join(', ') || t('workspace.agentProbe.none')}>
+          {t('workspace.agentProbe.capabilities')}: {link.probe.record.capabilities.length ? link.probe.record.capabilities.slice(0, 4).join(', ') : t('workspace.agentProbe.none')}
+        </span>}
         {action && onAction && (
           <button
             type="button"
@@ -168,7 +170,7 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
             {busy ? t('workspace.komariProbe.working') : t(`workspace.komariProbe.action.${action}`)}
           </button>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

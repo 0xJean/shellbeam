@@ -41,8 +41,8 @@ describe('Komari manual mapping workflow', () => {
     render(panel())
     fireEvent.click(screen.getByText(locale === 'en' ? 'Komari node mappings' : 'Komari 节点映射'))
     expect(await screen.findByText(locale === 'en'
-      ? 'No server API key is saved for this integration in this Vault. In Settings → Komari, select this server, paste its API key and save.'
-      : '当前 Vault 尚未为此集成保存服务器 API 密钥。请在设置 → Komari 中选择此服务器，粘贴 API 密钥并保存。')).toBeVisible()
+      ? 'No server API key is saved for this integration in this Vault. In Settings → Monitoring data sources → Komari, select this server, paste its API key and save.'
+      : '当前 Vault 尚未为此集成保存服务器 API 密钥。请在设置 → 监控数据源 → Komari 中选择此服务器，粘贴 API 密钥并保存。')).toBeVisible()
     expect(listKomariClients).not.toHaveBeenCalled()
     expect(screen.getByText(locale === 'en' ? 'Manual binding · second' : '手动绑定 · second')).toBeVisible()
     expect(screen.queryByText(/Node discovery completed|节点发现已完成/)).not.toBeInTheDocument()

@@ -1,4 +1,5 @@
 import { matchesHostSearch } from '@/lib/host-search'
+import { getHostIdentity } from '@/lib/host-identity'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { HostOpsAdvancedFilters } from '@/components/host-ops-filters'
 import { DEFAULT_HOST_OPS_FILTERS, matchesHostOpsFilters, type HostOpsFilters } from '@/lib/host-ops-filters'
@@ -26,7 +27,8 @@ import { hostProbeEvaluations, loadHostOpsViews, type HostOpsView } from '@/lib/
 import { buildKomariProbeLinks, checkKomariLinkedProbe, type KomariProbeLink } from '@/lib/komari-probe-link'
 import { runConfirmedOperation } from '@/lib/operation-job'
 import { runKomariAlertAction, type KomariAlertAction } from '@/lib/komari-alert-actions'
-import type { KomariAlertRecord } from '@/lib/komari-alerts'
+import type { KomariAlertRecord, KomariAlertState } from '@/lib/komari-alerts'
+import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
 import { listShellbeamAgents } from '@/lib/shellbeam-agent'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import { KOMARI_MAPPING_CHANGED_EVENT, confirmedKomariSyncAt, getKomariMappingState, manualKomariMappings, loadKomariPersistence, persistKomariAlertState, persistKomariSync } from '@/lib/komari-persistence'
@@ -39,9 +41,7 @@ import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, reconcileKomariProbeAler
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
-import { KomariProbeMappingNotice } from './komari-probe-ops-view'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
-import { KomariMappingsPanel } from './komari-mappings-panel'
 import MultiHostOperationsPanel, { type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
@@ -250,6 +250,12 @@ interface HostsDashboardProps {
   headerExtraAction?: ReactNode
 }
 
+function komariAlertHostVersion(host: HostProfile, hosts: readonly HostProfile[]): string {
+  const version = (row: HostProfile) => [row.name, row.updatedAt, row.authType, row.secretKeyRef, row.passwordKeyRef, row.privateKeyRef]
+  const jump = host.jumpHostId ? hosts.find((row) => row.id === host.jumpHostId) : undefined
+  return JSON.stringify([getHostIdentity(host, hosts), version(host), jump ? version(jump) : null])
+}
+
 function hostOpsToCardSummary(
   view?: HostOpsView,
   komariProbe?: KomariProbeLink,
@@ -262,6 +268,7 @@ function hostOpsToCardSummary(
   const latestAudit = view.latestAudit
   const alertSummary = view.health.alertSummary
   const alertLifecycle = view.health.alertLifecycle
+  const alertIncidents = groupKomariAlertIncidents(view.komariAlerts)
   return {
     serviceTotal: view.serviceSummary.total,
     serviceActive: view.serviceSummary.active,
@@ -274,6 +281,9 @@ function hostOpsToCardSummary(
       alertUnsupported: alertSummary.unsupported === true,
     } : {}),
     ...(alertLifecycle ? {
+      alertTotal: alertIncidents.length,
+      alertActive: alertIncidents.filter(({ alert }) => alert.status === 'active').length,
+      alertUnsupported: false,
       alertAcknowledged: alertLifecycle.acknowledged,
       alertClosed: alertLifecycle.closed,
       alertOpen: alertLifecycle.open,
@@ -378,13 +388,23 @@ export function HostsDashboard({
     return () => { mounted.current = false; sequence.current++ }
   }, [])
   const [komariProbeAction, setKomariProbeAction] = useState<{ vaultId?: string; key: string; sequence: number } | null>(null)
-  const [komariAlertAction, setKomariAlertAction] = useState<{ vaultId?: string; key: string; sequence: number } | null>(null)
+  const [komariAlertAction, setKomariAlertAction] = useState<{ vaultId?: string; key: string; sequence: number; generation: number } | null>(null)
   const komariProbeActionKey = komariProbeAction && komariProbeAction.vaultId === activeVaultId ? komariProbeAction.key : null
-  const komariAlertActionKey = komariAlertAction && komariAlertAction.vaultId === activeVaultId ? komariAlertAction.key : null
   const komariActionSequence = useRef(0)
   const localScope = useRef({ vaultId: activeVaultId, unlocked: vaultUnlocked, generation: 0, hosts })
   if (localScope.current.vaultId !== activeVaultId || localScope.current.unlocked !== vaultUnlocked) localScope.current.generation++
   localScope.current = { ...localScope.current, vaultId: activeVaultId, unlocked: vaultUnlocked, hosts }
+  const komariAlertActionKey = komariAlertAction && komariAlertAction.vaultId === activeVaultId && komariAlertAction.generation === localScope.current.generation ? komariAlertAction.key : null
+  const komariAlertContext = useRef({ hostVersions: new Map<string, string>(), hostGenerations: new Map<string, number>(), mappingGenerations: new Map<string, number>() })
+  const komariAlertPending = useRef<{ sequence: number; isCurrent: () => boolean } | null>(null)
+  const scopedActionHosts = hosts.filter((host) => !host.vaultId || host.vaultId === activeVaultId)
+  const hostVersions = new Map(scopedActionHosts.map((host) => [host.id, komariAlertHostVersion(host, scopedActionHosts)]))
+  for (const id of new Set([...komariAlertContext.current.hostVersions.keys(), ...hostVersions.keys()])) {
+    if (komariAlertContext.current.hostVersions.get(id) !== hostVersions.get(id)) {
+      komariAlertContext.current.hostGenerations.set(id, (komariAlertContext.current.hostGenerations.get(id) ?? 0) + 1)
+    }
+  }
+  komariAlertContext.current.hostVersions = hostVersions
   const localActionSequence = useRef(0)
   const localActionPending = useRef<{ generation: number; sequence: number } | null>(null)
   const [localAlertAction, setLocalAlertAction] = useState<{ vaultId: string; generation: number; sequence: number; hostId: string; ruleId: string } | null>(null)
@@ -433,7 +453,10 @@ export function HostsDashboard({
                   alertState: cachedAlertState,
                   now: Date.now(),
                 })
-                if (cachedAlerts.alertAudit.length > 0) {
+                const baselineSignature = (state: KomariAlertState | null) => JSON.stringify((state?.probeBaselines ?? [])
+                  .map((row) => JSON.stringify([row.integrationId, row.endpoint ?? '', row.nodeId, row.hostId, row.lastHealthySampledAt])).sort())
+                if (cachedAlerts.alertAudit.length > 0
+                  || baselineSignature(cachedAlerts.alertState) !== baselineSignature(cachedAlertState)) {
                   await persistKomariAlertState({
                     integrationId: integration.id,
                     state: cachedAlerts.alertState,
@@ -459,6 +482,7 @@ export function HostsDashboard({
                 ttlMs,
                 force: forceKomari,
                 alertState: cachedAlertState,
+                previousSnapshots: cachedSnapshots,
               })
               if (!isCurrent()) throw new Error('KOMARI_REFRESH_SUPERSEDED')
               if (!result.skipped) {
@@ -641,39 +665,67 @@ export function HostsDashboard({
   }, [activeVaultId, hosts, refreshHostOps, resolveKomariHostSecret, onOpenWorkspace, onSelectHost])
 
   const handleKomariAlertAction = useCallback(async (host: HostProfile, action: KomariAlertAction, alert: KomariAlertRecord) => {
-    if (!opsMounted.current || currentOpsVault.current !== activeVaultId) return
+    if (!activeVaultId || !vaultUnlocked) return
+    const generation = localScope.current.generation
+    const hostGeneration = komariAlertContext.current.hostGenerations.get(host.id)
+    const mappingGeneration = komariAlertContext.current.mappingGenerations.get(alert.integrationId) ?? 0
+    const isCurrent = () => opsMounted.current && localScope.current.generation === generation
+      && localScope.current.vaultId === activeVaultId && localScope.current.unlocked
+      && komariAlertContext.current.hostVersions.has(host.id)
+      && komariAlertContext.current.hostGenerations.get(host.id) === hostGeneration
+      && (komariAlertContext.current.mappingGenerations.get(alert.integrationId) ?? 0) === mappingGeneration
+    if (!isCurrent() || (host.vaultId && host.vaultId !== activeVaultId)
+      || komariAlertContext.current.hostVersions.get(host.id) !== komariAlertHostVersion(host, localScope.current.hosts.filter((row) => !row.vaultId || row.vaultId === activeVaultId))
+      || komariAlertPending.current?.isCurrent()) return
     const key = `${action}:${alert.alertId}`
     const sequence = ++komariActionSequence.current
-    setKomariAlertAction({ vaultId: activeVaultId, key, sequence })
+    komariAlertPending.current = { sequence, isCurrent }
+    setKomariAlertAction({ vaultId: activeVaultId, key, sequence, generation })
     try {
-      const persisted = await loadKomariPersistence(alert.integrationId)
+      const [persisted, integrations] = await Promise.all([loadKomariPersistence(alert.integrationId), listKomariIntegrations(activeVaultId)])
+      if (!isCurrent()) return
+      if (!integrations.some((integration) => integration.id === alert.integrationId && integration.vaultId === activeVaultId)) return
       const state = readKomariAlertState(persisted.syncState)
       if (!state) throw new Error('Komari alert state is unavailable; refresh the host first')
+      const current = groupKomariAlertIncidents(state.alerts).map(({ alert: incident }) => incident).find((row) => row.alertId === alert.alertId && row.integrationId === alert.integrationId
+        && row.fingerprint === alert.fingerprint && row.firstSeenAt === alert.firstSeenAt
+        && row.nodeId === alert.nodeId && row.hostId === alert.hostId)
+      if (!current) return
+      // Explicit historical ownership remains actionable on the original host
+      // after a remap. A node-only record needs a current binding, and cannot
+      // borrow another host's historical ownership merely via the node ID.
+      if (current.hostId) {
+        if (current.hostId !== host.id) return
+      } else {
+        if (!current.nodeId) return
+        const mapping = await getKomariMappingState(activeVaultId, alert.integrationId)
+        if (!isCurrent() || !mapping.mappings.some((row) => row.nodeId === current.nodeId && row.hostId === host.id)) return
+      }
+      if (!isCurrent()) return
       await runKomariAlertAction(action, {
         host,
         integrationId: alert.integrationId,
         state,
         alertId: alert.alertId,
         vaultId: activeVaultId,
+        isCurrent,
         lastSyncedAt: persisted.lastSyncedAt ?? undefined,
         ttlMs: persisted.syncState?.ttlMs,
         confirmMessage: t(
           action === 'acknowledge' ? 'hosts.alert.confirmAcknowledge' : 'hosts.alert.confirmClose',
-          { host: host.name, alert: alert.title },
+          { host: host.name, alert: current.title },
         ),
       })
     } catch (error) {
-      // Confirmation rejection and persistence failures remain in the
-      // OperationJob journal; keep the host list responsive and refresh the
-      // card so its audit count reflects the terminal job state.
-      console.error('Komari alert operation failed', error)
+      if (isCurrent()) console.error('Komari alert operation failed', error)
     } finally {
-      await refreshHostOps(true).catch((error) => {
+      if (isCurrent()) await refreshHostOps(true).catch((error) => {
         console.error('Komari host operations refresh failed', error)
       })
-      setKomariAlertAction((current) => current && current.vaultId === activeVaultId && current.key === key && current.sequence === sequence ? null : current)
+      if (komariAlertPending.current?.sequence === sequence) komariAlertPending.current = null
+      setKomariAlertAction((current) => current?.sequence === sequence ? null : current)
     }
-  }, [activeVaultId, refreshHostOps, t])
+  }, [activeVaultId, vaultUnlocked, refreshHostOps, t])
 
   const handleLocalAlertAction = useCallback(async (host: HostProfile, alert: LocalAlertRecord, action: 'acknowledge' | 'close') => {
     if (!activeVaultId || !vaultUnlocked) return
@@ -709,6 +761,7 @@ export function HostsDashboard({
     const invalidateMapping = (event: Event) => {
       const detail = (event as CustomEvent<{ vaultId: string; integrationId: string }>).detail
       if (!detail || detail.vaultId !== activeVaultId || currentOpsVault.current !== activeVaultId) return
+      komariAlertContext.current.mappingGenerations.set(detail.integrationId, (komariAlertContext.current.mappingGenerations.get(detail.integrationId) ?? 0) + 1)
       opsRefreshSequence.current++
       const affectedHosts = new Set(komariProbeLinks.filter((link) => link.integrationId === detail.integrationId).flatMap((link) => link.hostId ? [link.hostId] : []))
       setScopedKomariProbeLinks((current) => current.vaultId !== activeVaultId ? current : { ...current, links: current.links.filter((link) => link.integrationId !== detail.integrationId) })
@@ -898,7 +951,7 @@ export function HostsDashboard({
         const state = loadLocalAlertState(activeVaultId, id)
         const localAlerts = state.alerts.filter((alert) => alert.hostId === id)
         const open = localAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
-        const komari = view.komariAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
+        const komari = groupKomariAlertIncidents(view.komariAlerts).map(({ alert }) => alert).filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
         const rank = ['info', 'warning', 'critical']
         const highestAlertSeverity = [...open, ...komari].map((alert) => alert.severity).sort((a, b) => rank.indexOf(b) - rank.indexOf(a))[0] ?? null
         return [id, { ...view, localAlerts, localAlertEvaluations: hostProbeEvaluations(state.evaluations), localAlertOpen: open.length, highestAlertSeverity, alertOpenCount: view.alertOpenCount == null ? null : view.alertOpenCount - (view.localAlertOpen ?? 0) + open.length }]
@@ -1196,9 +1249,7 @@ export function HostsDashboard({
         }
       >
           <MultiHostOperationsPanel hosts={filteredHosts} onRunOperation={handleMultiHostOperation} />
-          <KomariAlertsDashboardPanel activeVaultId={activeVaultId} hosts={hosts} onOpenHost={(hostId) => { onSelectHost(hostId); onOpenWorkspace?.(hostId, 'overview') }} />
-          <KomariProbeMappingNotice links={komariProbeLinks} />
-          <KomariMappingsPanel key={activeVaultId} activeVaultId={activeVaultId} hosts={hosts} vaultUnlocked={vaultUnlocked} onLoadVaultSecret={onLoadVaultSecret} />
+          <KomariAlertsDashboardPanel activeVaultId={activeVaultId} vaultUnlocked={vaultUnlocked} hosts={hosts} onOpenHost={(hostId) => { onSelectHost(hostId); onOpenWorkspace?.(hostId, 'overview') }} />
           <HostCreateDialog availableHosts={hosts}
             open={showAddForm}
             defaultUsername={defaultUsername}

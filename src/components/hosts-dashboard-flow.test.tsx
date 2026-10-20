@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { HostsDashboard } from './hosts-dashboard'
 import { I18nProvider } from '@/lib/i18n'
@@ -6,6 +6,7 @@ import { buildHostOpsViews, loadHostOpsViews } from '@/lib/host-ops-view'
 import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
 import type { ProbeSnapshot } from '@/lib/probe-provider'
 import type { HostProfile } from '@/lib/hosts'
+import type { KomariAlertRecord, KomariAlertState } from '@/lib/komari-alerts'
 import { invoke } from '@tauri-apps/api/core'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import * as komariSync from '@/lib/komari-sync'
@@ -35,6 +36,46 @@ function komariSnapshot(sampledAt: number, ttlMs = 60_000): ProbeSnapshot {
     metrics: { data: metrics, source, freshness: { sampledAt, receivedAt: sampledAt, ttlMs, expiresAt: sampledAt + ttlMs, expired: false, expiryReason: null }, confidence: 'partial' }, inventory: null, errors: [] }
 }
 describe('host operations filter workflow', () => {
+  it('keeps integration setup and empty provider alerts out of the host dashboard', async () => {
+    renderDashboard({ onOpenWorkspace: vi.fn() })
+    await waitFor(() => expect(screen.getByTestId('host-ops-refresh-status')).toHaveAttribute('data-status', 'fresh'))
+    expect(screen.queryByTestId('komari-mappings-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('komari-probe-mapping-notice')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('komari-alert-panel')).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Open operations for API host' })).toBeVisible()
+  })
+
+  it('shows one local incident count while retaining the distinct zero-valued server aggregate in source details', async () => {
+    const now = Date.now()
+    const snapshot = { ...komariSnapshot(now - 1000), alerts: { load: 0, offline: 0, total: 0, active: 0, updatedAt: now } }
+    const metrics: KomariAlertRecord = { schemaVersion: 1, source: 'komari', alertId: 'metrics', fingerprint: 'komari-a|node-1|host-0|probe-error:metrics', integrationId: 'komari-a', nodeId: 'node-1', hostId: 'host-0', kind: 'probe-error:metrics', title: 'Komari Probe metrics error: Komari returned no dated metric observations', severity: 'warning', count: 1, status: 'active', firstSeenAt: now, lastSeenAt: now, acknowledgedAt: null, acknowledgedBy: null, resolvedAt: null, closedAt: null, relatedOperationJobId: null, deduplicatedCount: 0 }
+    const alertState: KomariAlertState = { schemaVersion: 1, audit: [], alerts: [
+      metrics,
+      { ...metrics, alertId: 'health', fingerprint: 'komari-a|node-1|host-0|probe-unknown', kind: 'probe-unknown', title: 'Komari Probe health is unknown' },
+      { ...metrics, alertId: 'retry', fingerprint: 'komari-a|node-1|host-0|probe-error:provider', kind: 'probe-error:provider', severity: 'critical', title: 'Komari Probe provider error: Probe recovery failed after 3 retries: Komari returned no dated metric observations' },
+    ], summary: { load: null, offline: null, total: 3, active: 3, open: 3, acknowledged: 0, resolved: 0, closed: 0, deduplicated: 0, localUpdatedAt: now, updatedAt: now } }
+    vi.mocked(loadHostOpsViews).mockResolvedValue(buildHostOpsViews({ hosts, komariSnapshots: [snapshot], komariAlertStates: [alertState], now }))
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true, createdAt: 1, updatedAt: 1 }]
+      if (command === 'get_komari_sync_state') return { integrationId: 'komari-a', lastSyncedAt: now, lastSuccessfulSyncAt: now, ttlMs: 60_000, alertSummary: alertState, updatedAt: now }
+      if (command === 'list_komari_snapshots') return [{ updatedAt: now, snapshot }]
+      if (command === 'list_komari_mappings') return [{ integrationId: 'komari-a', hostId: 'host-0', nodeId: 'node-1', source: 'manual', confidence: 'explicit', updatedAt: now }]
+      return command === 'mcp_list_project_deployments' ? { projects: [], total: 0, observedAt: 0 } : []
+    })
+    renderDashboard({ vaultUnlocked: true, onLoadVaultSecret: vi.fn(async () => null) })
+    const summary = await screen.findByTestId('host-ops-alert-summary')
+    expect(summary).toBeVisible()
+    expect(summary).toHaveAttribute('data-total', '1')
+    expect(summary).toHaveAttribute('data-active', '1')
+    expect(summary).toHaveAttribute('data-open', '1')
+    expect(summary).toHaveTextContent(/Alerts\s*1\s*·\s*1 active/)
+    const source = screen.getByTestId('komari-remote-alert-summary')
+    expect(source).not.toBeVisible()
+    fireEvent.click(within(summary.parentElement!).getByTestId('host-data-source-details').querySelector('summary')!)
+    expect(source).toBeVisible()
+    expect(source).toHaveTextContent('Server alert summary: 0/0')
+  })
+
   it.each([true, false])('renders only a confirmed persisted Komari sync timestamp (sync state: %s)', async (hasSync) => {
     const syncedAt = Date.now() - 5000
     const sampleAt = syncedAt - 10000
@@ -75,7 +116,7 @@ describe('host operations filter workflow', () => {
       const view = renderDashboard({ vaultUnlocked: true, onLoadVaultSecret })
       await waitFor(() => expect(loadHostOpsViews).toHaveBeenCalledTimes(1))
       await waitFor(() => expect(screen.getByTestId('host-ops-refresh-status')).toHaveAttribute('data-status', 'fresh'))
-      expect(syncState?.alertSummary?.alerts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'probe-stale', status: 'active' })]))
+      expect(syncState?.alertSummary?.alerts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'probe-error:metrics', title: 'Komari monitoring data is stale', status: 'active' })]))
       expect(invoke).toHaveBeenCalledWith('upsert_komari_sync_state', { payload: expect.objectContaining({ lastSyncedAt: updatedAt }) })
       expect(screen.getByTestId('komari-host-last-sync').querySelector('time')).toBeNull()
       expect(screen.getByTestId('komari-host-last-sync')).toHaveTextContent('Unknown')
@@ -93,6 +134,39 @@ describe('host operations filter workflow', () => {
       expect(JSON.stringify(snapshot)).toBe(before)
       expect(snapshot.metrics?.freshness.expiresAt).toBe(snapshot.metrics!.freshness.sampledAt + 60_000)
     } finally { http.mockRestore() }
+  })
+
+  it('persists a real cached healthy baseline without an alert or invented sync provenance, once across refreshes', async () => {
+    const sampledAt = Date.now() - 5_000
+    const updatedAt = sampledAt + 1_000
+    const snapshot = komariSnapshot(sampledAt)
+    let syncState: KomariSyncState = { integrationId: 'komari-a', lastSyncedAt: updatedAt, lastSuccessfulSyncAt: null, ttlMs: 60_000, alertSummary: null, updatedAt }
+    const onLoadVaultSecret = vi.fn(async () => 'fixture-token')
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true, createdAt: 1, updatedAt: 1 }]
+      if (command === 'get_komari_sync_state') return syncState
+      if (command === 'list_komari_snapshots') return [{ updatedAt, snapshot }]
+      if (command === 'list_komari_mappings') return [{ integrationId: 'komari-a', hostId: 'host-0', nodeId: 'node-1', source: 'manual', confidence: 'explicit', updatedAt }]
+      if (command === 'upsert_komari_sync_state') {
+        syncState = { ...(args as { payload: KomariSyncState }).payload, lastSuccessfulSyncAt: null }
+        return undefined
+      }
+      return command === 'mcp_list_project_deployments' ? { projects: [], total: 0, observedAt: 0 } : []
+    })
+    const view = renderDashboard({ vaultUnlocked: true, onLoadVaultSecret })
+    await waitFor(() => expect(loadHostOpsViews).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.getByTestId('host-ops-refresh-status')).toHaveAttribute('data-status', 'fresh'))
+    expect(syncState.alertSummary).toEqual(expect.objectContaining({
+      alerts: [], audit: [],
+      probeBaselines: [{ integrationId: 'komari-a', endpoint: 'https://komari.test', nodeId: 'node-1', hostId: 'host-0', lastHealthySampledAt: sampledAt }],
+    }))
+    expect(syncState.lastSuccessfulSyncAt).toBeNull()
+    expect(syncState.lastSyncedAt).toBe(updatedAt)
+    view.rerender(dashboardElement({ hosts: [...hosts], vaultUnlocked: true, onLoadVaultSecret }))
+    await waitFor(() => expect(loadHostOpsViews).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByTestId('host-ops-refresh-status')).toHaveAttribute('data-status', 'fresh'))
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'upsert_komari_sync_state')).toHaveLength(1)
+    expect(onLoadVaultSecret).not.toHaveBeenCalled()
   })
 
   it('shows the first committed real sync while retaining the remote metric sample and TTL', async () => {
@@ -133,7 +207,7 @@ describe('host operations filter workflow', () => {
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true }]
       if (command === 'get_komari_sync_state') return { integrationId: 'komari-a', lastSyncedAt: Date.now(), ttlMs: 60_000, alertSummary: null }
-      if (command === 'list_komari_snapshots') return moved ? [] : [{ updatedAt: Date.now(), snapshot: { schemaVersion: 1, host: { hostId: 'host-0' }, provider: { kind: 'komari', id: 'komari-a', nodeId: 'node-1', endpoint: 'https://komari.test', capabilities: ['metrics'] }, health: 'online', receivedAt: Date.now(), metrics: null, inventory: null, errors: [] } }]
+      if (command === 'list_komari_snapshots') return moved ? [] : [{ updatedAt: Date.now(), snapshot: komariSnapshot(Date.now()) }]
       if (command === 'list_komari_mappings') return [mapping(moved ? 'host-1' : 'host-0')]
       if (command === 'get_komari_mapping_state') {
         if (++checks === 1) return new Promise((resolve) => { finishOldCheck = resolve })
@@ -147,6 +221,8 @@ describe('host operations filter workflow', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       renderDashboard({ onLoadVaultSecret: vi.fn(async () => 'token'), vaultUnlocked: true, onOpenWorkspace: vi.fn() })
+      const source = await screen.findByTestId('komari-probe-ops-view')
+      fireEvent.click(source.closest('details')!.querySelector('summary')!)
       fireEvent.click(await screen.findByRole('button', { name: 'Review probe installation' }))
       await waitFor(() => expect(checks).toBe(1))
       moved = true
@@ -170,7 +246,7 @@ describe('host operations filter workflow', () => {
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true }]
       if (command === 'get_komari_sync_state') return { integrationId: 'komari-a', lastSyncedAt: Date.now(), ttlMs: 60_000, alertSummary: null }
-      if (command === 'list_komari_snapshots') return [{ updatedAt: Date.now(), snapshot: { schemaVersion: 1, host: { hostId: 'host-0' }, provider: { kind: 'komari', id: 'komari-a', nodeId: 'node-1', endpoint: 'https://komari.test', capabilities: ['metrics'] }, health: 'online', receivedAt: Date.now(), metrics: null, inventory: null, errors: [] } }]
+      if (command === 'list_komari_snapshots') return [{ updatedAt: Date.now(), snapshot: komariSnapshot(Date.now()) }]
       if (command === 'list_komari_mappings') return [manual]
       if (command === 'get_komari_mapping_state') return { revision: 1, mappings: [manual] }
       return command === 'mcp_list_project_deployments' ? { projects: [], total: 0, observedAt: 0 } : []
@@ -180,12 +256,16 @@ describe('host operations filter workflow', () => {
     const operation = vi.spyOn(komariBridge, 'runKomariLinkedProbeOperation')
     try {
       renderDashboard({ onLoadVaultSecret: vi.fn(async () => 'token'), vaultUnlocked: true, onSelectHost, onOpenWorkspace: available ? onOpenWorkspace : undefined })
+      const source = await screen.findByTestId('komari-probe-ops-view')
+      const disclosure = source.closest('details')!
+      expect(disclosure).not.toHaveAttribute('open')
+      fireEvent.click(disclosure.querySelector('summary')!)
+      expect(source).toBeVisible()
       if (available) {
         fireEvent.click(await screen.findByRole('button', { name: 'Review probe installation' }))
         await waitFor(() => expect(onOpenWorkspace).toHaveBeenCalledWith('host-0', 'overview'))
         expect(onSelectHost).toHaveBeenCalledWith('host-0')
       } else {
-        await waitFor(() => expect(screen.getByTestId('komari-probe-ops-view')).toBeVisible())
         expect(screen.queryByRole('button', { name: 'Review probe installation' })).not.toBeInTheDocument()
         expect(onSelectHost).not.toHaveBeenCalled()
       }

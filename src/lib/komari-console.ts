@@ -35,3 +35,10 @@ export function komariConsoleUrl(endpoint: string): string {
   if (!url.pathname.endsWith('/')) url.pathname += '/'
   return url.toString()
 }
+
+/** Collision-free native label for a Vault/integration pair. Stable across
+ * repeated opens; no credentials or endpoint are part of the identity. */
+export function komariConsoleBrowserId(vaultId: string, integrationId: string): string {
+  const encode = (value: string) => Array.from(new TextEncoder().encode(value), (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `komari-console-${encode(vaultId)}-${encode(integrationId)}`
+}

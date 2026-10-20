@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
@@ -79,6 +79,7 @@ function mergeNotificationStates(entries: AlertEntry[]): NotificationDispatchSta
 
 export interface KomariAlertsDashboardPanelProps {
   activeVaultId?: string
+  vaultUnlocked?: boolean
   /** Host profiles let host-scoped acknowledgement/close actions use the
    * same confirmed OperationJob bridge as the inline host card. Aggregate
    * alerts without a host continue through the local journal only. */
@@ -91,31 +92,47 @@ export interface KomariAlertsDashboardPanelProps {
  * the local notification policy, and delegates acknowledgement/close to the
  * same durable helper used by other alert surfaces. It never fetches Komari
  * credentials or mutates Komari's remote alert state. */
-export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHost, onOpenOperation }: KomariAlertsDashboardPanelProps) {
-  const { t } = useT()
+export function KomariAlertsDashboardPanel(props: KomariAlertsDashboardPanelProps) {
+  return props.activeVaultId && props.vaultUnlocked ? <VaultAlertsDashboard key={props.activeVaultId} {...props} /> : null
+}
+
+function VaultAlertsDashboard({ activeVaultId, hosts = [], onOpenHost, onOpenOperation }: KomariAlertsDashboardPanelProps) {
+  const { t, locale } = useT()
   const [entries, setEntries] = useState<AlertEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const scope = useRef({ generation: 0, loadSequence: 0 }).current
+  useEffect(() => {
+    scope.generation++
+    return () => { scope.generation++; scope.loadSequence++ }
+  }, [scope])
 
   const reload = useCallback(async () => {
     if (!activeVaultId) {
       setEntries([])
       return
     }
+    const epoch = scope.generation
+    const request = ++scope.loadSequence
+    const current = () => scope.generation === epoch && scope.loadSequence === request
     setLoading(true)
     setError(null)
     try {
       const integrations = await listKomariIntegrations(activeVaultId)
-      const loaded = await Promise.all(integrations.filter((integration) => integration.enabled).map(async (integration) => {
+      if (!current()) return
+      const loaded = await Promise.all(integrations.filter((integration) => integration.enabled && integration.vaultId === activeVaultId).map(async (integration) => {
         const persisted = await loadKomariPersistence(integration.id)
+        if (!current()) return null
         const state = readKomariAlertState(persisted.syncState)
         return state ? { integrationId: integration.id, state } : null
       }))
+      if (!current()) return
       const nextEntries = loaded.filter((entry): entry is AlertEntry => entry !== null)
       const notificationPolicy = loadNotificationPolicy()
       const notifiedEntries = await Promise.all(nextEntries.map(async (entry) => {
         try {
           const result = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, entry.state, {
+            isCurrent: current,
             policy: notificationPolicy,
             // Discover recent unseen MCP/session transitions, and retry known
             // failures without replaying old history or successful channels.
@@ -133,13 +150,13 @@ export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHo
           return entry
         }
       }))
-      setEntries(notifiedEntries)
+      if (current()) setEntries(notifiedEntries)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      if (current()) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [activeVaultId])
+  }, [activeVaultId, scope])
 
   useEffect(() => { void reload() }, [reload])
 
@@ -165,17 +182,26 @@ export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHo
   const notificationSummary = useMemo(() => mergeNotificationSummaries(entries), [entries])
   const notificationState = useMemo(() => mergeNotificationStates(entries), [entries])
   const handleAction = useCallback(async (action: KomariAlertAction, alert: KomariAlertRecord) => {
+    const epoch = scope.generation
+    const current = () => scope.generation === epoch
+    // An older reload must not overwrite a just-confirmed local action.
+    scope.loadSequence++
+    setLoading(false)
     const entry = entries.find((candidate) => candidate.state.alerts.some((item) => item.alertId === alert.alertId))
     if (!entry) throw new Error('Komari alert integration was not found')
     const persisted = await loadKomariPersistence(entry.integrationId)
-    const host = alert.hostId ? hosts.find((candidate) => candidate.id === alert.hostId) : undefined
+    if (!current()) return
+    const latest = readKomariAlertState(persisted.syncState) ?? entry.state
+    const host = alert.hostId ? hosts.find((candidate) => candidate.id === alert.hostId && (!candidate.vaultId || candidate.vaultId === activeVaultId)) : undefined
+    if (alert.hostId && !host) return
     const result = host
       ? (await runKomariAlertAction(action, {
           integrationId: entry.integrationId,
-          state: entry.state,
+          state: latest,
           alertId: alert.alertId,
           host,
           vaultId: activeVaultId,
+          isCurrent: current,
           lastSyncedAt: persisted.lastSyncedAt ?? undefined,
           ttlMs: persisted.syncState?.ttlMs,
           confirmMessage: t(
@@ -185,31 +211,35 @@ export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHo
         }))
       : await persistKomariAlertAction(action, {
           integrationId: entry.integrationId,
-          state: entry.state,
+          state: latest,
           alertId: alert.alertId,
         })
-    if (!result) return
+    if (!result || !current()) return
+    scope.loadSequence++
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('shellbeam:host-ops-refresh'))
     }
     try {
       const notificationResult = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, result.state, {
+        isCurrent: current,
         policy: loadNotificationPolicy(),
         audit: result.state.audit.slice(-1),
         retryPending: true,
         onLocal: emitKomariAlertNotification,
       })
+      if (!current()) return
       setEntries((current) => current.map((candidate) => candidate.integrationId === entry.integrationId
         ? { ...candidate, state: result.state, notificationState: notificationResult.state, notificationSummary: notificationResult.summary }
         : candidate))
     } catch {
-      setEntries((current) => current.map((candidate) => candidate.integrationId === entry.integrationId ? { ...candidate, state: result.state } : candidate))
+      if (current()) setEntries((rows) => rows.map((candidate) => candidate.integrationId === entry.integrationId ? { ...candidate, state: result.state } : candidate))
     }
-  }, [activeVaultId, entries, hosts, t])
+  }, [activeVaultId, entries, hosts, t, scope])
 
-  if (!activeVaultId && !state && !loading) return null
+  if (!error && !state?.alerts.length) return null
   return (
-    <>
+    <details className="mb-4 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]">
+      <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-[var(--workspace-text-strong)]">{locale === 'zh-CN' ? '告警' : 'Alerts'} · {state?.summary.open ?? 0} {locale === 'zh-CN' ? '未关闭' : 'open'}</summary>
       {notificationSummary && <NotificationDeliverySummary summary={notificationSummary} state={notificationState} compact className="mb-3" />}
       <KomariAlertPanel
         state={state}
@@ -222,7 +252,7 @@ export function KomariAlertsDashboardPanel({ activeVaultId, hosts = [], onOpenHo
         compact
         className="mb-4"
       />
-    </>
+    </details>
   )
 }
 

@@ -1,3 +1,4 @@
+import { groupKomariAlertIncidents } from './komari-alert-incidents'
 import {
   dispatchNotification,
   type NotificationDispatchOptions,
@@ -129,8 +130,8 @@ function lifecycleMessage(event: KomariAlertAuditEvent, record: KomariAlertRecor
     case 'opened': return `${title} opened`
     case 'reopened': return `${title} reopened`
     case 'resolved': return `${title} recovered`
-    case 'acknowledged': return `${title} acknowledged`
-    case 'closed': return `${title} closed`
+    case 'acknowledged': return `${title} acknowledged in ShellBeam (local only)`
+    case 'closed': return `${title} closed in ShellBeam (local only)`
     case 'updated': return `${title} updated`
     case 'deduplicated': return `${title} repeated observation`
     case 'operation-linked': return `${title} linked to an operation`
@@ -264,7 +265,23 @@ export async function dispatchKomariAlertNotifications(
   const pendingRows = options.retryPending
     ? state.audit.filter((audit) => latestIds.has(audit.auditId) && retryableChannels(audit, dispatchState, now).size > 0)
     : []
-  const candidateRows = uniqueAuditRows([...pendingRows, ...recentRows, ...sourceRows]).sort((left, right) => left.at - right.at)
+  const incidents = groupKomariAlertIncidents(state.alerts)
+  const incidentByMember = new Map(incidents.flatMap((incident) => incident.memberAlertIds.map((id) => [id, incident] as const)))
+  const transitionIds = (audit: KomariAlertAuditEntry) => {
+    const incident = incidentByMember.get(audit.alertId)
+    return new Set(state.audit.filter((row) => row.event === audit.event && row.at === audit.at
+      && (incident?.memberAlertIds ?? [audit.alertId]).includes(row.alertId)).map((row) => row.auditId).concat(audit.auditId))
+  }
+  const groupedRows = new Map<string, KomariAlertAuditEntry>()
+  for (const row of uniqueAuditRows([...pendingRows, ...recentRows, ...sourceRows])) {
+    const incident = incidentByMember.get(row.alertId)
+    const key = JSON.stringify([incident?.alert.alertId ?? row.alertId, row.event, row.at])
+    // Reuse an immutable legacy audit ID, including when an action caller only
+    // passed its last member row. No synthetic event can replay old delivery.
+    const canonical = state.audit.find((candidate) => candidate.alertId === incident?.alert.alertId && candidate.event === row.event && candidate.at === row.at) ?? row
+    groupedRows.set(key, canonical)
+  }
+  const candidateRows = [...groupedRows.values()].sort((left, right) => left.at - right.at)
   const boundedRows = candidateRows.slice(-maxEvents)
   const omitted = Math.max(0, candidateRows.length - boundedRows.length)
   const events: NotificationDispatchResult[] = []
@@ -281,12 +298,15 @@ export async function dispatchKomariAlertNotifications(
   const onLocal = options.onLocal ?? (typeof window !== 'undefined' ? emitKomariAlertNotification : undefined)
   for (const audit of boundedRows) {
     if (!eventTypes.has(audit.event)) continue
-    const record = recordForAudit(state, audit)
+    const incident = incidentByMember.get(audit.alertId)
+    const record = incident?.alert ?? recordForAudit(state, audit)
     if (!record) {
       skipped += 1
       continue
     }
     const event = komariAlertNotificationEvent(record, audit)
+    if (incident && incident.members.length > 1) event.metadata = { ...event.metadata, memberAlertIds: incident.memberAlertIds }
+    const aliases = transitionIds(audit)
     // Keep the payload compact by default, while allowing operators to opt in
     // to the bounded Komari aggregate in webhook/in-app metadata. The summary
     // contains counts and timestamps only; no provider payload is persisted.
@@ -311,7 +331,7 @@ export async function dispatchKomariAlertNotifications(
     }
     const configuredChannels = isRecovery ? policy.recoveryChannels : policy.channels
     const deliveredChannels = new Set((dispatchState?.deliveries ?? [])
-      .filter((delivery) => delivery.eventId === event.eventId)
+      .filter((delivery) => aliases.has(delivery.eventId ?? ''))
       .map((delivery) => delivery.channel))
     // Audit ids are immutable lifecycle facts. Once every currently enabled
     // channel has accepted one, do not replay an old row after its cooldown
@@ -324,13 +344,18 @@ export async function dispatchKomariAlertNotifications(
     // If a webhook was unavailable after the in-app event was delivered, a
     // later cross-session refresh must not emit the same local alert again
     // just because the global dedupe window has elapsed.
-    const retryChannels = retryableChannels(audit, dispatchState, now)
+    const retryState = {
+      ...dispatchState,
+      deliveries: dispatchState.deliveries.map((delivery) => aliases.has(delivery.eventId ?? '') ? { ...delivery, eventId: audit.auditId } : delivery),
+      attempts: dispatchState.attempts?.map((attempt) => aliases.has(attempt.eventId ?? '') ? { ...attempt, eventId: audit.auditId } : attempt),
+    }
+    const retryChannels = retryableChannels(audit, retryState, now)
     const pendingChannels = configuredChannels.filter((channel) => {
       if (deliveredChannels.has(channel)) return false
-      const previousFailure = (dispatchState.attempts ?? []).some((attempt) => attempt.eventId === event.eventId
+      const previousFailure = (dispatchState.attempts ?? []).some((attempt) => aliases.has(attempt.eventId ?? '')
         && attempt.channel === channel && isRetryableAttempt(attempt))
       if (previousFailure) return latestIds.has(audit.auditId) && retryChannels.has(channel)
-      return explicitIds.has(audit.auditId)
+      return [...aliases].some((id) => explicitIds.has(id))
     })
     if (pendingChannels.length === 0) {
       alreadyDelivered += 1

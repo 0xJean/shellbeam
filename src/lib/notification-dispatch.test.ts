@@ -19,6 +19,30 @@ const event: NotificationEvent = {
 }
 
 describe('notification dispatch', () => {
+  it('stops remaining sinks when the initiating scope changes and retains accepted delivery', async () => {
+    let current = true
+    const onSystem = vi.fn()
+    const fetchImpl = vi.fn()
+    const result = await dispatchNotification(event, {
+      now: 10_000,
+      isCurrent: () => current,
+      policy: { channels: ['local', 'system', 'webhook'], webhookUrl: 'https://example.test/hook' },
+      onLocal: () => { current = false },
+      onSystem,
+      fetchImpl,
+    })
+    expect(onSystem).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(result.deliveries).toEqual([{ channel: 'local', status: 'delivered', deliveredAt: 10_000 }])
+    expect(result.state.deliveries).toHaveLength(1)
+    const cancelled = await dispatchNotification(event, {
+      isCurrent: () => false, onLocal: vi.fn(), onSystem,
+      policy: { channels: ['system'] },
+    })
+    expect(cancelled.deliveries).toEqual([])
+    expect(onSystem).not.toHaveBeenCalled()
+  })
+
   it('delivers the system channel through the browser notification surface with redacted text', async () => {
     const shown: Array<{ title: string; options?: NotificationOptions }> = []
     class MockNotification {

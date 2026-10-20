@@ -72,7 +72,7 @@ describe('Komari sync orchestration', () => {
       }
       if (url.includes('/api/admin/notification/')) return new Response('[]', { status: 200 })
       if (metricFailure) return new Response('temporarily unavailable', { status: 503 })
-      return new Response(JSON.stringify([{ time: 1.9, cpu: 33 }]), { status: 200 })
+      return new Response(JSON.stringify([{ time: 2.9, cpu: 33 }]), { status: 200 })
     })
 
     const failed = await syncKomariIntegration({
@@ -176,7 +176,7 @@ describe('Komari sync orchestration', () => {
     expect(reopened.alertState.audit.map((entry) => entry.event)).toEqual(['opened', 'opened', 'resolved', 'resolved', 'reopened', 'reopened'])
   })
 
-  it('opens exactly one unknown-health alert when a restored online envelope has no observations', () => {
+  it('keeps one root-cause alert when a restored online envelope has no observations', () => {
     const initial = reconcileKomariAlerts([], [
       { integrationId: 'komari-recovery', kind: 'load', count: 1, updatedAt: 1_000 },
       { integrationId: 'komari-recovery', nodeId: 'node-1', hostId: host.id, kind: 'probe-error:metrics', count: 1, updatedAt: 1_000 },
@@ -191,17 +191,34 @@ describe('Komari sync orchestration', () => {
     }
     const result = reconcileKomariProbeAlerts({ integrationId: 'komari-recovery', snapshots: [withoutObservation], alertState: recovered.alertState, now: 3_000 })
     expect(result.alertAudit.map(({ event, fingerprint }) => ({ event, fingerprint }))).toEqual([
-      { event: 'opened', fingerprint: 'komari-recovery|node-1|host-1|probe-unknown' },
       { event: 'reopened', fingerprint: 'komari-recovery|node-1|host-1|probe-error:metrics' },
       { event: 'reopened', fingerprint: 'komari-recovery|||load' },
     ])
-    expect(result.alertState.alerts).toHaveLength(3)
+    expect(result.alertState.alerts).toHaveLength(2)
     expect(result.alertState.alerts.every((alert) => alert.status === 'active')).toBe(true)
-    expect(result.alertState.alerts.find((alert) => alert.kind === 'probe-unknown')).toMatchObject({ firstSeenAt: 3_000, count: 1 })
+    expect(result.alertState.alerts.some((alert) => alert.kind === 'probe-unknown')).toBe(false)
     // A repeated hydration must neither open another alert nor append audits.
     const repeated = reconcileKomariProbeAlerts({ integrationId: 'komari-recovery', snapshots: [withoutObservation], alertState: result.alertState, now: 3_100 })
-    expect(repeated.alertState.alerts).toHaveLength(3)
+    expect(repeated.alertState.alerts).toHaveLength(2)
     expect(repeated.alertAudit).toEqual([])
+  })
+
+  it('uses a matching old healthy cache as first-report evidence without treating it as recovery', async () => {
+    const endpoint = 'https://komari.example'
+    const previous = healthyRecoverySnapshot()
+    previous.provider.endpoint = endpoint
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => String(input).endsWith('/api/admin/client/list')
+      ? new Response(JSON.stringify([{ uuid: 'node-1', name: 'prod', ipv4: host.address }])) : new Response('[]'))
+    const result = await syncKomariIntegration({ integrationId: 'komari-recovery', config: { endpoint }, hosts: [host],
+      previousSnapshots: [previous], now: 100_000, fetchImpl })
+    expect(result.alertState?.probeBaselines).toEqual([{ integrationId: 'komari-recovery', endpoint, nodeId: 'node-1', hostId: host.id, lastHealthySampledAt: 1_900 }])
+    expect(result.alertState?.alerts).toHaveLength(1)
+    expect(result.alertState?.alerts[0]).toMatchObject({ kind: 'probe-error:metrics', status: 'active' })
+    expect(result.alertAudit.some((row) => row.event === 'resolved')).toBe(false)
+    const changedEndpoint = await syncKomariIntegration({ integrationId: 'komari-recovery', config: { endpoint: 'https://other.example' }, hosts: [host],
+      previousSnapshots: [previous], alertState: result.alertState, now: 100_000, fetchImpl })
+    expect(changedEndpoint.alertState?.probeBaselines).toEqual(result.alertState?.probeBaselines)
+    expect(changedEndpoint.alertAudit).toEqual([])
   })
 
   it('skips a fresh persisted sync and allows an explicit refresh', async () => {

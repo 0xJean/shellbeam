@@ -1,3 +1,4 @@
+import { isKomariWaitingForFirstReport } from './komari-first-report'
 import { normalizeKomariEndpoint } from './komari'
 import type { HostProfile } from './hosts'
 import type { KomariAlertSummary } from './komari'
@@ -31,6 +32,7 @@ export interface KomariProbeLink {
   /** Read-only Komari state associated with this node. */
   komari: {
     state: KomariProbeDataState
+    waitingForFirstReport?: boolean
     sampledAt: number | null
     receivedAt: number | null
     /** Successful integration sync, independent of node sampling or mapping writes. */
@@ -112,10 +114,11 @@ export function resolveKomariProbeTarget(options: {
 
 function komariDataState(snapshot: ProbeSnapshot | null, now: number): KomariProbeDataState {
   if (!snapshot) return 'unknown'
-  if (snapshot.health === 'offline' || snapshot.health === 'unknown') return 'offline'
+  if (snapshot.health === 'offline') return 'offline'
+  if (snapshot.health === 'unknown') return 'unknown'
   const observation = snapshot.metrics ?? snapshot.inventory
   if (snapshot.health === 'stale' || observation?.freshness.expired || (observation && now > observation.freshness.expiresAt)) return 'stale'
-  return 'online'
+  return observation ? 'online' : 'unknown'
 }
 
 function probeLifecycleState(record: ShellbeamAgentRecord | null): KomariProbeLifecycleState {
@@ -210,6 +213,7 @@ export function buildKomariProbeLinks(options: {
       alertState: scopedAlertState(options.alertState, nodeId, hostId),
       komari: {
         state,
+        waitingForFirstReport: isKomariWaitingForFirstReport(snapshot, options.alertState?.probeBaselines),
         sampledAt: snapshot?.metrics?.freshness.sampledAt ?? snapshot?.inventory?.freshness.sampledAt ?? null,
         receivedAt: snapshot?.receivedAt ?? null,
         lastSyncedAt,

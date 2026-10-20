@@ -1,3 +1,4 @@
+import { groupKomariAlertIncidents } from './komari-alert-incidents'
 import { observationVaultIds, scopeObservationHosts } from './host-observation-scope'
 import { hydrateLocalOpsHost } from './local-ops-persistence'
 import type { HostProfile } from './hosts'
@@ -387,6 +388,7 @@ function komariAlertStateForHost(
     .flatMap((state) => state.alerts)
     .filter((alert) => alert.hostId === host.id || providerNodes.some((provider) => provider.integrationId === alert.integrationId && provider.nodeId === alert.nodeId))
   if (alerts.length === 0) return null
+  const incidents = groupKomariAlertIncidents(alerts).map((incident) => incident.alert)
   const alertIds = new Set(alerts.map((alert) => alert.alertId))
   const audits = states
     .flatMap((state) => state.audit)
@@ -398,12 +400,12 @@ function komariAlertStateForHost(
     .sort((left, right) => right.at - left.at)[0]?.operationJobId ?? null
   return {
     summary: {
-      total: alerts.length,
-      open: alerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length,
-      active: alerts.filter((alert) => alert.status === 'active').length,
-      acknowledged: alerts.filter((alert) => alert.status === 'acknowledged').length,
-      resolved: alerts.filter((alert) => alert.status === 'resolved').length,
-      closed: alerts.filter((alert) => alert.status === 'closed').length,
+      total: incidents.length,
+      open: incidents.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length,
+      active: incidents.filter((alert) => alert.status === 'active').length,
+      acknowledged: incidents.filter((alert) => alert.status === 'acknowledged').length,
+      resolved: incidents.filter((alert) => alert.status === 'resolved').length,
+      closed: incidents.filter((alert) => alert.status === 'closed').length,
       latestOperationJobId,
     },
     alerts: [...alerts].sort((left, right) => right.lastSeenAt - left.lastSeenAt),
@@ -596,7 +598,7 @@ export function buildHostOpsViews({
     const alertState = komariAlertStateForHost(host, allProbeSnapshots, komariAlertStates)
     const localAlerts = (localAlertStates[host.id]?.alerts ?? []).filter((alert) => alert.hostId === host.id)
     const openLocal = localAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
-    const openKomari = (alertState?.alerts ?? []).filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
+    const openKomari = groupKomariAlertIncidents(alertState?.alerts ?? []).map((incident) => incident.alert).filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
     const severityRanks = ['info', 'warning', 'critical']
     const highestAlertSeverity = [...openLocal, ...openKomari].map((alert) => alert.severity).sort((a, b) => severityRanks.indexOf(b) - severityRanks.indexOf(a))[0] ?? null
     const komariOpenCount = alertState?.summary.open ?? selectedProbeSnapshot?.alerts?.active ?? (selectedProbeSnapshot?.alerts?.unsupported ? null : 0)

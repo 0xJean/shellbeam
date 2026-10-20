@@ -28,6 +28,13 @@ const link = {
 } as unknown as KomariProbeLink
 
 describe('KomariProbeOpsView', () => {
+  it('shows waiting for first report without an empty optional Probe lifecycle', () => {
+    render(<I18nProvider><KomariProbeOpsView host={host} link={{ ...link, komari: { ...link.komari, state: 'unknown', waitingForFirstReport: true }, probe: { state: 'not-recorded', health: null, version: null, lastHeartbeatAt: null, record: null }, recommendedAction: 'inspect-komari' }} /></I18nProvider>)
+    expect(screen.getByText('Waiting for first report')).toBeVisible()
+    expect(screen.queryByText('ShellBeam Probe')).not.toBeInTheDocument()
+    expect(screen.queryByText('Offline')).not.toBeInTheDocument()
+  })
+
   it('surfaces open alert and linked OperationJob in the host operations context', () => {
     render(<I18nProvider><KomariProbeOpsView host={host} link={link} /></I18nProvider>)
     expect(screen.getByTestId('komari-probe-ops-view')).toBeInTheDocument()

@@ -297,6 +297,23 @@ the canonical OperationJob, while a payload conflict is rejected. Query
 `get_server_operations` or `get_server_alerts` after a restart to recover the
 operation and alert audit state.
 
+Komari cache responses also expose `incidents`: scoped projections with
+`memberAlertIds`, while the original `alerts`, IDs and audit rows remain
+available. An exact legacy missing-observation fan-out (unknown health,
+metrics empty, retry exhausted) is grouped without deleting its members.
+Passing any retained member ID acknowledges/closes that incident's members
+under one OperationJob; each actual member transition keeps its own audit row.
+The action response includes `memberAlertIds` and `memberAudit`. Repeating an
+already applied transition does not append another lifecycle event. Grouping
+never crosses integration/node/host identity or absorbs an independent
+inventory failure. Local closure does not claim a fresh remote observation or
+recovery.
+
+For compatibility, `summary.total` and `summary.active` retain the remote
+aggregate semantics when a server summary exists. Derive local event totals
+from `incidents`; `summary.open`, `acknowledged`, `resolved` and `closed`
+describe the local incident lifecycle.
+
 For a local service, health-check or standalone SSH ProbeProvider alert, first
 read `get_server_alerts.localOps`. Pass `hostId`, `alertSource: "local-ops"`,
 the alert's `ruleId`, that document's `revision` as `expectedRevision`, and a

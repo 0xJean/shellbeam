@@ -9,10 +9,19 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useT } from '@/lib/i18n'
-import { closeBrowserWindow, loadBrowserSource, openBrowserWindow } from '@/lib/browser'
+import { KomariApiError, verifyKomariConnection, type KomariClient } from '@/lib/komari'
+import { listHosts, type HostProfile } from '@/lib/hosts'
+import { vaultStatus } from '@/lib/vault'
+import { komariOnboardingCopy } from '@/lib/locales/komari-onboarding'
+import { KomariAdministrationPanel } from './komari-administration-panel'
+import { KomariMappingsPanel } from './komari-mappings-panel'
 import { cancelMobileKomariConsole, komariConsoleMode, komariConsoleUrl, openMobileKomariConsole, prepareMobileKomariConsole } from '@/lib/komari-console'
 import { ExternalLink, Eye, EyeOff, RefreshCw, Server, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+
+function integrationVersion(integration: KomariIntegration | null | undefined): string {
+  return JSON.stringify(integration ? [integration.vaultId, integration.id, integration.endpoint, integration.credentialRef, integration.updatedAt, integration.enabled, integration.name] : null)
+}
 
 export function KomariSettingsSection() {
   const { activeVaultId } = useVault()
@@ -22,8 +31,9 @@ export function KomariSettingsSection() {
 }
 
 function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
-  const { t } = useT()
-  const { vaultStatusState, handleSaveSecret, captureVaultScope } = useVault()
+  const { t, locale } = useT()
+  const copy = komariOnboardingCopy[locale]
+  const { vaultStatusState, handleSaveSecret, handleRevealSecret, captureVaultScope } = useVault()
   const [integrations, setIntegrations] = useState<KomariIntegration[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -34,6 +44,16 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
   const [busy, setBusy] = useState(false)
   const [savedNotice, setSavedNotice] = useState(false)
   const [error, setError] = useState('')
+  const [mappingState, setMappingState] = useState({ busy: true, unmapped: 0, unsaved: false, failed: false })
+  const [step, setStep] = useState<'connection' | 'mapping' | 'complete'>('connection')
+  const [dirty, setDirty] = useState(false)
+  const [verifiedNodes, setVerifiedNodes] = useState<KomariClient[] | null>(null)
+  const [hosts, setHosts] = useState<HostProfile[]>([])
+  const [verifying, setVerifying] = useState(false)
+  const [verificationError, setVerificationError] = useState('')
+  const verificationSequence = useRef(0)
+  const unlockedRef = useRef(false)
+  const [administration, setAdministration] = useState<{ id: string; name: string; url: string; sequence: number } | null>(null)
   const [consoleBusy, setConsoleBusy] = useState(false)
   const [consoleError, setConsoleError] = useState<'invalid-endpoint' | 'open-failed' | 'locked' | null>(null)
   const alive = useRef(true)
@@ -41,12 +61,18 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
   const consoleSequence = useRef(0)
   const mobileRequest = useRef<string | null>(null)
   const selected = useRef<string | null>(null)
+  const selectedConfiguration = useRef<KomariIntegration | null>(null)
+  const dirtyRef = useRef(false)
+  dirtyRef.current = dirty
   const savedFormIntegrationId = useRef<string | null>(null)
   const unlocked = vaultStatusState?.unlocked === true
+  unlockedRef.current = unlocked
   const savedIntegration = integrations.find((item) => item.vaultId === vaultId && item.id === selectedId)
 
   const invalidateConsole = useCallback(() => {
     consoleSequence.current += 1
+    setAdministration(null)
+    setConsoleBusy(false)
     const requestId = mobileRequest.current
     mobileRequest.current = null
     // The native token remains cancellable inside the actual platform queue.
@@ -54,12 +80,24 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     if (requestId) void cancelMobileKomariConsole(requestId).catch(() => {})
   }, [])
 
+  const resetVerification = useCallback(() => {
+    verificationSequence.current += 1
+    setVerifying(false)
+    setVerificationError('')
+    setVerifiedNodes(null)
+    setStep('connection')
+    setMappingState({ busy: true, unmapped: 0, unsaved: false, failed: false })
+  }, [])
+
   const resetForm = useCallback(() => {
+    resetVerification()
+    setDirty(false)
     loadSequence.current += 1
     setSavedNotice(false)
     invalidateConsole()
     setConsoleBusy(false)
     selected.current = null
+    selectedConfiguration.current = null
     savedFormIntegrationId.current = null
     setSelectedId(null)
     setName('')
@@ -68,7 +106,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     setEnabled(true)
     setShowApiKey(false)
     setConsoleError(null)
-  }, [invalidateConsole])
+  }, [invalidateConsole, resetVerification])
 
   const load = useCallback(async () => {
     if (!alive.current) return false
@@ -77,13 +115,34 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
       setError('')
       const next = (await listKomariIntegrations(vaultId)).filter((item) => item.vaultId === vaultId)
       if (!alive.current || request !== loadSequence.current) return false
+      const retained = next.find((item) => item.id === selected.current)
+      if (retained) {
+        const changed = integrationVersion(selectedConfiguration.current) !== integrationVersion(retained)
+        // Invalidate before publishing new metadata: a reply for the previous
+        // endpoint/key must never authenticate or seed mappings for this one.
+        if (changed) {
+          resetVerification()
+          invalidateConsole()
+          setSavedNotice(false)
+          if (!dirtyRef.current) {
+            setName(retained.name)
+            setEndpoint(retained.endpoint)
+            setEnabled(retained.enabled)
+          }
+        }
+        selectedConfiguration.current = retained
+        setIntegrations(next)
+        return true
+      }
       setIntegrations(next)
-      if (next.some((item) => item.id === selected.current)) return true
       const first = next[0]
       if (first) {
+        resetVerification()
+        setDirty(false)
         invalidateConsole()
         setConsoleBusy(false)
         selected.current = first.id
+        selectedConfiguration.current = first
         setSelectedId(first.id)
         setName(first.name)
         setEndpoint(first.endpoint)
@@ -94,20 +153,32 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
       if (alive.current && request === loadSequence.current) setError(cause instanceof Error ? cause.message : String(cause))
       return false
     }
-  }, [vaultId, resetForm, invalidateConsole])
+  }, [vaultId, resetForm, invalidateConsole, resetVerification])
 
   useEffect(() => {
     alive.current = true
     void load()
-    return () => { alive.current = false; loadSequence.current += 1; invalidateConsole() }
+    return () => { alive.current = false; verificationSequence.current += 1; loadSequence.current += 1; invalidateConsole() }
   }, [load, invalidateConsole])
 
+  useEffect(() => {
+    if (!unlocked) {
+      invalidateConsole()
+      resetVerification()
+      setApiKey('')
+      setShowApiKey(false)
+    }
+  }, [unlocked, invalidateConsole, resetVerification])
+
   const selectIntegration = (integration: KomariIntegration) => {
+    resetVerification()
+    setDirty(false)
     loadSequence.current += 1
     setSavedNotice(false)
     invalidateConsole()
     setConsoleBusy(false)
     selected.current = integration.id
+    selectedConfiguration.current = integration
     savedFormIntegrationId.current = null
     setSelectedId(integration.id)
     setName(integration.name)
@@ -120,24 +191,23 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
   }
 
   const editForm = () => {
+    resetVerification()
+    setDirty(true)
     loadSequence.current += 1
     setSavedNotice(false)
   }
 
   const openConsole = async () => {
-    if (!savedIntegration) return
+    if (!savedIntegration || !unlocked) return
     const integrationId = savedIntegration.id
+    const version = integrationVersion(savedIntegration)
+    const isCurrentVault = captureVaultScope()
     const request = ++consoleSequence.current
-    const isCurrent = () => alive.current && consoleSequence.current === request && selected.current === integrationId
+    const isCurrent = () => alive.current && unlockedRef.current && isCurrentVault() && consoleSequence.current === request && selected.current === integrationId && integrationVersion(selectedConfiguration.current) === version
     let url: string
     try { url = komariConsoleUrl(savedIntegration.endpoint) }
     catch { setConsoleError('invalid-endpoint'); return }
-    let openedWindow: { browserId: string; sessionId: string } | null = null
     let preparedMobile: string | null = null
-    const closeNewWindow = async () => {
-      if (!openedWindow) return
-      try { await closeBrowserWindow(openedWindow.browserId, openedWindow.sessionId) } catch { /* Preserve the fixed opening error. */ }
-    }
     setConsoleBusy(true)
     setConsoleError(null)
     try {
@@ -152,15 +222,14 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
         await openMobileKomariConsole(preparedMobile)
         return
       }
-      const browserId = `komari-console-${crypto.randomUUID()}`
-      const sessionId = browserId
-      openedWindow = { browserId, sessionId }
-      await openBrowserWindow({ browserId, sessionId })
-      if (!isCurrent()) { await closeNewWindow(); return }
-      await loadBrowserSource({ browserId, sessionId, source: { kind: 'url', url } })
-      if (!isCurrent()) await closeNewWindow()
+      // Context status may still describe the previously selected Vault while
+      // its refresh is pending. Query the explicit native Vault identity;
+      // browser opening must not borrow that earlier unlocked status.
+      const status = await vaultStatus(vaultId)
+      if (!isCurrent()) return
+      if (status?.unlocked !== true) throw new Error('VAULT_LOCKED')
+      setAdministration({ id: integrationId, name: savedIntegration.name, url, sequence: request })
     } catch (cause) {
-      await closeNewWindow()
       const code = cause instanceof Error ? cause.message : cause
       if (isCurrent()) setConsoleError(code === 'VAULT_LOCKED' ? 'locked' : code === 'KOMARI_CONSOLE_INVALID_ENDPOINT' ? 'invalid-endpoint' : 'open-failed')
     } finally {
@@ -178,6 +247,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
       setError(t('settings.komariUnlockToSave'))
       return
     }
+    resetVerification()
     invalidateConsole()
     setConsoleBusy(false)
     setConsoleError(null)
@@ -230,7 +300,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
       setShowApiKey(false)
       setApiKey('')
       const reloaded = await load()
-      if (reloaded && alive.current && isCurrentVault()) setSavedNotice(true)
+      if (reloaded && alive.current && isCurrentVault()) { setSavedNotice(true); setDirty(false) }
     } catch (cause) {
       if (alive.current && isCurrentVault()) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -238,8 +308,49 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     }
   }
 
+  const verify = async () => {
+    if (!savedIntegration || !unlocked || dirty || busy) return
+    const request = ++verificationSequence.current
+    const version = integrationVersion(savedIntegration)
+    const isCurrentVault = captureVaultScope()
+    const current = () => alive.current && unlockedRef.current && isCurrentVault() && request === verificationSequence.current && integrationVersion(selectedConfiguration.current) === version
+    setVerifying(true); setVerificationError(''); setVerifiedNodes(null)
+    setMappingState({ busy: true, unmapped: 0, unsaved: false, failed: false })
+    try {
+      let token: string | null
+      try { token = await handleRevealSecret(savedIntegration.credentialRef) }
+      catch { if (current()) setVerificationError(copy.credentialFailed); return }
+      if (!current()) return
+      if (!token?.trim()) { setVerificationError(copy.missingKey); return }
+      const nodes = await verifyKomariConnection({ endpoint: savedIntegration.endpoint, token })
+      if (!current()) return
+      const profiles = await listHosts(vaultId)
+      if (!current()) return
+      setHosts(profiles.filter((host) => !host.vaultId || host.vaultId === vaultId))
+      setVerifiedNodes(nodes); setStep('mapping')
+    } catch (cause) {
+      if (!current()) return
+      const code = cause instanceof KomariApiError ? cause.code : null
+      setVerificationError(code === 'permission' ? copy.permission : code === 'timeout' ? copy.timeout : code === 'unavailable' ? copy.unavailable : copy.failed)
+    } finally { if (current()) setVerifying(false) }
+  }
+
+  const manageMappings = async () => {
+    if (!savedIntegration || !unlocked || dirty || busy) return
+    const request = ++verificationSequence.current
+    const isCurrentVault = captureVaultScope()
+    setMappingState({ busy: true, unmapped: 0, unsaved: false, failed: false })
+    try {
+      const profiles = await listHosts(vaultId)
+      if (!alive.current || !unlockedRef.current || !isCurrentVault() || request !== verificationSequence.current) return
+      setHosts(profiles.filter((host) => !host.vaultId || host.vaultId === vaultId))
+      setStep('mapping')
+    } catch { if (alive.current && isCurrentVault() && request === verificationSequence.current) setVerificationError(copy.failed) }
+  }
+
   const remove = async () => {
     if (!alive.current || !selectedId) return
+    resetVerification()
     invalidateConsole()
     setConsoleBusy(false)
     setConsoleError(null)
@@ -261,8 +372,8 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     <section className="rounded-lg border p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="flex items-center gap-2 font-semibold"><Server className="h-4 w-4" />{t('settings.komariTitle')}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">{t('settings.komariDescription')}</p>
+          <h3 className="flex items-center gap-2 font-semibold"><Server className="h-4 w-4" />{copy.title} · Komari</h3>
+          <p className="mt-1 text-xs text-muted-foreground">{copy.description}</p>
         </div>
         <Button variant="ghost" size="icon" aria-label={t('settings.komariRefresh')} onClick={() => void load()} disabled={busy}>
           <RefreshCw className="h-4 w-4" />
@@ -281,7 +392,11 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
         </div>
       )}
 
-      <div className="mt-4 space-y-3">
+      <ol className="mt-4 flex flex-wrap gap-3 text-xs text-muted-foreground" aria-label={copy.title}>
+        {(['connection', 'mapping', 'complete'] as const).map((item) => <li key={item} aria-current={step === item ? 'step' : undefined} className={step === item ? 'font-semibold text-foreground' : undefined}>{copy[item]}</li>)}
+      </ol>
+      {step === 'connection' && <div className="mt-4 space-y-3">
+        <p className="text-xs text-muted-foreground">{copy.connectHint}</p>
         <div>
           <label className="text-sm text-muted-foreground" htmlFor="komari-name">{t('settings.komariName')}</label>
           <Input id="komari-name" value={name} onChange={(event) => { editForm(); setName(event.target.value) }} disabled={busy} placeholder={t('settings.komariNamePlaceholder')} className="mt-1" />
@@ -310,11 +425,38 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => void save()} disabled={busy || !name.trim() || !endpoint.trim()}>{busy ? t('settings.komariSaving') : t('settings.komariSave')}</Button>
           {selectedId && <Button variant="outline" size="sm" onClick={() => void remove()} disabled={busy}><Trash2 className="mr-1.5 h-3.5 w-3.5" />{t('settings.komariRemove')}</Button>}
-          <Button variant="outline" size="sm" onClick={() => void openConsole()} disabled={busy || consoleBusy || !savedIntegration}><ExternalLink className="mr-1.5 h-3.5 w-3.5" />{t(consoleBusy ? 'settings.komariConsoleOpening' : 'settings.komariConsoleOpen')}</Button>
         </div>
-        <p className="text-xs text-muted-foreground">{t('settings.komariConsoleHint')}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => void verify()} disabled={busy || verifying || !unlocked || !savedIntegration || dirty}>{verifying ? copy.verifying : copy.verify}</Button>
+          {savedIntegration && <Button variant="ghost" size="sm" onClick={() => void manageMappings()} disabled={busy || verifying || !unlocked || dirty}>{copy.manage}</Button>}
+        </div>
+        {dirty && <p className="text-xs text-muted-foreground">{copy.saveFirst}</p>}
+        {verificationError && <p role="alert" className="text-xs text-red-500">{verificationError}</p>}
+      </div>}
+      {step === 'mapping' && savedIntegration && <div className="mt-4 space-y-3">
+        {verifiedNodes && <p role="status" className="text-sm">{copy.verified} · {copy.nodes}: {verifiedNodes.length}</p>}
+        {verifiedNodes?.length === 0 && <p className="text-xs text-muted-foreground">{copy.empty}</p>}
+        <KomariMappingsPanel key={`${vaultId}:${savedIntegration.id}`} activeVaultId={vaultId} hosts={hosts} vaultUnlocked={unlocked} onLoadVaultSecret={handleRevealSecret} integrationId={savedIntegration.id} initiallyOpen discoveredNodes={verifiedNodes ?? undefined} onStateChange={setMappingState} />
+        {!mappingState.busy && <p className="text-xs text-muted-foreground">{copy.unmapped}: {mappingState.unmapped}</p>}
+        {mappingState.unsaved && <p className="text-xs text-amber-600">{copy.unsavedMappings}</p>}
+        <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setStep('connection')}>{copy.back}</Button>
+          {verifiedNodes && <Button size="sm" disabled={mappingState.busy || mappingState.unsaved || mappingState.failed} onClick={() => setStep('complete')}>{copy.finish}</Button>}</div>
+      </div>}
+      {step === 'complete' && <div className="mt-4 space-y-3">
+        <h4 role="status" className="font-medium">{copy.ready}</h4><p className="text-sm text-muted-foreground">{copy.readyHint}</p>
+        {verifiedNodes?.length === 0 && <p className="text-xs text-muted-foreground">{copy.empty}</p>}
+        <p className="text-xs text-muted-foreground">{copy.unmapped}: {mappingState.unmapped}</p>
+        {!enabled && <p className="text-xs text-muted-foreground">{copy.disabled}</p>}
+        <Button variant="outline" size="sm" onClick={() => setStep('connection')}>{copy.back}</Button>
+      </div>}
+      <details className="mt-4 border-t pt-3">
+        <summary className="cursor-pointer text-xs text-muted-foreground">{copy.advanced}</summary>
+        <p className="my-2 text-xs text-muted-foreground">{copy.advancedHint}</p>
+        <p className="mb-2 text-xs text-muted-foreground">{copy.nativeHint}</p>
+        <Button variant="outline" size="sm" onClick={() => void openConsole()} disabled={busy || consoleBusy || !savedIntegration || !unlocked}><ExternalLink className="mr-1.5 h-3.5 w-3.5" />{consoleBusy ? t('settings.komariConsoleOpening') : copy.open}</Button>
         {consoleError && <p role="alert" className="text-xs text-red-500">{t(consoleError === 'invalid-endpoint' ? 'settings.komariConsoleInvalidEndpoint' : consoleError === 'locked' ? 'settings.komariConsoleUnlock' : 'settings.komariConsoleOpenFailed')}</p>}
-      </div>
+      </details>
+      {administration && unlocked && <KomariAdministrationPanel vaultId={vaultId} integrationId={administration.id} name={administration.name} url={administration.url} onClose={invalidateConsole} onError={() => { if (alive.current && unlockedRef.current && consoleSequence.current === administration.sequence) { invalidateConsole(); setConsoleError('open-failed') } }} />}
     </section>
   )
 }

@@ -1,3 +1,5 @@
+import { hasOnlyKomariMissingReport } from './komari-first-report'
+import { groupKomariAlertIncidents, normalizeKomariAlertIncidents } from './komari-alert-incidents'
 import type { KomariAlertSummary } from './komari'
 import type { ProbeProviderTelemetry, ProbeSnapshot } from './probe-provider'
 
@@ -31,6 +33,8 @@ export interface KomariAlertObservation {
   /** Safe scheduler telemetry attached to ProbeProvider lifecycle rows.  The
    * alert journal stores only bounded counters/codes, never provider output. */
   probeTelemetry?: KomariProbeAlertTelemetry
+  /** A dated observation must follow the failure before it can resolve it. */
+  recoverySampledAt?: number
 }
 
 export interface KomariProbeAlertTelemetry {
@@ -64,6 +68,8 @@ export interface KomariAlertRecord {
   closedAt: number | null
   relatedOperationJobId: string | null
   deduplicatedCount: number
+  /** Related diagnostics retain their IDs and share one local incident. */
+  incidentKey?: string
   /** Latest safe ProbeProvider collection outcome for this lifecycle row. */
   probeTelemetry?: KomariProbeAlertTelemetry
 }
@@ -81,11 +87,21 @@ export interface KomariAlertAuditEntry {
   probeTelemetry?: KomariProbeAlertTelemetry
 }
 
+export interface KomariProbeBaseline {
+  integrationId: string
+  endpoint?: string
+  nodeId: string
+  hostId: string
+  lastHealthySampledAt: number
+}
+
 export interface KomariAlertState {
   schemaVersion: 1
   alerts: KomariAlertRecord[]
   audit: KomariAlertAuditEntry[]
   summary: KomariAlertLifecycleSummary
+  /** Only real, fresh samples establish this durable per-node/host baseline. */
+  probeBaselines?: KomariProbeBaseline[]
 }
 
 export interface KomariAlertLifecycleSummary extends KomariAlertSummary {
@@ -288,17 +304,14 @@ export function komariAlertObservationsFromSummary(
     .filter((observation) => observation.count !== null)
 }
 
-/**
- * Turn a ProbeProvider result into local Komari lifecycle observations.  This
- * deliberately emits zero-valued recovery observations for every known kind:
- * the next healthy sample can resolve a prior alert even when the provider's
- * error list is empty.  It never treats a missing section as healthy data;
- * freshness and explicit provider errors remain separate lifecycle signals.
- */
+/** One source failure becomes one incident. Unknown health and scheduler retry
+ * exhaustion are diagnostics of that failure, not separate notifications.
+ * A newly installed node with no reports waits for its first sample. */
 export function komariAlertObservationsFromProbeSnapshot(
   snapshot: Pick<ProbeSnapshot, 'provider' | 'host' | 'health' | 'receivedAt' | 'metrics' | 'inventory' | 'errors' | 'telemetry'>,
   scope: KomariAlertScope,
   now = Date.now(),
+  lastHealthySampledAt?: number,
 ): KomariAlertObservation[] {
   const integrationId = required(scope.integrationId, 'integration id')
   const nodeId = snapshot.provider.nodeId?.trim() || scope.nodeId?.trim() || null
@@ -306,49 +319,44 @@ export function komariAlertObservationsFromProbeSnapshot(
   const updatedAt = boundedTime(snapshot.receivedAt, now)
   const observations: KomariAlertObservation[] = []
   const probeTelemetry = normalizeProbeTelemetry(snapshot.telemetry)
-  const add = (
-    kind: KomariProbeAlertKind,
-    count: number,
-    title: string,
-    severity: KomariAlertSeverity,
-  ) => observations.push({
-    integrationId,
-    nodeId,
-    hostId,
-    kind,
-    count,
-    active: count > 0 ? 1 : 0,
-    title,
-    severity,
-    updatedAt,
+  const add = (kind: KomariProbeAlertKind, count: number, title: string, severity: KomariAlertSeverity, recoverySampledAt?: number) => observations.push({
+    integrationId, nodeId, hostId, kind, count, active: count > 0 ? 1 : 0,
+    title, severity, updatedAt,
     ...(probeTelemetry ? { probeTelemetry } : {}),
+    ...(recoverySampledAt === undefined ? {} : { recoverySampledAt }),
   })
-
-  const metricExpired = Boolean(snapshot.metrics && (snapshot.metrics.freshness.expired || now > snapshot.metrics.freshness.expiresAt))
-  const inventoryExpired = Boolean(snapshot.inventory && (snapshot.inventory.freshness.expired || now > snapshot.inventory.freshness.expiresAt))
-  const stale = snapshot.health === 'stale' || metricExpired || inventoryExpired
-  const offline = snapshot.health === 'offline'
-  const unknown = snapshot.health === 'unknown'
-  const invalidSampleTime = snapshot.errors.some((error) => error.code === 'invalid-sample-time')
-  // An invalid timestamp proves neither reachability nor recovery. Retain
-  // existing health/error alerts until a dated observation can verify them.
-  if (!invalidSampleTime || offline) add('probe-offline', offline ? 1 : 0, 'Komari Probe offline', 'critical')
-  if (!invalidSampleTime || stale) add('probe-stale', stale && !offline ? 1 : 0, 'Komari Probe data is stale', 'warning')
-  add('probe-unknown', unknown ? 1 : 0, 'Komari Probe health is unknown', 'warning')
-
-  const errorSections = new Set(snapshot.errors.map((error) => error.section))
-  // Emit recovery rows for the known sections as well as current errors. This
-  // keeps a transient error from becoming a permanently open local alert.
-  for (const section of new Set(['provider', 'metrics', 'inventory', ...errorSections])) {
-    const kind = `probe-error:${section}` as KomariProbeAlertKind
-    const error = snapshot.errors.find((candidate) => candidate.section === section)
-    if (invalidSampleTime && !error) continue
-    add(
-      kind,
-      error ? 1 : 0,
-      error ? `Komari Probe ${section} error: ${safeText(error.message, 'collection failed')}` : `Komari Probe ${section} recovered`,
-      section === 'provider' ? 'critical' : 'warning',
-    )
+  const actualErrors = snapshot.errors.filter((error) => error.code !== 'recovery-retry-exhausted' && error.code !== 'stale-cache-fallback')
+  const metricError = actualErrors.find((error) => error.section === 'metrics')
+  const metric = snapshot.metrics
+  const metricExpired = Boolean(metric && (metric.freshness.expired || now > metric.freshness.expiresAt))
+  const freshMetric = metric && !metricExpired && snapshot.health === 'online'
+    && !snapshot.errors.some((error) => error.section === 'metrics' || error.section === 'provider')
+    && Number.isFinite(metric.freshness.sampledAt) && metric.freshness.sampledAt > 0 && metric.freshness.sampledAt <= now
+  const waiting = !lastHealthySampledAt && hasOnlyKomariMissingReport(snapshot)
+  if (snapshot.health === 'offline') {
+    add('probe-error:metrics', 1, 'Komari monitoring source is offline', 'critical')
+  } else if (metricError && !waiting) {
+    add('probe-error:metrics', 1, `Komari Probe metrics error: ${safeText(metricError.message, 'collection failed')}`, 'warning')
+  } else if (snapshot.health === 'stale' || metricExpired) {
+    add('probe-error:metrics', 1, 'Komari monitoring data is stale', 'warning')
+  } else if (!metric && lastHealthySampledAt && !actualErrors.length) {
+    add('probe-error:metrics', 1, 'Komari returned no dated metric observations', 'warning')
+  }
+  // Independent inventory/provider faults remain independent incidents. The
+  // scheduler's exhausted retry marker has already been removed above.
+  for (const section of ['provider', 'inventory'] as const) {
+    const error = actualErrors.find((candidate) => candidate.section === section)
+    if (error) add(`probe-error:${section}`, 1, `Komari Probe ${section} error: ${safeText(error.message, 'collection failed')}`, section === 'provider' ? 'critical' : 'warning')
+  }
+  if (freshMetric) {
+    for (const kind of ['probe-offline', 'probe-stale', 'probe-unknown', 'probe-error:provider', 'probe-error:metrics'] as const) {
+      add(kind, 0, 'Komari monitoring data recovered', 'warning', metric.freshness.sampledAt)
+    }
+  }
+  const inventory = snapshot.inventory
+  if (inventory && !inventory.freshness.expired && now <= inventory.freshness.expiresAt
+    && !snapshot.errors.some((error) => error.section === 'inventory' || error.section === 'provider')) {
+    add('probe-error:inventory', 0, 'Komari inventory recovered', 'warning', inventory.freshness.sampledAt)
   }
   return observations
 }
@@ -383,7 +391,7 @@ export function reconcileKomariAlerts(
     }
   }
 
-  const alerts = existing.map((record) => ({ ...record }))
+  const alerts = normalizeKomariAlertIncidents(existing)
   const audit: KomariAlertAuditEntry[] = []
   const seen = new Set<string>()
   for (const [fingerprint, observation] of byFingerprint) {
@@ -396,13 +404,19 @@ export function reconcileKomariAlerts(
       alerts.push(record)
       audit.push(auditFor(record, 'opened', now, actor, null, audit.length))
     } else {
+      // Cached/missing data cannot resolve an incident opened by a newer
+      // failure. The healthy sample must be newer than that failure evidence.
+      if ((observation.count ?? 0) <= 0 && record.kind.startsWith('probe-')
+        && (observation.recoverySampledAt === undefined || observation.recoverySampledAt <= record.lastSeenAt)) continue
       const wasClosed = record.status === 'closed' || record.status === 'resolved'
       const hasSignal = (observation.count ?? 0) > 0
       const countChanged = record.count !== observation.count
       const titleChanged = observation.title !== null && observation.title !== record.title
       record.count = observation.count
-      record.title = observation.title ?? record.title
-      record.severity = observation.severity ?? record.severity
+      if (hasSignal) {
+        record.title = observation.title ?? record.title
+        record.severity = observation.severity ?? record.severity
+      }
       if (observation.probeTelemetry) record.probeTelemetry = observation.probeTelemetry
       record.lastSeenAt = Math.max(record.lastSeenAt, now)
       if (hasSignal && wasClosed) {
@@ -428,7 +442,7 @@ export function reconcileKomariAlerts(
 
   if (options.complete) {
     for (const record of alerts) {
-      if (seen.has(record.fingerprint) || record.status === 'resolved' || record.status === 'closed') continue
+      if (record.kind.startsWith('probe-') || seen.has(record.fingerprint) || record.status === 'resolved' || record.status === 'closed') continue
       record.status = 'resolved'
       record.resolvedAt = now
       audit.push(auditFor(record, 'resolved', now, actor, record.relatedOperationJobId, audit.length))
@@ -436,7 +450,8 @@ export function reconcileKomariAlerts(
   }
 
   const mergedAudit = [...audit].slice(-Math.max(1, options.auditLimit ?? 500))
-  return { alerts, audit: mergedAudit, summary: summarizeKomariAlertState(alerts, now, options.baseSummary) }
+  const normalizedAlerts = normalizeKomariAlertIncidents(alerts)
+  return { alerts: normalizedAlerts, audit: mergedAudit, summary: summarizeKomariAlertState(normalizedAlerts, now, options.baseSummary) }
 }
 
 export function acknowledgeKomariAlert(
@@ -474,11 +489,12 @@ export function summarizeKomariAlertState(
   now = Date.now(),
   baseSummary?: KomariAlertSummary | null,
 ): KomariAlertLifecycleSummary {
-  const acknowledged = alerts.filter((alert) => alert.status === 'acknowledged').length
-  const active = alerts.filter((alert) => alert.status === 'active').length
-  const resolved = alerts.filter((alert) => alert.status === 'resolved').length
-  const closed = alerts.filter((alert) => alert.status === 'closed').length
-  const total = baseSummary?.total ?? alerts.reduce((sum, alert) => sum + (alert.count ?? 0), 0)
+  const incidents = groupKomariAlertIncidents(alerts).map((incident) => incident.alert)
+  const acknowledged = incidents.filter((alert) => alert.status === 'acknowledged').length
+  const active = incidents.filter((alert) => alert.status === 'active').length
+  const resolved = incidents.filter((alert) => alert.status === 'resolved').length
+  const closed = incidents.filter((alert) => alert.status === 'closed').length
+  const total = baseSummary?.total ?? incidents.reduce((sum, alert) => sum + (alert.count ?? 0), 0)
   const deduplicated = alerts.reduce((sum, alert) => sum + alert.deduplicatedCount, 0)
   return {
     load: baseSummary?.load ?? null,
@@ -501,6 +517,7 @@ export function toKomariAlertStatePayload(state: KomariAlertState): Record<strin
     alerts: state.alerts,
     audit: state.audit,
     summary: state.summary,
+    ...(state.probeBaselines ? { probeBaselines: state.probeBaselines } : {}),
   }
 }
 
@@ -535,5 +552,13 @@ export function parseKomariAlertState(value: unknown): KomariAlertState | null {
   const summary = raw.summary && typeof raw.summary === 'object'
     ? raw.summary as KomariAlertLifecycleSummary
     : summarizeKomariAlertState(alerts)
-  return { schemaVersion: 1, alerts, audit, summary }
+  const probeBaselines = Array.isArray(raw.probeBaselines) ? raw.probeBaselines.flatMap((value): KomariProbeBaseline[] => {
+    if (!value || typeof value !== 'object') return []
+    const row = value as Partial<KomariProbeBaseline>
+    if (typeof row.integrationId !== 'string' || typeof row.nodeId !== 'string' || typeof row.hostId !== 'string'
+      || !Number.isFinite(row.lastHealthySampledAt) || (row.lastHealthySampledAt ?? 0) <= 0) return []
+    return [{ integrationId: row.integrationId, nodeId: row.nodeId, hostId: row.hostId, lastHealthySampledAt: row.lastHealthySampledAt!, ...(typeof row.endpoint === 'string' && row.endpoint ? { endpoint: row.endpoint } : {}) }]
+  }).slice(-500) : undefined
+  const normalized = normalizeKomariAlertIncidents(alerts)
+  return { schemaVersion: 1, alerts: normalized, audit, summary: summarizeKomariAlertState(normalized, summary.localUpdatedAt, summary), ...(probeBaselines ? { probeBaselines } : {}) }
 }

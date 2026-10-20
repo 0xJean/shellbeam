@@ -1,3 +1,4 @@
+import { komariAlertIncidentMembers, normalizeKomariAlertIncidents } from './komari-alert-incidents'
 import {
   acknowledgeKomariAlert,
   closeKomariAlert,
@@ -49,6 +50,7 @@ export interface RunKomariAlertActionOptions extends PersistKomariAlertActionOpt
   requestId?: string
   provider?: string
   confirmMessage?: string
+  isCurrent?: () => boolean
 }
 
 export interface RunKomariAlertActionResult extends PersistKomariAlertActionResult {
@@ -69,16 +71,18 @@ export async function persistKomariAlertOperationLink(
   if (!alert) throw new Error('Komari alert was not found')
   const operationJobId = options.operationJobId.trim()
   if (!operationJobId) throw new Error('Operation job id is required')
-  if (alert.relatedOperationJobId === operationJobId) {
+  const members = komariAlertIncidentMembers(options.state.alerts, alert.alertId)
+  if (members.every((member) => member.relatedOperationJobId === operationJobId)) {
     return { state: options.state, alert }
   }
   const now = options.now ?? Date.now()
-  const result = linkKomariAlertOperation(alert, operationJobId, options.actor ?? 'local-user', now)
-  const alerts = options.state.alerts.map((candidate) => candidate.alertId === alert.alertId ? result.alert : candidate)
+  const results = members.filter((member) => member.relatedOperationJobId !== operationJobId).map((member) => linkKomariAlertOperation(member, operationJobId, options.actor ?? 'local-user', now))
+  const alerts = normalizeKomariAlertIncidents(options.state.alerts).map((candidate) => results.find((result) => result.alert.alertId === candidate.alertId)?.alert ?? candidate)
   const state: KomariAlertState = {
+    ...options.state,
     schemaVersion: 1,
     alerts,
-    audit: [...options.state.audit, result.audit].slice(-1000),
+    audit: [...options.state.audit, ...results.map((result) => result.audit)].slice(-1000),
     summary: summarizeKomariAlertState(alerts, now, options.state.summary),
   }
   await persistKomariAlertState({
@@ -88,7 +92,7 @@ export async function persistKomariAlertOperationLink(
     ttlMs: options.ttlMs,
     updatedAt: now,
   })
-  return { state, alert: result.alert }
+  return { state, alert: alerts.find((candidate) => candidate.alertId === alert.alertId)! }
 }
 
 /** Apply a local lifecycle action and persist the resulting record and audit
@@ -100,22 +104,20 @@ export async function persistKomariAlertAction(
 ): Promise<PersistKomariAlertActionResult> {
   const alert = options.state.alerts.find((candidate) => candidate.alertId === options.alertId)
   if (!alert) throw new Error('Komari alert was not found')
-  // A retry after a lost MCP/UI response must not append another lifecycle
-  // event when the requested transition already happened. Keep this guard in
-  // the persistence boundary (rather than only in the panel) so repeated
-  // requests from another session remain audit-idempotent as well.
-  if ((action === 'acknowledge' && alert.status !== 'active')
-    || (action === 'close' && alert.status === 'closed')) {
-    return { state: options.state, alert }
-  }
+  const members = komariAlertIncidentMembers(options.state.alerts, alert.alertId)
+  const actionable = members.filter((member) => action === 'acknowledge' ? member.status === 'active' : member.status !== 'closed')
+  // An old member ID remains a valid action target for the whole incident.
+  // Idempotency is checked per member, retaining every original audit ID.
+  if (actionable.length === 0) return { state: options.state, alert }
   const now = options.now ?? Date.now()
   const actor = options.actor ?? 'local-user'
-  const result = action === 'acknowledge'
-    ? acknowledgeKomariAlert(alert, actor, now)
-    : closeKomariAlert(alert, actor, now)
-  const alerts = options.state.alerts.map((candidate) => candidate.alertId === alert.alertId ? result.alert : candidate)
-  const audit = [...options.state.audit, result.audit].slice(-1000)
+  const results = actionable.map((member) => action === 'acknowledge'
+    ? acknowledgeKomariAlert(member, actor, now)
+    : closeKomariAlert(member, actor, now))
+  const alerts = normalizeKomariAlertIncidents(options.state.alerts).map((candidate) => results.find((result) => result.alert.alertId === candidate.alertId)?.alert ?? candidate)
+  const audit = [...options.state.audit, ...results.map((result) => result.audit)].slice(-1000)
   const state: KomariAlertState = {
+    ...options.state,
     schemaVersion: 1,
     alerts,
     audit,
@@ -128,7 +130,7 @@ export async function persistKomariAlertAction(
     ttlMs: options.ttlMs,
     updatedAt: now,
   })
-  return { state, alert: result.alert }
+  return { state, alert: alerts.find((candidate) => candidate.alertId === alert.alertId)! }
 }
 
 /**
@@ -162,9 +164,10 @@ export async function runKomariAlertAction(
     provider: options.provider ?? 'komari-local',
     transport: 'local',
     paramsSummary: `integrationId=${options.integrationId}; alertId=${options.alertId}; action=${action}`,
-    confirmMessage: options.confirmMessage ?? `Confirm ${action} for Komari alert ${options.alertId}?`,
+    isCurrent: options.isCurrent,
+    confirmMessage: options.confirmMessage ?? `Confirm ${action} for this local monitoring incident (${options.alertId})? This updates ShellBeam only; Komari server state is unchanged.`,
     onJob: (nextJob) => { operationJobId = nextJob.jobId },
-    execute: async () => {
+    execute: async (context) => {
       if (!operationJobId) throw new Error('Operation job id was not created')
       // Link first so both the lifecycle event and the alert record carry the
       // canonical OperationJob id, including idempotent/retried transitions.
@@ -178,6 +181,7 @@ export async function runKomariAlertAction(
         ttlMs: options.ttlMs,
         lastSyncedAt: options.lastSyncedAt,
       })
+      if (!context.isCurrent()) throw new Error('Operation context changed')
       return persistKomariAlertAction(action, {
         ...options,
         state: linked.state,

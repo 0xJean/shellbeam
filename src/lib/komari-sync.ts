@@ -20,6 +20,7 @@ import {
   reconcileKomariAlerts,
   type KomariAlertAuditEntry,
   type KomariAlertState,
+  type KomariProbeBaseline,
 } from './komari-alerts'
 
 export interface KomariSyncResult {
@@ -83,6 +84,25 @@ async function mapWithConcurrency<T, R>(
   return result
 }
 
+function probeAlertInput(integrationId: string, snapshots: ProbeSnapshot[], previous: Pick<KomariAlertState, 'probeBaselines'> | null | undefined, now: number) {
+  const key = (row: Pick<KomariProbeBaseline, 'integrationId' | 'endpoint' | 'nodeId' | 'hostId'>) => JSON.stringify([row.integrationId, row.endpoint ?? '', row.nodeId, row.hostId])
+  const baselines = new Map((previous?.probeBaselines ?? []).map((row) => [key(row), row]))
+  const observations = snapshots.flatMap((snapshot) => {
+    const identity = { integrationId, ...(snapshot.provider.endpoint ? { endpoint: snapshot.provider.endpoint } : {}), nodeId: snapshot.provider.nodeId ?? '', hostId: snapshot.host.hostId }
+    const baseline = baselines.get(key(identity))
+    const observations = komariAlertObservationsFromProbeSnapshot(snapshot, { integrationId }, now, baseline?.lastHealthySampledAt)
+    const metric = snapshot.metrics
+    if (identity.nodeId && identity.hostId && metric && snapshot.health === 'online'
+      && !metric.freshness.expired && now <= metric.freshness.expiresAt
+      && Number.isFinite(metric.freshness.sampledAt) && metric.freshness.sampledAt > 0 && metric.freshness.sampledAt <= now
+      && !snapshot.errors.some((error) => error.section === 'metrics' || error.section === 'provider')) {
+      baselines.set(key(identity), { ...identity, lastHealthySampledAt: Math.max(baseline?.lastHealthySampledAt ?? 0, metric.freshness.sampledAt) })
+    }
+    return observations
+  })
+  return { observations, probeBaselines: [...baselines.values()].slice(-500) }
+}
+
 /**
  * Reconcile cached ProbeProvider observations when the Komari sync TTL is
  * still valid. This lets an expired cross-session observation open or resolve
@@ -96,12 +116,8 @@ export function reconcileKomariProbeAlerts(options: {
   actor?: string
 }): { alertState: KomariAlertState; alertAudit: KomariAlertAuditEntry[] } {
   const now = options.now ?? Date.now()
-  const snapshots = options.snapshots.map((snapshot) => refreshProbeSnapshotFreshness(snapshot, now))
-  const observations = snapshots.flatMap((snapshot) => komariAlertObservationsFromProbeSnapshot(
-    snapshot,
-    { integrationId: options.integrationId },
-    now,
-  ))
+  const snapshots = options.snapshots.filter((snapshot) => snapshot.provider.kind === 'komari' && snapshot.provider.id === options.integrationId).map((snapshot) => refreshProbeSnapshotFreshness(snapshot, now))
+  const { observations, probeBaselines } = probeAlertInput(options.integrationId, snapshots, options.alertState, now)
   // Komari attaches its aggregate notification summary to every provider
   // snapshot. Reconcile one copy when hydrating a cache so a zero-valued
   // summary can automatically resolve a load/offline alert after a restart;
@@ -119,6 +135,7 @@ export function reconcileKomariProbeAlerts(options: {
   return {
     alertState: {
       schemaVersion: 1,
+      probeBaselines,
       alerts: reconciled.alerts,
       audit: [...(options.alertState?.audit ?? []), ...reconciled.audit].slice(-1000),
       summary: reconciled.summary,
@@ -149,6 +166,8 @@ export async function syncKomariIntegration(options: {
   maxConcurrency?: number
   includeAlerts?: boolean
   alertState?: KomariAlertState | null
+  /** Existing cache is historical first-report evidence, never recovery evidence. */
+  previousSnapshots?: ProbeSnapshot[]
   alertActor?: string
 }): Promise<KomariSyncResult> {
   const syncedAt = options.now ?? Date.now()
@@ -245,11 +264,17 @@ export async function syncKomariIntegration(options: {
   )
   const normalizedSnapshots = snapshots.filter((snapshot): snapshot is ProbeSnapshot => snapshot !== null)
   const completedAt = options.now ?? Date.now()
-  const probeAlertObservations = normalizedSnapshots.flatMap((snapshot) => komariAlertObservationsFromProbeSnapshot(
-    snapshot,
-    { integrationId: options.integrationId },
-    completedAt,
-  ))
+  const historical = { probeBaselines: options.alertState?.probeBaselines }
+  for (const previous of options.previousSnapshots ?? []) {
+    if (previous.provider.kind !== 'komari' || previous.provider.id !== options.integrationId
+      || previous.provider.endpoint !== options.config.endpoint || previous.receivedAt > completedAt
+      || !mapping.mappings.some((row) => row.nodeId === previous.provider.nodeId && row.hostId === previous.host.hostId)) continue
+    // Validate the original observation at its reception time. It may now be
+    // expired, but it still proves this same mapping once reported successfully.
+    const captured = refreshProbeSnapshotFreshness(previous, previous.receivedAt)
+    historical.probeBaselines = probeAlertInput(options.integrationId, [captured], historical, previous.receivedAt).probeBaselines
+  }
+  const { observations: probeAlertObservations, probeBaselines } = probeAlertInput(options.integrationId, normalizedSnapshots, historical, completedAt)
   const alertObservations = [
     ...(alerts ? komariAlertObservationsFromSummary(alerts, { integrationId: options.integrationId }) : []),
     ...probeAlertObservations,
@@ -258,7 +283,7 @@ export async function syncKomariIntegration(options: {
   // Reconcile only after all provider samples are available. This keeps a
   // transient Probe error in the same durable lifecycle as Komari's aggregate
   // alert summary and lets the next healthy sample emit a recovery audit row.
-  if (alerts !== null || probeAlertObservations.length > 0) {
+  if (alerts !== null || normalizedSnapshots.length > 0) {
     const reconciled = reconcileKomariAlerts(
       options.alertState?.alerts ?? [],
       alertObservations,
@@ -282,6 +307,7 @@ export async function syncKomariIntegration(options: {
     alertAudit = reconciled.audit
     alertState = {
       schemaVersion: 1 as const,
+      probeBaselines,
       alerts: reconciled.alerts,
       audit: [...(options.alertState?.audit ?? []), ...reconciled.audit].slice(-1000),
       summary: reconciled.summary,

@@ -127,7 +127,7 @@ export function createKomariProbeProvider(options: KomariProbeProviderOptions): 
         }
       } catch (error) {
         base.receivedAt = request.now ?? Date.now()
-        return { ...base, health: 'unknown', errors: [providerError(error)] }
+        return { ...base, provider: { ...ref, nodeId: node.uuid }, health: 'unknown', errors: [providerError(error)] }
       }
     },
   }

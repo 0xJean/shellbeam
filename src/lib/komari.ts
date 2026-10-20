@@ -240,6 +240,17 @@ function readKomariClientList(value: unknown): KomariClient[] {
   return clients
 }
 
+/** Verify authenticated API access. Public discovery is intentionally excluded:
+ * a public node list does not prove that the saved API key is valid. */
+export async function verifyKomariConnection(
+  config: KomariConnectionConfig,
+  fetchImpl?: KomariFetch,
+): Promise<KomariClient[]> {
+  if (!config.token?.trim()) throw new KomariApiError('Komari server API key is required', { code: 'permission' })
+  const payload = await requestKomari<unknown>(config, { path: '/api/admin/client/list' }, fetchImpl)
+  return readKomariClientList(payload)
+}
+
 export async function listKomariClients(
   config: KomariConnectionConfig,
   fetchImpl?: KomariFetch,

@@ -5,12 +5,14 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { monitoringSourcesCopy } from '@/lib/locales/monitoring-sources'
 import { getResourceUsageFillClassName, getResourceUsageTextClassName } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
+import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
 import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import { hostProbeEvaluations, validHostOpsSampleTime, type HostOpsCapability, type HostOpsProbeEvaluation } from '@/lib/host-ops-view'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
@@ -536,6 +538,8 @@ function HostProbeEvaluationRows({ host, summary, t }: { host: HostProfile; summ
 }
 
 function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?: HostOperationalSummary; t: TFn }) {
+  const { locale } = useT()
+  const sourceCopy = monitoringSourcesCopy[locale]
   if (!summary) return null
   const operations = summary
   const scopeVault = summary.vaultId && (!host.vaultId || host.vaultId === summary.vaultId) ? summary.vaultId : undefined
@@ -550,10 +554,15 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
   const lifecycleStatus = lifecycleStatuses.includes(summary.agentStatus ?? '') ? summary.agentStatus : 'unknown'
   const healthStatuses = ['online', 'offline', 'stale', 'unsupported', 'unknown']
   const agentHealth = healthStatuses.includes(summary.agentHealth ?? '') ? summary.agentHealth : 'unknown'
-  const actionableAlerts = (summary.komariAlerts ?? []).filter((alert) => (
+  const actionableAlerts = groupKomariAlertIncidents(summary.komariAlerts ?? []).map(({ alert }) => alert).filter((alert) => (
     alert.status === 'active' || alert.status === 'acknowledged' || alert.status === 'resolved'
   ))
   const latestAlertAudit = [...(summary.komariAlertAudits ?? [])].sort((left, right) => right.at - left.at)[0]
+  const hasSourceDetails = Boolean(summary.agentStatus || summary.probeState || summary.komariProbe
+    || summary.capabilities?.length || summary.ttlMs != null || summary.expiryReason)
+  const komariAttention = summary.komariProbe && (
+    summary.komariProbe.komari.waitingForFirstReport || summary.komariProbe.komari.state !== 'online' || summary.komariProbe.status !== 'linked'
+  ) ? summary.komariProbe : null
 
   async function runAlertAction(action: 'acknowledge' | 'close', alert: KomariAlertRecord) {
     if (!operations.onKomariAlertAction || operations.komariAlertBusy) return
@@ -638,7 +647,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
         </div>
       )}
       {(summary.alertTotal !== undefined || summary.alertUnsupported || summary.alertActive != null || summary.alertOpen != null || summary.alertAcknowledged != null || summary.alertClosed != null || summary.alertLinkedJobId != null) && (
-        <div className="flex min-w-0 items-center gap-2">
+        <div data-testid="host-ops-alert-summary" data-total={summary.alertTotal ?? undefined} data-active={summary.alertActive ?? undefined} data-open={summary.alertOpen ?? undefined} className="flex min-w-0 items-center gap-2">
           <span className="inline-flex min-w-0 items-center gap-1" title={t('hosts.opsAlerts')}>
             <AlertTriangle className="h-3 w-3 shrink-0 text-[color:var(--workspace-status-warn-text)]" />
             <span>{t('hosts.opsAlertsShort')}</span>
@@ -653,7 +662,26 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
           </span>
         </div>
       )}
-      {summary.agentStatus && (
+      <div className="flex min-w-0 items-center gap-2 text-[var(--workspace-text-subtle)]" data-testid="host-current-source">
+        <span className="inline-flex min-w-0 items-center gap-1 truncate" title={summary.provider || t('hosts.opsNoProvider')}>
+          <ShieldCheck className="h-3 w-3 shrink-0" />
+          <span className="truncate">{summary.provider || t('hosts.opsNoProvider')}</span>
+        </span>
+        <span className="shrink-0">{transportLabel}{summary.jumpHostName ? ` · ${summary.jumpHostName}` : ''}</span>
+        <span className="ml-auto shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
+      </div>
+      {komariAttention && <div data-testid="host-monitoring-source-attention" data-source="komari" data-state={komariAttention.komari.waitingForFirstReport ? 'waiting' : komariAttention.komari.state} className={cn('flex items-center gap-1.5', komariAttention.komari.waitingForFirstReport ? 'text-[var(--workspace-text-subtle)]' : 'text-[color:var(--workspace-status-warn-text)]')}>
+        <Activity className="h-3 w-3 shrink-0" aria-hidden="true" />
+        <span>{sourceCopy.komariSource} · {komariAttention.komari.waitingForFirstReport
+          ? sourceCopy.waitingForFirstReport
+          : t(`workspace.komariProbe.state.${komariAttention.komari.state}`)}{komariAttention.status !== 'linked' ? ` · ${t(`workspace.komariProbe.mapping.${komariAttention.status}`)}` : ''}</span>
+      </div>}
+      {(summary.highestAlertSeverity || summary.localAlertOpen) ? <div data-testid="host-ops-local-alerts" data-open-count={summary.localAlertOpen ?? 0} data-severity={summary.highestAlertSeverity ?? 'unknown'} className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsFilters.highest')}: {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {summary.localAlertOpen ?? 0}</div> : null}
+      <HostProbeEvaluationRows host={host} summary={summary} t={t} />
+      <HostLocalAlertRows host={host} summary={summary} t={t} />
+      {hasSourceDetails && <details data-testid="host-data-source-details" className="space-y-1.5 border-t border-[color:var(--workspace-border-soft)] pt-1.5" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+        <summary className="cursor-pointer font-medium text-[var(--workspace-text-muted)]">{sourceCopy.details}</summary>
+      {summary.agentStatus && !summary.komariProbe?.probe.record && (
         <div className="flex min-w-0 items-center gap-2" title={t('workspace.agentProbe.description')}>
           <Bot className="h-3 w-3 shrink-0 text-[var(--workspace-accent-text)]" />
           <span className="shrink-0">{t('workspace.agentProbe.title')}</span>
@@ -687,22 +715,11 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
           {summary.probeError && <span className="truncate text-[var(--workspace-text-subtle)]" title={summary.probeError}>· {summary.probeError}</span>}
         </div>
       )}
-      <div className="flex min-w-0 items-center gap-2 text-[var(--workspace-text-subtle)]">
-        <span className="inline-flex min-w-0 items-center gap-1 truncate" title={summary.provider || t('hosts.opsNoProvider')}>
-          <ShieldCheck className="h-3 w-3 shrink-0" />
-          <span className="truncate">{summary.provider || t('hosts.opsNoProvider')}</span>
-        </span>
-        <span className="shrink-0">{transportLabel}{summary.jumpHostName ? ` · ${summary.jumpHostName}` : ''}</span>
-        <span className="ml-auto shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
-      </div>
       <div data-testid="host-ops-capabilities" className="flex flex-wrap gap-1" title={t('hosts.opsFilters.capabilitiesHint')}>
         {(summary.capabilities ?? []).map((capability) => <span key={capability} className="rounded border border-border/50 px-1 py-0.5">{t(`hosts.opsFilters.capability.${capability}`)}</span>)}
         {summary.ttlMs != null && <span className="rounded border border-border/50 px-1 py-0.5" title={summary.expiresAt ? new Date(summary.expiresAt).toLocaleString() : undefined}>TTL {Math.round(summary.ttlMs / 1_000)}s</span>}
         {summary.expiryReason === 'ttl-expired' && <span data-testid="host-ops-expiry-reason" className="rounded border border-border/50 px-1 py-0.5 text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsExpiryReason.ttl-expired')}</span>}
       </div>
-      {(summary.highestAlertSeverity || summary.localAlertOpen) ? <div data-testid="host-ops-local-alerts" data-open-count={summary.localAlertOpen ?? 0} data-severity={summary.highestAlertSeverity ?? 'unknown'} className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsFilters.highest')}: {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {summary.localAlertOpen ?? 0}</div> : null}
-      <HostProbeEvaluationRows host={host} summary={summary} t={t} />
-      <HostLocalAlertRows host={host} summary={summary} t={t} />
       {summary.komariProbe && (
         <KomariProbeOpsView
           host={host}
@@ -712,6 +729,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
           busy={summary.komariProbeBusy}
         />
       )}
+      </details>}
     </div>
   )
 }

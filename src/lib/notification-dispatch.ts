@@ -85,6 +85,9 @@ export interface NotificationDispatchResult {
 }
 
 export interface NotificationDispatchOptions {
+  /** Cancel remaining sinks after the initiating Vault/view is replaced.
+   * Already accepted delivery facts still remain in their original ledger. */
+  isCurrent?: () => boolean
   policy?: NotificationPolicy | NotificationPolicyInput
   state?: NotificationDispatchState
   now?: number
@@ -315,6 +318,7 @@ export async function dispatchNotification(event: NotificationEvent, options: No
 
   const keyEvent = eventKey(payload)
   for (const channel of channels) {
+    if (options.isCurrent?.() === false) break
     const key = `${payload.fingerprint}|${channel}`
     const previous = latestDelivery(state, key)
     if (previous && previous.eventKey === keyEvent && policy.dedupeWindowMs > 0 && now - previous.deliveredAt < policy.dedupeWindowMs) {

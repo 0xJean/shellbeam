@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceProviderSource, WorkspaceProviderState } from '@/lib/workspace-provider-state'
 import { workspaceProviderCopy } from '@/lib/locales/workspace-provider'
+import { monitoringSourcesCopy } from '@/lib/locales/monitoring-sources'
 import { WorkspaceProviderSummary } from './workspace-provider-summary'
 
 const now = Date.UTC(2026, 9, 18, 12)
@@ -22,6 +23,22 @@ function state(source: WorkspaceProviderSource, sources = [source]): WorkspacePr
 
 describe('Workspace Provider presentation', () => {
   afterEach(() => localStorage.removeItem('shellbeam.locale'))
+
+  it.each(['en', 'zh-CN'] as const)('keeps the source and original sample visible while technical details are collapsed in %s', (locale) => {
+    localStorage.setItem('shellbeam.locale', locale)
+    render(<WorkspaceProviderSummary state={state(komari, [komari, ssh])} />)
+    const current = screen.getByTestId('workspace-current-source')
+    expect(current).toBeVisible()
+    expect(current).toHaveTextContent('Komari')
+    expect(current).toHaveTextContent(new Date(komari.sampledAt!).toLocaleString(locale))
+    const disclosure = screen.getByTestId('workspace-data-source-details')
+    expect(disclosure).not.toHaveAttribute('open')
+    expect(screen.getByText('komari-a · node-a')).not.toBeVisible()
+    fireEvent.click(screen.getByText(monitoringSourcesCopy[locale].details))
+    expect(disclosure).toHaveAttribute('open')
+    expect(screen.getByText('komari-a · node-a')).toBeVisible()
+    expect(screen.getAllByTestId('workspace-provider-source')).toHaveLength(2)
+  })
 
   it('keeps selected Komari sampling, delivery, synchronization and capabilities separate from failed SSH', () => {
     localStorage.setItem('shellbeam.locale', 'en')
@@ -56,6 +73,21 @@ describe('Workspace Provider presentation', () => {
     expect(screen.getByTestId('workspace-provider-fallback')).toHaveTextContent(workspaceProviderCopy[locale].usingSsh)
     expect(screen.queryByText('internal English diagnostic')).not.toBeInTheDocument()
     expect(screen.getAllByTestId('workspace-provider-source').find((row) => row.dataset.provider === 'komari')).toHaveAttribute('data-health', 'stale')
+  })
+
+  it.each(['en', 'zh-CN'] as const)('shows first-report and interruption status without opening details in %s', (locale) => {
+    localStorage.setItem('shellbeam.locale', locale)
+    const selected = { ...ssh, health: 'online' as const, fallbackProvider: 'komari' as const }
+    const waiting = { ...komari, health: 'unknown' as const, sampledAt: null, waitingForFirstReport: true }
+    const view = render(<WorkspaceProviderSummary state={state(selected, [selected, waiting])} />)
+    expect(screen.getByTestId('workspace-data-source-details')).not.toHaveAttribute('open')
+    expect(screen.getByTestId('workspace-provider-attention')).toBeVisible()
+    expect(screen.getByTestId('workspace-provider-attention')).toHaveTextContent(monitoringSourcesCopy[locale].waitingForFirstReport)
+    view.rerender(<WorkspaceProviderSummary state={state(selected, [selected, { ...waiting, waitingForFirstReport: false, health: 'offline' }])} />)
+    expect(screen.getByTestId('workspace-provider-attention')).toBeVisible()
+    expect(screen.getByTestId('workspace-provider-attention')).not.toHaveTextContent(monitoringSourcesCopy[locale].waitingForFirstReport)
+    view.rerender(<WorkspaceProviderSummary state={state(waiting)} />)
+    expect(screen.getByTestId('workspace-current-source')).toHaveTextContent(monitoringSourcesCopy[locale].waitingForFirstReport)
   })
 
   it('offers a read-only saved-observation retry when refresh fails', () => {

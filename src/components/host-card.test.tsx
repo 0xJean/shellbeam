@@ -179,7 +179,44 @@ describe('host list item', () => {
     const operations = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct' as const, sampledAt: 1000, komariProbe: probe }
     const props = { host, isSelected: false, operations, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
     render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
+    const disclosure = screen.getByTestId('host-data-source-details')
+    expect(disclosure).not.toHaveAttribute('open')
+    expect(screen.getByTestId('host-current-source')).toBeVisible()
+    expect(screen.getByTestId('komari-probe-ops-view')).not.toBeVisible()
+    fireEvent.click(disclosure.querySelector('summary')!)
+    expect(screen.getByTestId('komari-probe-ops-view')).toBeVisible()
+    expect(props.onSelect).not.toHaveBeenCalled()
+    expect(props.onConnect).not.toHaveBeenCalled()
+    expect(screen.queryByText('Komari / Probe')).not.toBeInTheDocument()
+    expect(screen.queryByText('ShellBeam Probe')).not.toBeInTheDocument()
     expect(screen.getByTestId('komari-host-last-sync').querySelector('time')).toHaveAttribute('datetime', new Date(2000).toISOString())
+  })
+  it.each(['grid', 'list'] as const)('omits empty data-source and optional Probe panels for an unconfigured %s host', (mode) => {
+    const operations: HostOperationalSummary = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct' }
+    const props = { host, isSelected: false, operations, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
+    expect(screen.queryByTestId('host-data-source-details')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('komari-probe-ops-view')).not.toBeInTheDocument()
+    expect(screen.queryByText('ShellBeam Probe')).not.toBeInTheDocument()
+  })
+  it.each(['grid', 'list'] as const)('keeps another monitoring source waiting or unhealthy visible outside collapsed details in %s', (mode) => {
+    const link = { integrationId: 'komari', nodeId: 'node', hostId: host.id, mapping: { hostId: host.id, nodeId: 'node' }, status: 'linked', alertState: null, komari: { state: 'unknown', waitingForFirstReport: true, sampledAt: null, receivedAt: null, lastSyncedAt: 2000, alerts: null, snapshot: null }, probe: { state: 'not-recorded', health: null, version: null, lastHeartbeatAt: null, record: null }, recommendedAction: 'none' } as unknown as KomariProbeLink
+    const operations: HostOperationalSummary = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct', provider: 'ssh-agentless', sampledAt: Date.now(), probeState: 'fresh' }
+    const props = { host, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+    const card = (komariProbe: KomariProbeLink) => mode === 'grid' ? <HostGridCard {...props} operations={{ ...operations, komariProbe }} /> : <HostListItem {...props} index={1} operations={{ ...operations, komariProbe }} />
+    const view = render(card(link))
+    expect(screen.getByTestId('host-current-source')).toHaveTextContent('ssh-agentless')
+    expect(screen.getByTestId('host-data-source-details')).not.toHaveAttribute('open')
+    expect(screen.getByTestId('host-monitoring-source-attention')).toBeVisible()
+    expect(screen.getByTestId('host-monitoring-source-attention')).toHaveTextContent('Waiting for first report')
+    for (const state of ['stale', 'offline', 'unknown'] as const) {
+      view.rerender(card({ ...link, komari: { ...link.komari, state, waitingForFirstReport: false } }))
+      expect(screen.getByTestId('host-monitoring-source-attention')).toBeVisible()
+      expect(screen.getByTestId('host-monitoring-source-attention')).toHaveAttribute('data-state', state)
+      expect(screen.getByTestId('host-data-source-details')).not.toHaveAttribute('open')
+    }
+    view.rerender(card({ ...link, komari: { ...link.komari, state: 'online', waitingForFirstReport: false } }))
+    expect(screen.queryByTestId('host-monitoring-source-attention')).not.toBeInTheDocument()
   })
   it.each(['grid', 'list'] as const)('explains TTL expiry in the %s card and removes it for fresh data', (mode) => {
     const operations = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct' as const, ttlMs: 60_000, expiryReason: 'ttl-expired' as const }
@@ -584,5 +621,22 @@ describe('host list item', () => {
 
     fireEvent.click(screen.getByTestId('komari-host-alert-close-alert-ack-card'))
     await waitFor(() => expect(onKomariAlertAction).toHaveBeenCalledWith('close', acknowledgedAlert))
+  })
+  it('exposes one visible action row for a legacy missing-observation incident and keeps its stored metrics ID', () => {
+    const metrics: KomariAlertRecord = { schemaVersion: 1, source: 'komari', alertId: 'missing-metrics', fingerprint: 'missing-metrics', integrationId: 'komari', nodeId: 'node', hostId: host.id, kind: 'probe-error:metrics', title: 'Komari Probe metrics error: Komari returned no dated metric observations', severity: 'warning', count: 1, status: 'active', firstSeenAt: 1000, lastSeenAt: 1000, acknowledgedAt: null, acknowledgedBy: null, resolvedAt: null, closedAt: null, relatedOperationJobId: null, deduplicatedCount: 0 }
+    const unknown: KomariAlertRecord = { ...metrics, alertId: 'missing-health', fingerprint: 'missing-health', kind: 'probe-unknown', title: 'Komari Probe health is unknown' }
+    const retry: KomariAlertRecord = { ...metrics, alertId: 'missing-retries', fingerprint: 'missing-retries', kind: 'probe-error:provider', title: 'Komari Probe provider error: Probe recovery failed after 3 retries: Komari returned no dated metric observations', severity: 'critical' }
+    const onKomariAlertAction = vi.fn()
+    const operations: HostOperationalSummary = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct', probeState: 'error', komariAlerts: [unknown, retry, metrics], onKomariAlertAction }
+    render(<HostListItem index={1} host={host} isSelected={false} operations={operations} onSelect={vi.fn()} onConnect={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.getByTestId('host-data-source-details')).not.toHaveAttribute('open')
+    expect(screen.getByTestId('host-ops-alert-actions')).toBeVisible()
+    expect(screen.queryByTestId('komari-host-alert-ack-missing-health')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('komari-host-alert-ack-missing-retries')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('komari-host-alert-ack-missing-metrics'))
+    expect(onKomariAlertAction).toHaveBeenCalledWith('acknowledge', expect.objectContaining({ alertId: metrics.alertId, severity: 'warning' }))
+    fireEvent.click(screen.getByTestId('komari-host-alert-close-missing-metrics'))
+    expect(onKomariAlertAction).toHaveBeenCalledWith('close', expect.objectContaining({ alertId: metrics.alertId }))
+    expect(operations.komariAlerts).toEqual([unknown, retry, metrics])
   })
 })

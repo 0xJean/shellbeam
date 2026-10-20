@@ -4,6 +4,9 @@ import { buildHostOpsViews, type HostOpsHealthState, type HostOpsProvider, type 
 import type { HostProfile } from './hosts'
 import { getHostIdentity } from './host-identity'
 import { listKomariIntegrations, type KomariIntegration } from './komari-config'
+import { normalizeKomariEndpoint } from './komari'
+import { parseKomariAlertState } from './komari-alerts'
+import { isKomariWaitingForFirstReport } from './komari-first-report'
 import { KOMARI_MAPPING_CHANGED_EVENT, confirmedKomariSyncAt, loadKomariPersistence, type KomariPersistedState } from './komari-persistence'
 import { listPersistedProbeSnapshots, type PersistedProbeSnapshotRecord } from './probe-persistence'
 import { refreshProbeSnapshotFreshness } from './probe-scheduler'
@@ -19,6 +22,7 @@ export interface WorkspaceProviderSource {
   id: string
   nodeId?: string
   health: HostOpsHealthState
+  waitingForFirstReport?: boolean
   confidence: ProbeConfidence | null
   sampledAt: number | null
   receivedAt: number | null
@@ -128,6 +132,10 @@ export function buildWorkspaceProviderState(options: WorkspaceProviderStateOptio
     if (snapshot.provider.kind !== 'komari') return true
     const integration = integrationById.get(snapshot.provider.id)
     if (!integration || !integration.state || integration.error) return false
+    if (snapshot.provider.endpoint) {
+      try { if (normalizeKomariEndpoint(snapshot.provider.endpoint) !== normalizeKomariEndpoint(integration.integration.endpoint)) return false }
+      catch { return false }
+    }
     const node = snapshot.provider.nodeId
     const mappings = integration.state.mappings
     // A canonical-only legacy cache can still be read. Once a mapping exists,
@@ -166,7 +174,11 @@ export function buildWorkspaceProviderState(options: WorkspaceProviderStateOptio
     const providerView = buildHostOpsViews({ hosts: [host], probeSnapshots: [snapshot], now, staleAfterMs: COLLECTION_LIMITS.cadence.metricsTtlMs })[host.id]
     const integration = integrationById.get(snapshot.provider.id)
     const sampledAt = validTime(observation?.freshness.sampledAt, now)
-    return { kind: snapshot.provider.kind, id: snapshot.provider.id, ...(snapshot.provider.nodeId ? { nodeId: snapshot.provider.nodeId } : {}), health: providerView.health.state,
+    // A legacy snapshot without an endpoint cannot establish first-report
+    // identity. Do not borrow another server's baseline.
+    const waitingForFirstReport = Boolean(snapshot.provider.endpoint && isKomariWaitingForFirstReport(refreshed, parseKomariAlertState(integration?.state?.syncState?.alertSummary)?.probeBaselines))
+    return { kind: snapshot.provider.kind, id: snapshot.provider.id, ...(snapshot.provider.nodeId ? { nodeId: snapshot.provider.nodeId } : {}), health: waitingForFirstReport ? 'unknown' : providerView.health.state,
+      ...(snapshot.provider.kind === 'komari' ? { waitingForFirstReport } : {}),
       confidence: observation?.confidence ?? null, sampledAt,
       receivedAt: validTime(observation?.freshness.receivedAt ?? snapshot.receivedAt, now),
       lastSyncedAt: snapshot.provider.kind === 'komari' && integration ? confirmedKomariSyncAt(integration.integration, integration.state?.syncState, now) : null,
@@ -202,7 +214,8 @@ export function buildWorkspaceProviderState(options: WorkspaceProviderStateOptio
   const selectedNode = view.health.probe?.nodeId
   const source = sources.find((candidate) => candidate.kind === view.health.provider && (!selectedId || candidate.id === selectedId) && (!selectedNode || candidate.nodeId === selectedNode)) ?? sources.find((candidate) => candidate.kind === view.health.provider) ?? null
   if (source) {
-    source.health = view.health.state
+    source.health = source.waitingForFirstReport ? 'unknown' : view.health.state
+    if (source.waitingForFirstReport) view.health.state = 'unknown'
     source.fallbackProvider = view.health.fallbackProvider
     source.fallbackReason = view.health.fallbackReason
     if (source.kind === 'ssh-agentless' && !source.fallbackProvider && sources.some((row) => row.kind === 'komari')) {

@@ -21,14 +21,18 @@ export interface KomariMappingsPanelProps {
   hosts: HostProfile[]
   vaultUnlocked: boolean
   onLoadVaultSecret?: (key: string) => Promise<string | null>
+  integrationId?: string
+  initiallyOpen?: boolean
+  discoveredNodes?: KomariClient[]
+  onStateChange?: (state: { busy: boolean; unmapped: number; unsaved: boolean; failed: boolean }) => void
 }
 
 /** Discovery is explicit and read-only. A saved binding uses native Vault,
  * host and revision checks; remote discovery never writes a mapping itself. */
-export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoadVaultSecret }: KomariMappingsPanelProps) {
+export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoadVaultSecret, integrationId, initiallyOpen = false, discoveredNodes, onStateChange }: KomariMappingsPanelProps) {
   const { locale } = useT()
   const copy = komariMappingCopy[locale]
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(initiallyOpen)
   const [loadedVault, setLoadedVault] = useState<string | null>(null)
   const loaded = loadedVault === activeVaultId
   const [scopedEntries, setScopedEntries] = useState<{ vaultId?: string; rows: Entry[] }>({ rows: [] })
@@ -36,14 +40,31 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
   const [selections, setSelections] = useState<Record<string, string>>({})
   const [busyState, setBusyState] = useState<{ sequence: number; key: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const scope = useRef({ vaultId: activeVaultId, unlocked: vaultUnlocked, sequence: 0 })
-  if (scope.current.vaultId !== activeVaultId || scope.current.unlocked !== vaultUnlocked) {
-    scope.current = { vaultId: activeVaultId, unlocked: vaultUnlocked, sequence: scope.current.sequence + 1 }
+  const scope = useRef({ vaultId: activeVaultId, integrationId, unlocked: vaultUnlocked, sequence: 0 })
+  if (scope.current.vaultId !== activeVaultId || scope.current.integrationId !== integrationId || scope.current.unlocked !== vaultUnlocked) {
+    scope.current = { vaultId: activeVaultId, integrationId, unlocked: vaultUnlocked, sequence: scope.current.sequence + 1 }
   }
   const busy = busyState?.sequence === scope.current.sequence ? busyState.key : null
   const scopedHosts = useMemo(() => hosts.filter((host) => !host.vaultId || host.vaultId === activeVaultId), [hosts, activeVaultId])
 
-  const load = useCallback(async () => {
+  const unmapped = entries.reduce((count, entry) => {
+    const mapping = mapKomariNodesToHosts({ hosts: scopedHosts, nodes: entry.nodes, explicit: manualKomariMappings(entry.state.mappings) })
+    return count + entry.nodes.filter((node) => !mapping.mappings.some((item) => item.nodeId === node.uuid)).length
+  }, 0)
+  const unsaved = entries.some((entry) => {
+    const mapping = mapKomariNodesToHosts({ hosts: scopedHosts, nodes: entry.nodes, explicit: manualKomariMappings(entry.state.mappings) })
+    return Object.entries(selections).some(([key, hostId]) => {
+      const prefix = `${entry.integration.id}:`
+      if (!key.startsWith(prefix)) return false
+      const nodeId = key.slice(prefix.length)
+      const saved = entry.state.mappings.find((item) => item.nodeId === nodeId && item.source === 'manual')
+      const resolved = mapping.mappings.find((item) => item.nodeId === nodeId)
+      return hostId !== (saved?.hostId ?? resolved?.hostId ?? '')
+    })
+  })
+  useEffect(() => { onStateChange?.({ busy: busy !== null || !loaded, unmapped, unsaved, failed: error !== null }) }, [busy, loaded, unmapped, unsaved, error, onStateChange])
+
+  const load = useCallback(async (reuseDiscovery = false) => {
     if (!activeVaultId || !vaultUnlocked) return
     const sequence = ++scope.current.sequence
     const current = () => scope.current.sequence === sequence && scope.current.vaultId === activeVaultId && scope.current.unlocked
@@ -52,10 +73,11 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
       const integrations = await listKomariIntegrations(activeVaultId)
       if (!current()) return
       let failed = false
-      const next = await Promise.all(integrations.filter((integration) => integration.enabled && integration.vaultId === activeVaultId).map(async (integration): Promise<Entry> => {
+      const next = await Promise.all(integrations.filter((integration) => (integrationId ? integration.id === integrationId : integration.enabled) && integration.vaultId === activeVaultId).map(async (integration): Promise<Entry> => {
         const state = await getKomariMappingState(activeVaultId, integration.id)
         const unavailable: Entry = { integration, state, nodes: [], discovered: false, discoveryError: null }
         if (!current()) return unavailable
+        if (reuseDiscovery && discoveredNodes && integration.id === integrationId) return { integration, state, nodes: discoveredNodes, discovered: true, discoveryError: null }
         if (!onLoadVaultSecret) {
           failed = true
           return { ...unavailable, discoveryError: 'credentialReadFailed' }
@@ -91,10 +113,10 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
       if (failed) setError(copy.loadFailed)
     } catch { if (current()) { setError(copy.loadFailed); setScopedEntries({ vaultId: activeVaultId, rows: [] }); setLoadedVault(activeVaultId) } }
     finally { if (current()) setBusyState(null) }
-  }, [activeVaultId, vaultUnlocked, onLoadVaultSecret, copy.loadFailed])
+  }, [activeVaultId, vaultUnlocked, onLoadVaultSecret, copy.loadFailed, integrationId, discoveredNodes])
 
   useEffect(() => {
-    if (open && !loaded && vaultUnlocked) void load()
+    if (open && !loaded && vaultUnlocked) void load(true)
   }, [open, loaded, vaultUnlocked, load])
   useEffect(() => () => { scope.current.sequence++ }, [])
 

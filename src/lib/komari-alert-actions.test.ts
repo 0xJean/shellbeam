@@ -1,3 +1,4 @@
+import { persistKomariAlertState } from './komari-persistence'
 import { describe, expect, it, vi } from 'vitest'
 import type { KomariAlertState } from './komari-alerts'
 import { persistKomariAlertAction, persistKomariAlertOperationLink, runKomariAlertAction } from './komari-alert-actions'
@@ -86,6 +87,23 @@ describe('persistKomariAlertAction', () => {
     }))
     expect(invoke).toHaveBeenNthCalledWith(2, 'operation_job_update', expect.objectContaining({ request: expect.objectContaining({ status: 'running' }) }))
     expect(invoke).toHaveBeenNthCalledWith(3, 'operation_job_update', expect.objectContaining({ request: expect.objectContaining({ status: 'completed' }) }))
+  })
+
+  it('does not continue a lifecycle write after the Vault scope changes during the operation link', async () => {
+    let current = true
+    invoke
+      .mockResolvedValueOnce({ jobId: 'job-scope', auditId: 'audit-scope', status: 'queued' })
+      .mockResolvedValueOnce({ jobId: 'job-scope', auditId: 'audit-scope', status: 'running' })
+      .mockResolvedValueOnce({ jobId: 'job-scope', auditId: 'audit-scope', status: 'failed' })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const persist = vi.mocked(persistKomariAlertState)
+    persist.mockClear()
+    persist.mockImplementationOnce(async () => { current = false })
+    await expect(runKomariAlertAction('close', {
+      integrationId: 'i', state, alertId: 'a1', host, vaultId: 'vault-1', isCurrent: () => current,
+    })).rejects.toThrow('Operation context changed')
+    expect(persist).toHaveBeenCalledTimes(1)
+    expect(persist.mock.calls[0][0].state.audit.at(-1)?.event).toBe('operation-linked')
   })
 
   it('updates the lifecycle and persists the audit entry', async () => {
