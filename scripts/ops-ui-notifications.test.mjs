@@ -10,6 +10,7 @@ import {
   notificationOcrMatches,
   notificationTextOcrMatches,
   inspectNotificationOcrModes,
+  inspectNotificationGroupOcrModes,
   parsePinnedDunstVersion,
   pinnedDunstPaths,
   parseDunstCount,
@@ -91,6 +92,36 @@ test('negative pixel proof requires both OCR modes to miss both strings and neve
     assert.equal(result.accepted, false)
   }
   await assert.rejects(inspectNotificationOcrModes(async () => { throw new Error('fixed test OCR failure') }, { title, body, expectedVisible: false }), /fixed test OCR failure/)
+})
+
+test('one group crop is read once per mode and each host independently needs its separate full title and body', async () => {
+  const expectations = ['via', 'jump'].map(role => ({ name: `notification-probe-${role}-resolved`, title: `ShellBeam UI ${role} metrics`, body: `ShellBeam UI ${role} metrics: resolved` }))
+  const full = expectations.map(item => `${item.title}\n${item.body}`).join('\n')
+  const reads = []
+  const complete = await inspectNotificationGroupOcrModes(async mode => { reads.push(mode); return full }, expectations, { expectedVisible: true })
+  assert.deepEqual(reads, [6, 11])
+  assert(complete.every(item => item.accepted && item.titleMatched && item.bodyMatched))
+  const partial = await inspectNotificationGroupOcrModes(async mode => `${expectations[0].title}\n${expectations[0].body}\n${mode === 6 ? `${expectations[1].title}\n${expectations[1].title}: opened` : expectations[1].body}`, expectations, { expectedVisible: true })
+  assert.equal(partial[0].accepted, true)
+  assert.equal(partial[1].accepted, false)
+  assert.equal(partial[1].titleMatched, true)
+  assert.equal(partial[1].bodyMatched, true)
+  const missingSeparateTitle = await inspectNotificationGroupOcrModes(async () => `${expectations[0].title}\n${expectations[0].body}\n${expectations[1].body}`, expectations, { expectedVisible: true })
+  assert.equal(missingSeparateTitle[1].accepted, false)
+})
+
+test('group retries cannot accumulate different hosts from different frame reads', async () => {
+  const expectations = ['via', 'jump'].map(role => ({ name: `notification-probe-${role}-opened`, title: `ShellBeam UI ${role} metrics`, body: `ShellBeam UI ${role} metrics: opened` }))
+  const attempts = []
+  for (const visible of expectations) {
+    attempts.push(await inspectNotificationGroupOcrModes(async () => `${visible.title}\n${visible.body}`, expectations, { expectedVisible: true }))
+  }
+  assert.deepEqual(attempts.map(matches => matches.map(item => item.accepted)), [[true, false], [false, true]])
+  assert(attempts.every(matches => !matches.every(item => item.accepted)))
+  const read = async () => { throw new Error('invalid groups must be refused before OCR') }
+  for (const invalid of [[], [...expectations, expectations[0]], [{ ...expectations[0], name: '../escape' }], [{ ...expectations[0], title: '' }], [expectations[0], { ...expectations[1], title: expectations[0].title }]]) {
+    await assert.rejects(inspectNotificationGroupOcrModes(read, invalid, { expectedVisible: true }), /invalid_capture_group/)
+  }
 })
 
 test('strict dunst counts never convert failed or malformed daemon output into displayed zero', () => {

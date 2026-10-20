@@ -133,12 +133,17 @@ export async function createOpsUiProbeNotificationOwner({ driver, fixture, recor
         return counts.displayed === profiles.length && counts.waiting === 0 && await daemon.history() === verified
       }, 'metrics_banner_group_not_unique')
       const geometry = await until(() => daemon.geometry(), 'metrics_banner_not_viewable')
-      // Each read must contain that host's full separate title AND body in
-      // one OCR mode. Two different hosts or partial modes are never joined.
-      for (const profile of profiles) {
-        const evidence = await daemon.capture({ driver: activeDriver, checkpoint, name: `notification-probe-${profile}-${event}`, geometry, expectedVisible: true,
-          expectedTitle: titles[profile], expectedBody: `${titles[profile]}: ${event}`, assertSafeUi: safeUi })
-        await record(`notification-probe-${profile}-${event}`, { passed: true, x11Viewable: true, groupDisplayed: profiles.length, ...evidence })
+      // Capture each displayed group once. Every host independently requires
+      // its full separate title AND body in one OCR mode of the same frame.
+      const expectations = profiles.map(profile => ({ name: `notification-probe-${profile}-${event}`, title: titles[profile], body: `${titles[profile]}: ${event}` }))
+      const evidence = await daemon.captureGroup({ driver: activeDriver, checkpoint, name: `notification-probe-${role}-${event}`, geometry, expectedVisible: true,
+        expectations, assertSafeUi: safeUi })
+      check(Array.isArray(evidence) && evidence.length === profiles.length && evidence.every(item => item && item.ocrAccepted && item.ocrTitleMatched && item.ocrBodyMatched
+        && /^[a-f0-9]{64}$/.test(item.sha256) && /^[a-f0-9]{64}$/.test(item.bannerSha256)
+        && item.sha256 === evidence[0].sha256 && item.bannerSha256 === evidence[0].bannerSha256
+        && item.screenshot === evidence[0].screenshot && item.bannerScreenshot === evidence[0].bannerScreenshot), 'invalid_group_pixel_evidence')
+      for (const [index, profile] of profiles.entries()) {
+        await record(`notification-probe-${profile}-${event}`, { passed: true, x11Viewable: true, groupDisplayed: profiles.length, ...evidence[index] })
       }
       await daemon.closeAll()
       await until(() => empty(verified + profiles.length), 'metrics_banner_group_not_closed')

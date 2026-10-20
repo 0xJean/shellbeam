@@ -106,11 +106,11 @@ function harness() {
   const daemon = {
     counts: async () => ({ displayed, waiting }), history: async () => history,
     geometry: async () => displayed && visible ? geometry : null,
-    capture: async options => {
+    captureGroup: async options => {
       await options.assertSafeUi(options.driver)
       captures.push(options)
       // This fake return tests coordinator flow only; never proves OS pixels.
-      return { screenshot: `${options.name}.png`, ocrAccepted: true, ocrTitleMatched: true, ocrBodyMatched: true }
+      return options.expectations.map(() => ({ screenshot: `${options.name}.png`, bannerScreenshot: `${options.name}-banner.png`, sha256: 'a'.repeat(64), bannerSha256: 'b'.repeat(64), ocrAccepted: true, ocrTitleMatched: true, ocrBodyMatched: true }))
     },
     closeAll: async () => { history += displayed; displayed = 0 }, stop: async () => { stops++ },
   }
@@ -135,12 +135,23 @@ test('one/direct and two/via+jump visible groups each require every full indepen
     const owner = await createOpsUiProbeNotificationOwner(unit.options, unit.dependencies)
     await assert.rejects(owner.verifyResolved('direct'), /invalid_verification_phase/)
     await verifyAll(owner, unit)
-    assert.equal(unit.captures.length, 6)
-    assert.deepEqual(unit.captures.map(capture => [capture.expectedTitle, capture.expectedBody]), [
+    assert.equal(unit.captures.length, 4)
+    assert.deepEqual(unit.captures.map(capture => capture.expectations.length), [1, 1, 2, 2])
+    assert.deepEqual(unit.captures.flatMap(capture => capture.expectations.map(item => [item.title, item.body])), [
       ...['opened', 'resolved'].map(event => [unit.titles.direct, `${unit.titles.direct}: ${event}`]),
       ...['opened', 'resolved'].flatMap(event => ['via', 'jump'].map(role => [unit.titles[role], `${unit.titles[role]}: ${event}`])),
     ])
     assert(unit.captures.every(capture => capture.expectedVisible && typeof capture.assertSafeUi === 'function'))
+    const visible = unit.records.filter(item => item.x11Viewable)
+    assert.equal(visible.length, 6)
+    for (const event of ['opened', 'resolved']) {
+      const group = visible.filter(item => ['via', 'jump'].some(role => item.name === `notification-probe-${role}-${event}`))
+      assert.equal(group.length, 2)
+      assert.equal(group[0].screenshot, group[1].screenshot)
+      assert.equal(group[0].sha256, group[1].sha256)
+      assert.equal(group[0].bannerScreenshot, group[1].bannerScreenshot)
+      assert.equal(group[0].bannerSha256, group[1].bannerSha256)
+    }
     // Extra actual accepted metadata notifications are permitted. The current
     // outcome may be Blocked/Failed; counts still must be real and durable.
     unit.setDelivered(23)
@@ -181,8 +192,8 @@ test('missing one group member OCR fails the group without marking it verified o
   try {
     const owner = await createOpsUiProbeNotificationOwner(unit.options, unit.dependencies)
     for (const event of ['opened', 'resolved']) { unit.emit('direct', event); await owner[event === 'opened' ? 'verifyOpened' : 'verifyResolved']('direct') }
-    const capture = unit.daemon.capture
-    unit.daemon.capture = async options => { if (options.expectedTitle === unit.titles.jump) throw new Error('unit exact pixels missing'); return capture(options) }
+    const capture = unit.daemon.captureGroup
+    unit.daemon.captureGroup = async options => { if (options.expectations.some(item => item.title === unit.titles.jump)) throw new Error('unit exact pixels missing'); return capture(options) }
     unit.emit('via', 'opened')
     await assert.rejects(owner.verifyOpened('via'), /unit exact pixels missing/)
     assert.deepEqual(await unit.daemon.counts(), { displayed: 2, waiting: 0 })
@@ -190,6 +201,29 @@ test('missing one group member OCR fails the group without marking it verified o
     await assert.rejects(owner.beforeRestart(), /incomplete_lifecycle_before_restart/)
     await owner.stop()
   } finally { unit.dom.window.close() }
+})
+
+test('a displayed group cannot join OCR evidence from different source frames or crops', async () => {
+  for (const changed of ['sha256', 'bannerSha256', 'screenshot', 'bannerScreenshot']) {
+    const unit = harness()
+    try {
+      const owner = await createOpsUiProbeNotificationOwner(unit.options, unit.dependencies)
+      for (const event of ['opened', 'resolved']) { unit.emit('direct', event); await owner[event === 'opened' ? 'verifyOpened' : 'verifyResolved']('direct') }
+      const capture = unit.daemon.captureGroup
+      unit.daemon.captureGroup = async options => {
+        const evidence = await capture(options)
+        evidence[1][changed] = changed.endsWith('256') ? 'c'.repeat(64) : 'another-frame.png'
+        return evidence
+      }
+      unit.emit('via', 'opened')
+      await assert.rejects(owner.verifyOpened('via'), /invalid_group_pixel_evidence/)
+      assert.deepEqual(await unit.daemon.counts(), { displayed: 2, waiting: 0 })
+      assert.equal(await unit.daemon.history(), 2)
+      assert.equal(unit.records.filter(item => item.x11Viewable).length, 2)
+      await assert.rejects(owner.beforeRestart(), /incomplete_lifecycle_before_restart/)
+      await owner.stop()
+    } finally { unit.dom.window.close() }
+  }
 })
 
 test('restart rejects any replay, changed durable count, missing lifecycle or reused driver instead of inferring success', async () => {
@@ -241,8 +275,8 @@ test('overlapping verification cannot capture the same notification twice and cl
   const unit = harness()
   let release
   const pending = new Promise(done => { release = done })
-  const capture = unit.daemon.capture
-  unit.daemon.capture = async options => { await pending; return capture(options) }
+  const capture = unit.daemon.captureGroup
+  unit.daemon.captureGroup = async options => { await pending; return capture(options) }
   try {
     const owner = await createOpsUiProbeNotificationOwner(unit.options, unit.dependencies)
     unit.emit('direct', 'opened')

@@ -95,6 +95,29 @@ export async function inspectNotificationOcrModes(read, { title, body, expectedV
   return { accepted: expectedVisible ? complete : !titleMatched && !bodyMatched, titleMatched, bodyMatched, modes }
 }
 
+function validateNotificationCaptureGroup(expectations, expectedVisible) {
+  requireFact(Array.isArray(expectations) && expectations.length > 0 && expectations.length <= 3
+    && expectations.every(item => item && /^[a-z0-9-]{1,80}$/.test(item.name)
+      && typeof item.title === 'string' && item.title.length > 0 && item.title.length <= 200
+      && typeof item.body === 'string' && item.body.length > 0 && item.body.length <= 400)
+    && new Set(expectations.map(item => item.name)).size === expectations.length
+    && new Set(expectations.map(item => item.title)).size === expectations.length
+    && typeof expectedVisible === 'boolean', 'invalid_capture_group')
+}
+
+/** Every member reads the same immutable crop in both modes. Keep matches
+ * independent: neither hosts nor incomplete modes may supply another's text. */
+export async function inspectNotificationGroupOcrModes(read, expectations, { expectedVisible }) {
+  validateNotificationCaptureGroup(expectations, expectedVisible)
+  const texts = new Map()
+  for (const mode of [6, 11]) texts.set(mode, await read(mode))
+  const results = []
+  for (const item of expectations) {
+    results.push(await inspectNotificationOcrModes(mode => texts.get(mode), { title: item.title, body: item.body, expectedVisible }))
+  }
+  return results
+}
+
 export function parseDunstCount(value) {
   requireFact(/^\s*[0-9]{1,6}\s*$/.test(value), 'invalid_daemon_count')
   return Number(value.trim())
@@ -249,7 +272,14 @@ async function reserveEvidencePath({ checkpoint, fixture, name }) {
   return path
 }
 
-async function captureRoot({ driver, checkpoint, fixture, scratch, name, geometry, expectedVisible, record, assertSafeUi = screenshotSafeUi, expectedTitle = NOTIFICATION_TEST_TITLE, expectedBody = NOTIFICATION_TEST_BODY }) {
+async function captureRoot(options) {
+  const { name, expectedTitle = NOTIFICATION_TEST_TITLE, expectedBody = NOTIFICATION_TEST_BODY } = options
+  const [evidence] = await captureRootGroup({ ...options, expectations: [{ name, title: expectedTitle, body: expectedBody }] })
+  return evidence
+}
+
+async function captureRootGroup({ driver, checkpoint, fixture, scratch, name, geometry, expectedVisible, record, assertSafeUi = screenshotSafeUi, expectations }) {
+  validateNotificationCaptureGroup(expectations, expectedVisible)
   await assertSafeUi(driver)
   const path = await reserveEvidencePath({ checkpoint, fixture, name })
   const banner = await reserveEvidencePath({ checkpoint, fixture, name: `${name}-banner` })
@@ -273,11 +303,23 @@ async function captureRoot({ driver, checkpoint, fixture, scratch, name, geometr
     await chmod(banner, 0o600)
     const crop = join(scratch, `${name}-ocr.png`)
     await command('/usr/bin/convert', [banner, '-resize', '200%', '-colorspace', 'Gray', '-negate', `png:${crop}`], 'root_preprocess', 8_000)
-    const matched = await inspectNotificationOcrModes((mode) => command('/usr/bin/tesseract', [crop, 'stdout', '-l', 'eng', '--psm', String(mode)], 'root_ocr', 8_000), { title: expectedTitle, body: expectedBody, expectedVisible })
-    const diagnostics = { attempt: attempt + 1, geometry, expectedVisible, ocrModes: matched.modes, bannerScreenshot: basename(banner), ocrAccepted: matched.accepted, ocrTitleMatched: matched.titleMatched, ocrBodyMatched: matched.bodyMatched }
-    if (record) await record(`${name}-pixel-inspection`, diagnostics)
-    if (matched.accepted) {
-      return { screenshot: basename(path), sha256: createHash('sha256').update(png).digest('hex'), screenshotBytes: png.length, width, height, ...diagnostics }
+    const bannerPng = await readFile(banner)
+    const sha256 = createHash('sha256').update(png).digest('hex')
+    const bannerSha256 = createHash('sha256').update(bannerPng).digest('hex')
+    const matches = await inspectNotificationGroupOcrModes((mode) => command('/usr/bin/tesseract', [crop, 'stdout', '-l', 'eng', '--psm', String(mode)], 'root_ocr', 8_000), expectations, { expectedVisible })
+    // A group may retry a new frame, but evidence can never combine members
+    // from different attempts or a crop changed after its source was hashed.
+    requireFact(createHash('sha256').update(await readFile(path)).digest('hex') === sha256
+      && createHash('sha256').update(await readFile(banner)).digest('hex') === bannerSha256, 'capture_changed_during_inspection')
+    const evidence = []
+    for (const [index, matched] of matches.entries()) {
+      const diagnostics = { attempt: attempt + 1, geometry, expectedVisible, ocrModes: matched.modes, bannerScreenshot: basename(banner), bannerSha256, bannerScreenshotBytes: bannerPng.length, ocrAccepted: matched.accepted, ocrTitleMatched: matched.titleMatched, ocrBodyMatched: matched.bodyMatched }
+      const current = { screenshot: basename(path), sha256, screenshotBytes: png.length, width, height, ...diagnostics }
+      if (record) await record(`${expectations[index].name}-pixel-inspection`, current)
+      evidence.push(current)
+    }
+    if (matches.every(matched => matched.accepted)) {
+      return evidence
     }
     await delay(120)
   }
@@ -326,6 +368,7 @@ export async function startOwnedOpsUiNotificationDaemon({ fixture, configText, r
       async closeAll() { daemon.assertAlive(); await command(tools.control, ['close-all'], 'daemon_close_all') },
       async geometry() { daemon.assertAlive(); return windowGeometry() },
       capture(options) { daemon.assertAlive(); return captureRoot({ ...options, fixture, scratch, record }) },
+      captureGroup(options) { daemon.assertAlive(); return captureRootGroup({ ...options, fixture, scratch, record }) },
       stop,
     }
   } catch (cause) { await stop(); throw cause }

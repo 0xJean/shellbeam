@@ -110,6 +110,30 @@ external instance's WebView save succeeded. The next actual-instance check must
 capture only the save request's method/path/status and immediately repeat the
 boolean metadata check; do not inspect Headers, settings bodies or HAR exports.
 
+### Repaired-App authorization confirmed, 2026-10-20
+
+The subsequent controlled server save was observed in the native console's
+detached Network list as `POST /api/admin/settings` HTTP 200. The immediately
+repeated configured-key boolean was true. The earlier unsuccessful save's cause
+remains unconfirmed; this evidence must not be described as user error.
+
+The macOS acceptance App was rebuilt from `75fb7c7`, preserving its compiled
+identifier and existing test Vault, then actually quit and relaunched. After
+the user unlocked it and saved the existing integration through the repaired
+form, the App visibly displayed the new saved-settings notice. Its main WebView
+then discovered the one real node. A separately prepared Network list, filtered
+to `/api/admin/client/list`, recorded completed **GET 200** requests from that
+main window. This is protected administrator API authorization evidence, rather
+than console Cookie authentication, a preflight or public fallback. Only the
+method/path/status list was inspected; no Headers, bodies, Key values or HAR
+were opened.
+
+Actual server-key persistence, repaired App credential saving and protected
+node discovery are now accepted for this isolated forwarded instance. The test
+Vault still has zero SSH hosts, so mapping, Workspace/OperationJob linkage and
+actual telemetry/alert recovery remain unaccepted. The one node previously had
+zero recent reports; no Agent or synthetic report was added to that instance.
+
 ## Local HTTP contract smoke
 
 Run the explicit smoke with an official Komari 1.6.0 executable for the current OS:

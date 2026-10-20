@@ -473,3 +473,40 @@ The inventory refresh checks do not establish inventory-notification presentatio
 remain false. macOS/Windows or other Linux desktop presentation, mobile devices,
 an external Komari deployment, public-CA renewal and production Agent distribution
 remain separate acceptance requirements.
+
+### Follow-up capture failure and same-frame group validation
+
+[Run 39366455099](https://github.com/0xJean/shellbeam/actions/runs/39366455099),
+head `75fb7c71a80b4295a4e565648f6c9f6e5b7bd7ff`, merge
+`dacedf85a34fcdaf78b478c73a97104a2f033539`, failed at
+`probe-failure-and-recovery` with `ops_ui_notifications_visible_text_missing`.
+The downloaded [artifact 12239558334](https://github.com/0xJean/shellbeam/actions/runs/39366455099/artifacts/12239558334)
+confirms successful service journeys, first restart and five Probe banner checks.
+The sixth `jump-resolved` capture was blank in all three attempts. Final inventory
+settlement, the second restart and the final aggregate notification ledger were
+not reached. Cleanup and actual application exit passed.
+
+The preceding `via-resolved` full frame and crop visibly contain both independent
+via and jump recovery titles/bodies. The next root frame differs only inside
+the notification rectangle, `(461,18)` through `(1262,299)`; its 225,081 pixels
+are uniformly RGB `(246,245,244)`. The failed crop exactly matches that root
+rectangle. This rules out an incorrect crop or OCR threshold for that failure,
+but does not uniquely establish the X11/dunst repaint trigger. The script had
+not yet called `closeAll()`, and this daemon's timeout remained zero.
+
+The capture helper now takes one real root frame and crop for each displayed
+notification group. Each host still requires its complete separate title and
+body together in one OCR mode of those same pixels. Both OCR modes read the
+same immutable crop; hosts, modes and retry frames cannot supply incomplete
+matches to each other. Source/crop paths, hashes and byte counts are retained,
+checked after OCR, and required to agree across group members before any
+notification is closed or history advances. Single-notification checks use the
+same implementation. Six lifecycle messages remain six independently checked
+messages; two-message groups share image evidence, so a complete successful
+run is expected to contain 24 PNG files rather than 28.
+
+All 117 related Node checks passed, including strict missing-title/body,
+different-frame/crop rejection and existing physical journey/restart/metadata
+contracts. The three attempts and 120 ms pixel retry interval are unchanged.
+These checks validate the capture logic; only a subsequent complete installed
+GUI run can accept the new current head.
