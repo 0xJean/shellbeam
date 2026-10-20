@@ -226,20 +226,34 @@ export function normalizeKomariClients(value: unknown): KomariClient[] {
     .filter((client): client is KomariClient => client !== null)
 }
 
+function readKomariClientList(value: unknown): KomariClient[] {
+  const payload = unwrapPayload(value)
+  // A reverse proxy or an unsupported API route can return the HTML console
+  // with HTTP 200. Do not turn that response into a successful empty discovery.
+  if (!Array.isArray(payload)) {
+    throw new KomariApiError('Komari node list has an unsupported response format', { code: 'endpoint-version' })
+  }
+  const clients = normalizeKomariClients(payload)
+  if (payload.length > 0 && clients.length === 0) {
+    throw new KomariApiError('Komari node list has an unsupported response format', { code: 'endpoint-version' })
+  }
+  return clients
+}
+
 export async function listKomariClients(
   config: KomariConnectionConfig,
   fetchImpl?: KomariFetch,
 ): Promise<KomariClient[]> {
   try {
     const payload = await requestKomari<unknown>(config, { path: '/api/admin/client/list' }, fetchImpl)
-    return normalizeKomariClients(payload)
+    return readKomariClientList(payload)
   } catch (error) {
     // Some Komari deployments expose public node discovery but restrict the
     // admin client list. Keep discovery read-only and use that endpoint as a
     // compatibility fallback for 401/403/404 responses.
     if (!(error instanceof KomariApiError) || !['permission', 'endpoint-version'].includes(error.code)) throw error
     const payload = await requestKomari<unknown>(config, { path: '/api/nodes' }, fetchImpl)
-    return normalizeKomariClients(payload)
+    return readKomariClientList(payload)
   }
 }
 

@@ -2,17 +2,17 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { KomariMappingsPanel } from './komari-mappings-panel'
 import { listKomariIntegrations } from '@/lib/komari-config'
-import { listKomariClients, type KomariClient } from '@/lib/komari'
+import { KomariApiError, listKomariClients, type KomariClient } from '@/lib/komari'
 import { editKomariMapping, getKomariMappingState, type KomariMappingState } from '@/lib/komari-persistence'
 import type { HostProfile } from '@/lib/hosts'
 vi.mock('@/lib/komari-config', () => ({ listKomariIntegrations: vi.fn() }))
-vi.mock('@/lib/komari', () => ({ listKomariClients: vi.fn() }))
+vi.mock('@/lib/komari', async (original) => ({ ...(await original<typeof import('@/lib/komari')>()), listKomariClients: vi.fn() }))
 vi.mock('@/lib/komari-persistence', async (original) => ({ ...(await original<typeof import('@/lib/komari-persistence')>()), editKomariMapping: vi.fn(), getKomariMappingState: vi.fn() }))
 
 const hosts: HostProfile[] = ['first', 'second'].map((name) => ({ id: name, name, vaultId: 'a', address: '10.0.0.1', username: 'ops', port: 22, authType: 'password', group: '', tags: [], createdAt: 0, updatedAt: 0 }))
 const node: KomariClient = { uuid: 'node-1', name: 'Node One', hostname: 'node', ipv4: '10.0.0.1', ipv6: null, os: null, kernel: null, version: null, raw: {} }
 let durable: KomariMappingState
-const secret = vi.fn<(key: string) => Promise<string>>(async () => 'secret')
+const secret = vi.fn<(key: string) => Promise<string | null>>(async () => 'secret')
 function panel(vaultId = 'a', profiles = hosts) { return <KomariMappingsPanel activeVaultId={vaultId} hosts={profiles} vaultUnlocked onLoadVaultSecret={secret} /> }
 async function openPanel() {
   fireEvent.click(screen.getByText('Komari node mappings'))
@@ -34,6 +34,64 @@ beforeEach(() => {
 })
 
 describe('Komari manual mapping workflow', () => {
+  it.each(['en', 'zh-CN'])('explains a missing saved credential in %s without sending discovery or losing the saved binding', async (locale) => {
+    localStorage.setItem('shellbeam.locale', locale)
+    durable = { revision: 2, mappings: [{ integrationId: 'server-a', hostId: 'second', nodeId: 'node-1', source: 'manual', confidence: 'explicit', updatedAt: 1 }] }
+    secret.mockResolvedValue(null)
+    render(panel())
+    fireEvent.click(screen.getByText(locale === 'en' ? 'Komari node mappings' : 'Komari 节点映射'))
+    expect(await screen.findByText(locale === 'en'
+      ? 'No server API key is saved for this integration in this Vault. In Settings → Komari, select this server, paste its API key and save.'
+      : '当前 Vault 尚未为此集成保存服务器 API 密钥。请在设置 → Komari 中选择此服务器，粘贴 API 密钥并保存。')).toBeVisible()
+    expect(listKomariClients).not.toHaveBeenCalled()
+    expect(screen.getByText(locale === 'en' ? 'Manual binding · second' : '手动绑定 · second')).toBeVisible()
+    expect(screen.queryByText(/Node discovery completed|节点发现已完成/)).not.toBeInTheDocument()
+  })
+
+  it('distinguishes a failed Vault credential read from a missing key without displaying the exception', async () => {
+    secret.mockRejectedValue(new Error('sensitive vault details'))
+    render(panel())
+    await openPanel()
+    expect(await screen.findByText('The server API key could not be read from this Vault. Unlock the Vault and try again.')).toBeVisible()
+    expect(listKomariClients).not.toHaveBeenCalled()
+    expect(screen.queryByText(/sensitive vault details|No server API key is saved/)).not.toBeInTheDocument()
+  })
+
+  it('reports an unavailable credential reader without claiming the saved key is missing', async () => {
+    render(<KomariMappingsPanel activeVaultId="a" hosts={hosts} vaultUnlocked />)
+    await openPanel()
+    expect(await screen.findByText('The server API key could not be read from this Vault. Unlock the Vault and try again.')).toBeVisible()
+    expect(listKomariClients).not.toHaveBeenCalled()
+    expect(screen.queryByText(/No server API key is saved/)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['permission', 'Komari rejected API access. Check the saved server API key and its permissions.'],
+    ['unavailable', 'Komari could not be reached from this app. Check the server address, SSH forwarding and network access.'],
+    ['timeout', 'Komari node discovery timed out. Check the connection and try again.'],
+    ['server-error', 'Komari did not return a usable node list. Check the server version and try again.'],
+  ])('explains %s discovery failures using fixed copy without the upstream payload', async (code, message) => {
+    vi.mocked(listKomariClients).mockRejectedValue(new KomariApiError('secret-token private-address upstream-body', { code }))
+    render(panel())
+    await openPanel()
+    expect(await screen.findByText(message)).toBeVisible()
+    expect(screen.queryByText(/secret-token|private-address|upstream-body/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Node discovery completed/)).not.toBeInTheDocument()
+  })
+
+  it('reports a successfully empty discovery independently from failures and clears the prior missing-key state on retry', async () => {
+    secret.mockResolvedValue(null)
+    render(panel())
+    await openPanel()
+    expect(await screen.findByText(/No server API key is saved/)).toBeVisible()
+    secret.mockResolvedValue('saved-key')
+    vi.mocked(listKomariClients).mockResolvedValue([])
+    fireEvent.click(screen.getByRole('button', { name: 'Discover nodes' }))
+    expect(await screen.findByText('Node discovery completed: the server returned no nodes.')).toBeVisible()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(listKomariClients).toHaveBeenCalledWith({ endpoint: 'https://komari.test', token: 'saved-key' })
+  })
+
   it('resolves an address conflict, retains the manual choice after remount and address changes, then explicitly returns to automatic matching', async () => {
     const view = render(panel())
     await openPanel()

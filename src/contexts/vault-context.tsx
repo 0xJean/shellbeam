@@ -61,7 +61,12 @@ export function useVault() {
 }
 
 export function VaultProvider({ children, setOutput }: { children: ReactNode; setOutput: (msg: string) => void }) {
-  const [activeVaultId, setActiveVaultId] = useState<string>(DEFAULT_VAULT_ID)
+  const [activeVaultId, setActiveVaultIdState] = useState<string>(DEFAULT_VAULT_ID)
+  const activeVaultScope = useRef({ id: DEFAULT_VAULT_ID })
+  const setActiveVaultId = useCallback((id: string) => {
+    if (activeVaultScope.current.id !== id) activeVaultScope.current = { id }
+    setActiveVaultIdState(id)
+  }, [])
   const [vaults, setVaults] = useState<VaultMeta[]>([])
   const [vaultStatusState, setVaultStatusState] = useState<VaultStatus | null>(null)
   const [vaultKeys, setVaultKeys] = useState<string[]>([])
@@ -93,10 +98,14 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
   }, [appendSecurityEvent])
 
   const refreshVault = useCallback(async () => {
+    const scope = activeVaultScope.current
+    if (scope.id !== activeVaultId) return
     const st = await vaultStatus(activeVaultId)
+    if (activeVaultScope.current !== scope) return
     setVaultStatusState(st)
     if (st.initialized) {
       const keys = await vaultListSecretKeys(activeVaultId)
+      if (activeVaultScope.current !== scope) return
       setVaultKeys(keys)
     } else {
       setVaultKeys([])
@@ -224,7 +233,10 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       await refreshVault()
       touchVaultActivity(`Vault secret saved: ${key}`)
       setOutput(`Saved vault key: ${key}`)
-    } catch (error) { setOutput(String(error)) } finally { setVaultBusy(false) }
+    } catch (error) {
+      setOutput('Failed to save vault key.')
+      throw error
+    } finally { setVaultBusy(false) }
   }, [activeVaultId, refreshVault, setOutput, touchVaultActivity])
 
   const handleLoadSecret = useCallback(async (key: string) => {
@@ -322,6 +334,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     refreshVaults,
     resolveAuthSecret,
     securityEvents,
+    setActiveVaultId,
     touchVaultActivity,
     vaultAutoLockMinutes,
     vaultBusy,

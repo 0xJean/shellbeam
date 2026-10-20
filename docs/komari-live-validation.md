@@ -34,6 +34,37 @@ API credentials, authenticated sync, node mapping, alert/Workspace linkage and
 public TLS remain unaccepted. No credentials or user host addresses are part of
 this record; no Komari Agent was installed to manufacture monitoring evidence.
 
+### Follow-up desktop check, 2026-10-20
+
+After the bounded instance had stopped, the same hash-checked executable was
+restarted with the original SQLite and StateDirectory, the same loopback-only
+listener and the same two-hour CPU/memory limits. The SSH forward was restored;
+the version endpoint still identified 1.6.0, public discovery returned one
+existing node with zero recent records, and an unauthenticated admin-list
+request returned 401. No
+database reset or new Agent deployment was needed for these checks.
+
+The actual desktop Vault was unlocked. Its saved integration had synchronization
+disabled, which was enabled and saved under the existing user authorization.
+Discovery then failed, and the Vault's key list contained zero credentials.
+The earlier user-reported key-save step therefore cannot be recorded as verified
+API authorization or successful synchronization. Public discovery alone also
+does not verify the dedicated key: the adapter can fall back to public discovery
+after a denied admin-list request.
+
+This exposed two feedback gaps. A native credential-write failure could be
+swallowed by the Vault context, allowing the settings form to clear its input
+as though saving had succeeded. Discovery also used one generic failure for
+missing credentials, denied API access and transport errors. The follow-up
+changes propagate write failures, retain unsaved input, show only fixed local
+error copy, and distinguish missing/read-failed credentials, permissions,
+connectivity, timeout and successful empty discovery. HTML and unsupported
+HTTP 200 list payloads are rejected instead of being normalized into a successful
+zero-node result; the existing one-request public fallback remains bounded.
+Regression tests for
+these behaviors do not replace the next saved-key desktop check, node mapping,
+actual telemetry or alert/Workspace acceptance.
+
 ## Local HTTP contract smoke
 
 Run the explicit smoke with an official Komari 1.6.0 executable for the current OS:

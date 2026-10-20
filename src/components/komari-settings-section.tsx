@@ -40,6 +40,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
   const consoleSequence = useRef(0)
   const mobileRequest = useRef<string | null>(null)
   const selected = useRef<string | null>(null)
+  const savedFormIntegrationId = useRef<string | null>(null)
   const unlocked = vaultStatusState?.unlocked === true
   const savedIntegration = integrations.find((item) => item.vaultId === vaultId && item.id === selectedId)
 
@@ -56,6 +57,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     invalidateConsole()
     setConsoleBusy(false)
     selected.current = null
+    savedFormIntegrationId.current = null
     setSelectedId(null)
     setName('')
     setEndpoint('')
@@ -99,6 +101,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     invalidateConsole()
     setConsoleBusy(false)
     selected.current = integration.id
+    savedFormIntegrationId.current = null
     setSelectedId(integration.id)
     setName(integration.name)
     setEndpoint(integration.endpoint)
@@ -169,7 +172,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     setBusy(true)
     setError('')
     try {
-      const integrationId = selectedId ?? crypto.randomUUID()
+      const integrationId = selectedId ?? savedFormIntegrationId.current ?? crypto.randomUUID()
       const saved = await upsertKomariIntegration({
         id: integrationId,
         vaultId,
@@ -178,9 +181,20 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
         enabled,
       })
       if (!alive.current) return
+      // Metadata may already exist when the separate Vault write fails. Keep
+      // this form's identity so retry updates it instead of creating a copy.
+      savedFormIntegrationId.current = saved.id
       const credentialRef = saved.credentialRef || komariCredentialKey(saved.id)
       if (apiKey.trim()) {
-        await handleSaveSecret(credentialRef, apiKey.trim())
+        try {
+          await handleSaveSecret(credentialRef, apiKey.trim())
+        } catch {
+          if (alive.current) {
+            setShowApiKey(false)
+            setError(t('settings.komariCredentialSaveFailed'))
+          }
+          return
+        }
         if (!alive.current) return
       }
       if (credentialRef !== saved.credentialRef) {
@@ -237,38 +251,38 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
       {integrations.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {integrations.map((integration) => (
-            <button key={integration.id} type="button" onClick={() => selectIntegration(integration)}
+            <button key={integration.id} type="button" onClick={() => selectIntegration(integration)} disabled={busy}
               className={`rounded-md border px-3 py-1.5 text-xs ${selectedId === integration.id ? 'border-primary bg-primary/10 text-primary' : 'border-border'}`}>
               {integration.name}
             </button>
           ))}
-          <Button variant="outline" size="sm" onClick={resetForm}>{t('settings.komariNew')}</Button>
+          <Button variant="outline" size="sm" onClick={resetForm} disabled={busy}>{t('settings.komariNew')}</Button>
         </div>
       )}
 
       <div className="mt-4 space-y-3">
         <div>
           <label className="text-sm text-muted-foreground" htmlFor="komari-name">{t('settings.komariName')}</label>
-          <Input id="komari-name" value={name} onChange={(event) => setName(event.target.value)} placeholder={t('settings.komariNamePlaceholder')} className="mt-1" />
+          <Input id="komari-name" value={name} onChange={(event) => setName(event.target.value)} disabled={busy} placeholder={t('settings.komariNamePlaceholder')} className="mt-1" />
         </div>
         <div>
           <label className="text-sm text-muted-foreground" htmlFor="komari-endpoint">{t('settings.komariEndpoint')}</label>
-          <Input id="komari-endpoint" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder={t('settings.komariEndpointPlaceholder')} className="mt-1" />
+          <Input id="komari-endpoint" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} disabled={busy} placeholder={t('settings.komariEndpointPlaceholder')} className="mt-1" />
         </div>
         <div>
           <label className="text-sm text-muted-foreground" htmlFor="komari-api-key">{t('settings.komariApiKey')}</label>
           <div className="relative mt-1">
-            <Input id="komari-api-key" type={showApiKey ? 'text' : 'password'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={selectedId ? t('settings.komariApiKeyKeep') : t('settings.komariApiKeyPaste')} className="pr-10" />
-            <button type="button" aria-label={showApiKey ? t('settings.komariHideApiKey') : t('settings.komariShowApiKey')} onClick={() => setShowApiKey((value) => !value)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
+            <Input id="komari-api-key" type={showApiKey ? 'text' : 'password'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} disabled={busy} placeholder={selectedId ? t('settings.komariApiKeyKeep') : t('settings.komariApiKeyPaste')} className="pr-10" />
+            <button type="button" aria-label={showApiKey ? t('settings.komariHideApiKey') : t('settings.komariShowApiKey')} onClick={() => setShowApiKey((value) => !value)} disabled={busy} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
               {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
         </div>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="rounded" />
+          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={busy} className="rounded" />
           {t('settings.komariEnabled')}
         </label>
-        {error && <p className="text-xs text-red-500">{error}</p>}
+        {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
         {!unlocked && <p className="text-xs text-amber-600 dark:text-amber-400">{t('settings.komariUnlockHint')}</p>}
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => void save()} disabled={busy || !name.trim() || !endpoint.trim()}>{busy ? t('settings.komariSaving') : t('settings.komariSave')}</Button>

@@ -66,6 +66,39 @@ describe('Komari API adapter', () => {
     ])
   })
 
+  it.each([[], { data: [] }, { data: { nodes: [] } }])('accepts an explicitly empty client list without a fallback request (%j)', async (body) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response(body))
+    await expect(listKomariClients({ endpoint: 'https://komari.example' }, fetchImpl)).resolves.toEqual([])
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses one public fallback when an unsupported admin route returns the HTML console with HTTP 200', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('<html>console</html>', { status: 200, headers: { 'content-type': 'text/html' } }))
+      .mockResolvedValueOnce(response({ data: [{ uuid: 'node-1', name: 'node' }] }))
+    await expect(listKomariClients({ endpoint: 'https://komari.example' }, fetchImpl)).resolves.toMatchObject([{ uuid: 'node-1' }])
+    expect(fetchImpl.mock.calls.map(([input]) => String(input))).toEqual([
+      'https://komari.example/api/admin/client/list',
+      'https://komari.example/api/nodes',
+    ])
+  })
+
+  it.each([null, {}, { data: { message: 'private upstream content' } }, [{ name: 'no-node-identity' }]])('rejects an unsupported list response instead of reporting zero nodes (%j)', async (body) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => response(body))
+    await expect(listKomariClients({ endpoint: 'https://komari.example', token: 'secret-token' }, fetchImpl))
+      .rejects.toMatchObject({ code: 'endpoint-version', message: 'Komari node list has an unsupported response format' })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a public HTML response after denied admin access without leaking either response body', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ message: 'private admin body' }, { status: 403 }))
+      .mockResolvedValueOnce(new Response('<html>private public body secret-token</html>', { status: 200 }))
+    await expect(listKomariClients({ endpoint: 'https://komari.example', token: 'secret-token' }, fetchImpl))
+      .rejects.toMatchObject({ code: 'endpoint-version', message: 'Komari node list has an unsupported response format' })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('loads recent records using an encoded node id', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response({ data: { time: 1710000000, cpu: 12 } }))
     const records = await getKomariRecentRecords({ endpoint: 'https://komari.example' }, 'node/a', fetchImpl)

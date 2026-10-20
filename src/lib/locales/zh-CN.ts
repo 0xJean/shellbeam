@@ -742,6 +742,7 @@ const zhCN: Record<string, string> = {
   'settings.komariHideApiKey': '隐藏 API 密钥',
   'settings.komariEnabled': '启用只读同步',
   'settings.komariUnlockToSave': '请先解锁当前保管库，再保存 Komari API 密钥。',
+  'settings.komariCredentialSaveFailed': '未能完成将 API 密钥保存到保管库。已保留输入，请重试。',
   'settings.komariUnlockHint': '解锁当前保管库后才能保存或更新 API 密钥。',
   'settings.komariSave': '保存集成',
   'settings.komariSaving': '保存中…',

@@ -742,6 +742,7 @@ const en: Record<string, string> = {
   'settings.komariHideApiKey': 'Hide API Key',
   'settings.komariEnabled': 'Enabled for read-only sync',
   'settings.komariUnlockToSave': 'Unlock the active Vault before saving a Komari API Key.',
+  'settings.komariCredentialSaveFailed': 'Could not complete saving the API Key to Vault. Your input has been kept. Please try again.',
   'settings.komariUnlockHint': 'Unlock the active Vault to save or update the API Key.',
   'settings.komariSave': 'Save integration',
   'settings.komariSaving': 'Saving…',

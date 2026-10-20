@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { listKomariIntegrations, type KomariIntegration } from '@/lib/komari-config'
-import { listKomariClients, type KomariClient } from '@/lib/komari'
+import { KomariApiError, listKomariClients, type KomariClient } from '@/lib/komari'
 import { mapKomariNodesToHosts } from '@/lib/komari-mapping'
 import { editKomariMapping, getKomariMappingState, manualKomariMappings, type KomariMappingState } from '@/lib/komari-persistence'
 import { komariMappingCopy } from '@/lib/locales/komari-mappings'
@@ -13,6 +13,7 @@ interface Entry {
   state: KomariMappingState
   nodes: KomariClient[]
   discovered: boolean
+  discoveryError: 'credentialMissing' | 'credentialReadFailed' | 'permissionDenied' | 'endpointUnavailable' | 'requestTimedOut' | 'requestFailed' | null
 }
 
 export interface KomariMappingsPanelProps {
@@ -53,14 +54,37 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
       let failed = false
       const next = await Promise.all(integrations.filter((integration) => integration.enabled && integration.vaultId === activeVaultId).map(async (integration): Promise<Entry> => {
         const state = await getKomariMappingState(activeVaultId, integration.id)
-        if (!current()) return { integration, state, nodes: [], discovered: false }
+        const unavailable: Entry = { integration, state, nodes: [], discovered: false, discoveryError: null }
+        if (!current()) return unavailable
+        if (!onLoadVaultSecret) {
+          failed = true
+          return { ...unavailable, discoveryError: 'credentialReadFailed' }
+        }
+        let token: string | null | undefined
         try {
-          const token = await onLoadVaultSecret?.(integration.credentialRef)
-          if (!current()) return { integration, state, nodes: [], discovered: false }
-          if (!token) throw new Error('KOMARI_CREDENTIAL_UNAVAILABLE')
+          token = await onLoadVaultSecret(integration.credentialRef)
+        } catch {
+          failed = true
+          return { ...unavailable, discoveryError: 'credentialReadFailed' }
+        }
+        if (!current()) return unavailable
+        if (!token?.trim()) {
+          failed = true
+          return { ...unavailable, discoveryError: 'credentialMissing' }
+        }
+        try {
           const nodes = await listKomariClients({ endpoint: integration.endpoint, token })
-          return { integration, state, nodes, discovered: true }
-        } catch { failed = true; return { integration, state, nodes: [], discovered: false } }
+          return { integration, state, nodes, discovered: true, discoveryError: null }
+        } catch (cause) {
+          failed = true
+          // Only fixed, local copy reaches the UI. Upstream error messages can
+          // contain credentials, addresses or response bodies.
+          const code = cause instanceof KomariApiError ? cause.code : null
+          const discoveryError = code === 'permission' ? 'permissionDenied'
+            : code === 'timeout' ? 'requestTimedOut'
+              : code === 'unavailable' ? 'endpointUnavailable' : 'requestFailed'
+          return { ...unavailable, discoveryError }
+        }
       }))
       if (!current()) return
       setScopedEntries({ vaultId: activeVaultId, rows: next }); setSelections({}); setLoadedVault(activeVaultId)
@@ -103,6 +127,8 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
         const nodeIds = [...new Set([...entry.nodes.map((node) => node.uuid), ...entry.state.mappings.filter((item) => item.source === 'manual').map((item) => item.nodeId)])]
         return <section key={entry.integration.id} className="space-y-2 rounded-md border p-3" aria-label={entry.integration.name}>
           <h3 className="text-sm font-medium">{entry.integration.name}</h3>
+          {entry.discoveryError && <p role="alert" className="text-xs text-red-500">{copy[entry.discoveryError]}</p>}
+          {entry.discovered && entry.nodes.length === 0 && <p role="status" className="text-xs text-muted-foreground">{copy.noNodes}</p>}
           {nodeIds.map((nodeId) => {
             const node = entry.nodes.find((item) => item.uuid === nodeId)
             const saved = entry.state.mappings.find((item) => item.nodeId === nodeId && item.source === 'manual')
