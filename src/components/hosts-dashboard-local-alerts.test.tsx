@@ -31,6 +31,13 @@ function seed(vaultId: string, name: string) {
 function element(vaultId = 'vault-a', extra: Partial<React.ComponentProps<typeof HostsDashboard>> = {}) {
   return <I18nProvider><HostsDashboard activeVaultId={vaultId} vaultUnlocked hosts={[{ ...host, vaultId }]} selectedHostId={null} loading={false} onSelectHost={vi.fn()} onCreateHost={vi.fn()} onUpdateHost={vi.fn()} onDeleteHost={vi.fn()} {...extra} /></I18nProvider>
 }
+async function openListOperations(mode: 'grid' | 'list' = 'list') {
+  if (mode === 'grid') return
+  const toggle = await screen.findByTestId('host-ops-details-toggle')
+  expect(toggle).toBeVisible()
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
+  expect(screen.getByTestId('host-ops-details')).toBeVisible()
+}
 beforeEach(() => {
   Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
   localStorage.clear(); localStorage.setItem('shellbeam.locale', 'en')
@@ -89,6 +96,7 @@ describe('host card canonical local alert actions', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(initialTime)
     render(element())
     if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
+    await openListOperations(mode)
     await screen.findByTestId('host-local-alert')
     const sampledAt = initialTime + 1_000
     clock.mockReturnValue(sampledAt)
@@ -113,6 +121,7 @@ describe('host card canonical local alert actions', () => {
     await flushLocalOpsHost('vault-a', host.id)
     const view = render(element())
     if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
+    await openListOperations(mode)
     const row = await screen.findByTestId('host-probe-evaluation')
     expect(row).toBeVisible()
     expect(row).toHaveTextContent('Healthy')
@@ -146,6 +155,7 @@ describe('host card canonical local alert actions', () => {
     }
     const view = render(element('vault-a', { hosts: [{ ...host, vaultId: undefined }] }))
     if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
+    await openListOperations(mode)
     let row = await screen.findByTestId('host-probe-evaluation')
     expect(row).toHaveAttribute('data-vault-id', 'vault-a')
     expect(row).toHaveAttribute('data-state', 'firing')
@@ -166,15 +176,18 @@ describe('host card canonical local alert actions', () => {
 
   it('shows scope-specific lifecycle and persistence failures from real events without changing provider health or exposing exceptions', async () => {
     const view = render(element())
+    await openListOperations()
     await screen.findByTestId('host-local-alert')
     const health = document.querySelector('[data-host-health]')!.getAttribute('data-host-health')
     act(() => setProbeAlertRuntimeDiagnostic('vault-a', host.id, 'listener-failed'))
     expect(await screen.findByText('Probe alert recording is unavailable. The next collection will retry.')).toBeVisible()
     expect(document.querySelector('[data-host-health]')).toHaveAttribute('data-host-health', health)
     view.rerender(element('vault-b'))
+    await openListOperations()
     await waitFor(() => expect(screen.getByTestId('host-local-alert')).toHaveTextContent('B Probe collection'))
     expect(screen.queryByText('Probe alert recording is unavailable. The next collection will retry.')).not.toBeInTheDocument()
     view.rerender(element())
+    await openListOperations()
     await screen.findByText('Probe alert recording is unavailable. The next collection will retry.')
     const original = vi.mocked(invoke).getMockImplementation()!
     vi.mocked(invoke).mockImplementation(async (command, args) => {
@@ -197,7 +210,9 @@ describe('host card canonical local alert actions', () => {
   it('rejects consent with a same-vault reference-ProxyJump cancelled job and zero lifecycle or remote writes', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(element())
-    fireEvent.click(await screen.findByTestId('local-host-alert-ack-builtin-probe'))
+    await openListOperations()
+    expect(await screen.findByTestId('local-host-alert-ack-builtin-probe')).toBeVisible()
+    fireEvent.click(screen.getByTestId('local-host-alert-ack-builtin-probe'))
     await waitFor(() => expect([...jobs.values()][0]).toMatchObject({ status: 'cancelled', confirmationStatus: 'rejected', hostId: host.id, vaultId: 'vault-a', action: 'local-alert.acknowledge', transport: 'proxy-jump' }))
     expect(window.confirm).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('A Probe collection'))
     expect(loadLocalAlertState('vault-a', host.id).alerts[0].status).toBe('active')
@@ -210,9 +225,11 @@ describe('host card canonical local alert actions', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(element())
     if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
-    fireEvent.click(await screen.findByTestId('local-host-alert-ack-builtin-probe'))
+    await openListOperations(mode)
+    expect(await screen.findByTestId('local-host-alert-ack-builtin-probe')).toBeVisible()
+    fireEvent.click(screen.getByTestId('local-host-alert-ack-builtin-probe'))
     await waitFor(() => expect(screen.getByTestId('host-local-alert')).toHaveAttribute('data-alert-status', 'acknowledged'))
-    await waitFor(() => expect(screen.getByTestId('host-ops-summary')).toHaveTextContent('local-alert.acknowledge builtin-probe · completed'))
+    await waitFor(() => expect(screen.getByTestId(mode === 'list' ? 'host-ops-details-summary' : 'host-ops-summary')).toHaveTextContent('local-alert.acknowledge builtin-probe · completed'))
     expect(screen.getByTestId('host-local-alert')).toHaveTextContent('job=job-1')
     expect(screen.queryByTestId('local-host-alert-ack-builtin-probe')).not.toBeInTheDocument()
     expect(loadLocalAlertState('vault-a', host.id).audit.at(-1)).toMatchObject({ event: 'acknowledged', operationJobId: 'job-1' })
@@ -220,6 +237,7 @@ describe('host card canonical local alert actions', () => {
     expect(window.confirm).toHaveBeenCalledTimes(1)
     expect(vi.mocked(invoke).mock.calls.filter(([name]) => name === 'local_ops_alert_action')).toHaveLength(1)
     expect(runWorkspaceRemoteCommand).not.toHaveBeenCalled()
+    expect(screen.getByTestId('local-host-alert-close-builtin-probe')).toBeVisible()
     fireEvent.click(screen.getByTestId('local-host-alert-close-builtin-probe'))
     await waitFor(() => expect(screen.getByTestId('host-local-alert')).toHaveAttribute('data-alert-status', 'closed'))
     expect(screen.getByTestId('host-local-alert')).toHaveTextContent('job=job-2')
@@ -233,9 +251,12 @@ describe('host card canonical local alert actions', () => {
     const old = deferred(), current = deferred()
     actionWait = async (document) => document.vaultId === 'vault-a' ? old.promise : current.promise
     const view = render(element())
-    fireEvent.click(await screen.findByTestId('local-host-alert-ack-builtin-probe'))
+    await openListOperations()
+    expect(await screen.findByTestId('local-host-alert-ack-builtin-probe')).toBeVisible()
+    fireEvent.click(screen.getByTestId('local-host-alert-ack-builtin-probe'))
     await waitFor(() => expect(vi.mocked(invoke).mock.calls.filter(([name]) => name === 'local_ops_alert_action')).toHaveLength(1))
     view.rerender(element('vault-b'))
+    await openListOperations()
     const button = await screen.findByTestId('local-host-alert-ack-builtin-probe')
     await waitFor(() => expect(button).toBeEnabled())
     expect(screen.getByTestId('host-local-alert')).toHaveTextContent('B Probe collection')
@@ -259,7 +280,9 @@ describe('host card canonical local alert actions', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     actionWait = async () => { throw new Error('LOCAL_OPS_REVISION_CONFLICT') }
     render(element())
-    fireEvent.click(await screen.findByTestId('local-host-alert-ack-builtin-probe'))
+    await openListOperations()
+    expect(await screen.findByTestId('local-host-alert-ack-builtin-probe')).toBeVisible()
+    fireEvent.click(screen.getByTestId('local-host-alert-ack-builtin-probe'))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The alert action could not be fully recorded'))
     expect(screen.getByTestId('host-local-alert')).toHaveAttribute('data-alert-status', 'active')
     await waitFor(() => expect(screen.getByTestId('local-host-alert-ack-builtin-probe')).toBeEnabled())
@@ -269,6 +292,7 @@ describe('host card canonical local alert actions', () => {
 
   it('omits action controls for a locked vault or a host from a conflicting vault', async () => {
     const view = render(element('vault-a', { vaultUnlocked: false }))
+    await openListOperations()
     await screen.findByTestId('host-local-alert')
     expect(screen.queryByTestId('local-host-alert-ack-builtin-probe')).not.toBeInTheDocument()
     view.rerender(element('vault-a', { hosts: [{ ...host, vaultId: 'different' }] }))

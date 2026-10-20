@@ -3,6 +3,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
+import { ensureOpsUiHostDetails } from './ops-ui-host-details.mjs'
 import {
   OPS_UI_PROBE_RULE_IDS, readOpsUiProbeAlert, readOpsUiProbeEvaluation,
   resumeOpsUiProbeJourney, runOpsUiProbeJourney, validateOpsUiProbeScope,
@@ -24,6 +25,109 @@ function domDriver(html) {
     text: async element => (typeof element === 'string' ? document.querySelector(element) : element).textContent,
   } }
 }
+
+function disclosedHostUnit() {
+  const state = scope(), now = Date.now() - 10, hostId = state.hostIds.direct
+  const unit = domDriver(`<article data-testid="host-card" data-host-id="${hostId}" data-vault-id="${state.vaultId}">
+    <div data-testid="host-ops-summary" data-host-id="${hostId}" data-vault-id="${state.vaultId}"></div>
+    <button data-testid="host-ops-details-toggle" aria-expanded="false" aria-controls=":host-details:">Operations details</button>
+    <section data-testid="host-ops-details" id=":host-details:" hidden>
+      ${evaluation(state, 'direct', now)}
+      <div data-testid="host-local-alert" data-rule-id="${rule}" data-host-id="${hostId}" data-vault-id="${state.vaultId}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="direct" data-alert-status="active" data-updated-at="${now}">${state.hostNames.direct} · ${name} · ProbeProvider collection</div>
+    </section>
+  </article>`)
+  const card = unit.document.querySelector('[data-testid="host-card"]')
+  const toggle = unit.document.querySelector('button')
+  const region = unit.document.querySelector('section')
+  const clicks = []
+  unit.driver.click = async selector => {
+    const button = unit.document.querySelector(selector)
+    assert.equal(button, toggle)
+    assert(!button.closest('[hidden]'))
+    clicks.push(selector)
+    button.setAttribute('aria-expanded', 'true')
+    region.hidden = false
+  }
+  unit.driver.until = async predicate => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const result = await predicate()
+      if (result) return result
+    }
+    throw new Error('unit timeout')
+  }
+  return { ...unit, state, now, card, toggle, region, clicks }
+}
+
+test('Probe readers genuinely expand the matching host once and preserve original evidence checks', async () => {
+  const unit = disclosedHostUnit()
+  try {
+    assert(unit.region.hidden)
+    assert.deepEqual(await readOpsUiProbeEvaluation(unit.driver, unit.state, 'direct'), { state: 'healthy', sampledAt: unit.now })
+    assert.deepEqual(await readOpsUiProbeAlert(unit.driver, unit.state, 'direct', 'active'), { jobId: null, updatedAt: unit.now, resolvedAt: null })
+    assert.equal(unit.clicks.length, 1)
+    assert.equal(unit.toggle.getAttribute('aria-expanded'), 'true')
+    const evaluationRow = unit.document.querySelector('[data-testid="host-probe-evaluation"]')
+    evaluationRow.hidden = true
+    assert.equal(await readOpsUiProbeEvaluation(unit.driver, unit.state, 'direct'), null)
+    evaluationRow.hidden = false
+    evaluationRow.dataset.sampledAt = String(Date.now() + 60_000)
+    assert.equal(await readOpsUiProbeEvaluation(unit.driver, unit.state, 'direct'), null)
+    const alert = unit.document.querySelector('[data-testid="host-local-alert"]')
+    alert.dataset.vaultId = 'foreign'
+    await assert.rejects(readOpsUiProbeAlert(unit.driver, unit.state, 'direct', 'active'), /alert_vault_scope_mismatch/)
+    assert.equal(unit.clicks.length, 1)
+  } finally { unit.dom.window.close() }
+})
+
+test('detail navigation refuses foreign, ambiguous or unlinked controls before clicking', async () => {
+  for (const problem of ['foreign-vault', 'missing-vault', 'duplicate-host', 'duplicate-toggle', 'duplicate-region', 'missing-region', 'foreign-control', 'invalid-expanded', 'hidden-toggle']) {
+    const unit = disclosedHostUnit()
+    try {
+      if (problem === 'foreign-vault') unit.card.dataset.vaultId = 'foreign'
+      if (problem === 'missing-vault') unit.card.removeAttribute('data-vault-id')
+      if (problem === 'duplicate-host') unit.card.after(unit.card.cloneNode(true))
+      if (problem === 'duplicate-toggle') unit.toggle.after(unit.toggle.cloneNode(true))
+      if (problem === 'duplicate-region') unit.region.after(unit.region.cloneNode(true))
+      if (problem === 'missing-region') unit.region.remove()
+      if (problem === 'foreign-control') unit.toggle.setAttribute('aria-controls', 'another-host-details')
+      if (problem === 'invalid-expanded') unit.toggle.setAttribute('aria-expanded', 'maybe')
+      if (problem === 'hidden-toggle') unit.toggle.hidden = true
+      await assert.rejects(ensureOpsUiHostDetails(unit.driver, { hostId: unit.state.hostIds.direct, vaultId: unit.state.vaultId }), /ops_ui_host_details_/)
+      assert.equal(unit.clicks.length, 0, problem)
+    } finally { unit.dom.window.close() }
+  }
+})
+
+test('detail navigation never forces a refused click, accepts hidden evidence or clicks again while waiting', async () => {
+  const unit = disclosedHostUnit()
+  const scope = { hostId: unit.state.hostIds.direct, vaultId: unit.state.vaultId }
+  try {
+    unit.driver.click = async () => { unit.clicks.push('attempt'); throw new Error('element not interactable') }
+    await assert.rejects(ensureOpsUiHostDetails(unit.driver, scope), /element not interactable/)
+    assert.equal(unit.clicks.length, 1)
+    assert(unit.region.hidden)
+    unit.driver.click = async () => { unit.clicks.push('attempt'); unit.toggle.setAttribute('aria-expanded', 'true') }
+    await assert.rejects(ensureOpsUiHostDetails(unit.driver, scope), /unit timeout/)
+    assert.equal(unit.clicks.length, 2)
+    assert(unit.region.hidden)
+    unit.region.hidden = false
+    await ensureOpsUiHostDetails(unit.driver, scope)
+    assert.equal(unit.clicks.length, 2)
+    unit.card.hidden = true
+    assert.equal(await ensureOpsUiHostDetails(unit.driver, scope), false)
+    assert.equal(unit.clicks.length, 2)
+  } finally { unit.dom.window.close() }
+})
+
+test('detail navigation rechecks the current Vault after the actual disclosure click', async () => {
+  const unit = disclosedHostUnit()
+  try {
+    const click = unit.driver.click
+    unit.driver.click = async selector => { await click(selector); unit.card.dataset.vaultId = 'foreign' }
+    await assert.rejects(readOpsUiProbeEvaluation(unit.driver, unit.state, 'direct'), /vault_mismatch/)
+    assert.equal(unit.clicks.length, 1)
+  } finally { unit.dom.window.close() }
+})
 
 test('scope rejects non-private endpoints, duplicate ports and ambiguous or injected host/Vault identities before UI work', () => {
   assert.doesNotThrow(() => validateOpsUiProbeScope(fixture(), scope()))

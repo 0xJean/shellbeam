@@ -99,6 +99,41 @@ test('pixel safety requires each actual metrics host/Vault/source/route/state an
   } finally { unit.dom.window.close() }
 })
 
+test('notification capture opens each requested host through its visible disclosure and still refuses hidden or foreign evidence', async () => {
+  const unit = ui(), context = { state: unit.resumeState, titles: unit.titles, profiles: ['via', 'jump'], event: 'opened' }
+  const clicks = []
+  try {
+    for (const role of roles) {
+      const card = unit.document.querySelector(`[data-testid="host-card"][data-host-id="${unit.resumeState.hostIds[role]}"]`)
+      card.dataset.vaultId = unit.resumeState.vaultId
+      const section = unit.document.createElement('section')
+      section.dataset.testid = 'host-ops-details'; section.id = `${role}-details`; section.hidden = true
+      section.append(...card.childNodes)
+      card.append(section)
+      card.insertAdjacentHTML('afterbegin', `<button data-testid="host-ops-details-toggle" aria-expanded="false" aria-controls="${section.id}">Details</button>`)
+    }
+    unit.driver.click = async selector => {
+      const toggle = unit.document.querySelector(selector)
+      assert(toggle && !toggle.closest('[hidden]'))
+      const card = toggle.closest('[data-testid="host-card"]')
+      clicks.push(card.dataset.hostId)
+      toggle.setAttribute('aria-expanded', 'true')
+      card.querySelector('[data-testid="host-ops-details"]').hidden = false
+    }
+    unit.driver.until = async predicate => { const value = await predicate(); assert(value, 'unit disclosure not visible'); return value }
+    await assertSafeProbeNotificationUi(unit.driver, context)
+    await assertSafeProbeNotificationUi(unit.driver, context)
+    assert.deepEqual(clicks, [unit.resumeState.hostIds.via, unit.resumeState.hostIds.jump])
+    assert(unit.document.getElementById('direct-details').hidden)
+    const alert = unit.document.querySelector('[data-transport="proxy-jump"]')
+    alert.hidden = true
+    await assert.rejects(assertSafeProbeNotificationUi(unit.driver, context), /unsafe_alert_scope/)
+    alert.hidden = false; alert.dataset.vaultId = 'foreign'
+    await assert.rejects(assertSafeProbeNotificationUi(unit.driver, context), /unsafe_alert_vault_scope/)
+    assert.equal(clicks.length, 2)
+  } finally { unit.dom.window.close() }
+})
+
 function harness() {
   const unit = ui(), records = [], captures = []
   let clock = Date.now(), displayed = 0, waiting = 0, history = 0, stops = 0, delivered = 12, visible = true

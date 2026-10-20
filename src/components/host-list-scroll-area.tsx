@@ -86,7 +86,7 @@ export function HostListScrollArea({ children }: { children: ReactNode }) {
         </div>
       )}
       <div ref={viewportRef} id={viewportId} data-testid="host-list-scroll-viewport" onScroll={readPosition} className="workspace-scrollbar-hidden workspace-horizontal-scroll min-w-0 overflow-x-auto overscroll-x-contain rounded-b-2xl">
-        <div ref={contentRef} className="xl:min-w-[86rem]">{children}</div>
+        <div ref={contentRef} className="xl:min-w-[91rem]">{children}</div>
       </div>
     </div>
   )

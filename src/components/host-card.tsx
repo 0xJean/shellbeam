@@ -16,11 +16,12 @@ import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
 import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import { hostProbeEvaluations, validHostOpsSampleTime, type HostOpsCapability, type HostOpsProbeEvaluation } from '@/lib/host-ops-view'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
-import { AlertTriangle, Activity, Bot, Check, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Network, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
-import { useState, type ComponentType } from 'react'
+import { AlertTriangle, Activity, Bot, Check, ChevronDown, Clock, Cpu, HardDrive, KeyRound, Laptop, ListChecks, LockKeyhole, MemoryStick, Network, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
+import { useId, useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { KomariProbeOpsView } from './komari-probe-ops-view'
+import { HOST_LIST_COLUMNS } from './host-list-layout'
 
 type TFn = (key: string, params?: Record<string, string | number>) => string
 
@@ -509,8 +510,8 @@ function HostLocalAlertRows({ host, summary, t }: { host: HostProfile; summary: 
   return <div data-testid="host-local-alerts" className="space-y-1.5 border-t border-[color:var(--workspace-border-soft)] pt-1.5">
     <span className="font-medium">{t('hosts.localAlert.title')}</span>
     {alerts.slice(0, 3).map((alert) => <div key={alert.ruleId} data-testid="host-local-alert" data-rule-id={alert.ruleId} data-vault-id={summary.vaultId} data-host-id={alert.hostId} data-alert-status={alert.status} data-metric={alert.metric} data-job-id={alert.operationJobId} data-updated-at={validHostOpsSampleTime(alert.updatedAt)} data-resolved-at={validHostOpsSampleTime(alert.resolvedAt)} data-source={alert.source} data-transport={alert.transport} className="space-y-1">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="min-w-0 flex-1 break-words"><strong>{alert.name}</strong> · {t(`localOps.metric.${alert.metric}`)} · {t(`localOps.status.${alert.status}`)}</span>
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <span className="min-w-0 flex-1 basis-full break-words sm:basis-0"><strong>{alert.name}</strong> · {t(`localOps.metric.${alert.metric}`)} · {t(`localOps.status.${alert.status}`)}</span>
         {summary.onLocalAlertAction && alert.status === 'active' && <button type="button" data-testid={`local-host-alert-ack-${alert.ruleId}`} disabled={!!summary.localAlertBusy} onClick={(event) => act(event, alert, 'acknowledge')} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} className="shrink-0 rounded-md border px-1.5 py-1 disabled:opacity-50">{t('localOps.acknowledge')}</button>}
         {summary.onLocalAlertAction && ['active', 'acknowledged', 'resolved'].includes(alert.status) && <button type="button" data-testid={`local-host-alert-close-${alert.ruleId}`} disabled={!!summary.localAlertBusy} onClick={(event) => act(event, alert, 'close')} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} className="shrink-0 rounded-md border px-1.5 py-1 disabled:opacity-50">{t('localOps.close')}</button>}
       </div>
@@ -537,7 +538,59 @@ function HostProbeEvaluationRows({ host, summary, t }: { host: HostProfile; summ
   </div>
 }
 
-function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?: HostOperationalSummary; t: TFn }) {
+/** A list cell is a bounded summary. Detailed journals belong below the row. */
+function HostOperationsCell({ host, summary, expanded, detailsId, onToggle }: {
+  host: HostProfile; summary?: HostOperationalSummary; expanded: boolean; detailsId: string; onToggle: () => void
+}) {
+  const { t, locale } = useT()
+  const copy = monitoringSourcesCopy[locale]
+  if (!summary) return <span className="text-xs text-[var(--workspace-text-subtle)]">—</span>
+  const scopeVault = summary.vaultId && (!host.vaultId || host.vaultId === summary.vaultId) ? summary.vaultId : undefined
+  const incidents = groupKomariAlertIncidents(summary.komariAlerts ?? []).map(({ alert }) => alert)
+  const local = (summary.localAlerts ?? []).filter((alert) => alert.hostId === host.id)
+  const localOpen = summary.localAlertOpen ?? local.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length
+  const komariOpen = summary.alertOpen ?? (incidents.length > 0
+    ? incidents.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length
+    : summary.alertUnsupported ? undefined : summary.alertActive)
+  const open = (komariOpen ?? 0) + localOpen
+  const hasCounts = komariOpen != null || localOpen > 0 || (!summary.alertUnsupported
+    && (summary.komariAlerts !== undefined || summary.localAlerts !== undefined || summary.localAlertOpen !== undefined))
+  const formatCount = (value: number | null | undefined) => value == null ? '—' : String(value)
+  const attention = summary.komariProbe && (summary.komariProbe.komari.waitingForFirstReport || summary.komariProbe.komari.state !== 'online' || summary.komariProbe.status !== 'linked') ? summary.komariProbe : null
+  const failed = summary.localAlertError || summary.localAlertPersistenceError || summary.probeAlertLifecycleError
+  return <div data-testid="host-ops-summary" data-host-ops-summary data-vault-id={scopeVault} data-host-id={host.id} data-sampled-at={validHostOpsSampleTime(summary.sampledAt)} className="min-w-0 space-y-1.5 text-xs text-[var(--workspace-text-muted)]">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span>{t('hosts.opsServicesShort')} <strong className="font-mono text-[var(--workspace-text-strong)]">{formatCount(summary.serviceActive)}/{formatCount(summary.serviceTotal)}</strong></span>
+      <span>{t('hosts.opsProcessesShort')} <strong className="font-mono text-[var(--workspace-text-strong)]">{formatCount(summary.processRunning)}/{formatCount(summary.processTotal)}</strong></span>
+      {(summary.serviceFailed ?? 0) > 0 && <span className="text-[color:var(--workspace-status-bad-text)]">{summary.serviceFailed} {t('hosts.opsFailed')}</span>}
+    </div>
+    <div data-testid="host-ops-alert-summary" data-total={summary.alertTotal ?? undefined} data-active={summary.alertActive ?? undefined} data-open={summary.alertOpen ?? undefined} className="flex flex-wrap items-center gap-1.5">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span>{copy.operationsAlerts} <strong>{hasCounts ? open : '—'}</strong></span>
+      {(summary.highestAlertSeverity || localOpen > 0) && <span data-testid="host-ops-local-alerts" data-open-count={localOpen} data-severity={summary.highestAlertSeverity ?? 'unknown'} className="text-[color:var(--workspace-status-warn-text)]">
+        {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {localOpen}
+      </span>}
+    </div>
+    <div data-testid="host-ops-compact-source" className="flex min-w-0 items-center gap-2 text-[11px] text-[var(--workspace-text-subtle)]">
+      <span className="truncate" title={summary.provider}>{summary.provider || t('hosts.opsNoProvider')}</span>
+      <span className="shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
+    </div>
+    {attention && <div data-testid="host-monitoring-source-attention" data-source="komari" data-state={attention.komari.waitingForFirstReport ? 'waiting' : attention.komari.state} className="text-[11px] text-[color:var(--workspace-status-warn-text)]">
+      Komari · {attention.komari.waitingForFirstReport ? copy.waitingForFirstReport : t(`workspace.komariProbe.state.${attention.komari.state}`)}
+      {attention.status !== 'linked' ? ` · ${t(`workspace.komariProbe.mapping.${attention.status}`)}` : ''}
+    </div>}
+    {failed && <div data-testid="host-ops-attention" className="flex items-center gap-1 text-[color:var(--workspace-status-bad-text)]"><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />{copy.reviewRequired}</div>}
+    {(summary.auditActive || summary.auditUnknown) ? <div className="flex flex-wrap gap-x-2 text-[11px]">
+      {summary.auditActive ? <span>{t('hosts.opsAuditActive')}: {summary.auditActive}</span> : null}
+      {summary.auditUnknown ? <span className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsRecoveryRequired')}: {summary.auditUnknown}</span> : null}
+    </div> : null}
+    <button type="button" data-testid="host-ops-details-toggle" aria-label={`${copy.expandOperations} · ${host.name}`} aria-expanded={expanded} aria-controls={detailsId} onClick={(event) => { event.stopPropagation(); onToggle() }} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} className="inline-flex min-h-8 items-center gap-1 rounded-md px-1 text-xs font-medium text-[var(--workspace-accent-text)] hover:bg-[var(--workspace-accent-subtle)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
+      {expanded ? copy.collapseOperations : copy.expandOperations}<ChevronDown className={cn('h-3.5 w-3.5', expanded && 'rotate-180')} aria-hidden="true" />
+    </button>
+  </div>
+}
+
+function HostOperationalMeta({ host, summary, t, expanded = false }: { host: HostProfile; summary?: HostOperationalSummary; t: TFn; expanded?: boolean }) {
   const { locale } = useT()
   const sourceCopy = monitoringSourcesCopy[locale]
   if (!summary) return null
@@ -570,8 +623,10 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
   }
 
   return (
-    <div data-testid="host-ops-summary" data-host-ops-summary data-vault-id={scopeVault} data-host-id={host.id} data-sampled-at={validHostOpsSampleTime(summary.sampledAt)} className="mt-2 space-y-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 text-[10px] text-[var(--workspace-text-muted)]">
-      <div className="flex min-w-0 items-center gap-2">
+    <div data-testid={expanded ? 'host-ops-details-summary' : 'host-ops-summary'} data-host-ops-summary={!expanded || undefined} data-vault-id={scopeVault} data-host-id={host.id} data-sampled-at={validHostOpsSampleTime(summary.sampledAt)} className={cn('min-w-0 text-[var(--workspace-text-muted)]', expanded ? 'grid gap-5 text-xs md:grid-cols-2 xl:grid-cols-3' : 'mt-2 space-y-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-2 text-[10px]')}>
+      <div className="min-w-0 space-y-1.5">
+      {expanded && <h4 className="mb-3 font-semibold text-[var(--workspace-text-strong)]">{sourceCopy.operationsOverview}</h4>}
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="inline-flex shrink-0 items-center gap-1" title={t('hosts.opsServices')}>
           <Wrench className="h-3 w-3 text-[var(--workspace-accent-text)]" />
           <span>{t('hosts.opsServicesShort')}</span>
@@ -606,6 +661,9 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
           {latestAlertAudit.operationJobId ? ` · job=${latestAlertAudit.operationJobId}` : ''}
         </div>
       )}
+      </div>
+      <div className="min-w-0 space-y-1.5">
+      {expanded && <h4 className="mb-3 font-semibold text-[var(--workspace-text-strong)]">{sourceCopy.operationsAlerts}</h4>}
       {actionableAlerts.length > 0 && (
         <div data-testid="host-ops-alert-actions" className="space-y-1.5 border-t border-[color:var(--workspace-border-soft)] pt-1.5">
           {actionableAlerts.slice(0, 3).map((alert) => {
@@ -613,8 +671,8 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
             const canAcknowledge = alert.status === 'active' && !!summary.onKomariAlertAction
             const canClose = !!summary.onKomariAlertAction
             return (
-              <div key={alert.alertId} className="flex min-w-0 items-center gap-1.5">
-                <span className="min-w-0 flex-1 truncate" title={alert.title}>
+              <div key={alert.alertId} className={cn('flex min-w-0 gap-1.5', expanded ? 'flex-wrap items-start' : 'items-center')}>
+                <span className={cn('min-w-0 flex-1', expanded ? 'basis-full break-words [overflow-wrap:anywhere]' : 'truncate')} title={alert.title}>
                   <span className="font-medium text-[var(--workspace-text-strong)]">{alert.title}</span>
                   <span className="ml-1 text-[var(--workspace-text-subtle)]">· {t(`komariAlerts.status.${alert.status}`)}</span>
                 </span>
@@ -647,8 +705,8 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
         </div>
       )}
       {(summary.alertTotal !== undefined || summary.alertUnsupported || summary.alertActive != null || summary.alertOpen != null || summary.alertAcknowledged != null || summary.alertClosed != null || summary.alertLinkedJobId != null) && (
-        <div data-testid="host-ops-alert-summary" data-total={summary.alertTotal ?? undefined} data-active={summary.alertActive ?? undefined} data-open={summary.alertOpen ?? undefined} className="flex min-w-0 items-center gap-2">
-          <span className="inline-flex min-w-0 items-center gap-1" title={t('hosts.opsAlerts')}>
+        <div data-testid={expanded ? 'host-ops-details-alert-summary' : 'host-ops-alert-summary'} data-total={summary.alertTotal ?? undefined} data-active={summary.alertActive ?? undefined} data-open={summary.alertOpen ?? undefined} className="flex min-w-0 items-center gap-2">
+          <span className="inline-flex min-w-0 flex-wrap items-center gap-1" title={t('hosts.opsAlerts')}>
             <AlertTriangle className="h-3 w-3 shrink-0 text-[color:var(--workspace-status-warn-text)]" />
             <span>{t('hosts.opsAlertsShort')}</span>
             <strong className="font-mono text-[var(--workspace-text-strong)]">
@@ -658,44 +716,47 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
             {summary.alertOpen != null && summary.alertOpen !== summary.alertActive && <span className="text-[color:var(--workspace-status-warn-text)]">· {summary.alertOpen} {t('hosts.alert.active')}</span>}
             {summary.alertAcknowledged ? <span className="text-[color:var(--workspace-status-warn-text)]">· {t('hosts.alert.acknowledged')}: {summary.alertAcknowledged}</span> : null}
             {summary.alertClosed ? <span className="text-[color:var(--workspace-status-good-text)]">· {t('hosts.alert.closed')}: {summary.alertClosed}</span> : null}
-            {summary.alertLinkedJobId && <span className="shrink-0 font-mono">{t('hosts.alert.linkedOperation', { jobId: summary.alertLinkedJobId })}</span>}
+            {summary.alertLinkedJobId && <span className="min-w-0 break-all font-mono">{t('hosts.alert.linkedOperation', { jobId: summary.alertLinkedJobId })}</span>}
           </span>
         </div>
       )}
-      <div className="flex min-w-0 items-center gap-2 text-[var(--workspace-text-subtle)]" data-testid="host-current-source">
+      {!expanded && (summary.highestAlertSeverity || summary.localAlertOpen) ? <div data-testid="host-ops-local-alerts" data-open-count={summary.localAlertOpen ?? 0} data-severity={summary.highestAlertSeverity ?? 'unknown'} className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsFilters.highest')}: {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {summary.localAlertOpen ?? 0}</div> : null}
+      <HostLocalAlertRows host={host} summary={summary} t={t} />
+      </div>
+      <div className="min-w-0 space-y-1.5">
+      {expanded && <h4 className="mb-3 font-semibold text-[var(--workspace-text-strong)]">{sourceCopy.operationsSource}</h4>}
+      <div className="flex min-w-0 flex-wrap items-center gap-2 text-[var(--workspace-text-subtle)]" data-testid="host-current-source">
         <span className="inline-flex min-w-0 items-center gap-1 truncate" title={summary.provider || t('hosts.opsNoProvider')}>
           <ShieldCheck className="h-3 w-3 shrink-0" />
           <span className="truncate">{summary.provider || t('hosts.opsNoProvider')}</span>
         </span>
-        <span className="shrink-0">{transportLabel}{summary.jumpHostName ? ` · ${summary.jumpHostName}` : ''}</span>
+        <span className="min-w-0 break-words">{transportLabel}{summary.jumpHostName ? ` · ${summary.jumpHostName}` : ''}</span>
         <span className="ml-auto shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
       </div>
-      {komariAttention && <div data-testid="host-monitoring-source-attention" data-source="komari" data-state={komariAttention.komari.waitingForFirstReport ? 'waiting' : komariAttention.komari.state} className={cn('flex items-center gap-1.5', komariAttention.komari.waitingForFirstReport ? 'text-[var(--workspace-text-subtle)]' : 'text-[color:var(--workspace-status-warn-text)]')}>
+      {!expanded && komariAttention && <div data-testid="host-monitoring-source-attention" data-source="komari" data-state={komariAttention.komari.waitingForFirstReport ? 'waiting' : komariAttention.komari.state} className={cn('flex items-center gap-1.5', komariAttention.komari.waitingForFirstReport ? 'text-[var(--workspace-text-subtle)]' : 'text-[color:var(--workspace-status-warn-text)]')}>
         <Activity className="h-3 w-3 shrink-0" aria-hidden="true" />
         <span>{sourceCopy.komariSource} · {komariAttention.komari.waitingForFirstReport
           ? sourceCopy.waitingForFirstReport
           : t(`workspace.komariProbe.state.${komariAttention.komari.state}`)}{komariAttention.status !== 'linked' ? ` · ${t(`workspace.komariProbe.mapping.${komariAttention.status}`)}` : ''}</span>
       </div>}
-      {(summary.highestAlertSeverity || summary.localAlertOpen) ? <div data-testid="host-ops-local-alerts" data-open-count={summary.localAlertOpen ?? 0} data-severity={summary.highestAlertSeverity ?? 'unknown'} className="text-[color:var(--workspace-status-warn-text)]">{t('hosts.opsFilters.highest')}: {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {summary.localAlertOpen ?? 0}</div> : null}
       <HostProbeEvaluationRows host={host} summary={summary} t={t} />
-      <HostLocalAlertRows host={host} summary={summary} t={t} />
       {hasSourceDetails && <details data-testid="host-data-source-details" className="space-y-1.5 border-t border-[color:var(--workspace-border-soft)] pt-1.5" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
         <summary className="cursor-pointer font-medium text-[var(--workspace-text-muted)]">{sourceCopy.details}</summary>
       {summary.agentStatus && !summary.komariProbe?.probe.record && (
-        <div className="flex min-w-0 items-center gap-2" title={t('workspace.agentProbe.description')}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2" title={t('workspace.agentProbe.description')}>
           <Bot className="h-3 w-3 shrink-0 text-[var(--workspace-accent-text)]" />
           <span className="shrink-0">{t('workspace.agentProbe.title')}</span>
           <strong className="truncate font-medium text-[var(--workspace-text-strong)]">
             {t(`workspace.agentProbe.lifecycle.${lifecycleStatus}`)}
           </strong>
           {summary.agentHealth && <span className="shrink-0 text-[var(--workspace-text-subtle)]">· {t(`workspace.agentProbe.${agentHealth === 'online' ? 'online' : agentHealth === 'offline' ? 'offline' : 'unknown'}`)}</span>}
-          {summary.agentVersion && <span className="shrink-0 font-mono">v{summary.agentVersion}</span>}
+          {summary.agentVersion && <span className="min-w-0 break-all font-mono">v{summary.agentVersion}</span>}
           {summary.agentHeartbeatAt && <span className="ml-auto shrink-0">{formatSummaryAge(summary.agentHeartbeatAt, t)}</span>}
         </div>
       )}
       {summary.probeState && (
         <div className={cn(
-          'flex min-w-0 items-center gap-1.5',
+          'flex min-w-0 flex-wrap items-center gap-1.5',
           summary.probeState === 'fresh' ? 'text-[color:var(--workspace-status-good-text)]' :
             summary.probeState === 'error' ? 'text-[color:var(--workspace-status-bad-text)]' :
               'text-[color:var(--workspace-status-warn-text)]',
@@ -705,14 +766,14 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
           <strong className="truncate font-medium">{t(`hosts.opsProbe.${summary.probeState}`)}</strong>
           {summary.probeProviderId && <span className="truncate font-mono text-[var(--workspace-text-subtle)]">· {summary.probeProviderId}</span>}
           {summary.probeTelemetry && (
-            <span className="shrink-0 text-[var(--workspace-text-subtle)]" title={t('hosts.opsProbe.telemetryHint')}>
+            <span className="min-w-0 break-words text-[var(--workspace-text-subtle)]" title={t('hosts.opsProbe.telemetryHint')}>
               · {t('hosts.opsProbe.attempts', { count: summary.probeTelemetry.attempts })}
               {summary.probeTelemetry.exhausted ? ` · ${t('hosts.opsProbe.exhausted')}` : ''}
               {` · ${t('hosts.opsProbe.duration', { ms: summary.probeTelemetry.durationMs })}`}
             </span>
           )}
-          {summary.probeErrorCode && <span className="shrink-0 font-mono text-[var(--workspace-text-subtle)]">· {summary.probeErrorCode}</span>}
-          {summary.probeError && <span className="truncate text-[var(--workspace-text-subtle)]" title={summary.probeError}>· {summary.probeError}</span>}
+          {summary.probeErrorCode && <span className="min-w-0 break-all font-mono text-[var(--workspace-text-subtle)]">· {summary.probeErrorCode}</span>}
+          {summary.probeError && <span className="min-w-0 break-words text-[var(--workspace-text-subtle)]" title={summary.probeError}>· {summary.probeError}</span>}
         </div>
       )}
       <div data-testid="host-ops-capabilities" className="flex flex-wrap gap-1" title={t('hosts.opsFilters.capabilitiesHint')}>
@@ -730,6 +791,7 @@ function HostOperationalMeta({ host, summary, t }: { host: HostProfile; summary?
         />
       )}
       </details>}
+      </div>
     </div>
   )
 }
@@ -820,6 +882,13 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const detailsId = useId()
+  const detailsOwner = JSON.stringify([host.id, host.vaultId ?? '', operations?.vaultId ?? ''])
+  const [detailsState, setDetailsState] = useState({ owner: detailsOwner, expanded: false })
+  const detailsOpen = detailsState.owner === detailsOwner && detailsState.expanded
+  if (detailsState.owner !== detailsOwner) {
+    setDetailsState({ owner: detailsOwner, expanded: false })
+  }
   const updatedAt = host.updatedAt > 0
     ? new Date(host.updatedAt).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })
     : t('hosts.noActivity')
@@ -830,25 +899,23 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
     <>
       <div
         data-testid="host-card" data-host-id={host.id} data-host-name={host.name} data-host-health={status ?? 'unknown'}
-        role="button"
-        tabIndex={0}
-        onClick={() => onSelect(host.id)}
-        onDoubleClick={() => onConnect(host.id)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            onSelect(host.id)
-          }
-        }}
+        data-vault-id={host.vaultId ?? operations?.vaultId}
         className={cn(
-          'group grid w-full cursor-pointer gap-4 rounded-2xl border px-4 py-5 text-left transition-[background-color,border-color,box-shadow]',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-border-glow)]',
-          'xl:grid-cols-[3.25rem_minmax(14rem,1.14fr)_minmax(12rem,0.92fr)_minmax(10rem,0.75fr)_7rem_minmax(15rem,1.02fr)_minmax(14rem,1fr)_7rem_14rem] xl:items-center xl:gap-4',
+          'group w-full min-w-0 rounded-2xl border text-left transition-[background-color,border-color,box-shadow]',
           isSelected
             ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-row-selected)] shadow-[inset_3px_0_0_var(--workspace-primary-500),var(--workspace-shadow-card)]'
             : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] shadow-[var(--workspace-shadow-card)] hover:border-[color:var(--workspace-border-strong)] hover:bg-[var(--workspace-surface-800)]',
         )}
       >
+        <div data-testid="host-list-primary" role="button" tabIndex={0}
+          onClick={() => onSelect(host.id)} onDoubleClick={() => onConnect(host.id)}
+          onKeyDown={(event) => {
+            if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+              event.preventDefault()
+              onSelect(host.id)
+            }
+          }}
+          className={cn('grid min-w-0 cursor-pointer gap-3 rounded-2xl px-4 py-4 sm:grid-cols-2 xl:items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-border-glow)]', HOST_LIST_COLUMNS)}>
         <div className="hidden font-mono text-lg font-semibold text-[var(--workspace-text-strong)] xl:block">
           {String(index).padStart(2, '0')}
         </div>
@@ -889,12 +956,12 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
         </div>
 
         <div className="text-xs text-[var(--workspace-text-muted)]" title={host.updatedAt > 0 ? new Date(host.updatedAt).toLocaleString() : undefined}>
-          <span className="font-mono text-sm font-semibold text-[var(--workspace-text-strong)]">{updatedAt}</span>
+          <span className="whitespace-nowrap font-mono text-sm font-semibold text-[var(--workspace-text-strong)]">{updatedAt}</span>
         </div>
 
         <HostResourceSummary resource={resource} metrics={metrics} t={t} />
 
-        <HostOperationalMeta host={host} summary={operations} t={t} />
+        <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} onToggle={() => setDetailsState({ owner: detailsOwner, expanded: !detailsOpen })} />
 
         <div className="flex items-center">
           <HostStatusPill status={status} sc={sc} t={t} />
@@ -921,6 +988,11 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
             <Trash2 className="h-4 w-4" />
           </button>
         </div>
+        </div>
+        {operations && <section id={detailsId} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!detailsOpen}
+          className="cursor-default rounded-b-2xl border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4">
+          <HostOperationalMeta host={host} summary={operations} t={t} expanded />
+        </section>}
       </div>
 
       <DeleteConfirmDialog open={confirmOpen} onOpenChange={setConfirmOpen}

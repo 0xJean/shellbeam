@@ -63,15 +63,20 @@ describe('host operations filter workflow', () => {
       return command === 'mcp_list_project_deployments' ? { projects: [], total: 0, observedAt: 0 } : []
     })
     renderDashboard({ vaultUnlocked: true, onLoadVaultSecret: vi.fn(async () => null) })
-    const summary = await screen.findByTestId('host-ops-alert-summary')
+    const hostCard = screen.getAllByTestId('host-card').find((card) => card.getAttribute('data-host-id') === 'host-0')!
+    const summary = await within(hostCard).findByTestId('host-ops-alert-summary')
     expect(summary).toBeVisible()
     expect(summary).toHaveAttribute('data-total', '1')
     expect(summary).toHaveAttribute('data-active', '1')
     expect(summary).toHaveAttribute('data-open', '1')
-    expect(summary).toHaveTextContent(/Alerts\s*1\s*·\s*1 active/)
+    expect(summary).toHaveTextContent(/Alerts\s*1/)
+    fireEvent.click(within(hostCard).getByTestId('host-ops-details-toggle'))
+    const incidentDetails = within(hostCard).getByTestId('host-ops-details-alert-summary')
+    expect(incidentDetails).toBeVisible()
+    expect(incidentDetails).toHaveTextContent(/Alerts\s*1\s*·\s*1 active/)
     const source = screen.getByTestId('komari-remote-alert-summary')
     expect(source).not.toBeVisible()
-    fireEvent.click(within(summary.parentElement!).getByTestId('host-data-source-details').querySelector('summary')!)
+    fireEvent.click(within(hostCard).getByTestId('host-data-source-details').querySelector('summary')!)
     expect(source).toBeVisible()
     expect(source).toHaveTextContent('Server alert summary: 0/0')
   })
@@ -222,6 +227,8 @@ describe('host operations filter workflow', () => {
     try {
       renderDashboard({ onLoadVaultSecret: vi.fn(async () => 'token'), vaultUnlocked: true, onOpenWorkspace: vi.fn() })
       const source = await screen.findByTestId('komari-probe-ops-view')
+      const hostCard = source.closest('[data-testid="host-card"]') as HTMLElement
+      fireEvent.click(within(hostCard).getByTestId('host-ops-details-toggle'))
       fireEvent.click(source.closest('details')!.querySelector('summary')!)
       fireEvent.click(await screen.findByRole('button', { name: 'Review probe installation' }))
       await waitFor(() => expect(checks).toBe(1))
@@ -257,6 +264,8 @@ describe('host operations filter workflow', () => {
     try {
       renderDashboard({ onLoadVaultSecret: vi.fn(async () => 'token'), vaultUnlocked: true, onSelectHost, onOpenWorkspace: available ? onOpenWorkspace : undefined })
       const source = await screen.findByTestId('komari-probe-ops-view')
+      const hostCard = source.closest('[data-testid="host-card"]') as HTMLElement
+      fireEvent.click(within(hostCard).getByTestId('host-ops-details-toggle'))
       const disclosure = source.closest('details')!
       expect(disclosure).not.toHaveAttribute('open')
       fireEvent.click(disclosure.querySelector('summary')!)
@@ -413,7 +422,11 @@ describe('host operations filter workflow', () => {
   it('filters actual host cards across dimensions, excludes unknown resource values and clears as one action', async () => {
     renderDashboard()
     fireEvent.click(screen.getByText(/Operations filters/))
-    await waitFor(() => expect(screen.getByText('Highest severity: Critical · Local open alerts: 1')).toBeInTheDocument())
+    const alerts = await screen.findByTestId('host-ops-local-alerts')
+    expect(alerts).toBeVisible()
+    expect(alerts).toHaveAttribute('data-severity', 'critical')
+    expect(alerts).toHaveAttribute('data-open-count', '1')
+    expect(alerts).toHaveTextContent('Critical · Local open alerts: 1')
     fireEvent.change(screen.getByLabelText('Probe provider'), { target: { value: 'komari' } })
     expect(screen.getByText('API host', { selector: 'p' })).toBeInTheDocument(); expect(screen.queryByText('DB host', { selector: 'p' })).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Operating system'), { target: { value: 'Ubuntu' } })

@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { notificationDaemonConfig, startOwnedOpsUiNotificationDaemon } from './ops-ui-notifications.mjs'
 import { readSystemDeliveryDiagnostic } from './ops-ui-alert-notifications.mjs'
 import { OPS_UI_PROBE_RULE_IDS, validateOpsUiProbeScope } from './ops-ui-probe-journey.mjs'
+import { ensureOpsUiHostDetails } from './ops-ui-host-details.mjs'
 
 const ROLES = Object.freeze(['direct', 'via', 'jump'])
 const PHASES = Object.freeze(['direct:opened', 'direct:resolved', 'via:opened', 'via:resolved'])
@@ -64,6 +65,7 @@ export async function assertSafeProbeNotificationUi(driver, { state, titles, pro
     const card = `[data-testid="host-card"][data-host-id=${q(state.hostIds[role])}]`
     const cards = await driver.findAll(card)
     check(cards.length === 1 && await driver.isDisplayed(cards[0]), 'unsafe_host_scope')
+    check(await ensureOpsUiHostDetails(driver, { hostId: state.hostIds[role], vaultId: state.vaultId }), 'unsafe_host_scope')
     const evaluations = await driver.findAll(`${card} [data-testid="host-probe-evaluation"][data-rule-id=${q(RULE)}][data-host-id=${q(state.hostIds[role])}][data-vault-id=${q(state.vaultId)}]`)
     check(evaluations.length === 1 && await driver.isDisplayed(evaluations[0]), 'unsafe_vault_scope')
     check(await driver.attr(evaluations[0], 'data-state') === (event === 'opened' ? 'firing' : 'healthy'), 'unexpected_evaluation_state')

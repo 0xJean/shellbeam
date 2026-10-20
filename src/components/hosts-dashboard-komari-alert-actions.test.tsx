@@ -26,7 +26,16 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 function element(extra: Partial<React.ComponentProps<typeof HostsDashboard>> = {}) {
   return <I18nProvider><HostsDashboard activeVaultId="vault-a" vaultUnlocked hosts={[host]} selectedHostId={null} loading={false} onSelectHost={vi.fn()} onCreateHost={vi.fn()} onUpdateHost={vi.fn()} onDeleteHost={vi.fn()} {...extra} /></I18nProvider>
 }
-async function clickAction() { fireEvent.click(await screen.findByTestId(`komari-host-alert-ack-${displayed.alertId}`)) }
+async function clickAction() {
+  const action = await screen.findByTestId(`komari-host-alert-ack-${displayed.alertId}`)
+  const row = action.closest('[data-testid="host-card"]')
+  expect(row).toBeTruthy()
+  const toggle = row!.querySelector('[data-testid="host-ops-details-toggle"]')!
+  expect(toggle).toBeVisible()
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
+  expect(action).toBeVisible()
+  fireEvent.click(action)
+}
 async function fresh() { await waitFor(() => expect(screen.getByTestId('host-ops-refresh-status')).toHaveAttribute('data-status', 'fresh')) }
 function mappingChanged(integrationId = 'integration', vaultId = 'vault-a') { window.dispatchEvent(new CustomEvent(KOMARI_MAPPING_CHANGED_EVENT, { detail: { integrationId, vaultId } })) }
 beforeEach(() => {

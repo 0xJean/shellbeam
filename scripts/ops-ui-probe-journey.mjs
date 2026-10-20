@@ -4,6 +4,7 @@
 import { createHash } from 'node:crypto'
 import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { findOpsUiAuditRow, respondOpsUiConfirmation, validateOpsUiServiceRect, waitForOpsUiConfirmation } from './ops-ui-journey.mjs'
+import { ensureOpsUiHostDetails } from './ops-ui-host-details.mjs'
 
 const ROLES = Object.freeze(['direct', 'via'])
 const route = (role) => role === 'via' ? 'proxy-jump' : 'direct'
@@ -46,6 +47,7 @@ const alertSelector = (state, role) => `${card(state, role)} ${tid('host-local-a
 export async function readOpsUiProbeEvaluation(driver, state, role, section = 'metrics') {
   check([...ROLES, 'jump'].includes(role), 'invalid_role')
   check(section === 'metrics' || section === 'inventory', 'invalid_section')
+  if (!await ensureOpsUiHostDetails(driver, { hostId: state.hostIds[role], vaultId: state.vaultId })) return null
   const rows = await driver.findAll(evaluationSelector(state, role, section))
   if (rows.length !== 1 || !await driver.isDisplayed(rows[0])) return null
   const sampledAt = sample(await driver.attr(rows[0], 'data-sampled-at'))
@@ -217,6 +219,7 @@ export async function settleOpsUiProbeInventory({ driver, fixture, resumeState, 
 
 export async function readOpsUiProbeAlert(driver, state, role, expectedStatus) {
   check([...ROLES, 'jump'].includes(role), 'invalid_role')
+  if (!await ensureOpsUiHostDetails(driver, { hostId: state.hostIds[role], vaultId: state.vaultId })) return null
   const rows = await driver.findAll(alertSelector(state, role))
   if (rows.length !== 1 || !await driver.isDisplayed(rows[0])) return null
   const row = rows[0]

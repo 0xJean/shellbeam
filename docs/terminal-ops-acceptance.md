@@ -24,6 +24,7 @@
 | 要求 | 实现证据 | 验证与状态 |
 | --- | --- | --- |
 | 运维列表、健康、告警、筛选 | `host-ops-view.ts`、`host-ops-filters.ts`、HostCard/HostsDashboard | Provider、OS、严重级别、能力、资源阈值、新鲜度；显示TTL、跳板、最后错误 |
+| 紧凑主行与运维详情 | HostListItem、共用`HOST_LIST_COLUMNS`、真实GUI展开导航 | 默认仅展示计数、来源、告警与常用入口，详情在整宽区域按服务/任务、告警、监控分组；主行与表头对齐，展开不改变主行高度。组件验证真实展开后的告警操作、审计、未知计数和主机/Vault切换收起；隔离Chromium使用实际组件/CSS及合成数据，在1920px下重告警主行由938px降至174px，九列对齐偏差0px。浏览器布局验证不替代安装包和用户Vault实测 |
 | Probe分区采样状态 | `hostProbeEvaluations`、HostCard Grid/List与HostsDashboard | 同Vault/主机canonical metrics/inventory evaluation单独展示健康与原始采样时间，无告警时仍可见；共用180秒新鲜度，过期/缺失/无效/未来时间为unknown，UI刷新不得伪造采样时间。真实SSH告警标题包含主机名以区分多主机系统通知 |
 | 资源摘要与跳板搜索 | HostCard Grid/List、`host-search.ts` | 显式展示RX/TX与uptime，选中Provider仅有metrics时仍可展示；缺失unknown、实际0保持0；跳板引用按同Vault当前配置搜索，编辑/删除不继续匹配旧复制字段 |
 | 主机快捷诊断入口 | HostCard/HostsDashboard、SessionsContext、PcLayout | 卡片/列表提供可见的一键Services按钮，避免将原生菜单打开/选择少计为一次；打开Services、选择服务、读取真实status为三次实际点击，11d9f63打包GUI已验证直连/跳板两路诊断，后续两次真实重启均恢复原审计与新观察。保留Overview、Files、Logs、健康检查和刷新；同Vault复用会话、补齐UI标签页，右侧会话提升后不重复挂载；跨Vault同名ID不得复用 |
