@@ -52,7 +52,7 @@
 | 同步TTL、并发、快照和告警 | `komari-sync.ts`、原生Komari persistence | 主机卡片Grid/List及Overview使用同一成功同步来源：原生`lastSuccessfulSyncAt`仅由完整同步事务设置，普通告警写入不能创建/推进，旧行迁移为NULL、映射变更清空。历史推断时间保持未知，直到真实同步成功；不借采样、映射更新时间或全局刷新时间，不改变既有调度兼容字段或指标TTL。保留既有告警去重、确认/关闭、恢复通知和OperationJob跨会话关联 |
 | 历史时序、范围查询和可视化 | `data/provider_history.rs`、`provider-history.ts`、ProviderHistoryPanel | Vault/provider/host/node隔离；7天/每series10080点/总计100000点；1h/6h/24h/7d视图，来源选择、null/停采断线、原始采样时间和TTL |
 | API契约兼容 | `src/lib/fixtures/komari-http-contracts.json` 和Komari契约测试 | 依据官方Komari源码记录支持的endpoint/版本；测试权限、flat/nested记录、乱序/重复/无时间/未来时间；不宣称所有版本兼容 |
-| 凭据保存与发现反馈 | `VaultProvider`、Komari设置、`KomariMappingsPanel` | 原生凭据写入或随后状态刷新失败必须reject，设置页显示固定双语错误并保留掩码输入；重试复用已创建集成ID，保存期间禁用表单切换。旧Vault刷新在status/keys每次await后核对scope，拒绝跨Vault迟到覆盖。发现区分缺失凭据、读取失败、权限、连接和超时；只有有效列表可显示成功空态，HTML/非法200响应不转换为零节点。真实Provider及Response回归不替代实际保存密钥后的App同步验收 |
+| 凭据保存与发现反馈 | `VaultProvider`、Komari设置、`KomariMappingsPanel` | 原生凭据写入或随后状态刷新失败必须reject，设置页显示固定双语错误并保留掩码输入；重试复用已创建集成ID，编辑保留已有凭据引用。新建、选择或输入使旧列表失效；保存后离开设置仍完成同一Vault generation的写入，切库/A→B→A/Provider卸载阻断后续阶段，不承诺已发送写入回滚或跨存储原子性。完成持久化及当前列表重载后才显示成功，双语文案区分服务器配置、Vault保存与实际认证。旧Vault刷新在status/keys每次await后核对scope。发现区分缺失凭据、读取失败、权限、连接和超时；只有有效列表可显示成功空态，HTML/非法200响应不转换为零节点。56项聚焦回归及本地官方实例控制台保存路由/受保护认证通过；外部实例仍为403及服务器有效Key布尔false，用户确认两侧已点保存，服务器实际保存请求待核验，不归因为漏操作 |
 | 真实Komari实例 | `scripts/komari-live-smoke.mjs`、`docs/komari-live-validation.md` | 未修改的官方1.6.0源码构建：节点/recent、非空真实历史、映射Provider、错误token与桌面Origin CORS头均通过；新节点coarse层为空时最多补查一次1h，保留真实时间，不声称完整24h覆盖；外部部署和实际WebView仍需对应环境验收 |
 
 ## Phase 3：明确授权的常驻探针

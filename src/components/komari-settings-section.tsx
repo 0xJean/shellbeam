@@ -23,7 +23,7 @@ export function KomariSettingsSection() {
 
 function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
   const { t } = useT()
-  const { vaultStatusState, handleSaveSecret } = useVault()
+  const { vaultStatusState, handleSaveSecret, captureVaultScope } = useVault()
   const [integrations, setIntegrations] = useState<KomariIntegration[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -32,6 +32,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
   const [showApiKey, setShowApiKey] = useState(false)
   const [enabled, setEnabled] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [savedNotice, setSavedNotice] = useState(false)
   const [error, setError] = useState('')
   const [consoleBusy, setConsoleBusy] = useState(false)
   const [consoleError, setConsoleError] = useState<'invalid-endpoint' | 'open-failed' | 'locked' | null>(null)
@@ -54,6 +55,8 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
   }, [])
 
   const resetForm = useCallback(() => {
+    loadSequence.current += 1
+    setSavedNotice(false)
     invalidateConsole()
     setConsoleBusy(false)
     selected.current = null
@@ -68,14 +71,14 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
   }, [invalidateConsole])
 
   const load = useCallback(async () => {
-    if (!alive.current) return
+    if (!alive.current) return false
     const request = ++loadSequence.current
     try {
       setError('')
       const next = (await listKomariIntegrations(vaultId)).filter((item) => item.vaultId === vaultId)
-      if (!alive.current || request !== loadSequence.current) return
+      if (!alive.current || request !== loadSequence.current) return false
       setIntegrations(next)
-      if (next.some((item) => item.id === selected.current)) return
+      if (next.some((item) => item.id === selected.current)) return true
       const first = next[0]
       if (first) {
         invalidateConsole()
@@ -86,8 +89,10 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
         setEndpoint(first.endpoint)
         setEnabled(first.enabled)
       } else resetForm()
+      return true
     } catch (cause) {
       if (alive.current && request === loadSequence.current) setError(cause instanceof Error ? cause.message : String(cause))
+      return false
     }
   }, [vaultId, resetForm, invalidateConsole])
 
@@ -98,6 +103,8 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
   }, [load, invalidateConsole])
 
   const selectIntegration = (integration: KomariIntegration) => {
+    loadSequence.current += 1
+    setSavedNotice(false)
     invalidateConsole()
     setConsoleBusy(false)
     selected.current = integration.id
@@ -110,6 +117,11 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     setShowApiKey(false)
     setError('')
     setConsoleError(null)
+  }
+
+  const editForm = () => {
+    loadSequence.current += 1
+    setSavedNotice(false)
   }
 
   const openConsole = async () => {
@@ -170,32 +182,36 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     setConsoleBusy(false)
     setConsoleError(null)
     setBusy(true)
+    setSavedNotice(false)
     setError('')
+    const isCurrentVault = captureVaultScope()
     try {
+      if (!isCurrentVault()) return
       const integrationId = selectedId ?? savedFormIntegrationId.current ?? crypto.randomUUID()
       const saved = await upsertKomariIntegration({
         id: integrationId,
         vaultId,
         name,
         endpoint,
+        ...(savedIntegration?.credentialRef ? { credentialRef: savedIntegration.credentialRef } : {}),
         enabled,
       })
-      if (!alive.current) return
+      if (!isCurrentVault()) return
       // Metadata may already exist when the separate Vault write fails. Keep
       // this form's identity so retry updates it instead of creating a copy.
-      savedFormIntegrationId.current = saved.id
+      if (alive.current) savedFormIntegrationId.current = saved.id
       const credentialRef = saved.credentialRef || komariCredentialKey(saved.id)
       if (apiKey.trim()) {
         try {
           await handleSaveSecret(credentialRef, apiKey.trim())
         } catch {
-          if (alive.current) {
+          if (alive.current && isCurrentVault()) {
             setShowApiKey(false)
             setError(t('settings.komariCredentialSaveFailed'))
           }
           return
         }
-        if (!alive.current) return
+        if (!isCurrentVault()) return
       }
       if (credentialRef !== saved.credentialRef) {
         await upsertKomariIntegration({
@@ -206,12 +222,17 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
           credentialRef,
           enabled: saved.enabled,
         })
-        if (!alive.current) return
+        if (!isCurrentVault()) return
       }
+      // A page change only ends UI updates. Finish the requested credential
+      // save while its original Vault generation is still current.
+      if (!alive.current) return
+      setShowApiKey(false)
       setApiKey('')
-      await load()
+      const reloaded = await load()
+      if (reloaded && alive.current && isCurrentVault()) setSavedNotice(true)
     } catch (cause) {
-      if (alive.current) setError(cause instanceof Error ? cause.message : String(cause))
+      if (alive.current && isCurrentVault()) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       if (alive.current) setBusy(false)
     }
@@ -263,26 +284,28 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
       <div className="mt-4 space-y-3">
         <div>
           <label className="text-sm text-muted-foreground" htmlFor="komari-name">{t('settings.komariName')}</label>
-          <Input id="komari-name" value={name} onChange={(event) => setName(event.target.value)} disabled={busy} placeholder={t('settings.komariNamePlaceholder')} className="mt-1" />
+          <Input id="komari-name" value={name} onChange={(event) => { editForm(); setName(event.target.value) }} disabled={busy} placeholder={t('settings.komariNamePlaceholder')} className="mt-1" />
         </div>
         <div>
           <label className="text-sm text-muted-foreground" htmlFor="komari-endpoint">{t('settings.komariEndpoint')}</label>
-          <Input id="komari-endpoint" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} disabled={busy} placeholder={t('settings.komariEndpointPlaceholder')} className="mt-1" />
+          <Input id="komari-endpoint" value={endpoint} onChange={(event) => { editForm(); setEndpoint(event.target.value) }} disabled={busy} placeholder={t('settings.komariEndpointPlaceholder')} className="mt-1" />
         </div>
         <div>
           <label className="text-sm text-muted-foreground" htmlFor="komari-api-key">{t('settings.komariApiKey')}</label>
           <div className="relative mt-1">
-            <Input id="komari-api-key" type={showApiKey ? 'text' : 'password'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} disabled={busy} placeholder={selectedId ? t('settings.komariApiKeyKeep') : t('settings.komariApiKeyPaste')} className="pr-10" />
+            <Input id="komari-api-key" type={showApiKey ? 'text' : 'password'} value={apiKey} onChange={(event) => { editForm(); setApiKey(event.target.value) }} disabled={busy} placeholder={selectedId ? t('settings.komariApiKeyKeep') : t('settings.komariApiKeyPaste')} className="pr-10" />
             <button type="button" aria-label={showApiKey ? t('settings.komariHideApiKey') : t('settings.komariShowApiKey')} onClick={() => setShowApiKey((value) => !value)} disabled={busy} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
               {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
+          <p className="mt-1 text-xs text-muted-foreground">{t('settings.komariApiKeyHelp')}</p>
         </div>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={busy} className="rounded" />
+          <input type="checkbox" checked={enabled} onChange={(event) => { editForm(); setEnabled(event.target.checked) }} disabled={busy} className="rounded" />
           {t('settings.komariEnabled')}
         </label>
         {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
+        {savedNotice && <p role="status" className="text-xs text-muted-foreground">{t('settings.komariSaved')}</p>}
         {!unlocked && <p className="text-xs text-amber-600 dark:text-amber-400">{t('settings.komariUnlockHint')}</p>}
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => void save()} disabled={busy || !name.trim() || !endpoint.trim()}>{busy ? t('settings.komariSaving') : t('settings.komariSave')}</Button>

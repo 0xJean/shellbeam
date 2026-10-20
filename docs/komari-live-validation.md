@@ -65,6 +65,51 @@ Regression tests for
 these behaviors do not replace the next saved-key desktop check, node mapping,
 actual telemetry or alert/Workspace acceptance.
 
+### Saved-key investigation, 2026-10-20
+
+After a further user-controlled save, the actual test Vault displayed one
+Komari credential entry. Fresh manual discovery, observed after clearing the
+native WebInspector console, still received HTTP 403 for
+`/api/admin/client/list` from `tauri://localhost`. A read-only boolean check of
+the dedicated server database found no API key satisfying official 1.6's
+configured-string validation. A separate inode comparison confirmed that the
+running acceptance server had that primary database open. These checks returned
+only booleans; they did not read a credential value, length, hash or database
+copy. The user reports clicking Save on both sides; the specific server-side
+save failure remains unconfirmed and must not be attributed to a missed click.
+
+Three App defects were reproduced and fixed independently of that server-side
+unknown. Editing an integration now preserves its existing custom credential
+reference. New/selection/input changes invalidate older list refreshes so a
+late response cannot redirect a credential draft to an old integration. Leaving
+Settings after Save continues the requested credential write within the same
+Vault generation; switching Vaults, including A→B→A, or unloading the provider
+blocks further persistence steps. This preserves the separate metadata and
+credential writes; it does not claim an atomic transaction or undo a write
+already dispatched.
+
+Successful saves deliberately clear and mask the input rather than reading
+the secret back. Bilingual help distinguishes the server API key from Agent
+tokens and explains that the form does not configure the server. A success
+notice appears only after persistence and the current list reload complete;
+editing clears it, and saving does not claim verified authentication.
+The real-VaultProvider regression suite covers deferred metadata/credential
+writes, page navigation, batched Vault transitions, provider unload and stale
+refreshes. The four focused suites passed 56 cases; the complete frontend run
+passed 1,305 cases with 17 platform-specific skips on macOS, using two workers
+and unchanged assertions/timeouts. The production TypeScript/Vite build passed.
+
+The isolated official-server smoke also passed the console's slashless
+`POST /api/admin/settings` route with a synthetic cookie session, same-origin
+header and canonical-path redirect, requiring JSON `status: success` rather
+than merely HTTP 200. The saved synthetic key then authorized a protected
+admin-list request with the desktop Origin. The safe result is retained in
+`/tmp/shellbeam-komari-console-save-contract-20261020.log` and includes
+`serverKeySaveVerified: true`. This HTTP contract result does not prove that the
+external instance's WebView save succeeded. The next actual-instance check must
+capture only the save request's method/path/status and immediately repeat the
+boolean metadata check; do not inspect Headers, settings bodies or HAR exports.
+
 ## Local HTTP contract smoke
 
 Run the explicit smoke with an official Komari 1.6.0 executable for the current OS:
@@ -75,7 +120,7 @@ node scripts/komari-live-smoke.mjs --binary /absolute/path/to/komari
 
 The script starts a new process bound only to `127.0.0.1` on an ephemeral port. Its working directory, primary SQLite database and monitoring database live under a new private temporary directory. It does not accept an existing endpoint/database, read ShellBeam credentials, install a service, invoke Docker or request elevated privileges.
 
-The first-run installation uses random temporary credentials kept in memory. The smoke creates one synthetic node through the authenticated API and submits two synthetic reports through the official agent v2 RPC. It loads the unchanged production `komari.ts` and `komari-probe-provider.ts` adapters with Vite, then checks version detection, node discovery, recent reports, non-empty stored history, mapped provider metrics, permission errors and authorization CORS response/preflight headers for the desktop origin. Its console output contains only version/hash, counts and pass/failure stages. Request/response bodies and upstream logs are never dumped because they can contain temporary tokens.
+The first-run installation uses random temporary credentials kept in memory. The smoke saves the server key through the console's settings route and verifies protected desktop-Origin authorization, creates one synthetic node through the authenticated API and submits two synthetic reports through the official agent v2 RPC. It loads the unchanged production `komari.ts` and `komari-probe-provider.ts` adapters with Vite, then checks version detection, node discovery, recent reports, non-empty stored history, mapped provider metrics, permission errors and authorization CORS response/preflight headers for the desktop origin. Its console output contains only version/hash, booleans, counts and pass/failure stages. Request/response bodies and upstream logs are never dumped because they can contain temporary tokens.
 
 On success or failure, the script stops its own process, waits for confirmed exit, then removes the temporary databases and logs. If exit cannot be confirmed, it reports the private directory path and retains state rather than deleting files beneath a running server.
 

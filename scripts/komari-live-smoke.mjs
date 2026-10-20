@@ -56,8 +56,8 @@ try {
   const port = listener.address().port
   await new Promise((done, reject) => listener.close((error) => error ? reject(error) : done()))
   const endpoint = `http://127.0.0.1:${port}`
-  const request = async (path, { body, headers = {}, method = body === undefined ? 'GET' : 'POST' } = {}) => {
-    const response = await fetch(`${endpoint}${path}`, { method, headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(10000) })
+  const request = async (path, { body, headers = {}, method = body === undefined ? 'GET' : 'POST', redirect = 'error' } = {}) => {
+    const response = await fetch(`${endpoint}${path}`, { method, headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body), redirect, signal: AbortSignal.timeout(10000) })
     const text = await response.text()
     let json = null
     try { json = JSON.parse(text) } catch { /* startup may return non-JSON */ }
@@ -80,9 +80,16 @@ try {
   assert.equal(login.response.status, 200)
   const cookie = login.response.headers.get('set-cookie')?.split(';')[0]
   assert.ok(cookie?.startsWith('session_token='))
-  const settings = await request('/api/admin/settings/', { headers: { Cookie: cookie }, body: { api_key: apiKey, private_site: true, geo_ip_enabled: false, notification_enabled: false, eula_accepted: true } })
+  stage = 'save temporary Server API Key using the official console route'
+  // Match the console's slashless POST and same-origin cookie session. Only
+  // this isolated loopback setup follows the server's canonical-path redirect.
+  const settings = await request('/api/admin/settings', { redirect: 'follow', headers: { Cookie: cookie, Origin: endpoint }, body: { api_key: apiKey, private_site: true, geo_ip_enabled: false, notification_enabled: false, eula_accepted: true } })
   assert.equal(settings.response.status, 200)
+  assert.equal(settings.json?.status, 'success')
   const auth = { Authorization: `Bearer ${apiKey}` }
+  const savedKeyCheck = await request('/api/admin/client/list', { headers: { ...auth, Origin: 'tauri://localhost' } })
+  assert.equal(savedKeyCheck.response.status, 200)
+  assert.equal(savedKeyCheck.response.headers.get('access-control-allow-origin'), 'tauri://localhost')
   stage = 'create synthetic node through official authenticated API'
   const created = await request('/api/admin/client/add', { headers: auth, body: { name: 'shellbeam-contract-node' } })
   assert.equal(created.response.status, 200)
@@ -144,7 +151,7 @@ try {
   const preflight = await request('/api/admin/client/list', { method: 'OPTIONS', headers: { Origin: 'tauri://localhost', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' } })
   assert.equal(preflight.response.status, 204)
   stage = 'complete'
-  console.log(JSON.stringify({ result: 'passed', serverVersion: version.version, serverHash: version.hash, nodes: nodes.length, recentRecords: recent.length, storedHistoryRecords: history.length, wideWindowRecords: observed.serverHistory, fineWindowRecords: observed.fineHistory, importedObservations: observations.length, unauthorized: 'permission', origin: 'tauri://localhost', scope: 'isolated-loopback-synthetic-report-contract' }))
+  console.log(JSON.stringify({ result: 'passed', serverVersion: version.version, serverHash: version.hash, serverKeySaveVerified: true, nodes: nodes.length, recentRecords: recent.length, storedHistoryRecords: history.length, wideWindowRecords: observed.serverHistory, fineWindowRecords: observed.fineHistory, importedObservations: observations.length, unauthorized: 'permission', origin: 'tauri://localhost', scope: 'isolated-loopback-synthetic-report-contract' }))
 } catch {
   // Never dump request/response bodies or upstream logs: they can contain temporary secrets.
   console.error(`Komari live contract smoke failed during: ${stage}; counts=${JSON.stringify(observed)}`)

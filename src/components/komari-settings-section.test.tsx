@@ -8,8 +8,30 @@ import en from '@/lib/locales/en'
 import zhCN from '@/lib/locales/zh-CN'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 
-const vault = vi.hoisted(() => ({ id: 'vault-a', unlocked: false, saveSecret: vi.fn() }))
-vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: vault.id, vaultStatusState: { unlocked: vault.unlocked }, handleSaveSecret: vault.saveSecret }) }))
+const vault = vi.hoisted(() => {
+  let scope = { id: 'vault-a' }
+  return {
+    get id() { return scope.id },
+    set id(id: string) { if (scope.id !== id) scope = { id } },
+    unlocked: false,
+    saveSecret: vi.fn(),
+    captureScope: (expectedId: string) => {
+      const captured = scope
+      return () => captured.id === expectedId && captured === scope
+    },
+  }
+})
+vi.mock('@/contexts/vault-context', () => ({
+  useVault: () => {
+    const id = vault.id
+    return {
+      activeVaultId: id,
+      vaultStatusState: { unlocked: vault.unlocked },
+      handleSaveSecret: vault.saveSecret,
+      captureVaultScope: () => vault.captureScope(id),
+    }
+  },
+}))
 vi.mock('@/lib/komari-config', () => ({ listKomariIntegrations: vi.fn(), upsertKomariIntegration: vi.fn(), deleteKomariIntegration: vi.fn(), komariCredentialKey: (id: string) => `komari.${id}.api-key` }))
 vi.mock('@/lib/browser', () => ({ openBrowserWindow: vi.fn(), loadBrowserSource: vi.fn(), closeBrowserWindow: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }))
