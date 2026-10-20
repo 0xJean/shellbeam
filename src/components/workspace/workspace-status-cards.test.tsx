@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getServerMonitorHostKey } from '@/lib/server-monitor'
 import { clearServerMonitorStates, mergeServerMonitorStates } from '@/lib/server-monitor-state'
@@ -54,6 +54,7 @@ describe('workspace status cards', () => {
     vi.mocked(invoke).mockReset().mockImplementation(async (command) => {
       if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'active', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari-a.api-key', enabled: true, createdAt: 1, updatedAt: 1 }]
       if (command === 'list_komari_mappings') return [{ integrationId: 'komari-a', hostId: host.id, nodeId: 'node-a', source: 'manual', confidence: 'explicit', updatedAt: Date.now() }]
+      if (command === 'get_komari_mapping_state') return { revision: 1, mappings: [{ integrationId: 'komari-a', hostId: host.id, nodeId: 'node-a', source: 'manual', confidence: 'explicit', updatedAt: Date.now() }] }
       if (command === 'get_komari_sync_state') return { integrationId: 'komari-a', lastSyncedAt: Date.now() - 2000, ttlMs: 60_000, updatedAt: Date.now(), alertSummary: null }
       return []
     })
@@ -73,7 +74,7 @@ describe('workspace status cards', () => {
     expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'online')
     act(() => vi.advanceTimersByTime(150_000))
     expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'stale')
-    expect(screen.getAllByText('Data stale')).not.toHaveLength(0)
+    expect(screen.getAllByText('Monitoring data is stale')).not.toHaveLength(0)
     expect(screen.getByText('23%')).toBeInTheDocument()
   })
 
@@ -115,9 +116,13 @@ describe('workspace status cards', () => {
     expect(screen.getByText('61%')).toBeInTheDocument()
     expect(screen.getByText('74%')).toBeInTheDocument()
     expect(screen.getByText(/↓ 18 MB\/s/)).toBeInTheDocument()
-    expect(screen.getAllByText('Online').length).toBeGreaterThan(0)
+    expect(screen.getByTestId('workspace-current-source')).toHaveTextContent('SSH Agentless')
+    expect(screen.getByTestId('workspace-current-source')).not.toHaveTextContent('Unknown')
     expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'online')
-    expect(screen.getAllByTestId('workspace-probe-telemetry')).toHaveLength(4)
+    expect(screen.getAllByTestId('workspace-probe-telemetry')).toHaveLength(1)
+    expect(screen.getByTestId('workspace-probe-telemetry')).not.toBeVisible()
+    fireEvent.click(screen.getByText('Data source details'))
+    expect(screen.getByTestId('workspace-probe-telemetry')).toBeVisible()
     expect(screen.getAllByTestId('workspace-probe-telemetry')[0]).toHaveTextContent('Recovered from cache')
     expect(screen.getAllByTestId('workspace-probe-telemetry')[0]).toHaveTextContent('1 retries')
   })
@@ -125,7 +130,7 @@ describe('workspace status cards', () => {
   it.each(['cards', 'mobile Overview'] as const)('shows current Komari metrics while retaining failed SSH separately in %s', async (presentation) => {
     const scoped = { ...host, vaultId: 'active' }
     const sampledAt = Date.now() - 5000
-    const source = { kind: 'komari' as const, id: 'komari-a', nodeId: 'node-a', capabilities: ['metrics' as const] }
+    const source = { kind: 'komari' as const, id: 'komari-a', nodeId: 'node-a', endpoint: 'https://komari.test', capabilities: ['metrics' as const] }
     const probe: ProbeSnapshot = {
       schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username },
       provider: { ...source, capabilities: [...source.capabilities] }, health: 'online', transport: 'direct', receivedAt: sampledAt + 1000,
@@ -159,8 +164,10 @@ describe('workspace status cards', () => {
   it('falls back gracefully when no host is selected', () => {
     render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={null} hosts={[host]} />)
 
-    expect(screen.getAllByText('Not connected').length).toBeGreaterThan(0)
-    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'idle')
+    expect(screen.getByTestId('workspace-resources-empty')).toHaveTextContent('No resource sample yet.')
+    expect(screen.getByTestId('workspace-resources-empty')).toHaveTextContent('Terminal, files and SSH operations remain available.')
+    expect(screen.queryByTestId('workspace-status-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-provider-status')).not.toBeInTheDocument()
   })
 
   it('uses only the active Vault observation when host IDs collide', async () => {
@@ -181,7 +188,8 @@ describe('workspace status cards', () => {
     await act(async () => view.rerender(<WorkspaceStatusCards activeVaultId="missing" hostAddress={host.address} selectedHostId={host.id} hosts={[otherHost, host]} />))
     expect(screen.queryByText('37%')).not.toBeInTheDocument()
     expect(screen.queryByText('99%')).not.toBeInTheDocument()
-    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'idle')
+    expect(screen.queryByTestId('workspace-status-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-resources-empty')).toBeVisible()
   })
 
   it('matches the current host address when host id is unavailable', () => {
@@ -207,7 +215,7 @@ describe('workspace status cards', () => {
     render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={null} hosts={[host]} />)
 
     expect(screen.getByText('31%')).toBeInTheDocument()
-    expect(screen.getAllByText('Data stale').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Monitoring data is stale').length).toBeGreaterThan(0)
   })
 
   it('shows offline status without launching another SSH request', () => {
@@ -233,11 +241,14 @@ describe('workspace status cards', () => {
 
     render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={host.id} hosts={[host]} />)
 
-    expect(screen.getAllByText('Offline').length).toBeGreaterThan(0)
-    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveAttribute('data-status', 'offline')
+    expect(screen.getByTestId('workspace-current-source')).toHaveTextContent('Monitoring data unavailable')
+    expect(screen.getByTestId('workspace-resources-empty')).toBeVisible()
+    expect(screen.queryByTestId('workspace-status-card')).not.toBeInTheDocument()
   })
 
   it('uses a container-adaptive grid so four cards reflow inside narrow widgets', () => {
+    const key = getServerMonitorHostKey(host)
+    mergeServerMonitorStates({ [key]: { history: [], latest: { hostKey: key, hostId: host.id, hostName: host.name, hostAddress: host.address, port: host.port, username: host.username, status: 'online', snapshot, lastAttemptAt: snapshot.sampledAt, lastSuccessAt: snapshot.sampledAt, updatedAt: snapshot.sampledAt } } })
     render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={host.id} hosts={[host]} />)
 
     expect(screen.getByTestId('workspace-status-grid')).toHaveClass('grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]')
@@ -245,6 +256,8 @@ describe('workspace status cards', () => {
   })
 
   it('uses the darker workspace monitor card styling from the visual language spec', () => {
+    const key = getServerMonitorHostKey(host)
+    mergeServerMonitorStates({ [key]: { history: [], latest: { hostKey: key, hostId: host.id, hostName: host.name, hostAddress: host.address, port: host.port, username: host.username, status: 'online', snapshot, lastAttemptAt: snapshot.sampledAt, lastSuccessAt: snapshot.sampledAt, updatedAt: snapshot.sampledAt } } })
     render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={host.id} hosts={[host]} />)
 
     expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveClass('bg-[var(--workspace-surface-900)]')

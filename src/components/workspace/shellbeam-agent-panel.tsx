@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { workspaceOverviewCopy } from '@/lib/locales/workspace-overview'
 import {
   SHELLBEAM_AGENT_HEARTBEAT_TTL_MS,
   checkShellbeamAgent,
@@ -16,7 +17,7 @@ import { shellbeamAgentReleaseParamsSummary, type ValidatedShellbeamAgentRelease
 import { runShellbeamAgentArtifactOperation, type ShellbeamAgentArtifactPolicy } from '@/lib/shellbeam-agent-artifact'
 import { DEFAULT_VAULT_ID } from '@/lib/vaults'
 import { AlertTriangle, Bot, CheckCircle2, CircleDashed, RefreshCw, ShieldAlert, Trash2, Upload } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ShellbeamAgentHistoryView } from './shellbeam-agent-history-view'
 
 interface ShellbeamAgentPanelProps {
@@ -37,7 +38,8 @@ function statusTone(status: ShellbeamAgentRecord['status']) {
 }
 
 export function ShellbeamAgentPanel({ host, vaultId = host?.vaultId ?? DEFAULT_VAULT_ID, resolveAuthSecret, artifactManifest, artifactPolicy }: ShellbeamAgentPanelProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const copy = workspaceOverviewCopy[locale]
   const scopeKey = host && (!host.vaultId || host.vaultId === vaultId) ? JSON.stringify([
     vaultId, host.id, host.address, host.port, host.username, host.authType,
     host.secretKeyRef, host.passwordKeyRef, host.privateKeyRef,
@@ -47,13 +49,17 @@ export function ShellbeamAgentPanel({ host, vaultId = host?.vaultId ?? DEFAULT_V
   if (scopeRef.current.key !== scopeKey) scopeRef.current = { key: scopeKey, generation: scopeRef.current.generation + 1 }
   const scopeGeneration = scopeRef.current.generation
   const scopeToken = JSON.stringify([scopeKey, scopeGeneration])
+  const [expandedScope, setExpandedScope] = useState<string | null>(null)
+  const expanded = expandedScope === scopeToken
   const mountedRef = useRef(true)
   useEffect(() => {
     mountedRef.current = true
     return () => { mountedRef.current = false }
   }, [])
   const isCurrent = () => mountedRef.current && scopeRef.current.key === scopeKey && scopeRef.current.generation === scopeGeneration
-  const [storedRecord, setRecord] = useState<ShellbeamAgentRecord | null>(null)
+  const [recordState, setRecordState] = useState<{ key: string; value: ShellbeamAgentRecord | null } | null>(null)
+  const setRecord = useCallback((value: ShellbeamAgentRecord | null) => setRecordState({ key: scopeToken, value }), [scopeToken])
+  const storedRecord = recordState?.key === scopeToken ? recordState.value : null
   const record = scopeKey && storedRecord?.hostId === host?.id && storedRecord?.vaultId === vaultId ? storedRecord : null
   const [loadingState, setLoadingState] = useState({ key: scopeToken, value: false })
   const loading = loadingState.key === scopeToken && loadingState.value
@@ -88,12 +94,9 @@ export function ShellbeamAgentPanel({ host, vaultId = host?.vaultId ?? DEFAULT_V
       if (!cancelled) setLoading(false)
     })
     return () => { cancelled = true }
-  }, [hostId, scopeKey, vaultId, loadFailed, setError, setLoading])
+  }, [hostId, scopeKey, vaultId, loadFailed, setError, setLoading, setRecord])
 
-  const heartbeatAge = useMemo(() => {
-    if (!record?.lastHeartbeatAt) return null
-    return Math.max(0, Date.now() - record.lastHeartbeatAt)
-  }, [record])
+  const heartbeatAge = record?.lastHeartbeatAt ? Math.max(0, Date.now() - record.lastHeartbeatAt) : null
   const canOperate = Boolean(scopeKey && host && resolveAuthSecret && !running && !releaseLoading)
 
   async function refresh() {
@@ -165,9 +168,21 @@ export function ShellbeamAgentPanel({ host, vaultId = host?.vaultId ?? DEFAULT_V
   }
 
   if (!host || !scopeKey) return null
+  const inactive = record?.status === 'not-installed' || record?.status === 'retired' || record?.status === 'unsupported'
+  const needsAttention = !inactive && (record?.status === 'failed' || record?.status === 'offline'
+    || record?.health === 'offline' || record?.health === 'stale' || Boolean(record?.lastError)
+    || (record?.status === 'installed' && heartbeatAge !== null && heartbeatAge > record.heartbeatTtlMs))
+  if (!expanded) return <div data-testid="shellbeam-agent-entry" className="flex flex-wrap items-center gap-3 text-xs">
+    <button type="button" aria-expanded="false" onClick={() => setExpandedScope(scopeToken)} className="rounded border border-border/60 px-3 py-1.5 text-muted-foreground hover:text-foreground">
+      {record ? copy.manageAgent : copy.monitoringTools}
+    </button>
+    {needsAttention && <span role="status" className="text-[color:var(--workspace-status-warn-text)]">{copy.agentAttention}</span>}
+    {error && <span role="status" className="text-[color:var(--workspace-status-warn-text)]">{error}</span>}
+  </div>
 
   return (
     <section data-testid="shellbeam-agent-panel" className="rounded-xl border border-border/60 bg-card px-5 py-4">
+      <button type="button" aria-expanded="true" onClick={() => setExpandedScope(null)} className="mb-3 text-xs text-muted-foreground hover:text-foreground">{copy.closeAgent}</button>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"><Bot className="h-4 w-4" /></div>

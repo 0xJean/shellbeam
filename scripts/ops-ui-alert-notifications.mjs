@@ -4,6 +4,7 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import {
   notificationDaemonConfig,
+  openOpsUiNotificationSettings,
   startOwnedOpsUiNotificationDaemon,
 } from './ops-ui-notifications.mjs'
 
@@ -125,11 +126,7 @@ export async function assertSafeLocalServiceUi(driver, { hostId, vaultId, name, 
 }
 
 async function openSettings(driver) {
-  await driver.waitFor('[data-testid="pc-dashboard"]')
-  await driver.click('[data-testid="pc-dashboard"]')
-  await driver.click("xpath=//aside//button[normalize-space(.)='Settings' or normalize-space(.)='设置']")
-  await driver.click("xpath=//button[normalize-space(.)='English']")
-  await driver.waitFor(SETTINGS)
+  await openOpsUiNotificationSettings(driver, { english: true })
 }
 async function checked(driver, target, value) {
   if (await driver.isSelected(target) !== value) await driver.click(target)

@@ -7,6 +7,7 @@ import { assertSafeLocalServiceUi, localServiceNotificationConfig, localServiceN
 import {
   evidencePathIsOwned,
   notificationDaemonConfig,
+  openOpsUiNotificationSettings,
   notificationOcrMatches,
   notificationTextOcrMatches,
   inspectNotificationOcrModes,
@@ -19,6 +20,62 @@ import {
   runOpsUiNotifications,
   startOpsUiAlertNotifications,
 } from './ops-ui-notifications.mjs'
+
+// The real app mounts only the chosen settings category. This model refuses
+// every hidden control and does not expose the notification panel before the
+// actual category click, including the initial language/policy setup journey.
+function settingsNavigation() {
+  const dashboard = '[data-testid="pc-dashboard"]'
+  const settings = "xpath=//aside//button[normalize-space(.)='Settings' or normalize-space(.)='设置']"
+  const general = '[data-testid="settings-category-general"]'
+  const monitoring = '[data-testid="settings-category-monitoring"]'
+  const language = "xpath=//button[normalize-space(.)='English']"
+  const panel = '[data-testid="notification-settings"]'
+  const calls = []
+  let page = 'workspace', category = 'general', chosenEnglish = false
+  const visible = target => target === dashboard || target === settings && page !== 'workspace'
+    || page === 'settings' && ([general, monitoring].includes(target) || target === language && category === 'general' || target === panel && category === 'monitoring')
+  const driver = {
+    waitFor: async target => { calls.push(['wait', target]); assert(visible(target), `control must be visibly mounted: ${target}`); return target },
+    click: async target => {
+      calls.push(['click', target]); assert(visible(target), `native click cannot reach hidden control: ${target}`)
+      if (target === dashboard) page = 'hosts'
+      else if (target === settings) { page = 'settings'; category = 'general' }
+      else if (target === general) category = 'general'
+      else if (target === monitoring) category = 'monitoring'
+      else if (target === language) chosenEnglish = true
+      else assert.fail('unexpected policy change during navigation')
+    },
+  }
+  return { driver, calls, selectors: { dashboard, settings, general, monitoring, language, panel }, state: () => ({ page, category, chosenEnglish }) }
+}
+
+test('initial notification setup and subsequent owners open the real monitoring category before reading notification settings', async () => {
+  for (const english of [true, false]) {
+    const unit = settingsNavigation(), s = unit.selectors
+    await openOpsUiNotificationSettings(unit.driver, { english })
+    assert.deepEqual(unit.state(), { page: 'settings', category: 'monitoring', chosenEnglish: english })
+    assert.deepEqual(unit.calls, [
+      ['wait', s.dashboard], ['click', s.dashboard], ['wait', s.settings], ['click', s.settings],
+      ...(english ? [['wait', s.general], ['click', s.general], ['wait', s.language], ['click', s.language]] : []),
+      ['wait', s.monitoring], ['click', s.monitoring], ['wait', s.panel],
+    ])
+  }
+})
+
+test('a missing category or rejected native category click stops notification setup without hidden reads or fallback', async () => {
+  for (const stage of ['wait', 'click']) {
+    const unit = settingsNavigation(), s = unit.selectors
+    const method = stage === 'wait' ? 'waitFor' : 'click', original = unit.driver[method]
+    unit.driver[method] = async target => {
+      if (target === s.monitoring) throw new Error(`native_category_${stage}_failed`)
+      return original(target)
+    }
+    await assert.rejects(openOpsUiNotificationSettings(unit.driver, { english: true }), new RegExp(`native_category_${stage}_failed`))
+    assert(!unit.calls.some(([, target]) => target === s.panel))
+    assert.equal(unit.state().category, 'general')
+  }
+})
 
 test('the exact supported upstream banner is parsed without accepting the incompatible Jammy daemon or arbitrary version text', () => {
   assert.equal(parsePinnedDunstVersion('Dunst - A customizable and lightweight notification-daemon 1.7.3 (2021-12-08)\n'), '1.7.3')

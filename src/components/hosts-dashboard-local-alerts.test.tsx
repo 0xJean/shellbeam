@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import { HostsDashboard } from './hosts-dashboard'
@@ -31,8 +31,7 @@ function seed(vaultId: string, name: string) {
 function element(vaultId = 'vault-a', extra: Partial<React.ComponentProps<typeof HostsDashboard>> = {}) {
   return <I18nProvider><HostsDashboard activeVaultId={vaultId} vaultUnlocked hosts={[{ ...host, vaultId }]} selectedHostId={null} loading={false} onSelectHost={vi.fn()} onCreateHost={vi.fn()} onUpdateHost={vi.fn()} onDeleteHost={vi.fn()} {...extra} /></I18nProvider>
 }
-async function openListOperations(mode: 'grid' | 'list' = 'list') {
-  if (mode === 'grid') return
+async function openListOperations() {
   const toggle = await screen.findByTestId('host-ops-details-toggle')
   expect(toggle).toBeVisible()
   if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
@@ -91,12 +90,32 @@ beforeEach(() => {
 afterEach(() => { Reflect.deleteProperty(window, '__TAURI_INTERNALS__'); vi.restoreAllMocks(); clearLocalOpsMemory(); resetLocalOpsPersistenceMemory(); clearProbeAlertRuntimeDiagnostic('vault-a', host.id); clearProbeAlertRuntimeDiagnostic('vault-b', host.id) })
 
 describe('host card canonical local alert actions', () => {
+  it('uses the same confirmation and durable OperationJob lifecycle from the unified alerts center', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(element())
+    fireEvent.click(await screen.findByTestId('host-alerts-open'))
+    let incident = await screen.findByTestId('host-incident')
+    expect(incident).toHaveAttribute('data-host-id', host.id)
+    fireEvent.click(within(incident).getByRole('button', { name: 'Acknowledge' }))
+    await waitFor(() => expect(jobs.get('job-1')).toMatchObject({ status: 'completed', action: 'local-alert.acknowledge', confirmationStatus: 'confirmed', vaultId: 'vault-a', hostId: host.id, transport: 'proxy-jump' }))
+    expect(loadLocalAlertState('vault-a', host.id).audit.at(-1)).toMatchObject({ event: 'acknowledged', operationJobId: 'job-1' })
+    expect(window.confirm).toHaveBeenCalledTimes(1)
+    incident = screen.getByTestId('host-incident')
+    expect(within(incident).queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument()
+    fireEvent.click(within(incident).getByRole('button', { name: 'Close alert' }))
+    await waitFor(() => expect(jobs.get('job-2')).toMatchObject({ status: 'completed', action: 'local-alert.close', confirmationStatus: 'confirmed', vaultId: 'vault-a', hostId: host.id, transport: 'proxy-jump' }))
+    expect(loadLocalAlertState('vault-a', host.id).audit.at(-1)).toMatchObject({ event: 'closed', operationJobId: 'job-2' })
+    expect(window.confirm).toHaveBeenCalledTimes(2)
+    expect(runWorkspaceRemoteCommand).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('host-incident')).not.toBeInTheDocument()
+  })
+
   it.each(['grid', 'list'] as const)('accepts a real collection newer than the last 15-second display tick in %s', async (mode) => {
     const initialTime = Date.now()
     const clock = vi.spyOn(Date, 'now').mockReturnValue(initialTime)
     render(element())
     if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
-    await openListOperations(mode)
+    await openListOperations()
     await screen.findByTestId('host-local-alert')
     const sampledAt = initialTime + 1_000
     clock.mockReturnValue(sampledAt)
@@ -121,7 +140,7 @@ describe('host card canonical local alert actions', () => {
     await flushLocalOpsHost('vault-a', host.id)
     const view = render(element())
     if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
-    await openListOperations(mode)
+    await openListOperations()
     const row = await screen.findByTestId('host-probe-evaluation')
     expect(row).toBeVisible()
     expect(row).toHaveTextContent('Healthy')
@@ -155,7 +174,7 @@ describe('host card canonical local alert actions', () => {
     }
     const view = render(element('vault-a', { hosts: [{ ...host, vaultId: undefined }] }))
     if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
-    await openListOperations(mode)
+    await openListOperations()
     let row = await screen.findByTestId('host-probe-evaluation')
     expect(row).toHaveAttribute('data-vault-id', 'vault-a')
     expect(row).toHaveAttribute('data-state', 'firing')
@@ -225,11 +244,11 @@ describe('host card canonical local alert actions', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(element())
     if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
-    await openListOperations(mode)
+    await openListOperations()
     expect(await screen.findByTestId('local-host-alert-ack-builtin-probe')).toBeVisible()
     fireEvent.click(screen.getByTestId('local-host-alert-ack-builtin-probe'))
     await waitFor(() => expect(screen.getByTestId('host-local-alert')).toHaveAttribute('data-alert-status', 'acknowledged'))
-    await waitFor(() => expect(screen.getByTestId(mode === 'list' ? 'host-ops-details-summary' : 'host-ops-summary')).toHaveTextContent('local-alert.acknowledge builtin-probe · completed'))
+    await waitFor(() => expect(screen.getByTestId('host-ops-details-summary')).toHaveTextContent('local-alert.acknowledge builtin-probe · completed'))
     expect(screen.getByTestId('host-local-alert')).toHaveTextContent('job=job-1')
     expect(screen.queryByTestId('local-host-alert-ack-builtin-probe')).not.toBeInTheDocument()
     expect(loadLocalAlertState('vault-a', host.id).audit.at(-1)).toMatchObject({ event: 'acknowledged', operationJobId: 'job-1' })

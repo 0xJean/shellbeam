@@ -44,6 +44,8 @@ export interface MultiHostOperationsPanelProps {
   onRunOperation: (request: MultiHostOperationRequest) => Promise<MultiHostOperationResult>
   maxHosts?: number
   initialSelectedHostIds?: string[]
+  /** The host list owns selection; do not render a second host picker. */
+  selectionFromList?: boolean
   disabled?: boolean
   className?: string
 }
@@ -66,6 +68,7 @@ export function MultiHostOperationsPanel({
   onRunOperation,
   maxHosts = MAX_BATCH_HOSTS,
   initialSelectedHostIds = [],
+  selectionFromList = false,
   disabled = false,
   className,
 }: MultiHostOperationsPanelProps) {
@@ -155,8 +158,9 @@ export function MultiHostOperationsPanel({
         </span>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(14rem,0.8fr)]">
-        <div className="space-y-2">
+      {selectionFromList && <p className="text-sm">{hosts.filter(host => selectedHostIds.includes(host.id)).map(host => host.name).join(' · ')}</p>}
+      <div className={cn('grid gap-4', !selectionFromList && 'lg:grid-cols-[minmax(0,1.2fr)_minmax(14rem,0.8fr)]')}>
+        {!selectionFromList && <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <div className="text-xs font-semibold text-foreground">{t('multiHost.hosts')}</div>
             <div className="flex gap-2">
@@ -178,7 +182,7 @@ export function MultiHostOperationsPanel({
               )
             })}
           </div>
-        </div>
+        </div>}
 
         <div className="space-y-3 rounded-lg border border-border/50 p-3">
           <div>

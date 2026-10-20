@@ -70,7 +70,12 @@ describe('host Komari alert scope guards', () => {
     } else if (change === 'host' || change === 'host-return') {
       view.rerender(element({ hosts: [{ ...host, address: '10.0.0.2' }] })); await fresh()
       if (change === 'host-return') { view.rerender(element()); await fresh() }
-    } else if (change === 'remove-host') { view.rerender(element({ hosts: [] })); await fresh() }
+    } else if (change === 'remove-host') {
+      view.rerender(element({ hosts: [] }))
+      await waitFor(() => expect(screen.getByTestId('host-ops-refresh')).toBeEnabled())
+      expect(screen.queryByTestId('host-ops-refresh-status')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('host-card')).not.toBeInTheDocument()
+    }
     else if (change === 'mapping') act(() => mappingChanged())
     else view.unmount()
     const refreshes = vi.mocked(loadHostOpsViews).mock.calls.length

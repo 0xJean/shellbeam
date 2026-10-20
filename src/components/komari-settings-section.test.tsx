@@ -8,6 +8,7 @@ import { vaultStatus } from '@/lib/vault'
 import { editKomariMapping, getKomariMappingState } from '@/lib/komari-persistence'
 import { I18nProvider } from '@/lib/i18n'
 import { komariOnboardingCopy } from '@/lib/locales/komari-onboarding'
+import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
 import en from '@/lib/locales/en'
 import zhCN from '@/lib/locales/zh-CN'
 import { invoke, isTauri } from '@tauri-apps/api/core'
@@ -30,8 +31,14 @@ const copy = komariOnboardingCopy.en
 const integration = (patch: Partial<KomariIntegration> = {}): KomariIntegration => ({ id: 'same-id', vaultId: 'vault-a', name: 'Saved Komari', endpoint: 'http://192.168.1.10:25774/komari', credentialRef: 'custom.saved.key', enabled: false, createdAt: 1, updatedAt: 1, ...patch })
 const node: KomariClient = { uuid: 'node-1', name: 'Node One', hostname: null, ipv4: null, ipv6: null, os: null, kernel: null, version: null, raw: {} }
 const section = () => <I18nProvider><KomariSettingsSection /></I18nProvider>
+async function renderEditor() {
+  const view = render(section())
+  fireEvent.click(await screen.findByRole('button', { name: 'Saved Komari' }))
+  return view
+}
 const requestId = '11111111-1111-4111-8111-111111111111'
 async function advanced(locale: 'en' | 'zh-CN' = 'en') {
+  if (!screen.queryByTestId('komari-connection-editor')) fireEvent.click(await screen.findByRole('button', { name: 'Saved Komari' }))
   fireEvent.click(screen.getByText(komariOnboardingCopy[locale].advanced))
   const button = screen.getByRole('button', { name: komariOnboardingCopy[locale].open })
   await waitFor(() => expect(button).toBeEnabled())
@@ -51,11 +58,79 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear() })
 
+describe('optional Komari data sources', () => {
+  it.each(['en', 'zh-CN'] as const)('waits for an explicit add action before exposing an unconfigured connection form (%s)', async (locale) => {
+    localStorage.setItem('shellbeam.locale', locale)
+    vi.mocked(listKomariIntegrations).mockResolvedValue([])
+    const text = locale === 'en' ? en : zhCN
+    const navigation = settingsNavigationCopy[locale]
+    render(section())
+    await act(async () => {})
+    expect(screen.getByText(navigation.optionalKomari)).toBeVisible()
+    expect(screen.queryByLabelText(text['settings.komariApiKey'])).not.toBeInTheDocument()
+    expect(screen.queryByText(komariOnboardingCopy[locale].advanced)).not.toBeInTheDocument()
+    expect(verifyKomariConnection).not.toHaveBeenCalled()
+    expect(vault.revealSecret).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: navigation.addSource }))
+    expect(screen.getByLabelText(text['settings.komariApiKey'])).toHaveValue('')
+    fireEvent.change(screen.getByLabelText(text['settings.komariApiKey']), { target: { value: 'unsaved-draft' } })
+    fireEvent.click(screen.getByRole('button', { name: navigation.closeEditor }))
+    expect(screen.queryByLabelText(text['settings.komariApiKey'])).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: navigation.addSource }))
+    expect(screen.getByLabelText(text['settings.komariApiKey'])).toHaveValue('')
+    expect(upsertKomariIntegration).not.toHaveBeenCalled()
+    expect(vault.saveSecret).not.toHaveBeenCalled()
+  })
+
+  it('shows saved sources without opening or reading credentials until selected', async () => {
+    render(section())
+    const saved = await screen.findByRole('button', { name: 'Saved Komari' })
+    expect(screen.getByText(settingsNavigationCopy.en.paused)).toBeVisible()
+    expect(screen.queryByTestId('komari-connection-editor')).not.toBeInTheDocument()
+    expect(vault.revealSecret).not.toHaveBeenCalled()
+    fireEvent.click(saved)
+    expect(screen.getByLabelText(en['settings.komariEndpoint'])).toHaveValue(integration().endpoint)
+    expect(screen.getByLabelText(en['settings.komariApiKey'])).toHaveValue('')
+    expect(screen.getByLabelText(en['settings.komariApiKey'])).toHaveAttribute('placeholder', en['settings.komariApiKeyKeep'])
+    expect(vault.revealSecret).not.toHaveBeenCalled()
+  })
+
+  it('closes the editor and drops every draft when the Vault locks', async () => {
+    const view = await renderEditor()
+    fireEvent.change(screen.getByLabelText(en['settings.komariName']), { target: { value: 'Draft source' } })
+    fireEvent.change(screen.getByLabelText(en['settings.komariApiKey']), { target: { value: 'draft-secret' } })
+    vault.unlocked = false; view.rerender(section())
+    expect(screen.queryByTestId('komari-connection-editor')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: settingsNavigationCopy.en.addSource })).toBeDisabled()
+    vault.unlocked = true; view.rerender(section())
+    expect(screen.queryByTestId('komari-connection-editor')).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Saved Komari' }))
+    expect(screen.getByLabelText(en['settings.komariName'])).toHaveValue(integration().name)
+    expect(screen.getByLabelText(en['settings.komariApiKey'])).toHaveValue('')
+    expect(vault.saveSecret).not.toHaveBeenCalled()
+  })
+
+  it('does not persist a pending draft credential after locking and unlocking the same Vault', async () => {
+    let finish!: (saved: KomariIntegration) => void
+    vi.mocked(upsertKomariIntegration).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const view = await renderEditor()
+    fireEvent.change(screen.getByLabelText(en['settings.komariApiKey']), { target: { value: 'draft-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: en['settings.komariSave'] }))
+    await waitFor(() => expect(upsertKomariIntegration).toHaveBeenCalledOnce())
+    vault.unlocked = false; view.rerender(section())
+    vault.unlocked = true; view.rerender(section())
+    await act(async () => { finish(integration()) })
+    expect(vault.saveSecret).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('komari-connection-editor')).not.toBeInTheDocument()
+    expect(screen.queryByText(en['settings.komariSaved'])).not.toBeInTheDocument()
+  })
+})
+
 describe('native Komari connection flow', () => {
   it.each(['en', 'zh-CN'] as const)('verifies the saved custom credential, discovers nodes, and completes without opening a console (%s)', async (locale) => {
     localStorage.setItem('shellbeam.locale', locale)
     const text = komariOnboardingCopy[locale]
-    render(section())
+    await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: text.verify })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: text.verify }))
     expect(await screen.findByText(`${text.verified} · ${text.nodes}: 1`)).toBeVisible()
@@ -79,6 +154,8 @@ describe('native Komari connection flow', () => {
     vi.mocked(upsertKomariIntegration).mockImplementation(async (input) => { stored = integration({ id: input.id, name: input.name, endpoint: input.endpoint, enabled: true }); return stored })
     vault.revealSecret.mockResolvedValue(null)
     render(section())
+    await act(async () => {})
+    fireEvent.click(screen.getByRole('button', { name: settingsNavigationCopy.en.addSource }))
     await waitFor(() => expect(listKomariIntegrations).toHaveBeenCalled())
     fireEvent.change(screen.getByLabelText(en['settings.komariName']), { target: { value: 'New source' } })
     fireEvent.change(screen.getByLabelText(en['settings.komariEndpoint']), { target: { value: 'http://localhost:25749' } })
@@ -93,7 +170,7 @@ describe('native Komari connection flow', () => {
   })
 
   it('requires saving edited fields before verification and never sends a draft key or endpoint', async () => {
-    render(section())
+    await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: copy.verify })).toBeEnabled())
     fireEvent.change(screen.getByLabelText(en['settings.komariApiKey']), { target: { value: 'draft-key' } })
     fireEvent.change(screen.getByLabelText(en['settings.komariEndpoint']), { target: { value: 'https://draft.example' } })
@@ -104,7 +181,7 @@ describe('native Komari connection flow', () => {
 
   it.each(['permission', 'unavailable', 'timeout', 'server-error'])('shows a safe %s verification result and preserves settings', async (code) => {
     vi.mocked(verifyKomariConnection).mockRejectedValue(new KomariApiError('private token upstream response', { code }))
-    render(section())
+    await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: copy.verify })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: copy.verify }))
     expect(await screen.findByRole('alert')).toHaveTextContent(copy[code === 'server-error' ? 'failed' : code as 'permission' | 'unavailable' | 'timeout'])
@@ -115,7 +192,7 @@ describe('native Komari connection flow', () => {
 
   it('handles an empty successful server as waiting for nodes instead of an error', async () => {
     vi.mocked(verifyKomariConnection).mockResolvedValue([])
-    render(section())
+    await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: copy.verify })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: copy.verify }))
     expect(await screen.findByText(copy.empty)).toBeVisible()
@@ -129,7 +206,7 @@ describe('native Komari connection flow', () => {
     let finish!: (nodes: KomariClient[]) => void
     vi.mocked(verifyKomariConnection).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
     vi.mocked(listKomariIntegrations).mockResolvedValue([integration(), integration({ id: 'other', name: 'Other' })])
-    const view = render(section())
+    const view = await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: copy.verify })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: copy.verify }))
     await waitFor(() => expect(verifyKomariConnection).toHaveBeenCalledTimes(1))
@@ -146,7 +223,7 @@ describe('native Komari connection flow', () => {
   it.each(['endpoint', 'credentialRef', 'updatedAt'] as const)('invalidates verification when refreshed same-ID %s changes', async (field) => {
     let finish!: (nodes: KomariClient[]) => void
     vi.mocked(verifyKomariConnection).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
-    render(section())
+    await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: copy.verify })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: copy.verify }))
     await waitFor(() => expect(verifyKomariConnection).toHaveBeenCalledTimes(1))
@@ -167,7 +244,7 @@ describe('native Komari connection flow', () => {
   })
 
   it('invalidates completed verification on refresh while retaining an edited draft', async () => {
-    render(section())
+    await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: copy.verify })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: copy.verify }))
     await screen.findByTestId('komari-mapping-node-1')
@@ -187,7 +264,7 @@ describe('native Komari connection flow', () => {
     vi.mocked(listHosts).mockResolvedValue([{ id: 'host-one', name: 'Existing host', vaultId: 'vault-a', address: '10.0.0.1', username: 'ops', port: 22, authType: 'password', group: '', tags: [], createdAt: 0, updatedAt: 0 }])
     let finishSave!: (value: Awaited<ReturnType<typeof editKomariMapping>>) => void
     vi.mocked(editKomariMapping).mockImplementationOnce(() => new Promise((resolve) => { finishSave = resolve }))
-    render(section())
+    await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: copy.verify })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: copy.verify }))
     await screen.findByTestId('komari-mapping-node-1')
@@ -205,7 +282,7 @@ describe('native Komari connection flow', () => {
   it('allows managing retained bindings for an offline or paused data source', async () => {
     vault.revealSecret.mockResolvedValue(null)
     vi.mocked(getKomariMappingState).mockResolvedValue({ revision: 2, mappings: [{ integrationId: 'same-id', hostId: 'host-one', nodeId: 'retained-node', source: 'manual', confidence: 'explicit', updatedAt: 1 }] })
-    render(section())
+    await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: copy.manage })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: copy.manage }))
     expect(await screen.findByTestId('komari-mapping-retained-node')).toBeVisible()
@@ -219,7 +296,7 @@ describe('advanced administration in the main window', () => {
     localStorage.setItem('shellbeam.locale', locale)
     const text = locale === 'en' ? en : zhCN
     vi.mocked(listKomariIntegrations).mockResolvedValue([integration({ endpoint: 'https://saved.example/base?token=old#private' })])
-    render(section())
+    await renderEditor()
     const button = await advanced(locale)
     fireEvent.change(screen.getByLabelText(text['settings.komariApiKey']), { target: { value: 'draft-private-key' } })
     fireEvent.change(screen.getByLabelText(text['settings.komariEndpoint']), { target: { value: 'https://draft.example' } })
@@ -237,7 +314,7 @@ describe('advanced administration in the main window', () => {
   })
 
   it('does not borrow Vault A unlocked status while Vault B native status is still pending', async () => {
-    const view = render(section())
+    const view = await renderEditor()
     await screen.findByRole('button', { name: 'Saved Komari' })
     vault.id = 'vault-b' // Keep the stale, unlocked context value from A.
     vi.mocked(listKomariIntegrations).mockResolvedValue([integration({ vaultId: 'vault-b' })])
@@ -255,7 +332,7 @@ describe('advanced administration in the main window', () => {
   it.each(['vault', 'configuration'] as const)('ignores a late unlocked native console status after %s changes', async (change) => {
     let finishStatus!: (status: Awaited<ReturnType<typeof vaultStatus>>) => void
     vi.mocked(vaultStatus).mockImplementationOnce(() => new Promise((resolve) => { finishStatus = resolve }))
-    const view = render(section()); fireEvent.click(await advanced())
+    const view = await renderEditor(); fireEvent.click(await advanced())
     await waitFor(() => expect(vaultStatus).toHaveBeenCalledExactlyOnceWith('vault-a'))
     if (change === 'vault') {
       vault.id = 'vault-b'
@@ -272,7 +349,7 @@ describe('advanced administration in the main window', () => {
 
   it.each(['lock', 'vault', 'selection'] as const)('unmounts the administration panel on %s', async (change) => {
     vi.mocked(listKomariIntegrations).mockResolvedValue([integration(), integration({ id: 'other', name: 'Other' })])
-    const view = render(section())
+    const view = await renderEditor()
     fireEvent.click(await advanced())
     await screen.findByRole('dialog')
     if (change === 'lock') { vault.unlocked = false; view.rerender(section()) }
@@ -283,14 +360,14 @@ describe('advanced administration in the main window', () => {
 
   it.each(['javascript:alert(1)', 'https://user:private-password@komari.example'])('rejects an unsafe saved endpoint: %s', async (endpoint) => {
     vi.mocked(listKomariIntegrations).mockResolvedValue([integration({ endpoint })])
-    render(section()); fireEvent.click(await advanced())
+    await renderEditor(); fireEvent.click(await advanced())
     expect(screen.getByRole('alert')).toHaveTextContent(en['settings.komariConsoleInvalidEndpoint'])
     expect(browser.render).not.toHaveBeenCalled()
   })
 
   it('ignores an old embedded load failure after reopening another administration scope', async () => {
     vi.mocked(listKomariIntegrations).mockResolvedValue([integration(), integration({ id: 'other', name: 'Other' })])
-    render(section()); fireEvent.click(await advanced())
+    await renderEditor(); fireEvent.click(await advanced())
     await screen.findByRole('dialog')
     const oldError = browser.render.mock.lastCall?.[0].onError as (message: string) => void
     fireEvent.click(screen.getByRole('button', { name: 'Other' }))
@@ -304,7 +381,7 @@ describe('advanced administration in the main window', () => {
   it('keeps mobile administration on a saved-scope native browser handoff', async () => {
     vi.mocked(isTauri).mockReturnValue(true)
     vi.mocked(invoke).mockResolvedValueOnce('mobile').mockResolvedValueOnce(requestId).mockResolvedValue(undefined)
-    render(section()); fireEvent.click(await advanced())
+    await renderEditor(); fireEvent.click(await advanced())
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('cancel_mobile_komari_console', { requestId }))
     expect(invoke).toHaveBeenNthCalledWith(2, 'prepare_mobile_komari_console', { vaultId: 'vault-a', integrationId: 'same-id' })
     expect(invoke).toHaveBeenNthCalledWith(3, 'open_mobile_komari_console', { requestId })
@@ -317,7 +394,7 @@ describe('advanced administration in the main window', () => {
     vi.mocked(isTauri).mockReturnValue(true)
     vi.mocked(invoke).mockResolvedValueOnce('mobile').mockImplementationOnce(() => new Promise((resolve) => { finish = resolve })).mockResolvedValue(undefined)
     vi.mocked(listKomariIntegrations).mockResolvedValue([integration(), integration({ id: 'other', name: 'Other' })])
-    const view = render(section()); fireEvent.click(await advanced())
+    const view = await renderEditor(); fireEvent.click(await advanced())
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('prepare_mobile_komari_console', { vaultId: 'vault-a', integrationId: 'same-id' }))
     if (change === 'lock') { vault.unlocked = false; view.rerender(section()) }
     if (change === 'vault') { vault.id = 'vault-b'; view.rerender(section()) }
@@ -328,7 +405,8 @@ describe('advanced administration in the main window', () => {
     expect(vi.mocked(invoke).mock.calls.some(([command]) => command === 'open_mobile_komari_console')).toBe(false)
     if (change === 'lock') {
       vault.unlocked = true; view.rerender(section())
-      expect(screen.getByRole('button', { name: copy.open })).toBeEnabled()
+      expect(screen.queryByTestId('komari-connection-editor')).not.toBeInTheDocument()
+      expect(await advanced()).toBeEnabled()
     }
   })
   it.each(['metadata', 'secret'] as const)('does not continue old-Vault writes after switching while %s persistence is pending', async (stage) => {
@@ -339,7 +417,7 @@ describe('advanced administration in the main window', () => {
     if (stage === 'metadata') vi.mocked(upsertKomariIntegration).mockImplementationOnce(() => new Promise((resolve) => { finishMetadata = resolve }))
     else vi.mocked(upsertKomariIntegration).mockResolvedValueOnce(saved)
     vault.saveSecret.mockImplementationOnce(() => new Promise<void>((resolve) => { finishSecret = resolve }))
-    const view = render(section())
+    const view = await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: copy.open, hidden: true })).toBeEnabled())
     fireEvent.change(screen.getByLabelText(en['settings.komariApiKey']), { target: { value: 'old-vault-secret' } })
     fireEvent.click(screen.getByRole('button', { name: en['settings.komariSave'] }))
@@ -347,7 +425,8 @@ describe('advanced administration in the main window', () => {
     vi.mocked(listKomariIntegrations).mockResolvedValueOnce([integration({ vaultId: 'vault-b', name: 'Current Vault Komari', endpoint: 'https://current.example/base' })])
     vault.id = 'vault-b'
     view.rerender(section())
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Current Vault Komari' })).toBeInTheDocument())
+    expect(screen.queryByTestId('komari-connection-editor')).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Current Vault Komari' }))
     await act(async () => { if (stage === 'metadata') finishMetadata(saved); else finishSecret() })
     expect(upsertKomariIntegration).toHaveBeenCalledTimes(1)
     expect(vault.saveSecret).toHaveBeenCalledTimes(stage === 'metadata' ? 0 : 1)
@@ -361,7 +440,7 @@ describe('advanced administration in the main window', () => {
     vault.unlocked = true
     vi.mocked(upsertKomariIntegration).mockResolvedValueOnce(integration({ credentialRef: '' })).mockResolvedValueOnce(integration())
     vault.saveSecret.mockResolvedValueOnce(undefined)
-    render(section())
+    await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: copy.open, hidden: true })).toBeEnabled())
     fireEvent.change(screen.getByLabelText(en['settings.komariApiKey']), { target: { value: 'new-scoped-secret' } })
     fireEvent.click(screen.getByRole('button', { name: en['settings.komariSave'] }))
@@ -374,13 +453,14 @@ describe('advanced administration in the main window', () => {
   it('does not reload or reset the new Vault after an old-Vault removal finishes', async () => {
     let finishRemove!: () => void
     vi.mocked(deleteKomariIntegration).mockImplementationOnce(() => new Promise((resolve) => { finishRemove = resolve }))
-    const view = render(section())
+    const view = await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariRemove'] })).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: en['settings.komariRemove'] }))
     vi.mocked(listKomariIntegrations).mockResolvedValueOnce([integration({ vaultId: 'vault-b', name: 'Current Vault Komari', endpoint: 'https://current.example/base' })])
     vault.id = 'vault-b'
     view.rerender(section())
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Current Vault Komari' })).toBeInTheDocument())
+    expect(screen.queryByTestId('komari-connection-editor')).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Current Vault Komari' }))
     await act(async () => { finishRemove() })
     expect(deleteKomariIntegration).toHaveBeenCalledExactlyOnceWith('same-id', 'vault-a')
     expect(listKomariIntegrations).toHaveBeenCalledTimes(2)

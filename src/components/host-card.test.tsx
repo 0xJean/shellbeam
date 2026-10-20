@@ -7,6 +7,7 @@ import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
 import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import type { HostOpsProbeEvaluation } from '@/lib/host-ops-view'
+import { I18nProvider } from '@/lib/i18n'
 
 const host = {
   id: 'host-1',
@@ -28,8 +29,7 @@ const sampledMetrics: ServerMonitorSnapshot = {
 }
 const oldResource = { hostname: 'api', os: 'Linux', kernel: '', uptime: 'old uptime', cpuPercent: 95, memoryPercent: 20, memoryText: '', diskPercent: 30, diskText: '', network: 'old throughput' }
 
-function openListOperations(mode: 'grid' | 'list' = 'list') {
-  if (mode === 'grid') return
+function openOperations() {
   const toggle = screen.getByTestId('host-ops-details-toggle')
   expect(toggle).toBeVisible()
   if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
@@ -38,6 +38,95 @@ function openListOperations(mode: 'grid' | 'list' = 'list') {
 }
 
 describe('host list item', () => {
+  it.each((['grid', 'list'] as const).flatMap(mode => (['en', 'zh-CN'] as const).flatMap(locale =>
+    (['offline', 'stale'] as const).map(status => ({ mode, locale, status })),
+  )))('labels Komari $status as monitoring data in the $locale $mode view without blocking SSH', ({ mode, locale, status }) => {
+    const previousLocale = localStorage.getItem('shellbeam.locale')
+    localStorage.setItem('shellbeam.locale', locale)
+    try {
+      const operations: HostOperationalSummary = { vaultId: 'vault-a', serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct', provider: 'komari' }
+      const onConnect = vi.fn()
+      const props = { host, status, operations, monitoring: false, isSelected: false, onConnect, onSelect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+      render(<I18nProvider>{mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />}</I18nProvider>)
+      const expected = locale === 'zh-CN'
+        ? status === 'offline' ? '监控中断' : '监控数据过期'
+        : status === 'offline' ? 'Monitoring interrupted' : 'Monitoring data stale'
+      expect(screen.getByText(expected)).toBeVisible()
+      expect(screen.queryByText(locale === 'zh-CN' ? '离线' : 'Offline', { exact: true })).not.toBeInTheDocument()
+      expect(screen.getByTestId('host-card')).toHaveAttribute('data-host-health', status)
+      expect(screen.getByTestId('host-connect')).toBeEnabled()
+      fireEvent.click(screen.getByTestId('host-connect'))
+      expect(onConnect).toHaveBeenCalledExactlyOnceWith(host.id)
+    } finally {
+      if (previousLocale === null) localStorage.removeItem('shellbeam.locale')
+      else localStorage.setItem('shellbeam.locale', previousLocale)
+    }
+  })
+
+  it('keeps grid diagnostics and audit details collapsed while exposing the alert count and actions on demand', () => {
+    const onLocalAlertAction = vi.fn()
+    const operations: HostOperationalSummary = {
+      vaultId: 'vault-a', serviceTotal: 4, serviceActive: 3, serviceFailed: 1, processTotal: 2, processRunning: 2,
+      auditCount: 1, provider: 'ssh-agentless', transport: 'direct', localAlertOpen: 1,
+      localAlerts: [{ ruleId: 'cpu-hot', hostId: host.id, name: 'CPU pressure', metric: 'cpu', severity: 'critical', status: 'active', openedAt: 1, updatedAt: 2, resolvedAt: null, value: 99, source: 'ssh-agentless', transport: 'direct' }],
+      latestAudit: { auditId: 'audit-visible-on-demand', action: 'service.restart', target: 'nginx', status: 'completed', createdAt: 2, transport: 'direct', provider: 'ssh-agentless', source: 'workspace' },
+      onLocalAlertAction,
+    }
+    const onConnect = vi.fn(), onSelect = vi.fn()
+    render(<HostGridCard host={host} operations={operations} isSelected={false} onConnect={onConnect} onSelect={onSelect} onEdit={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.getByTestId('host-ops-summary')).toBeVisible()
+    expect(screen.getByTestId('host-ops-local-alerts')).toHaveAttribute('data-open-count', '1')
+    expect(screen.getByTestId('host-ops-details')).not.toBeVisible()
+    expect(screen.getByTestId('host-local-alert')).not.toBeVisible()
+    expect(screen.getByText(/audit-visible-on-demand/)).not.toBeVisible()
+    openOperations()
+    expect(screen.getByTestId('host-local-alert')).toBeVisible()
+    expect(screen.getByText(/audit-visible-on-demand/)).toBeVisible()
+    fireEvent.click(screen.getByTestId('local-host-alert-ack-cpu-hot'))
+    expect(onLocalAlertAction).toHaveBeenCalledExactlyOnceWith(operations.localAlerts![0], 'acknowledge')
+    expect(onConnect).not.toHaveBeenCalled()
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it.each(['grid', 'list'] as const)('keeps connection and alert handling available without resource placeholders in %s connection mode', (mode) => {
+    const onConnect = vi.fn(), onSelect = vi.fn(), onLocalAlertAction = vi.fn()
+    const operations: HostOperationalSummary = {
+      serviceTotal: 4, serviceActive: 3, serviceFailed: 1, processTotal: 2, processRunning: 2, auditCount: 0, transport: 'direct', provider: 'ssh-agentless', localAlertOpen: 1,
+      localAlerts: [{ ruleId: 'cpu-hot', hostId: host.id, name: 'CPU pressure', metric: 'cpu', severity: 'warning', status: 'active', openedAt: 1, updatedAt: 2, resolvedAt: null, value: 99, source: 'ssh-agentless', transport: 'direct' }], onLocalAlertAction,
+    }
+    const props = { host, monitoring: false, metrics: sampledMetrics, resource: oldResource, operations, isSelected: false, onConnect, onSelect, onEdit: vi.fn(), onDelete: vi.fn() }
+    render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
+    expect(screen.queryByRole('meter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('host-resource-throughput')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('host-resource-uptime')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('host-ops-compact-source')).not.toBeInTheDocument()
+    expect(screen.getByTestId('host-ops-local-alerts')).toBeVisible()
+    expect(screen.getByTestId('host-ops-details')).not.toBeVisible()
+    openOperations()
+    fireEvent.click(screen.getByTestId('local-host-alert-ack-cpu-hot'))
+    expect(onLocalAlertAction).toHaveBeenCalledExactlyOnceWith(operations.localAlerts![0], 'acknowledge')
+    fireEvent.click(screen.getByTestId('host-connect'))
+    expect(onConnect).toHaveBeenCalledExactlyOnceWith(host.id)
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it.each(['grid', 'list'] as const)('isolates %s batch selection from host selection and terminal opening', (mode) => {
+    const onConnect = vi.fn(), onSelect = vi.fn(), onChange = vi.fn()
+    const props = { host, monitoring: false, batchSelection: { selected: false, disabled: false, onChange }, isSelected: false, onConnect, onSelect, onEdit: vi.fn(), onDelete: vi.fn() }
+    const view = render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
+    const checkbox = screen.getByRole('checkbox', { name: /Production API/ })
+    fireEvent.click(checkbox)
+    expect(onChange).toHaveBeenCalledOnce()
+    fireEvent.doubleClick(checkbox)
+    fireEvent.keyDown(checkbox, { key: 'Enter' })
+    fireEvent.keyDown(checkbox, { key: ' ' })
+    expect(onConnect).not.toHaveBeenCalled()
+    expect(onSelect).not.toHaveBeenCalled()
+    const disabled = { ...props, batchSelection: { ...props.batchSelection, disabled: true } }
+    view.rerender(mode === 'grid' ? <HostGridCard {...disabled} /> : <HostListItem {...disabled} index={1} />)
+    expect(screen.getByRole('checkbox', { name: /Production API/ })).toBeDisabled()
+  })
+
   it('keeps the host main row separate from hidden full-width operational details', () => {
     const sampledAt = Date.now() - 1_000
     const operations: HostOperationalSummary = { vaultId: 'vault-a', serviceTotal: 4, serviceActive: 3, serviceFailed: 1, processTotal: 2, processRunning: 2, auditCount: 1, provider: 'ssh-agentless', transport: 'proxy-jump', sampledAt, localAlertOpen: 1, highestAlertSeverity: 'critical', localAlerts: [{ ruleId: 'probe-error', hostId: host.id, name: 'Long collection diagnosis '.repeat(10), metric: 'probe-provider', severity: 'critical', status: 'active', openedAt: sampledAt, updatedAt: sampledAt, resolvedAt: null, value: 1, source: 'ssh-agentless', transport: 'proxy-jump' }] }
@@ -58,14 +147,14 @@ describe('host list item', () => {
     expect(compact).toHaveAttribute('data-sampled-at', String(sampledAt))
     expect(compact).toHaveTextContent('3/4')
     expect(compact).toHaveTextContent('2/2')
-    expect(compact).toHaveTextContent('ssh-agentless')
+    expect(within(compact).getByTestId('host-ops-compact-source')).toHaveTextContent('SSH')
     const alertSummary = within(primary).getByTestId('host-ops-local-alerts')
     expect(alertSummary).toBeVisible()
     expect(alertSummary).toHaveAttribute('data-open-count', '1')
     expect(alertSummary).toHaveAttribute('data-severity', 'critical')
     expect(within(primary).getByRole('button', { name: 'Services · Production API' })).toBeVisible()
     expect(within(primary).getByRole('combobox', { name: 'Open operations for Production API' })).toBeVisible()
-    openListOperations()
+    openOperations()
     expect(screen.getByTestId('host-local-alert')).toBeVisible()
     expect(primary).not.toContainElement(screen.getByTestId('host-ops-details-summary'))
   })
@@ -115,12 +204,12 @@ describe('host list item', () => {
     expect(parent).not.toHaveBeenCalled()
   })
 
-  it('collapses details when the same host id changes Vault, and keeps a new host collapsed', () => {
+  it.each(['grid', 'list'] as const)('collapses %s details when the same host id changes Vault, and keeps a new host collapsed', (mode) => {
     const operations: HostOperationalSummary = { vaultId: 'vault-a', serviceTotal: 1, serviceActive: 1, serviceFailed: 0, processTotal: 1, processRunning: 1, auditCount: 0, transport: 'direct' }
     const props = { index: 1, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
-    const card = (vaultId: string, id = host.id) => <HostListItem {...props} host={{ ...host, id, vaultId }} operations={{ ...operations, vaultId }} />
+    const card = (vaultId: string, id = host.id) => mode === 'grid' ? <HostGridCard {...props} host={{ ...host, id, vaultId }} operations={{ ...operations, vaultId }} /> : <HostListItem {...props} host={{ ...host, id, vaultId }} operations={{ ...operations, vaultId }} />
     const view = render(card('vault-a'))
-    openListOperations()
+    openOperations()
     view.rerender(card('vault-b'))
     expect(screen.getByTestId('host-ops-details-toggle')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByTestId('host-ops-details')).not.toBeVisible()
@@ -129,7 +218,7 @@ describe('host list item', () => {
     expect(screen.getByTestId('host-ops-details-toggle')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByTestId('host-ops-details')).not.toBeVisible()
     view.rerender(card('vault-b'))
-    openListOperations()
+    openOperations()
     view.rerender(card('vault-b', 'another-host'))
     expect(screen.getByTestId('host-ops-details-toggle')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByTestId('host-ops-details')).not.toBeVisible()
@@ -150,7 +239,7 @@ describe('host list item', () => {
     const props = { host, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
     const card = (summary: HostOperationalSummary) => mode === 'grid' ? <HostGridCard {...props} operations={summary} /> : <HostListItem {...props} index={1} operations={summary} />
     const view = render(card(operations))
-    openListOperations(mode)
+    openOperations()
     const [metrics, inventory] = screen.getAllByTestId('host-probe-evaluation')
     expect(metrics).toBeVisible()
     expect(metrics).toHaveTextContent('Metrics')
@@ -184,7 +273,7 @@ describe('host list item', () => {
     const props = { host: { ...host, vaultId: 'vault-a' }, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
     const card = (summary: HostOperationalSummary) => mode === 'grid' ? <HostGridCard {...props} operations={summary} /> : <HostListItem {...props} index={1} operations={summary} />
     const view = render(card(operations))
-    openListOperations(mode)
+    openOperations()
     const [old, missing] = screen.getAllByTestId('host-probe-evaluation')
     expect(old).toHaveAttribute('data-state', 'unknown')
     expect(old).toHaveTextContent('Unknown')
@@ -205,12 +294,12 @@ describe('host list item', () => {
     const operations: HostOperationalSummary = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct', localAlerts: [], localAlertPersistenceError: true, probeAlertLifecycleError: true }
     const props = { host, operations, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
     render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
-    if (mode === 'list') {
+    {
       expect(screen.getByTestId('host-ops-attention')).toBeVisible()
       expect(screen.getByTestId('host-ops-attention')).toHaveTextContent('Review needed')
       expect(screen.getByText('Native operations history could not be saved or changed in another session. Refresh before continuing.')).not.toBeVisible()
     }
-    openListOperations(mode)
+    openOperations()
     expect(screen.getByText('Native operations history could not be saved or changed in another session. Refresh before continuing.')).toBeVisible()
     expect(screen.getByText('Probe alert recording is unavailable. The next collection will retry.')).toBeVisible()
     expect(screen.queryByTestId('host-local-alert')).not.toBeInTheDocument()
@@ -222,7 +311,7 @@ describe('host list item', () => {
     const parent = vi.fn()
     const props = { host: { ...host, jumpHostId: 'saved-bastion' }, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), operations: { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'proxy-jump' as const, localAlerts: [alert], onLocalAlertAction, onKomariAlertAction } }
     render(<div onClick={parent} onDoubleClick={parent} onKeyDown={parent}>{mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />}</div>)
-    openListOperations(mode)
+    openOperations()
     const row = screen.getByTestId('host-local-alert')
     expect(row).toBeVisible()
     expect(row).toHaveTextContent('ProbeProvider collection')
@@ -248,7 +337,7 @@ describe('host list item', () => {
     const props = { host, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
     const card = (summary: typeof operations) => mode === 'grid' ? <HostGridCard {...props} operations={summary} /> : <HostListItem {...props} index={1} operations={summary} />
     const view = render(card(operations))
-    openListOperations(mode)
+    openOperations()
     expect(screen.queryByTestId('local-host-alert-ack-acknowledged')).not.toBeInTheDocument()
     expect(screen.queryByTestId('local-host-alert-close-closed')).not.toBeInTheDocument()
     expect(screen.queryByTestId('local-host-alert-close-foreign')).not.toBeInTheDocument()
@@ -304,7 +393,7 @@ describe('host list item', () => {
     const operations = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct' as const, sampledAt: 1000, komariProbe: probe }
     const props = { host, isSelected: false, operations, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
     render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
-    openListOperations(mode)
+    openOperations()
     const disclosure = screen.getByTestId('host-data-source-details')
     expect(disclosure).not.toHaveAttribute('open')
     expect(screen.getByTestId('host-current-source')).toBeVisible()
@@ -331,7 +420,8 @@ describe('host list item', () => {
     const props = { host, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
     const card = (komariProbe: KomariProbeLink) => mode === 'grid' ? <HostGridCard {...props} operations={{ ...operations, komariProbe }} /> : <HostListItem {...props} index={1} operations={{ ...operations, komariProbe }} />
     const view = render(card(link))
-    expect(screen.getByTestId('host-current-source')).toHaveTextContent('ssh-agentless')
+    expect(screen.getByTestId('host-ops-compact-source')).toBeVisible()
+    expect(screen.getByTestId('host-ops-compact-source')).toHaveTextContent('SSH')
     expect(screen.getByTestId('host-data-source-details')).not.toHaveAttribute('open')
     expect(screen.getByTestId('host-monitoring-source-attention')).toBeVisible()
     expect(screen.getByTestId('host-monitoring-source-attention')).toHaveTextContent('Waiting for first report')
@@ -351,7 +441,7 @@ describe('host list item', () => {
       ? <HostGridCard {...props} operations={{ ...operations, expiryReason }} />
       : <HostListItem {...props} index={1} operations={{ ...operations, expiryReason }} />
     const view = render(renderCard('ttl-expired'))
-    openListOperations(mode)
+    openOperations()
     fireEvent.click(screen.getByTestId('host-data-source-details').querySelector('summary')!)
     expect(screen.getByTestId('host-ops-expiry-reason')).toBeVisible()
     expect(screen.getByTestId('host-ops-expiry-reason')).toHaveTextContent('Sample TTL expired')
@@ -406,10 +496,9 @@ describe('host list item', () => {
     expect(screen.getByTestId('host-resource-uptime')).toHaveTextContent('Unknown')
     const missing = { ...props, metrics: undefined, resource: undefined }
     view.rerender(mode === 'grid' ? <HostGridCard {...missing} /> : <HostListItem {...missing} index={1} />)
-    expect(screen.getByTestId('host-resource-throughput')).toHaveTextContent('Unknown')
-    expect(screen.getByTestId('host-resource-throughput')).not.toHaveTextContent('0 B/s')
-    expect(screen.getByTestId('host-resource-uptime')).toHaveTextContent('Unknown')
-    expect(screen.getByTestId('host-resource-uptime')).not.toHaveTextContent('0s')
+    expect(screen.queryByTestId('host-resource-summary')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('host-resource-throughput')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('host-resource-uptime')).not.toBeInTheDocument()
   })
 
   it('retains available legacy inventory values when no metric observation exists', () => {
@@ -589,7 +678,7 @@ describe('host list item', () => {
       />,
     )
 
-    openListOperations()
+    openOperations()
     const details = within(screen.getByTestId('host-ops-details'))
     expect(screen.getByTestId('host-ops-summary')).toBeVisible()
     expect(details.getByText('3/4')).toBeInTheDocument()
@@ -679,7 +768,7 @@ describe('host list item', () => {
       />,
     )
 
-    openListOperations()
+    openOperations()
     fireEvent.click(screen.getByTestId('host-data-source-details').querySelector('summary')!)
     expect(screen.getByText('2 open alert(s)')).toBeVisible()
     expect(screen.getByText('Acknowledged: 1')).toBeInTheDocument()
@@ -750,7 +839,7 @@ describe('host list item', () => {
       />,
     )
 
-    openListOperations()
+    openOperations()
     expect(screen.getByTestId('komari-host-alert-ack-alert-active-card')).toBeVisible()
     fireEvent.click(screen.getByTestId('komari-host-alert-ack-alert-active-card'))
     await waitFor(() => expect(onKomariAlertAction).toHaveBeenCalledWith('acknowledge', activeAlert))
@@ -766,7 +855,7 @@ describe('host list item', () => {
     const operations: HostOperationalSummary = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct', probeState: 'error', komariAlerts: [unknown, retry, metrics], onKomariAlertAction }
     render(<HostListItem index={1} host={host} isSelected={false} operations={operations} onSelect={vi.fn()} onConnect={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />)
     expect(screen.getByTestId('host-data-source-details')).not.toHaveAttribute('open')
-    openListOperations()
+    openOperations()
     expect(screen.getByTestId('host-ops-alert-actions')).toBeVisible()
     expect(screen.queryByTestId('komari-host-alert-ack-missing-health')).not.toBeInTheDocument()
     expect(screen.queryByTestId('komari-host-alert-ack-missing-retries')).not.toBeInTheDocument()

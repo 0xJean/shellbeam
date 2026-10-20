@@ -21,7 +21,7 @@ import { DockerOpsPanel } from './docker-ops-panel'
 import { ScheduledTasksPanel } from './scheduled-tasks-panel'
 import { SitesSslPanel } from '../sites-ssl-panel'
 import { NetworkOpsPanel } from './network-ops-panel'
-import { ProviderHistoryPanel } from './provider-history-panel'
+import { ProviderHistoryDisclosure } from './provider-history-panel'
 import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
 import { WorkspaceStatusCards } from './workspace-status-cards'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
@@ -210,7 +210,7 @@ export function WorkspaceMobileShell({
         {isOverview && <div className="space-y-4">
           {sessionVaultMismatch ? <p role="status" className="p-4 text-sm">{t('workspace.sessionVaultMismatch')}</p> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
           <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
-          {activeVaultId && activeHost && <ProviderHistoryPanel vaultId={activeVaultId} hostId={activeHost.id} />}
+          {activeVaultId && activeHost && <ProviderHistoryDisclosure vaultId={activeVaultId} hostId={activeHost.id} />}
         </div>}
       </motion.div>
 

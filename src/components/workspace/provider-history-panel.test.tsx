@@ -1,11 +1,31 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { metricHistoryPaths, listProviderMetricHistory, type ProviderMetricHistoryPoint } from '@/lib/provider-history'
-import { ProviderHistoryPanel } from './provider-history-panel'
+import { ProviderHistoryDisclosure, ProviderHistoryPanel } from './provider-history-panel'
 vi.mock('@/lib/provider-history', async (importOriginal) => ({ ...await importOriginal<typeof import('@/lib/provider-history')>(), listProviderMetricHistory: vi.fn() }))
 const point = (at: number, cpu: number | null, providerId = 'komari-main') => ({ providerKind: 'komari', providerId, hostId: 'edge', nodeId: 'node-1', sampledAt: at, receivedAt: at + 10, expiresAt: at + 120000, confidence: 'partial', metrics: { cpuPercent: cpu, memoryPercent: null, diskPercent: 20, sampledAt: at } } as ProviderMetricHistoryPoint)
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 describe('Provider metric history range view', () => {
+  it('loads history only on request and hides pending previous-scope data after A → B → A', async () => {
+    localStorage.setItem('shellbeam.locale', 'en')
+    let resolvePrevious!: (points: ProviderMetricHistoryPoint[]) => void
+    vi.mocked(listProviderMetricHistory).mockImplementationOnce(() => new Promise((resolve) => { resolvePrevious = resolve })).mockResolvedValue([])
+    const view = render(<ProviderHistoryDisclosure vaultId="vault-a" hostId="edge" />)
+    expect(listProviderMetricHistory).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('provider-history-panel')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Metric history' }))
+    expect(listProviderMetricHistory).toHaveBeenCalledOnce()
+    view.rerender(<ProviderHistoryDisclosure vaultId="vault-b" hostId="edge" />)
+    expect(screen.queryByTestId('provider-history-panel')).not.toBeInTheDocument()
+    view.rerender(<ProviderHistoryDisclosure vaultId="vault-a" hostId="edge" />)
+    await act(async () => { resolvePrevious([point(Date.now(), 73)]) })
+    expect(screen.queryByTestId('provider-history-panel')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Metric history' })).toHaveAttribute('aria-expanded', 'false')
+    expect(listProviderMetricHistory).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Metric history' }))
+    await waitFor(() => expect(listProviderMetricHistory).toHaveBeenCalledTimes(2))
+    expect(screen.queryByText('CPU: 73.0%')).not.toBeInTheDocument()
+  })
   it('queries the active vault and host, changes range and exposes provenance/unknown values', async () => {
     localStorage.setItem('shellbeam.locale', 'en')
     const now = Date.now(); vi.mocked(listProviderMetricHistory).mockResolvedValue([point(now - 1000, 25), point(now, 30)])

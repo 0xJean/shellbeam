@@ -14,7 +14,7 @@ const { invoke, runSshCommand } = vi.hoisted(() => ({ invoke: vi.fn(), runSshCom
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@/lib/sessions', async (original) => ({ ...await original<typeof import('@/lib/sessions')>(), runSshCommand }))
 vi.mock('@/hooks/use-host-network-metadata', () => ({ useHostNetworkMetadata: () => ({}) }))
-vi.mock('./provider-history-panel', () => ({ ProviderHistoryPanel: () => null }))
+vi.mock('./provider-history-panel', () => ({ ProviderHistoryDisclosure: () => null }))
 const host = { id: 'incident-host', vaultId: 'team', name: 'Production nginx', address: '10.0.0.9', port: 22, username: 'ops', group: 'Default', authType: 'password' as const, tags: [], jumpHost: 'bastion.example', createdAt: 0, updatedAt: 0 }
 const hosts = [host]
 const resolveAuthSecret = vi.fn(async () => { throw new Error('Saved host credentials must stay native') })

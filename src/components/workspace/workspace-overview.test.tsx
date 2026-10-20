@@ -32,7 +32,7 @@ describe('workspace mode toggle', () => {
 
 describe('workspace overview', () => {
   beforeEach(() => { clearServerMonitorStates(); clearLocalOpsMemory(); localStorage.clear() })
-  it('shows the workspace app launcher and status cards', () => {
+  it('keeps SSH apps available without empty metric cards', () => {
     render(
       <WorkspaceOverview
         hostName="Production API"
@@ -43,7 +43,9 @@ describe('workspace overview', () => {
     )
 
     expect(screen.getByText('Production API')).toBeInTheDocument()
-    expect(screen.getByText('CPU')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-resources-empty')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-status-card')).not.toBeInTheDocument()
+    expect(screen.queryByText('Komari')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /file transfer/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /file system/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /logs/i })).toBeInTheDocument()

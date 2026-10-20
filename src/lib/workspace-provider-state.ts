@@ -3,11 +3,11 @@ import { COLLECTION_LIMITS } from './collection-limits'
 import { buildHostOpsViews, type HostOpsHealthState, type HostOpsProvider, type HostOpsView } from './host-ops-view'
 import type { HostProfile } from './hosts'
 import { getHostIdentity } from './host-identity'
-import { listKomariIntegrations, type KomariIntegration } from './komari-config'
-import { normalizeKomariEndpoint } from './komari'
+import { listKomariIntegrations } from './komari-config'
+import { isCurrentKomariSnapshot, loadCurrentKomariSource, type CurrentKomariSource } from './komari-source-eligibility'
 import { parseKomariAlertState } from './komari-alerts'
 import { isKomariWaitingForFirstReport } from './komari-first-report'
-import { KOMARI_MAPPING_CHANGED_EVENT, confirmedKomariSyncAt, loadKomariPersistence, type KomariPersistedState } from './komari-persistence'
+import { KOMARI_MAPPING_CHANGED_EVENT, confirmedKomariSyncAt, type KomariPersistedState } from './komari-persistence'
 import { listPersistedProbeSnapshots, type PersistedProbeSnapshotRecord } from './probe-persistence'
 import { refreshProbeSnapshotFreshness } from './probe-scheduler'
 import type { ProbeCapability, ProbeConfidence, ProbeProviderKind, ProbeProviderTelemetry, ProbeSnapshot } from './probe-provider'
@@ -52,11 +52,7 @@ export interface WorkspaceProviderStateOptions {
   vaultId?: string
 }
 
-export interface WorkspaceKomariState {
-  integration: KomariIntegration
-  state: KomariPersistedState | null
-  error: boolean
-}
+export type WorkspaceKomariState = CurrentKomariSource
 
 export interface WorkspaceProviderData {
   rows: PersistedProbeSnapshotRecord[]
@@ -130,17 +126,7 @@ export function buildWorkspaceProviderState(options: WorkspaceProviderStateOptio
   const allowed = (snapshot: ProbeSnapshot) => {
     if (snapshot.host.hostId !== host.id || !sameEndpoint(snapshot, host, hosts)) return false
     if (snapshot.provider.kind !== 'komari') return true
-    const integration = integrationById.get(snapshot.provider.id)
-    if (!integration || !integration.state || integration.error) return false
-    if (snapshot.provider.endpoint) {
-      try { if (normalizeKomariEndpoint(snapshot.provider.endpoint) !== normalizeKomariEndpoint(integration.integration.endpoint)) return false }
-      catch { return false }
-    }
-    const node = snapshot.provider.nodeId
-    const mappings = integration.state.mappings
-    // A canonical-only legacy cache can still be read. Once a mapping exists,
-    // its node/host association is authoritative over either cache table.
-    return !mappings.length || mappings.some((mapping) => mapping.integrationId === snapshot.provider.id && mapping.nodeId === node && mapping.hostId === host.id)
+    return isCurrentKomariSnapshot(snapshot, host, komari)
   }
   const canonical = data.rows.filter((row) => row.vaultId === vaultId && row.hostId === host.id && row.snapshot.host.hostId === row.hostId && row.snapshot.provider.id === row.providerId && row.snapshot.provider.kind === row.providerKind).map(rowSnapshot).filter(allowed)
   const dedicated = komari.flatMap((entry) => (entry.state?.snapshots ?? []).filter((row) => row.integrationId === entry.integration.id && row.hostId === host.id && row.snapshot.host.hostId === row.hostId && row.snapshot.provider.kind === 'komari' && row.snapshot.provider.id === row.integrationId && row.snapshot.provider.nodeId === row.nodeId).map(rowSnapshot)).filter(allowed)
@@ -166,7 +152,7 @@ export function buildWorkspaceProviderState(options: WorkspaceProviderStateOptio
       inventoryStates[key] = { hostKey: key, hostId: host.id, hostName: host.name, hostAddress: host.address, username: host.username, port: host.port, hostGroup: host.group, tags: host.tags, authType: host.authType, status: runtimeInventory.status, updatedAt: runtimeInventory.updatedAt ?? 0, error: runtimeInventory.error }
     }
   }
-  const common = { hosts, monitorLatest: monitor ? [monitor] : [], inventoryCache, inventoryStates, shellbeamAgents: data.agents.filter((agent) => agent.vaultId === vaultId && agent.hostId === host.id), now, staleAfterMs: COLLECTION_LIMITS.cadence.metricsTtlMs }
+  const common = { hosts, monitorLatest: monitor ? [monitor] : [], inventoryCache, inventoryStates, shellbeamAgents: data.agents.filter((agent) => agent.vaultId === vaultId && agent.hostId === host.id), komariSources: komari, now, staleAfterMs: COLLECTION_LIMITS.cadence.metricsTtlMs }
   const view = buildHostOpsViews({ ...common, probeSnapshots: canonical, komariSnapshots: dedicated })[host.id]
   const sources: WorkspaceProviderSource[] = snapshots.map((snapshot) => {
     const refreshed = refreshProbeSnapshotFreshness(snapshot, now)
@@ -205,8 +191,17 @@ export function buildWorkspaceProviderState(options: WorkspaceProviderStateOptio
   // A mapped node with no usable observation is still a real source. Keep its
   // last successful sync visible while explaining a current SSH fallback.
   for (const entry of komari) {
+    if (entry.error) continue
     for (const mapping of entry.state?.mappings.filter((row) => row.hostId === host.id && row.integrationId === entry.integration.id) ?? []) {
       if (sources.some((source) => source.kind === 'komari' && source.id === entry.integration.id && source.nodeId === mapping.nodeId)) continue
+      const retained = [
+        ...data.rows.filter(row => row.vaultId === vaultId && row.hostId === host.id).map(row => row.snapshot),
+        ...(entry.state?.snapshots.map(row => row.snapshot) ?? []),
+      ].filter(snapshot => snapshot.provider.kind === 'komari' && snapshot.provider.id === entry.integration.id
+        && snapshot.host.hostId === host.id && snapshot.provider.nodeId === mapping.nodeId)
+      // A metadata rename preserves an unsampled authoritative mapping. An
+      // old endpoint observation cannot instead manufacture a current fallback.
+      if (retained.some(snapshot => snapshot.provider.endpoint && !isCurrentKomariSnapshot(snapshot, host, [entry]))) continue
       sources.push({ kind: 'komari', id: entry.integration.id, nodeId: mapping.nodeId, health: 'unknown', confidence: null, sampledAt: null, receivedAt: null, lastSyncedAt: confirmedKomariSyncAt(entry.integration, entry.state?.syncState, now), ttlMs: null, expiresAt: null, capabilities: [], syncError: entry.error })
     }
   }
@@ -238,10 +233,7 @@ async function loadData(host: HostProfile, vaultId: string): Promise<{ data: Wor
   ] as const)
   const [rows, integrations, monitors, inventoryCache, inventoryStates, agents] = results
   const configured = integrations.status === 'fulfilled' ? (integrations.value ?? []).filter((entry) => entry.vaultId === vaultId && entry.enabled) : []
-  const komari = await Promise.all(configured.map(async (integration): Promise<WorkspaceKomariState> => {
-    try { return { integration, state: await loadKomariPersistence(integration.id), error: false } }
-    catch { return { integration, state: null, error: true } }
-  }))
+  const komari = await Promise.all(configured.map(loadCurrentKomariSource))
   return { data: { rows: rows.status === 'fulfilled' ? rows.value ?? [] : [], komari,
     monitors: monitors.status === 'fulfilled' ? monitors.value ?? [] : [], inventoryCache: inventoryCache.status === 'fulfilled' ? inventoryCache.value ?? {} : {},
     inventoryStates: inventoryStates.status === 'fulfilled' ? inventoryStates.value ?? {} : {}, agents: agents.status === 'fulfilled' ? agents.value ?? [] : [] },

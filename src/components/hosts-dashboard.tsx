@@ -14,6 +14,10 @@ import { HostCreateDialog } from '@/components/host-create-dialog'
 import { HostEditorDialog } from '@/components/host-editor-dialog'
 import { PullToRefresh } from '@/components/pull-to-refresh'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { HostAlertsCenter } from './host-alerts-center'
+import { buildHostIncidents, type HostIncident } from '@/lib/host-incidents'
+import { hostPresentationCopy } from '@/lib/locales/host-presentation'
 import { Input } from '@/components/ui/input'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
@@ -23,7 +27,7 @@ import { cn } from '@/lib/utils'
 import { getWorkspaceInventoryHealthStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { listMcpDeploymentRecords, type McpDeploymentRecord } from '@/lib/mcp'
-import { hostProbeEvaluations, loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
+import { hasHostOpsEvidence, hostProbeEvaluations, loadHostOpsViews, type HostOpsView } from '@/lib/host-ops-view'
 import { buildKomariProbeLinks, checkKomariLinkedProbe, type KomariProbeLink } from '@/lib/komari-probe-link'
 import { runConfirmedOperation } from '@/lib/operation-job'
 import { runKomariAlertAction, type KomariAlertAction } from '@/lib/komari-alert-actions'
@@ -31,18 +35,20 @@ import type { KomariAlertRecord, KomariAlertState } from '@/lib/komari-alerts'
 import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
 import { listShellbeamAgents } from '@/lib/shellbeam-agent'
 import { listKomariIntegrations } from '@/lib/komari-config'
+import { normalizeKomariEndpoint } from '@/lib/komari'
+import { isCurrentKomariAlert, isCurrentKomariSnapshot, loadCurrentKomariSource, loadCurrentKomariSources } from '@/lib/komari-source-eligibility'
 import { KOMARI_MAPPING_CHANGED_EVENT, confirmedKomariSyncAt, getKomariMappingState, manualKomariMappings, loadKomariPersistence, persistKomariAlertState, persistKomariSync } from '@/lib/komari-persistence'
 import { readKomariAlertState } from '@/lib/komari-persistence'
 import { dispatchAndPersistKomariAlertNotifications, emitKomariAlertNotification } from '@/lib/komari-alert-notifications'
 import { loadNotificationPolicy } from '@/lib/notification-policy'
-import { runBatchDockerOperation, runBatchOperation, runBatchServiceOperation, type BatchOperationResult } from '@/lib/multi-host-operations'
+import { MAX_BATCH_HOSTS, runBatchDockerOperation, runBatchOperation, runBatchServiceOperation, type BatchOperationResult } from '@/lib/multi-host-operations'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, reconcileKomariProbeAlerts, syncKomariIntegration } from '@/lib/komari-sync'
 import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
-import { HOST_LIST_COLUMNS } from './host-list-layout'
+import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS } from './host-list-layout'
 import MultiHostOperationsPanel, { type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
@@ -265,7 +271,7 @@ function hostOpsToCardSummary(
   onKomariAlertAction?: HostOperationalSummary['onKomariAlertAction'],
   komariAlertBusy?: string | null,
 ): HostOperationalSummary | undefined {
-  if (!view) return undefined
+  if (!view || (!hasHostOpsEvidence(view) && !komariProbe)) return undefined
   const latestAudit = view.latestAudit
   const alertSummary = view.health.alertSummary
   const alertLifecycle = view.health.alertLifecycle
@@ -370,7 +376,21 @@ export function HostsDashboard({
   const [sortOpen, setSortOpen] = useState(false)
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set())
   const [tagFilterOpen, setTagFilterOpen] = useState(false)
-  const { t } = useT()
+  const { t, locale } = useT()
+  const presentationCopy = hostPresentationCopy[locale]
+  const presentationOwner = JSON.stringify([activeVaultId, vaultUnlocked])
+  const preferenceKey = `shellbeam:host-monitoring-summary:${activeVaultId ?? 'none'}`
+  const readMonitoringPreference = () => {
+    try { return localStorage.getItem(preferenceKey) === 'visible' } catch { return false }
+  }
+  const [presentation, setPresentation] = useState(() => ({ owner: presentationOwner, monitoring: readMonitoringPreference(), alerts: false, batch: false, selected: [] as string[] }))
+  if (presentation.owner !== presentationOwner) {
+    setPresentation({ owner: presentationOwner, monitoring: readMonitoringPreference(), alerts: false, batch: false, selected: [] })
+    setAdvancedFilters({ ...DEFAULT_HOST_OPS_FILTERS })
+    setStatusFilter('all')
+  }
+  const currentPresentation = presentation.owner === presentationOwner ? presentation : { owner: presentationOwner, monitoring: readMonitoringPreference(), alerts: false, batch: false, selected: [] as string[] }
+  const [batchBusy, setBatchBusy] = useState(false)
   const sharedStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
   const [agentDeployments, setAgentDeployments] = useState<McpDeploymentRecord[]>([])
@@ -395,6 +415,12 @@ export function HostsDashboard({
   const localScope = useRef({ vaultId: activeVaultId, unlocked: vaultUnlocked, generation: 0, hosts })
   if (localScope.current.vaultId !== activeVaultId || localScope.current.unlocked !== vaultUnlocked) localScope.current.generation++
   localScope.current = { ...localScope.current, vaultId: activeVaultId, unlocked: vaultUnlocked, hosts }
+  const alertScopeGeneration = localScope.current.generation
+  const [integrationIncidents, setIntegrationIncidents] = useState<{ generation: number; incidents: HostIncident[] }>({ generation: -1, incidents: [] })
+  const receiveIntegrationIncidents = useCallback((incidents: HostIncident[]) => {
+    if (localScope.current.generation !== alertScopeGeneration || !localScope.current.unlocked) return
+    setIntegrationIncidents({ generation: alertScopeGeneration, incidents })
+  }, [alertScopeGeneration])
   const komariAlertActionKey = komariAlertAction && komariAlertAction.vaultId === activeVaultId && komariAlertAction.generation === localScope.current.generation ? komariAlertAction.key : null
   const komariAlertContext = useRef({ hostVersions: new Map<string, string>(), hostGenerations: new Map<string, number>(), mappingGenerations: new Map<string, number>() })
   const komariAlertPending = useRef<{ sequence: number; isCurrent: () => boolean } | null>(null)
@@ -418,12 +444,16 @@ export function HostsDashboard({
   const refreshHostOps = useCallback(async (forceKomari = false) => {
     if (!opsMounted.current || currentOpsVault.current !== activeVaultId) return
     const sequence = ++opsRefreshSequence.current
-    const isCurrent = () => opsMounted.current && currentOpsVault.current === activeVaultId && opsRefreshSequence.current === sequence
+    const generation = localScope.current.generation
+    const isCurrent = () => opsMounted.current && currentOpsVault.current === activeVaultId
+      && localScope.current.generation === generation && opsRefreshSequence.current === sequence
     setHostOpsLoading(true)
     setHostOpsRefreshStatus('refreshing')
     setHostOpsRefreshError(null)
     let recoveredFromPersistence = false
     try {
+      const observationHosts = hosts.filter(host => !host.vaultId || host.vaultId === activeVaultId)
+        .map(host => ({ ...host, vaultId: host.vaultId ?? activeVaultId }))
       let komariSnapshots = undefined
       const komariRecords: Array<{
         integrationId: string
@@ -434,20 +464,23 @@ export function HostsDashboard({
         alertState: Awaited<ReturnType<typeof syncKomariIntegration>>['alertState']
         alertAudit: Awaited<ReturnType<typeof syncKomariIntegration>>['alertAudit']
       }> = []
-      if (activeVaultId && onLoadVaultSecret) {
+      if (activeVaultId && onLoadVaultSecret && vaultUnlocked) {
         const integrations = await listKomariIntegrations(activeVaultId).catch(() => [])
         const enabledIntegrations = integrations.filter((integration) => integration.enabled && integration.vaultId === activeVaultId)
         const syncResults = await Promise.allSettled(
           enabledIntegrations
             .map(async (integration) => {
-              const cached = await loadKomariPersistence(integration.id).catch(() => ({ snapshots: [], mappings: [], syncState: null, lastSyncedAt: null }))
+              const source = await loadCurrentKomariSource(integration)
+              if (!source.state || source.error) throw new Error('KOMARI_MAPPING_READ_FAILED')
+              const cached = source.state
               if (!isCurrent()) throw new Error('KOMARI_REFRESH_SUPERSEDED')
               const cachedSnapshots = cached.snapshots.map((entry) => entry.snapshot)
+                .filter(snapshot => observationHosts.some(host => isCurrentKomariSnapshot(snapshot, host, [source])))
               const cachedAlertState = readKomariAlertState(cached.syncState)
               const lastSyncedAt = cached.lastSyncedAt
               const confirmedSyncAt = confirmedKomariSyncAt(integration, cached.syncState)
               const ttlMs = cached.syncState?.ttlMs ?? DEFAULT_KOMARI_SYNC_TTL_MS
-              if (!forceKomari && isKomariSyncFresh(lastSyncedAt, Date.now(), ttlMs)) {
+              if (!forceKomari && isKomariSyncFresh(confirmedSyncAt, Date.now(), ttlMs)) {
                 const cachedAlerts = reconcileKomariProbeAlerts({
                   integrationId: integration.id,
                   snapshots: cachedSnapshots,
@@ -479,7 +512,7 @@ export function HostsDashboard({
                 config: { endpoint: integration.endpoint, token: apiKey },
                 hosts,
                 explicitMappings: manualKomariMappings(mappingState.mappings),
-                lastSyncedAt,
+                lastSyncedAt: confirmedSyncAt,
                 ttlMs,
                 force: forceKomari,
                 alertState: cachedAlertState,
@@ -540,13 +573,24 @@ export function HostsDashboard({
       // Fresh rows deliver once; TTL cache hits may retry bounded, durable
       // channel failures without replaying the historical alert journal.
       if (komariRecords.length > 0) {
+        const sources = await loadCurrentKomariSources(activeVaultId ? [activeVaultId] : [])
+        if (!isCurrent()) return
         const notificationPolicy = loadNotificationPolicy()
         await Promise.all(komariRecords.map(async (record) => {
           if (!record.alertState) return
+          const source = sources.find(source => source.integration.id === record.integrationId && !source.error && source.state)
+          if (!source?.state || normalizeKomariEndpoint(record.endpoint) !== normalizeKomariEndpoint(source.integration.endpoint)) return
+          const alerts = record.alertState.alerts.filter(alert => {
+            if (alert.hostId || alert.nodeId) return observationHosts.some(host => isCurrentKomariAlert(alert, host, sources, record.snapshots))
+            return confirmedKomariSyncAt(source.integration, source.state!.syncState) !== null
+          })
+          const ids = new Set(alerts.map(alert => alert.alertId))
+          const state = { ...record.alertState, alerts, audit: record.alertState.audit.filter(audit => ids.has(audit.alertId)) }
           try {
-            await dispatchAndPersistKomariAlertNotifications(record.integrationId, record.alertState, {
+            await dispatchAndPersistKomariAlertNotifications(record.integrationId, state, {
+              isCurrent,
               policy: notificationPolicy,
-              audit: record.alertAudit,
+              audit: record.alertAudit.filter(audit => ids.has(audit.alertId)),
               retryPending: true,
               onLocal: emitKomariAlertNotification,
             })
@@ -568,19 +612,32 @@ export function HostsDashboard({
       setHostOpsLastRefreshedAt(Date.now())
       setHostOpsRefreshStatus(recoveredFromPersistence ? 'recovered' : 'fresh')
       if (komariRecords.length > 0) {
-        const agents = await listShellbeamAgents({ vaultId: activeVaultId }).catch(() => [])
+        const [agents, sources] = await Promise.all([
+          listShellbeamAgents({ vaultId: activeVaultId }).catch(() => []),
+          loadCurrentKomariSources(activeVaultId ? [activeVaultId] : []),
+        ])
         if (!isCurrent()) return
-        setScopedKomariProbeLinks({ vaultId: activeVaultId, links: komariRecords.flatMap((record) => buildKomariProbeLinks({
-          integrationId: record.integrationId,
-          vaultId: activeVaultId,
-          endpoint: record.endpoint,
-          lastSyncedAt: record.lastSyncedAt,
-          hosts,
-          mappings: record.mappings,
-          snapshots: record.snapshots,
-          shellbeamAgents: agents,
-          alertState: record.alertState,
-        })) })
+        setScopedKomariProbeLinks({ vaultId: activeVaultId, links: sources.flatMap(source => {
+          if (source.error || !source.state) return []
+          const record = komariRecords.find(record => record.integrationId === source.integration.id)
+          if (!record || normalizeKomariEndpoint(record.endpoint) !== normalizeKomariEndpoint(source.integration.endpoint)) return []
+          const snapshots = record.snapshots.filter(snapshot => observationHosts.some(host => isCurrentKomariSnapshot(snapshot, host, sources)))
+          const alertState = record.alertState ? {
+            ...record.alertState,
+            alerts: record.alertState.alerts.filter(alert => observationHosts.some(host => isCurrentKomariAlert(alert, host, sources, snapshots))),
+          } : null
+          return buildKomariProbeLinks({
+            integrationId: source.integration.id,
+            vaultId: activeVaultId,
+            endpoint: source.integration.endpoint,
+            lastSyncedAt: record.lastSyncedAt,
+            hosts,
+            mappings: source.state.mappings,
+            snapshots,
+            shellbeamAgents: agents,
+            alertState,
+          })
+        }) })
       } else {
         setScopedKomariProbeLinks({ vaultId: activeVaultId, links: [] })
       }
@@ -614,7 +671,7 @@ export function HostsDashboard({
     } finally {
       if (isCurrent()) setHostOpsLoading(false)
     }
-  }, [activeVaultId, hosts, onLoadVaultSecret])
+  }, [activeVaultId, hosts, onLoadVaultSecret, vaultUnlocked])
 
   const resolveKomariHostSecret = useCallback(async (host: HostProfile) => {
     if (!onLoadVaultSecret) throw new Error('Vault secret resolver is unavailable')
@@ -1082,6 +1139,30 @@ export function HostsDashboard({
     unknown: t('hosts.statusUnknown'),
     'jump-unavailable': t('hosts.statusJumpUnavailable'),
   }
+  const hasOperations = [...operationalSummaryByHost.values()].some(Boolean)
+  const hasAdvancedFilters = Object.keys(DEFAULT_HOST_OPS_FILTERS).some(key => advancedFilters[key as keyof HostOpsFilters] !== DEFAULT_HOST_OPS_FILTERS[key as keyof HostOpsFilters])
+  const hasMonitoring = hosts.some(host => {
+    const view = hostOpsViews[host.id]
+    return !!(view?.metrics || view?.resource || (view && view.health.provider !== 'unknown') || sharedStates[hostKey(host)]?.inventory?.resource)
+  })
+  const showMonitoring = hasMonitoring && currentPresentation.monitoring
+  const providerOptions = [...new Set(Object.values(hostOpsViews).map(view => view.health.provider))]
+  const incidents = [...new Map([
+    ...(integrationIncidents.generation === alertScopeGeneration && vaultUnlocked ? integrationIncidents.incidents : []),
+    ...buildHostIncidents(hosts, operationalSummaryByHost, activeVaultId),
+  ].map(incident => [incident.key, incident])).values()].sort((a, b) => b.updatedAt - a.updatedAt || a.key.localeCompare(b.key))
+  const openIncidents = incidents.filter(row => !row.historyOnly && (row.status === 'active' || row.status === 'acknowledged')).length
+  const selectedBatchIds = currentPresentation.selected.filter(id => filteredHosts.some(host => host.id === id && (!host.vaultId || host.vaultId === activeVaultId)))
+  const batchSelection = (host: HostProfile) => currentPresentation.batch ? {
+    selected: selectedBatchIds.includes(host.id),
+    disabled: batchBusy || (!selectedBatchIds.includes(host.id) && selectedBatchIds.length >= MAX_BATCH_HOSTS),
+    onChange: () => setPresentation(current => current.owner !== presentationOwner || batchBusy ? current : {
+      ...current, selected: selectedBatchIds.includes(host.id) ? selectedBatchIds.filter(id => id !== host.id) : [...selectedBatchIds, host.id].slice(0, MAX_BATCH_HOSTS),
+    }),
+  } : undefined
+  const displayStatus = (host: HostProfile) => operationalSummaryByHost.get(host.id) || sharedStates[hostKey(host)]?.inventory
+    ? getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)
+    : undefined
 
   return (
     <div className="flex min-w-0 w-full flex-col text-[var(--workspace-text)]">
@@ -1094,7 +1175,6 @@ export function HostsDashboard({
           groups={resourceGroups}
         />
       )}
-      <HostOpsAdvancedFilters value={advancedFilters} onChange={setAdvancedFilters} osOptions={osOptions} />
       <WorkspaceResourceOverviewHeader
         title={t('hosts.title')}
         description={t('hosts.subtitle')}
@@ -1109,7 +1189,25 @@ export function HostsDashboard({
         actions={
           <>
             {headerExtraAction}
-            <select
+            {(hasOperations || hasMonitoring || hasAdvancedFilters) && <details className="relative" data-testid="host-view-options">
+              <summary className="cursor-pointer rounded-lg border px-3 py-2 text-xs">{presentationCopy.filters}</summary>
+              <div className="fixed inset-x-3 bottom-3 z-40 max-h-[75dvh] space-y-3 overflow-y-auto rounded-xl border bg-[var(--workspace-surface-950)] p-4 shadow-xl xl:absolute xl:inset-x-auto xl:bottom-auto xl:right-0 xl:top-full xl:mt-2 xl:w-[38rem]">
+                <div className="flex items-center justify-between xl:hidden">
+                  <span className="text-sm font-medium">{presentationCopy.filters}</span>
+                  <Button size="sm" variant="ghost" aria-label={t('common.close')} onClick={event => event.currentTarget.closest('details')?.removeAttribute('open')}><X className="h-4 w-4" /></Button>
+                </div>
+                {hasMonitoring && <label className="flex items-start gap-2 text-xs">
+                  <input type="checkbox" data-testid="host-monitoring-summary-toggle" checked={currentPresentation.monitoring} onChange={event => {
+                    const monitoring = event.target.checked
+                    setPresentation(current => ({ ...current, monitoring }))
+                    try { localStorage.setItem(preferenceKey, monitoring ? 'visible' : 'hidden') } catch { /* A display preference may remain session-only. */ }
+                  }} />
+                  <span>{presentationCopy.monitoring}<span className="mt-1 block text-muted-foreground">{presentationCopy.monitoringHint}</span></span>
+                </label>}
+                <HostOpsAdvancedFilters value={advancedFilters} onChange={setAdvancedFilters} osOptions={osOptions} providerOptions={providerOptions} />
+              </div>
+            </details>}
+            {(hasOperations || statusFilter !== 'all') && <select
               aria-label={t('hosts.statusFilter')}
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value as HostStatusFilter)}
@@ -1118,7 +1216,7 @@ export function HostsDashboard({
               {(Object.keys(statusFilterLabels) as HostStatusFilter[]).map((status) => (
                 <option key={status} value={status}>{statusFilterLabels[status]}</option>
               ))}
-            </select>
+            </select>}
             <div className="relative">
               <button type="button" onClick={() => { setTagFilterOpen((v) => !v); setSortOpen(false) }}
                 className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
@@ -1213,11 +1311,17 @@ export function HostsDashboard({
         controls={
           <>
           <div className="flex-1" />
-          <HostOpsRefreshIndicator
+          {incidents.length > 0 && <Button size="sm" variant="outline" data-testid="host-alerts-open" onClick={() => setPresentation(current => ({ ...current, alerts: true }))}>
+            {presentationCopy.alerts} · {openIncidents} {presentationCopy.open}
+          </Button>}
+          {hosts.length > 1 && <Button size="sm" variant="outline" data-testid="host-batch-select" disabled={batchBusy} onClick={() => setPresentation(current => ({ ...current, batch: !current.batch, selected: [] }))}>
+            {currentPresentation.batch ? presentationCopy.done : presentationCopy.batch}
+          </Button>}
+          {(hasOperations || hostOpsRefreshError) && <HostOpsRefreshIndicator
             status={hostOpsRefreshStatus}
             lastRefreshedAt={hostOpsLastRefreshedAt}
             error={hostOpsRefreshError}
-          />
+          />}
           <Button
             size="sm"
             variant="outline"
@@ -1249,8 +1353,21 @@ export function HostsDashboard({
           </>
         }
       >
-          <MultiHostOperationsPanel hosts={filteredHosts} onRunOperation={handleMultiHostOperation} />
-          <KomariAlertsDashboardPanel activeVaultId={activeVaultId} vaultUnlocked={vaultUnlocked} hosts={hosts} onOpenHost={(hostId) => { onSelectHost(hostId); onOpenWorkspace?.(hostId, 'overview') }} />
+          {currentPresentation.batch && selectedBatchIds.length > 0 && <MultiHostOperationsPanel
+            key={`${presentationOwner}:${selectedBatchIds.join(',')}`} hosts={filteredHosts.filter(host => selectedBatchIds.includes(host.id))}
+            initialSelectedHostIds={selectedBatchIds} selectionFromList
+            onRunOperation={async request => { setBatchBusy(true); try { return await handleMultiHostOperation(request) } finally { setBatchBusy(false) } }}
+          />}
+          <KomariAlertsDashboardPanel headless onAdditionalIncidents={receiveIntegrationIncidents} activeVaultId={activeVaultId} vaultUnlocked={vaultUnlocked} hosts={hosts} />
+          <Dialog labelledBy="host-alerts-title" open={currentPresentation.alerts && vaultUnlocked} onOpenChange={alerts => setPresentation(current => ({ ...current, alerts }))}>
+            <DialogContent className="w-full max-w-3xl p-5 md:w-full md:max-w-3xl">
+              <Button variant="ghost" size="sm" className="absolute right-3 top-3" aria-label={t('common.close')} onClick={() => setPresentation(current => ({ ...current, alerts: false }))}><X className="h-4 w-4" /></Button>
+              <HostAlertsCenter key={presentationOwner} incidents={incidents} onOpenHost={hostId => {
+                setPresentation(current => ({ ...current, alerts: false }))
+                onSelectHost(hostId); onOpenWorkspace?.(hostId, 'overview')
+              }} />
+            </DialogContent>
+          </Dialog>
           <HostCreateDialog availableHosts={hosts}
             open={showAddForm}
             defaultUsername={defaultUsername}
@@ -1304,10 +1421,12 @@ export function HostsDashboard({
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {filteredHosts.map((host) => (
                   <HostGridCard
-                    key={host.id}
+                    key={`${presentationOwner}:${host.id}`}
                     host={host}
                     isSelected={selectedHostId === host.id}
-                    status={getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)}
+                    status={displayStatus(host)}
+                    monitoring={showMonitoring}
+                    batchSelection={batchSelection(host)}
                     resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}
                     metrics={hostOpsViews[host.id]?.metrics ?? undefined}
                     operations={operationalSummaryByHost.get(host.id)}
@@ -1353,26 +1472,28 @@ export function HostsDashboard({
                     )}
                   </div>
                 </div>
-                <HostListScrollArea>
-                    <div data-testid="host-list-header" className={cn("mx-3 hidden border-x border-transparent border-b border-b-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)] xl:grid xl:items-center", HOST_LIST_COLUMNS)}>
+                <HostListScrollArea monitoring={showMonitoring}>
+                    <div data-testid="host-list-header" data-monitoring={showMonitoring} className={cn("mx-3 hidden border-x border-transparent border-b border-b-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)] xl:grid xl:items-center", showMonitoring ? HOST_LIST_COLUMNS : HOST_CONNECTION_COLUMNS)}>
                       <span>{t('hosts.columnIndex')}</span>
                       <span>{t('hosts.columnHost')}</span>
-                      <span>{t('hosts.columnLocation')}</span>
+                      {showMonitoring && <span>{t('hosts.columnLocation')}</span>}
                       <span>{t('hosts.columnIp')}</span>
-                      <span>{t('hosts.columnUpdated')}</span>
+                      {showMonitoring && <><span>{t('hosts.columnUpdated')}</span>
                       <span>{t('hosts.columnResource')}</span>
-                      <span>{t('hosts.columnOperations')}</span>
+                      <span>{t('hosts.columnOperations')}</span></>}
                       <span>{t('hosts.columnStatus')}</span>
                       <span className="text-right">{t('hosts.columnActions')}</span>
                     </div>
                     <div className="space-y-2 p-3">
                       {filteredHosts.map((host, index) => (
                         <HostListItem
-                          key={host.id}
+                          key={`${presentationOwner}:${host.id}`}
                           index={index + 1}
                           host={host}
                           isSelected={selectedHostId === host.id}
-                          status={getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)}
+                          status={displayStatus(host)}
+                          monitoring={showMonitoring}
+                          batchSelection={batchSelection(host)}
                           resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}
                           metrics={hostOpsViews[host.id]?.metrics ?? undefined}
                           operations={operationalSummaryByHost.get(host.id)}

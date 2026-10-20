@@ -27,6 +27,7 @@ import {
     type BiometricStatus,
 } from '@/lib/biometric'
 import { LOCALE_OPTIONS, useT } from '@/lib/i18n'
+import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
 import type { TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
 import { AlertTriangle, BookOpen, Eye, EyeOff, Fingerprint, Monitor, Moon, Settings, Sparkles, Sun } from 'lucide-react'
@@ -70,6 +71,8 @@ export function SettingsPanel({
   onKeepAliveIntervalSecsChange,
 }: SettingsPanelProps) {
   const { t, locale, setLocale } = useT()
+  const copy = settingsNavigationCopy[locale]
+  const [category, setCategory] = useState<'general' | 'connection' | 'monitoring' | 'integrations' | 'advanced'>('general')
   return (
     <div className="flex w-full flex-col">
       <div className="px-6 pb-4 pt-6">
@@ -79,21 +82,16 @@ export function SettingsPanel({
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">{t('settings.desc')}</p>
       </div>
-      <div className="space-y-4 px-6 pb-6">
-        {onOpenGuide && (
-          <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4">
-            <div>
-              <h3 className="flex items-center gap-2 font-semibold"><BookOpen className="h-4 w-4" />{t('guide.title')}</h3>
-              <p className="mt-1 text-xs text-muted-foreground">{t('guide.settingsHint')}</p>
-            </div>
-            <Button variant="outline" size="sm" onClick={onOpenGuide}>{t('guide.open')}</Button>
-          </section>
-        )}
-        <McpSettingsSection />
-        <KomariSettingsSection />
-        <ShellbeamAgentReleaseSettingsSection />
-        <NotificationSettingsSection />
-        <ProbeRetrySettingsSection />
+      <nav className="flex flex-wrap gap-2 px-6 pb-4" aria-label={copy.navigation}>
+        {(['general', 'connection', 'monitoring', 'integrations', 'advanced'] as const).map((item) => (
+          <button key={item} type="button" data-testid={`settings-category-${item}`}
+            aria-pressed={category === item} aria-controls="settings-category-content"
+            className={cn('rounded-md border px-3 py-2 text-sm transition-colors', category === item ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground')}
+            onClick={() => setCategory(item)}>{copy[item]}</button>
+        ))}
+      </nav>
+      <div id="settings-category-content" className="space-y-4 px-6 pb-6" role="region" aria-label={copy[category]}>
+        {category === 'general' && <>
         <section className="rounded-lg border p-4">
           <h3 className="mb-2 font-semibold">{t('settings.language')}</h3>
           <div className="flex items-center justify-between">
@@ -125,6 +123,64 @@ export function SettingsPanel({
               {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               {theme === 'dark' ? t('settings.light') : t('settings.dark')}
             </Button>
+          </div>
+        </section>
+
+        <section className="rounded-lg border p-4">
+          <h3 className="mb-2 font-semibold">{t('settings.vault')}</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">{t('settings.autoLock')}</span>
+            <Input
+              type="number"
+              min={1}
+              max={120}
+              value={vaultAutoLockMinutes}
+              onChange={(e) => onVaultAutoLockMinutesChange(Number(e.target.value) || 10)}
+              className="w-20"
+            />
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t('settings.autoLockDesc')}
+          </p>
+          <BiometricToggle />
+        </section>
+
+        {onOpenGuide && (
+          <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4">
+            <div>
+              <h3 className="flex items-center gap-2 font-semibold"><BookOpen className="h-4 w-4" />{t('guide.title')}</h3>
+              <p className="mt-1 text-xs text-muted-foreground">{t('guide.settingsHint')}</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={onOpenGuide}>{t('guide.open')}</Button>
+          </section>
+        )}
+        </>}
+        {category === 'connection' && <>
+        <section className="rounded-lg border p-4">
+          <h3 className="mb-2 font-semibold">{t('settings.general')}</h3>
+          <div className="space-y-3">
+            <div>
+              <span className="text-sm text-muted-foreground">{t('settings.defaultUser')}</span>
+              <p className="text-xs text-muted-foreground mb-1">{t('settings.defaultUserDesc')}</p>
+              <Input
+                value={defaultUsername}
+                onChange={(e) => onDefaultUsernameChange(e.target.value)}
+                placeholder="root"
+                className="w-full max-w-[200px]"
+              />
+            </div>
+            <div>
+              <span className="text-sm text-muted-foreground">{t('settings.keepAlive')}</span>
+              <p className="text-xs text-muted-foreground mb-1">{t('settings.keepAliveDesc')}</p>
+              <Input
+                type="number"
+                min={10}
+                max={300}
+                value={keepAliveIntervalSecs}
+                onChange={(e) => onKeepAliveIntervalSecsChange(Number(e.target.value) || 30)}
+                className="w-20"
+              />
+            </div>
           </div>
         </section>
 
@@ -162,53 +218,6 @@ export function SettingsPanel({
               />
             </div>
           </div>
-        </section>
-
-        <section className="rounded-lg border p-4">
-          <h3 className="mb-2 font-semibold">{t('settings.general')}</h3>
-          <div className="space-y-3">
-            <div>
-              <span className="text-sm text-muted-foreground">{t('settings.defaultUser')}</span>
-              <p className="text-xs text-muted-foreground mb-1">{t('settings.defaultUserDesc')}</p>
-              <Input
-                value={defaultUsername}
-                onChange={(e) => onDefaultUsernameChange(e.target.value)}
-                placeholder="root"
-                className="w-full max-w-[200px]"
-              />
-            </div>
-            <div>
-              <span className="text-sm text-muted-foreground">{t('settings.keepAlive')}</span>
-              <p className="text-xs text-muted-foreground mb-1">{t('settings.keepAliveDesc')}</p>
-              <Input
-                type="number"
-                min={10}
-                max={300}
-                value={keepAliveIntervalSecs}
-                onChange={(e) => onKeepAliveIntervalSecsChange(Number(e.target.value) || 30)}
-                className="w-20"
-              />
-            </div>
-          </div>
-        </section>
-
-        <section className="rounded-lg border p-4">
-          <h3 className="mb-2 font-semibold">{t('settings.vault')}</h3>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-muted-foreground">{t('settings.autoLock')}</span>
-            <Input
-              type="number"
-              min={1}
-              max={120}
-              value={vaultAutoLockMinutes}
-              onChange={(e) => onVaultAutoLockMinutesChange(Number(e.target.value) || 10)}
-              className="w-20"
-            />
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t('settings.autoLockDesc')}
-          </p>
-          <BiometricToggle />
         </section>
 
         <section className="rounded-lg border p-4">
@@ -253,10 +262,18 @@ export function SettingsPanel({
             </p>
           </div>
         </section>
-
-        <AISettingsSection />
-
-        <ClearDataSection />
+        </>}
+        {category === 'monitoring' && <NotificationSettingsSection />}
+        {category === 'integrations' && <>
+          <KomariSettingsSection />
+          <AISettingsSection />
+        </>}
+        {category === 'advanced' && <>
+          <McpSettingsSection />
+          <ShellbeamAgentReleaseSettingsSection />
+          <ProbeRetrySettingsSection />
+          <ClearDataSection />
+        </>}
       </div>
     </div>
   )

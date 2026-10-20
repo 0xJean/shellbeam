@@ -6,6 +6,7 @@ import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { monitoringSourcesCopy } from '@/lib/locales/monitoring-sources'
+import { hostPresentationCopy } from '@/lib/locales/host-presentation'
 import { getResourceUsageFillClassName, getResourceUsageTextClassName } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
@@ -21,7 +22,7 @@ import { useId, useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { KomariProbeOpsView } from './komari-probe-ops-view'
-import { HOST_LIST_COLUMNS } from './host-list-layout'
+import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS } from './host-list-layout'
 
 type TFn = (key: string, params?: Record<string, string | number>) => string
 
@@ -38,11 +39,11 @@ function formatRelativeTime(ts: number, t: TFn): string {
   return new Date(ts).toLocaleDateString()
 }
 
-function statusConfig(status: string | undefined, t: TFn) {
+function statusConfig(status: string | undefined, t: TFn, provider: string | undefined, copy: typeof hostPresentationCopy[keyof typeof hostPresentationCopy]) {
   if (status === 'unsupported') return { label: t('hostCard.unsupported'), dot: 'bg-[color:var(--workspace-text-subtle)]', text: 'text-[var(--workspace-text-muted)]', bg: 'bg-[var(--workspace-surface-800)]', border: 'border-[color:var(--workspace-border-soft)]' }
   if (status === 'online') return { label: t('hostCard.online'), dot: 'bg-[color:var(--workspace-status-good)]', text: 'text-[color:var(--workspace-status-good-text)]', bg: 'bg-[var(--workspace-status-good-bg)]', border: 'border-[color:var(--workspace-status-good-border)]' }
-  if (status === 'stale') return { label: t('hostCard.stale'), dot: 'bg-[color:var(--workspace-status-warn)]', text: 'text-[color:var(--workspace-status-warn-text)]', bg: 'bg-[var(--workspace-status-warn-bg)]', border: 'border-[color:var(--workspace-status-warn-border)]' }
-  if (status === 'offline') return { label: t('hostCard.offline'), dot: 'bg-[color:var(--workspace-status-bad)]', text: 'text-[color:var(--workspace-status-bad-text)]', bg: 'bg-[var(--workspace-status-bad-bg)]', border: 'border-[color:var(--workspace-status-bad-border)]' }
+  if (status === 'stale') return { label: provider === 'komari' ? copy.monitoringStale : t('hostCard.stale'), dot: 'bg-[color:var(--workspace-status-warn)]', text: 'text-[color:var(--workspace-status-warn-text)]', bg: 'bg-[var(--workspace-status-warn-bg)]', border: 'border-[color:var(--workspace-status-warn-border)]' }
+  if (status === 'offline') return { label: provider === 'komari' ? copy.monitoringOffline : t('hostCard.offline'), dot: 'bg-[color:var(--workspace-status-bad)]', text: 'text-[color:var(--workspace-status-bad-text)]', bg: 'bg-[var(--workspace-status-bad-bg)]', border: 'border-[color:var(--workspace-status-bad-border)]' }
   if (status === 'unknown') return { label: t('hostCard.unknown'), dot: 'bg-[color:var(--workspace-text-subtle)]', text: 'text-[var(--workspace-text-muted)]', bg: 'bg-[var(--workspace-surface-800)]', border: 'border-[color:var(--workspace-border-soft)]' }
   if (status === 'paused') return { label: t('hostCard.paused'), dot: 'bg-[color:var(--workspace-text-subtle)]', text: 'text-[var(--workspace-text-muted)]', bg: 'bg-[var(--workspace-surface-800)]', border: 'border-[color:var(--workspace-border-soft)]' }
   if (status === 'jump-unavailable') return { label: t('hostCard.jumpUnavailable'), dot: 'bg-[color:var(--workspace-status-bad)]', text: 'text-[color:var(--workspace-status-bad-text)]', bg: 'bg-[var(--workspace-status-bad-bg)]', border: 'border-[color:var(--workspace-status-bad-border)]' }
@@ -177,6 +178,8 @@ function HostOpsQuickActions({ host, onOpenWorkspace, onRefresh }: { host: HostP
 }
 
 interface HostGridCardProps {
+  monitoring?: boolean
+  batchSelection?: { selected: boolean; disabled: boolean; onChange: () => void }
   host: HostProfile
   isSelected: boolean
   status?: HostHealthStatus
@@ -194,10 +197,15 @@ interface HostGridCardProps {
   onSelect: (id: string) => void
 }
 
-export function HostGridCard({ host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete }: HostGridCardProps) {
-  const { t } = useT()
+export function HostGridCard({ host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, monitoring = true, batchSelection }: HostGridCardProps) {
+  const { t, locale } = useT()
+  const detailsId = useId()
+  const owner = JSON.stringify([host.id, host.vaultId, operations?.vaultId, monitoring])
+  const [disclosure, setDisclosure] = useState({ owner, expanded: false })
+  if (disclosure.owner !== owner) setDisclosure({ owner, expanded: false })
+  const detailsOpen = disclosure.owner === owner && disclosure.expanded
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
-  const sc = statusConfig(status, t)
+  const sc = statusConfig(status, t, operations?.provider, hostPresentationCopy[locale])
   const [confirmOpen, setConfirmOpen] = useState(false)
   const groupLabel = getDisplayGroupLabel(host.group, t)
   const jumpHost = formatJumpHost(host, operations)
@@ -205,7 +213,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
   return (
     <>
       <div
-        data-testid="host-card" data-host-id={host.id} data-host-name={host.name} data-host-health={status ?? 'unknown'}
+        data-testid="host-card" data-host-id={host.id} data-host-name={host.name} data-host-health={status ?? 'unknown'} data-vault-id={host.vaultId ?? operations?.vaultId}
         className={cn(
           'group relative flex flex-col rounded-xl border transition-all',
           isSelected
@@ -235,6 +243,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
         </div>
 
         <div className="flex items-center gap-3 px-4 pt-4 pb-3">
+          {batchSelection && <input type="checkbox" aria-label={`${hostPresentationCopy[locale].selectHost} · ${host.name}`} checked={batchSelection.selected} disabled={batchSelection.disabled} onChange={batchSelection.onChange} />}
           <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-lg shadow-[var(--workspace-shadow-card)]', resource?.os ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]' : bg)}>
             {resource?.os ? <WorkspaceOsIcon os={resource.os} className="h-5 w-5" /> : icon}
           </div>
@@ -292,8 +301,8 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
             className="text-xs text-[var(--workspace-text-muted)]"
             iconClassName="h-3.5 w-3.5"
           />
-          <HostResourceSummary resource={resource} metrics={metrics} t={t} />
-          <HostOperationalMeta host={host} summary={operations} t={t} />
+          {monitoring && (metrics || resource) && <HostResourceSummary resource={resource} metrics={metrics} t={t} />}
+          {operations && <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} compactOnly={!monitoring} onToggle={() => setDisclosure({ owner, expanded: !detailsOpen })} />}
           <div className="flex items-center gap-1 overflow-hidden">
             {host.tags && host.tags.length > 0 ? (
               <>
@@ -316,6 +325,9 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
           )}
         </div>
 
+        {operations && <section id={detailsId} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!detailsOpen} className="border-t border-[color:var(--workspace-border-soft)] p-4">
+          <HostOperationalMeta host={host} summary={operations} t={t} expanded />
+        </section>}
         <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
           <div className="flex flex-wrap items-center gap-2">
             <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
@@ -339,6 +351,8 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
 }
 
 interface HostListItemProps {
+  monitoring?: boolean
+  batchSelection?: { selected: boolean; disabled: boolean; onChange: () => void }
   index: number
   host: HostProfile
   isSelected: boolean
@@ -539,8 +553,8 @@ function HostProbeEvaluationRows({ host, summary, t }: { host: HostProfile; summ
 }
 
 /** A list cell is a bounded summary. Detailed journals belong below the row. */
-function HostOperationsCell({ host, summary, expanded, detailsId, onToggle }: {
-  host: HostProfile; summary?: HostOperationalSummary; expanded: boolean; detailsId: string; onToggle: () => void
+function HostOperationsCell({ host, summary, expanded, detailsId, onToggle, compactOnly = false }: {
+  host: HostProfile; summary?: HostOperationalSummary; expanded: boolean; detailsId: string; onToggle: () => void; compactOnly?: boolean
 }) {
   const { t, locale } = useT()
   const copy = monitoringSourcesCopy[locale]
@@ -559,23 +573,23 @@ function HostOperationsCell({ host, summary, expanded, detailsId, onToggle }: {
   const attention = summary.komariProbe && (summary.komariProbe.komari.waitingForFirstReport || summary.komariProbe.komari.state !== 'online' || summary.komariProbe.status !== 'linked') ? summary.komariProbe : null
   const failed = summary.localAlertError || summary.localAlertPersistenceError || summary.probeAlertLifecycleError
   return <div data-testid="host-ops-summary" data-host-ops-summary data-vault-id={scopeVault} data-host-id={host.id} data-sampled-at={validHostOpsSampleTime(summary.sampledAt)} className="min-w-0 space-y-1.5 text-xs text-[var(--workspace-text-muted)]">
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+    {!compactOnly && (summary.serviceTotal != null || summary.processTotal != null) && <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
       <span>{t('hosts.opsServicesShort')} <strong className="font-mono text-[var(--workspace-text-strong)]">{formatCount(summary.serviceActive)}/{formatCount(summary.serviceTotal)}</strong></span>
       <span>{t('hosts.opsProcessesShort')} <strong className="font-mono text-[var(--workspace-text-strong)]">{formatCount(summary.processRunning)}/{formatCount(summary.processTotal)}</strong></span>
       {(summary.serviceFailed ?? 0) > 0 && <span className="text-[color:var(--workspace-status-bad-text)]">{summary.serviceFailed} {t('hosts.opsFailed')}</span>}
-    </div>
+    </div>}
     <div data-testid="host-ops-alert-summary" data-total={summary.alertTotal ?? undefined} data-active={summary.alertActive ?? undefined} data-open={summary.alertOpen ?? undefined} className="flex flex-wrap items-center gap-1.5">
       <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       <span>{copy.operationsAlerts} <strong>{hasCounts ? open : '—'}</strong></span>
       {(summary.highestAlertSeverity || localOpen > 0) && <span data-testid="host-ops-local-alerts" data-open-count={localOpen} data-severity={summary.highestAlertSeverity ?? 'unknown'} className="text-[color:var(--workspace-status-warn-text)]">
-        {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')} · {t('hosts.opsFilters.localAlerts')}: {localOpen}
+        {summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : t('hosts.opsFilters.unknown')}{localOpen > 0 ? ` · ${t('hosts.opsFilters.localAlerts')}: ${localOpen}` : ''}
       </span>}
     </div>
-    <div data-testid="host-ops-compact-source" className="flex min-w-0 items-center gap-2 text-[11px] text-[var(--workspace-text-subtle)]">
-      <span className="truncate" title={summary.provider}>{summary.provider || t('hosts.opsNoProvider')}</span>
-      <span className="shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
-    </div>
-    {attention && <div data-testid="host-monitoring-source-attention" data-source="komari" data-state={attention.komari.waitingForFirstReport ? 'waiting' : attention.komari.state} className="text-[11px] text-[color:var(--workspace-status-warn-text)]">
+    {!compactOnly && summary.provider && <div data-testid="host-ops-compact-source" className="flex min-w-0 items-center gap-2 text-[11px] text-[var(--workspace-text-subtle)]">
+      <span className="truncate" title={summary.provider}>{summary.provider === 'ssh-agentless' ? 'SSH' : summary.provider === 'komari' ? 'Komari' : summary.provider}</span>
+      {summary.sampledAt && <span className="shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>}
+    </div>}
+    {attention && <div data-testid="host-monitoring-source-attention" data-source="komari" data-state={attention.komari.waitingForFirstReport ? 'waiting' : attention.komari.state} className={cn('text-[11px]', attention.komari.waitingForFirstReport ? 'text-[var(--workspace-text-subtle)]' : 'text-[color:var(--workspace-status-warn-text)]')}>
       Komari · {attention.komari.waitingForFirstReport ? copy.waitingForFirstReport : t(`workspace.komariProbe.state.${attention.komari.state}`)}
       {attention.status !== 'linked' ? ` · ${t(`workspace.komariProbe.mapping.${attention.status}`)}` : ''}
     </div>}
@@ -877,13 +891,13 @@ function getNetworkScopeLabel(network: HostNetworkDisplay | undefined, t: TFn) {
   return t('hosts.networkUnknown')
 }
 
-export function HostListItem({ index, host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete }: HostListItemProps) {
-  const { t } = useT()
+export function HostListItem({ index, host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, monitoring = true, batchSelection }: HostListItemProps) {
+  const { t, locale } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
-  const sc = statusConfig(status, t)
+  const sc = statusConfig(status, t, operations?.provider, hostPresentationCopy[locale])
   const [confirmOpen, setConfirmOpen] = useState(false)
   const detailsId = useId()
-  const detailsOwner = JSON.stringify([host.id, host.vaultId ?? '', operations?.vaultId ?? ''])
+  const detailsOwner = JSON.stringify([host.id, host.vaultId ?? '', operations?.vaultId ?? '', monitoring])
   const [detailsState, setDetailsState] = useState({ owner: detailsOwner, expanded: false })
   const detailsOpen = detailsState.owner === detailsOwner && detailsState.expanded
   if (detailsState.owner !== detailsOwner) {
@@ -915,9 +929,9 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
               onSelect(host.id)
             }
           }}
-          className={cn('grid min-w-0 cursor-pointer gap-3 rounded-2xl px-4 py-4 sm:grid-cols-2 xl:items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-border-glow)]', HOST_LIST_COLUMNS)}>
-        <div className="hidden font-mono text-lg font-semibold text-[var(--workspace-text-strong)] xl:block">
-          {String(index).padStart(2, '0')}
+          className={cn('grid min-w-0 cursor-pointer gap-3 rounded-2xl px-4 py-4 sm:grid-cols-2 xl:items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-border-glow)]', monitoring ? HOST_LIST_COLUMNS : HOST_CONNECTION_COLUMNS)}>
+        <div className={cn('font-mono text-lg font-semibold text-[var(--workspace-text-strong)]', !batchSelection && 'hidden xl:block')}>
+          {batchSelection ? <input type="checkbox" aria-label={`${hostPresentationCopy[locale].selectHost} · ${host.name}`} checked={batchSelection.selected} disabled={batchSelection.disabled} onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onChange={batchSelection.onChange} /> : String(index).padStart(2, '0')}
         </div>
 
         <div className="flex min-w-0 items-center gap-3">
@@ -935,7 +949,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
           </div>
         </div>
 
-        <div className="min-w-0 xl:self-center">
+        {monitoring && <div className="min-w-0 xl:self-center">
           <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[var(--workspace-text-strong)]">
             <HostRegionMeta
               network={network}
@@ -946,7 +960,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
             {network?.locationStatus === 'loading' && <RefreshCw className="h-3 w-3 shrink-0 animate-spin text-[var(--workspace-text-subtle)]" />}
           </div>
           <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{scopeLabel}</div>
-        </div>
+        </div>}
 
         <div className="min-w-0 xl:self-center">
           <div className="truncate font-mono text-sm font-semibold text-[var(--workspace-text-strong)]">{host.address}</div>
@@ -955,16 +969,18 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
           </div>
         </div>
 
-        <div className="text-xs text-[var(--workspace-text-muted)]" title={host.updatedAt > 0 ? new Date(host.updatedAt).toLocaleString() : undefined}>
+        {monitoring && <div className="text-xs text-[var(--workspace-text-muted)]" title={host.updatedAt > 0 ? new Date(host.updatedAt).toLocaleString() : undefined}>
           <span className="whitespace-nowrap font-mono text-sm font-semibold text-[var(--workspace-text-strong)]">{updatedAt}</span>
-        </div>
+        </div>}
 
-        <HostResourceSummary resource={resource} metrics={metrics} t={t} />
+        {monitoring && (resource || metrics ? <HostResourceSummary resource={resource} metrics={metrics} t={t} />
+          : <span className="text-xs text-[var(--workspace-text-subtle)]">—</span>)}
 
-        <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} onToggle={() => setDetailsState({ owner: detailsOwner, expanded: !detailsOpen })} />
+        {monitoring && <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} onToggle={() => setDetailsState({ owner: detailsOwner, expanded: !detailsOpen })} />}
 
-        <div className="flex items-center">
+        <div className="flex flex-col items-start gap-2">
           <HostStatusPill status={status} sc={sc} t={t} />
+          {!monitoring && operations && <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} compactOnly onToggle={() => setDetailsState({ owner: detailsOwner, expanded: !detailsOpen })} />}
         </div>
 
         <div className="flex flex-wrap items-center justify-start gap-1 xl:justify-end [&>button]:shrink-0">

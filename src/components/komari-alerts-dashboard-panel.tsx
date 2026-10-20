@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import type { HostProfile } from '@/lib/hosts'
+import { isCurrentKomariAlert, loadCurrentKomariSource, type CurrentKomariSource } from '@/lib/komari-source-eligibility'
+import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
+import type { HostIncident } from './host-alerts-center'
 import { useT } from '@/lib/i18n'
 import { loadNotificationPolicy } from '@/lib/notification-policy'
 import type { NotificationDispatchState } from '@/lib/notification-dispatch'
@@ -11,7 +14,9 @@ import {
 } from '@/lib/komari-alert-notifications'
 import {
   loadKomariPersistence,
+  confirmedKomariSyncAt,
   readKomariAlertState,
+  KOMARI_MAPPING_CHANGED_EVENT,
 } from '@/lib/komari-persistence'
 import {
   persistKomariAlertAction,
@@ -29,9 +34,36 @@ import NotificationDeliverySummary, { type NotificationDispatchSummary } from '.
 
 interface AlertEntry {
   integrationId: string
+  source: CurrentKomariSource
   state: KomariAlertState
   notificationState?: NotificationDispatchState
   notificationSummary?: KomariAlertNotificationSummary
+}
+const EMPTY_HOSTS: HostProfile[] = []
+
+function unassignedAlert(alert: KomariAlertRecord, source: CurrentKomariSource) {
+  // A former host-owned incident stays in that host's audit. Losing a mapping
+  // must never turn it into a newly discovered source-level incident.
+  return !alert.hostId && (!alert.nodeId || !!source.state && !source.error
+    && !source.state.mappings.some(mapping => mapping.nodeId === alert.nodeId))
+}
+
+function currentUnassignedAlert(alert: KomariAlertRecord, source: CurrentKomariSource) {
+  if (!source.integration.enabled || source.error || !unassignedAlert(alert, source)) return false
+  const syncedAt = confirmedKomariSyncAt(source.integration, source.state?.syncState)
+  // Aggregate rows have no endpoint in their fingerprint. Only a committed
+  // remote sync for this configuration proves their current origin; a local
+  // acknowledgement or cache write cannot manufacture that provenance.
+  return syncedAt !== null && alert.integrationId === source.integration.id
+    && alert.lastSeenAt >= source.integration.updatedAt && alert.lastSeenAt <= Date.now()
+}
+
+function notificationProjection(entry: AlertEntry, hosts: HostProfile[]): KomariAlertState {
+  const snapshots = entry.source.state?.snapshots.map(row => row.snapshot) ?? []
+  const alerts = entry.state.alerts.filter(alert => entry.source.integration.enabled && !entry.source.error
+    && ((!!alert.hostId || !!alert.nodeId) && hosts.some(host => isCurrentKomariAlert(alert, host, [entry.source], snapshots)) || currentUnassignedAlert(alert, entry.source)))
+  const ids = new Set(alerts.map(alert => alert.alertId))
+  return { ...entry.state, alerts, audit: entry.state.audit.filter(audit => ids.has(audit.alertId)) }
 }
 
 function sumNullable(values: Array<number | null | undefined>): number | null {
@@ -78,6 +110,9 @@ function mergeNotificationStates(entries: AlertEntry[]): NotificationDispatchSta
 }
 
 export interface KomariAlertsDashboardPanelProps {
+  /** Retain delivery reconciliation when the host page owns the unified UI. */
+  headless?: boolean
+  onAdditionalIncidents?: (incidents: HostIncident[]) => void
   activeVaultId?: string
   vaultUnlocked?: boolean
   /** Host profiles let host-scoped acknowledgement/close actions use the
@@ -96,15 +131,23 @@ export function KomariAlertsDashboardPanel(props: KomariAlertsDashboardPanelProp
   return props.activeVaultId && props.vaultUnlocked ? <VaultAlertsDashboard key={props.activeVaultId} {...props} /> : null
 }
 
-function VaultAlertsDashboard({ activeVaultId, hosts = [], onOpenHost, onOpenOperation }: KomariAlertsDashboardPanelProps) {
+function VaultAlertsDashboard({ activeVaultId, hosts = EMPTY_HOSTS, onOpenHost, onOpenOperation, headless, onAdditionalIncidents }: KomariAlertsDashboardPanelProps) {
   const { t, locale } = useT()
+  const additionalCallback = useRef(onAdditionalIncidents)
+  additionalCallback.current = onAdditionalIncidents
+  const scopedHosts = useMemo(() => hosts.filter(host => !host.vaultId || host.vaultId === activeVaultId).map(host => ({ ...host, vaultId: host.vaultId ?? activeVaultId })), [activeVaultId, hosts])
   const [entries, setEntries] = useState<AlertEntry[]>([])
+  const latestEntries = useRef(entries)
+  latestEntries.current = entries
+  const latestHosts = useRef(scopedHosts)
+  latestHosts.current = scopedHosts
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const scope = useRef({ generation: 0, loadSequence: 0 }).current
+  const scope = useRef({ generation: 0, loadSequence: 0, mounted: false }).current
   useEffect(() => {
+    scope.mounted = true
     scope.generation++
-    return () => { scope.generation++; scope.loadSequence++ }
+    return () => { scope.mounted = false; scope.generation++; scope.loadSequence++; additionalCallback.current?.([]) }
   }, [scope])
 
   const reload = useCallback(async () => {
@@ -114,24 +157,29 @@ function VaultAlertsDashboard({ activeVaultId, hosts = [], onOpenHost, onOpenOpe
     }
     const epoch = scope.generation
     const request = ++scope.loadSequence
-    const current = () => scope.generation === epoch && scope.loadSequence === request
+    const current = () => scope.mounted && scope.generation === epoch && scope.loadSequence === request
+    if (!current()) return
     setLoading(true)
     setError(null)
     try {
       const integrations = await listKomariIntegrations(activeVaultId)
       if (!current()) return
-      const loaded = await Promise.all(integrations.filter((integration) => integration.enabled && integration.vaultId === activeVaultId).map(async (integration) => {
-        const persisted = await loadKomariPersistence(integration.id)
+      const loaded = await Promise.all(integrations.filter((integration) => integration.vaultId === activeVaultId).map(async (integration): Promise<AlertEntry | null> => {
+        const source = await loadCurrentKomariSource(integration)
+        if (!current()) return null
+        const persisted = source.state ?? await loadKomariPersistence(integration.id)
         if (!current()) return null
         const state = readKomariAlertState(persisted.syncState)
-        return state ? { integrationId: integration.id, state } : null
+        return state ? { integrationId: integration.id, source, state } : null
       }))
       if (!current()) return
       const nextEntries = loaded.filter((entry): entry is AlertEntry => entry !== null)
       const notificationPolicy = loadNotificationPolicy()
       const notifiedEntries = await Promise.all(nextEntries.map(async (entry) => {
+        const projected = notificationProjection(entry, scopedHosts)
+        if (!projected.alerts.length || !current()) return entry
         try {
-          const result = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, entry.state, {
+          const result = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, projected, {
             isCurrent: current,
             policy: notificationPolicy,
             // Discover recent unseen MCP/session transitions, and retry known
@@ -156,7 +204,7 @@ function VaultAlertsDashboard({ activeVaultId, hosts = [], onOpenHost, onOpenOpe
     } finally {
       if (current()) setLoading(false)
     }
-  }, [activeVaultId, scope])
+  }, [activeVaultId, scope, scopedHosts])
 
   useEffect(() => { void reload() }, [reload])
 
@@ -171,9 +219,13 @@ function VaultAlertsDashboard({ activeVaultId, hosts = [], onOpenHost, onOpenOpe
       if (document.visibilityState === 'visible') void reload()
     }
     document.addEventListener('visibilitychange', refreshWhenVisible)
+    window.addEventListener('shellbeam:host-ops-refresh', refreshWhenVisible)
+    window.addEventListener(KOMARI_MAPPING_CHANGED_EVENT, refreshWhenVisible)
     const timer = window.setInterval(refreshWhenVisible, 15_000)
     return () => {
       document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.removeEventListener('shellbeam:host-ops-refresh', refreshWhenVisible)
+      window.removeEventListener(KOMARI_MAPPING_CHANGED_EVENT, refreshWhenVisible)
       window.clearInterval(timer)
     }
   }, [reload])
@@ -183,16 +235,20 @@ function VaultAlertsDashboard({ activeVaultId, hosts = [], onOpenHost, onOpenOpe
   const notificationState = useMemo(() => mergeNotificationStates(entries), [entries])
   const handleAction = useCallback(async (action: KomariAlertAction, alert: KomariAlertRecord) => {
     const epoch = scope.generation
-    const current = () => scope.generation === epoch
+    const initialHost = alert.hostId ? latestHosts.current.find(host => host.id === alert.hostId && host.vaultId === activeVaultId) : undefined
+    const hostVersion = initialHost ? JSON.stringify(initialHost) : null
+    const current = () => scope.mounted && scope.generation === epoch && (!alert.hostId
+      || latestHosts.current.some(host => host.id === alert.hostId && host.vaultId === activeVaultId && JSON.stringify(host) === hostVersion))
+    if (!current()) return
     // An older reload must not overwrite a just-confirmed local action.
     scope.loadSequence++
     setLoading(false)
-    const entry = entries.find((candidate) => candidate.state.alerts.some((item) => item.alertId === alert.alertId))
+    const entry = latestEntries.current.find((candidate) => candidate.integrationId === alert.integrationId && candidate.state.alerts.some((item) => item.alertId === alert.alertId))
     if (!entry) throw new Error('Komari alert integration was not found')
     const persisted = await loadKomariPersistence(entry.integrationId)
     if (!current()) return
     const latest = readKomariAlertState(persisted.syncState) ?? entry.state
-    const host = alert.hostId ? hosts.find((candidate) => candidate.id === alert.hostId && (!candidate.vaultId || candidate.vaultId === activeVaultId)) : undefined
+    const host = alert.hostId ? latestHosts.current.find((candidate) => candidate.id === alert.hostId && candidate.vaultId === activeVaultId) : undefined
     if (alert.hostId && !host) return
     const result = host
       ? (await runKomariAlertAction(action, {
@@ -219,24 +275,40 @@ function VaultAlertsDashboard({ activeVaultId, hosts = [], onOpenHost, onOpenOpe
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('shellbeam:host-ops-refresh'))
     }
-    try {
-      const notificationResult = await dispatchAndPersistKomariAlertNotifications(entry.integrationId, result.state, {
-        isCurrent: current,
-        policy: loadNotificationPolicy(),
-        audit: result.state.audit.slice(-1),
-        retryPending: true,
-        onLocal: emitKomariAlertNotification,
-      })
-      if (!current()) return
-      setEntries((current) => current.map((candidate) => candidate.integrationId === entry.integrationId
-        ? { ...candidate, state: result.state, notificationState: notificationResult.state, notificationSummary: notificationResult.summary }
-        : candidate))
-    } catch {
-      if (current()) setEntries((rows) => rows.map((candidate) => candidate.integrationId === entry.integrationId ? { ...candidate, state: result.state } : candidate))
-    }
-  }, [activeVaultId, entries, hosts, t, scope])
+    // Re-read current configuration and eligibility before delivery. The
+    // action helper above receives the complete journal; this refresh writes
+    // only delivery metadata and never persists a filtered lifecycle state.
+    await reload()
+  }, [activeVaultId, t, scope, reload])
 
-  if (!error && !state?.alerts.length) return null
+  useEffect(() => {
+    if (!headless || !additionalCallback.current) return
+    const incidents: HostIncident[] = entries.flatMap(entry => {
+      const snapshots = entry.source.state?.snapshots.map(row => row.snapshot) ?? []
+      return groupKomariAlertIncidents(entry.state.alerts).flatMap(({ alert, memberAlertIds }): HostIncident[] => {
+        if (alert.integrationId !== entry.integrationId) return []
+        const host = alert.hostId ? scopedHosts.find(host => host.id === alert.hostId) : undefined
+        const hasCurrentHost = (!!alert.hostId || !!alert.nodeId)
+          && scopedHosts.some(host => isCurrentKomariAlert(alert, host, [entry.source], snapshots))
+        // Current host incidents are already supplied by the host summary.
+        if (hasCurrentHost) return []
+        const currentUnassigned = currentUnassignedAlert(alert, entry.source)
+        return [{
+          key: host ? `komari:${host.id}:${entry.integrationId}:${alert.alertId}` : `komari:additional:${entry.integrationId}:${alert.alertId}`, hostId: host?.id ?? '',
+          hostName: host?.name ?? entry.source.integration.name,
+          title: alert.title, source: 'komari', status: alert.status, updatedAt: alert.lastSeenAt, busy: loading,
+          historyOnly: !currentUnassigned,
+          audit: entry.state.audit.filter(row => memberAlertIds.includes(row.alertId)),
+          // Deleted/foreign host identities remain read-only history; they
+          // must not be reclassified as unassigned actionable incidents.
+          act: !alert.hostId || host ? (action: 'acknowledge' | 'close') => handleAction(action, alert) : undefined,
+        }]
+      })
+    })
+    additionalCallback.current(incidents)
+  }, [entries, headless, handleAction, loading, scopedHosts])
+
+  if (headless || (!error && !state?.alerts.length)) return null
   return (
     <details className="mb-4 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]">
       <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-[var(--workspace-text-strong)]">{locale === 'zh-CN' ? '告警' : 'Alerts'} · {state?.summary.open ?? 0} {locale === 'zh-CN' ? '未关闭' : 'open'}</summary>

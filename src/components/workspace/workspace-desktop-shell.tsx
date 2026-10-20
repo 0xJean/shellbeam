@@ -22,7 +22,7 @@ import { DockerOpsPanel } from './docker-ops-panel'
 import { ScheduledTasksPanel } from './scheduled-tasks-panel'
 import { SitesSslPanel } from '../sites-ssl-panel'
 import { NetworkOpsPanel } from './network-ops-panel'
-import { ProviderHistoryPanel } from './provider-history-panel'
+import { ProviderHistoryDisclosure } from './provider-history-panel'
 import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
@@ -492,7 +492,7 @@ export function WorkspaceDesktopShell({
                   hosts={hosts}
                   resolveAuthSecret={resolveAuthSecret}
                 />}
-                {activeVaultId && activeHost && <ProviderHistoryPanel vaultId={activeVaultId} hostId={activeHost.id} />}
+                {activeVaultId && activeHost && <ProviderHistoryDisclosure vaultId={activeVaultId} hostId={activeHost.id} />}
                 </div>
                 <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
                 <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] px-4 py-4 shadow-[var(--workspace-shadow-card)]">

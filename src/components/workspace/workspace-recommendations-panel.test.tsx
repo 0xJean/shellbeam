@@ -31,7 +31,7 @@ let persistedRows: PersistedProbeSnapshotRecord[]
 
 function komariRow(options: { vaultId?: string; sampledAt?: number; ttlMs?: number; metrics?: Partial<ServerMonitorSnapshot>; health?: ProbeSnapshot['health'] } = {}): PersistedProbeSnapshotRecord {
   const sampledAt = options.sampledAt ?? Date.now()
-  const source = { kind: 'komari' as const, id: 'komari-fixture', nodeId: 'node-a', capabilities: ['metrics' as const] }
+  const source = { kind: 'komari' as const, id: 'komari-fixture', nodeId: 'node-a', endpoint: 'https://komari.example', capabilities: ['metrics' as const] }
   const snapshot: ProbeSnapshot = {
     schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username },
     provider: { ...source, capabilities: [...source.capabilities] }, transport: 'direct',
@@ -74,6 +74,7 @@ beforeEach(() => {
     }
     if (command === 'list_komari_integrations') return [{ id: 'komari-fixture', vaultId: (args as { vaultId: string }).vaultId, name: 'Fixture', endpoint: 'https://komari.example', credentialRef: 'komari.fixture', enabled: true, createdAt: 1, updatedAt: 1 }]
     if (command === 'list_komari_mappings') return [{ integrationId: 'komari-fixture', hostId: host.id, nodeId: 'node-a', source: 'manual', confidence: 'explicit', updatedAt: 1 }]
+    if (command === 'get_komari_mapping_state') return { revision: 1, mappings: [{ integrationId: 'komari-fixture', hostId: host.id, nodeId: 'node-a', source: 'manual', confidence: 'explicit', updatedAt: 1 }] }
     if (command === 'get_komari_sync_state') return null
     if (['list_shellbeam_agents', 'list_server_monitor_latest', 'list_workspace_inventory_snapshots', 'list_workspace_inventory_host_states', 'operation_audit_list', 'list_komari_snapshots', 'local_ops_list'].includes(command)) return []
     throw new Error(`Unexpected native read: ${command}`)

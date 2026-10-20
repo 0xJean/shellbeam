@@ -5,6 +5,7 @@ import { VaultProvider, useVault } from '@/contexts/vault-context'
 import { I18nProvider } from '@/lib/i18n'
 import { listKomariIntegrations, normalizeKomariIntegrationInput, upsertKomariIntegration, type KomariIntegration } from '@/lib/komari-config'
 import en from '@/lib/locales/en'
+import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
 import zhCN from '@/lib/locales/zh-CN'
 import { vaultGetSecret, vaultListSecretKeys, vaultSetSecret, vaultStatus, type VaultStatus } from '@/lib/vault'
 import { listVaults } from '@/lib/vaults'
@@ -162,8 +163,8 @@ describe('Komari settings with the real Vault save handler', () => {
     if (stage === 'metadata') vi.mocked(upsertKomariIntegration).mockReturnValueOnce(metadata.promise)
     else vi.mocked(vaultSetSecret).mockReturnValueOnce(write.promise)
     const view = render(<I18nProvider><VaultProvider setOutput={output}><SettingsNavigation /></VaultProvider></I18nProvider>)
-    await screen.findByRole('button', { name: saved.name })
     await waitFor(() => expect(screen.getByTestId('vault-ready')).toHaveTextContent('true'))
+    fireEvent.click(await screen.findByRole('button', { name: saved.name }))
     fireEvent.change(screen.getByLabelText(en['settings.komariApiKey']), { target: { value: secret } })
     fireEvent.click(screen.getByRole('button', { name: en['settings.komariSave'] }))
     await waitFor(() => {
@@ -187,8 +188,8 @@ describe('Komari settings with the real Vault save handler', () => {
     if (stage === 'metadata') vi.mocked(upsertKomariIntegration).mockReturnValueOnce(metadata.promise)
     else vi.mocked(vaultSetSecret).mockReturnValueOnce(write.promise)
     render(<I18nProvider><VaultProvider setOutput={output}><SettingsNavigation /></VaultProvider></I18nProvider>)
-    await screen.findByRole('button', { name: saved.name })
     await waitFor(() => expect(screen.getByTestId('vault-ready')).toHaveTextContent('true'))
+    fireEvent.click(await screen.findByRole('button', { name: saved.name }))
     fireEvent.change(screen.getByLabelText(en['settings.komariApiKey']), { target: { value: secret } })
     fireEvent.click(screen.getByRole('button', { name: en['settings.komariSave'] }))
     await waitFor(() => {
@@ -215,8 +216,8 @@ describe('Komari settings with the real Vault save handler', () => {
     if (stage === 'metadata') vi.mocked(upsertKomariIntegration).mockReturnValueOnce(metadata.promise)
     else vi.mocked(vaultSetSecret).mockReturnValueOnce(write.promise)
     render(<I18nProvider><VaultProvider setOutput={output}><SettingsNavigation /></VaultProvider></I18nProvider>)
-    await screen.findByRole('button', { name: saved.name })
     await waitFor(() => expect(screen.getByTestId('vault-ready')).toHaveTextContent('true'))
+    fireEvent.click(await screen.findByRole('button', { name: saved.name }))
     const input = screen.getByLabelText(en['settings.komariApiKey'])
     fireEvent.change(input, { target: { value: secret } })
     fireEvent.click(screen.getByRole('button', { name: en['settings.komariSave'] }))
@@ -259,8 +260,8 @@ describe('Komari settings with the real Vault save handler', () => {
       vi.mocked(listKomariIntegrations).mockReturnValueOnce(pending.promise)
       fireEvent.click(screen.getByRole('button', { name: en['settings.komariRefresh'] }))
       await waitFor(() => expect(listKomariIntegrations).toHaveBeenCalledTimes(2))
-      fireEvent.click(screen.getByRole('button', { name: action === 'new' ? en['settings.komariNew'] : second.name }))
-    }
+      fireEvent.click(screen.getByRole('button', { name: action === 'new' ? settingsNavigationCopy.en.addSource : second.name }))
+    } else fireEvent.click(screen.getByRole('button', { name: settingsNavigationCopy.en.addSource }))
     const expectedName = action === 'selection' ? second.name : 'New draft Komari'
     const expectedEndpoint = action === 'selection' ? second.endpoint : 'https://draft.example'
     const input = screen.getByLabelText(en['settings.komariApiKey'])
@@ -303,8 +304,8 @@ describe('Komari settings with the real Vault save handler', () => {
       return stored
     })
     render(<I18nProvider><VaultProvider setOutput={output}><KomariSettingsSection /><VaultContract /></VaultProvider></I18nProvider>)
-    await screen.findByRole('button', { name: saved.name })
     await waitFor(() => expect(screen.getByTestId('vault-ready')).toHaveTextContent('true'))
+    fireEvent.click(await screen.findByRole('button', { name: saved.name }))
     if (replaceKey) fireEvent.change(screen.getByLabelText(en['settings.komariApiKey']), { target: { value: secret } })
     fireEvent.change(screen.getByLabelText(en['settings.komariName']), { target: { value: 'Edited Komari' } })
     fireEvent.click(screen.getByRole('button', { name: en['settings.komariSave'] }))
@@ -326,8 +327,8 @@ describe('Komari settings with the real Vault save handler', () => {
     const other = { ...saved, id: 'other', name: 'Other Komari' }
     vi.mocked(listKomariIntegrations).mockResolvedValue([saved, other])
     render(<I18nProvider><VaultProvider setOutput={output}><KomariSettingsSection /><VaultContract /></VaultProvider></I18nProvider>)
-    await screen.findByRole('button', { name: saved.name })
     await waitFor(() => expect(screen.getByTestId('vault-ready')).toHaveTextContent('true'))
+    fireEvent.click(await screen.findByRole('button', { name: saved.name }))
     const name = screen.getByLabelText(en['settings.komariName'])
     const endpoint = screen.getByLabelText(en['settings.komariEndpoint'])
     const input = screen.getByLabelText(en['settings.komariApiKey'])
@@ -340,7 +341,7 @@ describe('Komari settings with the real Vault save handler', () => {
     expect(screen.queryByText(en['settings.komariSaved'])).not.toBeInTheDocument()
     const selected = screen.getByRole('button', { name: saved.name })
     const otherButton = screen.getByRole('button', { name: other.name })
-    const newButton = screen.getByRole('button', { name: en['settings.komariNew'] })
+    const newButton = screen.getByRole('button', { name: settingsNavigationCopy.en.addSource })
     const showKey = screen.getByRole('button', { name: en['settings.komariShowApiKey'] })
     const controls = [selected, otherButton, newButton, name, endpoint, input, enabled, showKey]
     for (const control of controls) expect(control).toBeDisabled()
@@ -380,6 +381,7 @@ describe('Komari settings with the real Vault save handler', () => {
     try {
       render(<I18nProvider><VaultProvider setOutput={output}><KomariSettingsSection /><VaultContract /></VaultProvider></I18nProvider>)
       await waitFor(() => expect(screen.getByTestId('vault-ready')).toHaveTextContent('true'))
+      fireEvent.click(screen.getByRole('button', { name: settingsNavigationCopy.en.addSource }))
       fireEvent.change(screen.getByLabelText(en['settings.komariName']), { target: { value: saved.name } })
       fireEvent.change(screen.getByLabelText(en['settings.komariEndpoint']), { target: { value: saved.endpoint } })
       const input = screen.getByLabelText(en['settings.komariApiKey'])
@@ -415,8 +417,8 @@ describe('Komari settings with the real Vault save handler', () => {
     localStorage.setItem('shellbeam.locale', locale)
     const copy = locale === 'en' ? en : zhCN
     render(<I18nProvider><VaultProvider setOutput={output}><KomariSettingsSection /><VaultContract /></VaultProvider></I18nProvider>)
-    await screen.findByRole('button', { name: saved.name })
     await waitFor(() => expect(screen.getByTestId('vault-ready')).toHaveTextContent('true'))
+    fireEvent.click(await screen.findByRole('button', { name: saved.name }))
     const input = screen.getByLabelText(copy['settings.komariApiKey'])
     expect(screen.getByText(copy['settings.komariApiKeyHelp'])).toBeInTheDocument()
     fireEvent.change(input, { target: { value: secret } })

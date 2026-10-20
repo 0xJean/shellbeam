@@ -16,14 +16,14 @@ const now = 100_000
 const metrics: ServerMonitorSnapshot = { hostname: 'app', os: 'Linux', kernel: '6', uptimeSeconds: 100, cpuPercent: 95, load1: 1, load5: 1, load15: 1, memoryUsedBytes: 1, memoryTotalBytes: 2, memoryPercent: 50, diskUsedBytes: null, diskTotalBytes: null, diskPercent: null, networkRxBytesPerSec: null, networkTxBytesPerSec: null, latencyMs: null, sampledAt: now }
 const telemetry = (status: ProbeProviderTelemetry['status']): ProbeProviderTelemetry => ({ status, startedAt: now, completedAt: now, durationMs: 0, attempts: 0, maxRetries: 2, retryDelayMs: 100, recovered: status === 'recovered', exhausted: status === 'failed', sections: ['metrics'] })
 function probe(kind: ProbeProviderKind = 'komari', sampledAt = now, ttlMs = 10_000): ProbeSnapshot {
-  const provider = { kind, id: kind === 'komari' ? 'integration-a' : kind, ...(kind === 'komari' ? { nodeId: 'node-a' } : {}), capabilities: ['metrics' as const] }
+  const provider = { kind, id: kind === 'komari' ? 'integration-a' : kind, ...(kind === 'komari' ? { nodeId: 'node-a', endpoint: 'https://example.test' } : {}), capabilities: ['metrics' as const] }
   return { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username }, provider, transport: 'direct', health: 'online', receivedAt: sampledAt, metrics: createProbeObservation({ data: { ...metrics, sampledAt }, source: provider, sampledAt, receivedAt: sampledAt, ttlMs, confidence: kind === 'komari' ? 'partial' : 'observed' }), inventory: null, errors: [] }
 }
 function row(snapshot: ProbeSnapshot, vaultId = host.vaultId!): PersistedProbeSnapshotRecord {
   return { vaultId, hostId: snapshot.host.hostId, providerKind: snapshot.provider.kind, providerId: snapshot.provider.id, snapshot, sampledAt: snapshot.metrics?.freshness.sampledAt ?? snapshot.receivedAt, receivedAt: snapshot.receivedAt, expiresAt: snapshot.metrics?.freshness.expiresAt ?? snapshot.receivedAt, updatedAt: snapshot.receivedAt }
 }
 function komari(): WorkspaceKomariState {
-  return { integration: { id: 'integration-a', vaultId: 'vault-a', name: 'Komari', endpoint: 'https://example.test', credentialRef: 'secret', enabled: true, createdAt: 1, updatedAt: 1 }, state: { snapshots: [], mappings: [], syncState: { integrationId: 'integration-a', lastSyncedAt: now - 50, lastSuccessfulSyncAt: now - 50, ttlMs: 60_000, alertSummary: null, updatedAt: now }, lastSyncedAt: now - 50 }, error: false }
+  return { integration: { id: 'integration-a', vaultId: 'vault-a', name: 'Komari', endpoint: 'https://example.test', credentialRef: 'secret', enabled: true, createdAt: 1, updatedAt: 1 }, state: { snapshots: [], mappings: [], syncState: { integrationId: 'integration-a', lastSyncedAt: now - 50, lastSuccessfulSyncAt: now - 50, ttlMs: 60_000, alertSummary: null, updatedAt: now }, lastSyncedAt: now - 50 }, mappingRevision: 0, error: false }
 }
 function data(rows: PersistedProbeSnapshotRecord[] = []): WorkspaceProviderData {
   return { rows, komari: [komari()], monitors: [], inventoryCache: {}, inventoryStates: {}, agents: [] }
@@ -160,6 +160,28 @@ describe('Workspace provider projection', () => {
     expect(result.sources.find((source) => source.kind === 'komari')).toMatchObject({ health: 'unknown', sampledAt: null, lastSyncedAt: now - 50, capabilities: [] })
   })
 
+  it.each([false, true])('keeps an authoritative unsampled mapping visible after a rename (SSH available: %s)', (withSsh) => {
+    const current = data()
+    const entry = current.komari[0]
+    entry.mappingRevision = 1
+    entry.state!.mappings = [{ integrationId: 'integration-a', hostId: host.id, nodeId: 'node-a', source: 'manual', confidence: 'explicit', updatedAt: now - 1000 }]
+    entry.integration.name = 'Renamed server'
+    entry.integration.updatedAt = now - 25
+    const original = JSON.stringify(current)
+    const result = buildWorkspaceProviderState({ host, vaultId: 'vault-a', data: current, runtimeMonitor: withSsh ? monitor() : undefined, now })
+    expect(result.sources.find(source => source.kind === 'komari')).toMatchObject({
+      id: 'integration-a', nodeId: 'node-a', health: 'unknown', sampledAt: null, lastSyncedAt: null,
+    })
+    if (withSsh) {
+      expect(result.source).toMatchObject({ kind: 'ssh-agentless', health: 'online', fallbackProvider: 'komari' })
+      expect(result.view?.metrics?.cpuPercent).toBe(12)
+    } else {
+      expect(result.view?.metrics).toBeNull()
+      expect(result.view?.health.state).toBe('unknown')
+    }
+    expect(JSON.stringify(current)).toBe(original)
+  })
+
   it('distinguishes first report from interruption using the same endpoint, integration, node and host baseline', () => {
     const snapshot: ProbeSnapshot = { ...probe(), provider: { ...probe().provider, endpoint: 'https://example.test' }, metrics: null, health: 'unknown', errors: [{ section: 'metrics', code: 'empty', message: 'Komari returned no dated metric observations' }] }
     const current = data([row(snapshot)])
@@ -198,6 +220,7 @@ describe('useWorkspaceProviderState', () => {
       if (command === 'list_komari_integrations') return currentData.komari.map((entry) => entry.integration)
       if (command === 'list_komari_snapshots') return currentData.komari[0]?.state?.snapshots ?? []
       if (command === 'list_komari_mappings') return currentData.komari[0]?.state?.mappings ?? []
+      if (command === 'get_komari_mapping_state') return { mappings: currentData.komari[0]?.state?.mappings ?? [], revision: currentData.komari[0]?.mappingRevision ?? 0 }
       if (command === 'get_komari_sync_state') return currentData.komari[0]?.state?.syncState ?? null
       return []
     })

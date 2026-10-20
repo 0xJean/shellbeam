@@ -402,6 +402,30 @@ function ownDaemon(config, binary) {
   }
 }
 
+/** Navigate through the production settings categories using native clicks.
+ * A category must be visibly available before opening it; no hidden settings
+ * reads or fallback path may bypass the same navigation used by the user. */
+export async function openOpsUiNotificationSettings(driver, { english = false } = {}) {
+  const dashboard = '[data-testid="pc-dashboard"]'
+  const settings = "xpath=//aside//button[normalize-space(.)='Settings' or normalize-space(.)='设置']"
+  const general = '[data-testid="settings-category-general"]'
+  const monitoring = '[data-testid="settings-category-monitoring"]'
+  const language = "xpath=//button[normalize-space(.)='English']"
+  await driver.waitFor(dashboard)
+  await driver.click(dashboard)
+  await driver.waitFor(settings)
+  await driver.click(settings)
+  if (english) {
+    await driver.waitFor(general)
+    await driver.click(general)
+    await driver.waitFor(language)
+    await driver.click(language)
+  }
+  await driver.waitFor(monitoring)
+  await driver.click(monitoring)
+  await driver.waitFor(SETTINGS)
+}
+
 async function uiStatusContains(driver, text) { return (await driver.text(SETTINGS)).includes(text) }
 async function clickTest(driver, accepted) {
   await until(async () => !await driver.attr(TEST_BUTTON, 'disabled'), 'test_button_busy')
@@ -437,11 +461,7 @@ export async function runOpsUiNotifications({ driver, record, checkpoint, fixtur
 
     // The preceding real Ops journey leaves a Workspace tab active. Return via
     // its actual Dashboard tab before interacting with the desktop sidebar.
-    await driver.waitFor('[data-testid="pc-dashboard"]')
-    await driver.click('[data-testid="pc-dashboard"]')
-    await driver.click("xpath=//aside//button[normalize-space(.)='Settings' or normalize-space(.)='设置']")
-    await driver.click("xpath=//button[normalize-space(.)='English']")
-    await until(async () => (await driver.findAll(SETTINGS)).length === 1, 'settings_missing')
+    await openOpsUiNotificationSettings(driver, { english: true })
     if (!await driver.isSelected(SYSTEM_CHECKBOX)) await driver.click(SYSTEM_CHECKBOX)
     await command(tools.control, ['close-all'], 'daemon_close_all')
     await until(async () => { const value = await daemonCounts(tools.control); return value.displayed === 0 && value.waiting === 0 }, 'daemon_not_empty')

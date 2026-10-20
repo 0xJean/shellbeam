@@ -24,6 +24,26 @@ function state(source: WorkspaceProviderSource, sources = [source]): WorkspacePr
 describe('Workspace Provider presentation', () => {
   afterEach(() => localStorage.removeItem('shellbeam.locale'))
 
+  it('does not advertise providers or integration setup when no source is configured', () => {
+    const current = { ...state(ssh), source: null, sources: [], loading: false }
+    const view = render(<WorkspaceProviderSummary state={current} />)
+    expect(view.container).toBeEmptyDOMElement()
+    view.rerender(<WorkspaceProviderSummary state={{ ...current, loading: true }} />)
+    expect(view.container).toBeEmptyDOMElement()
+  })
+
+  it('resets diagnostics when the host scope changes and does not reveal old details on return', () => {
+    localStorage.setItem('shellbeam.locale', 'en')
+    const scoped = (hostId: string) => ({ ...state(komari), view: { host: { id: hostId, vaultId: 'scope' } } as WorkspaceProviderState['view'] })
+    const view = render(<WorkspaceProviderSummary state={scoped('first')} />)
+    fireEvent.click(screen.getByText(monitoringSourcesCopy.en.details))
+    expect(screen.getByTestId('workspace-data-source-details')).toHaveAttribute('open')
+    view.rerender(<WorkspaceProviderSummary state={scoped('second')} />)
+    expect(screen.getByTestId('workspace-data-source-details')).not.toHaveAttribute('open')
+    view.rerender(<WorkspaceProviderSummary state={scoped('first')} />)
+    expect(screen.getByTestId('workspace-data-source-details')).not.toHaveAttribute('open')
+  })
+
   it.each(['en', 'zh-CN'] as const)('keeps the source and original sample visible while technical details are collapsed in %s', (locale) => {
     localStorage.setItem('shellbeam.locale', locale)
     render(<WorkspaceProviderSummary state={state(komari, [komari, ssh])} />)
@@ -95,6 +115,7 @@ describe('Workspace Provider presentation', () => {
     const current = { ...state(komari), error: true }
     render(<WorkspaceProviderSummary state={current} />)
     expect(screen.getByRole('alert')).toHaveTextContent('Saved observations could not be refreshed.')
+    fireEvent.click(screen.getByText(monitoringSourcesCopy.en.details))
     fireEvent.click(screen.getByRole('button', { name: 'Refresh saved observations' }))
     expect(current.refresh).toHaveBeenCalledOnce()
   })

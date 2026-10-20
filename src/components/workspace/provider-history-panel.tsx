@@ -1,11 +1,29 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/lib/i18n'
+import { workspaceOverviewCopy } from '@/lib/locales/workspace-overview'
 import { metricHistoryPaths, listProviderMetricHistory, type ProviderMetricHistoryPoint } from '@/lib/provider-history'
 
 const RANGES = [1, 6, 24, 168]
 const METRICS = [{ key: 'cpuPercent', label: 'CPU', color: '#38bdf8' }, { key: 'memoryPercent', label: 'Memory', color: '#a78bfa' }, { key: 'diskPercent', label: 'Disk', color: '#fb923c' }] as const
 const sourceKey = (point: ProviderMetricHistoryPoint) => `${point.providerKind}:${point.providerId}:${point.nodeId}`
+interface ProviderHistoryPanelProps { vaultId: string; hostId: string; providerId?: string }
+
+/** Only the explicit history view subscribes and reads persisted samples. A
+ * host/Vault change remounts the disclosure, including an A → B → A return. */
+export function ProviderHistoryDisclosure(props: ProviderHistoryPanelProps) {
+  return <ScopedProviderHistoryDisclosure key={JSON.stringify([props.vaultId, props.hostId, props.providerId])} {...props} />
+}
+
+function ScopedProviderHistoryDisclosure(props: ProviderHistoryPanelProps) {
+  const { locale } = useT()
+  const [expanded, setExpanded] = useState(false)
+  return <div data-testid="provider-history-disclosure">
+    <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} className="rounded border border-border/60 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">{workspaceOverviewCopy[locale].history}</button>
+    {expanded && <div className="mt-3"><ProviderHistoryPanel {...props} /></div>}
+  </div>
+}
+
 export function ProviderHistoryPanel({ vaultId, hostId, providerId }: { vaultId: string; hostId: string; providerId?: string }) {
   const { t } = useT()
   const [hours, setHours] = useState(24)

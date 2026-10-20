@@ -1,7 +1,7 @@
 // Actual SSH Probe metrics -> native notifications -> owned dunst -> X11
 // framebuffer pixels. This does not verify inventory, Komari or read receipts.
 import { setTimeout as delay } from 'node:timers/promises'
-import { notificationDaemonConfig, startOwnedOpsUiNotificationDaemon } from './ops-ui-notifications.mjs'
+import { notificationDaemonConfig, openOpsUiNotificationSettings, startOwnedOpsUiNotificationDaemon } from './ops-ui-notifications.mjs'
 import { readSystemDeliveryDiagnostic } from './ops-ui-alert-notifications.mjs'
 import { OPS_UI_PROBE_RULE_IDS, validateOpsUiProbeScope } from './ops-ui-probe-journey.mjs'
 import { isOpsUiHostDetailsVisible } from './ops-ui-host-details.mjs'
@@ -86,10 +86,7 @@ export async function assertSafeProbeNotificationUi(driver, { state, titles, pro
 }
 
 async function openSettings(driver) {
-  await driver.waitFor('[data-testid="pc-dashboard"]')
-  await driver.click('[data-testid="pc-dashboard"]')
-  await driver.click("xpath=//aside//button[normalize-space(.)='Settings' or normalize-space(.)='设置']")
-  await driver.waitFor(SETTINGS)
+  await openOpsUiNotificationSettings(driver)
 }
 
 /** The public entry always binds the real owned OS helper and visible UI

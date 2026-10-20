@@ -2,7 +2,7 @@ import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type Reac
 import { ArrowLeftRight, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 
-export function HostListScrollArea({ children }: { children: ReactNode }) {
+export function HostListScrollArea({ children, monitoring = true }: { children: ReactNode; monitoring?: boolean }) {
   const { t } = useT()
   const viewportId = useId()
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -32,7 +32,7 @@ export function HostListScrollArea({ children }: { children: ReactNode }) {
       observer?.disconnect()
       window.removeEventListener('resize', readPosition)
     }
-  }, [])
+  }, [monitoring])
 
   function scrollTo(left: number) {
     const viewport = viewportRef.current
@@ -86,7 +86,7 @@ export function HostListScrollArea({ children }: { children: ReactNode }) {
         </div>
       )}
       <div ref={viewportRef} id={viewportId} data-testid="host-list-scroll-viewport" onScroll={readPosition} className="workspace-scrollbar-hidden workspace-horizontal-scroll min-w-0 overflow-x-auto overscroll-x-contain rounded-b-2xl">
-        <div ref={contentRef} className="xl:min-w-[91rem]">{children}</div>
+        <div ref={contentRef} className={monitoring ? 'xl:min-w-[91rem]' : ''}>{children}</div>
       </div>
     </div>
   )

@@ -9,7 +9,7 @@ vi.mock('./network-ops-panel', () => ({ NetworkOpsPanel: (props: NetworkOpsPanel
   networkSpy(props)
   return <div data-testid="network-route"><button onClick={props.onOpenServices}>Network to Services</button><button onClick={() => props.onOpenLogs?.()}>Network to Logs</button><button onClick={() => props.onOpenTerminal?.("ss -lntup '( sport = :443 )'")}>Network to Terminal</button></div>
 } }))
-vi.mock('./provider-history-panel', () => ({ ProviderHistoryPanel: () => null }))
+vi.mock('./provider-history-panel', () => ({ ProviderHistoryDisclosure: () => null }))
 const host = { id: 'network-host', vaultId: 'team', name: 'Network host', address: '10.0.0.8', port: 22, username: 'ops', group: 'Default', authType: 'password' as const, tags: [], createdAt: 0, updatedAt: 0 }
 
 // Routing integration table: both surfaces preserve host, vault, and interactive

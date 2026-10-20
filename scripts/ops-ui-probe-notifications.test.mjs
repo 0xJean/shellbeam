@@ -20,6 +20,8 @@ function ui() {
   const options = scope(), titles = probeNotificationTitles(options.fixture, options.resumeState)
   const dom = new JSDOM(`<button data-testid="pc-dashboard"></button><section data-testid="notification-settings"></section>${roles.map(role => `<article data-testid="host-card" data-host-id="${options.resumeState.hostIds[role]}"><span data-testid="host-probe-evaluation" data-rule-id="${rule}" data-vault-id="${options.resumeState.vaultId}" data-host-id="${options.resumeState.hostIds[role]}" data-state="firing" data-sampled-at="${Date.now() - 1}">Metrics</span><div data-testid="host-local-alert" data-host-id="${options.resumeState.hostIds[role]}" data-vault-id="${options.resumeState.vaultId}" data-rule-id="${rule}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}" data-alert-status="active">${titles[role]} · ProbeProvider collection</div></article>`).join('')}<input type="password"><textarea></textarea>`)
   const document = dom.window.document
+  const navigation = []
+  let monitoringOpen = false
   const driver = {
     findAll: async selector => [...document.querySelectorAll(selector)],
     isDisplayed: async element => !element.closest('[hidden]'),
@@ -28,7 +30,16 @@ function ui() {
       return field === 'value' ? element.value : element.getAttribute(field)
     },
     text: async element => element.textContent,
-    waitFor: async () => ({}), click: async () => {},
+    waitFor: async target => {
+      navigation.push(['wait', target])
+      if (target === '[data-testid="notification-settings"]') assert(monitoringOpen, 'notification settings cannot be read before their category is opened')
+      return {}
+    },
+    click: async target => {
+      navigation.push(['click', target])
+      if (target.includes('//aside//button')) monitoringOpen = false
+      if (target === '[data-testid="settings-category-monitoring"]') monitoringOpen = true
+    },
     isSelected: async selector => selector.includes("='Enable notification delivery'") || selector.includes("='System'") || /notification-recovery-(?:enabled|channel-system)/.test(selector),
   }
   const transition = (role, event) => {
@@ -36,7 +47,7 @@ function ui() {
     card.querySelector('[data-testid="host-probe-evaluation"]').dataset.state = event === 'opened' ? 'firing' : 'healthy'
     card.querySelector('[data-testid="host-local-alert"]').dataset.alertStatus = event === 'opened' ? 'active' : 'resolved'
   }
-  return { ...options, titles, dom, document, driver, transition }
+  return { ...options, titles, dom, document, driver, transition, navigation }
 }
 
 test('only fixed fixture titles, production 48-character host context and six exact metrics lifecycle messages enter the real daemon rules', () => {
@@ -170,6 +181,23 @@ async function verifyAll(owner, unit) {
     await owner[event === 'opened' ? 'verifyOpened' : 'verifyResolved'](role)
   }
 }
+
+test('Probe notification startup and both restart boundaries use the visible monitoring category', async () => {
+  const unit = harness()
+  try {
+    const owner = await createOpsUiProbeNotificationOwner(unit.options, unit.dependencies)
+    await verifyAll(owner, unit)
+    await owner.beforeRestart()
+    await owner.afterRestart({ driver: { ...unit.driver } })
+    const visits = unit.navigation.filter(([, target]) => target === '[data-testid="settings-category-monitoring"]' || target === '[data-testid="notification-settings"]')
+    assert.deepEqual(visits, Array.from({ length: 3 }, () => [
+      ['wait', '[data-testid="settings-category-monitoring"]'],
+      ['click', '[data-testid="settings-category-monitoring"]'],
+      ['wait', '[data-testid="notification-settings"]'],
+    ]).flat())
+    await owner.stop()
+  } finally { unit.dom.window.close() }
+})
 
 test('one/direct and two/via+jump visible groups each require every full independent title/body and total exactly six history rows', async () => {
   const unit = harness()
