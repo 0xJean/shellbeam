@@ -117,6 +117,15 @@ class Lifecycle(unittest.TestCase):
         with self.assertRaisesRegex(helper.Rejected, 'unsafe_configuration'): self.operate('install', old, b'old-agent')
 
 class ProcessRecognition(unittest.TestCase):
+    def test_service_directory_uses_path_syntax_separate_from_command_quoting(self):
+        service = object.__new__(helper.Service)
+        service.root = Path('/home/test space/$name%quote"/managed')
+        service.user = True
+        text = service.text()
+        self.assertIn('WorkingDirectory=/home/test space/$name%%quote"/managed\n', text)
+        self.assertIn('ExecStart="/home/test space/$$name%%quote\\"/managed/current/agent"', text)
+        self.assertNotIn('WorkingDirectory="', text)
+
     def test_monitoring_server_is_not_mistaken_for_an_existing_agent(self):
         root = Path('/home/test/.local/share/shellbeam/komari/owned')
         self.assertFalse(helper.is_agent_executable('/usr/local/bin/komari', root))

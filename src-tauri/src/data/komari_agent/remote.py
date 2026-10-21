@@ -97,11 +97,13 @@ class Service:
         run(self.command + ["show-environment"])
 
     def text(self):
-        # Root is an owned fixed path with no unit specifiers or quoting ambiguity.
+        # WorkingDirectory is a single path, not an ExecStart argument: systemd
+        # does not remove quotes or expand dollar variables in this directive.
+        directory = str(self.root).replace("%", "%%")
         escaped = str(self.root).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$")
         return ("# ShellBeam managed monitoring probe\n[Unit]\nDescription=ShellBeam monitoring probe\n"
                 "After=network-online.target\nWants=network-online.target\n[Service]\n"
-                f'WorkingDirectory="{escaped}"\nExecStart="{escaped}/current/agent" --config "{escaped}/config.json"\n'
+                f'WorkingDirectory={directory}\nExecStart="{escaped}/current/agent" --config "{escaped}/config.json"\n'
                 "Restart=on-failure\nRestartSec=5\nUMask=0077\nNoNewPrivileges=true\n" +
                 ("" if self.user else "PrivateTmp=true\nProtectSystem=strict\nProtectHome=read-only\n") +
                 "StandardOutput=null\nStandardError=null\n[Install]\nWantedBy=" +
