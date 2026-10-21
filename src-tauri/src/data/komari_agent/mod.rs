@@ -578,7 +578,11 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
         }
         if matches!(p.action.as_str(), "install" | "upgrade") {
             if p.action == "install" && !matches!(p.observed.status.as_str(), "absent" | "retired")
-                || p.action == "upgrade" && p.observed.status != "active"
+                || p.action == "upgrade"
+                    && p.observed.status != "active"
+                    && !(p.observed.status == "activating"
+                        && p.observed.active
+                        && p.baseline.as_ref().is_some_and(|r| r.status == "active"))
             {
                 return Err("KOMARI_AGENT_STATE_CHANGED".into());
             }
@@ -709,26 +713,47 @@ fn apply_observation(record: &mut Record, state: Observation) -> Result<(), Stri
     record.observation = state;
     Ok(())
 }
+fn same_activation(expected: &Observation, actual: &Observation) -> bool {
+    let mut copy = expected.clone();
+    copy.active = actual.active;
+    copy == *actual
+}
 fn verify_report(
     app: &tauri::AppHandle,
     p: &Plan,
-    expected: &Manifest,
+    connection: &transport::Connection,
+    expected_state: &Observation,
     watermark: i64,
     started: i64,
 ) -> Result<i64, String> {
+    let expected = expected_state
+        .current
+        .as_ref()
+        .ok_or("KOMARI_AGENT_REMOTE_UNKNOWN")?;
     let scope = p.source.as_ref().ok_or("KOMARI_AGENT_SOURCE_REQUIRED")?;
-    let remote = service::Remote::new(app, scope)?;
+    let api = service::Remote::new(app, scope)?;
     let token = service::secret(app, scope)?;
     let start = Instant::now();
     loop {
         check(app, p)?;
-        let (created, version) = node(&remote, &token, &p.node)?;
+        let (created, version) = node(&api, &token, &p.node)?;
         if created != p.node_created {
             return Err("KOMARI_AGENT_NODE_CHANGED".into());
         }
-        let observed = recent(&remote, &token, &p.node)?;
+        let observed = recent(&api, &token, &p.node)?;
         if version == expected.version && fresh(observed, watermark, started, now_unix_ms()) {
-            return Ok(observed);
+            let result = remote(
+                connection,
+                &json!({"action":"inspect","deployment":p.deployment}),
+                &|| check(app, p),
+            )?;
+            let (_, latest) = state(&result, Some(&p.identity))?;
+            if !latest.active || !same_activation(expected_state, &latest) {
+                return Err("KOMARI_AGENT_PROCESS_NOT_VERIFIED".into());
+            }
+            if fresh(observed, watermark, started, now_unix_ms()) {
+                return Ok(observed);
+            }
         }
         if start.elapsed() > Duration::from_secs(45) {
             return Err("KOMARI_AGENT_REPORT_NOT_VERIFIED".into());
@@ -867,17 +892,11 @@ fn operate(app: &tauri::AppHandle, id: &str, confirmed: bool) -> Result<Record, 
             record.status = "absent".into();
             record.observed_at = Some(now_unix_ms());
         } else {
-            let release = record
-                .current
-                .as_ref()
-                .ok_or("KOMARI_AGENT_REMOTE_UNKNOWN")?
-                .manifest
-                .clone();
             if !record.observation.active {
                 return Err("KOMARI_AGENT_PROCESS_NOT_VERIFIED".into());
             }
             let started = now_unix_ms();
-            match verify_report(app, &p, &release, record.watermark, started) {
+            match verify_report(app, &p, &c, &record.observation, record.watermark, started) {
                 Ok(time) => {
                     record.observed_at = Some(time);
                     record.status = "active".into();
@@ -891,6 +910,16 @@ fn operate(app: &tauri::AppHandle, id: &str, confirmed: bool) -> Result<Record, 
                             .is_some_and(|r| r.rollback.as_deref() == Some("not-needed"))
                     {
                         check(app, &p)?;
+                        let latest = remote(
+                            &c,
+                            &json!({"action":"inspect","deployment":p.deployment}),
+                            &|| check(app, &p),
+                        )?;
+                        let (_, latest) = state(&latest, Some(&p.identity))?;
+                        if !same_activation(&record.observation, &latest) {
+                            return Err("KOMARI_AGENT_STATE_CHANGED".into());
+                        }
+                        record.observation = latest;
                         let rollback = record.previous.clone();
                         let action = if rollback.is_some() && p.observed.status != "retired" {
                             "rollback"
@@ -905,14 +934,11 @@ fn operate(app: &tauri::AppHandle, id: &str, confirmed: bool) -> Result<Record, 
                         let (_, s) = state(&result, Some(&p.identity))?;
                         apply_observation(&mut record, s)?;
                         if action == "rollback" {
-                            let old = record
-                                .current
-                                .as_ref()
-                                .ok_or("KOMARI_AGENT_ROLLBACK_UNKNOWN")?;
                             record.observed_at = Some(verify_report(
                                 app,
                                 &p,
-                                &old.manifest,
+                                &c,
+                                &record.observation,
                                 record.watermark,
                                 now_unix_ms(),
                             )?);

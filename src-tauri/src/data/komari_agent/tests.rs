@@ -251,3 +251,23 @@ fn execution_lease_limits_a_vault_and_excludes_duplicate_host_actions() {
     drop((second, foreign, next));
     assert!(lease(&vault, "one").is_ok());
 }
+#[test]
+fn compensation_tolerates_a_stopped_process_but_never_a_changed_remote_journal() {
+    let before = Observation {
+        status: "active".into(),
+        active: true,
+        deployment: Some("managed".into()),
+        current: Some(release("1.5.11", b"agent").manifest),
+        config_sha256: Some("a".repeat(64)),
+        job: Some("authorized".into()),
+        ..Default::default()
+    };
+    let mut after = before.clone();
+    after.active = false;
+    assert!(same_activation(&before, &after));
+    after.job = Some("another-operation".into());
+    assert!(!same_activation(&before, &after));
+    after = before.clone();
+    after.config_sha256 = Some("b".repeat(64));
+    assert!(!same_activation(&before, &after));
+}

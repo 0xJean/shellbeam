@@ -22,7 +22,7 @@ const helper = join(project, 'src-tauri/src/data/komari_agent/remote.py')
 const { privateKey } = generateKeyPairSync('ed25519'); const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' })
 const delay = ms => new Promise(done => setTimeout(done, ms))
 let child; let stopped = false; let stage = 'download pinned official binaries'; let inspected; let failed = false
-const report = { result: 'running', server: pins.server.version, architecture: arch, checks: [], cleanup: false, serverStopped: false }
+const report = { result: 'running', server: pins.server.version, architecture: arch, checks: [], freshReports: [], cleanup: false, serverStopped: false }
 const log = await open(join(directory, 'server.log'), 'wx', 0o600)
 async function download(repo, name, version, pin) {
   const url = `https://github.com/komari-monitor/${repo}/releases/download/${version}/${name}`
@@ -53,16 +53,21 @@ try {
   child = spawn(binary.file, ['server', '--listen', `127.0.0.1:${port}`, '--database', join(directory, 'primary.db')], { cwd: directory, env: { PATH: process.env.PATH, TZ: 'UTC' }, stdio: ['ignore', log.fd, log.fd] }); child.on('close', () => { stopped = true })
   const request = async (path, body, auth = {}) => {
     const r = await fetch(endpoint + path, { method: body === undefined ? 'GET' : 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(10000) })
-    assert.equal(r.status, 200); return { response: r, value: await r.json() }
+    assert.equal(r.status, 200); const value = await r.json(); return { response: r, value, data: value?.data ?? value?.result ?? value }
   }
-  await waitFor(async () => (await request('/api/install/status')).value.data?.required)
+  await waitFor(async () => (await request('/api/install/status')).data?.required === true)
   const username = 'smoke-' + randomBytes(8).toString('hex'); const password = 'Sb1' + randomBytes(24).toString('hex'); const apiKey = randomBytes(32).toString('hex')
+  stage = 'complete isolated installation'
   await request('/api/install/complete', { username, password, sitename: 'Isolated lifecycle test', metric_dsn: join(directory, 'metrics.db') })
-  await waitFor(async () => (await request('/api/version')).value.version === '1.6.0')
+  stage = 'verify installed version envelope'
+  await waitFor(async () => (await request('/api/version')).data?.version === '1.6.0')
+  stage = 'authenticate isolated administrator'
   const login = await request('/api/login', { username, password }); const cookie = login.response.headers.get('set-cookie')?.split(';')[0]; assert.ok(cookie)
+  stage = 'save isolated service API key'
   await request('/api/admin/settings', { api_key: apiKey, private_site: true, geo_ip_enabled: false, notification_enabled: false, eula_accepted: true }, { Cookie: cookie, Origin: endpoint })
   const auth = { Authorization: `Bearer ${apiKey}` }
-  const created = (await request('/api/admin/client/add', { name: 'isolated-lifecycle-node' }, auth)).value.data
+  stage = 'create isolated monitoring node'
+  const created = (await request('/api/admin/client/add', { name: 'isolated-lifecycle-node' }, auth)).data
   const nodeId = created.uuid; const token = created.token; assert.equal(typeof nodeId, 'string'); assert.equal(typeof token, 'string')
   const rpc = async (method) => (await request('/api/rpc2', { jsonrpc: '2.0', id: 1, method, params: { uuid: nodeId } }, auth)).value.result
   const originalNode = await rpc('admin:getClient'); const tokenBefore = (await rpc('admin:getClientToken')).token; assert.equal(token, tokenBefore)
@@ -75,7 +80,15 @@ try {
   }
   const watermark = async () => latest((await request(`/api/recent/${nodeId}`, undefined, auth)).value)
   const fresh = async (version, before, started) => {
-    await waitFor(async () => { const node = await rpc('admin:getClient'); const time = await watermark(); return node.uuid === nodeId && node.created_at === originalNode.created_at && node.version?.replace(/^v/, '') === version && time > before && time >= started - 5000 && time <= Date.now() + 5000 && time >= Date.now() - 60000 })
+    const expectedSha256 = artifacts.find(a => a.manifest.version === version).manifest.sha256
+    await waitFor(async () => {
+      const node = await rpc('admin:getClient'); const time = await watermark()
+      if (!(node.uuid === nodeId && node.created_at === originalNode.created_at && node.version?.replace(/^v/, '') === version && time > before && time >= started - 5000 && time <= Date.now() + 5000 && time >= Date.now() - 60000)) return false
+      const current = await inspect()
+      if (!current.state.active || current.state.current?.sha256 !== expectedSha256 || time < Date.now() - 60000 || time > Date.now() + 5000) return false
+      report.freshReports.push({ version, nodeIdentityVerified: true, originalSampleAt: time, before, started, verifiedAt: Date.now(), processSha256: expectedSha256 })
+      return true
+    })
   }
   const operate = async (action, artifact, overrideBytes) => {
     const baseline = await inspect()
