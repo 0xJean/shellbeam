@@ -50,7 +50,7 @@ describe('Komari sync orchestration', () => {
     const result = await syncKomariIntegration({
       integrationId: 'komari-prod',
       config: { endpoint: 'https://komari.example', token: 'secret' },
-      hosts: [host],
+      hosts: [host], explicitMappings: { [host.id]: 'node-1' },
       now: 2_000,
       fetchImpl,
     })
@@ -76,7 +76,7 @@ describe('Komari sync orchestration', () => {
     })
 
     const failed = await syncKomariIntegration({
-      integrationId: 'komari-prod-recovery', config: { endpoint: 'https://komari.example' }, hosts: [host], now: 2_000, fetchImpl,
+      integrationId: 'komari-prod-recovery', config: { endpoint: 'https://komari.example' }, hosts: [host], explicitMappings: { [host.id]: 'node-1' }, now: 2_000, fetchImpl,
     })
     expect(failed.alertState?.alerts).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'probe-error:metrics', status: 'active' }),
@@ -86,7 +86,7 @@ describe('Komari sync orchestration', () => {
 
     metricFailure = false
     const recovered = await syncKomariIntegration({
-      integrationId: 'komari-prod-recovery', config: { endpoint: 'https://komari.example' }, hosts: [host], now: 3_000, fetchImpl,
+      integrationId: 'komari-prod-recovery', config: { endpoint: 'https://komari.example' }, hosts: [host], explicitMappings: { [host.id]: 'node-1' }, now: 3_000, fetchImpl,
       alertState: failed.alertState,
     })
     expect(recovered.snapshots[0]?.health).toBe('online')
@@ -108,7 +108,7 @@ describe('Komari sync orchestration', () => {
       if (url.includes('/api/admin/notification/')) return new Response('[]')
       return new Response(JSON.stringify([{ time: now + 1, cpu: 25 }]))
     })
-    const result = await syncKomariIntegration({ integrationId, config: { endpoint: 'https://komari.example' }, hosts: [host], now, fetchImpl,
+    const result = await syncKomariIntegration({ integrationId, config: { endpoint: 'https://komari.example' }, hosts: [host], explicitMappings: { [host.id]: 'node-1' }, now, fetchImpl,
       alertState: { schemaVersion: 1, alerts: previous.alerts, audit: previous.audit, summary: previous.summary },
     })
     expect(result.snapshots[0]).toMatchObject({ health: 'unknown', metrics: null })
@@ -130,7 +130,7 @@ describe('Komari sync orchestration', () => {
         now += 1000
         return new Response(JSON.stringify([{ time: now, cpu: 25 }]))
       })
-      const result = await syncKomariIntegration({ integrationId: 'komari-reception-clock-regression', config: { endpoint: 'https://komari.example' }, hosts: [host], fetchImpl, includeAlerts: false })
+      const result = await syncKomariIntegration({ integrationId: 'komari-reception-clock-regression', config: { endpoint: 'https://komari.example' }, hosts: [host], explicitMappings: { [host.id]: 'node-1' }, fetchImpl, includeAlerts: false })
       expect(result.syncedAt).toBe(startedAt)
       expect(result.snapshots[0]).toMatchObject({ health: 'online', receivedAt: now })
       expect(result.snapshots[0].metrics?.freshness.sampledAt).toBe(now)
@@ -208,13 +208,13 @@ describe('Komari sync orchestration', () => {
     previous.provider.endpoint = endpoint
     const fetchImpl = vi.fn<typeof fetch>(async (input) => String(input).endsWith('/api/admin/client/list')
       ? new Response(JSON.stringify([{ uuid: 'node-1', name: 'prod', ipv4: host.address }])) : new Response('[]'))
-    const result = await syncKomariIntegration({ integrationId: 'komari-recovery', config: { endpoint }, hosts: [host],
+    const result = await syncKomariIntegration({ integrationId: 'komari-recovery', config: { endpoint }, hosts: [host], explicitMappings: { [host.id]: 'node-1' },
       previousSnapshots: [previous], now: 100_000, fetchImpl })
     expect(result.alertState?.probeBaselines).toEqual([{ integrationId: 'komari-recovery', endpoint, nodeId: 'node-1', hostId: host.id, lastHealthySampledAt: 1_900 }])
     expect(result.alertState?.alerts).toHaveLength(1)
     expect(result.alertState?.alerts[0]).toMatchObject({ kind: 'probe-error:metrics', status: 'active' })
     expect(result.alertAudit.some((row) => row.event === 'resolved')).toBe(false)
-    const changedEndpoint = await syncKomariIntegration({ integrationId: 'komari-recovery', config: { endpoint: 'https://other.example' }, hosts: [host],
+    const changedEndpoint = await syncKomariIntegration({ integrationId: 'komari-recovery', config: { endpoint: 'https://other.example' }, hosts: [host], explicitMappings: { [host.id]: 'node-1' },
       previousSnapshots: [previous], alertState: result.alertState, now: 100_000, fetchImpl })
     expect(changedEndpoint.alertState?.probeBaselines).toEqual(result.alertState?.probeBaselines)
     expect(changedEndpoint.alertAudit).toEqual([])
@@ -227,7 +227,7 @@ describe('Komari sync orchestration', () => {
     const result = await syncKomariIntegration({
       integrationId: 'komari-prod',
       config: { endpoint: 'https://komari.example' },
-      hosts: [host],
+      hosts: [host], explicitMappings: { [host.id]: 'node-1' },
       now: 1_500,
       lastSyncedAt: 1_000,
       ttlMs: 1_000,
@@ -323,7 +323,7 @@ describe('Komari sync orchestration', () => {
     const result = await syncKomariIntegration({
       integrationId: 'komari-prod',
       config: { endpoint: 'https://komari.example' },
-      hosts,
+      hosts, explicitMappings: Object.fromEntries(hosts.map((h, i) => [h.id, `node-${i}`])),
       now: 2_000,
       fetchImpl,
       maxConcurrency: 2,

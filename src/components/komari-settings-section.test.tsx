@@ -24,7 +24,7 @@ vi.mock('@/contexts/vault-context', () => ({ useVault: () => { const id = vault.
 vi.mock('@/lib/komari-config', () => ({ listKomariIntegrations: vi.fn(), upsertKomariIntegration: vi.fn(), deleteKomariIntegration: vi.fn(), komariCredentialKey: (id: string) => `komari.${id}.api-key` }))
 vi.mock('@/lib/komari', async (original) => ({ ...await original<typeof import('@/lib/komari')>(), listKomariClients: vi.fn(), verifyKomariConnection: vi.fn() }))
 vi.mock('@/lib/vault', () => ({ vaultStatus: vi.fn() }))
-vi.mock('@/lib/hosts', () => ({ listHosts: vi.fn() }))
+vi.mock('@/lib/hosts', async original => ({ ...(await original<typeof import('@/lib/hosts')>()), listHosts: vi.fn() }))
 vi.mock('@/lib/komari-persistence', async (original) => ({ ...await original<typeof import('@/lib/komari-persistence')>(), getKomariMappingState: vi.fn(), editKomariMapping: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }))
 const copy = komariOnboardingCopy.en

@@ -13,7 +13,7 @@ describe('Komari history sync imports', () => {
       return new Response(JSON.stringify(body), { status: 200 })
     })
     for (const vaultId of ['history-vault-a', 'history-vault-b']) {
-      const result = await syncKomariIntegration({ integrationId: 'history-integration', vaultId, config: { endpoint: 'https://komari.example', token: 'secret-never-saved' }, hosts: [host], fetchImpl, includeAlerts: false, now: Date.parse('2026-10-17T08:30:30Z') })
+      const result = await syncKomariIntegration({ integrationId: 'history-integration', vaultId, config: { endpoint: 'https://komari.example', token: 'secret-never-saved' }, hosts: [host], explicitMappings: { [host.id]: 'node-fixture' }, fetchImpl, includeAlerts: false, now: Date.parse('2026-10-17T08:30:30Z') })
       expect(result.historyImportedCount).toBe(3)
       expect(result.snapshots[0].metrics?.data.sampledAt).toBe(Date.parse('2026-10-17T08:30:00Z'))
     }

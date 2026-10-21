@@ -1,3 +1,4 @@
+import { hasSshConnection } from '@/lib/hosts'
 import { useEffect, useMemo, useState } from 'react'
 import { Network, Plus, Trash2, Play, Square, RefreshCw, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -169,7 +170,7 @@ export function PortForwardPanel({
                   placeholder={t('portForward.selectHost')}
                   options={[
                     { value: '', label: t('portForward.selectHost') },
-                    ...hosts.map((h) => ({
+                    ...hosts.filter(hasSshConnection).map((h) => ({
                       value: h.id,
                       label: h.name,
                       icon: (

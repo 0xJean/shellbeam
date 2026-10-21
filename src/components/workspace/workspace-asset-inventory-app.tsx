@@ -1,3 +1,4 @@
+import { hasSshConnection } from '@/lib/hosts'
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
@@ -1226,7 +1227,7 @@ export function WorkspaceAssetInventoryApp({
               </div>
             )
           }}
-          onRowDoubleClick={onOpenTerminal}
+          onRowDoubleClick={host => { if (hasSshConnection(host)) onOpenTerminal?.(host); else onEditHost?.(host) }}
           presentation={isMobile ? 'mobile' : 'panel'}
         />
 
@@ -1316,6 +1317,7 @@ export function WorkspaceAssetInventoryApp({
                       {onOpenTerminal && (
                         <button
                           type="button"
+                          disabled={!hasSshConnection(selectedHost)}
                           onClick={() => onOpenTerminal(selectedHost)}
                           className="inline-flex h-9 items-center justify-center gap-2 rounded-xl bg-[color:var(--workspace-primary-500)] px-3 text-xs font-semibold text-[var(--workspace-primary-foreground)] transition-colors hover:bg-[color:var(--workspace-primary-400)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-primary-400)]"
                         >

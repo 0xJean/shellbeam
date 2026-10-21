@@ -447,10 +447,13 @@ pub(super) fn dispatch(app: &tauri::AppHandle, client: &Client, request: Value) 
 }
 
 fn public_host(host: &HostProfile, client: &Client) -> Value {
-    let connection_supported = host.auth_type == "password" || host.auth_type == "privateKey";
+    let connection_supported = crate::data::host_connections::supports_ssh(host)
+        && (host.auth_type == "password" || host.auth_type == "privateKey");
     json!({"hostId":host.id,"name":host.name,"address":host.address,"port":host.port,"username":host.username,
         "group":host.group,"tags":host.tags,"authType":host.auth_type,"jumpHost":host.jump_host,"jumpHostId":host.jump_host_id,
         "connectionSupported":connection_supported,
+        "connectionCount":host.connections.as_ref().map(|c| c.len()).unwrap_or(1),
+        "defaultConnectionId":host.default_connection_id,
         "authorizationValid":client.authorize_host(host).is_ok()})
 }
 
@@ -2156,6 +2159,8 @@ mod tests {
 
     fn host_with_jump(auth_type: &str) -> HostProfile {
         HostProfile {
+            connections: None,
+            default_connection_id: None,
             id: "host".into(),
             name: "Host".into(),
             address: "target.example.com".into(),

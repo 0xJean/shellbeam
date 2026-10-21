@@ -20,6 +20,7 @@ export interface HostIdentity {
 /** Prefer the referenced profile. Native SSH results supply the resolved route
  * after verification; non-SSH providers can pass current profiles explicitly. */
 export function getHostIdentity(host: HostProfile, profiles: readonly HostProfile[] = []): HostIdentity {
+  if (host.connections?.length === 0) return { hostId: host.id, address: '', port: 0, username: '' }
   const referenced = host.jumpHostId ? profiles.find((profile) => profile.id === host.jumpHostId) : undefined
   const jump = host.jumpHostId
     ? { hostId: host.jumpHostId, ...(referenced ? { address: referenced.address, port: referenced.port || 22, username: referenced.username || 'root' } : {}) }

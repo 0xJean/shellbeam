@@ -458,7 +458,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
       {step === 'mapping' && savedIntegration && <div className="mt-4 space-y-3">
         {verifiedNodes && <p role="status" className="text-sm">{copy.verified} · {copy.nodes}: {verifiedNodes.length}</p>}
         {verifiedNodes?.length === 0 && <p className="text-xs text-muted-foreground">{copy.empty}</p>}
-        <KomariMappingsPanel key={`${vaultId}:${savedIntegration.id}`} activeVaultId={vaultId} hosts={hosts} vaultUnlocked={unlocked} onLoadVaultSecret={handleRevealSecret} integrationId={savedIntegration.id} initiallyOpen discoveredNodes={verifiedNodes ?? undefined} onStateChange={setMappingState} />
+        <KomariMappingsPanel key={`${vaultId}:${savedIntegration.id}`} activeVaultId={vaultId} hosts={hosts} vaultUnlocked={unlocked} onLoadVaultSecret={handleRevealSecret} integrationId={savedIntegration.id} initiallyOpen discoveredNodes={verifiedNodes ?? undefined} onStateChange={setMappingState} onHostImported={host => setHosts(current => current.some(h => h.id === host.id) ? current : [...current, host])} />
         {!mappingState.busy && <p className="text-xs text-muted-foreground">{copy.unmapped}: {mappingState.unmapped}</p>}
         {mappingState.unsaved && <p className="text-xs text-amber-600">{copy.unsavedMappings}</p>}
         <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setStep('connection')}>{copy.back}</Button>

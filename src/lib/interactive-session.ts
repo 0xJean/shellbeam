@@ -11,6 +11,7 @@ const INTERACTIVE_STATUS_EVENT = 'shellbeam://interactive-status'
 const INTERACTIVE_PROGRESS_EVENT = 'shellbeam://interactive-progress'
 
 export interface InteractiveSessionCreateRequest {
+  expectedConnectionKey?: string
   vaultId?: string
   hostId?: string
   host: string
@@ -31,6 +32,8 @@ export interface InteractiveSessionCreateRequest {
 }
 
 export interface InteractiveSessionInfo {
+  connectionKey?: string
+  port?: number
   vaultId?: string
   sessionId: string
   hostId?: string

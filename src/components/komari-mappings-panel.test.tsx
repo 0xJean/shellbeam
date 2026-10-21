@@ -3,11 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { KomariMappingsPanel } from './komari-mappings-panel'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import { KomariApiError, listKomariClients, type KomariClient } from '@/lib/komari'
-import { editKomariMapping, getKomariMappingState, type KomariMappingState } from '@/lib/komari-persistence'
+import { importMonitoringHost, editKomariMapping, getKomariMappingState, type KomariMappingState } from '@/lib/komari-persistence'
 import type { HostProfile } from '@/lib/hosts'
 vi.mock('@/lib/komari-config', () => ({ listKomariIntegrations: vi.fn() }))
 vi.mock('@/lib/komari', async (original) => ({ ...(await original<typeof import('@/lib/komari')>()), listKomariClients: vi.fn() }))
-vi.mock('@/lib/komari-persistence', async (original) => ({ ...(await original<typeof import('@/lib/komari-persistence')>()), editKomariMapping: vi.fn(), getKomariMappingState: vi.fn() }))
+vi.mock('@/lib/komari-persistence', async (original) => ({ ...(await original<typeof import('@/lib/komari-persistence')>()), importMonitoringHost: vi.fn(), editKomariMapping: vi.fn(), getKomariMappingState: vi.fn() }))
 
 const hosts: HostProfile[] = ['first', 'second'].map((name) => ({ id: name, name, vaultId: 'a', address: '10.0.0.1', username: 'ops', port: 22, authType: 'password', group: '', tags: [], createdAt: 0, updatedAt: 0 }))
 const node: KomariClient = { uuid: 'node-1', name: 'Node One', hostname: 'node', ipv4: '10.0.0.1', ipv6: null, os: null, kernel: null, version: null, raw: {} }
@@ -15,7 +15,7 @@ let durable: KomariMappingState
 const secret = vi.fn<(key: string) => Promise<string | null>>(async () => 'secret')
 function panel(vaultId = 'a', profiles = hosts) { return <KomariMappingsPanel activeVaultId={vaultId} hosts={profiles} vaultUnlocked onLoadVaultSecret={secret} /> }
 async function openPanel() {
-  fireEvent.click(screen.getByText('Komari node mappings'))
+  fireEvent.click(screen.getByText('Monitored hosts'))
   await waitFor(() => expect(screen.getByRole('button', { name: 'Discover nodes' })).toBeEnabled())
 }
 beforeEach(() => {
@@ -34,12 +34,42 @@ beforeEach(() => {
 })
 
 describe('Komari manual mapping workflow', () => {
+  it('imports a discovered node into the same directory with the current Vault and binding revision', async () => {
+    const imported = { ...hosts[0], id: 'new-stable', name: 'Node One', address: '', username: '', port: 0, connections: [] }
+    const onHostImported = vi.fn()
+    vi.mocked(importMonitoringHost).mockImplementation(async () => {
+      durable = { revision: 1, mappings: [{ integrationId: 'server-a', hostId: imported.id, nodeId: node.uuid, source: 'manual', confidence: 'explicit', updatedAt: 1 }] }
+      return imported
+    })
+    const view = render(<KomariMappingsPanel activeVaultId="a" hosts={[]} vaultUnlocked onLoadVaultSecret={secret} onHostImported={onHostImported} />)
+    await openPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Add monitoring-only host' }))
+    await waitFor(() => expect(onHostImported).toHaveBeenCalledWith(imported))
+    expect(importMonitoringHost).toHaveBeenCalledExactlyOnceWith({ vaultId: 'a', integrationId: 'server-a', nodeId: 'node-1', expectedRevision: 0, expectedIntegrationVersion: 0, name: 'Node One', group: 'Custom', tags: [] })
+    view.rerender(<KomariMappingsPanel activeVaultId="a" hosts={[imported]} vaultUnlocked onLoadVaultSecret={secret} onHostImported={onHostImported} />)
+    expect(await screen.findByText('Manual binding · Node One')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Add monitoring-only host' })).not.toBeInTheDocument()
+  })
+
+  it('does not display a late import result after switching Vaults', async () => {
+    let finish!: (host: HostProfile) => void
+    vi.mocked(importMonitoringHost).mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const onHostImported = vi.fn()
+    const view = render(<KomariMappingsPanel activeVaultId="a" hosts={[]} vaultUnlocked onLoadVaultSecret={secret} onHostImported={onHostImported} />)
+    await openPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Add monitoring-only host' }))
+    view.rerender(<KomariMappingsPanel activeVaultId="b" hosts={[]} vaultUnlocked onLoadVaultSecret={secret} onHostImported={onHostImported} />)
+    await act(async () => finish({ ...hosts[0], id: 'old-vault-import', connections: [], address: '', username: '', port: 0 }))
+    expect(onHostImported).not.toHaveBeenCalled()
+    expect(importMonitoringHost).toHaveBeenCalledTimes(1)
+  })
+
   it.each(['en', 'zh-CN'])('explains a missing saved credential in %s without sending discovery or losing the saved binding', async (locale) => {
     localStorage.setItem('shellbeam.locale', locale)
     durable = { revision: 2, mappings: [{ integrationId: 'server-a', hostId: 'second', nodeId: 'node-1', source: 'manual', confidence: 'explicit', updatedAt: 1 }] }
     secret.mockResolvedValue(null)
     render(panel())
-    fireEvent.click(screen.getByText(locale === 'en' ? 'Komari node mappings' : 'Komari 节点映射'))
+    fireEvent.click(screen.getByText(locale === 'en' ? 'Monitored hosts' : '监控主机'))
     expect(await screen.findByText(locale === 'en'
       ? 'No server API key is saved for this integration in this Vault. In Settings → Monitoring data sources → Komari, select this server, paste its API key and save.'
       : '当前 Vault 尚未为此集成保存服务器 API 密钥。请在设置 → 监控数据源 → Komari 中选择此服务器，粘贴 API 密钥并保存。')).toBeVisible()
@@ -92,7 +122,7 @@ describe('Komari manual mapping workflow', () => {
     expect(listKomariClients).toHaveBeenCalledWith({ endpoint: 'https://komari.test', token: 'saved-key' })
   })
 
-  it('resolves an address conflict, retains the manual choice after remount and address changes, then explicitly returns to automatic matching', async () => {
+  it('resolves an address conflict, retains the manual choice after remount and address changes, then explicitly unlinks without automatic reassociation', async () => {
     const view = render(panel())
     await openPanel()
     expect(await screen.findByText('Address matches multiple hosts; choose one explicitly.')).toBeVisible()
@@ -105,8 +135,9 @@ describe('Komari manual mapping workflow', () => {
     await openPanel()
     expect(await screen.findByText('Manual binding · second')).toBeVisible()
     expect(screen.getByLabelText('Host: Server a / node-1')).toHaveValue('second')
-    fireEvent.click(screen.getByRole('button', { name: 'Return to automatic' }))
-    expect(await screen.findByText('Address match · first')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Unlink' }))
+    expect(await screen.findByText('Suggested match · confirm before linking')).toBeVisible()
+    expect(durable.mappings).toEqual([])
     expect(editKomariMapping).toHaveBeenLastCalledWith(expect.objectContaining({ hostId: null, expectedRevision: 1 }))
   })
 
@@ -127,7 +158,7 @@ describe('Komari manual mapping workflow', () => {
     await openPanel()
     expect(await screen.findByText('Saved node; current discovery is unavailable.')).toBeVisible()
     durable.revision++
-    fireEvent.click(screen.getByRole('button', { name: 'Return to automatic' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Unlink' }))
     expect(await screen.findByText('Mappings changed in another session. Discover nodes again before saving.')).toBeVisible()
     expect(screen.queryByText(/remote secret output/)).not.toBeInTheDocument()
     expect(screen.getByText('Manual binding · second')).toBeVisible()
@@ -137,7 +168,7 @@ describe('Komari manual mapping workflow', () => {
     let finishOld!: (value: string) => void
     secret.mockImplementation((key) => key === 'token-a' ? new Promise<string>((resolve) => { finishOld = resolve }) : Promise.resolve('new-secret'))
     const view = render(panel())
-    fireEvent.click(screen.getByText('Komari node mappings'))
+    fireEvent.click(screen.getByText('Monitored hosts'))
     await waitFor(() => expect(secret).toHaveBeenCalledWith('token-a'))
     view.rerender(panel('b', hosts.map((host) => ({ ...host, vaultId: 'b' }))))
     await waitFor(() => expect(screen.getByRole('region', { name: 'Server b' })).toBeVisible())

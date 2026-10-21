@@ -24,6 +24,7 @@ fn default_rows() -> u32 {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InteractiveSessionCreateRequest {
+    expected_connection_key: Option<String>,
     host_id: Option<String>,
     vault_id: Option<String>,
     host: String,
@@ -86,6 +87,10 @@ pub struct LocalTerminalRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InteractiveSessionInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    connection_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     vault_id: Option<String>,
     session_id: String,
@@ -291,6 +296,8 @@ fn new_shared_state() -> (SharedOutput, SharedSeq, Arc<Mutex<String>>) {
 fn make_info(session_id: &str, p: &InteractiveSessionCreateRequest) -> InteractiveSessionInfo {
     let now = now_unix_ms();
     InteractiveSessionInfo {
+        connection_key: None,
+        port: Some(p.port),
         vault_id: p.vault_id.clone(),
         session_id: session_id.to_string(),
         host_id: p.host_id.clone(),
@@ -590,10 +597,21 @@ pub async fn create_interactive_session(
         let session_id = Uuid::new_v4().to_string();
         let record = {
             emit_progress(&app, &session_id, "resolve_host");
+            let mut connection_key = None;
             let route = if let (Some(host_id), Some(vault_id)) =
                 (payload.host_id.as_deref(), payload.vault_id.as_deref())
             {
-                crate::ssh::transport::resolve_host_route(&app, vault_id, host_id)?
+                let hosts = crate::data::hosts::load_hosts(&app, Some(vault_id))?;
+                let host = hosts
+                    .iter()
+                    .find(|h| h.id == host_id)
+                    .ok_or("HOST_NOT_FOUND")?;
+                crate::data::host_connections::require_connection_key(
+                    host,
+                    payload.expected_connection_key.as_deref(),
+                )?;
+                connection_key = Some(crate::data::host_connections::connection_key(host));
+                crate::ssh::transport::route_for_host(&app, vault_id, host, &hosts)?
             } else {
                 crate::ssh::transport::legacy_route(
                     &payload.host,
@@ -660,10 +678,15 @@ pub async fn create_interactive_session(
                 )
             });
 
+            let mut info = make_info(&session_id, &payload);
+            info.connection_key = connection_key;
+            info.host = route.target.host.clone();
+            info.username = route.target.username.clone();
+            info.port = Some(route.target.port);
             SessionRecord {
                 vault_id: payload.vault_id.clone(),
                 verified_host_keys,
-                info: make_info(&session_id, &payload),
+                info,
                 command_tx,
                 output,
                 _seq_counter: seq_counter,
@@ -983,6 +1006,8 @@ pub fn create_local_terminal(
 
     let now = now_unix_ms();
     let info = InteractiveSessionInfo {
+        connection_key: None,
+        port: None,
         vault_id: None,
         session_id: session_id.clone(),
         host_id: None,

@@ -74,6 +74,8 @@ pub struct MetadataBinding {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct JournalEvent {
+    #[serde(default)]
+    action: Option<String>,
     id: String,
     job_id: String,
     vault_id: String,
@@ -188,6 +190,7 @@ fn event(db: &Connection, row: &MetadataBinding, detail: &str) -> Result<()> {
         "running"
     };
     let e = JournalEvent {
+        action: None,
         id: Uuid::new_v4().to_string(),
         job_id: row.job_id.clone(),
         vault_id: row.vault_id.clone(),
@@ -198,6 +201,30 @@ fn event(db: &Connection, row: &MetadataBinding, detail: &str) -> Result<()> {
     db.execute(
         "INSERT INTO host_metadata_events(body) VALUES(?1)",
         [serde_json::to_string(&e).map_err(err)?],
+    )
+    .map_err(err)?;
+    Ok(())
+}
+/// Directory changes share the durable, idempotent OperationJob outbox.
+pub(crate) fn record_directory_edit(
+    db: &Connection,
+    vault: &str,
+    host: &str,
+    action: &str,
+) -> Result<()> {
+    initialize(db)?;
+    let event = JournalEvent {
+        action: Some(action.into()),
+        id: Uuid::new_v4().to_string(),
+        job_id: Uuid::new_v4().to_string(),
+        vault_id: vault.into(),
+        host_id: host.into(),
+        status: "completed".into(),
+        detail: "Host directory saved locally; existing credentials and history retained".into(),
+    };
+    db.execute(
+        "INSERT INTO host_metadata_events(body) VALUES(?1)",
+        [serde_json::to_string(&event).map_err(err)?],
     )
     .map_err(err)?;
     Ok(())
@@ -624,13 +651,37 @@ fn project_on(db: &Connection, audit: &mut Connection) -> Result<()> {
                         host_address: None,
                         username: None,
                         source: "workspace".into(),
-                        actor: Some("metadata-sync".into()),
-                        action: "host.metadata.sync".into(),
+                        actor: Some(
+                            if e.action.is_some() {
+                                "host-directory"
+                            } else {
+                                "metadata-sync"
+                            }
+                            .into(),
+                        ),
+                        action: e
+                            .action
+                            .clone()
+                            .unwrap_or_else(|| "host.metadata.sync".into()),
                         target: e.host_id,
                         risk: "low".into(),
-                        provider: Some("komari".into()),
-                        transport: Some("api".into()),
-                        params_summary: Some("Shared fields: name, group, tags".into()),
+                        provider: Some(
+                            if e.action.is_some() {
+                                "host-directory"
+                            } else {
+                                "komari"
+                            }
+                            .into(),
+                        ),
+                        transport: Some(if e.action.is_some() { "local" } else { "api" }.into()),
+                        params_summary: Some(
+                            if e.action.is_some() {
+                                "Host directory; no credential values"
+                            } else {
+                                "Shared fields: name, group, tags"
+                            }
+                            .into(),
+                        ),
                         confirmation_required: false,
                         request_id: Some(e.job_id.clone()),
                     },
@@ -647,7 +698,14 @@ fn project_on(db: &Connection, audit: &mut Connection) -> Result<()> {
                     result_summary: Some(e.detail.clone()),
                     error_code: None,
                     error_summary: None,
-                    actor: Some("metadata-sync".into()),
+                    actor: Some(
+                        if e.action.is_some() {
+                            "host-directory"
+                        } else {
+                            "metadata-sync"
+                        }
+                        .into(),
+                    ),
                 };
                 if current.status == "queued" {
                     update_on(&tx, update("running"))?;
@@ -999,6 +1057,49 @@ mod tests {
         assert_eq!(row.job_id, job);
         assert_eq!(row.attempts, 0);
     }
+    #[test]
+    fn directory_edit_projects_once_and_retains_existing_sync_audit() {
+        let mut db = setup();
+        enabled(&mut db, values("WEB", "prod"));
+        record_directory_edit(&db, "v", "h", "host.directory.edit").unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "shellbeam-directory-audit-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let mut audit = super::super::operation_jobs::open_database(&path).unwrap();
+        project_on(&db, &mut audit).unwrap();
+        let count: i64 = audit
+            .query_row("SELECT count(*) FROM operation_audit", [], |r| r.get(0))
+            .unwrap();
+        let row: (String, String, String, String) = audit.query_row("SELECT status,provider,transport,actor FROM operation_jobs WHERE action='host.directory.edit'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
+        assert_eq!(
+            row,
+            (
+                "completed".into(),
+                "host-directory".into(),
+                "local".into(),
+                "host-directory".into()
+            )
+        );
+        let sync_count: i64 = audit
+            .query_row(
+                "SELECT count(*) FROM operation_jobs WHERE action='host.metadata.sync'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sync_count, 1);
+        db.execute("UPDATE host_metadata_events SET projected=0", [])
+            .unwrap();
+        project_on(&db, &mut audit).unwrap();
+        let after: i64 = audit
+            .query_row("SELECT count(*) FROM operation_audit", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, after);
+        drop(audit);
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn audit_projection_replays_once_after_cross_database_crash() {
         let mut db = setup();

@@ -1,3 +1,4 @@
+import { hasSshConnection } from './hosts'
 import { COLLECTION_LIMITS, collectionConcurrency } from './collection-limits'
 import type { HostProfile } from './hosts'
 import {
@@ -415,6 +416,7 @@ export class ProbeProviderRegistry {
     const sections = requestSections(request)
     const provider = this.get(request.providerId ?? 'ssh-agentless')
     if (!provider) throw new Error(`probe_provider_unavailable:${request.providerId ?? 'ssh-agentless'}`)
+    if (provider.ref.kind === 'ssh-agentless' && !hasSshConnection(request.host)) throw new Error('HOST_CONNECTION_REQUIRED')
     const now = request.now ?? Date.now()
     const key = cacheKey(provider, request.host, sections, vaultId)
     const readCached = () => {

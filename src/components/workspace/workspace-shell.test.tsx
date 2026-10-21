@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { hostConnectionKey, type HostProfile } from '@/lib/hosts'
 import { WorkspaceShell } from './workspace-shell'
 
 vi.mock('@/lib/sessions', () => ({
@@ -42,6 +43,21 @@ vi.mock('./workspace-asset-inventory-app', () => ({
 
 describe('workspace shell', () => {
   const sessionId = 'session-1'
+  it('blocks new operations on an old connection after the default changes or SSH is removed', () => {
+    const host: HostProfile = { id: 'h', name: 'WEB', address: 'old.test', port: 22, username: 'ops', authType: 'password', group: 'Custom', tags: [], createdAt: 1, updatedAt: 1 }
+    const onOpenTerminal = vi.fn(), onEditHost = vi.fn()
+    const props = { sessionId, sessionConnectionKey: hostConnectionKey(host), hostId: host.id, hostName: host.name, hostAddress: host.address, mobile: false, activeApp: 'overview' as const, onSelectApp: vi.fn(), onOpenTerminal, onEditHost }
+    const changed = { ...host, address: 'new.test' }
+    const { rerender } = render(<WorkspaceShell {...props} hosts={[changed]} />)
+    expect(screen.queryByTestId('workspace-desktop-shell')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    expect(onOpenTerminal).toHaveBeenCalledWith(changed)
+    const pure = { ...host, connections: [], address: '', username: '', port: 0 }
+    rerender(<WorkspaceShell {...props} hosts={[pure]} />)
+    expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Configure SSH' }))
+    expect(onEditHost).toHaveBeenCalledWith(pure)
+  })
   it('renders the desktop shell when mobile is false', () => {
     render(
       <WorkspaceShell

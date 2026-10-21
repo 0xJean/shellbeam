@@ -134,6 +134,7 @@ export function HostsProvider({ children }: { children: ReactNode }) {
   }, [activeVaultId, refreshHosts])
 
   const handleUpdateHost = useCallback(async (host: HostProfile, draft: HostProfileDraft) => {
+    if (host.vaultId && host.vaultId !== activeVaultId) throw new Error('HOST_VAULT_SCOPE_MISMATCH')
     const updated: HostProfile = {
       ...host,
       ...draft,

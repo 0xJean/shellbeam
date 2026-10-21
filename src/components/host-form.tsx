@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
-import { validateHostDraft } from '@/lib/hosts'
+import { hasSshConnection, validateHostDraft } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import type { AuthType } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
@@ -24,6 +24,7 @@ interface HostFormProps {
   existingTags?: string[]
   availableHosts?: HostProfile[]
   metadataControls?: ReactNode
+  connectionOnly?: boolean
 }
 
 export function HostForm({
@@ -40,7 +41,9 @@ export function HostForm({
   existingTags = [],
   availableHosts = [],
   metadataControls,
+  connectionOnly = false,
 }: HostFormProps) {
+  const [connectionSecretId] = useState(() => crypto.randomUUID())
   const [address, setAddress] = useState(initial?.address ?? '')
   const [name, setName] = useState(initial?.name ?? '')
   const [group, setGroup] = useState(initial?.group ?? 'Custom')
@@ -50,8 +53,8 @@ export function HostForm({
   const [authType, setAuthType] = useState<AuthType>(initial?.authType ?? 'password')
   const [password, setPassword] = useState('')
   const [privateKey, setPrivateKey] = useState('')
-  const [vaultKeyRef, setVaultKeyRef] = useState(initial?.passwordKeyRef ?? initial?.privateKeyRef ?? '')
-  const [useInlineSecret, setUseInlineSecret] = useState(!initial?.passwordKeyRef && !initial?.privateKeyRef)
+  const [vaultKeyRef, setVaultKeyRef] = useState(initial?.passwordKeyRef ?? initial?.privateKeyRef ?? initial?.secretKeyRef ?? '')
+  const [useInlineSecret, setUseInlineSecret] = useState(!initial?.passwordKeyRef && !initial?.privateKeyRef && !initial?.secretKeyRef)
   const [vaultSaveName, setVaultSaveName] = useState('')
   const [tagDraft, setTagDraft] = useState('')
   const [groupDraft, setGroupDraft] = useState('')
@@ -72,7 +75,7 @@ export function HostForm({
 
   useEffect(() => {
     if (!initial) return
-    const nextRef = authType === 'password' ? (initial.passwordKeyRef ?? '') : (initial.privateKeyRef ?? '')
+    const nextRef = authType === 'password' ? (initial.passwordKeyRef ?? initial.secretKeyRef ?? '') : (initial.privateKeyRef ?? initial.secretKeyRef ?? '')
     setVaultKeyRef(nextRef)
     setUseInlineSecret(!nextRef)
     setVaultSaveName('')
@@ -86,7 +89,7 @@ export function HostForm({
     if (useInlineSecret) {
       const suffix = authType === 'password' ? 'password' : 'key'
       const existingRef = authType === 'password' ? initial?.passwordKeyRef : initial?.privateKeyRef
-      const saveName = vaultSaveName.trim() || existingRef || `${addrSlug}-${suffix}`
+      const saveName = vaultSaveName.trim() || existingRef || `${addrSlug}-${connectionOnly ? `${username}-${connectionSecretId}-` : ''}${suffix}`
       const secret = authType === 'password' ? password : privateKey
       if (secret) {
         try {
@@ -113,7 +116,7 @@ export function HostForm({
       tags,
       passwordKeyRef: authType === 'password' ? passwordKeyRef : undefined,
       privateKeyRef: authType === 'privateKey' ? privateKeyRef : undefined,
-      secretKeyRef: undefined,
+      secretKeyRef: initial?.secretKeyRef,
       jumpHostId: jumpHostId || undefined,
       jumpHost: jumpHost.trim() || undefined,
       jumpPort: jumpPort.trim() ? parseInt(jumpPort, 10) || undefined : undefined,
@@ -141,7 +144,7 @@ export function HostForm({
       <CardContent className="space-y-5 p-5">
         {/* Title */}
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold">{initial ? t('hostForm.editHost') : t('hostForm.newHost')}</h2>
+          <h2 className="text-base font-semibold">{connectionOnly ? t('hostDirectory.editConnection') : initial ? t('hostForm.editHost') : t('hostForm.newHost')}</h2>
           <span className="text-xs text-muted-foreground">{vaultName}</span>
         </div>
 
@@ -190,6 +193,7 @@ export function HostForm({
           </div>
         </div>
 
+        {!connectionOnly && <>
         {/* Group selector */}
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">{t('hostForm.parentGroup')}</label>
@@ -274,6 +278,7 @@ export function HostForm({
         </div>
 
         {metadataControls}
+        </>}
 
         {/* Divider */}
         <div className="border-t border-border" />
@@ -331,7 +336,7 @@ export function HostForm({
                   if (profile) { setJumpHost(profile.address); setJumpPort(String(profile.port)); setJumpUser(profile.username) }
                 }}>
                   <option value="">{t('hostForm.jumpProfileLegacy')}</option>
-                  {availableHosts.filter((host) => !host.jumpHost?.trim() && !host.jumpHostId).map((host) => <option key={host.id} value={host.id}>{host.name} · {host.username}@{host.address}</option>)}
+                  {availableHosts.filter((host) => hasSshConnection(host) && !host.jumpHost?.trim() && !host.jumpHostId).map((host) => <option key={host.id} value={host.id}>{host.name} · {host.username}@{host.address}</option>)}
                 </select>
                 <span>{t('hostForm.jumpProfileHelp')}</span>
               </label>
@@ -360,7 +365,7 @@ export function HostForm({
         <div data-tour="host-save" className="flex justify-end gap-2 pt-1">
           <Button variant="outline" size="sm" onClick={onCancel}>{t('hostForm.cancel')}</Button>
           <Button data-testid="host-save" size="sm" onClick={handleSubmit} disabled={submitting}>
-            {submitting ? t('hostForm.saving') : t('hostForm.save')}
+            {submitting ? t('hostForm.saving') : connectionOnly ? t('hostDirectory.useConnection') : t('hostForm.save')}
           </Button>
         </div>
       </CardContent>

@@ -1,6 +1,7 @@
 export const komariMappingCopy = {
   en: {
-    title: 'Komari node mappings', description: 'Bind a node to one host in this Vault. Manual choices survive address changes and synchronization.',
+    importHost: 'Add monitoring-only host', importFailed: 'Could not add host. It may already be linked, or the service changed. Refresh discovery; existing data is retained.',
+    title: 'Monitored hosts', description: 'Link a discovered server to an existing host, or add it without SSH. Name and address matches are suggestions that require confirmation.',
     refresh: 'Discover nodes', loading: 'Loading mappings…', empty: 'No enabled Komari servers in this Vault.',
     loadFailed: 'Node discovery failed. Check the server, token and Vault; saved choices remain available.',
     credentialMissing: 'No server API key is saved for this integration in this Vault. In Settings → Monitoring data sources → Komari, select this server, paste its API key and save.',
@@ -12,13 +13,14 @@ export const komariMappingCopy = {
     noNodes: 'Node discovery completed: the server returned no nodes.',
     saveFailed: 'The mapping could not be saved. Refresh and try again.', conflict: 'Mappings changed in another session. Discover nodes again before saving.',
     locked: 'Unlock this Vault to discover nodes or change mappings.', node: 'Node', host: 'Host', automatic: 'Automatic address matching',
-    manual: 'Manual binding', matched: 'Address match', unmapped: 'Unmapped', ambiguous: 'Address matches multiple hosts; choose one explicitly.',
+    manual: 'Manual binding', matched: 'Suggested match · confirm before linking', unmapped: 'Unmapped', ambiguous: 'Address matches multiple hosts; choose one explicitly.',
     missing: 'Node absent from the latest discovery; manual binding is retained.', unavailable: 'Saved node; current discovery is unavailable.',
-    apply: 'Save binding', reset: 'Return to automatic', saving: 'Saving…', choose: 'Choose a host', noHosts: 'No hosts in this Vault.',
+    apply: 'Save binding', reset: 'Unlink', saving: 'Saving…', choose: 'Choose a host', noHosts: 'No hosts in this Vault.',
     hostMissing: 'Saved host is unavailable', occupied: 'already manually bound',
   },
   'zh-CN': {
-    title: 'Komari 节点映射', description: '将节点绑定到当前 Vault 的一台主机。手动选择会在地址变化和后续同步中保留。',
+    importHost: '添加为仅监控主机', importFailed: '添加失败，节点可能已关联或服务配置已变化。请刷新发现结果，现有数据保持不变。',
+    title: '监控主机', description: '关联当前目录的主机，或添加为仅监控主机。名称和地址匹配仅供建议，确认后才会关联。',
     refresh: '发现节点', loading: '正在加载映射…', empty: '当前 Vault 没有已启用的 Komari 服务器。',
     loadFailed: '节点发现失败，请检查服务器、Token 和 Vault；已保存的绑定仍然保留。',
     credentialMissing: '当前 Vault 尚未为此集成保存服务器 API 密钥。请在设置 → 监控数据源 → Komari 中选择此服务器，粘贴 API 密钥并保存。',
@@ -30,9 +32,9 @@ export const komariMappingCopy = {
     noNodes: '节点发现已完成：服务器返回 0 个节点。',
     saveFailed: '映射保存失败，请刷新后重试。', conflict: '其他会话已修改映射，请重新发现节点后再保存。',
     locked: '请解锁当前 Vault 后发现节点或修改映射。', node: '节点', host: '主机', automatic: '按地址自动匹配',
-    manual: '手动绑定', matched: '地址匹配', unmapped: '未映射', ambiguous: '地址匹配到多台主机，请明确选择一台。',
+    manual: '手动绑定', matched: '建议关联 · 待确认', unmapped: '未映射', ambiguous: '地址匹配到多台主机，请明确选择一台。',
     missing: '最近发现结果中没有此节点，手动绑定仍保留。', unavailable: '已保存的节点，当前无法完成发现。',
-    apply: '保存绑定', reset: '恢复自动匹配', saving: '正在保存…', choose: '选择主机', noHosts: '当前 Vault 没有主机。',
+    apply: '保存绑定', reset: '解除关联', saving: '正在保存…', choose: '选择主机', noHosts: '当前 Vault 没有主机。',
     hostMissing: '已绑定的主机不可用', occupied: '已被手动绑定',
   },
 } as const

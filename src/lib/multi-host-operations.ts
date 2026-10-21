@@ -1,3 +1,4 @@
+import { hasSshConnection } from './hosts'
 import type { HostProfile } from './hosts'
 import {
   createOperationJob,
@@ -118,6 +119,7 @@ export function selectBatchHosts(hosts: readonly HostProfile[], selectedHostIds?
   }
   const missing = ids.filter((id) => !byId.has(id))
   if (missing.length > 0) throw new Error(`batch_selection_unknown_host:${missing.join(',').slice(0, 240)}`)
+  if (ids.some(id => !hasSshConnection(byId.get(id)!))) throw new Error('HOST_CONNECTION_REQUIRED')
   return {
     hosts: ids.map((id) => byId.get(id)!).filter(Boolean),
     selectedHostIds: ids,

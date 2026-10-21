@@ -1,3 +1,4 @@
+import { hasSshConnection, hostConnectionKey } from '@/lib/hosts'
 import { parseHostKeyError, type HostKeyInfo } from '@/components/host-key-confirm-dialog'
 import { appendActivity } from '@/lib/activity-log'
 import { t } from '@/lib/i18n'
@@ -280,6 +281,8 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
   const activeVaultIdRef = useRef(activeVaultId)
   activeVaultIdRef.current = activeVaultId
   const { hosts, defaultUsername, keepAliveIntervalSecs, setSelectedHostId } = useHosts()
+  const hostsRef = useRef(hosts)
+  hostsRef.current = hosts
 
   const [interactiveSessions, setInteractiveSessions] = useState<InteractiveSessionInfo[]>([])
   const [interactiveChunksBySession, setInteractiveChunksBySession] = useState<Record<string, InteractiveOutputChunk[]>>({})
@@ -553,13 +556,16 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     for (let attempt = 1; attempt <= rs.maxRetries; attempt++) {
       await new Promise<void>((r) => window.setTimeout(r, rs.intervalMs))
       if (sourceVaultId !== activeVaultIdRef.current) break
-      const host = hosts.find((h) => h.id === hostId && (!h.vaultId || h.vaultId === sourceVaultId))
-      if (!host) break
+      const host = hostsRef.current.find((h) => h.id === hostId && (!h.vaultId || h.vaultId === sourceVaultId))
+      if (!host || !hasSshConnection(host)) break
+      const original = interactiveSessionsRef.current.find(session => session.sessionId === sessionId)
+      if (original?.connectionKey && original.connectionKey !== hostConnectionKey(host)) break
       try {
         const previousWorkspaceState = workspaceBySessionRef.current[sessionId]
         const previousBrowserState = browserBySessionRef.current[sessionId]
         const secret = undefined
         const newSession = await createInteractiveSession({
+          expectedConnectionKey: original?.connectionKey ?? hostConnectionKey(host),
           vaultId: sourceVaultId, hostId: host.id, host: host.address, port: host.port || 22,
           username: host.username || defaultUsername, authType: host.authType,
           password: host.authType === 'password' ? secret : undefined,
@@ -941,7 +947,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     const effectiveRouteMode = resolveBrowserRouteMode(state.routeMode, hasRemoteSession)
     if (effectiveRouteMode !== 'remote') return
 
-    const host = session?.hostId ? hosts.find((item) => item.id === session.hostId) : undefined
+    const host = session?.hostId ? hosts.find((item) => item.id === session.hostId && (!session.connectionKey || session.connectionKey === hostConnectionKey(item))) : undefined
     setOutput(t('browser.feedback.transportRecovering', {
       host: host?.name ?? host?.address ?? sessionId,
     }))
@@ -1080,7 +1086,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       const browserId = getManagedBrowserId(sessionId, state)
       const syncStartedAt = performance.now()
       const session = interactiveSessionsRef.current.find((item) => item.sessionId === sessionId)
-      const host = session?.hostId ? hosts.find((item) => item.id === session.hostId) : undefined
+      const host = session?.hostId ? hosts.find((item) => item.id === session.hostId && (!session.connectionKey || session.connectionKey === hostConnectionKey(item))) : undefined
       const authSecret = workspaceAuthBySession[sessionId]
       const hasRemoteSession = Boolean(session?.hostId)
       const effectiveRouteMode = resolveBrowserRouteMode(state.routeMode, hasRemoteSession)
@@ -1375,7 +1381,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
   async function openHostConnection(hostId: string, placeholderId?: string, workspaceApp?: WorkspaceAppId) {
     const host = hosts.find((h) => h.id === hostId)
-    if (!host) return
+    if (!host || !hasSshConnection(host)) return
     setSelectedHostId(hostId)
     const targetSessionId = placeholderId ?? `pending-${Date.now()}`
     const newTab: SessionTab = {
@@ -1401,6 +1407,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     try {
       const resolvedSecret = undefined
       const session = await connectWithHostKeyPrompt({
+        expectedConnectionKey: hostConnectionKey(host),
         vaultId: activeVaultId, hostId: host.id, host: host.address, port: host.port || 22,
         username: host.username || defaultUsername, authType: host.authType,
         password: host.authType === 'password' ? resolvedSecret : undefined,
@@ -1452,8 +1459,8 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
   async function openHostWorkspace(hostId: string, app: WorkspaceAppId) {
     const host = hosts.find((profile) => profile.id === hostId)
-    if (!host) return
-    const existing = interactiveSessionsRef.current.find((session) => session.hostId === hostId && session.vaultId === activeVaultId && session.status === 'running')
+    if (!host || !hasSshConnection(host)) return
+    const existing = interactiveSessionsRef.current.find((session) => session.hostId === hostId && session.vaultId === activeVaultId && session.status === 'running' && session.host === host.address && session.username === host.username && (!session.connectionKey || session.connectionKey === hostConnectionKey(host)))
     if (!existing) { await openHostConnection(hostId, undefined, app); return }
     setPcSessionTabs((previous) => previous.some((tab) => tab.sessionId === existing.sessionId) ? previous : [...previous, {
       sessionId: existing.sessionId,

@@ -1,6 +1,6 @@
 import { COLLECTION_LIMITS, collectionConcurrency } from './collection-limits'
 import { observationVaultIds, scopeObservationHosts } from './host-observation-scope'
-import type { HostProfile } from '@/lib/hosts'
+import { hasSshConnection, type HostProfile } from '@/lib/hosts'
 import {
   getServerMonitorHostKey,
   listServerMonitorHistory,
@@ -113,7 +113,7 @@ export async function scanServerMonitorHosts({
     return { scannedHosts: [], skippedHosts: hosts }
   }
 
-  hosts = scopeObservationHosts(hosts, vaultId)
+  hosts = scopeObservationHosts(hosts, vaultId).filter(hasSshConnection)
   pruneServerMonitorStates(hosts)
   const pending = hosts.slice()
   const scannedHosts: HostProfile[] = []

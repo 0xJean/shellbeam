@@ -553,7 +553,7 @@ describe('pc layout', () => {
     useVault.mockReturnValue({
       activeVaultId: 'vault-1',
       vaults: [{ id: 'vault-1', name: 'Vault' }],
-      vaultStatusState: { unlocked: false },
+      vaultStatusState: { unlocked: true },
       vaultKeys: ['prod-password'],
       vaultBusy: false,
       vaultAutoLockMinutes: 15,

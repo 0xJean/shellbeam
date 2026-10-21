@@ -1,3 +1,4 @@
+import { hasSshConnection } from '@/lib/hosts'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '@/lib/i18n'
 import {
@@ -84,7 +85,7 @@ export function SftpDualPane({ hosts, selectedHostId, vaultId, resolveAuthSecret
   const [selectedRemoteHostId, setSelectedRemoteHostId] = useState<string | null>(selectedHostId)
   const autoConnectHostRef = useRef<string | null>(null)
 
-  const remoteHost = hosts.find((h) => h.id === selectedRemoteHostId) ?? null
+  const remoteHost = hosts.find((h) => h.id === selectedRemoteHostId && hasSshConnection(h)) ?? null
   const remoteFs = useMemo(
     () => (remoteHost ? createRemoteFsClient(remoteHost, resolveAuthSecret, { vaultId }) : null),
     [remoteHost, resolveAuthSecret, vaultId],
@@ -398,7 +399,7 @@ export function SftpDualPane({ hosts, selectedHostId, vaultId, resolveAuthSecret
             className="h-7 max-w-[200px] text-xs [&_button]:h-7 [&_button]:text-xs"
             options={[
               { value: '', label: t('sftp.selectHost') },
-              ...hosts.map((h) => ({
+              ...hosts.filter(hasSshConnection).map((h) => ({
                 value: h.id,
                 label: `${h.name} (${h.address})`,
                 icon: (

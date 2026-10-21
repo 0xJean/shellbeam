@@ -96,7 +96,7 @@ pub struct KomariMappingEdit {
     pub vault_id: String,
     pub integration_id: String,
     pub node_id: String,
-    /// None explicitly removes the manual choice and resumes address matching.
+    /// None removes the manual choice. Address matches remain suggestions only.
     pub host_id: Option<String>,
     pub expected_revision: i64,
 }
@@ -488,6 +488,10 @@ fn edit_mapping(
         return Err("KOMARI_MAPPING_CONFLICT".into());
     }
     if let Some(host) = &host {
+        let duplicate: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM komari_mappings m JOIN komari_integrations i ON i.id=m.integration_id JOIN komari_integrations current ON current.id=?1 WHERE i.vault_id=?2 AND i.endpoint=current.endpoint AND m.node_id=?3 AND m.host_id!=?4 AND m.integration_id!=?1)", params![integration,vault,node,host], |r|r.get(0)).map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
+        if duplicate {
+            return Err("KOMARI_NODE_ALREADY_BOUND".into());
+        }
         let found: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM workspace_hosts WHERE vault_id=?1 AND id=?2)",
@@ -538,6 +542,112 @@ fn edit_mapping(
     let saved = mapping_state(&tx, &integration)?;
     tx.commit().map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
     Ok(saved)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportMonitoringHost {
+    pub vault_id: String,
+    pub integration_id: String,
+    pub node_id: String,
+    pub expected_revision: i64,
+    pub expected_integration_version: i64,
+    pub name: String,
+    pub group: String,
+    pub tags: Vec<String>,
+}
+
+fn import_monitoring_host_on(
+    conn: &mut Connection,
+    p: &ImportMonitoringHost,
+) -> Result<super::hosts::HostProfile, String> {
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|_| "HOST_DIRECTORY_STORE_FAILED")?;
+    require_integration_scope(&tx, &p.integration_id, &p.vault_id)?;
+    let (version, endpoint): (i64, String) = tx
+        .query_row(
+            "SELECT updated_at,endpoint FROM komari_integrations WHERE id=?1 AND vault_id=?2",
+            params![p.integration_id, p.vault_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| "KOMARI_MAPPING_SCOPE_MISMATCH")?;
+    if version != p.expected_integration_version
+        || mapping_state(&tx, &p.integration_id)?.revision != p.expected_revision
+    {
+        return Err("KOMARI_MAPPING_CONFLICT".into());
+    }
+    id(&p.node_id, "node id")?;
+    if p.name.trim().is_empty()
+        || p.name.len() > 400
+        || p.group.len() > 400
+        || p.tags.len() > 50
+        || p.tags.iter().any(|t| t.len() > 100)
+    {
+        return Err("HOST_NAME_REQUIRED".into());
+    }
+    // The same endpoint/node imported through another saved integration is
+    // still the same directory entry within this Vault. Never infer from IP/name.
+    let occupied: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM komari_mappings m JOIN komari_integrations i ON i.id=m.integration_id WHERE i.vault_id=?1 AND i.endpoint=?2 AND m.node_id=?3)", params![p.vault_id,endpoint,p.node_id], |r|r.get(0)).map_err(|_| "HOST_DIRECTORY_STORE_FAILED")?;
+    if occupied {
+        return Err("KOMARI_NODE_ALREADY_BOUND".into());
+    }
+    let now = now_unix_ms();
+    let host = super::hosts::HostProfile {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: p.name.trim().into(),
+        group: p.group.clone(),
+        tags: p.tags.clone(),
+        connections: Some(vec![]),
+        default_connection_id: None,
+        address: String::new(),
+        username: String::new(),
+        port: 0,
+        auth_type: "password".into(),
+        secret_key_ref: None,
+        password_key_ref: None,
+        private_key_ref: None,
+        jump_host_id: None,
+        jump_host: None,
+        jump_port: None,
+        jump_user: None,
+        created_at: now,
+        updated_at: now,
+    };
+    super::hosts::insert_host_row(&tx, &p.vault_id, &host)?;
+    insert_mapping(
+        &tx,
+        &KomariMappingPayload {
+            integration_id: p.integration_id.clone(),
+            host_id: host.id.clone(),
+            node_id: p.node_id.clone(),
+            source: "manual".into(),
+            confidence: "explicit".into(),
+            updated_at: Some(now),
+        },
+    )?;
+    bump_mapping_revision(&tx, &p.integration_id)?;
+    tx.execute("UPDATE komari_sync_state SET last_synced_at=0,last_successful_sync_at=NULL WHERE integration_id=?1", [&p.integration_id]).map_err(|_| "HOST_DIRECTORY_STORE_FAILED")?;
+    super::host_metadata::record_directory_edit(
+        &tx,
+        &p.vault_id,
+        &host.id,
+        "host.directory.import",
+    )?;
+    tx.commit().map_err(|_| "HOST_DIRECTORY_STORE_FAILED")?;
+    Ok(host)
+}
+
+#[tauri::command]
+pub fn import_monitoring_host(
+    app: tauri::AppHandle,
+    payload: ImportMonitoringHost,
+) -> Result<super::hosts::HostProfile, String> {
+    app.state::<crate::vault::secrets::VaultState>()
+        .while_unlocked(&payload.vault_id, || {
+            super::hosts::load_hosts(&app, Some(&payload.vault_id))?;
+            import_monitoring_host_on(&mut open(&app)?, &payload)
+        })
 }
 
 #[tauri::command]
@@ -679,7 +789,7 @@ pub fn upsert_komari_mapping(
         .map_err(|err| format!("Commit Komari mapping failed: {err}"))
 }
 
-/// Replace automatic mappings without discarding explicit user choices.
+/// Validate sync mappings without authorizing new address-based associations.
 /// Manual bindings are changed through the revision-checked edit command.
 #[tauri::command]
 pub fn replace_komari_mappings(
@@ -739,6 +849,12 @@ fn replace_sync_mappings(
             {
                 return Err("KOMARI_MAPPING_CONFLICT".into());
             }
+        } else if !saved.mappings.iter().any(|old| {
+            old.host_id == mapping.host_id
+                && old.node_id == mapping.node_id
+                && old.source == mapping.source
+        }) {
+            return Err("KOMARI_MAPPING_CONFIRMATION_REQUIRED".into());
         } else if manual
             .iter()
             .any(|saved| saved.host_id == mapping.host_id || saved.node_id == mapping.node_id)
@@ -746,14 +862,7 @@ fn replace_sync_mappings(
             return Err("KOMARI_MAPPING_CONFLICT".into());
         }
     }
-    tx.execute(
-        "DELETE FROM komari_mappings WHERE integration_id=?1 AND source!='manual'",
-        params![integration],
-    )
-    .map_err(|_| "KOMARI_MAPPING_SAVE_FAILED")?;
-    for mapping in mappings.iter().filter(|mapping| mapping.source != "manual") {
-        insert_mapping(tx, mapping)?;
-    }
+    // Retain legacy suggestions and history; only explicit edits change bindings.
     Ok(())
 }
 
@@ -926,7 +1035,7 @@ mod tests {
 
     fn prepare_mapping_db(conn: &rusqlite::Connection) {
         super::initialize(conn).unwrap();
-        conn.execute_batch("CREATE TABLE IF NOT EXISTS komari_integrations(id TEXT PRIMARY KEY,vault_id TEXT); CREATE TABLE IF NOT EXISTS workspace_hosts(vault_id TEXT,id TEXT,PRIMARY KEY(vault_id,id)); INSERT OR IGNORE INTO komari_integrations VALUES('server','vault-a'); INSERT OR IGNORE INTO workspace_hosts VALUES('vault-a','one'),('vault-a','two'),('vault-b','foreign');").unwrap();
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS komari_integrations(id TEXT PRIMARY KEY,vault_id TEXT,endpoint TEXT,updated_at INTEGER); CREATE TABLE IF NOT EXISTS workspace_hosts(vault_id TEXT,id TEXT,PRIMARY KEY(vault_id,id)); INSERT OR IGNORE INTO komari_integrations VALUES('server','vault-a','https://monitor.test',1); INSERT OR IGNORE INTO workspace_hosts VALUES('vault-a','one'),('vault-a','two'),('vault-b','foreign'); INSERT OR IGNORE INTO komari_mappings VALUES('server','one','node','address','matched',1);").unwrap();
     }
 
     fn edit(node: &str, host: Option<&str>, revision: i64) -> super::KomariMappingEdit {
@@ -1114,7 +1223,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_mapping_survives_reopen_and_sync_then_explicit_release_resumes_address_matching() {
+    fn manual_mapping_survives_reopen_and_sync_then_release_requires_new_confirmation() {
         let path = std::env::temp_dir().join(format!(
             "shellbeam-komari-mapping-{}.sqlite",
             uuid::Uuid::new_v4()
@@ -1156,10 +1265,14 @@ mod tests {
                 .query_row("SELECT COUNT(*) FROM probe_snapshots", [], |row| row.get(0))
                 .unwrap();
             assert_eq!(count, 0);
-            super::persist_sync(&mut conn, &sync(2, "one", "address")).unwrap();
+            assert_eq!(
+                super::persist_sync(&mut conn, &sync(2, "one", "address")).unwrap_err(),
+                "KOMARI_MAPPING_CONFIRMATION_REQUIRED"
+            );
+            super::edit_mapping(&mut conn, &edit("node", Some("one"), 2)).unwrap();
             let mapping = super::mapping_state(&conn, "server").unwrap();
             assert_eq!(mapping.mappings[0].host_id, "one");
-            assert_eq!(mapping.mappings[0].source, "address");
+            assert_eq!(mapping.mappings[0].source, "manual");
         }
         std::fs::remove_file(path).unwrap();
     }
@@ -1232,25 +1345,23 @@ mod tests {
     }
 
     #[test]
-    fn automatic_reassignment_removes_old_latest_caches_without_touching_history() {
+    fn automatic_reassignment_requires_confirmation_and_retains_legacy_history() {
         let mut conn = mapping_db();
-        conn.execute_batch("CREATE TABLE provider_metric_history(host_id TEXT,node_id TEXT); INSERT INTO provider_metric_history VALUES('one','node');").unwrap();
+        conn.execute_batch("CREATE TABLE provider_metric_history(host_id TEXT,node_id TEXT); INSERT INTO provider_metric_history VALUES('one','node'); INSERT OR IGNORE INTO komari_mappings VALUES('server','one','node','address','matched',1);").unwrap();
         super::persist_sync(&mut conn, &sync(0, "one", "address")).unwrap();
-        super::persist_sync(&mut conn, &sync(0, "two", "address")).unwrap();
-        for table in ["komari_snapshots", "probe_snapshots"] {
-            let hosts: Vec<String> = conn
-                .prepare(&format!("SELECT host_id FROM {table}"))
-                .unwrap()
-                .query_map([], |row| row.get(0))
-                .unwrap()
-                .collect::<Result<_, _>>()
-                .unwrap();
-            assert_eq!(hosts, ["two"]);
-        }
         assert_eq!(
-            conn.query_row("SELECT host_id FROM provider_metric_history", [], |row| row
-                .get::<_, String>(0))
-                .unwrap(),
+            super::persist_sync(&mut conn, &sync(0, "two", "address")).unwrap_err(),
+            "KOMARI_MAPPING_CONFIRMATION_REQUIRED"
+        );
+        assert_eq!(
+            super::mapping_state(&conn, "server").unwrap().mappings[0].host_id,
+            "one"
+        );
+        assert_eq!(
+            conn.query_row("SELECT host_id FROM provider_metric_history", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
             "one"
         );
     }
@@ -1295,5 +1406,109 @@ mod tests {
             })
             .unwrap();
         assert_eq!(sampled, 200);
+    }
+}
+
+#[cfg(test)]
+mod directory_import_tests {
+    use super::*;
+    fn payload() -> ImportMonitoringHost {
+        ImportMonitoringHost {
+            vault_id: "a".into(),
+            integration_id: "source".into(),
+            node_id: "stable-node".into(),
+            expected_revision: 0,
+            expected_integration_version: 1,
+            name: "WEB".into(),
+            group: "prod".into(),
+            tags: vec!["web".into()],
+        }
+    }
+    fn db() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        super::super::hosts::initialize_host_schema(&db).unwrap();
+        initialize(&db).unwrap();
+        db.execute_batch("CREATE TABLE komari_integrations(id TEXT PRIMARY KEY,vault_id TEXT,endpoint TEXT,updated_at INTEGER); INSERT INTO komari_integrations VALUES('source','a','https://monitor.test',1),('alias','a','https://monitor.test',1),('foreign','b','https://monitor.test',1);").unwrap();
+        db
+    }
+    #[test]
+    fn import_is_atomic_scoped_and_deduplicates_endpoint_node_without_addresses() {
+        let mut db = db();
+        let p = payload();
+        let host = import_monitoring_host_on(&mut db, &p).unwrap();
+        assert!(host.address.is_empty());
+        assert_eq!(host.connections.as_ref().unwrap().len(), 0);
+        assert_eq!(host.port, 0);
+        assert_eq!(
+            mapping_state(&db, "source").unwrap().mappings[0].host_id,
+            host.id
+        );
+        let mut stale = payload();
+        stale.expected_revision = 0;
+        assert_eq!(
+            import_monitoring_host_on(&mut db, &stale).unwrap_err(),
+            "KOMARI_MAPPING_CONFLICT"
+        );
+        stale.expected_revision = 1;
+        assert_eq!(
+            import_monitoring_host_on(&mut db, &stale).unwrap_err(),
+            "KOMARI_NODE_ALREADY_BOUND"
+        );
+        let mut alias = payload();
+        alias.integration_id = "alias".into();
+        assert_eq!(
+            import_monitoring_host_on(&mut db, &alias).unwrap_err(),
+            "KOMARI_NODE_ALREADY_BOUND"
+        );
+        let mut foreign = payload();
+        foreign.integration_id = "foreign".into();
+        assert_eq!(
+            import_monitoring_host_on(&mut db, &foreign).unwrap_err(),
+            "KOMARI_MAPPING_SCOPE_MISMATCH"
+        );
+        foreign.vault_id = "b".into();
+        let other = import_monitoring_host_on(&mut db, &foreign).unwrap();
+        assert_ne!(host.id, other.id);
+        assert_eq!(
+            db.query_row(
+                "SELECT COUNT(*) FROM workspace_hosts WHERE vault_id='a'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        let body: String = db
+            .query_row(
+                "SELECT body FROM host_metadata_events ORDER BY seq LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(body.contains("host.directory.import"));
+        assert!(body.contains(&host.id));
+        assert!(!body.contains("password"));
+    }
+    #[test]
+    fn stale_discovery_and_failed_audit_cannot_leave_an_unbound_host() {
+        let mut db = db();
+        let mut p = payload();
+        p.expected_integration_version = 0;
+        assert_eq!(
+            import_monitoring_host_on(&mut db, &p).unwrap_err(),
+            "KOMARI_MAPPING_CONFLICT"
+        );
+        p.expected_integration_version = 1;
+        super::super::host_metadata::initialize(&db).unwrap();
+        db.execute_batch("CREATE TRIGGER reject_directory_audit BEFORE INSERT ON host_metadata_events BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+        assert!(import_monitoring_host_on(&mut db, &p).is_err());
+        assert_eq!(
+            db.query_row("SELECT COUNT(*) FROM workspace_hosts", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert!(mapping_state(&db, "source").unwrap().mappings.is_empty());
+        assert_eq!(mapping_state(&db, "source").unwrap().revision, 0);
     }
 }

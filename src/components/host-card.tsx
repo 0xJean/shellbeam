@@ -1,3 +1,4 @@
+import { hasSshConnection, hostConnections } from '@/lib/hosts'
 import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { Button } from '@/components/ui/button'
@@ -150,7 +151,7 @@ function formatJumpHost(host: HostProfile, route?: Pick<HostOperationalSummary, 
 
 function HostOpsQuickActions({ host, onOpenWorkspace, onRefresh }: { host: HostProfile; onOpenWorkspace?: (id: string, app: WorkspaceAppId) => void; onRefresh?: (id: string) => void }) {
   const { t } = useT()
-  if (!onOpenWorkspace) return null
+  if (!onOpenWorkspace || !hasSshConnection(host)) return null
   return <>
     <button
       type="button"
@@ -227,7 +228,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
         >
           <span role="button" tabIndex={0}
             className="flex h-9 w-9 items-center justify-center rounded-md text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] md:h-7 md:w-7"
-            onClick={() => onConnect(host.id)} title={t('hostCard.connect')}>
+            onClick={() => hasSshConnection(host) ? onConnect(host.id) : onEdit(host.id)} title={hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}>
             <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />
           </span>
           <span role="button" tabIndex={0}
@@ -250,22 +251,23 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{host.name}</p>
             <p className="mt-0.5 truncate text-xs text-[var(--workspace-text-muted)]">
-              {resource?.os || `${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
+              {!hasSshConnection(host) ? t('hostDirectory.monitoringOnly') : resource?.os || `${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
+              {hostConnections(host).length > 1 && <span className="ml-2">{t('hostDirectory.connectionCount', { count: hostConnections(host).length })}</span>}
             </p>
           </div>
         </div>
 
         <div className="flex-1 space-y-2 border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
-          <div className="flex items-center justify-between">
+          {hasSshConnection(host) && <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs text-[var(--workspace-text-muted)]">
-              <User className="h-3 w-3" /><span className="truncate">{host.username || 'root'}</span>
+              <User className="h-3 w-3" /><span className="truncate">{hasSshConnection(host) ? host.username || 'root' : '—'}</span>
             </div>
             <div className="flex items-center gap-1.5 text-xs text-[var(--workspace-text-muted)]">
               {host.authType === 'privateKey'
                 ? <><KeyRound className="h-3 w-3" /><span>{t('hostCard.sshKey')}</span></>
                 : <><LockKeyhole className="h-3 w-3" /><span>{t('hostCard.password')}</span></>}
             </div>
-          </div>
+          </div>}
           <div className="flex flex-wrap items-center gap-2">
             {sc ? (
               <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold', sc.bg, sc.text)}>
@@ -326,13 +328,14 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
         </div>
 
         {operations && <section id={detailsId} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!detailsOpen} className="border-t border-[color:var(--workspace-border-soft)] p-4">
+          {detailsOpen && !monitoring && (metrics || resource) && <div className="mb-4 max-w-lg"><HostResourceSummary resource={resource} metrics={metrics} t={t} /></div>}
           <HostOperationalMeta host={host} summary={operations} t={t} expanded />
         </section>}
         <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
           <div className="flex flex-wrap items-center gap-2">
             <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
-            <Button data-testid="host-connect" size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => onConnect(host.id)}>
-              <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{t('hostCard.connect')}
+            <Button data-testid="host-connect" size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => hasSshConnection(host) ? onConnect(host.id) : onEdit(host.id)}>
+              <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}
             </Button>
             {host.updatedAt > 0 && (
               <span className="shrink-0 flex items-center gap-1 text-[10px] text-[var(--workspace-text-subtle)]" title={new Date(host.updatedAt).toLocaleString()}>
@@ -922,7 +925,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
         )}
       >
         <div data-testid="host-list-primary" role="button" tabIndex={0}
-          onClick={() => onSelect(host.id)} onDoubleClick={() => onConnect(host.id)}
+          onClick={() => onSelect(host.id)} onDoubleClick={() => hasSshConnection(host) ? onConnect(host.id) : onEdit(host.id)}
           onKeyDown={(event) => {
             if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
               event.preventDefault()
@@ -943,7 +946,8 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
               <p className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{host.name}</p>
             </div>
             <p className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">
-              {resource?.os || `${host.username || 'root'}@${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
+              {!hasSshConnection(host) ? t('hostDirectory.monitoringOnly') : resource?.os || `${host.username || 'root'}@${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
+              {hostConnections(host).length > 1 && <span className="ml-2">{t('hostDirectory.connectionCount', { count: hostConnections(host).length })}</span>}
             </p>
             <HostGroupTagsMeta operations={operations} host={host} t={t} agentDeploymentCount={agentDeploymentCount} agentDeploymentStatus={agentDeploymentStatus} />
           </div>
@@ -963,9 +967,9 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
         </div>}
 
         <div className="min-w-0 xl:self-center">
-          <div className="truncate font-mono text-sm font-semibold text-[var(--workspace-text-strong)]">{host.address}</div>
+          <div className="truncate font-mono text-sm font-semibold text-[var(--workspace-text-strong)]">{host.address || '—'}</div>
           <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">
-            {host.port !== 22 ? t('hosts.portValue', { port: host.port }) : t('hosts.defaultSshPort')}
+            {hasSshConnection(host) ? host.port !== 22 ? t('hosts.portValue', { port: host.port }) : t('hosts.defaultSshPort') : t('hostDirectory.addSsh')}
           </div>
         </div>
 
@@ -988,7 +992,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
           <button
             type="button"
             className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)] md:h-8 md:w-8"
-            data-testid="host-connect" onClick={(e) => { e.stopPropagation(); onConnect(host.id) }} title={t('hostCard.connect')}>
+            data-testid="host-connect" onClick={(e) => { e.stopPropagation(); if (hasSshConnection(host)) onConnect(host.id); else onEdit(host.id) }} title={hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}>
             <Terminal className="h-4 w-4" />
           </button>
           <button
@@ -1007,6 +1011,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
         </div>
         {operations && <section id={detailsId} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!detailsOpen}
           className="cursor-default rounded-b-2xl border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4">
+          {detailsOpen && !monitoring && (metrics || resource) && <div className="mb-4 max-w-lg"><HostResourceSummary resource={resource} metrics={metrics} t={t} /></div>}
           <HostOperationalMeta host={host} summary={operations} t={t} expanded />
         </section>}
       </div>

@@ -1,3 +1,4 @@
+import { hasSshConnection } from '@/lib/hosts'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { HostProfile } from '@/lib/hosts'
@@ -174,7 +175,7 @@ export function MultiHostOperationsPanel({
               const atLimit = selectedHostIds.length >= boundedMax && !selected
               return (
                 <label key={host.id} className={cn('flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-xs transition-colors', selected ? 'border-primary/40 bg-primary/5' : 'border-transparent hover:bg-muted/40', atLimit && 'cursor-not-allowed opacity-50')}>
-                  <input type="checkbox" checked={selected} onChange={() => toggleHost(host.id)} disabled={disabled || running || atLimit} className="h-3.5 w-3.5 accent-primary" />
+                  <input type="checkbox" checked={selected} onChange={() => toggleHost(host.id)} disabled={!hasSshConnection(host) || disabled || running || atLimit} className="h-3.5 w-3.5 accent-primary" />
                   <Server className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate font-medium">{host.name}</span>
                   <span className="max-w-40 truncate text-[11px] text-muted-foreground">{host.address}{host.jumpHostId || host.jumpHost ? ` · ${t('multiHost.proxyJump')}` : ''}</span>

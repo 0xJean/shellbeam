@@ -3,7 +3,7 @@ import type { HostProfile } from '@/lib/hosts'
 import { listKomariIntegrations, type KomariIntegration } from '@/lib/komari-config'
 import { KomariApiError, listKomariClients, type KomariClient } from '@/lib/komari'
 import { mapKomariNodesToHosts } from '@/lib/komari-mapping'
-import { editKomariMapping, getKomariMappingState, manualKomariMappings, type KomariMappingState } from '@/lib/komari-persistence'
+import { importMonitoringHost, editKomariMapping, getKomariMappingState, manualKomariMappings, type KomariMappingState } from '@/lib/komari-persistence'
 import { komariMappingCopy } from '@/lib/locales/komari-mappings'
 import { useT } from '@/lib/i18n'
 import { Button } from './ui/button'
@@ -24,12 +24,13 @@ export interface KomariMappingsPanelProps {
   integrationId?: string
   initiallyOpen?: boolean
   discoveredNodes?: KomariClient[]
+  onHostImported?: (host: HostProfile) => void
   onStateChange?: (state: { busy: boolean; unmapped: number; unsaved: boolean; failed: boolean }) => void
 }
 
 /** Discovery is explicit and read-only. A saved binding uses native Vault,
  * host and revision checks; remote discovery never writes a mapping itself. */
-export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoadVaultSecret, integrationId, initiallyOpen = false, discoveredNodes, onStateChange }: KomariMappingsPanelProps) {
+export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoadVaultSecret, integrationId, initiallyOpen = false, discoveredNodes, onStateChange, onHostImported }: KomariMappingsPanelProps) {
   const { locale } = useT()
   const copy = komariMappingCopy[locale]
   const [open, setOpen] = useState(initiallyOpen)
@@ -57,7 +58,7 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
       const prefix = `${entry.integration.id}:`
       if (!key.startsWith(prefix)) return false
       const nodeId = key.slice(prefix.length)
-      const saved = entry.state.mappings.find((item) => item.nodeId === nodeId && item.source === 'manual')
+      const saved = entry.state.mappings.find((item) => item.nodeId === nodeId)
       const resolved = mapping.mappings.find((item) => item.nodeId === nodeId)
       return hostId !== (saved?.hostId ?? resolved?.hostId ?? '')
     })
@@ -135,6 +136,26 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
     } finally { if (current()) setBusyState(null) }
   }
 
+  async function importNode(entry: Entry, node: KomariClient) {
+    if (!activeVaultId || !vaultUnlocked || busy) return
+    const sequence = ++scope.current.sequence
+    const current = () => scope.current.sequence === sequence && scope.current.vaultId === activeVaultId && scope.current.unlocked
+    setBusyState({ sequence, key: `${entry.integration.id}:${node.uuid}` }); setError(null)
+    try {
+      const imported = await importMonitoringHost({ vaultId: activeVaultId, integrationId: entry.integration.id, nodeId: node.uuid,
+        expectedRevision: entry.state.revision, expectedIntegrationVersion: entry.integration.updatedAt,
+        name: node.name || node.hostname || node.uuid, group: typeof node.raw.group === 'string' ? node.raw.group : 'Custom',
+        tags: typeof node.raw.tags === 'string' ? node.raw.tags.split(';').filter(Boolean) : [] })
+      if (!current()) return
+      const state = await getKomariMappingState(activeVaultId, entry.integration.id)
+      if (!current()) return
+      onHostImported?.(imported)
+      setScopedEntries(previous => previous.vaultId !== activeVaultId ? previous : { ...previous, rows: previous.rows.map(row => row.integration.id === entry.integration.id ? { ...row, state } : row) })
+      setSelections({})
+    } catch { if (current()) setError(copy.importFailed) }
+    finally { if (current()) setBusyState(null) }
+  }
+
   if (!activeVaultId) return null
   return <details className="mb-3 rounded-lg border border-border/60 p-3" data-testid="komari-mappings-panel" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary className="cursor-pointer text-xs font-medium">{copy.title}</summary>
@@ -146,21 +167,22 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
       {loaded && entries.length === 0 && <p className="text-xs text-muted-foreground">{copy.empty}</p>}
       {vaultUnlocked && entries.map((entry) => {
         const mapping = mapKomariNodesToHosts({ hosts: scopedHosts, nodes: entry.nodes, explicit: manualKomariMappings(entry.state.mappings) })
-        const nodeIds = [...new Set([...entry.nodes.map((node) => node.uuid), ...entry.state.mappings.filter((item) => item.source === 'manual').map((item) => item.nodeId)])]
+        const nodeIds = [...new Set([...entry.nodes.map((node) => node.uuid), ...entry.state.mappings.map((item) => item.nodeId)])]
         return <section key={entry.integration.id} className="space-y-2 rounded-md border p-3" aria-label={entry.integration.name}>
           <h3 className="text-sm font-medium">{entry.integration.name}</h3>
           {entry.discoveryError && <p role="alert" className="text-xs text-red-500">{copy[entry.discoveryError]}</p>}
           {entry.discovered && entry.nodes.length === 0 && <p role="status" className="text-xs text-muted-foreground">{copy.noNodes}</p>}
           {nodeIds.map((nodeId) => {
             const node = entry.nodes.find((item) => item.uuid === nodeId)
-            const saved = entry.state.mappings.find((item) => item.nodeId === nodeId && item.source === 'manual')
+            const saved = entry.state.mappings.find((item) => item.nodeId === nodeId)
             const resolved = mapping.mappings.find((item) => item.nodeId === nodeId)
             const key = `${entry.integration.id}:${nodeId}`
-            const selection = selections[key] ?? saved?.hostId ?? resolved?.hostId ?? ''
+            const suggested = mapping.suggestions?.find(item => item.nodeId === nodeId)
+            const selection = selections[key] ?? saved?.hostId ?? resolved?.hostId ?? suggested?.hostId ?? ''
             const ambiguous = mapping.conflicts.some((item) => item.nodeId === nodeId)
             return <div key={nodeId} className="space-y-2 rounded border border-border/60 p-3" data-testid={`komari-mapping-${nodeId}`}>
               <div className="text-xs font-medium">{node?.name || node?.hostname || nodeId} <span className="font-mono text-muted-foreground">{nodeId}</span></div>
-              <div className="text-xs text-muted-foreground">{saved ? copy.manual : resolved ? copy.matched : copy.unmapped}{resolved ? ` · ${scopedHosts.find((host) => host.id === resolved.hostId)?.name ?? copy.hostMissing}` : ''}</div>
+              <div className="text-xs text-muted-foreground">{saved?.source === 'manual' ? copy.manual : saved || suggested ? copy.matched : copy.unmapped}{resolved ? ` · ${scopedHosts.find((host) => host.id === resolved.hostId)?.name ?? copy.hostMissing}` : ''}</div>
               {!node && <p className="text-xs text-amber-600">{entry.discovered ? copy.missing : copy.unavailable}</p>}
               {ambiguous && <p className="text-xs text-amber-600">{copy.ambiguous}</p>}
               <div className="flex flex-wrap items-center gap-2">
@@ -172,7 +194,8 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
                     return <option key={host.id} value={host.id} disabled={occupied}>{host.name} · {host.address}{occupied ? ` (${copy.occupied})` : ''}</option>
                   })}
                 </select>
-                <Button size="sm" disabled={!vaultUnlocked || busy !== null || !selection || !scopedHosts.some((host) => host.id === selection) || saved?.hostId === selection} onClick={() => void save(entry, nodeId, selection)}>{busy === key ? copy.saving : copy.apply}</Button>
+                <Button size="sm" disabled={!vaultUnlocked || busy !== null || !selection || !scopedHosts.some((host) => host.id === selection) || (saved?.source === 'manual' && saved.hostId === selection)} onClick={() => void save(entry, nodeId, selection)}>{busy === key ? copy.saving : copy.apply}</Button>
+                {node && !entry.state.mappings.some(item => item.nodeId === nodeId) && <Button size="sm" variant="outline" disabled={!vaultUnlocked || busy !== null} onClick={() => void importNode(entry, node)}>{copy.importHost}</Button>}
                 {saved && <Button size="sm" variant="outline" disabled={!vaultUnlocked || busy !== null} onClick={() => void save(entry, nodeId, null)}>{copy.reset}</Button>}
               </div>
             </div>

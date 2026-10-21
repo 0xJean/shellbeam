@@ -1281,6 +1281,7 @@ export function PcLayout() {
                       ) : browserPageMode ? null : (
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            sessionConnectionKey={sessionInfo?.connectionKey}
                             sessionVaultId={sessionInfo?.vaultId}
                             activeVaultId={vault.activeVaultId}
                             sessionId={tab.sessionId}
@@ -1429,6 +1430,7 @@ export function PcLayout() {
                       ) : browserPageMode ? null : (
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            sessionConnectionKey={sessionInfo?.connectionKey}
                             sessionVaultId={sessionInfo?.vaultId}
                             activeVaultId={vault.activeVaultId}
                             sessionId={tab.sessionId}

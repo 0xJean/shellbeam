@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createKomariProbeProvider } from './komari-probe-provider'
+import { withHostConnections } from './hosts'
 import type { ProbeRequest } from './probe-provider'
 
 const request: ProbeRequest = {
@@ -24,6 +25,23 @@ describe('Komari ProbeProvider', () => {
     expect(snapshot.health).toBe('online')
     expect(snapshot.metrics?.data.cpuPercent).toBe(25)
     expect(snapshot.inventory).toBeNull()
+  })
+
+  it('collects a monitoring-only host and keeps its monitoring identity when SSH is added', async () => {
+    const resolveAuthSecret = vi.fn(async () => 'not-used')
+    const provider = createKomariProbeProvider({
+      endpoint: 'https://komari.example',
+      nodeForHost: () => ({ uuid: 'node-1', name: 'prod', hostname: null, ipv4: null, ipv6: null, os: null, kernel: null, version: null, raw: {} }),
+      client: { fetchRecentRecords: async () => [{ time: 1.9, cpu: 25 }] },
+    })
+    const pure = { ...request.host, ...withHostConnections(request.host, [], null) }
+    const snapshot = await provider.probe({ ...request, host: pure, resolveAuthSecret })
+    expect(snapshot).toMatchObject({ host: { hostId: 'host-1', address: '', port: 0, username: '' }, health: 'online' })
+    expect(snapshot.metrics?.data.cpuPercent).toBe(25)
+    const withSsh = await provider.probe({ ...request, resolveAuthSecret })
+    expect(withSsh.host.hostId).toBe(snapshot.host.hostId)
+    expect(withSsh.provider).toEqual(snapshot.provider)
+    expect(resolveAuthSecret).not.toHaveBeenCalled()
   })
 
   it('reports unmapped and API failures without throwing', async () => {

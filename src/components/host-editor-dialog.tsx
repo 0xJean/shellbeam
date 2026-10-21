@@ -1,5 +1,5 @@
 import { HostMetadataSyncPanel } from './host-metadata-sync-panel'
-import { HostForm } from '@/components/host-form'
+import { HostDirectoryEditor } from './host-directory-editor'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 
@@ -36,8 +36,9 @@ export function HostEditorDialog({
     <Dialog open={!!host} onOpenChange={(open) => { if (!open) onCancel() }}>
       <DialogContent>
         {host && (
-          <HostForm
-            initial={host}
+          <HostDirectoryEditor
+            key={`${host.vaultId}:${host.id}`}
+            host={host}
             defaultUsername={defaultUsername}
             vaultKeys={vaultKeys}
             vaultUnlocked={vaultUnlocked}

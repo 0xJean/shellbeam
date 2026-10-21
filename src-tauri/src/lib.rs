@@ -111,6 +111,7 @@ pub fn run() {
             net::known_hosts::fetch_and_add_known_host,
             net::known_hosts::remove_known_host,
             data::hosts::list_hosts,
+            data::komari_persistence::import_monitoring_host,
             data::hosts::create_host,
             data::hosts::update_host,
             data::hosts::delete_host,

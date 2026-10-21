@@ -788,6 +788,8 @@ mod tests {
 
     fn host_with_jump(auth_type: &str) -> HostProfile {
         HostProfile {
+            connections: None,
+            default_connection_id: None,
             id: "host".into(),
             name: "host".into(),
             address: "target.example.com".into(),

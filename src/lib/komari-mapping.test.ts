@@ -11,7 +11,7 @@ const node = (uuid: string, address: string, name = uuid): KomariClient => ({
 })
 
 describe('Komari host mapping', () => {
-  it('prefers explicit mappings and fills unique address matches', () => {
+  it('keeps only explicit mappings and suggests unique address matches', () => {
     const result = mapKomariNodesToHosts({
       hosts: [host('h1', '10.0.0.1'), host('h2', '10.0.0.2')],
       nodes: [node('n1', '10.0.0.9'), node('n2', '10.0.0.2')],
@@ -20,10 +20,10 @@ describe('Komari host mapping', () => {
     })
     expect(result.mappings).toEqual([
       expect.objectContaining({ hostId: 'h1', nodeId: 'n1', source: 'manual', confidence: 'explicit', updatedAt: 123 }),
-      expect.objectContaining({ hostId: 'h2', nodeId: 'n2', source: 'address', confidence: 'matched' }),
     ])
-    expect(result.unmappedHosts).toEqual([])
-    expect(result.unmappedNodes).toEqual([])
+    expect(result.suggestions).toEqual([expect.objectContaining({ hostId: 'h2', nodeId: 'n2', source: 'address' })])
+    expect(result.unmappedHosts).toEqual(['h2'])
+    expect(result.unmappedNodes).toEqual(['n2'])
   })
 
   it('leaves ambiguous address matches unresolved', () => {

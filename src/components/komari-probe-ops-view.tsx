@@ -1,3 +1,4 @@
+import { hasSshConnection } from '@/lib/hosts'
 import type { HostProfile } from '@/lib/hosts'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
@@ -61,6 +62,7 @@ function statusClass(state: string) {
 }
 
 function routeLabel(host: HostProfile, t: TFn) {
+  if (!hasSshConnection(host)) return t('hostDirectory.monitoringOnly')
   if (!host.jumpHost?.trim()) return t('hosts.opsDirect')
   const user = host.jumpUser?.trim() ? `${host.jumpUser.trim()}@` : ''
   const port = host.jumpPort ? `:${host.jumpPort}` : ''
@@ -78,7 +80,7 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
   const syncCopy = komariHostSyncCopy[locale]
   const syncAt = link.komari.lastSyncedAt
   const validSync = isKnownSyncTime(syncAt)
-  const action = link.recommendedAction === 'check-probe' || link.recommendedAction === 'install-probe'
+  const action = hasSshConnection(host) && (link.recommendedAction === 'check-probe' || link.recommendedAction === 'install-probe')
     ? link.recommendedAction
     : null
   const alertSummary = link.komari.alerts

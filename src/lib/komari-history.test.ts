@@ -18,7 +18,7 @@ describe('Versioned official Komari HTTP contract and history', () => {
   it('preserves unordered flat historical records and nested live records with original timestamps', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input) => response(String(input).includes('/api/admin/client/list') ? fixtures.nodes : String(input).includes('/api/records/load') ? fixtures.history : fixtures.recent))
     const nodes = await listKomariClients(config, fetchImpl)
-    expect(mapKomariNodesToHosts({ hosts: [host], nodes }).mappings[0]).toMatchObject({ hostId: host.id, nodeId: 'node-fixture' })
+    expect(mapKomariNodesToHosts({ hosts: [host], nodes, explicit: { [host.id]: 'node-fixture' } }).mappings[0]).toMatchObject({ hostId: host.id, nodeId: 'node-fixture' })
     const recent = await getKomariRecentRecords(config, nodes[0].uuid, fetchImpl)
     const historical = await getKomariHistoryRecords(config, nodes[0].uuid, { hours: 24 }, fetchImpl)
     const history: ProbeObservation<ServerMonitorSnapshot>[] = []

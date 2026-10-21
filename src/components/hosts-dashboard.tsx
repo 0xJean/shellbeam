@@ -1,3 +1,4 @@
+import { hasSshConnection } from '@/lib/hosts'
 import { HostMetadataSyncNotice } from './host-metadata-sync-panel'
 import { matchesHostSearch } from '@/lib/host-search'
 import { getHostIdentity } from '@/lib/host-identity'
@@ -1153,10 +1154,10 @@ export function HostsDashboard({
     ...buildHostIncidents(hosts, operationalSummaryByHost, activeVaultId),
   ].map(incident => [incident.key, incident])).values()].sort((a, b) => b.updatedAt - a.updatedAt || a.key.localeCompare(b.key))
   const openIncidents = incidents.filter(row => !row.historyOnly && (row.status === 'active' || row.status === 'acknowledged')).length
-  const selectedBatchIds = currentPresentation.selected.filter(id => filteredHosts.some(host => host.id === id && (!host.vaultId || host.vaultId === activeVaultId)))
+  const selectedBatchIds = currentPresentation.selected.filter(id => filteredHosts.some(host => host.id === id && hasSshConnection(host) && (!host.vaultId || host.vaultId === activeVaultId)))
   const batchSelection = (host: HostProfile) => currentPresentation.batch ? {
     selected: selectedBatchIds.includes(host.id),
-    disabled: batchBusy || (!selectedBatchIds.includes(host.id) && selectedBatchIds.length >= MAX_BATCH_HOSTS),
+    disabled: !hasSshConnection(host) || batchBusy || (!selectedBatchIds.includes(host.id) && selectedBatchIds.length >= MAX_BATCH_HOSTS),
     onChange: () => setPresentation(current => current.owner !== presentationOwner || batchBusy ? current : {
       ...current, selected: selectedBatchIds.includes(host.id) ? selectedBatchIds.filter(id => id !== host.id) : [...selectedBatchIds, host.id].slice(0, MAX_BATCH_HOSTS),
     }),

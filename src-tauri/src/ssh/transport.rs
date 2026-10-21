@@ -87,6 +87,9 @@ fn endpoint_for(
     vault_id: &str,
     host: &HostProfile,
 ) -> Result<Endpoint, String> {
+    if !crate::data::host_connections::supports_ssh(host) {
+        return Err("HOST_CONNECTION_REQUIRED".into());
+    }
     let state = app.state::<VaultState>();
     if !state.is_unlocked(vault_id) {
         return Err("VAULT_LOCKED".into());

@@ -1,6 +1,6 @@
 import { COLLECTION_LIMITS, collectionConcurrency } from './collection-limits'
 import { scopeObservationHosts } from './host-observation-scope'
-import type { HostProfile } from './hosts'
+import { hasSshConnection, type HostProfile } from './hosts'
 import {
   getWorkspaceInventoryHostKey,
   loadWorkspaceInventoryPersistedCache,
@@ -70,7 +70,7 @@ export async function scanWorkspaceInventoryHosts({
 }: WorkspaceInventoryScanOptions): Promise<WorkspaceInventoryScanResult> {
   if (hosts.length === 0 || !isCurrent()) return { scannedHosts: [], skippedHosts: [] }
 
-  hosts = scopeObservationHosts(hosts, vaultId)
+  hosts = scopeObservationHosts(hosts, vaultId).filter(hasSshConnection)
   const cache = await loadWorkspaceInventoryPersistedCache(hosts)
   if (!isCurrent()) return { scannedHosts: [], skippedHosts: hosts }
 
