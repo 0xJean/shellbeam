@@ -49,7 +49,7 @@ node scripts/publish-komari-agent.mjs --spec release-spec.json --key /private/pa
 
 - Rust：签名域、篡改、真实 Node 发布器 → native 验签、原始样本新鲜度、既有配置/部署身份、原子确认审计、CAS、跨会话新只读任务和旧终态保留。
 - Python：真实隔离文件系统 + 显式假的服务管理器，覆盖安装/升级/回滚/卸载、坏制品不切换、启动失败回滚、旧预览/机器变化、激活中断只读恢复、非托管服务、配置权限/符号链接与数据保留。此层不冒充 systemd 实机。
-- 真实 Linux：`SHELLBEAM_KOMARI_LIFECYCLE_SMOKE=1 node scripts/komari-agent-lifecycle-smoke.mjs` 使用固定官方服务与 Agent、独立随机凭据、回环服务、生产 helper 和真实 systemd。验证 1.5.10 安装、1.5.11 升级、无下载回滚、坏制品拒绝、激活失败补偿、进程哈希与新上报、跨进程只读及卸载保留。CI 覆盖 amd64 和 arm64，脱敏报告必须记录清理与服务退出。
+- 真实 Linux：`SHELLBEAM_KOMARI_LIFECYCLE_SMOKE=1 node scripts/komari-agent-lifecycle-smoke.mjs` 使用固定官方服务与 Agent、独立随机凭据、回环服务、生产 helper 和真实 systemd。验证 1.5.10 安装、1.5.11 升级、无下载回滚、坏制品拒绝、激活失败补偿、进程哈希与新上报、跨进程只读及卸载保留。CI 在 amd64 和 arm64 分别执行普通用户服务与 root 系统服务；提权仅发生于临时 CI runner 的隔离测试，产品不执行提权。脱敏报告记录 checkout commit、实际服务作用域、新原始样本与进程哈希、清理及服务退出。
 - UI：生产组件的确认拒绝、Vault 变更、晚到读结果、组件卸载撤销、并发点击阻止、未知任务只读核验、未接入/纯监控状态和双语布局。隔离 IPC 浏览器截图不是用户 Vault 或打包应用安装探针的证据。
 
 仍不包括接管第三方已安装服务、变更已有部署账号/地址/节点的迁移、非 Linux 被管主机、移动端安装包、完整多设备竞争和生产签名环境验收。失败时不会借助原站执行未审计的替代操作。

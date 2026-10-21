@@ -24,6 +24,8 @@
 
 静态复查另修正已安装程序识别：监控服务本身的 `komari`/`komari.service` 不等于 `komari-agent`，同一服务器允许部署两者；仍拒绝既有 Agent 和其他托管部署。增加官方服务/Agent 文件名及自身/他人部署路径回归，8 项 Python 测试通过。
 
+真实 systemd 暴露 `WorkingDirectory` 被按命令参数加引号的错误，已按目录字段语法修正，Python 回归增至 9 项。`9ab6af4` 的 run `39609174956` 在 amd64/arm64 均完成真实 1.5.10 安装、篡改哈希拒绝、1.5.11 升级及原始新样本/进程哈希核对；后续测试脚本在构建无上传字节的回滚请求时访问空值，尚未发送回滚。脚本已修正可选字节处理，原来的回滚验收条件保持不变。两份失败报告仍记录 failed，cleanup/serverStopped 均为 true；不把部分成功写成完整通过。CI 随后增加两架构各自的 root 系统服务旅程和 checkout/作用域证据，完整最终结果须按最新 head 的报告核对，记录于 PR 验证栏。
+
 ### 第四批 CI 修复记录
 
 `ae46f5d` 有 11 项通过，安装包 GUI run `39598625400` 在配置通知策略时失败（`alert-notification-policy / no such element`，artifact `12345686360`）。真实系统通知的可见/暂停/恢复/不可用四场景已通过，清理和应用退出也通过。原因是此前将用户开关明确命名为 “Send reminders from this device”，两个 GUI 流程仍按旧文案定位复选框。修复更新这两个真实 UI 选择器和对应 driver fixture；保留实际点击、状态回读、保存后重新挂载验证及所有截图/OCR/no-replay 断言。修复提交 `0f772ba90f2dcf85f55894069e726753a007c64c` 的 12 项检查已全部成功；这是第五批功能之前的基线，新功能不能借用其绿色结果。

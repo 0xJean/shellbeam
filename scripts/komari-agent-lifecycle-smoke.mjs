@@ -22,7 +22,7 @@ const helper = join(project, 'src-tauri/src/data/komari_agent/remote.py')
 const { privateKey } = generateKeyPairSync('ed25519'); const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' })
 const delay = ms => new Promise(done => setTimeout(done, ms))
 let child; let stopped = false; let stage = 'download pinned official binaries'; let inspected; let failed = false
-const report = { result: 'running', server: pins.server.version, architecture: arch, checks: [], freshReports: [], remoteChecks: [], cleanup: false, serverStopped: false }
+const report = { result: 'running', server: pins.server.version, architecture: arch, serviceScope: process.getuid() === 0 ? 'system' : 'user', sourceCommit: /^[0-9a-f]{40}$/.test(process.env.GITHUB_SHA ?? '') ? process.env.GITHUB_SHA : null, checks: [], freshReports: [], remoteChecks: [], cleanup: false, serverStopped: false }
 const log = await open(join(directory, 'server.log'), 'wx', 0o600)
 async function download(repo, name, version, pin) {
   const url = `https://github.com/komari-monitor/${repo}/releases/download/${version}/${name}`
