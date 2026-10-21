@@ -39,7 +39,7 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
   useEffect(() => { const epoch = ++readEpoch.current; const valid = captureVaultScope(); let current = true; void readCompatibleAgent(vaultId, host.id).then(r => { if (current && epoch === readEpoch.current && valid()) { setRecord(r); if (r) setEndpoint(r.endpoint) } }).catch(() => {}); return () => { current = false } }, [vaultId, host.id, captureVaultScope])
   const explain = (cause: unknown) => {
     const raw = String(cause).match(/(?:KOMARI_AGENT|MONITORING)_[A-Z_]+/)?.[0] ?? 'KOMARI_AGENT_OPERATION_FAILED'; setCode(raw)
-    return /NO_UPGRADE/.test(raw) ? c.noUpgrade : /READBACK/.test(raw) ? c.readback : /ALREADY_REPORTING/.test(raw) ? c.nodeOnline : /EXTERNAL|UNMANAGED/.test(raw) ? c.external : /CHANGED|SCOPE/.test(raw) ? c.changed : /RELEASE|CATALOG|SIGNATURE|ARTIFACT|POLICY|ARCHITECTURE/.test(raw) ? c.releaseError : /REPORT/.test(raw) ? c.report : /SSH/.test(raw) ? c.connection : c.generic
+    return /NO_UPGRADE/.test(raw) ? c.noUpgrade : /READBACK/.test(raw) ? c.readback : /ALREADY_REPORTING/.test(raw) ? c.nodeOnline : /EXTERNAL|UNMANAGED/.test(raw) ? c.external : /CHANGED|SCOPE/.test(raw) ? c.changed : /CATALOG_EXPIRED|CATALOG_ROLLBACK/.test(raw) ? c.catalogStale : /RELEASE|CATALOG|SIGNATURE|ARTIFACT|POLICY|ARCHITECTURE/.test(raw) ? c.releaseError : /REPORT/.test(raw) ? c.report : /SSH/.test(raw) ? c.connection : c.generic
   }
   const work = async (fn: (current: () => boolean) => Promise<void>) => {
     if (running.current || vaultId !== activeVaultId) return
@@ -68,7 +68,7 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
   const unsettled = !!record && ['prepared', 'dispatched', 'unknown'].includes(record.status)
   const installed = !!record?.current && !['retired', 'absent'].includes(record.observation.status)
   return <div data-testid="compatible-agent-panel" className="min-w-0 space-y-3 py-3 text-xs" onClick={e => e.stopPropagation()}>
-    <p>{c.description}</p><p className="text-muted-foreground">{c.requirements}</p>
+    <p>{c.description}</p><p className="text-muted-foreground">{c.officialHint}</p><p className="text-muted-foreground">{c.requirements}</p>
     <div role="status" className="break-words">{busy ? c.working : status}</div>
     {record && <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
       <dt>{c.version}</dt><dd>{record.current?.manifest.version ?? '—'}</dd><dt>{c.previous}</dt><dd>{record.previous?.manifest.version ?? '—'}</dd>
@@ -82,8 +82,9 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
     <details className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.policy}</summary><p className="my-2 text-muted-foreground">{c.policyHint}</p>
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void work(async current => { const value = await compatibleAgentPolicy(); if (current()) setPolicy(value) })}>{c.loadPolicy}</Button>
       {policy && <div className="mt-2 space-y-2">
+        <label className="block">{c.source}<select aria-label={c.source} disabled={busy} value={policy.source ?? 'custom'} onChange={e => setPolicy({ ...policy, source: e.target.value as 'official' | 'custom' })} className="ml-2 rounded border border-border bg-background p-1"><option value="official">{c.official}</option><option value="custom">{c.custom}</option></select></label>
         <label className="flex gap-2"><input type="checkbox" disabled={busy} checked={policy.enabled} onChange={e => setPolicy({ ...policy, enabled: e.target.checked })} />{c.enabled}</label>
-        {(['manifestUrl', 'trustedPublicKey', 'allowedHosts'] as const).map(key => <label className="block" key={key}>{key === 'manifestUrl' ? c.catalog : key === 'trustedPublicKey' ? c.publicKey : c.hosts}<Input disabled={busy} value={key === 'allowedHosts' ? policy.allowedHosts.join(', ') : policy[key]} onChange={e => setPolicy({ ...policy, [key]: key === 'allowedHosts' ? e.target.value.split(',').map(x => x.trim()).filter(Boolean) : e.target.value })} /></label>)}
+        {policy.source !== 'official' && (['manifestUrl', 'trustedPublicKey', 'allowedHosts'] as const).map(key => <label className="block" key={key}>{key === 'manifestUrl' ? c.catalog : key === 'trustedPublicKey' ? c.publicKey : c.hosts}<Input disabled={busy} value={key === 'allowedHosts' ? policy.allowedHosts.join(', ') : policy[key]} onChange={e => setPolicy({ ...policy, [key]: key === 'allowedHosts' ? e.target.value.split(',').map(x => x.trim()).filter(Boolean) : e.target.value })} /></label>)}
         <Button size="sm" disabled={busy} onClick={() => void work(async current => { const answer = await requestUserDecision({ vaultId, risk: 'high', message: c.policyConfirm, isCurrent: current }); if (!answer.accepted || !current() || answer.isCurrent?.() === false) return; const value = await compatibleAgentPolicy(policy, true); if (current()) { setPolicy(value); setNotice(c.saved) } })}>{c.savePolicy}</Button>
       </div>}
     </details>

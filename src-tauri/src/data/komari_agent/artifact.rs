@@ -1,12 +1,14 @@
-use crate::storage::{data_file_path, read_json_or_default, write_json};
+use crate::storage::{data_file_path, write_json};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Policy {
+    #[serde(default = "custom_source")]
+    pub source: String,
     pub enabled: bool,
     pub manifest_url: String,
     pub trusted_public_key: String,
@@ -113,8 +115,42 @@ pub fn verify(release: &TrustedRelease) -> Result<(), String> {
         .verify_strict(&canonical(m), &signature)
         .map_err(|_| "KOMARI_AGENT_SIGNATURE_INVALID".into())
 }
+fn custom_source() -> String {
+    "custom".into()
+}
+impl Default for Policy {
+    fn default() -> Self {
+        let trust = super::official::trust();
+        Self {
+            source: "official".into(),
+            enabled: true,
+            manifest_url: trust.catalog_url,
+            trusted_public_key: trust.public_key,
+            allowed_hosts: trust.allowed_hosts,
+        }
+    }
+}
+fn normalize(value: Policy) -> Result<Policy, String> {
+    match value.source.as_str() {
+        "official" => Ok(Policy {
+            enabled: value.enabled,
+            ..Policy::default()
+        }),
+        "custom" => Ok(value),
+        _ => Err("KOMARI_AGENT_POLICY_INVALID".into()),
+    }
+}
+pub(super) fn read_policy(path: &std::path::Path) -> Result<Policy, String> {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            normalize(serde_json::from_slice(&bytes).map_err(|_| "KOMARI_AGENT_POLICY_INVALID")?)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Policy::default()),
+        Err(_) => Err("KOMARI_AGENT_POLICY_INVALID".into()),
+    }
+}
 pub fn policy(app: &tauri::AppHandle) -> Result<Policy, String> {
-    read_json_or_default(&data_file_path(app, "komari_agent_release_policy.json")?)
+    read_policy(&data_file_path(app, "komari_agent_release_policy.json")?)
 }
 #[tauri::command]
 pub fn komari_agent_release_policy(
@@ -126,6 +162,7 @@ pub fn komari_agent_release_policy(
         if confirmed != Some(true) {
             return Err("KOMARI_AGENT_CONFIRMATION_REQUIRED".into());
         }
+        let value = normalize(value)?;
         if value.enabled
             && (!allowed(&value.manifest_url, &value.allowed_hosts)
                 || value.allowed_hosts.is_empty()
@@ -144,7 +181,11 @@ pub fn komari_agent_release_policy(
     }
     policy(&app)
 }
-pub fn select(policy: &Policy, arch: &str) -> Result<TrustedRelease, String> {
+pub fn select(
+    app: &tauri::AppHandle,
+    policy: &Policy,
+    arch: &str,
+) -> Result<TrustedRelease, String> {
     if !policy.enabled || !allowed(&policy.manifest_url, &policy.allowed_hosts) {
         return Err("KOMARI_AGENT_RELEASE_NOT_CONFIGURED".into());
     }
@@ -153,6 +194,26 @@ pub fn select(policy: &Policy, arch: &str) -> Result<TrustedRelease, String> {
     let bytes = STANDARD
         .decode(result.bytes_b64)
         .map_err(|_| "KOMARI_AGENT_CATALOG_INVALID")?;
+    if policy.source == "official" {
+        let catalog = super::official::verify_catalog(
+            &bytes,
+            &super::official::trust(),
+            crate::storage::now_unix_ms(),
+        )?;
+        super::official::remember(
+            &data_file_path(app, "komari_agent_catalog.sqlite3")?,
+            &catalog,
+        )?;
+        return catalog
+            .artifacts
+            .into_iter()
+            .find(|m| m.architecture == arch)
+            .map(|manifest| TrustedRelease {
+                manifest,
+                public_key: policy.trusted_public_key.clone(),
+            })
+            .ok_or_else(|| "KOMARI_AGENT_ARCHITECTURE_UNSUPPORTED".into());
+    }
     #[derive(Deserialize)]
     struct Catalog {
         artifacts: Vec<Manifest>,

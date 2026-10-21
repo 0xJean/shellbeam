@@ -1,4 +1,4 @@
-# 兼容监控探针生命周期（PRD 0.5 D 首批）
+# 兼容监控探针生命周期与内置可信发布（PRD 0.5 D）
 
 入口为主机详情中现有运维工具下的“监控探针”，复用主机、默认 SSH 连接和可选监控绑定。没有接入且没有托管部署记录的主机不增加界面；纯监控主机先添加真实 SSH 连接。不会打开 Komari 网页、第二个应用或一套远端终端。
 
@@ -33,9 +33,9 @@
 
 ## 独立发布信任
 
-兼容 Agent 使用独立 Ed25519 信任根和 `shellbeam/komari-agent/v1\n` 签名域，不能混用 ShellBeam Agent 签名。签名覆盖 runtime/version/platform/architecture/URL/SHA-256/sizeBytes；下载目录最大 64 KiB、32 条，制品最大 32 MiB，仅允许明确列出的 HTTPS 域名，重定向逐跳校验。公钥、目录与允许域名保存在设备发布设置中，保存需确认；预览期间修改即失效。
+兼容 Agent 使用独立 Ed25519 信任根和 `shellbeam/komari-agent/v1\n` 签名域，不能混用 ShellBeam Agent 签名。签名覆盖 runtime/version/platform/architecture/URL/SHA-256/sizeBytes；下载目录最大 64 KiB、32 条，制品最大 32 MiB，仅允许明确列出的 HTTPS 域名，重定向逐跳校验。默认公钥、目录地址与精确域名编译进 App，普通用户不配置密钥。设备可明确选择自定义发布者；保存仍需确认，预览期间修改即失效。缺失的旧设置使用官方默认值，已存在的旧设置按自定义配置原样读取，包括禁用状态；损坏配置报错，不偷偷切换信任。
 
-默认没有生产发布公钥，不会自动信任未签名的上游下载。生产发布者应使用单独、受保护的 `komari-agent-release` 环境和 Ed25519 私钥，审核固定上游版本/哈希后签名，公钥和 HTTPS 目录交给客户端。当前提交提供发布工具和验签，**没有生成或配置生产私钥、发布制品或声称生产发布环境已就绪**。
+生产公钥在 `src-tauri/src/data/komari_agent/official-trust.json`，key ID 为 `compatible-probe-2026-01`。生产私钥仅存入 GitHub `komari-agent-release` Environment Secret，未进入源码、应用、日志或发布资产；该环境仅允许 `main`，要求维护者审批且禁止管理员绕过。仓库原有 Vault/SSH/API 凭据不变。后续工作流随本 PR 合并后在默认分支手动触发；首次引导发布使用相同发布脚本和上阶段已验证的固定上游制品，不宣称未合并的工作流已经执行。
 
 发布工具仅读取操作者提供的私有密钥文件（权限 0600）和已下载、核对过字节数及 SHA-256 的文件：
 
@@ -43,7 +43,7 @@
 node scripts/publish-komari-agent.mjs --spec release-spec.json --key /private/path/key.pem --out catalog.json
 ```
 
-`release-spec.json` 为 `{ "artifacts": [...] }`，每项包含 `file`、`version`、`architecture`（amd64/arm64）、`url`、`expectedSha256`、`expectedSize`。制品 URL 必须是最终的 HTTPS 下载地址，不得携带认证查询参数。工具不会覆盖已有目录文件，也不发布到网络；输出只包含制品数量和公开公钥。目录托管后将目录 URL、公钥、原始和重定向下载域名填入“可信探针版本”。历史已信任版本的核验、回滚、卸载不依赖当前发布策略。
+`release-spec.json` 为 `{ "artifacts": [...] }`，每项包含 `file`、`version`、`architecture`（amd64/arm64）、`url`、`expectedSha256`、`expectedSize`。制品 URL 必须是最终的 HTTPS 下载地址，不得携带认证查询参数。工具不会覆盖已有目录文件，也不发布到网络；输出只包含制品数量和公开公钥。以上命令仍适用于自定义分发，官方用户无需执行或填写这些字段。历史已信任版本的核验、回滚、卸载不依赖当前发布策略。
 
 ## 验收层次
 
@@ -52,4 +52,22 @@ node scripts/publish-komari-agent.mjs --spec release-spec.json --key /private/pa
 - 真实 Linux：`SHELLBEAM_KOMARI_LIFECYCLE_SMOKE=1 node scripts/komari-agent-lifecycle-smoke.mjs` 使用固定官方服务与 Agent、独立随机凭据、回环服务、生产 helper 和真实 systemd。验证 1.5.10 安装、1.5.11 升级、无下载回滚、坏制品拒绝、激活失败补偿、进程哈希与新上报、跨进程只读及卸载保留。CI 在 amd64 和 arm64 分别执行普通用户服务与 root 系统服务；提权仅发生于临时 CI runner 的隔离测试，产品不执行提权。脱敏报告记录 checkout commit、实际服务作用域、新原始样本与进程哈希、清理及服务退出。
 - UI：生产组件的确认拒绝、Vault 变更、晚到读结果、组件卸载撤销、并发点击阻止、未知任务只读核验、未接入/纯监控状态和双语布局。隔离 IPC 浏览器截图不是用户 Vault 或打包应用安装探针的证据。
 
-仍不包括接管第三方已安装服务、变更已有部署账号/地址/节点的迁移、非 Linux 被管主机、移动端安装包、完整多设备竞争和生产签名环境验收。失败时不会借助原站执行未审计的替代操作。
+仍不包括接管第三方已安装服务、变更已有部署账号/地址/节点的迁移、非 Linux 被管主机、移动端安装包、完整多设备竞争。失败时不会借助原站执行未审计的替代操作。
+
+## 生产发布与更新流程
+
+默认目录是 `https://raw.githubusercontent.com/0xJean/shellbeam/monitoring-probe-releases/stable/catalog.json`。该独立分支只存公开签名目录，不修改 main，不包含 Actions 或应用用户数据。制品位于独立版本的 GitHub Release；发布工具拒绝替换已发布资产，始终使用 `--latest=false`，不抢占 ShellBeam 应用最新版。平台管理员仍能修改 GitHub 资产；客户端以签名、大小和哈希拒绝变更，不把版本化 URL 当作平台强制不可变性。
+
+官方目录另有 `shellbeam/komari-agent-catalog/v1` 签名域，覆盖 key ID、stable 渠道、序号、发布时间、过期时间和两种架构的完整制品清单。默认有效期 90 天，最多允许 180 天和 5 分钟时钟偏差；到期拒绝新安装/升级，用户仍可检查、回滚、卸载。必须在到期前发布新修订，客户端不会降低校验或回退到未签名上游。
+
+原生层以独立 SQLite 事务保存最高目录序号、内容指纹和 Agent 版本，重启后拒绝旧序号、同序号异内容或版本降级。显式回滚只使用既有部署里已信任的保留版本，语义不与发布源防回退混用。信任根轮换需要更新签名的 ShellBeam 应用及编译公钥；下载目录不能授权自己的新公钥。
+
+维护者流程：
+1. 在 `releases/compatible-probe-pins.json` 审查上游版本、两架构 SHA-256 和大小，通过 PR 提交。原版 MIT 许可证随制品分发。
+2. 默认分支手动运行 `Publish trusted compatible probe`，选择已审查版本和新的 release revision。发布环境审批后，先无密钥下载固定制品，再使用环境私钥签名；临时密钥文件退出即删除。
+3. `promote-komari-agent-release.mjs` 创建或恢复同目标的草稿，下载回读上传资产逐字节核验，再发布。随后匿名核验两种制品，最后以文件 SHA 的 CAS 原子推进稳定目录。发布资产不包含 spec、私钥、内部日志或凭据。
+4. 发布中断可在相同提交和修订上重跑工作流：先找回已上传的目录，核对生产签名、有效期、精确制品 URL、版本、哈希和大小，再复用原字节；未上传目录才重新签名。已上传/已发布字节只核验，不覆盖；已推进的同一目录只读验证。目录并发变化则停止，不能静默覆盖。已公开但尚未推进的版本不会被客户端默认发现；已过期目录必须采用新修订。
+
+首次版本为 `monitoring-probe-v1.5.11-r1`，bootstrap 公共目录副本保存在 `releases/compatible-probe-bootstrap.json` 供跨语言验签回归；它不是离线回退源。正常安装始终读取当前在线目录并验证有效期。
+
+2026-10-21 已完成首次公开发布、两种架构匿名下载和 App 原生默认策略验签；目录序号 `1792594908584`。实际重试确认发布资产未替换、目录提交未改变；本地临时生产私钥已删除，仅保留受保护环境中的 Secret。ShellBeam 应用 latest 仍为 `v0.1.4`。

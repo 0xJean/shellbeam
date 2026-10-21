@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "versions": {
+    "1.5.11": {
+      "amd64": {
+        "sha256": "78c28d89e523816baea010c0ed0714f245f508ffdaca0540f5c9f230f7053c8c",
+        "size": 12585218
+      },
+      "arm64": {
+        "sha256": "ff8e33dc12ef2b5738fa291a58498bd15dcbf8ef51966ab65fd67679a0abc87d",
+        "size": 11892529
+      }
+    }
+  }
+}

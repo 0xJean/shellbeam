@@ -9,7 +9,8 @@ import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { signCompatibleAgent } from './publish-komari-agent.mjs'
+import { signCompatibleAgent, verifyCompatibleCatalog } from './publish-komari-agent.mjs'
+import { downloadPinned } from './prepare-komari-agent-release.mjs'
 
 if (process.platform !== 'linux' || process.env.SHELLBEAM_KOMARI_LIFECYCLE_SMOKE !== '1') throw new Error('explicit_isolated_linux_opt_in_required')
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -47,6 +48,17 @@ try {
   const binary = await download('komari', `komari-linux-${arch}`, pins.server.version, pins.server[arch])
   const artifacts = []
   for (const entry of pins.agents) artifacts.push(await download('komari-agent', `komari-agent-linux-${arch}`, entry.version, entry[arch]))
+  if (process.env.SHELLBEAM_KOMARI_PRODUCTION_RELEASE === '1') {
+    stage = 'verify anonymous production catalog and upgrade artifact'
+    const root = JSON.parse(await readFile(join(project, 'src-tauri/src/data/komari_agent/official-trust.json')))
+    const catalog = verifyCompatibleCatalog(JSON.parse(await downloadPinned(root.catalogUrl, null, 65536)), root)
+    const manifest = catalog.artifacts.find(a => a.architecture === arch)
+    const pinned = pins.agents.find(a => a.version === manifest.version)?.[arch]
+    assert.ok(pinned); assert.equal(manifest.sha256, pinned.sha256); assert.equal(manifest.sizeBytes, pinned.size)
+    const bytes = await downloadPinned(manifest.url, pinned)
+    artifacts[1] = { bytes, manifest }
+    report.productionRelease = { keyId: root.keyId, sequence: catalog.sequence, version: manifest.version, signatureVerified: true, bytesVerified: true, noUserConfiguration: true }
+  }
   stage = 'initialize isolated loopback server'
   const listener = createServer(); await new Promise(done => listener.listen(0, '127.0.0.1', done)); const port = listener.address().port; await new Promise(done => listener.close(done))
   const endpoint = `http://127.0.0.1:${port}`

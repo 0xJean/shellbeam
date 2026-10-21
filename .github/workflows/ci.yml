@@ -65,6 +65,11 @@ jobs:
       - run: npm run build
       - name: Native unit, protocol, persistence and SSH route tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib
+      - name: Verify built-in production probe trust and anonymous artifact downloads
+        if: runner.os == 'Linux'
+        env:
+          SHELLBEAM_OFFICIAL_PROBE_RELEASE_LIVE: '1'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib builtin_production_catalog_and_binaries_verify_without_user_configuration -- --ignored
       - name: MCP stdio integration
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test mcp_stdio
       - name: Reject notifications without a real desktop notification daemon

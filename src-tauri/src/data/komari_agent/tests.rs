@@ -271,3 +271,134 @@ fn compensation_tolerates_a_stopped_process_but_never_a_changed_remote_journal()
     after.config_sha256 = Some("b".repeat(64));
     assert!(!same_activation(&before, &after));
 }
+
+#[test]
+fn default_trust_is_built_in_but_old_custom_preferences_are_not_overwritten() {
+    let path = std::env::temp_dir().join(format!("probe-policy-{}", Uuid::new_v4()));
+    let default = artifact::read_policy(&path).unwrap();
+    assert!(default.enabled);
+    assert_eq!(default.source, "official");
+    assert_eq!(default.trusted_public_key, official::trust().public_key);
+    let legacy = br#"{"enabled":false,"manifestUrl":"https://private.test/catalog.json","trustedPublicKey":"existing","allowedHosts":["private.test"]}"#;
+    std::fs::write(&path, legacy).unwrap();
+    let old = artifact::read_policy(&path).unwrap();
+    assert_eq!(old.source, "custom");
+    assert!(!old.enabled);
+    assert_eq!(old.trusted_public_key, "existing");
+    assert_eq!(std::fs::read(&path).unwrap(), legacy);
+    std::fs::write(&path, br#"{"source":"official","enabled":false,"manifestUrl":"https://attacker.test","trustedPublicKey":"other","allowedHosts":[]}"#).unwrap();
+    let normalized = artifact::read_policy(&path).unwrap();
+    assert!(!normalized.enabled);
+    assert_eq!(normalized.manifest_url, default.manifest_url);
+    assert_eq!(normalized.trusted_public_key, default.trusted_public_key);
+    std::fs::write(&path, b"corrupt").unwrap();
+    assert!(artifact::read_policy(&path).is_err());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn official_catalog_signature_time_and_architectures_match_node_publisher() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../scripts/fixtures/official-compatible-catalog-test.json"
+    ))
+    .unwrap();
+    let root: official::Trust = serde_json::from_value(fixture["root"].clone()).unwrap();
+    let c = fixture["catalog"].clone();
+    let now = c["publishedAt"].as_i64().unwrap();
+    let bytes = serde_json::to_vec(&c).unwrap();
+    official::verify_catalog(&bytes, &root, now).unwrap();
+    assert!(official::verify_catalog(&bytes, &official::trust(), now).is_err());
+    assert!(official::verify_catalog(&bytes, &root, c["expiresAt"].as_i64().unwrap()).is_err());
+    assert!(official::verify_catalog(&bytes, &root, now - 300_001).is_err());
+    for (key, value) in [
+        ("sequence", json!(2)),
+        ("channel", json!("preview")),
+        ("expiresAt", json!(now + 1)),
+        ("keyId", json!("other")),
+    ] {
+        let mut changed = c.clone();
+        changed[key] = value;
+        assert!(
+            official::verify_catalog(&serde_json::to_vec(&changed).unwrap(), &root, now).is_err()
+        );
+    }
+}
+
+#[test]
+fn production_bootstrap_catalog_verifies_with_the_compiled_public_key() {
+    let bytes = include_bytes!("../../../../releases/compatible-probe-bootstrap.json");
+    let header: Value = serde_json::from_slice(bytes).unwrap();
+    let c = official::verify_catalog(
+        bytes,
+        &official::trust(),
+        header["publishedAt"].as_i64().unwrap(),
+    )
+    .unwrap();
+    let pins: Value = serde_json::from_str(include_str!(
+        "../../../../releases/compatible-probe-pins.json"
+    ))
+    .unwrap();
+    for m in c.artifacts {
+        assert_eq!(
+            m.sha256,
+            pins["versions"][&m.version][&m.architecture]["sha256"]
+                .as_str()
+                .unwrap()
+        );
+        assert_eq!(
+            m.size_bytes as u64,
+            pins["versions"][&m.version][&m.architecture]["size"]
+                .as_u64()
+                .unwrap()
+        );
+    }
+}
+
+#[test]
+fn catalog_watermark_survives_reopen_and_rejects_replay_equivocation_and_downgrade() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../scripts/fixtures/official-compatible-catalog-test.json"
+    ))
+    .unwrap();
+    let mut c: official::Catalog = serde_json::from_value(fixture["catalog"].clone()).unwrap();
+    let path = std::env::temp_dir().join(format!("probe-catalog-{}.sqlite3", Uuid::new_v4()));
+    official::remember(&path, &c).unwrap();
+    official::remember(&path, &c).unwrap();
+    c.sequence = 2;
+    official::remember(&path, &c).unwrap();
+    c.sequence = 1;
+    assert!(official::remember(&path, &c).is_err());
+    c.sequence = 2;
+    c.published_at += 1;
+    assert!(official::remember(&path, &c).is_err());
+    c.sequence = 3;
+    c.artifacts[0].version = "1.5.10".into();
+    assert!(official::remember(&path, &c).is_err());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+#[ignore = "explicit anonymous production release download, no Vault access"]
+fn builtin_production_catalog_and_binaries_verify_without_user_configuration() {
+    assert_eq!(
+        std::env::var("SHELLBEAM_OFFICIAL_PROBE_RELEASE_LIVE").as_deref(),
+        Ok("1")
+    );
+    let policy = artifact::Policy::default();
+    let downloaded =
+        crate::agent_release::download(&policy.manifest_url, &policy.allowed_hosts, 65536).unwrap();
+    let catalog = official::verify_catalog(
+        &STANDARD.decode(downloaded.bytes_b64).unwrap(),
+        &official::trust(),
+        now_unix_ms(),
+    )
+    .unwrap();
+    for manifest in catalog.artifacts {
+        let r = TrustedRelease {
+            manifest,
+            public_key: policy.trusted_public_key.clone(),
+        };
+        let bytes = artifact::download(&r, &policy).unwrap();
+        artifact::verify_bytes(&r, &STANDARD.decode(bytes).unwrap()).unwrap();
+    }
+}

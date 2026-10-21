@@ -6,6 +6,8 @@ on:
       - 'src-tauri/src/ssh/transport.rs'
       - 'src-tauri/src/data/monitoring_service.rs'
       - 'scripts/*komari-agent*'
+      - 'scripts/*official-komari*'
+      - 'releases/**'
       - 'scripts/fixtures/komari-lifecycle-releases.json'
       - '.github/workflows/komari-agent-ci.yml'
   workflow_dispatch:
@@ -27,7 +29,7 @@ jobs:
           node-version: 22
       - name: Verify signature publisher and filesystem failure recovery
         run: |
-          node --test scripts/publish-komari-agent.test.mjs
+          node --test scripts/publish-komari-agent.test.mjs scripts/official-komari-agent-release.test.mjs
           PYTHONDONTWRITEBYTECODE=1 python3 scripts/komari-agent-remote.test.py
       - name: Prepare isolated runner user service manager
         run: |
@@ -36,6 +38,7 @@ jobs:
       - name: Official probe install, upgrade, rollback and uninstall with fresh server reports
         env:
           SHELLBEAM_KOMARI_LIFECYCLE_SMOKE: '1'
+          SHELLBEAM_KOMARI_PRODUCTION_RELEASE: '1'
           SHELLBEAM_KOMARI_LIFECYCLE_REPORT: ${{ runner.temp }}/komari-agent-lifecycle.json
         run: |
           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
@@ -45,6 +48,7 @@ jobs:
         run: |
           sudo --set-home env \
             SHELLBEAM_KOMARI_LIFECYCLE_SMOKE=1 \
+            SHELLBEAM_KOMARI_PRODUCTION_RELEASE=1 \
             SHELLBEAM_KOMARI_LIFECYCLE_REPORT="$RUNNER_TEMP/komari-agent-lifecycle-root.json" \
             GITHUB_SHA="$GITHUB_SHA" \
             "$(command -v node)" scripts/komari-agent-lifecycle-smoke.mjs

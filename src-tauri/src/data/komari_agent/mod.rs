@@ -1,6 +1,7 @@
 //! A narrow, native lifecycle for the optional monitoring runtime. Secrets only
 //! travel from Vault / server to SSH stdin; never through previews or audit rows.
 pub mod artifact;
+mod official;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -588,7 +589,7 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
             }
             let policy = artifact::policy(app)?;
             p.policy_fingerprint = Some(fingerprint(&policy)?);
-            let release = artifact::select(&policy, &p.identity.architecture)?;
+            let release = artifact::select(app, &policy, &p.identity.architecture)?;
             if p.action == "upgrade"
                 && p.observed.current.as_ref().is_none_or(|c| {
                     artifact::version(&c.version).unwrap_or(u64::MAX)

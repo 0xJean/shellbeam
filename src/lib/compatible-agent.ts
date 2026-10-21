@@ -9,7 +9,7 @@ export interface CompatibleAgentRecord {
   observedAt: number | null; updatedAt: number; errorCode: string | null;
 }
 export interface CompatibleAgentPreview { planId: string; action: CompatibleAgentAction; hostName: string; nodeId: string; endpoint: string; transport: string; account: string; serviceScope: 'system' | 'user'; dataDirectory: string; artifactBytes: number | null; currentVersion: string | null; targetVersion: string | null; status: string; expiresAt: number }
-export interface CompatibleAgentPolicy { enabled: boolean; manifestUrl: string; trustedPublicKey: string; allowedHosts: string[] }
+export interface CompatibleAgentPolicy { source?: 'official' | 'custom'; enabled: boolean; manifestUrl: string; trustedPublicKey: string; allowedHosts: string[] }
 export const readCompatibleAgent = (vaultId: string, hostId: string) => invoke<CompatibleAgentRecord | null>('komari_agent_record', { vaultId, hostId })
 export const prepareCompatibleAgent = (input: { vaultId: string; hostId: string; integrationId: string; action: CompatibleAgentAction; endpoint?: string }) => invoke<CompatibleAgentPreview>('komari_agent_prepare', { input })
 export const operateCompatibleAgent = (planId: string, confirmed: boolean) => invoke<CompatibleAgentRecord>('komari_agent_operate', { planId, confirmed })
