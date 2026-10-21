@@ -49,6 +49,7 @@ function unassignedAlert(alert: KomariAlertRecord, source: CurrentKomariSource) 
 }
 
 function currentUnassignedAlert(alert: KomariAlertRecord, source: CurrentKomariSource) {
+  if (alert.kind === 'load' || alert.kind === 'offline') return false
   if (!source.integration.enabled || source.error || !unassignedAlert(alert, source)) return false
   const syncedAt = confirmedKomariSyncAt(source.integration, source.state?.syncState)
   // Aggregate rows have no endpoint in their fingerprint. Only a committed
@@ -298,6 +299,7 @@ function VaultAlertsDashboard({ activeVaultId, hosts = EMPTY_HOSTS, onOpenHost, 
           hostName: host?.name ?? entry.source.integration.name,
           title: alert.title, source: 'komari', status: alert.status, updatedAt: alert.lastSeenAt, busy: loading,
           historyOnly: !currentUnassigned,
+          evidenceUnavailable: alert.evidenceStatus === 'unverified-rule-count',
           audit: entry.state.audit.filter(row => memberAlertIds.includes(row.alertId)),
           // Deleted/foreign host identities remain read-only history; they
           // must not be reclassified as unassigned actionable incidents.

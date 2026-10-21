@@ -314,6 +314,8 @@ describe('buildHostOpsViews', () => {
     expect(view.health.provider).toBe('komari')
     expect(view.health.fallbackProvider).toBe('ssh-agentless')
     expect(view.health.alertSummary).toMatchObject({ total: 3, active: 1 })
+    expect(view.alertOpenCount).toBe(0)
+    expect(view.highestAlertSeverity).toBeNull()
   })
 
   it('joins persisted Komari lifecycle and MCP operation links into the host view', () => {
@@ -328,7 +330,7 @@ describe('buildHostOpsViews', () => {
           integrationId: 'komari-prod',
           nodeId: 'node-1',
           hostId: host.id,
-          kind: 'load',
+          kind: 'probe-error:metrics',
           title: 'Load',
           severity: 'warning',
           count: 1,
@@ -350,7 +352,7 @@ describe('buildHostOpsViews', () => {
           integrationId: 'komari-prod',
           nodeId: 'node-1',
           hostId: host.id,
-          kind: 'offline',
+          kind: 'probe-offline',
           title: 'Offline',
           severity: 'critical',
           count: 1,

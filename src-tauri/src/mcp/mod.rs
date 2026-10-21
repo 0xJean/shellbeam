@@ -798,7 +798,10 @@ fn scoped_komari_alert_state(
                 .is_some_and(|alert_id| alert_ids.contains(alert_id))
         })
         .collect::<Vec<_>>();
-    let incidents = komari_incidents::project(&alerts);
+    let incidents = komari_incidents::project(&alerts)
+        .into_iter()
+        .filter(|row| row["evidenceStatus"] != "unverified-rule-count")
+        .collect::<Vec<_>>();
     if let Some(baselines) = object
         .get_mut("probeBaselines")
         .and_then(Value::as_array_mut)
@@ -811,6 +814,7 @@ fn scoped_komari_alert_state(
         });
     }
     if let Some(summary) = object.get_mut("summary").and_then(Value::as_object_mut) {
+        summary.insert("total".into(), json!(incidents.len()));
         summary.insert(
             "open".into(),
             json!(incidents
@@ -818,7 +822,7 @@ fn scoped_komari_alert_state(
                 .filter(|row| { row["status"] == "active" || row["status"] == "acknowledged" })
                 .count()),
         );
-        for status in ["acknowledged", "resolved", "closed"] {
+        for status in ["active", "acknowledged", "resolved", "closed"] {
             summary.insert(
                 status.into(),
                 json!(incidents
@@ -1016,7 +1020,10 @@ fn mutate_komari_alert(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let incidents = komari_incidents::project(&alert_rows);
+    let incidents = komari_incidents::project(&alert_rows)
+        .into_iter()
+        .filter(|row| row["evidenceStatus"] != "unverified-rule-count")
+        .collect::<Vec<_>>();
     let count_status = |status: &str| {
         incidents
             .iter()
@@ -1031,10 +1038,8 @@ fn mutate_komari_alert(
     let lifecycle = lifecycle
         .as_object_mut()
         .ok_or("KOMARI_ALERT_STATE_INVALID")?;
-    lifecycle
-        .entry("total")
-        .or_insert_with(|| json!(alert_rows.len() as i64));
-    lifecycle.entry("active").or_insert_with(|| json!(active));
+    lifecycle.insert("total".into(), json!(incidents.len()));
+    lifecycle.insert("active".into(), json!(active));
     lifecycle.insert("open".into(), json!(active + acknowledged));
     lifecycle.insert("acknowledged".into(), json!(acknowledged));
     lifecycle.insert("resolved".into(), json!(resolved));

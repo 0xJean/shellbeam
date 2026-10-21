@@ -1,3 +1,4 @@
+import { isUnverifiedKomariRuleAlert } from './komari-alert-incidents'
 import { normalizeKomariEndpoint } from './komari'
 import { parseKomariAlertState, type KomariAlertRecord } from './komari-alerts'
 import { listKomariIntegrations, type KomariIntegration } from './komari-config'
@@ -62,6 +63,7 @@ export function isCurrentKomariSnapshot(snapshot: ProbeSnapshot, host: HostProfi
 }
 
 export function isCurrentKomariAlert(alert: KomariAlertRecord, host: HostProfile, sources: readonly CurrentKomariSource[], snapshots: readonly ProbeSnapshot[]): boolean {
+  if (isUnverifiedKomariRuleAlert(alert)) return false
   const entry = sourceFor(host, alert.integrationId, sources)
   if (!entry || (alert.hostId && alert.hostId !== host.id)) return false
   const baselines = parseKomariAlertState(entry.state?.syncState?.alertSummary)?.probeBaselines ?? []

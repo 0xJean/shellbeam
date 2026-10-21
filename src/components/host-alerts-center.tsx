@@ -40,19 +40,22 @@ export function HostAlertsCenter({ incidents, onOpenHost }: { incidents: HostInc
       </select></label>}
       <label className="flex items-center gap-2"><input type="checkbox" checked={includeHistory} onChange={event => setIncludeHistory(event.target.checked)} />{copy.history}</label>
     </div>
+    <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '确认表示已接手，归档保留处理记录；两者均不代表故障恢复或停止通知。' : 'Acknowledgement records ownership; archiving retains the record. Neither proves recovery nor silences notifications.'}</p>
     {error && <p role="alert" className="text-sm text-red-500">{t('localOps.actionFailed')}</p>}
     {rows.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">{copy.noAlerts}</p>}
     <div className="max-h-[65vh] space-y-3 overflow-y-auto">
       {rows.map(row => <article key={row.key} data-testid="host-incident" data-host-id={row.hostId} data-source={row.source} className="rounded-lg border p-3">
         <p className="break-words text-sm font-medium">{row.title}</p>
+        {row.evidenceUnavailable && <p className="mt-1 text-xs text-muted-foreground">{locale === 'zh-CN' ? '历史规则统计缺少事件证据，未计入当前异常。' : 'Historical rule count without event evidence; excluded from current incidents.'}</p>}
         {row.historyOnly && <p className="mt-1 text-xs text-muted-foreground">{copy.historicalSource}</p>}
-        <p className="mt-1 text-xs text-muted-foreground">{row.hostName} · {sourceLabel(row.source)} · {t(`localOps.status.${row.status}`)}
+        <p className="mt-1 text-xs text-muted-foreground">{row.hostName} · {sourceLabel(row.source)} · {row.status === 'closed' ? (locale === 'zh-CN' ? '已归档' : 'Archived') : t(`localOps.status.${row.status}`)}
           {Number.isFinite(row.updatedAt) && row.updatedAt > 0 && row.updatedAt <= Date.now() ? ` · ${new Date(row.updatedAt).toLocaleString(locale)}` : ''}
         </p>
+        {row.lastObservation && <p className="mt-1 text-xs text-muted-foreground">{locale === 'zh-CN' ? '最近观测：' : 'Last observation: '}{({ abnormal: locale === 'zh-CN' ? '异常' : 'Abnormal', recovered: locale === 'zh-CN' ? '已恢复' : 'Recovered', unknown: locale === 'zh-CN' ? '未知' : 'Unknown' })[row.lastObservation]}</p>}
         <div className="mt-3 flex flex-wrap gap-2">
           {onOpenHost && row.hostId && <Button size="sm" variant="outline" onClick={() => onOpenHost(row.hostId)}>{copy.overview}</Button>}
-          {row.act && row.status === 'active' && <Button size="sm" variant="outline" disabled={!!pending || row.busy} onClick={() => void act(row, 'acknowledge')}>{t('localOps.acknowledge')}</Button>}
-          {row.act && ['active', 'acknowledged', 'resolved'].includes(row.status) && <Button size="sm" variant="outline" disabled={!!pending || row.busy} onClick={() => void act(row, 'close')}>{t('localOps.close')}</Button>}
+          {row.act && !row.evidenceUnavailable && row.status === 'active' && <Button size="sm" variant="outline" disabled={!!pending || row.busy} onClick={() => void act(row, 'acknowledge')}>{t('localOps.acknowledge')}</Button>}
+          {row.act && ['active', 'acknowledged', 'resolved'].includes(row.status) && <Button size="sm" variant="outline" disabled={!!pending || row.busy} onClick={() => void act(row, 'close')}>{locale === 'zh-CN' ? '归档' : 'Archive'}</Button>}
         </div>
         {!!row.audit?.length && <details className="mt-3 border-t pt-2 text-xs">
           <summary className="cursor-pointer text-muted-foreground">{t('komariAlerts.auditTitle', { count: row.audit.length })}</summary>

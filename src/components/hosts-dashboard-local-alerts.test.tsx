@@ -102,7 +102,7 @@ describe('host card canonical local alert actions', () => {
     expect(window.confirm).toHaveBeenCalledTimes(1)
     incident = screen.getByTestId('host-incident')
     expect(within(incident).queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument()
-    fireEvent.click(within(incident).getByRole('button', { name: 'Close alert' }))
+    fireEvent.click(within(incident).getByRole('button', { name: 'Archive' }))
     await waitFor(() => expect(jobs.get('job-2')).toMatchObject({ status: 'completed', action: 'local-alert.close', confirmationStatus: 'confirmed', vaultId: 'vault-a', hostId: host.id, transport: 'proxy-jump' }))
     expect(loadLocalAlertState('vault-a', host.id).audit.at(-1)).toMatchObject({ event: 'closed', operationJobId: 'job-2' })
     expect(window.confirm).toHaveBeenCalledTimes(2)

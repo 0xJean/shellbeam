@@ -84,10 +84,15 @@ fn vault_file_name(vault_id: Option<&str>) -> String {
 
 #[derive(Default)]
 pub struct VaultState {
+    session_generation: std::sync::atomic::AtomicU64,
     unlocked_keys: Mutex<std::collections::HashMap<String, [u8; VAULT_KEY_SIZE]>>,
 }
 
 impl VaultState {
+    pub(crate) fn session_generation(&self) -> u64 {
+        self.session_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
     pub(crate) fn is_unlocked(&self, vault_id: &str) -> bool {
         self.unlocked_keys
             .lock()
@@ -379,6 +384,9 @@ pub fn vault_lock(
         .lock()
         .map_err(|_| standard_error_from_raw("vault", "lock", "Vault state lock poisoned"))?;
     guard.remove(&vid);
+    state
+        .session_generation
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     Ok(VaultStatus {
         initialized: true,
         unlocked: false,

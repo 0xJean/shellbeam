@@ -1,3 +1,4 @@
+import { HostMetadataSyncPanel } from './host-metadata-sync-panel'
 import { HostForm } from '@/components/host-form'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
@@ -45,7 +46,8 @@ export function HostEditorDialog({
             vaultName={vaultName}
             existingGroups={existingGroups}
             existingTags={existingTags}
-          availableHosts={availableHosts}
+            availableHosts={availableHosts}
+            metadataControls={<HostMetadataSyncPanel host={host} unlocked={!!vaultUnlocked} />}
             onSubmit={(draft) => onSubmit(host, draft)}
             onCancel={onCancel}
           />

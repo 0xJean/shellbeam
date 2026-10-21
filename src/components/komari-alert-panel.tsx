@@ -78,7 +78,7 @@ export function KomariAlertPanel({
   const incidents = useMemo(() => groupKomariAlertIncidents(state?.alerts ?? []), [state?.alerts])
   const alerts = useMemo(() => sortAlerts(incidents.map((incident) => incident.alert)), [incidents])
   const localOnly = locale === 'zh-CN' ? '确认和关闭仅更新 ShellBeam 本地记录，不会修改 Komari 服务器。' : 'Acknowledging or closing updates ShellBeam records only; Komari server state is unchanged.'
-  const open = alerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length
+  const open = alerts.filter((alert) => !alert.evidenceStatus && (alert.status === 'active' || alert.status === 'acknowledged')).length
   const audit = state?.audit ?? []
 
   async function runAction(alert: KomariAlertRecord, action: 'acknowledge' | 'close') {
@@ -130,7 +130,7 @@ export function KomariAlertPanel({
             const Icon = severityIcon(alert.severity)
             const isExpanded = expanded === alert.alertId
             const members = incidents.find((incident) => incident.alert.alertId === alert.alertId)?.members ?? [alert]
-            const canAcknowledge = alert.status === 'active' && !!onAcknowledge
+            const canAcknowledge = !alert.evidenceStatus && alert.status === 'active' && !!onAcknowledge
             const canClose = (alert.status === 'active' || alert.status === 'acknowledged' || alert.status === 'resolved') && !!onClose
             return (
               <article key={alert.alertId} data-testid={`komari-alert-${alert.alertId}`} className={cn(compact ? 'px-3 py-2.5' : 'px-4 py-3')}>
@@ -143,6 +143,7 @@ export function KomariAlertPanel({
                       {members.length > 1 && <span className="text-xs text-[var(--workspace-text-muted)]">{locale === 'zh-CN' ? `${members.length} 条关联诊断` : `${members.length} related diagnostics`}</span>}
                       {alert.count != null && members.length === 1 && <span className="text-xs text-[var(--workspace-text-muted)]">×{alert.count}</span>}
                     </div>
+                    {alert.evidenceStatus && <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '缺少事件证据 · 仅保留历史与审计' : 'No event evidence · history and audit retained'}</p>}
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--workspace-text-subtle)]">
                       <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatTime(alert.lastSeenAt, locale)}</span>
                       {alert.hostId && onOpenHost ? (

@@ -1,4 +1,4 @@
-import { groupKomariAlertIncidents } from './komari-alert-incidents'
+import { groupKomariAlertIncidents, isUnverifiedKomariRuleAlert } from './komari-alert-incidents'
 import {
   dispatchNotification,
   type NotificationDispatchOptions,
@@ -300,7 +300,7 @@ export async function dispatchKomariAlertNotifications(
     if (!eventTypes.has(audit.event)) continue
     const incident = incidentByMember.get(audit.alertId)
     const record = incident?.alert ?? recordForAudit(state, audit)
-    if (!record) {
+    if (!record || isUnverifiedKomariRuleAlert(record)) {
       skipped += 1
       continue
     }

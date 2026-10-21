@@ -59,8 +59,8 @@ describe('Komari sync orchestration', () => {
     expect(result.snapshots[0]?.metrics?.data.cpuPercent).toBe(33)
     expect(result.alerts).toEqual({ load: 1, offline: 1, total: 2, active: null, updatedAt: 2_000 })
     expect(result.snapshots[0]?.alerts).toEqual(result.alerts)
-    expect(result.alertState?.summary.open).toBe(2)
-    expect(result.alertState?.alerts.map((alert) => alert.integrationId)).toEqual(['komari-prod', 'komari-prod'])
+    expect(result.alertState?.summary.open).toBe(0)
+    expect(result.alertState?.alerts).toEqual([])
   })
 
   it('reconciles a Probe collection error and resolves it on the next healthy sync', async () => {
@@ -138,7 +138,7 @@ describe('Komari sync orchestration', () => {
   })
 
 
-  it('auto-resolves and reopens persisted Probe and aggregate alerts across sessions', () => {
+  it('recovers real Probe incidents across sessions without converting aggregate rules into events', () => {
     const initial = reconcileKomariAlerts([], [
       { integrationId: 'komari-recovery', kind: 'load', count: 1, updatedAt: 1_000 },
       { integrationId: 'komari-recovery', nodeId: 'node-1', hostId: 'host-1', kind: 'probe-error:metrics', count: 1, updatedAt: 1_000 },
@@ -152,8 +152,8 @@ describe('Komari sync orchestration', () => {
     })
     expect(recovered.alertState.alerts.every((alert) => alert.status === 'resolved')).toBe(true)
     expect(recovered.alertState.summary).toMatchObject({ load: 0, offline: 0, open: 0 })
-    expect(recovered.alertAudit.map((entry) => entry.event)).toEqual(['resolved', 'resolved'])
-    expect(recovered.alertState.audit.map((entry) => entry.event)).toEqual(['opened', 'opened', 'resolved', 'resolved'])
+    expect(recovered.alertAudit.map((entry) => entry.event)).toEqual(['resolved'])
+    expect(recovered.alertState.audit.map((entry) => entry.event)).toEqual(['opened', 'resolved'])
 
     const failingSnapshot: ProbeSnapshot = {
       ...healthySnapshot,
@@ -170,10 +170,10 @@ describe('Komari sync orchestration', () => {
       alertState: recovered.alertState,
       now: 3_000,
     })
-    expect(reopened.alertState.alerts).toHaveLength(2)
+    expect(reopened.alertState.alerts).toHaveLength(1)
     expect(reopened.alertState.alerts.every((alert) => alert.status === 'active')).toBe(true)
-    expect(reopened.alertAudit.map((entry) => entry.event)).toEqual(['reopened', 'reopened'])
-    expect(reopened.alertState.audit.map((entry) => entry.event)).toEqual(['opened', 'opened', 'resolved', 'resolved', 'reopened', 'reopened'])
+    expect(reopened.alertAudit.map((entry) => entry.event)).toEqual(['reopened'])
+    expect(reopened.alertState.audit.map((entry) => entry.event)).toEqual(['opened', 'resolved', 'reopened'])
   })
 
   it('keeps one root-cause alert when a restored online envelope has no observations', () => {
@@ -192,14 +192,13 @@ describe('Komari sync orchestration', () => {
     const result = reconcileKomariProbeAlerts({ integrationId: 'komari-recovery', snapshots: [withoutObservation], alertState: recovered.alertState, now: 3_000 })
     expect(result.alertAudit.map(({ event, fingerprint }) => ({ event, fingerprint }))).toEqual([
       { event: 'reopened', fingerprint: 'komari-recovery|node-1|host-1|probe-error:metrics' },
-      { event: 'reopened', fingerprint: 'komari-recovery|||load' },
     ])
-    expect(result.alertState.alerts).toHaveLength(2)
+    expect(result.alertState.alerts).toHaveLength(1)
     expect(result.alertState.alerts.every((alert) => alert.status === 'active')).toBe(true)
     expect(result.alertState.alerts.some((alert) => alert.kind === 'probe-unknown')).toBe(false)
     // A repeated hydration must neither open another alert nor append audits.
     const repeated = reconcileKomariProbeAlerts({ integrationId: 'komari-recovery', snapshots: [withoutObservation], alertState: result.alertState, now: 3_100 })
-    expect(repeated.alertState.alerts).toHaveLength(2)
+    expect(repeated.alertState.alerts).toHaveLength(1)
     expect(repeated.alertAudit).toEqual([])
   })
 
@@ -263,7 +262,7 @@ describe('Komari sync orchestration', () => {
     expect(result.alertState?.summary.load).toBeNull()
   })
 
-  it('returns only lifecycle audit rows produced by the current reconciliation', async () => {
+  it('retains old aggregate audits without reopening an unverified historical event', async () => {
     const previous = {
       schemaVersion: 1 as const,
       alerts: [{
@@ -293,9 +292,11 @@ describe('Komari sync orchestration', () => {
       fetchImpl,
       alertState: previous,
     })
-    expect(result.alertAudit.map((entry) => entry.event)).toEqual(['reopened'])
+    expect(result.alertAudit).toEqual([])
     expect(result.alertAudit).not.toContainEqual(expect.objectContaining({ auditId: 'old-open' }))
-    expect(result.alertState?.audit.map((entry) => entry.auditId)).toEqual(['old-open', result.alertAudit[0]?.auditId])
+    expect(result.alertState?.audit.map((entry) => entry.auditId)).toEqual(['old-open'])
+    expect(result.alertState?.alerts[0]).toMatchObject({ status: 'resolved', evidenceStatus: 'unverified-rule-count' })
+    expect(result.alertState?.summary.open).toBe(0)
   })
 
   it('caps concurrent recent-metric requests while preserving all snapshots', async () => {

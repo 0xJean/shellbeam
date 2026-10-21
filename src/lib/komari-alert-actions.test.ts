@@ -20,7 +20,7 @@ const state: KomariAlertState = {
     integrationId: 'i',
     nodeId: 'n',
     hostId: 'h',
-    kind: 'load',
+    kind: 'probe-error:metrics',
     title: 'Load',
     severity: 'warning',
     count: 1,

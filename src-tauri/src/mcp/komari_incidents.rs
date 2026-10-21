@@ -36,6 +36,9 @@ fn legacy_empty_retry(title: &str) -> bool {
 
 pub(super) fn normalize(alerts: &mut [Value]) {
     for alert in alerts.iter_mut() {
+        if matches!(alert["kind"].as_str(), Some("load" | "offline")) {
+            alert["evidenceStatus"] = json!("unverified-rule-count");
+        }
         let independent_provider_failure = incident_key(alert)
             .is_some_and(|key| key.starts_with("komari-missing-observations:"))
             && alert["kind"] == "probe-error:provider"
@@ -234,6 +237,29 @@ pub(super) fn apply_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_rule_statistics_retain_history_without_becoming_event_evidence() {
+        let original = json!({"alertId":"legacy-rule", "kind":"offline", "status":"active",
+            "relatedOperationJobId":"retained-job", "count":1, "resolvedAt":null});
+        let mut alerts = vec![original.clone()];
+        normalize(&mut alerts);
+        assert_eq!(alerts[0]["evidenceStatus"], "unverified-rule-count");
+        for key in [
+            "alertId",
+            "status",
+            "relatedOperationJobId",
+            "count",
+            "resolvedAt",
+        ] {
+            assert_eq!(alerts[0][key], original[key]);
+        }
+        assert!(project(&alerts)
+            .into_iter()
+            .filter(|row| row["evidenceStatus"] != "unverified-rule-count")
+            .collect::<Vec<_>>()
+            .is_empty());
+    }
 
     fn legacy() -> Vec<Value> {
         [

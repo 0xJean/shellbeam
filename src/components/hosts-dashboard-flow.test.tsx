@@ -80,7 +80,7 @@ describe('host operations filter workflow', () => {
     expect(source).not.toBeVisible()
     fireEvent.click(within(hostCard).getByTestId('host-data-source-details').querySelector('summary')!)
     expect(source).toBeVisible()
-    expect(source).toHaveTextContent('Server alert summary: 0/0')
+    expect(source).toHaveTextContent('Notification rules (not incidents): 0')
   })
 
   it.each([true, false])('renders only a confirmed persisted Komari sync timestamp (sync state: %s)', async (hasSync) => {

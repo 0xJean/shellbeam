@@ -118,10 +118,8 @@ export function reconcileKomariProbeAlerts(options: {
   const now = options.now ?? Date.now()
   const snapshots = options.snapshots.filter((snapshot) => snapshot.provider.kind === 'komari' && snapshot.provider.id === options.integrationId).map((snapshot) => refreshProbeSnapshotFreshness(snapshot, now))
   const { observations, probeBaselines } = probeAlertInput(options.integrationId, snapshots, options.alertState, now)
-  // Komari attaches its aggregate notification summary to every provider
-  // snapshot. Reconcile one copy when hydrating a cache so a zero-valued
-  // summary can automatically resolve a load/offline alert after a restart;
-  // duplicate host-scoped rows would otherwise inflate the lifecycle.
+  // Preserve configuration statistics separately from observed incidents.
+  // A cached zero-valued rule count never proves a recovery.
   const aggregateSummary = snapshots.find((snapshot) => snapshot.alerts !== null && snapshot.alerts !== undefined)?.alerts
   if (aggregateSummary) {
     observations.push(...komariAlertObservationsFromSummary(aggregateSummary, { integrationId: options.integrationId }))
@@ -290,17 +288,9 @@ export async function syncKomariIntegration(options: {
       {
         now: completedAt,
         actor: options.alertActor ?? 'komari-sync',
-        // A complete Komari summary may resolve rows absent from this sync,
-        // but only when every mapped host produced a sample. Unsupported
-        // summaries never prove recovery.
-        complete: Boolean(
-          alerts
-          && alerts.unsupported !== true
-          && alerts.load !== null
-          && alerts.offline !== null
-          && normalizedSnapshots.length >= mapping.mappings.length
-          && !normalizedSnapshots.some((snapshot) => snapshot.errors.some((error) => error.code === 'invalid-sample-time')),
-        ),
+        // Rule collections cannot prove event absence or recovery. Probe rows
+        // resolve only through their dated healthy observation.
+        complete: false,
         baseSummary: alerts ?? options.alertState?.summary ?? null,
       },
     )

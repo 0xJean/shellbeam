@@ -8,7 +8,7 @@ import { useT } from '@/lib/i18n'
 import type { AuthType } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
 import { Archive, ChevronDown, Eye, EyeOff, Key, Lock, RefreshCw, Server, User, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 interface HostFormProps {
   initial?: Partial<HostProfileDraft> | null
@@ -23,6 +23,7 @@ interface HostFormProps {
   existingGroups?: string[]
   existingTags?: string[]
   availableHosts?: HostProfile[]
+  metadataControls?: ReactNode
 }
 
 export function HostForm({
@@ -38,6 +39,7 @@ export function HostForm({
   existingGroups = [],
   existingTags = [],
   availableHosts = [],
+  metadataControls,
 }: HostFormProps) {
   const [address, setAddress] = useState(initial?.address ?? '')
   const [name, setName] = useState(initial?.name ?? '')
@@ -270,6 +272,8 @@ export function HostForm({
             </div>
           )}
         </div>
+
+        {metadataControls}
 
         {/* Divider */}
         <div className="border-t border-border" />

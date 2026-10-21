@@ -65,9 +65,11 @@ fn normalized_vault_id(vault_id: Option<&str>) -> String {
         .to_string()
 }
 
-fn open_hosts_db(app: &tauri::AppHandle) -> Result<Connection, String> {
+pub(crate) fn open_hosts_db(app: &tauri::AppHandle) -> Result<Connection, String> {
     let path = data_file_path(app, SHELLBEAM_DATA_DB)?;
     let conn = Connection::open(path).map_err(|err| format!("Open hosts db failed: {err}"))?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| "HOST_STORE_BUSY")?;
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;
@@ -399,6 +401,7 @@ pub fn save_hosts(
     let tx = conn
         .transaction()
         .map_err(|err| format!("Start hosts save failed: {err}"))?;
+    super::host_metadata::begin_host_write(&tx, &normalized_vault_id)?;
     tx.execute(
         "DELETE FROM workspace_hosts WHERE vault_id = ?1",
         params![normalized_vault_id],
@@ -407,6 +410,8 @@ pub fn save_hosts(
     for host in hosts {
         insert_host_row(&tx, &normalized_vault_id, host)?;
     }
+    super::host_metadata::hosts_changed(&tx, &normalized_vault_id)?;
+    super::host_metadata::end_host_write(&tx, &normalized_vault_id)?;
     mark_hosts_migrated(&tx, &normalized_vault_id)?;
     tx.commit()
         .map_err(|err| format!("Commit hosts save failed: {err}"))
@@ -428,7 +433,6 @@ pub fn create_host(
 ) -> Result<HostProfile, String> {
     let vid = vault_id.as_deref();
     let now = now_unix_ms();
-    let mut hosts = load_hosts(&app, vid)?;
     let host = HostProfile {
         id: Uuid::new_v4().to_string(),
         name: payload.name.trim().to_string(),
@@ -463,9 +467,19 @@ pub fn create_host(
         created_at: now,
         updated_at: now,
     };
-    hosts.push(host.clone());
-    save_hosts(&app, &hosts, vid)?;
-    Ok(host)
+    use tauri::Manager;
+    let vault = normalized_vault_id(vid);
+    app.state::<crate::vault::secrets::VaultState>()
+        .while_unlocked(&vault, || {
+            let mut conn = open_hosts_db(&app)?;
+            migrate_legacy_hosts(&app, &mut conn, &vault, vid)?;
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(|_| "HOST_SAVE_FAILED")?;
+            insert_host_row(&tx, &vault, &host)?;
+            tx.commit().map_err(|_| "HOST_SAVE_FAILED")?;
+            Ok(host)
+        })
 }
 
 #[tauri::command]
@@ -474,32 +488,57 @@ pub fn update_host(
     payload: HostProfile,
     vault_id: Option<String>,
 ) -> Result<HostProfile, String> {
-    let vid = vault_id.as_deref();
-    let mut hosts = load_hosts(&app, vid)?;
-    let idx = hosts
-        .iter()
-        .position(|host| host.id == payload.id)
-        .ok_or_else(|| "Host not found".to_string())?;
-    let mut updated = payload;
-    updated.name = updated.name.trim().to_string();
-    updated.address = updated.address.trim().to_string();
-    updated.username = updated.username.trim().to_string();
-    updated.secret_key_ref = updated
-        .secret_key_ref
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-    updated.password_key_ref = updated
-        .password_key_ref
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-    updated.private_key_ref = updated
-        .private_key_ref
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-    updated.updated_at = now_unix_ms();
-    hosts[idx] = updated.clone();
-    save_hosts(&app, &hosts, vid)?;
-    Ok(updated)
+    use tauri::Manager;
+    let vid = normalized_vault_id(vault_id.as_deref());
+    let state = app.state::<crate::vault::secrets::VaultState>();
+    state.while_unlocked(&vid, || {
+        let mut conn = open_hosts_db(&app)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|_| "HOST_SAVE_FAILED")?;
+        let previous: i64 = tx
+            .query_row(
+                "SELECT updated_at FROM workspace_hosts WHERE vault_id=?1 AND id=?2",
+                params![vid, payload.id],
+                |r| r.get(0),
+            )
+            .map_err(|_| "Host not found")?;
+        if previous != payload.updated_at {
+            return Err("METADATA_STALE_EDIT".into());
+        }
+        let created_at: i64 = tx
+            .query_row(
+                "SELECT created_at FROM workspace_hosts WHERE vault_id=?1 AND id=?2",
+                params![vid, payload.id],
+                |r| r.get(0),
+            )
+            .map_err(|_| "Host not found")?;
+        let mut updated = payload;
+        updated.created_at = created_at;
+        updated.name = updated.name.trim().to_string();
+        updated.address = updated.address.trim().to_string();
+        updated.username = updated.username.trim().to_string();
+        for reference in [
+            &mut updated.secret_key_ref,
+            &mut updated.password_key_ref,
+            &mut updated.private_key_ref,
+            &mut updated.jump_host,
+            &mut updated.jump_user,
+            &mut updated.jump_host_id,
+        ] {
+            *reference = reference
+                .take()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+        }
+        updated.updated_at = now_unix_ms().max(previous + 1);
+        super::host_metadata::begin_host_write(&tx, &vid)?;
+        insert_host_row(&tx, &vid, &updated)?;
+        super::host_metadata::hosts_changed(&tx, &vid)?;
+        super::host_metadata::end_host_write(&tx, &vid)?;
+        tx.commit().map_err(|_| "HOST_SAVE_FAILED")?;
+        Ok(updated)
+    })
 }
 
 #[tauri::command]
@@ -508,15 +547,21 @@ pub fn delete_host(
     id: String,
     vault_id: Option<String>,
 ) -> Result<(), String> {
+    use tauri::Manager;
     let vid = vault_id.as_deref();
-    let mut hosts = load_hosts(&app, vid)?;
-    let before_len = hosts.len();
-    let deleted_host = hosts.iter().find(|host| host.id == id).cloned();
-    hosts.retain(|host| host.id != id);
-    if hosts.len() == before_len {
-        return Err("Host not found".to_string());
-    }
-    save_hosts(&app, &hosts, vid)?;
+    let vault = normalized_vault_id(vid);
+    let deleted_host = app.state::<crate::vault::secrets::VaultState>().while_unlocked(&vault, || {
+        let mut conn = open_hosts_db(&app)?;
+        migrate_legacy_hosts(&app, &mut conn, &vault, vid)?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|_| "HOST_SAVE_FAILED")?;
+        let host = tx.query_row("SELECT id,name,address,port,username,host_group,auth_type,secret_key_ref,password_key_ref,private_key_ref,tags_json,jump_host,jump_port,jump_user,created_at,updated_at,jump_host_id FROM workspace_hosts WHERE vault_id=?1 AND id=?2", params![vault,id], host_from_row).map_err(|_| "Host not found")?;
+        super::host_metadata::begin_host_write(&tx, &vault)?;
+        tx.execute("DELETE FROM workspace_hosts WHERE vault_id=?1 AND id=?2", params![vault,id]).map_err(|_| "HOST_SAVE_FAILED")?;
+        super::host_metadata::hosts_changed(&tx, &vault)?;
+        super::host_metadata::end_host_write(&tx, &vault)?;
+        tx.commit().map_err(|_| "HOST_SAVE_FAILED")?;
+        Ok(Some(host))
+    })?;
     if let Some(host) = deleted_host {
         delete_host_inventory_data(&app, &host)?;
         if let Err(error) = crate::mcp::delete_project_deployments_for_host(

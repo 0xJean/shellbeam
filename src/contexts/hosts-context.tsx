@@ -1,3 +1,4 @@
+import { HOST_METADATA_CHANGED, notifyHostMetadataChanged, syncHostMetadata } from '@/lib/host-metadata-sync'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { type HostProfile, type HostProfileDraft, createHost, updateHost, deleteHost, listHosts } from '@/lib/hosts'
 import { vaultSetSecret } from '@/lib/vault'
@@ -32,6 +33,7 @@ interface HostsContextValue {
 
 const HostsContext = createContext<HostsContextValue | null>(null)
 
+// eslint-disable-next-line react-refresh/only-export-components -- The context hook accompanies its provider.
 export function useHosts() {
   const ctx = useContext(HostsContext)
   if (!ctx) throw new Error('useHosts must be used within HostsProvider')
@@ -42,7 +44,7 @@ const DEFAULT_USERNAME_KEY = 'shellbeam.defaultUsername'
 const KEEP_ALIVE_INTERVAL_SECS_KEY = 'shellbeam.keepAliveIntervalSecs'
 
 export function HostsProvider({ children }: { children: ReactNode }) {
-  const { activeVaultId, resolveAuthSecret, refreshVault } = useVault()
+  const { activeVaultId, resolveAuthSecret, refreshVault, vaultStatusState, captureVaultScope } = useVault()
 
   const [hosts, setHosts] = useState<HostProfile[]>([])
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null)
@@ -60,20 +62,38 @@ export function HostsProvider({ children }: { children: ReactNode }) {
   )
 
   const refreshHosts = useCallback(async () => {
+    const valid = captureVaultScope()
     setLoadingHosts(true)
     try {
       const items = await listHosts(activeVaultId)
+      if (!valid()) return
       setHosts(items)
       setSelectedHostId((cur) => {
         if (cur && items.some((i) => i.id === cur)) return cur
         return items[0]?.id ?? null
       })
     } finally {
-      setLoadingHosts(false)
+      if (valid()) setLoadingHosts(false)
     }
-  }, [activeVaultId])
+  }, [activeVaultId, captureVaultScope])
 
-  useEffect(() => { void refreshHosts() }, [activeVaultId])
+  useEffect(() => { void refreshHosts() }, [refreshHosts])
+
+  useEffect(() => {
+    if (!vaultStatusState?.unlocked || !('__TAURI_INTERNALS__' in window)) return
+    const captured = captureVaultScope()
+    const controller = new AbortController()
+    let alive = true
+    const valid = () => alive && captured()
+    const tick = () => { void syncHostMetadata(activeVaultId, valid, controller.signal).catch(() => {}) }
+    const changed = (event: Event) => {
+      if ((event as CustomEvent<{ vaultId: string }>).detail?.vaultId === activeVaultId && valid()) void refreshHosts()
+    }
+    tick()
+    const timer = window.setInterval(tick, 5000)
+    window.addEventListener(HOST_METADATA_CHANGED, changed)
+    return () => { alive = false; controller.abort(); window.clearInterval(timer); window.removeEventListener(HOST_METADATA_CHANGED, changed) }
+  }, [activeVaultId, vaultStatusState?.unlocked, captureVaultScope, refreshHosts])
 
   useEffect(() => {
     let cancelled = false
@@ -119,9 +139,10 @@ export function HostsProvider({ children }: { children: ReactNode }) {
       ...draft,
       group: draft.group ?? host.group,
       tags: draft.tags ?? host.tags,
-      updatedAt: Date.now(),
+      updatedAt: host.updatedAt,
     }
     await updateHost(updated, activeVaultId)
+    notifyHostMetadataChanged(activeVaultId)
     await refreshHosts()
   }, [activeVaultId, refreshHosts])
 

@@ -1,3 +1,4 @@
+import { HostMetadataSyncNotice } from './host-metadata-sync-panel'
 import { matchesHostSearch } from '@/lib/host-search'
 import { getHostIdentity } from '@/lib/host-identity'
 import type { WorkspaceAppId } from '@/lib/workspace'
@@ -32,7 +33,7 @@ import { buildKomariProbeLinks, checkKomariLinkedProbe, type KomariProbeLink } f
 import { runConfirmedOperation } from '@/lib/operation-job'
 import { runKomariAlertAction, type KomariAlertAction } from '@/lib/komari-alert-actions'
 import type { KomariAlertRecord, KomariAlertState } from '@/lib/komari-alerts'
-import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
+import { groupKomariAlertIncidents, isUnverifiedKomariRuleAlert } from '@/lib/komari-alert-incidents'
 import { listShellbeamAgents } from '@/lib/shellbeam-agent'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import { normalizeKomariEndpoint } from '@/lib/komari'
@@ -275,7 +276,7 @@ function hostOpsToCardSummary(
   const latestAudit = view.latestAudit
   const alertSummary = view.health.alertSummary
   const alertLifecycle = view.health.alertLifecycle
-  const alertIncidents = groupKomariAlertIncidents(view.komariAlerts)
+  const alertIncidents = groupKomariAlertIncidents(view.komariAlerts).filter(({ alert }) => !isUnverifiedKomariRuleAlert(alert))
   return {
     serviceTotal: view.serviceSummary.total,
     serviceActive: view.serviceSummary.active,
@@ -283,8 +284,8 @@ function hostOpsToCardSummary(
     processTotal: view.processSummary.total,
     processRunning: view.processSummary.pm2,
     ...(alertSummary ? {
-      alertTotal: alertSummary.total,
-      alertActive: alertSummary.active,
+      alertTotal: 0,
+      alertActive: 0,
       alertUnsupported: alertSummary.unsupported === true,
     } : {}),
     ...(alertLifecycle ? {
@@ -1009,7 +1010,7 @@ export function HostsDashboard({
         const state = loadLocalAlertState(activeVaultId, id)
         const localAlerts = state.alerts.filter((alert) => alert.hostId === id)
         const open = localAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
-        const komari = groupKomariAlertIncidents(view.komariAlerts).map(({ alert }) => alert).filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
+        const komari = groupKomariAlertIncidents(view.komariAlerts).map(({ alert }) => alert).filter(alert => !isUnverifiedKomariRuleAlert(alert)).filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
         const rank = ['info', 'warning', 'critical']
         const highestAlertSeverity = [...open, ...komari].map((alert) => alert.severity).sort((a, b) => rank.indexOf(b) - rank.indexOf(a))[0] ?? null
         return [id, { ...view, localAlerts, localAlertEvaluations: hostProbeEvaluations(state.evaluations), localAlertOpen: open.length, highestAlertSeverity, alertOpenCount: view.alertOpenCount == null ? null : view.alertOpenCount - (view.localAlertOpen ?? 0) + open.length }]
@@ -1166,6 +1167,7 @@ export function HostsDashboard({
 
   return (
     <div className="flex min-w-0 w-full flex-col text-[var(--workspace-text)]">
+      <HostMetadataSyncNotice vaultId={activeVaultId} unlocked={!!vaultUnlocked} hosts={hosts} onEdit={setEditingHost} />
       {SHOW_HOST_SUMMARY_STRIP && (
         <HostSummaryStrip
           totalHosts={hosts.length}

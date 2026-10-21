@@ -29,7 +29,7 @@ function integration(vaultId = 'a'): KomariIntegration {
 }
 function state(vaultId = 'a'): KomariAlertState {
   const result = reconcileKomariAlerts([], [{
-    integrationId: `integration-${vaultId}`, nodeId: 'node', hostId: 'host', kind: 'load',
+    integrationId: `integration-${vaultId}`, nodeId: 'node', hostId: 'host', kind: 'probe-error:metrics',
     count: 1, active: 1, title: `Alert for ${vaultId}`, updatedAt: 100,
   }], { now: 100 })
   return { schemaVersion: 1, ...result, probeBaselines: [{ integrationId: `integration-${vaultId}`, endpoint: 'https://example.test', nodeId: 'node', hostId: 'host', lastHealthySampledAt: 99 }] }

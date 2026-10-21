@@ -7,6 +7,18 @@ export interface KomariAlertIncident {
   memberAlertIds: string[]
 }
 
+/** Legacy load/offline rows came from rule counts, not dated event evidence.
+ * Keep their IDs, lifecycle and audits, but never treat them as current faults. */
+export function isUnverifiedKomariRuleAlert(alert: Pick<KomariAlertRecord, 'kind'>): boolean {
+  return alert.kind === 'load' || alert.kind === 'offline'
+}
+
+export function komariAlertLastObservation(alert: KomariAlertRecord): 'abnormal' | 'recovered' | 'unknown' {
+  if (isUnverifiedKomariRuleAlert(alert)) return 'unknown'
+  if (alert.resolvedAt !== null || alert.count === 0) return 'recovered'
+  return (alert.count ?? 0) > 0 ? 'abnormal' : 'unknown'
+}
+
 function scopeKey(alert: KomariAlertRecord): string {
   return JSON.stringify([alert.integrationId, alert.nodeId ?? null, alert.hostId ?? null])
 }
@@ -23,6 +35,7 @@ function isLegacyMissingReportRetry(alert: KomariAlertRecord): boolean {
 export function normalizeKomariAlertIncidents(alerts: readonly KomariAlertRecord[]): KomariAlertRecord[] {
   const records = alerts.map((alert) => {
     const record = { ...alert }
+    if (isUnverifiedKomariRuleAlert(record)) record.evidenceStatus = 'unverified-rule-count'
     if (typeof record.incidentKey !== 'string' || !record.incidentKey.trim() || record.incidentKey.length > 200) delete record.incidentKey
     // A historical retry symptom may later become an independent provider
     // fault. Detach open faults on reads as well as reconciliation, without

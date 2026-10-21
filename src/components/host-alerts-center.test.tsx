@@ -15,7 +15,7 @@ function local(overrides: Partial<LocalAlertRecord> = {}): LocalAlertRecord {
   return { ruleId: 'cpu', hostId: host.id, name: 'CPU high', metric: 'cpu', status: 'active', severity: 'warning', openedAt: 100, updatedAt: 200, resolvedAt: null, value: 95, source: 'ssh-agentless', transport: 'direct', ...overrides }
 }
 function komari(overrides: Partial<KomariAlertRecord> = {}): KomariAlertRecord {
-  const alert = reconcileKomariAlerts([], [{ integrationId: 'integration', hostId: host.id, nodeId: 'node', kind: 'load', count: 1, active: 1, title: 'Monitoring interrupted', updatedAt: 250 }], { now: 250 }).alerts[0]
+  const alert = reconcileKomariAlerts([], [{ integrationId: 'integration', hostId: host.id, nodeId: 'node', kind: 'probe-error:metrics', count: 1, active: 1, title: 'Monitoring interrupted', updatedAt: 250 }], { now: 250 }).alerts[0]
   return { ...alert, ...overrides }
 }
 function summary(overrides: Partial<HostOperationalSummary> = {}): HostOperationalSummary {
@@ -119,7 +119,7 @@ describe('unified host alerts center', () => {
     for (const text of ['Opened', 'komari-sync', 'Acknowledged', 'original-operator', '#original-operation-job']) {
       expect(within(audit).getByText(text)).toBeVisible()
     }
-    fireEvent.click(within(incident).getByRole('button', { name: 'Close alert' }))
+    fireEvent.click(within(incident).getByRole('button', { name: 'Archive' }))
     await waitFor(() => expect(onAction).toHaveBeenCalledWith('close'))
     expect(JSON.stringify(row)).toBe(before)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Include history' }))
@@ -173,7 +173,7 @@ describe('unified host alerts center', () => {
     const komariCard = screen.getAllByTestId('host-incident').find(element => element.dataset.source === 'komari')!
     fireEvent.click(within(localCard).getByRole('button', { name: 'Acknowledge' }))
     await waitFor(() => expect(onLocal).toHaveBeenCalledWith(localAlert, 'acknowledge'))
-    fireEvent.click(within(komariCard).getByRole('button', { name: 'Close alert' }))
+    fireEvent.click(within(komariCard).getByRole('button', { name: 'Archive' }))
     await waitFor(() => expect(onKomari).toHaveBeenCalledWith('close', expect.objectContaining({ alertId: komariAlert.alertId, integrationId: komariAlert.integrationId, nodeId: komariAlert.nodeId })))
     expect(localAlert.status).toBe('active')
     expect(komariAlert.status).toBe('active')
@@ -196,22 +196,22 @@ describe('unified host alerts center', () => {
     expect(onKomari).not.toHaveBeenCalled()
     fireEvent.click(within(localCard).getByRole('button', { name: 'Acknowledge' }))
     expect(onLocal).toHaveBeenCalledTimes(1)
-    expect(screen.getAllByRole('button', { name: /Acknowledge|Close alert/ }).every(button => (button as HTMLButtonElement).disabled)).toBe(true)
-    fireEvent.click(within(localCard).getByRole('button', { name: 'Close alert' }))
+    expect(screen.getAllByRole('button', { name: /Acknowledge|Archive/ }).every(button => (button as HTMLButtonElement).disabled)).toBe(true)
+    fireEvent.click(within(localCard).getByRole('button', { name: 'Archive' }))
     expect(onLocal).toHaveBeenCalledTimes(1)
     await act(async () => { waiting.resolve(); await waiting.promise })
     view.rerender(panel(makeRows()))
-    expect(screen.getAllByRole('button', { name: /Acknowledge|Close alert/ }).every(button => !(button as HTMLButtonElement).disabled)).toBe(true)
+    expect(screen.getAllByRole('button', { name: /Acknowledge|Archive/ }).every(button => !(button as HTMLButtonElement).disabled)).toBe(true)
   })
 
   it('shows action failure, preserves the row and allows a later retry', async () => {
     const action = vi.fn().mockRejectedValueOnce(new Error('persistence unavailable')).mockResolvedValueOnce(undefined)
     const rows = buildHostIncidents([host], new Map([[host.id, summary({ localAlerts: [local()], onLocalAlertAction: action })]]), 'vault-a')
     render(panel(rows))
-    fireEvent.click(screen.getByRole('button', { name: 'Close alert' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
     await waitFor(() => expect(screen.getByRole('alert')).toBeVisible())
     expect(shownTitles()).toEqual(['CPU high'])
-    fireEvent.click(screen.getByRole('button', { name: 'Close alert' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
     await waitFor(() => expect(action).toHaveBeenCalledTimes(2))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -229,7 +229,7 @@ describe('unified host alerts center', () => {
     const recovered = screen.getByText('Recovered').closest('article')!
     const closed = screen.getByText('Closed').closest('article')!
     expect(within(recovered).queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument()
-    expect(within(recovered).getByRole('button', { name: 'Close alert' })).toBeVisible()
+    expect(within(recovered).getByRole('button', { name: 'Archive' })).toBeVisible()
     expect(within(closed).queryByRole('button')).not.toBeInTheDocument()
   })
 })

@@ -1,6 +1,6 @@
 import type { HostProfile } from './hosts'
 import type { HostOperationalSummary } from '@/components/host-card'
-import { groupKomariAlertIncidents } from './komari-alert-incidents'
+import { groupKomariAlertIncidents, komariAlertLastObservation } from './komari-alert-incidents'
 import type { KomariAlertAuditEntry } from './komari-alerts'
 
 export interface HostIncident {
@@ -14,6 +14,8 @@ export interface HostIncident {
   busy: boolean
   /** Retained lifecycle from a source that no longer supplies current health. */
   historyOnly?: boolean
+  evidenceUnavailable?: boolean
+  lastObservation?: 'abnormal' | 'recovered' | 'unknown'
   audit?: KomariAlertAuditEntry[]
   act?: (action: 'acknowledge' | 'close') => void | Promise<void>
 }
@@ -34,8 +36,11 @@ export function buildHostIncidents(hosts: HostProfile[], summaries: Map<string, 
     const komari: HostIncident[] = groupKomariAlertIncidents(summary.komariAlerts ?? [])
       .filter(({ alert }) => !alert.hostId || alert.hostId === host.id).map(({ alert, memberAlertIds }) => ({
         key: `komari:${host.id}:${alert.integrationId}:${alert.alertId}`, hostId: host.id, hostName: host.name,
+        lastObservation: komariAlertLastObservation(alert),
         title: alert.title, source: 'komari', status: alert.status, updatedAt: alert.lastSeenAt,
         busy: !!summary.komariAlertBusy,
+        historyOnly: alert.evidenceStatus === 'unverified-rule-count',
+        evidenceUnavailable: alert.evidenceStatus === 'unverified-rule-count',
         audit: summary.komariAlertAudits?.filter(entry => memberAlertIds.includes(entry.alertId)),
         act: summary.onKomariAlertAction ? action => summary.onKomariAlertAction!(action, alert) : undefined,
       }))

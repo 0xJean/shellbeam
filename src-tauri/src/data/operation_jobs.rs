@@ -509,9 +509,16 @@ pub(crate) fn create_on(
     db: &Connection,
     request: CreateOperationJobRequest,
 ) -> Result<OperationJob, String> {
+    create_on_with_id(db, request, &Uuid::new_v4().to_string())
+}
+
+pub(crate) fn create_on_with_id(
+    db: &Connection,
+    request: CreateOperationJobRequest,
+    job_id: &str,
+) -> Result<OperationJob, String> {
     validate_request(&request)?;
     let now = now_unix_ms();
-    let job_id = Uuid::new_v4().to_string();
     let queued_audit_id = Uuid::new_v4().to_string();
     let actor = request
         .actor
@@ -928,7 +935,7 @@ pub(crate) fn audit_list_on(
 pub fn recover(app: &tauri::AppHandle) -> Result<(), String> {
     let db = open(app)?;
     let mut statement = db
-        .prepare("SELECT job_id FROM operation_jobs WHERE status IN ('queued','running')")
+        .prepare("SELECT job_id FROM operation_jobs WHERE status IN ('queued','running') AND action != 'host.metadata.sync'")
         .map_err(|e| e.to_string())?;
     let ids = statement
         .query_map([], |row| row.get::<_, String>(0))

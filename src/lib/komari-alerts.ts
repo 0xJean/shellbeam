@@ -1,5 +1,5 @@
 import { hasOnlyKomariMissingReport } from './komari-first-report'
-import { groupKomariAlertIncidents, normalizeKomariAlertIncidents } from './komari-alert-incidents'
+import { groupKomariAlertIncidents, normalizeKomariAlertIncidents, isUnverifiedKomariRuleAlert } from './komari-alert-incidents'
 import type { KomariAlertSummary } from './komari'
 import type { ProbeProviderTelemetry, ProbeSnapshot } from './probe-provider'
 
@@ -49,6 +49,7 @@ export interface KomariProbeAlertTelemetry {
 
 export interface KomariAlertRecord {
   schemaVersion: 1
+  evidenceStatus?: 'unverified-rule-count'
   source: 'komari'
   alertId: string
   fingerprint: string
@@ -279,29 +280,14 @@ function auditFor(
   }
 }
 
-/** Convert Komari's aggregate notification response to stable local alert
- * observations. Zero values are retained so a later sync can resolve an open
- * alert; unsupported/null values are omitted because they cannot prove a
- * recovery. */
+/** Notification collections are configuration statistics. Even an aggregate
+ * active count has no stable event identity, host or recovery timestamp. */
 export function komariAlertObservationsFromSummary(
-  summary: KomariAlertSummary | null | undefined,
-  scope: KomariAlertScope,
+  _summary: KomariAlertSummary | null | undefined,
+  _scope: KomariAlertScope,
 ): KomariAlertObservation[] {
-  if (!summary || summary.unsupported) return []
-  const updatedAt = summary.updatedAt
-  return (['load', 'offline'] as const)
-    .map((kind) => ({
-      integrationId: required(scope.integrationId, 'integration id'),
-      nodeId: scope.nodeId ?? null,
-      hostId: scope.hostId ?? null,
-      kind,
-      count: boundedCount(summary[kind]),
-      active: summary.active,
-      severity: severityFor(kind),
-      title: kind === 'offline' ? 'Komari offline notifications' : 'Komari load notifications',
-      updatedAt,
-    }))
-    .filter((observation) => observation.count !== null)
+  void _summary; void _scope // Keep the read API compatible; rule counts cannot identify incidents.
+  return []
 }
 
 /** One source failure becomes one incident. Unknown health and scheduler retry
@@ -374,6 +360,7 @@ export function reconcileKomariAlerts(
   const byFingerprint = new Map<string, KomariAlertObservation>()
   const duplicateCounts = new Map<string, number>()
   for (const raw of observations) {
+    if (isUnverifiedKomariRuleAlert(raw)) continue
     const observation = normalizeObservation(raw)
     const fingerprint = komariAlertFingerprint(observation)
     const previous = byFingerprint.get(fingerprint)
@@ -442,7 +429,7 @@ export function reconcileKomariAlerts(
 
   if (options.complete) {
     for (const record of alerts) {
-      if (record.kind.startsWith('probe-') || seen.has(record.fingerprint) || record.status === 'resolved' || record.status === 'closed') continue
+      if (isUnverifiedKomariRuleAlert(record) || record.kind.startsWith('probe-') || seen.has(record.fingerprint) || record.status === 'resolved' || record.status === 'closed') continue
       record.status = 'resolved'
       record.resolvedAt = now
       audit.push(auditFor(record, 'resolved', now, actor, record.relatedOperationJobId, audit.length))
@@ -489,18 +476,18 @@ export function summarizeKomariAlertState(
   now = Date.now(),
   baseSummary?: KomariAlertSummary | null,
 ): KomariAlertLifecycleSummary {
-  const incidents = groupKomariAlertIncidents(alerts).map((incident) => incident.alert)
+  const incidents = groupKomariAlertIncidents(alerts).map((incident) => incident.alert).filter(alert => !isUnverifiedKomariRuleAlert(alert))
   const acknowledged = incidents.filter((alert) => alert.status === 'acknowledged').length
   const active = incidents.filter((alert) => alert.status === 'active').length
   const resolved = incidents.filter((alert) => alert.status === 'resolved').length
   const closed = incidents.filter((alert) => alert.status === 'closed').length
-  const total = baseSummary?.total ?? incidents.reduce((sum, alert) => sum + (alert.count ?? 0), 0)
+  const total = incidents.length
   const deduplicated = alerts.reduce((sum, alert) => sum + alert.deduplicatedCount, 0)
   return {
     load: baseSummary?.load ?? null,
     offline: baseSummary?.offline ?? null,
     total,
-    active: baseSummary?.active ?? active,
+    active,
     open: active + acknowledged,
     acknowledged,
     resolved,

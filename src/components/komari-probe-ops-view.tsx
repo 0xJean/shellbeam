@@ -3,7 +3,7 @@ import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import { komariHostSyncCopy } from '@/lib/locales/komari-host-sync'
 import { monitoringSourcesCopy } from '@/lib/locales/monitoring-sources'
-import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
+import { groupKomariAlertIncidents, isUnverifiedKomariRuleAlert } from '@/lib/komari-alert-incidents'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AlertTriangle, CheckCircle2, Clock3, Route, ShieldAlert, Wrench } from 'lucide-react'
@@ -83,7 +83,7 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
     : null
   const alertSummary = link.komari.alerts
   const scopedAlerts = link.alertState?.alerts.filter((alert) => alert.nodeId === link.nodeId || alert.hostId === host.id) ?? []
-  const incidents = groupKomariAlertIncidents(scopedAlerts).map(({ alert }) => alert)
+  const incidents = groupKomariAlertIncidents(scopedAlerts).map(({ alert }) => alert).filter(alert => !isUnverifiedKomariRuleAlert(alert))
   const openAlerts = incidents.filter((alert) => (alert.status === 'active' || alert.status === 'acknowledged')
     && (alert.nodeId === link.nodeId || alert.hostId === host.id)) ?? []
   const acknowledgedAlerts = incidents.filter((alert) => alert.status === 'acknowledged')
@@ -123,9 +123,8 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
           <span className="truncate">{formatAge(link.komari.sampledAt, t)}</span>
         </span>
         {alertSummary && (
-          <span data-testid="komari-remote-alert-summary" className={cn('inline-flex shrink-0 items-center gap-1', (alertSummary.active ?? 0) > 0 && 'text-[color:var(--workspace-status-bad-text)]')} title={monitoringSourcesCopy[locale].remoteAlerts}>
-            <AlertTriangle className="h-3 w-3" />
-            <span>{monitoringSourcesCopy[locale].remoteAlerts}: {alertSummary.unsupported ? t('hosts.opsUnsupported') : `${alertSummary.active ?? '—'}/${alertSummary.total ?? '—'}`}</span>
+          <span data-testid="komari-remote-alert-summary" className="inline-flex min-w-0 flex-wrap items-center gap-1" title={monitoringSourcesCopy[locale].remoteAlerts}>
+            <span>{monitoringSourcesCopy[locale].remoteAlerts}: {alertSummary.unsupported ? t('hosts.opsUnsupported') : `${alertSummary.total ?? '—'}`}</span>
           </span>
         )}
         {scopedAlerts.length > 0 && (

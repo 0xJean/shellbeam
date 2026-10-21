@@ -741,7 +741,7 @@ const zhCN: Record<string, string> = {
   'settings.komariApiKeyHelp': '请先在 Komari「系统 → 登录 → API」保存服务器 API 密钥，再将同一密钥粘贴到这里。此处供 ShellBeam 使用，不会修改 Komari 配置。请勿填写 Agent Token。',
   'settings.komariShowApiKey': '显示 API 密钥',
   'settings.komariHideApiKey': '隐藏 API 密钥',
-  'settings.komariEnabled': '启用只读同步',
+  'settings.komariEnabled': '启用监控连接',
   'settings.komariUnlockToSave': '请先解锁当前保管库，再保存 Komari API 密钥。',
   'settings.komariCredentialSaveFailed': '未能完成将 API 密钥保存到保管库。已保留输入，请重试。',
   'settings.komariUnlockHint': '解锁当前保管库后才能保存或更新 API 密钥。',

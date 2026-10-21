@@ -97,7 +97,7 @@ describe('Komari persistence adapter', () => {
 
   it('persists and reads lifecycle alert state without losing the sync TTL', async () => {
     vi.clearAllMocks()
-    const state = reconcileKomariAlerts([], [{ integrationId: 'integration-1', hostId: 'host-1', kind: 'load', count: 1, updatedAt: 1_000 }], { now: 1_000 })
+    const state = reconcileKomariAlerts([], [{ integrationId: 'integration-1', hostId: 'host-1', kind: 'probe-error:metrics', count: 1, updatedAt: 1_000 }], { now: 1_000 })
     vi.mocked(invoke)
       .mockResolvedValueOnce({ integrationId: 'integration-1', lastSyncedAt: 900, ttlMs: 30_000, alertSummary: null, updatedAt: 900 })
       .mockResolvedValueOnce(undefined)
@@ -112,7 +112,7 @@ describe('Komari persistence adapter', () => {
 
   it.each([undefined, 1_300])('keeps legacy alert TTL scheduling without claiming sync provenance (hint: %s)', async (lastSyncedAt) => {
     vi.clearAllMocks()
-    const state = reconcileKomariAlerts([], [{ integrationId: 'integration-1', hostId: 'host-1', kind: 'load', count: 1, updatedAt: 1_000 }], { now: 1_000 })
+    const state = reconcileKomariAlerts([], [{ integrationId: 'integration-1', hostId: 'host-1', kind: 'probe-error:metrics', count: 1, updatedAt: 1_000 }], { now: 1_000 })
     vi.mocked(invoke).mockResolvedValueOnce(null).mockResolvedValueOnce(undefined)
     await persistKomariAlertState({ integrationId: 'integration-1', state: { schemaVersion: 1, ...state }, lastSyncedAt, updatedAt: 1_400 })
     expect(invoke).toHaveBeenNthCalledWith(2, 'upsert_komari_sync_state', {
@@ -123,7 +123,7 @@ describe('Komari persistence adapter', () => {
 
   it('never forwards successful-sync provenance from a lifecycle write', async () => {
     vi.clearAllMocks()
-    const state = reconcileKomariAlerts([], [{ integrationId: 'integration-1', hostId: 'host-1', kind: 'load', count: 1, updatedAt: 1_000 }], { now: 1_000 })
+    const state = reconcileKomariAlerts([], [{ integrationId: 'integration-1', hostId: 'host-1', kind: 'probe-error:metrics', count: 1, updatedAt: 1_000 }], { now: 1_000 })
     vi.mocked(invoke)
       .mockResolvedValueOnce({ integrationId: 'integration-1', lastSyncedAt: 900, lastSuccessfulSyncAt: 850, ttlMs: 30_000, alertSummary: null, updatedAt: 900 })
       .mockResolvedValueOnce(undefined)

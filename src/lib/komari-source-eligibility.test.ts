@@ -32,7 +32,7 @@ function sshMonitor(): ServerMonitorLatest {
     status: 'online', snapshot: { ...snapshot().metrics!.data, cpuPercent: 15 }, lastAttemptAt: now, lastSuccessAt: now, updatedAt: now }
 }
 const audit: OperationAuditEntry = { auditId: 'audit-old', jobId: 'job-old', hostId: host.id, hostName: host.name, hostAddress: host.address, source: 'workspace', actor: 'local-user', action: 'komari.alert.acknowledge', target: 'alert-old', risk: 'low', provider: 'komari', transport: 'direct', event: 'updated', status: 'completed', confirmationStatus: 'confirmed', createdAt: now - 20, resultSummary: 'Acknowledged' }
-const alertState = () => ({ schemaVersion: 1 as const, ...reconcileKomariAlerts([], [{ integrationId: 'komari-a', hostId: host.id, nodeId: 'node-a', kind: 'offline', count: 1, active: 1, title: 'Metrics interrupted', updatedAt: now }], { now }) })
+const alertState = () => ({ schemaVersion: 1 as const, ...reconcileKomariAlerts([], [{ integrationId: 'komari-a', hostId: host.id, nodeId: 'node-a', kind: 'probe-offline', count: 1, active: 1, title: 'Metrics interrupted', updatedAt: now }], { now }) })
 
 beforeEach(() => { vi.clearAllMocks(); localStorage.clear() })
 

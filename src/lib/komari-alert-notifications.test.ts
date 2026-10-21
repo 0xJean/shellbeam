@@ -12,7 +12,7 @@ const state: KomariAlertState = {
     integrationId: 'prod',
     nodeId: 'node-1',
     hostId: 'host-1',
-    kind: 'offline',
+    kind: 'probe-offline',
     title: 'Host offline',
     severity: 'critical',
     count: 1,

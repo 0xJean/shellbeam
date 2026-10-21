@@ -1,4 +1,4 @@
-import { groupKomariAlertIncidents } from './komari-alert-incidents'
+import { groupKomariAlertIncidents, isUnverifiedKomariRuleAlert } from './komari-alert-incidents'
 import { observationVaultIds, scopeObservationHosts } from './host-observation-scope'
 import { hydrateLocalOpsHost } from './local-ops-persistence'
 import type { HostProfile } from './hosts'
@@ -113,10 +113,8 @@ export interface HostOpsHealth {
   fallbackProvider?: HostOpsProvider
   fallbackReason?: string
   alertSummary?: KomariAlertSummary | null
-  /** Local Komari lifecycle counts are kept beside the provider aggregate.
-   * The provider's active count can remain non-zero after a local
-   * acknowledge/close, so collapsing these values would make the host card
-   * look stale after an MCP action. */
+  /** Local incident counts are separate from remote rule configuration.
+   * Aggregate configuration counts never prove a host has an active fault. */
   alertLifecycle?: HostOpsAlertLifecycleSummary | null
   agent?: Pick<ShellbeamAgentRecord, 'status' | 'health' | 'version' | 'capabilities' | 'lastHeartbeatAt' | 'lastCheckedAt'> | null
   /** Durable ProbeProvider state rendered beside the selected health source. */
@@ -406,7 +404,7 @@ function komariAlertStateForHost(
     .filter((alert) => alert.hostId === host.id || providerNodes.some((provider) => provider.integrationId === alert.integrationId && provider.nodeId === alert.nodeId))
     .filter((alert) => !sources || isCurrentKomariAlert(alert, host, sources, snapshots))
   if (alerts.length === 0) return null
-  const incidents = groupKomariAlertIncidents(alerts).map((incident) => incident.alert)
+  const incidents = groupKomariAlertIncidents(alerts).map((incident) => incident.alert).filter(alert => !isUnverifiedKomariRuleAlert(alert))
   const alertIds = new Set(alerts.map((alert) => alert.alertId))
   const audits = states
     .flatMap((state) => state.audit)
@@ -619,10 +617,10 @@ export function buildHostOpsViews({
     const alertState = komariAlertStateForHost(host, allProbeSnapshots, komariAlertStates, komariSources)
     const localAlerts = (localAlertStates[host.id]?.alerts ?? []).filter((alert) => alert.hostId === host.id)
     const openLocal = localAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
-    const openKomari = groupKomariAlertIncidents(alertState?.alerts ?? []).map((incident) => incident.alert).filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
+    const openKomari = groupKomariAlertIncidents(alertState?.alerts ?? []).map((incident) => incident.alert).filter(alert => !isUnverifiedKomariRuleAlert(alert)).filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
     const severityRanks = ['info', 'warning', 'critical']
     const highestAlertSeverity = [...openLocal, ...openKomari].map((alert) => alert.severity).sort((a, b) => severityRanks.indexOf(b) - severityRanks.indexOf(a))[0] ?? null
-    const komariOpenCount = alertState?.summary.open ?? selectedProbeSnapshot?.alerts?.active ?? (selectedProbeSnapshot?.alerts?.unsupported ? null : 0)
+    const komariOpenCount = alertState?.summary.open ?? 0
     const view: HostOpsView = {
       host,
       hostKey,
@@ -665,7 +663,7 @@ export function buildHostOpsViews({
       localAlerts,
       localAlertEvaluations: hostProbeEvaluations(localAlertStates[host.id]?.evaluations ?? [], now),
       localAlertOpen: openLocal.length,
-      alertOpenCount: komariOpenCount === null ? null : komariOpenCount + openLocal.length,
+      alertOpenCount: komariOpenCount + openLocal.length,
       highestAlertSeverity,
       capabilities: healthState(monitor, monitor && monitor !== sshMonitor ? undefined : state, freshnessValue, metricProbe) === 'unsupported' ? ['files'] : observedCapabilities(inventory, selectedProbeSnapshot, Boolean(sshMonitor || inventoryEntry || state?.status === 'ready'), sshMonitor?.status !== 'unsupported' && Boolean(sshMonitor?.snapshot || inventoryEntry || state?.status === 'ready')),
     }

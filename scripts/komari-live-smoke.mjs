@@ -119,6 +119,20 @@ try {
   assert.equal(nodes.length, 1)
   assert.equal(nodes[0].uuid, nodeId)
   assert.equal(nodes[0].name, 'shellbeam-contract-node')
+  stage = 'validate native metadata adapter writes and external edits'
+  const metadata = await vite.ssrLoadModule('/src/lib/host-metadata-sync.ts')
+  const initialMetadata = await metadata.readRemoteHostMetadata(config, nodeId)
+  const desired = { name: 'native-profile-edit', group: 'staging', tags: ['web', 'test'] }
+  await metadata.writeRemoteHostMetadata(config, { nodeId, remote: initialMetadata.values, desired })
+  const afterNativeEdit = await metadata.readRemoteHostMetadata(config, nodeId)
+  assert.deepEqual(afterNativeEdit.values, desired)
+  assert.equal(afterNativeEdit.identity, initialMetadata.identity)
+  const externalEdit = await request(`/api/admin/client/${encodeURIComponent(nodeId)}/edit`, { headers: auth, body: { name: 'external-profile-edit' } })
+  assert.equal(externalEdit.response.status, 200)
+  const afterExternalEdit = await metadata.readRemoteHostMetadata(config, nodeId)
+  assert.deepEqual(afterExternalEdit.values, { ...desired, name: 'external-profile-edit' })
+  await metadata.writeRemoteHostMetadata(config, { nodeId, remote: afterExternalEdit.values, desired: initialMetadata.values })
+  assert.deepEqual((await metadata.readRemoteHostMetadata(config, nodeId)).values, initialMetadata.values)
   stage = 'validate actual recent reports'
   const recent = await adapter.getKomariRecentRecords(config, nodeId)
   observed.recent = recent.length
@@ -151,7 +165,7 @@ try {
   const preflight = await request('/api/admin/client/list', { method: 'OPTIONS', headers: { Origin: 'tauri://localhost', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' } })
   assert.equal(preflight.response.status, 204)
   stage = 'complete'
-  console.log(JSON.stringify({ result: 'passed', serverVersion: version.version, serverHash: version.hash, serverKeySaveVerified: true, nodes: nodes.length, recentRecords: recent.length, storedHistoryRecords: history.length, wideWindowRecords: observed.serverHistory, fineWindowRecords: observed.fineHistory, importedObservations: observations.length, unauthorized: 'permission', origin: 'tauri://localhost', scope: 'isolated-loopback-synthetic-report-contract' }))
+  console.log(JSON.stringify({ result: 'passed', serverVersion: version.version, serverHash: version.hash, serverKeySaveVerified: true, metadataWriteReadback: true, externalMetadataReadback: true, nodes: nodes.length, recentRecords: recent.length, storedHistoryRecords: history.length, wideWindowRecords: observed.serverHistory, fineWindowRecords: observed.fineHistory, importedObservations: observations.length, unauthorized: 'permission', origin: 'tauri://localhost', scope: 'isolated-loopback-synthetic-report-contract' }))
 } catch {
   // Never dump request/response bodies or upstream logs: they can contain temporary secrets.
   console.error(`Komari live contract smoke failed during: ${stage}; counts=${JSON.stringify(observed)}`)

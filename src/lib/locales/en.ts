@@ -741,7 +741,7 @@ const en: Record<string, string> = {
   'settings.komariApiKeyHelp': 'First save the Server API Key in Komari → System → Sign on → API, then paste that key here. This form stores it for ShellBeam; it does not configure Komari. Do not use an Agent token.',
   'settings.komariShowApiKey': 'Show API Key',
   'settings.komariHideApiKey': 'Hide API Key',
-  'settings.komariEnabled': 'Enabled for read-only sync',
+  'settings.komariEnabled': 'Enable monitoring connection',
   'settings.komariUnlockToSave': 'Unlock the active Vault before saving a Komari API Key.',
   'settings.komariCredentialSaveFailed': 'Could not complete saving the API Key to Vault. Your input has been kept. Please try again.',
   'settings.komariUnlockHint': 'Unlock the active Vault to save or update the API Key.',

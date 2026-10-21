@@ -4,6 +4,7 @@ pub mod discovery;
 #[cfg(target_os = "ios")]
 pub mod discovery_ios;
 pub mod history;
+pub mod host_metadata;
 pub mod hosts;
 pub mod komari;
 pub mod komari_persistence;
