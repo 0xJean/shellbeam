@@ -40,7 +40,7 @@ function ui() {
       if (target.includes('//aside//button')) monitoringOpen = false
       if (target === '[data-testid="settings-category-monitoring"]') monitoringOpen = true
     },
-    isSelected: async selector => selector.includes("='Enable notification delivery'") || selector.includes("='System'") || /notification-recovery-(?:enabled|channel-system)/.test(selector),
+    isSelected: async selector => selector.includes("='Send reminders from this device'") || selector.includes("='System'") || /notification-recovery-(?:enabled|channel-system)/.test(selector),
   }
   const transition = (role, event) => {
     const card = document.querySelector(`[data-host-id="${options.resumeState.hostIds[role]}"]`)

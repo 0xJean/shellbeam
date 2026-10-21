@@ -15,7 +15,7 @@ const SETTINGS_XPATH = "//*[@data-testid='notification-settings']"
 const SYSTEM = `${SETTINGS} [data-testid="notification-channel-system"]`
 const attrString = (value) => `"${String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
 const labelInput = (label) => `xpath=${SETTINGS_XPATH}//label[normalize-space(.)='${label}']/input[@type='checkbox']`
-const POLICY_ENABLE = labelInput('Enable notification delivery')
+const POLICY_ENABLE = labelInput('Send reminders from this device')
 const SYSTEM_ENABLE = labelInput('System')
 const LOCAL_ENABLE = labelInput('In-app')
 const WEBHOOK_ENABLE = labelInput('Webhook')

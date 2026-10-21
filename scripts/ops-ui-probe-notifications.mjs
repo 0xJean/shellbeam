@@ -48,7 +48,7 @@ timeout = 0
 }
 
 export async function verifyProbeNotificationPolicy(driver) {
-  check(await driver.isSelected(input('Enable notification delivery')) && await driver.isSelected(input('System'))
+  check(await driver.isSelected(input('Send reminders from this device')) && await driver.isSelected(input('System'))
     && !await driver.isSelected(input('In-app')) && !await driver.isSelected(input('Webhook'))
     && await driver.isSelected(`${SETTINGS} [data-testid="notification-recovery-enabled"]`)
     && await driver.isSelected(`${SETTINGS} [data-testid="notification-recovery-channel-system"]`)
