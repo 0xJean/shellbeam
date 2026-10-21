@@ -38,6 +38,12 @@ describe('Komari and ShellBeam Probe linkage', () => {
     expect(() => resolveKomariProbeTarget({ integrationId: 'komari-prod', nodeId: 'node-1', mappings: [mapping, { ...mapping, nodeId: 'node-2' }], hosts: [host] })).toThrow('conflicting')
   })
 
+  it('does not recommend a second Agent for an already monitored host', () => {
+    const [link] = buildKomariProbeLinks({ integrationId: 'komari-prod', hosts: [host], mappings: [mapping], snapshots: [snapshot], now: 1_100 })
+    expect(link.komari.state).toBe('online')
+    expect(link.recommendedAction).toBe('none')
+  })
+
   it('joins Komari freshness, alert state and probe lifecycle without conflating health', () => {
     const links = buildKomariProbeLinks({ integrationId: 'komari-prod', hosts: [host], mappings: [mapping], snapshots: [snapshot], shellbeamAgents: [agent], now: 1_100 })
     expect(links).toHaveLength(1)

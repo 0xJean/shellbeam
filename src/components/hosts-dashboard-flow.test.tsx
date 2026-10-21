@@ -254,6 +254,7 @@ describe('host operations filter workflow', () => {
     let checks = 0
     let queueActionCheck = false
     vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === 'list_shellbeam_agents') return [{ vaultId: 'vault', hostId: 'host-0', agentId: 'existing-agent', status: 'installed', health: 'unknown', transport: 'direct', lastCheckedAt: Date.now(), updatedAt: Date.now(), capabilities: [] }]
       if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true, createdAt: 1, updatedAt: 1 }]
       if (command === 'get_komari_sync_state') return { integrationId: 'komari-a', lastSyncedAt: Date.now(), lastSuccessfulSyncAt: Date.now(), ttlMs: 60_000, alertSummary: null }
       if (command === 'list_komari_snapshots') return moved ? [] : [{ updatedAt: Date.now(), snapshot: komariSnapshot(Date.now()) }]
@@ -280,14 +281,14 @@ describe('host operations filter workflow', () => {
       fireEvent.click(source.closest('details')!.querySelector('summary')!)
       const beforeAction = checks
       queueActionCheck = true
-      fireEvent.click(await screen.findByRole('button', { name: 'Review probe installation' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Check probe' }))
       await waitFor(() => expect(checks).toBe(beforeAction + 1))
       moved = true
       act(() => {
         window.dispatchEvent(new CustomEvent(KOMARI_MAPPING_CHANGED_EVENT, { detail: { vaultId: 'vault', integrationId: 'komari-a' } }))
         window.dispatchEvent(new Event('shellbeam:host-ops-refresh'))
       })
-      expect(screen.queryByRole('button', { name: 'Review probe installation' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Check probe' })).not.toBeInTheDocument()
       expect(screen.getAllByTestId('host-ops-summary')).toHaveLength(1)
       expect(within(screen.getByTestId('host-ops-summary')).getByTitle('ssh-agentless')).toHaveTextContent('SSH')
       await waitFor(() => expect(sync).toHaveBeenCalledTimes(1))
@@ -298,7 +299,7 @@ describe('host operations filter workflow', () => {
     } finally { sync.mockRestore(); operation.mockRestore(); error.mockRestore() }
   })
 
-  it.each([true, false])('routes installation review to the signed Workspace panel without a remote write or installation job (Workspace available: %s)', async (available) => {
+  it.each([true, false])('does not recommend a duplicate Agent for existing monitoring (Workspace available: %s)', async (available) => {
     const manual = { integrationId: 'komari-a', hostId: 'host-0', nodeId: 'node-1', source: 'manual', confidence: 'explicit', updatedAt: 1 }
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true }]
@@ -320,14 +321,9 @@ describe('host operations filter workflow', () => {
       expect(disclosure).not.toHaveAttribute('open')
       fireEvent.click(disclosure.querySelector('summary')!)
       expect(source).toBeVisible()
-      if (available) {
-        fireEvent.click(await screen.findByRole('button', { name: 'Review probe installation' }))
-        await waitFor(() => expect(onOpenWorkspace).toHaveBeenCalledWith('host-0', 'overview'))
-        expect(onSelectHost).toHaveBeenCalledWith('host-0')
-      } else {
-        expect(screen.queryByRole('button', { name: 'Review probe installation' })).not.toBeInTheDocument()
-        expect(onSelectHost).not.toHaveBeenCalled()
-      }
+      expect(screen.queryByRole('button', { name: 'Review probe installation' })).not.toBeInTheDocument()
+      expect(onSelectHost).not.toHaveBeenCalled()
+      expect(onOpenWorkspace).not.toHaveBeenCalled()
       expect(operation).not.toHaveBeenCalled()
       expect(runWorkspaceRemoteCommand).not.toHaveBeenCalled()
       expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'operation_job_create')).toHaveLength(0)

@@ -147,7 +147,9 @@ function recommendedAction(options: {
 }): KomariProbeLink['recommendedAction'] {
   if (options.status !== 'linked') return 'inspect-komari'
   if (options.komariState === 'offline' || options.komariState === 'unknown') return 'inspect-komari'
-  if (!options.probe || options.probe.status === 'not-installed' || options.probe.status === 'retired') return 'install-probe'
+  // A reporting backend Agent already provides continuous monitoring. An
+  // optional ShellBeam Agent is an explicit capability choice, not a repair.
+  if (!options.probe || options.probe.status === 'not-installed' || options.probe.status === 'retired') return 'none'
   if (options.probe.health === 'offline' || options.probe.health === 'unknown') return 'check-probe'
   return 'none'
 }

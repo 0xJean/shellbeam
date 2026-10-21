@@ -409,32 +409,49 @@ pub fn vault_set_secret(
             None,
         ));
     }
-    let vid = ensure_vault_id(payload.vault_id.as_deref());
-    let key = read_unlocked_vault_key(&state, &vid)
-        .map_err(|err| standard_error_from_raw("vault", "set secret", err))?;
-    let mut vault = load_vault_file(&app, Some(&vid))
-        .map_err(|err| standard_error_from_raw("vault", "set secret", err))?
-        .ok_or_else(|| {
-            standard_error_payload(
-                "not_initialized",
-                "vault",
-                false,
-                "Vault is not initialized",
-                None,
-            )
-        })?;
-    let (nonce_b64, ciphertext_b64) = encrypt_vault_value(&key, payload.value.as_bytes())
-        .map_err(|err| standard_error_from_raw("vault", "set secret", err))?;
-    vault.secrets.insert(
-        payload.key.trim().to_string(),
+    let generation = state.session_generation();
+    set_secret_in_session(
+        &app,
+        &state,
+        &ensure_vault_id(payload.vault_id.as_deref()),
+        &payload.key,
+        &payload.value,
+        generation,
+    )
+    .map_err(|error| standard_error_from_raw("vault", "set secret", error))
+}
+
+/// Serialize secret writes with locking and reject A -> B -> A completions.
+pub(crate) fn set_secret_in_session(
+    app: &tauri::AppHandle,
+    state: &VaultState,
+    vid: &str,
+    secret_ref: &str,
+    value: &str,
+    generation: u64,
+) -> Result<(), String> {
+    if secret_ref.trim().is_empty() {
+        return Err("Vault key is required".into());
+    }
+    let keys = state
+        .unlocked_keys
+        .lock()
+        .map_err(|_| "Vault state lock poisoned")?;
+    if state.session_generation() != generation {
+        return Err("MONITORING_SCOPE_CHANGED".into());
+    }
+    let key = keys.get(vid).ok_or("Vault is locked")?;
+    let mut file = load_vault_file(app, Some(vid))?.ok_or("Vault is not initialized")?;
+    let (nonce_b64, ciphertext_b64) = encrypt_vault_value(key, value.as_bytes())?;
+    file.secrets.insert(
+        secret_ref.trim().to_string(),
         VaultSecretRecord {
             nonce_b64,
             ciphertext_b64,
             updated_at: now_unix_ms(),
         },
     );
-    save_vault_file(&app, &vault, Some(&vid))
-        .map_err(|err| standard_error_from_raw("vault", "set secret", err))
+    save_vault_file(app, &file, Some(vid))
 }
 
 #[tauri::command]
@@ -478,6 +495,30 @@ pub(crate) fn get_secret_value(
             format!("Decode secret utf8 failed: {err}"),
         )
     })
+}
+
+/// Encrypt pending remote edits without placing channel credentials in the
+/// operation database or audit. The Vault remains the only key authority.
+pub(crate) fn seal_operation_value(
+    state: &VaultState,
+    vault_id: &str,
+    value: &str,
+) -> Result<String, String> {
+    let key = read_unlocked_vault_key(state, vault_id)?;
+    let (nonce, ciphertext) = encrypt_vault_value(&key, value.as_bytes())?;
+    serde_json::to_string(&(nonce, ciphertext)).map_err(|_| "MONITORING_STORAGE".into())
+}
+
+pub(crate) fn open_operation_value(
+    state: &VaultState,
+    vault_id: &str,
+    value: &str,
+) -> Result<String, String> {
+    let key = read_unlocked_vault_key(state, vault_id)?;
+    let (nonce, ciphertext): (String, String) =
+        serde_json::from_str(value).map_err(|_| "MONITORING_STORAGE")?;
+    let plain = decrypt_vault_value(&key, &nonce, &ciphertext)?;
+    String::from_utf8(plain).map_err(|_| "MONITORING_STORAGE".into())
 }
 
 /// Export all vault secrets as decrypted key-value pairs.
@@ -632,6 +673,28 @@ pub fn vault_list_secret_keys(
 #[cfg(test)]
 mod unlocked_transaction_tests {
     use super::*;
+
+    #[test]
+    fn operation_values_are_authenticated_encrypted_and_vault_scoped() {
+        let state = VaultState::default();
+        state
+            .unlocked_keys
+            .lock()
+            .unwrap()
+            .insert("a".into(), [1; VAULT_KEY_SIZE]);
+        state
+            .unlocked_keys
+            .lock()
+            .unwrap()
+            .insert("b".into(), [2; VAULT_KEY_SIZE]);
+        let plain = "synthetic-channel-password";
+        let sealed = seal_operation_value(&state, "a", plain).unwrap();
+        assert!(!sealed.contains(plain));
+        assert_eq!(open_operation_value(&state, "a", &sealed).unwrap(), plain);
+        assert!(open_operation_value(&state, "b", &sealed).is_err());
+        state.unlocked_keys.lock().unwrap().remove("a");
+        assert!(open_operation_value(&state, "a", &sealed).is_err());
+    }
 
     #[test]
     fn locked_or_different_vault_never_runs_the_persistence_callback() {

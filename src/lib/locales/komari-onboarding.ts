@@ -1,8 +1,8 @@
 export const komariOnboardingCopy = {
   en: {
-    title: 'Monitoring data sources', description: 'Connect Komari to existing ShellBeam hosts. Daily monitoring and operations stay in the host overview.',
+    title: 'Monitoring services', description: 'Connect Komari to existing ShellBeam hosts. Daily monitoring and operations stay in the host overview.',
     connection: '1. Connection', mapping: '2. Host associations', complete: '3. Finish',
-    connectHint: 'Save a server address and API key, then verify API access. Leave the key blank to keep an existing credential.',
+    connectHint: 'Enter the service address, then sign in or supply an API key. Leave an existing key blank to keep it.',
     verify: 'Verify connection and discover nodes', verifying: 'Verifying connection…', saveFirst: 'Save changes before verifying this connection.',
     verified: 'API access verified', nodes: 'Nodes discovered', missingKey: 'No API key is saved. Enter the server API key and save before verifying.',
     credentialFailed: 'The saved API key could not be read. Unlock this Vault and try again.',
@@ -20,9 +20,9 @@ export const komariOnboardingCopy = {
     nativeHint: 'A Komari server API key is required. Server deployment and administrator account creation remain advanced server tasks.',
   },
   'zh-CN': {
-    title: '监控数据源', description: '将 Komari 接入已有的 ShellBeam 主机，日常监控和运维统一在主机总览完成。',
+    title: '监控服务', description: '将 Komari 接入已有的 ShellBeam 主机，日常监控和运维统一在主机总览完成。',
     connection: '1. 连接', mapping: '2. 关联主机', complete: '3. 完成',
-    connectHint: '保存服务器地址和 API 密钥后验证访问。编辑已有数据源时，密钥留空即可保留现有凭据。',
+    connectHint: '填写服务地址后，选择管理员登录或 API 密钥接入。编辑已有服务时，密钥留空即可保留现有凭据。',
     verify: '验证连接并发现节点', verifying: '正在验证连接…', saveFirst: '请先保存修改，再验证此连接。',
     verified: 'API 访问已验证', nodes: '已发现节点', missingKey: '尚未保存 API 密钥，请填写服务器 API 密钥并保存后再验证。',
     credentialFailed: '无法读取已保存的 API 密钥，请解锁当前 Vault 后重试。',

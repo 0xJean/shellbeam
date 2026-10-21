@@ -264,9 +264,8 @@ export function SettingsPanel({
           </div>
         </section>
         </>}
-        {category === 'monitoring' && <><HostRuleSettingsSection /><NotificationSettingsSection /></>}
+        {category === 'monitoring' && <><KomariSettingsSection /><HostRuleSettingsSection /><NotificationSettingsSection /></>}
         {category === 'integrations' && <>
-          <KomariSettingsSection />
           <AISettingsSection />
         </>}
         {category === 'advanced' && <>

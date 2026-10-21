@@ -4,14 +4,14 @@ import { KomariSettingsSection } from './komari-settings-section'
 import { deleteKomariIntegration, listKomariIntegrations, upsertKomariIntegration, type KomariIntegration } from '@/lib/komari-config'
 import { KomariApiError, listKomariClients, verifyKomariConnection, type KomariClient } from '@/lib/komari'
 import { listHosts } from '@/lib/hosts'
-import { vaultStatus } from '@/lib/vault'
 import { editKomariMapping, getKomariMappingState } from '@/lib/komari-persistence'
 import { I18nProvider } from '@/lib/i18n'
 import { komariOnboardingCopy } from '@/lib/locales/komari-onboarding'
 import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
 import en from '@/lib/locales/en'
 import zhCN from '@/lib/locales/zh-CN'
-import { invoke, isTauri } from '@tauri-apps/api/core'
+import { invoke } from '@tauri-apps/api/core'
+import { monitoringServiceCopy } from '@/lib/locales/monitoring-service'
 
 const vault = vi.hoisted(() => {
   let scope = { id: 'vault-a' }
@@ -23,7 +23,7 @@ vi.mock('@/components/browser/embedded-browser-webview', () => ({ EmbeddedBrowse
 vi.mock('@/contexts/vault-context', () => ({ useVault: () => { const id = vault.id; return { activeVaultId: id, vaultStatusState: { unlocked: vault.unlocked }, handleSaveSecret: vault.saveSecret, handleRevealSecret: vault.revealSecret, captureVaultScope: () => vault.captureScope(id) } } }))
 vi.mock('@/lib/komari-config', () => ({ listKomariIntegrations: vi.fn(), upsertKomariIntegration: vi.fn(), deleteKomariIntegration: vi.fn(), komariCredentialKey: (id: string) => `komari.${id}.api-key` }))
 vi.mock('@/lib/komari', async (original) => ({ ...await original<typeof import('@/lib/komari')>(), listKomariClients: vi.fn(), verifyKomariConnection: vi.fn() }))
-vi.mock('@/lib/vault', () => ({ vaultStatus: vi.fn() }))
+vi.mock('./monitoring-service-panel', () => ({ MonitoringServicePanel: () => <div data-testid="native-service" /> }))
 vi.mock('@/lib/hosts', async original => ({ ...(await original<typeof import('@/lib/hosts')>()), listHosts: vi.fn() }))
 vi.mock('@/lib/komari-persistence', async (original) => ({ ...await original<typeof import('@/lib/komari-persistence')>(), getKomariMappingState: vi.fn(), editKomariMapping: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }))
@@ -36,19 +36,9 @@ async function renderEditor() {
   fireEvent.click(await screen.findByRole('button', { name: 'Saved Komari' }))
   return view
 }
-const requestId = '11111111-1111-4111-8111-111111111111'
-async function advanced(locale: 'en' | 'zh-CN' = 'en') {
-  if (!screen.queryByTestId('komari-connection-editor')) fireEvent.click(await screen.findByRole('button', { name: 'Saved Komari' }))
-  fireEvent.click(screen.getByText(komariOnboardingCopy[locale].advanced))
-  const button = screen.getByRole('button', { name: komariOnboardingCopy[locale].open })
-  await waitFor(() => expect(button).toBeEnabled())
-  return button
-}
 beforeEach(() => {
   vault.id = 'vault-a'; vault.unlocked = true
-  vi.mocked(vaultStatus).mockResolvedValue({ initialized: true, unlocked: true, secretCount: 1 })
   vault.revealSecret.mockResolvedValue('synthetic-stored-key')
-  vi.mocked(isTauri).mockReturnValue(false)
   localStorage.setItem('shellbeam.locale', 'en')
   vi.mocked(listKomariIntegrations).mockResolvedValue([integration()])
   vi.mocked(verifyKomariConnection).mockResolvedValue([node])
@@ -72,11 +62,13 @@ describe('optional Komari data sources', () => {
     expect(verifyKomariConnection).not.toHaveBeenCalled()
     expect(vault.revealSecret).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: navigation.addSource }))
+    fireEvent.change(screen.getByLabelText(monitoringServiceCopy[locale].access), { target: { value: 'key' } })
     expect(screen.getByLabelText(text['settings.komariApiKey'])).toHaveValue('')
     fireEvent.change(screen.getByLabelText(text['settings.komariApiKey']), { target: { value: 'unsaved-draft' } })
     fireEvent.click(screen.getByRole('button', { name: navigation.closeEditor }))
     expect(screen.queryByLabelText(text['settings.komariApiKey'])).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: navigation.addSource }))
+    fireEvent.change(screen.getByLabelText(monitoringServiceCopy[locale].access), { target: { value: 'key' } })
     expect(screen.getByLabelText(text['settings.komariApiKey'])).toHaveValue('')
     expect(upsertKomariIntegration).not.toHaveBeenCalled()
     expect(vault.saveSecret).not.toHaveBeenCalled()
@@ -156,6 +148,7 @@ describe('native Komari connection flow', () => {
     render(section())
     await act(async () => {})
     fireEvent.click(screen.getByRole('button', { name: settingsNavigationCopy.en.addSource }))
+    fireEvent.change(screen.getByLabelText(monitoringServiceCopy.en.access), { target: { value: 'key' } })
     await waitFor(() => expect(listKomariIntegrations).toHaveBeenCalled())
     fireEvent.change(screen.getByLabelText(en['settings.komariName']), { target: { value: 'New source' } })
     fireEvent.change(screen.getByLabelText(en['settings.komariEndpoint']), { target: { value: 'http://localhost:25749' } })
@@ -291,123 +284,15 @@ describe('native Komari connection flow', () => {
   })
 })
 
-describe('advanced administration in the main window', () => {
-  it.each(['en', 'zh-CN'] as const)('opens the saved base URL in one stable scoped panel without forwarding credentials (%s)', async (locale) => {
+describe('native service ownership and retained credential guards', () => {
+  it.each(['en', 'zh-CN'] as const)('has no second console or browser entry (%s)', async locale => {
     localStorage.setItem('shellbeam.locale', locale)
-    const text = locale === 'en' ? en : zhCN
-    vi.mocked(listKomariIntegrations).mockResolvedValue([integration({ endpoint: 'https://saved.example/base?token=old#private' })])
     await renderEditor()
-    const button = await advanced(locale)
-    fireEvent.change(screen.getByLabelText(text['settings.komariApiKey']), { target: { value: 'draft-private-key' } })
-    fireEvent.change(screen.getByLabelText(text['settings.komariEndpoint']), { target: { value: 'https://draft.example' } })
-    fireEvent.click(button)
-    expect(await screen.findByRole('dialog')).toBeVisible()
-    const props = browser.render.mock.lastCall?.[0]
-    expect(props).toMatchObject({ browserId: expect.stringMatching(/^komari-console-/), source: { kind: 'url', url: 'https://saved.example/base/' } })
-    expect(JSON.stringify(props)).not.toMatch(/draft|private|token|credentialRef/)
-    fireEvent.click(screen.getByRole('button', { name: komariOnboardingCopy[locale].close }))
+    expect(screen.getByTestId('native-service')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: komariOnboardingCopy[locale].open })).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    fireEvent.click(button)
-    await screen.findByRole('dialog')
-    expect(browser.render.mock.lastCall?.[0].browserId).toBe(props.browserId)
+    expect(browser.render).not.toHaveBeenCalled()
     expect(invoke).not.toHaveBeenCalled()
-  })
-
-  it('does not borrow Vault A unlocked status while Vault B native status is still pending', async () => {
-    const view = await renderEditor()
-    await screen.findByRole('button', { name: 'Saved Komari' })
-    vault.id = 'vault-b' // Keep the stale, unlocked context value from A.
-    vi.mocked(listKomariIntegrations).mockResolvedValue([integration({ vaultId: 'vault-b' })])
-    let finishStatus!: (status: Awaited<ReturnType<typeof vaultStatus>>) => void
-    vi.mocked(vaultStatus).mockImplementationOnce(() => new Promise((resolve) => { finishStatus = resolve }))
-    view.rerender(section()); fireEvent.click(await advanced())
-    await waitFor(() => expect(vaultStatus).toHaveBeenCalledExactlyOnceWith('vault-b'))
-    expect(browser.render).not.toHaveBeenCalled()
-    await act(async () => { finishStatus({ initialized: true, unlocked: false, secretCount: 1 }) })
-    expect(screen.getByRole('alert')).toHaveTextContent(en['settings.komariConsoleUnlock'])
-    expect(browser.render).not.toHaveBeenCalled()
-    expect(vault.revealSecret).not.toHaveBeenCalled()
-  })
-
-  it.each(['vault', 'configuration'] as const)('ignores a late unlocked native console status after %s changes', async (change) => {
-    let finishStatus!: (status: Awaited<ReturnType<typeof vaultStatus>>) => void
-    vi.mocked(vaultStatus).mockImplementationOnce(() => new Promise((resolve) => { finishStatus = resolve }))
-    const view = await renderEditor(); fireEvent.click(await advanced())
-    await waitFor(() => expect(vaultStatus).toHaveBeenCalledExactlyOnceWith('vault-a'))
-    if (change === 'vault') {
-      vault.id = 'vault-b'
-      vi.mocked(listKomariIntegrations).mockResolvedValue([integration({ vaultId: 'vault-b' })])
-      view.rerender(section())
-    } else {
-      vi.mocked(listKomariIntegrations).mockResolvedValue([integration({ endpoint: 'https://changed.example', updatedAt: 2 })])
-      fireEvent.click(screen.getByRole('button', { name: en['settings.komariRefresh'] }))
-      await waitFor(() => expect(screen.getByLabelText(en['settings.komariEndpoint'])).toHaveValue('https://changed.example'))
-    }
-    await act(async () => { finishStatus({ initialized: true, unlocked: true, secretCount: 1 }) })
-    expect(browser.render).not.toHaveBeenCalled()
-  })
-
-  it.each(['lock', 'vault', 'selection'] as const)('unmounts the administration panel on %s', async (change) => {
-    vi.mocked(listKomariIntegrations).mockResolvedValue([integration(), integration({ id: 'other', name: 'Other' })])
-    const view = await renderEditor()
-    fireEvent.click(await advanced())
-    await screen.findByRole('dialog')
-    if (change === 'lock') { vault.unlocked = false; view.rerender(section()) }
-    if (change === 'vault') { vault.id = 'vault-b'; view.rerender(section()) }
-    if (change === 'selection') fireEvent.click(screen.getByRole('button', { name: 'Other' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  })
-
-  it.each(['javascript:alert(1)', 'https://user:private-password@komari.example'])('rejects an unsafe saved endpoint: %s', async (endpoint) => {
-    vi.mocked(listKomariIntegrations).mockResolvedValue([integration({ endpoint })])
-    await renderEditor(); fireEvent.click(await advanced())
-    expect(screen.getByRole('alert')).toHaveTextContent(en['settings.komariConsoleInvalidEndpoint'])
-    expect(browser.render).not.toHaveBeenCalled()
-  })
-
-  it('ignores an old embedded load failure after reopening another administration scope', async () => {
-    vi.mocked(listKomariIntegrations).mockResolvedValue([integration(), integration({ id: 'other', name: 'Other' })])
-    await renderEditor(); fireEvent.click(await advanced())
-    await screen.findByRole('dialog')
-    const oldError = browser.render.mock.lastCall?.[0].onError as (message: string) => void
-    fireEvent.click(screen.getByRole('button', { name: 'Other' }))
-    fireEvent.click(screen.getByRole('button', { name: copy.open }))
-    await screen.findByRole('dialog')
-    act(() => oldError('sensitive upstream error'))
-    expect(screen.getByRole('dialog')).toHaveAttribute('aria-label', `${copy.advanced}: Other`)
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
-  it('keeps mobile administration on a saved-scope native browser handoff', async () => {
-    vi.mocked(isTauri).mockReturnValue(true)
-    vi.mocked(invoke).mockResolvedValueOnce('mobile').mockResolvedValueOnce(requestId).mockResolvedValue(undefined)
-    await renderEditor(); fireEvent.click(await advanced())
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('cancel_mobile_komari_console', { requestId }))
-    expect(invoke).toHaveBeenNthCalledWith(2, 'prepare_mobile_komari_console', { vaultId: 'vault-a', integrationId: 'same-id' })
-    expect(invoke).toHaveBeenNthCalledWith(3, 'open_mobile_komari_console', { requestId })
-    expect(browser.render).not.toHaveBeenCalled()
-    expect(JSON.stringify(vi.mocked(invoke).mock.calls)).not.toMatch(/http|credentialRef|synthetic/)
-  })
-
-  it.each(['lock', 'vault', 'selection', 'unmount'] as const)('cancels a late mobile prepare after %s without opening the token', async (change) => {
-    let finish!: (token: string) => void
-    vi.mocked(isTauri).mockReturnValue(true)
-    vi.mocked(invoke).mockResolvedValueOnce('mobile').mockImplementationOnce(() => new Promise((resolve) => { finish = resolve })).mockResolvedValue(undefined)
-    vi.mocked(listKomariIntegrations).mockResolvedValue([integration(), integration({ id: 'other', name: 'Other' })])
-    const view = await renderEditor(); fireEvent.click(await advanced())
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('prepare_mobile_komari_console', { vaultId: 'vault-a', integrationId: 'same-id' }))
-    if (change === 'lock') { vault.unlocked = false; view.rerender(section()) }
-    if (change === 'vault') { vault.id = 'vault-b'; view.rerender(section()) }
-    if (change === 'selection') fireEvent.click(screen.getByRole('button', { name: 'Other' }))
-    if (change === 'unmount') view.unmount()
-    await act(async () => { finish(requestId) })
-    expect(invoke).toHaveBeenCalledWith('cancel_mobile_komari_console', { requestId })
-    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === 'open_mobile_komari_console')).toBe(false)
-    if (change === 'lock') {
-      vault.unlocked = true; view.rerender(section())
-      expect(screen.queryByTestId('komari-connection-editor')).not.toBeInTheDocument()
-      expect(await advanced()).toBeEnabled()
-    }
   })
   it.each(['metadata', 'secret'] as const)('does not continue old-Vault writes after switching while %s persistence is pending', async (stage) => {
     vault.unlocked = true
@@ -418,7 +303,7 @@ describe('advanced administration in the main window', () => {
     else vi.mocked(upsertKomariIntegration).mockResolvedValueOnce(saved)
     vault.saveSecret.mockImplementationOnce(() => new Promise<void>((resolve) => { finishSecret = resolve }))
     const view = await renderEditor()
-    await waitFor(() => expect(screen.getByRole('button', { name: copy.open, hidden: true })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariSave'] })).toBeEnabled())
     fireEvent.change(screen.getByLabelText(en['settings.komariApiKey']), { target: { value: 'old-vault-secret' } })
     fireEvent.click(screen.getByRole('button', { name: en['settings.komariSave'] }))
     await waitFor(() => expect(stage === 'metadata' ? upsertKomariIntegration : vault.saveSecret).toHaveBeenCalledTimes(1))
@@ -441,7 +326,7 @@ describe('advanced administration in the main window', () => {
     vi.mocked(upsertKomariIntegration).mockResolvedValueOnce(integration({ credentialRef: '' })).mockResolvedValueOnce(integration())
     vault.saveSecret.mockResolvedValueOnce(undefined)
     await renderEditor()
-    await waitFor(() => expect(screen.getByRole('button', { name: copy.open, hidden: true })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: en['settings.komariSave'] })).toBeEnabled())
     fireEvent.change(screen.getByLabelText(en['settings.komariApiKey']), { target: { value: 'new-scoped-secret' } })
     fireEvent.click(screen.getByRole('button', { name: en['settings.komariSave'] }))
     await waitFor(() => expect(upsertKomariIntegration).toHaveBeenCalledTimes(2))
@@ -465,6 +350,62 @@ describe('advanced administration in the main window', () => {
     expect(deleteKomariIntegration).toHaveBeenCalledExactlyOnceWith('same-id', 'vault-a')
     expect(listKomariIntegrations).toHaveBeenCalledTimes(2)
     expect(screen.getByLabelText(en['settings.komariEndpoint'])).toHaveValue('https://current.example/base')
-    expect(screen.getByRole('button', { name: copy.open, hidden: true })).toBeEnabled()
+    expect(screen.getByRole('button', { name: en['settings.komariSave'] })).toBeEnabled()
+  })
+})
+
+describe('native administrator authorization', () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockImplementation(async (command) => command === 'monitoring_service_context' ? { vaultId: 'vault-a', integrationId: 'same-id', configVersion: 1, session: 2, contextId: 'auth-context', configurationIdentity: 'config' } : command === 'monitoring_service' ? { authorized: true } : undefined)
+    vi.mocked(upsertKomariIntegration).mockResolvedValue(integration())
+  })
+  it.each(['en', 'zh-CN'] as const)('saves and discovers in one login workflow without copying a key (%s)', async locale => {
+    localStorage.setItem('shellbeam.locale', locale)
+    const text = monitoringServiceCopy[locale]
+    await renderEditor()
+    fireEvent.change(screen.getByLabelText(text.access), { target: { value: 'authorize' } })
+    fireEvent.change(screen.getByLabelText(text.user), { target: { value: 'synthetic-admin' } })
+    fireEvent.change(screen.getByLabelText(text.pass), { target: { value: 'Synthetic-only-123' } })
+    fireEvent.click(screen.getByRole('button', { name: text.connect }))
+    expect(await screen.findByText(`${komariOnboardingCopy[locale].verified} · ${komariOnboardingCopy[locale].nodes}: 1`)).toBeVisible()
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'monitoring_service')).toEqual([['monitoring_service', { input: { scope: { vaultId: 'vault-a', integrationId: 'same-id', configVersion: 1, session: 2, contextId: 'auth-context', configurationIdentity: 'config' }, action: 'authorize', confirmed: false, username: 'synthetic-admin', password: 'Synthetic-only-123', twoFactor: '', metricDsn: './data/metrics.db' } }]])
+    expect(vault.saveSecret).not.toHaveBeenCalled()
+    expect(browser.render).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenCalledWith('monitoring_service_cancel_context', { contextId: 'auth-context' })
+    fireEvent.click(screen.getByRole('button', { name: komariOnboardingCopy[locale].back }))
+    expect(screen.getByLabelText(text.pass)).toHaveValue('')
+  })
+  it.each([true, false])('requires an explicit initialization decision before any save (%s)', async accepted => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(accepted)
+    const text = monitoringServiceCopy.en
+    await renderEditor()
+    fireEvent.change(screen.getByLabelText(text.access), { target: { value: 'initialize' } })
+    fireEvent.change(screen.getByLabelText(text.user), { target: { value: 'synthetic-admin' } })
+    fireEvent.change(screen.getByLabelText(text.pass), { target: { value: 'Synthetic-only-123' } })
+    fireEvent.click(screen.getByRole('button', { name: text.connect }))
+    await waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+    if (accepted) {
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith('monitoring_service', { input: expect.objectContaining({ action: 'initialize', confirmed: true, username: 'synthetic-admin', metricDsn: './data/metrics.db' }) }))
+      await screen.findByText(`${copy.verified} · ${copy.nodes}: 1`)
+    } else {
+      await waitFor(() => expect(screen.getByRole('button', { name: text.connect })).toBeEnabled())
+      expect(upsertKomariIntegration).not.toHaveBeenCalled()
+      expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'monitoring_service')).toHaveLength(0)
+    }
+    confirm.mockRestore()
+  })
+  it.each(['lock', 'vault', 'unmount'] as const)('revokes authorization before further work after %s', async change => {
+    let done!: (value: unknown) => void
+    vi.mocked(invoke).mockImplementation(async command => command === 'monitoring_service_context' ? { vaultId: 'vault-a', integrationId: 'same-id', configVersion: 1, session: 2, contextId: 'auth-context', configurationIdentity: 'config' } : command === 'monitoring_service' ? await new Promise(resolve => { done = resolve }) : undefined)
+    const view = await renderEditor(); const text = monitoringServiceCopy.en
+    fireEvent.change(screen.getByLabelText(text.access), { target: { value: 'authorize' } })
+    fireEvent.change(screen.getByLabelText(text.user), { target: { value: 'synthetic-admin' } }); fireEvent.change(screen.getByLabelText(text.pass), { target: { value: 'Synthetic-only-123' } }); fireEvent.click(screen.getByRole('button', { name: text.connect }))
+    await waitFor(() => expect(done).toBeTypeOf('function'))
+    if (change === 'lock') { vault.unlocked = false; view.rerender(section()) }
+    if (change === 'vault') { vault.id = 'vault-b'; view.rerender(section()) }
+    if (change === 'unmount') view.unmount()
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('monitoring_service_cancel_context', { contextId: 'auth-context' }))
+    await act(async () => { done({ authorized: true }) })
+    expect(vault.revealSecret).not.toHaveBeenCalled(); expect(verifyKomariConnection).not.toHaveBeenCalled()
   })
 })

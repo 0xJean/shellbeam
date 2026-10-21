@@ -11,6 +11,7 @@ pub mod hosts;
 pub mod komari;
 pub mod komari_persistence;
 pub mod local_ops;
+pub mod monitoring_service;
 pub mod operation_jobs;
 pub mod probe_persistence;
 pub mod provider_history;

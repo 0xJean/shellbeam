@@ -57,9 +57,9 @@ describe('settings categories', () => {
 
     fireEvent.click(screen.getByTestId('settings-category-monitoring'))
     expect(screen.getByTestId('notification-settings')).toBeVisible()
-    expect(screen.queryByTestId('komari-settings')).not.toBeInTheDocument()
-    fireEvent.click(within(nav).getByRole('button', { name: copy.integrations }))
     expect(screen.getByTestId('komari-settings')).toBeVisible()
+    fireEvent.click(within(nav).getByRole('button', { name: copy.integrations }))
+    expect(screen.queryByTestId('komari-settings')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: text['settings.ai'] })).toBeVisible()
     fireEvent.click(within(nav).getByRole('button', { name: copy.advanced }))
     for (const id of ['mcp-settings', 'agent-settings', 'probe-retry-settings']) expect(screen.getByTestId(id)).toBeVisible()

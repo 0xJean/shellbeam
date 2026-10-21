@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { open, mkdtemp, chmod, realpath, rm } from 'node:fs/promises'
 import { createServer as createNetServer } from 'node:net'
+import { createServer as createHttpServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -28,6 +29,8 @@ const observed = { nodes: 0, recent: 0, history: 0, historyStatus: 0, serverHist
 let child
 let stopped = false
 let vite
+let receiver
+const delivered = []
 let interrupted = false
 const onSignal = () => { interrupted = true; child?.kill('SIGTERM') }
 process.on('SIGINT', onSignal)
@@ -169,6 +172,49 @@ try {
   assert.equal(snapshot.metrics?.data.diskPercent, 20)
   assert.ok(observations.length >= 2)
   assert.ok(observations.every((point) => point.freshness.sampledAt <= point.freshness.receivedAt))
+  stage = 'verify metric retention writes and readback'
+  const definitions = await request('/api/rpc2', { headers: auth, body: { jsonrpc: '2.0', id: 1, method: 'admin:listMetricDefinitions', params: {} } })
+  const metrics = definitions.json?.result
+  assert.ok(Array.isArray(metrics) && metrics.length > 0)
+  const metric = metrics.find(item => typeof item.name === 'string' && Number.isInteger(item.retention_days))
+  assert.ok(metric)
+  const retentionDays = metric.retention_days === 30 ? 31 : 30
+  const retained = await request('/api/rpc2', { headers: auth, body: { jsonrpc: '2.0', id: 2, method: 'admin:updateMetricDefinition', params: { name: metric.name, retention_days: retentionDays } } })
+  assert.equal(retained.response.status, 200)
+  assert.equal(retained.json?.error, undefined)
+  const readback = await request('/api/rpc2', { headers: auth, body: { jsonrpc: '2.0', id: 3, method: 'admin:listMetricDefinitions', params: {} } })
+  assert.equal(readback.json.result.find(item => item.name === metric.name)?.retention_days, retentionDays)
+  stage = 'configure a synthetic local notification receiver'
+  receiver = createHttpServer((req, res) => {
+    let body = ''
+    req.on('data', data => { body += data; if (body.length > 65536) req.destroy() })
+    req.on('end', () => {
+      try { const message = JSON.parse(body); if (req.method === 'POST' && req.url === '/receipt' && ['Test', 'Offline', 'Online'].includes(message.event)) delivered.push(message.event) } catch { /* invalid test delivery is never evidence */ }
+      res.writeHead(200); res.end('ok')
+    })
+  })
+  await new Promise((done, reject) => { receiver.once('error', reject); receiver.listen(0, '127.0.0.1', done) })
+  const currentChannel = await request('/api/admin/notification/channel/configuration?id=webhook', { headers: auth })
+  const channel = { ...currentChannel.data.data, url: `http://127.0.0.1:${receiver.address().port}/receipt`, method: 'POST', body: '{"event":"{{title}}","message":"{{message}}"}' }
+  assert.equal((await request('/api/admin/notification/channel/configuration', { headers: auth, body: { id: 'webhook', data: channel } })).response.status, 200)
+  assert.deepEqual((await request('/api/admin/notification/channel/configuration?id=webhook', { headers: auth })).data.data, channel)
+  assert.equal((await request('/api/admin/settings/', { headers: auth, body: { notification_enabled: true, notification_method: 'webhook', login_notification: false } })).response.status, 200)
+  assert.equal((await request('/api/admin/test/sendMessage', { headers: auth, body: {} })).response.status, 200)
+  await waitFor(() => delivered.includes('Test'), 10000)
+  await rules.writeOfflineRule(config, nodeId, { enabled: true, gracePeriod: 1 })
+  const reportAgain = () => request('/api/clients/v2/rpc', { body: { token: agentToken, jsonrpc: '2.0', id: 4, method: 'agent.report', params: { report: { cpu: { usage: 30 }, ram: { total: 8192, used: 4096 }, disk: { total: 100000, used: 20000 }, uptime: 3605 } } } })
+  assert.equal((await reportAgain()).json?.error, undefined)
+  stage = 'verify real HTTP Agent presence expiry and offline delivery'
+  // Official 1.6 uses a 35-second POST presence TTL. Do not fabricate events,
+  // change server clocks, or write its notification database to bypass it.
+  await waitFor(() => delivered.includes('Offline'), 50000)
+  assert.equal(delivered.filter(event => event === 'Offline').length, 1)
+  stage = 'verify fresh Agent report and service recovery delivery'
+  assert.equal((await reportAgain()).json?.error, undefined)
+  await waitFor(() => delivered.includes('Online'), 10000)
+  assert.equal(delivered.filter(event => event === 'Online').length, 1)
+  assert.equal(delivered.filter(event => event === 'Test').length, 1)
+  assert.equal((await request('/api/admin/settings/', { headers: auth, body: { notification_enabled: false } })).response.status, 200)
   stage = 'validate real unauthorized adapter error contracts'
   await assert.rejects(() => adapter.requestKomari({ endpoint, token: 'invalid-test-token' }, { path: '/api/admin/client/list' }), (error) => error.code === 'permission' && [401, 403].includes(error.status))
   await assert.rejects(() => adapter.listKomariClients({ endpoint, token: 'invalid-test-token' }), (error) => error.code === 'permission')
@@ -179,13 +225,14 @@ try {
   const preflight = await request('/api/admin/client/list', { method: 'OPTIONS', headers: { Origin: 'tauri://localhost', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' } })
   assert.equal(preflight.response.status, 204)
   stage = 'complete'
-  console.log(JSON.stringify({ result: 'passed', serverVersion: version.version, serverHash: version.hash, serverKeySaveVerified: true, metadataWriteReadback: true, externalMetadataReadback: true, offlineRuleWriteReadback: true, externalOfflineRuleReadback: true, nodes: nodes.length, recentRecords: recent.length, storedHistoryRecords: history.length, wideWindowRecords: observed.serverHistory, fineWindowRecords: observed.fineHistory, importedObservations: observations.length, unauthorized: 'permission', origin: 'tauri://localhost', scope: 'isolated-loopback-synthetic-report-contract' }))
+  console.log(JSON.stringify({ result: 'passed', serverVersion: version.version, serverHash: version.hash, serverKeySaveVerified: true, metadataWriteReadback: true, externalMetadataReadback: true, offlineRuleWriteReadback: true, externalOfflineRuleReadback: true, retentionReadback: true, notificationReceipts: delivered, nodes: nodes.length, recentRecords: recent.length, storedHistoryRecords: history.length, wideWindowRecords: observed.serverHistory, fineWindowRecords: observed.fineHistory, importedObservations: observations.length, unauthorized: 'permission', origin: 'tauri://localhost', scope: 'isolated-loopback-synthetic-report-contract' }))
 } catch {
   // Never dump request/response bodies or upstream logs: they can contain temporary secrets.
   console.error(`Komari live contract smoke failed during: ${stage}; counts=${JSON.stringify(observed)}`)
   process.exitCode = 1
 } finally {
   try { await vite?.close() } catch { process.exitCode = 1 }
+  if (receiver) await new Promise(resolve => receiver.close(resolve))
   const exited = await stop()
   await log.close()
   if (exited) await rm(root, { recursive: true, force: true })
