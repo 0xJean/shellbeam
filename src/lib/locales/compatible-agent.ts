@@ -1,6 +1,6 @@
 export const compatibleAgentCopy = {
   en: {
-    title: 'Monitoring probe', account: 'SSH account', systemService: 'System service', userService: 'User service', artifact: 'Artifact', cadence: 'Collects every 5 seconds; existing host resource policy applies.', description: 'Manage this host’s compatible monitoring probe over its saved SSH connection. The existing monitoring node and key are reused.',
+    title: 'Monitoring probe', account: 'SSH account', systemService: 'System service', userService: 'User service', artifact: 'Artifact', cadence: 'Collects every 5 seconds in the background, using this host’s CPU, memory and network.', description: 'Manage this host’s compatible monitoring probe over its saved SSH connection. The existing monitoring node and key are reused.',
     inspect: 'Check deployment', install: 'Install probe', upgrade: 'Upgrade probe', rollback: 'Roll back probe', uninstall: 'Uninstall probe', working: 'Checking or applying…',
     endpoint: 'Monitoring address reachable from this host', endpointHint: 'Leave blank to use the saved service address. For an SSH tunnel, enter the address reachable by the server, not the desktop’s loopback address. A saved deployment keeps its original address.',
     preserved: 'Uninstall stops only the managed service. Monitoring nodes, keys, history, configuration and release files are retained.',
@@ -21,7 +21,7 @@ export const compatibleAgentCopy = {
     nodeOnline: 'This node is already reporting. Check its existing agent before installing another one.',
   },
   'zh-CN': {
-    title: '监控探针', account: 'SSH 账号', systemService: '系统服务', userService: '用户服务', artifact: '制品', cadence: '每 5 秒采集一次，遵循主机已有资源限制。', description: '通过此主机已保存的 SSH 连接管理兼容监控探针，复用现有监控节点和密钥。',
+    title: '监控探针', account: 'SSH 账号', systemService: '系统服务', userService: '用户服务', artifact: '制品', cadence: '每 5 秒在后台采集一次，会使用此主机的 CPU、内存和网络资源。', description: '通过此主机已保存的 SSH 连接管理兼容监控探针，复用现有监控节点和密钥。',
     inspect: '检查部署', install: '安装探针', upgrade: '升级探针', rollback: '回滚探针', uninstall: '卸载探针', working: '正在检查或执行…',
     endpoint: '此主机可访问的监控地址', endpointHint: '留空使用已保存的服务地址。如果桌面通过 SSH 隧道访问，请填写服务器能访问的地址，而非桌面的回环地址。已有部署保留原地址。',
     preserved: '卸载只停止应用管理的服务，保留监控节点、密钥、历史、配置和版本文件。',
