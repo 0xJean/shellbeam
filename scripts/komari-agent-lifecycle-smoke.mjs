@@ -22,7 +22,7 @@ const helper = join(project, 'src-tauri/src/data/komari_agent/remote.py')
 const { privateKey } = generateKeyPairSync('ed25519'); const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' })
 const delay = ms => new Promise(done => setTimeout(done, ms))
 let child; let stopped = false; let stage = 'download pinned official binaries'; let inspected; let failed = false
-const report = { result: 'running', server: pins.server.version, architecture: arch, checks: [], freshReports: [], cleanup: false, serverStopped: false }
+const report = { result: 'running', server: pins.server.version, architecture: arch, checks: [], freshReports: [], remoteChecks: [], cleanup: false, serverStopped: false }
 const log = await open(join(directory, 'server.log'), 'wx', 0o600)
 async function download(repo, name, version, pin) {
   const url = `https://github.com/komari-monitor/${repo}/releases/download/${version}/${name}`
@@ -37,7 +37,7 @@ async function remote(request) {
     const timer = setTimeout(() => { p.kill('SIGKILL'); reject(new Error('helper_timeout')) }, 120000)
     p.stdout.on('data', value => { bytes = Buffer.concat([bytes, value]); if (bytes.length > 131072) { p.kill(); reject(new Error('helper_output_bound')) } })
     p.once('error', () => { clearTimeout(timer); reject(new Error('helper_spawn')) })
-    p.once('close', code => { clearTimeout(timer); try { assert.equal(code, 0); done(JSON.parse(bytes)) } catch { reject(new Error('helper_response')) } })
+    p.once('close', code => { clearTimeout(timer); try { assert.equal(code, 0); const value = JSON.parse(bytes); report.remoteChecks.push({ action: request.action, ok: value.ok, code: value.code, category: value.category, locations: value.locations, serviceStep: value.serviceStep, status: value.state?.status, active: value.state?.active, rollback: value.rollback }); done(value) } catch { reject(new Error('helper_response')) } })
     p.stdin.on('error', () => {}); p.stdin.end(JSON.stringify({ ...request, deployment }))
   })
 }

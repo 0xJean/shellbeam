@@ -13,8 +13,10 @@ import subprocess
 import sys
 import time
 import uuid
+import traceback
 
 LIMIT = 32 * 1024 * 1024
+SERVICE_STEP = None
 
 
 class Rejected(Exception):
@@ -67,6 +69,8 @@ def safe_tree(path, create=False):
 
 
 def run(arguments, allow_failure=False):
+    global SERVICE_STEP
+    SERVICE_STEP = next((v for v in arguments if v in ("show-user", "show-environment", "daemon-reload", "enable", "restart", "show", "is-active", "disable")), "unknown")
     environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
     if os.geteuid() != 0:
         runtime = Path("/run/user") / str(os.geteuid())
@@ -351,9 +355,12 @@ def main():
         result = perform(json.loads(raw))
         print(json.dumps({"ok": True, **result}))
     except Rejected as error:
-        print(json.dumps({"ok": False, "code": str(error)}))
-    except Exception:
-        print(json.dumps({"ok": False, "code": "remote_result_unknown"}))
+        print(json.dumps({"ok": False, "code": str(error), "serviceStep": SERVICE_STEP}))
+    except Exception as error:
+        # Only exception class and static code locations, never messages, paths,
+        # request bodies, local variables or service output (which may be secret).
+        locations = [{"function": frame.name, "line": frame.lineno} for frame in traceback.extract_tb(error.__traceback__)[-4:]]
+        print(json.dumps({"ok": False, "code": "remote_result_unknown", "category": type(error).__name__, "locations": locations, "serviceStep": SERVICE_STEP}))
 
 
 if __name__ == "__main__":
