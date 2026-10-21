@@ -92,7 +92,7 @@ try {
   }
   const operate = async (action, artifact, overrideBytes) => {
     const baseline = await inspect()
-    const result = await remote({ action, identity: baseline.identity, expected: baseline.state, job: randomUUID(), release: artifact?.manifest, bytes: overrideBytes ?? artifact?.bytes.toString('base64'), configuration: config })
+    const result = await remote({ action, identity: baseline.identity, expected: baseline.state, job: randomUUID(), release: artifact?.manifest, bytes: overrideBytes ?? artifact?.bytes?.toString('base64'), configuration: config })
     return result
   }
   stage = 'install actual 1.5.10 systemd service and verify fresh report'
