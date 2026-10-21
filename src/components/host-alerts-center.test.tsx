@@ -164,7 +164,8 @@ describe('unified host alerts center', () => {
   it('forwards local and Komari actions to existing confirmation callbacks without changing lifecycle state itself', async () => {
     const localAlert = local()
     const komariAlert = komari()
-    const onLocal = vi.fn().mockResolvedValue(undefined)
+    const confirmation = deferred()
+    const onLocal = vi.fn(() => confirmation.promise)
     const onKomari = vi.fn().mockResolvedValue(undefined)
     const onOpen = vi.fn()
     const rows = buildHostIncidents([host], new Map([[host.id, summary({ localAlerts: [localAlert], komariAlerts: [komariAlert], onLocalAlertAction: onLocal, onKomariAlertAction: onKomari })]]), 'vault-a')
@@ -173,8 +174,18 @@ describe('unified host alerts center', () => {
     const komariCard = screen.getAllByTestId('host-incident').find(element => element.dataset.source === 'komari')!
     fireEvent.click(within(localCard).getByRole('button', { name: 'Acknowledge' }))
     await waitFor(() => expect(onLocal).toHaveBeenCalledWith(localAlert, 'acknowledge'))
-    fireEvent.click(within(komariCard).getByRole('button', { name: 'Archive' }))
+    const archive = within(komariCard).getByRole('button', { name: 'Archive' })
+    // Callback entry is earlier than confirmation completion. A second action
+    // must wait for the actual UI to unlock, not merely for the spy to be called.
+    expect(archive).toBeDisabled()
+    fireEvent.click(archive)
+    expect(onKomari).not.toHaveBeenCalled()
+    await act(async () => { confirmation.resolve(); await confirmation.promise })
+    await waitFor(() => expect(archive).toBeEnabled())
+    fireEvent.click(archive)
     await waitFor(() => expect(onKomari).toHaveBeenCalledWith('close', expect.objectContaining({ alertId: komariAlert.alertId, integrationId: komariAlert.integrationId, nodeId: komariAlert.nodeId })))
+    expect(onLocal).toHaveBeenCalledTimes(1)
+    expect(onKomari).toHaveBeenCalledTimes(1)
     expect(localAlert.status).toBe('active')
     expect(komariAlert.status).toBe('active')
     expect(within(localCard).getByRole('button', { name: 'Acknowledge' })).toBeVisible()

@@ -1175,28 +1175,63 @@ mod tests {
     #[test]
     fn notification_rule_audit_is_recoverable_and_projected_once() {
         let db = setup();
-        record_rule_event(&db, "v", "h", "rule-job", "running", "Offline rule pending; no delivery claim").unwrap();
-        let path = std::env::temp_dir().join(format!("shellbeam-rule-audit-{}.sqlite", Uuid::new_v4()));
+        record_rule_event(
+            &db,
+            "v",
+            "h",
+            "rule-job",
+            "running",
+            "Offline rule pending; no delivery claim",
+        )
+        .unwrap();
+        let path =
+            std::env::temp_dir().join(format!("shellbeam-rule-audit-{}.sqlite", Uuid::new_v4()));
         let mut audit = super::super::operation_jobs::open_database(&path).unwrap();
         project_on(&db, &mut audit).unwrap();
-        let job = super::super::operation_jobs::get_on(&audit, "rule-job").unwrap().unwrap();
+        let job = super::super::operation_jobs::get_on(&audit, "rule-job")
+            .unwrap()
+            .unwrap();
         assert_eq!(job.action, "host.notification-rule.update");
         assert_eq!(job.actor, "monitoring-rule");
         assert_eq!(job.provider, "komari");
         assert_eq!(job.status, "running");
-        let before: i64 = audit.query_row("SELECT count(*) FROM operation_audit", [], |r| r.get(0)).unwrap();
+        let before: i64 = audit
+            .query_row("SELECT count(*) FROM operation_audit", [], |r| r.get(0))
+            .unwrap();
         drop(audit);
         let mut audit = super::super::operation_jobs::open_database(&path).unwrap();
-        db.execute("UPDATE host_metadata_events SET projected=0", []).unwrap();
+        db.execute("UPDATE host_metadata_events SET projected=0", [])
+            .unwrap();
         project_on(&db, &mut audit).unwrap();
-        let after: i64 = audit.query_row("SELECT count(*) FROM operation_audit", [], |r| r.get(0)).unwrap();
+        let after: i64 = audit
+            .query_row("SELECT count(*) FROM operation_audit", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(before, after);
-        record_rule_event(&db, "v", "h", "rule-job", "completed", "Offline rule read back; no delivery claim").unwrap();
+        record_rule_event(
+            &db,
+            "v",
+            "h",
+            "rule-job",
+            "completed",
+            "Offline rule read back; no delivery claim",
+        )
+        .unwrap();
         project_on(&db, &mut audit).unwrap();
-        let job = super::super::operation_jobs::get_on(&audit, "rule-job").unwrap().unwrap();
+        let job = super::super::operation_jobs::get_on(&audit, "rule-job")
+            .unwrap()
+            .unwrap();
         assert_eq!(job.status, "completed");
-        assert_eq!(job.result_summary.as_deref(), Some("Offline rule read back; no delivery claim"));
-        let wrong_actor: i64 = audit.query_row("SELECT count(*) FROM operation_audit WHERE actor != 'monitoring-rule'", [], |r| r.get(0)).unwrap();
+        assert_eq!(
+            job.result_summary.as_deref(),
+            Some("Offline rule read back; no delivery claim")
+        );
+        let wrong_actor: i64 = audit
+            .query_row(
+                "SELECT count(*) FROM operation_audit WHERE actor != 'monitoring-rule'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(wrong_actor, 0);
         drop(audit);
         std::fs::remove_file(path).unwrap();
