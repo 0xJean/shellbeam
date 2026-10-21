@@ -23,6 +23,7 @@ import { useId, useState, type ComponentType } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { KomariProbeOpsView } from './komari-probe-ops-view'
+import { CompatibleAgentTools } from './compatible-agent-panel'
 import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS } from './host-list-layout'
 
 type TFn = (key: string, params?: Record<string, string | number>) => string
@@ -808,6 +809,7 @@ function HostOperationalMeta({ host, summary, t, expanded = false }: { host: Hos
         />
       )}
       </details>}
+      <CompatibleAgentTools host={host} integrationId={summary.komariProbe?.status === 'linked' ? summary.komariProbe.integrationId : undefined} bindingKey={summary.komariProbe?.nodeId} />
       </div>
     </div>
   )

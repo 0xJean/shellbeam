@@ -8,9 +8,17 @@
 
 下表是完整 0.5 要求；仅分批实现记录明确列出的范围已取得本地证据，其余仍待实现或平台验收。
 
+### 2026-10-21 第五批：兼容监控探针生命周期
+
+实现与边界见 [兼容监控探针](./compatible-monitoring-agent.md)。增加原生安装/升级/回滚/卸载、独立签名制品、SSH/ProxyJump、确认及 OperationJob、保留数据卸载和跨会话只读核验。不会覆盖已有 ShellBeam Agent 或非托管 Komari Agent；生产签名环境尚未配置，不用测试密钥代替生产发布。
+
+本地定向：79 项主机/探针 UI、7 项 Python 文件系统/失败恢复、2 项 Node 发布器通过；全量 Rust 219 通过、2 显式忽略，包括新增跨语言验签和审计恢复。中英文 × 390/768/1440px × 未接入/新部署/运行/未知/发布设置共 30 组隔离浏览器布局通过，已目视手机发布设置。未接入主机无新增入口，无 iframe、横向溢出或组件错误；仅有 fixture favicon 404。
+
+首次全量前端并行运行遇到两个既有实际进程测试超时（network-ops、shellbeam-agent-artifact-activation），7 项定向复测均通过；没有调整超时或断言，低并发全量 1538 通过、17 Linux 限定跳过；134 项 Node 协议测试、生产构建、修改文件 ESLint 与格式检查通过。amd64/arm64 官方探针真实 systemd 与新 head CI 的最终结果在提交后补记。Docker 本地镜像下载不可达，没有据此声称真实服务测试通过；新增专门的 Linux CI 报告要求保留进程、原始新上报、回滚、数据保留和清理证据。
+
 ### 第四批 CI 修复记录
 
-`ae46f5d` 有 11 项通过，安装包 GUI run `39598625400` 在配置通知策略时失败（`alert-notification-policy / no such element`，artifact `12345686360`）。真实系统通知的可见/暂停/恢复/不可用四场景已通过，清理和应用退出也通过。原因是此前将用户开关明确命名为 “Send reminders from this device”，两个 GUI 流程仍按旧文案定位复选框。修复更新这两个真实 UI 选择器和对应 driver fixture；保留实际点击、状态回读、保存后重新挂载验证及所有截图/OCR/no-replay 断言。后续提交需重新核验完整 GUI 流程。
+`ae46f5d` 有 11 项通过，安装包 GUI run `39598625400` 在配置通知策略时失败（`alert-notification-policy / no such element`，artifact `12345686360`）。真实系统通知的可见/暂停/恢复/不可用四场景已通过，清理和应用退出也通过。原因是此前将用户开关明确命名为 “Send reminders from this device”，两个 GUI 流程仍按旧文案定位复选框。修复更新这两个真实 UI 选择器和对应 driver fixture；保留实际点击、状态回读、保存后重新挂载验证及所有截图/OCR/no-replay 断言。修复提交 `0f772ba90f2dcf85f55894069e726753a007c64c` 的 12 项检查已全部成功；这是第五批功能之前的基线，新功能不能借用其绿色结果。
 
 ### 2026-10-21 第四批：原生接入、服务配置与通知投递
 

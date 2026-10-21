@@ -1,0 +1,51 @@
+name: Compatible monitoring probe lifecycle
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/src/data/komari_agent/**'
+      - 'src-tauri/src/ssh/transport.rs'
+      - 'src-tauri/src/data/monitoring_service.rs'
+      - 'scripts/*komari-agent*'
+      - 'scripts/fixtures/komari-lifecycle-releases.json'
+      - '.github/workflows/komari-agent-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lifecycle:
+    name: Compatible probe lifecycle (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify signature publisher and filesystem failure recovery
+        run: |
+          node --test scripts/publish-komari-agent.test.mjs
+          PYTHONDONTWRITEBYTECODE=1 python3 scripts/komari-agent-remote.test.py
+      - name: Prepare isolated runner user service manager
+        run: |
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
+      - name: Official probe install, upgrade, rollback and uninstall with fresh server reports
+        env:
+          SHELLBEAM_KOMARI_LIFECYCLE_SMOKE: '1'
+          SHELLBEAM_KOMARI_LIFECYCLE_REPORT: ${{ runner.temp }}/komari-agent-lifecycle.json
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          node scripts/komari-agent-lifecycle-smoke.mjs
+      - name: Preserve redacted lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatible-probe-lifecycle-${{ matrix.runner }}
+          path: ${{ runner.temp }}/komari-agent-lifecycle.json
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,971 @@
+//! A narrow, native lifecycle for the optional monitoring runtime. Secrets only
+//! travel from Vault / server to SSH stdin; never through previews or audit rows.
+pub mod artifact;
+mod store;
+#[cfg(test)]
+mod tests;
+use super::{
+    hosts::{self, HostProfile},
+    komari, komari_persistence, monitoring_service as service,
+};
+use crate::{ssh::transport, storage::now_unix_ms, vault::VaultState};
+use artifact::{fingerprint, Manifest, TrustedRelease};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::{
+    collections::{HashMap, HashSet},
+    io::{Read, Write},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
+    time::{Duration, Instant},
+};
+use store::Record;
+use tauri::Manager;
+use uuid::Uuid;
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct Identity {
+    machine: String,
+    uid: u32,
+    root: String,
+    architecture: String,
+}
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Observation {
+    status: String,
+    #[serde(default)]
+    active: bool,
+    #[serde(default)]
+    external_agent: bool,
+    #[serde(default)]
+    deployment: Option<String>,
+    #[serde(default)]
+    current: Option<Manifest>,
+    #[serde(default)]
+    previous: Option<Manifest>,
+    #[serde(default)]
+    config_sha256: Option<String>,
+    #[serde(default)]
+    job: Option<String>,
+}
+#[derive(Deserialize)]
+struct RemoteResult {
+    ok: bool,
+    identity: Option<Identity>,
+    state: Option<Observation>,
+    rollback: Option<String>,
+    error: Option<String>,
+    code: Option<String>,
+}
+#[derive(Clone)]
+struct Plan {
+    id: String,
+    vault: String,
+    session: u64,
+    host: HostProfile,
+    host_fingerprint: String,
+    keys: String,
+    source: Option<service::Scope>,
+    mapping_fingerprint: Option<String>,
+    service_identity: String,
+    integration: String,
+    node: String,
+    node_created: String,
+    deployment: String,
+    endpoint: String,
+    identity: Identity,
+    observed: Observation,
+    baseline: Option<Record>,
+    release: Option<TrustedRelease>,
+    policy_fingerprint: Option<String>,
+    action: String,
+    watermark: i64,
+    expires: i64,
+    cancelled: Arc<AtomicBool>,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preview {
+    plan_id: String,
+    action: String,
+    host_name: String,
+    node_id: String,
+    endpoint: String,
+    transport: String,
+    account: String,
+    service_scope: String,
+    data_directory: String,
+    artifact_bytes: Option<usize>,
+    current_version: Option<String>,
+    target_version: Option<String>,
+    status: String,
+    expires_at: i64,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Prepare {
+    vault_id: String,
+    host_id: String,
+    integration_id: String,
+    action: String,
+    endpoint: Option<String>,
+}
+static PLANS: OnceLock<Mutex<HashMap<String, Plan>>> = OnceLock::new();
+static BUSY: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
+struct Lease(String, String);
+impl Drop for Lease {
+    fn drop(&mut self) {
+        if let Ok(mut set) = BUSY.get_or_init(Default::default).lock() {
+            set.remove(&(self.0.clone(), self.1.clone()));
+        }
+    }
+}
+fn lease(vault: &str, host_id: &str) -> Result<Lease, String> {
+    let mut set = BUSY
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "KOMARI_AGENT_BUSY")?;
+    let key = (vault.to_owned(), host_id.to_owned());
+    if set.len() >= 8
+        || set.iter().filter(|(id, _)| id == vault).count() >= 2
+        || !set.insert(key.clone())
+    {
+        return Err("KOMARI_AGENT_BUSY".into());
+    }
+    Ok(Lease(key.0, key.1))
+}
+fn host(app: &tauri::AppHandle, vault: &str, id: &str) -> Result<(HostProfile, String), String> {
+    let all = hosts::load_hosts(app, Some(vault))?;
+    let h = all
+        .iter()
+        .find(|h| h.id == id)
+        .ok_or("KOMARI_AGENT_HOST_CHANGED")?;
+    let jump = h
+        .jump_host_id
+        .as_ref()
+        .and_then(|id| all.iter().find(|h| &h.id == id));
+    Ok((h.clone(), fingerprint(&(h, jump))?))
+}
+fn mapping(
+    app: &tauri::AppHandle,
+    vault: &str,
+    integration: &str,
+    host: &str,
+) -> Result<(String, String), String> {
+    let state = komari_persistence::get_komari_mapping_state(
+        app.clone(),
+        vault.into(),
+        integration.into(),
+    )?;
+    let m = state
+        .mappings
+        .iter()
+        .find(|m| m.host_id == host)
+        .ok_or("KOMARI_AGENT_MAPPING_REQUIRED")?;
+    Uuid::parse_str(&m.node_id).map_err(|_| "KOMARI_AGENT_NODE_INVALID")?;
+    Ok((m.node_id.clone(), fingerprint(&(state.revision, m))?))
+}
+fn check(app: &tauri::AppHandle, p: &Plan) -> Result<(), String> {
+    if p.cancelled.load(Ordering::SeqCst)
+        || now_unix_ms() > p.expires
+        || !app.state::<VaultState>().is_unlocked(&p.vault)
+        || app.state::<VaultState>().session_generation() != p.session
+    {
+        return Err("KOMARI_AGENT_SCOPE_CHANGED".into());
+    }
+    if host(app, &p.vault, &p.host.id)?.1 != p.host_fingerprint {
+        return Err("KOMARI_AGENT_HOST_CHANGED".into());
+    }
+    if let Some(scope) = &p.source {
+        service::check(app, scope)?;
+        if mapping(app, &p.vault, &p.integration, &p.host.id)?
+            != (
+                p.node.clone(),
+                p.mapping_fingerprint.clone().unwrap_or_default(),
+            )
+        {
+            return Err("KOMARI_AGENT_MAPPING_CHANGED".into());
+        }
+    }
+    if let Some(expected) = &p.policy_fingerprint {
+        if fingerprint(&artifact::policy(app)?)? != *expected {
+            return Err("KOMARI_AGENT_POLICY_CHANGED".into());
+        }
+    }
+    Ok(())
+}
+fn rpc(remote: &service::Remote, token: &str, method: &str, node: &str) -> Result<Value, String> {
+    remote.call(
+        "/api/rpc2",
+        Some(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":{"uuid":node}})),
+        Some(token),
+        None,
+    )
+}
+fn node(remote: &service::Remote, token: &str, id: &str) -> Result<(String, String), String> {
+    let v = rpc(remote, token, "admin:getClient", id)?;
+    if v["uuid"].as_str() != Some(id) {
+        return Err("KOMARI_AGENT_NODE_CHANGED".into());
+    }
+    let created = v["created_at"]
+        .as_str()
+        .filter(|v| chrono::DateTime::parse_from_rfc3339(v).is_ok())
+        .ok_or("KOMARI_AGENT_NODE_CHANGED")?;
+    Ok((
+        created.into(),
+        v["version"]
+            .as_str()
+            .unwrap_or("")
+            .trim_start_matches('v')
+            .into(),
+    ))
+}
+fn sample(value: &Value, depth: usize) -> i64 {
+    if depth > 5 {
+        return 0;
+    }
+    if let Some(rows) = value.as_array() {
+        return rows.iter().map(|r| sample(r, depth + 1)).max().unwrap_or(0);
+    }
+    if ["cpu", "ram", "memory", "disk", "network", "net", "load"]
+        .iter()
+        .any(|k| value.get(k).is_some())
+    {
+        return value
+            .get("time")
+            .or_else(|| value.get("updated_at"))
+            .and_then(Value::as_str)
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.timestamp_millis())
+            .unwrap_or(0);
+    }
+    ["records", "reports", "data", "result"]
+        .iter()
+        .filter_map(|k| value.get(k))
+        .map(|v| sample(v, depth + 1))
+        .max()
+        .unwrap_or(0)
+}
+fn recent(remote: &service::Remote, token: &str, id: &str) -> Result<i64, String> {
+    Ok(sample(
+        &remote.call(&format!("/api/recent/{id}"), None, Some(token), None)?,
+        0,
+    ))
+}
+fn fresh(value: i64, watermark: i64, started: i64, now: i64) -> bool {
+    value > watermark && value >= started - 5_000 && value <= now + 5_000 && value >= now - 60_000
+}
+fn connect(app: &tauri::AppHandle, p: &Plan) -> Result<transport::Connection, String> {
+    check(app, p)?;
+    let route = transport::resolve_host_route(app, &p.vault, &p.host.id)
+        .map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
+    let c = transport::connect(app, &route).map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
+    check(app, p)?;
+    if fingerprint(&c.verified_host_keys)? != p.keys {
+        return Err("KOMARI_AGENT_SSH_IDENTITY_CHANGED".into());
+    }
+    Ok(c)
+}
+fn remote(
+    c: &transport::Connection,
+    request: &Value,
+    guard: &dyn Fn() -> Result<(), String>,
+) -> Result<RemoteResult, String> {
+    let started = Instant::now();
+    let current = || -> Result<(), String> {
+        guard()?;
+        if started.elapsed() > Duration::from_secs(90) {
+            Err("KOMARI_AGENT_REMOTE_UNKNOWN".into())
+        } else {
+            Ok(())
+        }
+    };
+    current()?;
+    c.session.set_timeout(5_000);
+    let mut ch = c
+        .session
+        .channel_session()
+        .map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
+    // The command contains only a compiled-in helper. Credentials and artifact
+    // bytes are stdin data, not shell words, process arguments or script logs.
+    let code = include_str!("remote.py").replace('\'', "'\\''");
+    ch.exec(&format!("python3 -I -c '{code}'"))
+        .map_err(|_| "KOMARI_AGENT_REMOTE_UNKNOWN")?;
+    let input = serde_json::to_vec(request).map_err(|_| "KOMARI_AGENT_REQUEST")?;
+    let mut offset = 0;
+    while offset < input.len() {
+        current()?;
+        match ch.write(&input[offset..(offset + 65536).min(input.len())]) {
+            Ok(0) => return Err("KOMARI_AGENT_REMOTE_UNKNOWN".into()),
+            Ok(n) => offset += n,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue
+            }
+            Err(_) => return Err("KOMARI_AGENT_REMOTE_UNKNOWN".into()),
+        }
+    }
+    current()?;
+    ch.send_eof().map_err(|_| "KOMARI_AGENT_REMOTE_UNKNOWN")?;
+    let mut bytes = Vec::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        current()?;
+        match ch.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                bytes.extend_from_slice(&buffer[..n]);
+                if bytes.len() > 131072 {
+                    return Err("KOMARI_AGENT_REMOTE_UNKNOWN".into());
+                }
+            }
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue
+            }
+            Err(_) => return Err("KOMARI_AGENT_REMOTE_UNKNOWN".into()),
+        }
+    }
+    if bytes.len() > 131072 {
+        return Err("KOMARI_AGENT_REMOTE_UNKNOWN".into());
+    }
+    let result: RemoteResult =
+        serde_json::from_slice(&bytes).map_err(|_| "KOMARI_AGENT_REMOTE_UNKNOWN")?;
+    ch.wait_close().map_err(|_| "KOMARI_AGENT_REMOTE_UNKNOWN")?;
+    if ch.exit_status().unwrap_or(1) != 0 {
+        return Err("KOMARI_AGENT_REMOTE_UNKNOWN".into());
+    }
+    if !result.ok {
+        let code = match result.code.as_deref() {
+            Some("external_agent_present") => "KOMARI_AGENT_EXTERNAL_AGENT",
+            Some("user_manager_requires_linger") => "KOMARI_AGENT_LINGER_REQUIRED",
+            Some("linux_required") => "KOMARI_AGENT_LINUX_REQUIRED",
+            Some("remote_state_changed") => "KOMARI_AGENT_STATE_CHANGED",
+            Some("unmanaged_service") => "KOMARI_AGENT_UNMANAGED_SERVICE",
+            _ => "KOMARI_AGENT_REMOTE_UNKNOWN",
+        };
+        return Err(code.into());
+    }
+    Ok(result)
+}
+fn state(
+    result: &RemoteResult,
+    identity: Option<&Identity>,
+) -> Result<(Identity, Observation), String> {
+    let i = result
+        .identity
+        .clone()
+        .ok_or("KOMARI_AGENT_REMOTE_UNKNOWN")?;
+    let s = result.state.clone().ok_or("KOMARI_AGENT_REMOTE_UNKNOWN")?;
+    if identity.is_some_and(|e| e != &i)
+        || i.machine.len() != 32
+        || !i.machine.bytes().all(|b| b.is_ascii_hexdigit())
+        || !matches!(i.architecture.as_str(), "amd64" | "arm64")
+        || !matches!(
+            s.status.as_str(),
+            "absent" | "active" | "activating" | "retired"
+        )
+    {
+        return Err("KOMARI_AGENT_IDENTITY_CHANGED".into());
+    }
+    Ok((i, s))
+}
+fn endpoint(value: &str) -> Result<String, String> {
+    let u = url::Url::parse(value).map_err(|_| "KOMARI_AGENT_ENDPOINT_INVALID")?;
+    if !matches!(u.scheme(), "http" | "https")
+        || u.host_str().is_none()
+        || !u.username().is_empty()
+        || u.password().is_some()
+        || u.query().is_some()
+        || u.fragment().is_some()
+        || value.len() > 2048
+    {
+        return Err("KOMARI_AGENT_ENDPOINT_INVALID".into());
+    }
+    Ok(value.trim_end_matches('/').into())
+}
+fn transport_name(h: &HostProfile) -> &str {
+    if h.jump_host_id.is_some() || h.jump_host.as_ref().is_some_and(|v| !v.is_empty()) {
+        "ssh-proxyjump"
+    } else {
+        "ssh-direct"
+    }
+}
+#[tauri::command]
+pub fn komari_agent_record(
+    app: tauri::AppHandle,
+    vault_id: String,
+    host_id: String,
+) -> Result<Option<Record>, String> {
+    app.state::<VaultState>().while_unlocked(&vault_id, || {
+        store::get(&store::open(&app)?, &vault_id, &host_id)
+    })
+}
+#[tauri::command]
+pub fn komari_agent_cancel(plan_id: String) -> Result<(), String> {
+    if let Some(p) = PLANS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "KOMARI_AGENT_BUSY")?
+        .remove(&plan_id)
+    {
+        p.cancelled.store(true, Ordering::SeqCst);
+        if let Some(s) = p.source {
+            service::monitoring_service_cancel_context(s.context_id)?;
+        }
+    }
+    Ok(())
+}
+fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
+    if !matches!(
+        input.action.as_str(),
+        "inspect" | "install" | "upgrade" | "rollback" | "uninstall"
+    ) {
+        return Err("KOMARI_AGENT_ACTION_INVALID".into());
+    }
+    let session = app.state::<VaultState>().session_generation();
+    if !app.state::<VaultState>().is_unlocked(&input.vault_id) {
+        return Err("KOMARI_AGENT_SCOPE_CHANGED".into());
+    }
+    let (h, hf) = host(app, &input.vault_id, &input.host_id)?;
+    let baseline = store::get(&store::open(app)?, &input.vault_id, &h.id)?;
+    if baseline.as_ref().is_some_and(|r| {
+        r.host_created_at != h.created_at || r.integration_id != input.integration_id
+    }) {
+        return Err("KOMARI_AGENT_IDENTITY_CHANGED".into());
+    }
+    if baseline
+        .as_ref()
+        .is_some_and(|r| matches!(r.status.as_str(), "dispatched" | "prepared" | "unknown"))
+        && !matches!(input.action.as_str(), "inspect" | "uninstall")
+    {
+        return Err("KOMARI_AGENT_READBACK_REQUIRED".into());
+    }
+    let deployment = baseline
+        .as_ref()
+        .map(|r| r.deployment.clone())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let route = transport::resolve_host_route(app, &input.vault_id, &h.id)
+        .map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
+    let c = transport::connect(app, &route).map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
+    if !app.state::<VaultState>().is_unlocked(&input.vault_id)
+        || app.state::<VaultState>().session_generation() != session
+        || host(app, &input.vault_id, &h.id)?.1 != hf
+    {
+        return Err("KOMARI_AGENT_SCOPE_CHANGED".into());
+    }
+    let keys = fingerprint(&c.verified_host_keys)?;
+    if baseline.as_ref().is_some_and(|r| r.host_keys != keys) {
+        return Err("KOMARI_AGENT_SSH_IDENTITY_CHANGED".into());
+    }
+    let (identity, observed) = state(
+        &remote(
+            &c,
+            &json!({"action":"inspect","deployment":deployment}),
+            &|| {
+                if app.state::<VaultState>().session_generation() != session
+                    || !app.state::<VaultState>().is_unlocked(&input.vault_id)
+                    || host(app, &input.vault_id, &h.id)?.1 != hf
+                {
+                    Err("KOMARI_AGENT_SCOPE_CHANGED".into())
+                } else {
+                    Ok(())
+                }
+            },
+        )?,
+        baseline.as_ref().map(|r| &r.identity),
+    )?;
+    if observed.external_agent && input.action != "inspect" {
+        return Err("KOMARI_AGENT_EXTERNAL_AGENT".into());
+    }
+    let mut p = Plan {
+        id: Uuid::new_v4().to_string(),
+        vault: input.vault_id,
+        session,
+        host: h,
+        host_fingerprint: hf,
+        keys,
+        source: None,
+        mapping_fingerprint: None,
+        service_identity: baseline
+            .as_ref()
+            .map(|r| r.service_identity.clone())
+            .unwrap_or_default(),
+        integration: input.integration_id,
+        node: baseline
+            .as_ref()
+            .map(|r| r.node_id.clone())
+            .unwrap_or_default(),
+        node_created: baseline
+            .as_ref()
+            .map(|r| r.node_created_at.clone())
+            .unwrap_or_default(),
+        deployment,
+        endpoint: baseline
+            .as_ref()
+            .map(|r| r.endpoint.clone())
+            .unwrap_or_default(),
+        identity,
+        observed,
+        baseline,
+        release: None,
+        policy_fingerprint: None,
+        action: input.action,
+        watermark: 0,
+        expires: now_unix_ms() + 300_000,
+        cancelled: Arc::new(AtomicBool::new(false)),
+    };
+    // Cleanup of an owned deployment must remain possible with the server down
+    // or its source removed. Every other action rechecks the source and node.
+    let result = (|| {
+        if p.action != "uninstall" {
+            let integration = komari::list_komari_integrations(app.clone(), p.vault.clone())?
+                .into_iter()
+                .find(|s| s.id == p.integration)
+                .ok_or("KOMARI_AGENT_SOURCE_REQUIRED")?;
+            let source_identity = fingerprint(&(
+                integration.id.clone(),
+                integration.endpoint.clone(),
+                integration.created_at,
+            ))?;
+            if p.baseline
+                .as_ref()
+                .is_some_and(|r| r.service_identity != source_identity)
+            {
+                return Err("KOMARI_AGENT_SOURCE_CHANGED".into());
+            }
+            let (node_id, mapping_id) = mapping(app, &p.vault, &p.integration, &p.host.id)?;
+            p.source = Some(service::monitoring_service_context(
+                app.clone(),
+                integration.clone(),
+            )?);
+            p.mapping_fingerprint = Some(mapping_id);
+            p.node = node_id;
+            p.service_identity = source_identity;
+            let s = p.source.as_ref().unwrap();
+            let r = service::Remote::new(app, s)?;
+            let token = service::secret(app, s)?;
+            r.version(Some(&token))?;
+            let (created, _) = node(&r, &token, &p.node)?;
+            if p.baseline
+                .as_ref()
+                .is_some_and(|old| old.node_id != p.node || old.node_created_at != created)
+            {
+                return Err("KOMARI_AGENT_NODE_CHANGED".into());
+            }
+            p.node_created = created;
+            p.watermark = recent(&r, &token, &p.node)?;
+            if p.action == "install"
+                && p.observed.status == "absent"
+                && p.watermark >= now_unix_ms() - 60_000
+            {
+                return Err("KOMARI_AGENT_NODE_ALREADY_REPORTING".into());
+            }
+            if p.baseline.as_ref().is_none_or(|r| r.current.is_none()) {
+                p.endpoint = endpoint(input.endpoint.as_deref().unwrap_or(&integration.endpoint))?;
+            }
+        }
+        if matches!(p.action.as_str(), "install" | "upgrade") {
+            if p.action == "install" && !matches!(p.observed.status.as_str(), "absent" | "retired")
+                || p.action == "upgrade" && p.observed.status != "active"
+            {
+                return Err("KOMARI_AGENT_STATE_CHANGED".into());
+            }
+            let policy = artifact::policy(app)?;
+            p.policy_fingerprint = Some(fingerprint(&policy)?);
+            let release = artifact::select(&policy, &p.identity.architecture)?;
+            if p.action == "upgrade"
+                && p.observed.current.as_ref().is_none_or(|c| {
+                    artifact::version(&c.version).unwrap_or(u64::MAX)
+                        >= artifact::version(&release.manifest.version).unwrap_or(0)
+                })
+            {
+                return Err("KOMARI_AGENT_NO_UPGRADE".into());
+            }
+            p.release = Some(release);
+        } else if p.action == "rollback" {
+            let release = p
+                .baseline
+                .as_ref()
+                .and_then(|r| r.previous.clone())
+                .ok_or("KOMARI_AGENT_NO_ROLLBACK")?;
+            artifact::verify(&release)?;
+            if p.observed.previous.as_ref() != Some(&release.manifest) {
+                return Err("KOMARI_AGENT_STATE_CHANGED".into());
+            }
+            p.release = Some(release);
+        } else if p.action == "uninstall" && (p.baseline.is_none() || p.observed.status == "absent")
+        {
+            return Err("KOMARI_AGENT_NOT_MANAGED".into());
+        }
+        if let Some(old) = &p.baseline {
+            validate_observation(old, &p.observed)?;
+        }
+        check(app, &p)?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        if let Some(s) = p.source {
+            let _ = service::monitoring_service_cancel_context(s.context_id);
+        }
+        return Err(e);
+    }
+    let preview = Preview {
+        plan_id: p.id.clone(),
+        action: p.action.clone(),
+        host_name: p.host.name.clone(),
+        node_id: p.node.clone(),
+        endpoint: p.endpoint.clone(),
+        transport: transport_name(&p.host).into(),
+        account: p.host.username.clone(),
+        service_scope: if p.identity.uid == 0 {
+            "system"
+        } else {
+            "user"
+        }
+        .into(),
+        data_directory: p.identity.root.clone(),
+        artifact_bytes: p.release.as_ref().map(|r| r.manifest.size_bytes),
+        current_version: p.observed.current.as_ref().map(|r| r.version.clone()),
+        target_version: p.release.as_ref().map(|r| r.manifest.version.clone()),
+        status: p.observed.status.clone(),
+        expires_at: p.expires,
+    };
+    let mut plans = PLANS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "KOMARI_AGENT_BUSY")?;
+    plans.retain(|_, v| v.expires > now_unix_ms());
+    if plans.len() >= 128 {
+        return Err("KOMARI_AGENT_BUSY".into());
+    }
+    plans.insert(p.id.clone(), p);
+    Ok(preview)
+}
+#[tauri::command]
+pub async fn komari_agent_prepare(
+    app: tauri::AppHandle,
+    input: Prepare,
+) -> Result<Preview, String> {
+    tauri::async_runtime::spawn_blocking(move || prepare(&app, input))
+        .await
+        .map_err(|_| "KOMARI_AGENT_INTERNAL")?
+}
+fn known(record: &Record, manifest: &Manifest) -> Result<TrustedRelease, String> {
+    let r = [&record.current, &record.previous, &record.requested]
+        .into_iter()
+        .flatten()
+        .find(|r| &r.manifest == manifest)
+        .ok_or("KOMARI_AGENT_UNTRUSTED_REMOTE_RELEASE")?;
+    artifact::verify(r)?;
+    Ok(r.clone())
+}
+fn validate_observation(record: &Record, state: &Observation) -> Result<(), String> {
+    if state.status == "absent" {
+        return if record.current.is_none() && record.observation.status == "absent" {
+            Ok(())
+        } else {
+            Err("KOMARI_AGENT_MANAGED_STATE_MISSING".into())
+        };
+    }
+    if state.deployment.as_deref() != Some(&record.deployment) {
+        return Err("KOMARI_AGENT_IDENTITY_CHANGED".into());
+    }
+    if record.observation.config_sha256.is_some()
+        && record.observation.config_sha256 != state.config_sha256
+    {
+        return Err("KOMARI_AGENT_CONFIGURATION_CHANGED".into());
+    }
+    for m in [&state.current, &state.previous].into_iter().flatten() {
+        known(record, m)?;
+    }
+    Ok(())
+}
+fn apply_observation(record: &mut Record, state: Observation) -> Result<(), String> {
+    validate_observation(record, &state)?;
+    let current = state
+        .current
+        .as_ref()
+        .map(|m| known(record, m))
+        .transpose()?;
+    let previous = state
+        .previous
+        .as_ref()
+        .map(|m| known(record, m))
+        .transpose()?;
+    record.current = current;
+    record.previous = previous;
+    record.observation = state;
+    Ok(())
+}
+fn verify_report(
+    app: &tauri::AppHandle,
+    p: &Plan,
+    expected: &Manifest,
+    watermark: i64,
+    started: i64,
+) -> Result<i64, String> {
+    let scope = p.source.as_ref().ok_or("KOMARI_AGENT_SOURCE_REQUIRED")?;
+    let remote = service::Remote::new(app, scope)?;
+    let token = service::secret(app, scope)?;
+    let start = Instant::now();
+    loop {
+        check(app, p)?;
+        let (created, version) = node(&remote, &token, &p.node)?;
+        if created != p.node_created {
+            return Err("KOMARI_AGENT_NODE_CHANGED".into());
+        }
+        let observed = recent(&remote, &token, &p.node)?;
+        if version == expected.version && fresh(observed, watermark, started, now_unix_ms()) {
+            return Ok(observed);
+        }
+        if start.elapsed() > Duration::from_secs(45) {
+            return Err("KOMARI_AGENT_REPORT_NOT_VERIFIED".into());
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+}
+fn operate(app: &tauri::AppHandle, id: &str, confirmed: bool) -> Result<Record, String> {
+    let p = PLANS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "KOMARI_AGENT_BUSY")?
+        .get(id)
+        .cloned()
+        .ok_or("KOMARI_AGENT_SCOPE_CHANGED")?;
+    if p.action != "inspect" && !confirmed {
+        return Err("KOMARI_AGENT_CONFIRMATION_REQUIRED".into());
+    }
+    let _lease = lease(&p.vault, &p.host.id)?;
+    check(app, &p)?;
+    let expected = p.baseline.as_ref().map_or(0, |r| r.revision);
+    if store::get(&store::open(app)?, &p.vault, &p.host.id)?.map_or(0, |r| r.revision) != expected {
+        return Err("KOMARI_AGENT_STATE_CHANGED".into());
+    }
+    let c = connect(app, &p)?;
+    let (_, observed) = state(
+        &remote(
+            &c,
+            &json!({"action":"inspect","deployment":p.deployment}),
+            &|| check(app, &p),
+        )?,
+        Some(&p.identity),
+    )?;
+    if observed != p.observed {
+        return Err("KOMARI_AGENT_STATE_CHANGED".into());
+    }
+    let mut record = p.baseline.clone().unwrap_or(Record {
+        vault_id: p.vault.clone(),
+        host_id: p.host.id.clone(),
+        host_created_at: p.host.created_at,
+        integration_id: p.integration.clone(),
+        service_identity: p.service_identity.clone(),
+        node_id: p.node.clone(),
+        node_created_at: p.node_created.clone(),
+        deployment: p.deployment.clone(),
+        revision: 0,
+        identity: p.identity.clone(),
+        host_keys: p.keys.clone(),
+        endpoint: p.endpoint.clone(),
+        status: "prepared".into(),
+        action: p.action.clone(),
+        job_id: String::new(),
+        current: None,
+        previous: None,
+        requested: None,
+        observation: observed.clone(),
+        watermark: p.watermark,
+        observed_at: None,
+        updated_at: now_unix_ms(),
+        error_code: None,
+    });
+    record.endpoint = p.endpoint.clone();
+    record.action = p.action.clone();
+    record.status = "prepared".into();
+    record.error_code = None;
+    if p.release.is_some() {
+        record.requested = p.release.clone();
+    }
+    check(app, &p)?;
+    app.state::<VaultState>().while_unlocked(&p.vault, || {
+        store::begin(
+            &mut store::open(app)?,
+            &mut record,
+            &p.host,
+            transport_name(&p.host),
+            expected,
+        )
+    })?;
+    let mut dispatched = false;
+    let outcome = (|| {
+        let mut response = None;
+        if p.action != "inspect" {
+            let bytes = if matches!(p.action.as_str(), "install" | "upgrade") {
+                Some(artifact::download(
+                    p.release.as_ref().unwrap(),
+                    &artifact::policy(app)?,
+                )?)
+            } else {
+                None
+            };
+            let mut configuration = Value::Null;
+            let mut watermark = p.watermark;
+            if let Some(s) = &p.source {
+                let r = service::Remote::new(app, s)?;
+                let token = service::secret(app, s)?;
+                if node(&r, &token, &p.node)?.0 != p.node_created {
+                    return Err("KOMARI_AGENT_NODE_CHANGED".into());
+                }
+                watermark = recent(&r, &token, &p.node)?;
+                if p.action == "install" && observed.status == "absent" {
+                    if watermark >= now_unix_ms() - 60_000 {
+                        return Err("KOMARI_AGENT_NODE_ALREADY_REPORTING".into());
+                    }
+                    let v = rpc(&r, &token, "admin:getClientToken", &p.node)?;
+                    let agent_token = v["token"]
+                        .as_str()
+                        .filter(|v| !v.is_empty() && v.len() <= 4096)
+                        .ok_or("KOMARI_AGENT_NODE_AUTH_REQUIRED")?;
+                    configuration = json!({"endpoint":p.endpoint,"token":agent_token,"disable_auto_update":true,"disable_web_ssh":true,"interval":5,"info_report_interval":1,"month_rotate":0,"get_ip_addr_from_nic":true});
+                }
+            }
+            let request = json!({"action":p.action,"deployment":p.deployment,"identity":p.identity,"expected":observed,"job":record.job_id,"release":p.release.as_ref().map(|r|&r.manifest),"bytes":bytes,"configuration":configuration});
+            check(app, &p)?;
+            record.status = "dispatched".into();
+            record.watermark = watermark;
+            store::save(&mut store::open(app)?, &mut record, None)?;
+            check(app, &p)?;
+            dispatched = true;
+            let result = remote(&c, &request, &|| check(app, &p))?;
+            let (_, state) = state(&result, Some(&p.identity))?;
+            apply_observation(&mut record, state)?;
+            response = Some(result);
+        } else if observed.status != "absent" {
+            apply_observation(&mut record, observed)?;
+        } else {
+            record.observation = observed;
+        }
+        check(app, &p)?;
+        if p.action == "uninstall" || record.observation.status == "retired" {
+            if record.observation.status != "retired" || record.observation.active {
+                return Err("KOMARI_AGENT_UNINSTALL_NOT_VERIFIED".into());
+            }
+            record.status = "retired".into();
+            record.observed_at = Some(now_unix_ms());
+        } else if record.observation.status == "absent" {
+            record.status = "absent".into();
+            record.observed_at = Some(now_unix_ms());
+        } else {
+            let release = record
+                .current
+                .as_ref()
+                .ok_or("KOMARI_AGENT_REMOTE_UNKNOWN")?
+                .manifest
+                .clone();
+            if !record.observation.active {
+                return Err("KOMARI_AGENT_PROCESS_NOT_VERIFIED".into());
+            }
+            let started = now_unix_ms();
+            match verify_report(app, &p, &release, record.watermark, started) {
+                Ok(time) => {
+                    record.observed_at = Some(time);
+                    record.status = "active".into();
+                }
+                Err(error) => {
+                    // A failed activation is compensated only on this still-valid
+                    // context and exact remote journal. A lost scope never replays.
+                    if matches!(p.action.as_str(), "install" | "upgrade" | "rollback")
+                        && response
+                            .as_ref()
+                            .is_some_and(|r| r.rollback.as_deref() == Some("not-needed"))
+                    {
+                        check(app, &p)?;
+                        let rollback = record.previous.clone();
+                        let action = if rollback.is_some() && p.observed.status != "retired" {
+                            "rollback"
+                        } else {
+                            "uninstall"
+                        };
+                        let result = remote(
+                            &c,
+                            &json!({"action":action,"deployment":p.deployment,"identity":p.identity,"expected":record.observation,"job":record.job_id,"release":rollback.as_ref().map(|r|&r.manifest)}),
+                            &|| check(app, &p),
+                        )?;
+                        let (_, s) = state(&result, Some(&p.identity))?;
+                        apply_observation(&mut record, s)?;
+                        if action == "rollback" {
+                            let old = record
+                                .current
+                                .as_ref()
+                                .ok_or("KOMARI_AGENT_ROLLBACK_UNKNOWN")?;
+                            record.observed_at = Some(verify_report(
+                                app,
+                                &p,
+                                &old.manifest,
+                                record.watermark,
+                                now_unix_ms(),
+                            )?);
+                        }
+                        if action == "uninstall"
+                            && (record.observation.active || record.observation.status != "retired")
+                        {
+                            return Err("KOMARI_AGENT_ROLLBACK_UNKNOWN".into());
+                        }
+                        record.status = "rolled-back".into();
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        if response.as_ref().is_some_and(|r| r.error.is_some()) {
+            record.status = "rolled-back".into();
+            return Err("KOMARI_AGENT_ACTIVATION_FAILED".into());
+        }
+        Ok(())
+    })();
+    match outcome {
+        Ok(()) => store::save(&mut store::open(app)?, &mut record, Some("completed"))?,
+        Err(code) => {
+            record.error_code = Some(safe_error(&code));
+            if record.status != "rolled-back" {
+                record.status = if dispatched { "unknown" } else { "failed" }.into();
+            }
+            let status = if record.status == "unknown" {
+                "unknown"
+            } else {
+                "failed"
+            };
+            store::save(&mut store::open(app)?, &mut record, Some(status))?;
+        }
+    }
+    let _ = komari_agent_cancel(id.into());
+    Ok(record)
+}
+fn safe_error(value: &str) -> String {
+    if value.len() < 96 && value.bytes().all(|c| c.is_ascii_uppercase() || c == b'_') {
+        value.into()
+    } else {
+        "KOMARI_AGENT_OPERATION_FAILED".into()
+    }
+}
+#[tauri::command]
+pub async fn komari_agent_operate(
+    app: tauri::AppHandle,
+    plan_id: String,
+    confirmed: bool,
+) -> Result<Record, String> {
+    tauri::async_runtime::spawn_blocking(move || operate(&app, &plan_id, confirmed))
+        .await
+        .map_err(|_| "KOMARI_AGENT_INTERNAL")?
+}

@@ -9,6 +9,7 @@ pub mod host_metadata;
 pub mod host_notification_rules;
 pub mod hosts;
 pub mod komari;
+pub mod komari_agent;
 pub mod komari_persistence;
 pub mod local_ops;
 pub mod monitoring_service;

@@ -1,0 +1,11 @@
+{
+  "server": {
+    "version": "1.6.0",
+    "amd64": {"sha256":"81657c0f616edb64a247d9f7a1628be104e344e6cd6eec6da82d43050a3d56e5", "size":34366968},
+    "arm64": {"sha256":"da5af06dbe5f001c65044bb83e8f7295f59f40dd8e8981a9ffd3435d45dac940", "size":32225504}
+  },
+  "agents": [
+    {"version":"1.5.10", "amd64":{"sha256":"407ec1a1484abbc8a993e3ad3821c612f15107b4b7622e4e959662a28cf186a8","size":12556545}, "arm64":{"sha256":"a49f9a77d9b2f212120864b691a26bd2f603296c9009519abc3426e07df24975","size":11884056}},
+    {"version":"1.5.11", "amd64":{"sha256":"78c28d89e523816baea010c0ed0714f245f508ffdaca0540f5c9f230f7053c8c","size":12585218}, "arm64":{"sha256":"ff8e33dc12ef2b5738fa291a58498bd15dcbf8ef51966ab65fd67679a0abc87d","size":11892529}}
+  ]
+}

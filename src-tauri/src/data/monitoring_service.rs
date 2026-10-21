@@ -174,7 +174,7 @@ fn configuration_identity(service: &KomariIntegration) -> Result<String, String>
         Sha256::digest(serde_json::to_vec(service).map_err(err)?)
     ))
 }
-fn check(app: &tauri::AppHandle, scope: &Scope) -> Result<KomariIntegration, String> {
+pub(crate) fn check(app: &tauri::AppHandle, scope: &Scope) -> Result<KomariIntegration, String> {
     let valid = CONTEXTS
         .get_or_init(Default::default)
         .lock()
@@ -205,7 +205,7 @@ fn check(app: &tauri::AppHandle, scope: &Scope) -> Result<KomariIntegration, Str
         })
         .ok_or_else(|| "MONITORING_SCOPE_CHANGED".into())
 }
-fn secret(app: &tauri::AppHandle, scope: &Scope) -> Result<String, String> {
+pub(crate) fn secret(app: &tauri::AppHandle, scope: &Scope) -> Result<String, String> {
     let integration = check(app, scope)?;
     vault::get_secret_value(
         app,
@@ -273,14 +273,14 @@ fn exchange(
         .cloned()
         .unwrap_or(value))
 }
-struct Remote<'a> {
+pub(crate) struct Remote<'a> {
     app: &'a tauri::AppHandle,
     scope: &'a Scope,
     endpoint: String,
     client: Client,
 }
 impl<'a> Remote<'a> {
-    fn new(app: &'a tauri::AppHandle, scope: &'a Scope) -> Result<Self, String> {
+    pub(crate) fn new(app: &'a tauri::AppHandle, scope: &'a Scope) -> Result<Self, String> {
         let integration = check(app, scope)?;
         let client = Client::builder()
             .timeout(Duration::from_secs(20))
@@ -294,7 +294,7 @@ impl<'a> Remote<'a> {
             client,
         })
     }
-    fn call(
+    pub(crate) fn call(
         &self,
         path: &str,
         body: Option<&Value>,
@@ -306,7 +306,7 @@ impl<'a> Remote<'a> {
         check(self.app, self.scope)?;
         result
     }
-    fn version(&self, token: Option<&str>) -> Result<(), String> {
+    pub(crate) fn version(&self, token: Option<&str>) -> Result<(), String> {
         let v = self.call("/api/version", None, token, None)?;
         let v = v["version"].as_str().unwrap_or("").trim_start_matches('v');
         if !v.starts_with("1.6.")

@@ -80,9 +80,9 @@ fn allowed_url(value: &str, allowed_hosts: &[String]) -> Result<Url, String> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentDownload {
-    bytes_b64: String,
+    pub(crate) bytes_b64: String,
 }
-fn download(
+pub(crate) fn download(
     url: &str,
     allowed_hosts: &[String],
     max_bytes: usize,
