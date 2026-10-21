@@ -160,17 +160,22 @@ def process_in(root):
     return False
 
 
+def is_agent_executable(executable, root):
+    # The monitoring server may run on the same host. It is not an Agent.
+    return ("komari-agent" in Path(executable).name.lower() or "/shellbeam/komari/" in executable) and not executable.startswith(str(root) + "/")
+
+
 def existing_agent(root):
     for entry in Path("/proc").iterdir():
         if not entry.name.isdecimal():
             continue
         try:
             executable = os.readlink(entry / "exe").removesuffix(" (deleted)")
-            if ("komari" in Path(executable).name.lower() or "/shellbeam/komari/" in executable) and not executable.startswith(str(root) + "/"):
+            if is_agent_executable(executable, root):
                 return True
         except OSError:
             continue
-    for name in ("komari.service", "komari-agent.service"):
+    for name in ("komari-agent.service",):
         for directory in (Path("/etc/systemd/system"), Path.home() / ".config/systemd/user"):
             if (directory / name).exists():
                 return True

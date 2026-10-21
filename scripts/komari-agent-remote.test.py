@@ -116,4 +116,14 @@ class Lifecycle(unittest.TestCase):
         (self.root / 'config.json').unlink(); (self.root / 'config.json').symlink_to(self.home / 'another.json')
         with self.assertRaisesRegex(helper.Rejected, 'unsafe_configuration'): self.operate('install', old, b'old-agent')
 
+class ProcessRecognition(unittest.TestCase):
+    def test_monitoring_server_is_not_mistaken_for_an_existing_agent(self):
+        root = Path('/home/test/.local/share/shellbeam/komari/owned')
+        self.assertFalse(helper.is_agent_executable('/usr/local/bin/komari', root))
+        self.assertFalse(helper.is_agent_executable('/tmp/komari-linux-amd64-1.6.0', root))
+        self.assertTrue(helper.is_agent_executable('/usr/local/bin/komari-agent', root))
+        self.assertTrue(helper.is_agent_executable('/opt/komari-agent-linux-arm64', root))
+        self.assertFalse(helper.is_agent_executable(str(root / 'releases/hash/agent'), root))
+        self.assertTrue(helper.is_agent_executable('/home/test/.local/share/shellbeam/komari/other/releases/hash/agent', root))
+
 if __name__ == '__main__': unittest.main()
