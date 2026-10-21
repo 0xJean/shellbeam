@@ -133,7 +133,7 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     Ok(conn)
 }
 
-fn initialize(conn: &Connection) -> Result<(), String> {
+pub(crate) fn initialize(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;

@@ -1,3 +1,4 @@
+import { syncHostRules } from '@/lib/host-notification-rules'
 import { HOST_METADATA_CHANGED, notifyHostMetadataChanged, syncHostMetadata } from '@/lib/host-metadata-sync'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { type HostProfile, type HostProfileDraft, createHost, updateHost, deleteHost, listHosts } from '@/lib/hosts'
@@ -85,7 +86,7 @@ export function HostsProvider({ children }: { children: ReactNode }) {
     const controller = new AbortController()
     let alive = true
     const valid = () => alive && captured()
-    const tick = () => { void syncHostMetadata(activeVaultId, valid, controller.signal).catch(() => {}) }
+    const tick = () => { void syncHostMetadata(activeVaultId, valid, controller.signal).catch(() => {}); void syncHostRules(activeVaultId, valid, controller.signal).catch(() => {}) }
     const changed = (event: Event) => {
       if ((event as CustomEvent<{ vaultId: string }>).detail?.vaultId === activeVaultId && valid()) void refreshHosts()
     }

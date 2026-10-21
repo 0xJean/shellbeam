@@ -1,3 +1,4 @@
+import { HostNotificationRulesPanel } from './host-notification-rules-panel'
 import { HostMetadataSyncPanel } from './host-metadata-sync-panel'
 import { HostDirectoryEditor } from './host-directory-editor'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
@@ -48,7 +49,7 @@ export function HostEditorDialog({
             existingGroups={existingGroups}
             existingTags={existingTags}
             availableHosts={availableHosts}
-            metadataControls={<HostMetadataSyncPanel host={host} unlocked={!!vaultUnlocked} />}
+            metadataControls={<><HostMetadataSyncPanel host={host} unlocked={!!vaultUnlocked} /><HostNotificationRulesPanel host={host} unlocked={!!vaultUnlocked} /></>}
             onSubmit={(draft) => onSubmit(host, draft)}
             onCancel={onCancel}
           />

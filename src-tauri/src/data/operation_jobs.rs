@@ -935,7 +935,7 @@ pub(crate) fn audit_list_on(
 pub fn recover(app: &tauri::AppHandle) -> Result<(), String> {
     let db = open(app)?;
     let mut statement = db
-        .prepare("SELECT job_id FROM operation_jobs WHERE status IN ('queued','running') AND action != 'host.metadata.sync'")
+        .prepare("SELECT job_id FROM operation_jobs WHERE status IN ('queued','running') AND action NOT IN ('host.metadata.sync','host.notification-rule.update')")
         .map_err(|e| e.to_string())?;
     let ids = statement
         .query_map([], |row| row.get::<_, String>(0))

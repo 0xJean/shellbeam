@@ -1,5 +1,32 @@
 # Isolated Komari live contract validation
 
+## PRD 0.5 native offline-rule contract, 2026-10-21
+
+The production `host-notification-rules` adapter was exercised against an
+isolated official 1.6.0 executable (upstream commit
+`1b76b7ad5bc3de6529bb7f0577069b4ac241fec3`) by `scripts/komari-live-smoke.mjs`.
+It reads `/api/admin/notification/offline` and posts only
+`[{ client, enable, grace_period }]` to `/api/admin/notification/offline/edit`.
+The supported contract is based on the official
+[1.6.0 notification handler](https://github.com/komari-monitor/komari/blob/1.6.0/web/rpc/jsonrpc/admin.notification.go)
+and [model](https://github.com/komari-monitor/komari/blob/1.6.0/database/models/notification.go).
+Runtime fields such as `client_info` and `last_notified` are neither saved nor
+written. Node creation identity is checked through the existing metadata adapter.
+
+The smoke verified disabled/90 seconds, enabled/120 seconds, and a separate
+external edit to disabled/180 seconds. The adapter read back exact values and
+the same node identity. Its safe report records `offlineRuleWriteReadback: true`
+and `externalOfflineRuleReadback: true`; existing metadata, authentication,
+sampling and history checks also passed. Global notifications were disabled,
+no external channel was configured, and the isolated process/data were removed.
+This proves the rule API contract, not message delivery or actual desktop Vault
+interaction. The editor supports only verified 1.6.x servers; there is no CAS,
+so preflight/readback cannot eliminate concurrent third-party write races.
+
+The following setup records are historical observations. PRD 0.5 is replacing
+daily server-page tasks incrementally with native ShellBeam controls; it does
+not claim that all initialization or channel management has been replaced yet.
+
 ## First-time desktop setup
 
 The desktop console already uses ShellBeam's own browser window. In Settings →

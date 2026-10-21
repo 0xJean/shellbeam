@@ -229,6 +229,33 @@ pub(crate) fn record_directory_edit(
     .map_err(err)?;
     Ok(())
 }
+/// Notification intent shares the same transactional audit outbox and receipts.
+pub(crate) fn record_rule_event(
+    db: &Connection,
+    vault: &str,
+    host: &str,
+    job: &str,
+    status: &str,
+    detail: &str,
+) -> Result<()> {
+    initialize(db)?;
+    let event = JournalEvent {
+        action: Some("host.notification-rule.update".into()),
+        id: Uuid::new_v4().to_string(),
+        job_id: job.into(),
+        vault_id: vault.into(),
+        host_id: host.into(),
+        status: status.into(),
+        detail: detail.into(),
+    };
+    db.execute(
+        "INSERT INTO host_metadata_events(body) VALUES(?1)",
+        [serde_json::to_string(&event).map_err(err)?],
+    )
+    .map_err(err)?;
+    Ok(())
+}
+
 /// Called inside the host transaction, including device imports. A deleted
 /// host disables its old queue; a newly reused ID cannot revive that queue.
 pub(crate) fn hosts_changed(db: &Connection, vault: &str) -> Result<()> {
@@ -610,7 +637,7 @@ fn action(db: &Connection, input: MetadataAction) -> Result<MetadataBinding> {
 /// Audit is an idempotent projection of the transactional outbox. A crash
 /// between databases is repaired using immutable event receipts, never a new
 /// OperationJob identity. A projection failure does not discard saved intent.
-fn project(app: &tauri::AppHandle, db: &Connection) -> Result<()> {
+pub(crate) fn project(app: &tauri::AppHandle, db: &Connection) -> Result<()> {
     let mut audit =
         super::operation_jobs::open_database(&data_file_path(app, "operation_jobs.sqlite3")?)?;
     project_on(db, &mut audit)
@@ -631,6 +658,11 @@ fn project_on(db: &Connection, audit: &mut Connection) -> Result<()> {
         .map_err(err)?;
     for (seq, body) in events {
         let e: JournalEvent = serde_json::from_str(&body).map_err(err)?;
+        let directory = e
+            .action
+            .as_deref()
+            .is_some_and(|action| action.starts_with("host.directory."));
+        let rule = e.action.as_deref() == Some("host.notification-rule.update");
         let tx = audit.transaction().map_err(err)?;
         let done: bool = tx
             .query_row(
@@ -652,8 +684,10 @@ fn project_on(db: &Connection, audit: &mut Connection) -> Result<()> {
                         username: None,
                         source: "workspace".into(),
                         actor: Some(
-                            if e.action.is_some() {
+                            if directory {
                                 "host-directory"
+                            } else if rule {
+                                "monitoring-rule"
                             } else {
                                 "metadata-sync"
                             }
@@ -666,17 +700,19 @@ fn project_on(db: &Connection, audit: &mut Connection) -> Result<()> {
                         target: e.host_id,
                         risk: "low".into(),
                         provider: Some(
-                            if e.action.is_some() {
+                            if directory {
                                 "host-directory"
                             } else {
                                 "komari"
                             }
                             .into(),
                         ),
-                        transport: Some(if e.action.is_some() { "local" } else { "api" }.into()),
+                        transport: Some(if directory { "local" } else { "api" }.into()),
                         params_summary: Some(
-                            if e.action.is_some() {
+                            if directory {
                                 "Host directory; no credential values"
+                            } else if rule {
+                                "Offline rule: enabled, grace period; no credential values"
                             } else {
                                 "Shared fields: name, group, tags"
                             }
@@ -699,8 +735,10 @@ fn project_on(db: &Connection, audit: &mut Connection) -> Result<()> {
                     error_code: None,
                     error_summary: None,
                     actor: Some(
-                        if e.action.is_some() {
+                        if directory {
                             "host-directory"
+                        } else if rule {
+                            "monitoring-rule"
                         } else {
                             "metadata-sync"
                         }
@@ -1130,6 +1168,36 @@ mod tests {
                 .status,
             "completed"
         );
+        drop(audit);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn notification_rule_audit_is_recoverable_and_projected_once() {
+        let db = setup();
+        record_rule_event(&db, "v", "h", "rule-job", "running", "Offline rule pending; no delivery claim").unwrap();
+        let path = std::env::temp_dir().join(format!("shellbeam-rule-audit-{}.sqlite", Uuid::new_v4()));
+        let mut audit = super::super::operation_jobs::open_database(&path).unwrap();
+        project_on(&db, &mut audit).unwrap();
+        let job = super::super::operation_jobs::get_on(&audit, "rule-job").unwrap().unwrap();
+        assert_eq!(job.action, "host.notification-rule.update");
+        assert_eq!(job.actor, "monitoring-rule");
+        assert_eq!(job.provider, "komari");
+        assert_eq!(job.status, "running");
+        let before: i64 = audit.query_row("SELECT count(*) FROM operation_audit", [], |r| r.get(0)).unwrap();
+        drop(audit);
+        let mut audit = super::super::operation_jobs::open_database(&path).unwrap();
+        db.execute("UPDATE host_metadata_events SET projected=0", []).unwrap();
+        project_on(&db, &mut audit).unwrap();
+        let after: i64 = audit.query_row("SELECT count(*) FROM operation_audit", [], |r| r.get(0)).unwrap();
+        assert_eq!(before, after);
+        record_rule_event(&db, "v", "h", "rule-job", "completed", "Offline rule read back; no delivery claim").unwrap();
+        project_on(&db, &mut audit).unwrap();
+        let job = super::super::operation_jobs::get_on(&audit, "rule-job").unwrap().unwrap();
+        assert_eq!(job.status, "completed");
+        assert_eq!(job.result_summary.as_deref(), Some("Offline rule read back; no delivery claim"));
+        let wrong_actor: i64 = audit.query_row("SELECT count(*) FROM operation_audit WHERE actor != 'monitoring-rule'", [], |r| r.get(0)).unwrap();
+        assert_eq!(wrong_actor, 0);
         drop(audit);
         std::fs::remove_file(path).unwrap();
     }

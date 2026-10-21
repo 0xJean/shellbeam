@@ -133,6 +133,20 @@ try {
   assert.deepEqual(afterExternalEdit.values, { ...desired, name: 'external-profile-edit' })
   await metadata.writeRemoteHostMetadata(config, { nodeId, remote: afterExternalEdit.values, desired: initialMetadata.values })
   assert.deepEqual((await metadata.readRemoteHostMetadata(config, nodeId)).values, initialMetadata.values)
+  stage = 'validate native offline rule read/write/readback contract'
+  const rules = await vite.ssrLoadModule('/src/lib/host-notification-rules.ts')
+  const ruleBefore = await rules.readOfflineRule(config, nodeId)
+  await rules.writeOfflineRule(config, nodeId, { enabled: false, gracePeriod: 90 })
+  const ruleAfter = await rules.readOfflineRule(config, nodeId)
+  assert.deepEqual(ruleAfter.rule, { enabled: false, gracePeriod: 90 })
+  assert.equal(ruleAfter.identity, ruleBefore.identity)
+  // Global notifications are disabled in this synthetic server; no real channel
+  // is configured. Verify toggles without sending any test message.
+  await rules.writeOfflineRule(config, nodeId, { enabled: true, gracePeriod: 120 })
+  assert.deepEqual((await rules.readOfflineRule(config, nodeId)).rule, { enabled: true, gracePeriod: 120 })
+  const externalRuleEdit = await request('/api/admin/notification/offline/edit', { headers: auth, body: [{ client: nodeId, enable: false, grace_period: 180 }] })
+  assert.equal(externalRuleEdit.response.status, 200)
+  assert.deepEqual((await rules.readOfflineRule(config, nodeId)).rule, { enabled: false, gracePeriod: 180 })
   stage = 'validate actual recent reports'
   const recent = await adapter.getKomariRecentRecords(config, nodeId)
   observed.recent = recent.length
@@ -165,7 +179,7 @@ try {
   const preflight = await request('/api/admin/client/list', { method: 'OPTIONS', headers: { Origin: 'tauri://localhost', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' } })
   assert.equal(preflight.response.status, 204)
   stage = 'complete'
-  console.log(JSON.stringify({ result: 'passed', serverVersion: version.version, serverHash: version.hash, serverKeySaveVerified: true, metadataWriteReadback: true, externalMetadataReadback: true, nodes: nodes.length, recentRecords: recent.length, storedHistoryRecords: history.length, wideWindowRecords: observed.serverHistory, fineWindowRecords: observed.fineHistory, importedObservations: observations.length, unauthorized: 'permission', origin: 'tauri://localhost', scope: 'isolated-loopback-synthetic-report-contract' }))
+  console.log(JSON.stringify({ result: 'passed', serverVersion: version.version, serverHash: version.hash, serverKeySaveVerified: true, metadataWriteReadback: true, externalMetadataReadback: true, offlineRuleWriteReadback: true, externalOfflineRuleReadback: true, nodes: nodes.length, recentRecords: recent.length, storedHistoryRecords: history.length, wideWindowRecords: observed.serverHistory, fineWindowRecords: observed.fineHistory, importedObservations: observations.length, unauthorized: 'permission', origin: 'tauri://localhost', scope: 'isolated-loopback-synthetic-report-contract' }))
 } catch {
   // Never dump request/response bodies or upstream logs: they can contain temporary secrets.
   console.error(`Komari live contract smoke failed during: ${stage}; counts=${JSON.stringify(observed)}`)

@@ -50,6 +50,26 @@
 
 仍有限制：默认连接通过编辑器选择，尚无临时逐次连接选择；纯监控资料与监控详情在主机页，未做无 SSH 独立 Workspace。endpoint + nodeId 去重不是服务端签名身份。多设备端到端合并、完整资产字段和原生规则/通知/服务/探针生命周期继续后续阶段。新 head 的 Linux Ops 和打包 GUI 以 GitHub Actions 实际报告为准；旧 head 绿色不算本批通过。用户真实 Vault、凭据、运行中的 Acceptance App 及 12 个未跟踪图标文件未改动。
 
+第二批 CI 补验（仅 `38e34485a5f4b8458caefc9c898ec815fb66a1d5`）：[主 CI](https://github.com/0xJean/shellbeam/actions/runs/39585271081)、[Agent CI](https://github.com/0xJean/shellbeam/actions/runs/39585271169) 和 [安装包 GUI](https://github.com/0xJean/shellbeam/actions/runs/39585271059) 共 12 项成功。独立下载 [Linux Ops 报告](https://github.com/0xJean/shellbeam/actions/runs/39585271081/artifacts/12339740228)，16 通过、0 跳过、清理成功；[GUI 报告](https://github.com/0xJean/shellbeam/actions/runs/39585271059/artifacts/12341085156) 确认成功、最终退出和清理、4 条服务任务及 6 条 Probe 任务恢复、3 份新资产观测、6 条真实 metrics 通知和重启后 5 秒无重放。独立核对 24 张 PNG 的 SHA-256/字节数和 165 条事件，查看 via/jump 开启及恢复共享截图：两条通知在首帧分别通过标题/正文 OCR。两个报告的 merge `38f31f8cfc9314e8887ecba9c6ac35a8ca5b2433` 的父提交包含该 head。此证据不替代下面第三批的新提交 CI，也不证明 Komari 通知投递。
+
+### 2026-10-21 第三批：原生主机离线通知规则
+
+- 主机编辑器按需展开规则；监控与通知设置复用同一表单，与设备提醒同页。未接入用户不显示规则入口。读取启用状态/宽限期，显式保存后原生持久化、预检、最小字段 POST 和 GET 核验，不打开原站。
+- 事务保存 `host_notification_rules` 和既有审计 outbox，凭据只保留引用；SQLite 版本检查、Vault 会话代次、主机创建时间、服务版本、手动绑定修订、节点创建身份共同阻断陈旧操作。取消修改不要求读取凭据、不修改服务器规则；原有主机、映射、资料、凭据、告警和审计不删除。
+- 失败或中断后按 60 秒 TTL 读取，最多两个并发、每轮十条；未核验写入不自动重放。显式重试沿用任务；冲突保留双方值并显式处理，之后的外部变更有独立核对任务。相同读取不追加重复审计；跨数据库投影使用 receipt 恢复。
+- “已保存”“正在核验”“需要处理”“冲突”“服务端已核验”分开表达。规则未核验前不生成虚假的观测时间；权限、版本、回读不一致和作用域变化有固定双语说明。规则保存或停用不表示送达/已读、静默已有通知或监控恢复。
+
+| 本地检查 | 结果与范围 |
+| --- | --- |
+| 全量前端回归 | 1521 通过、17 项 Linux 限定跳过；包括新增协议/worker 8 项、原生规则组件 8 项，覆盖读写字段白名单、版本拒绝、请求并发/TTL、重启只读恢复、冲突、取消、切库/卸载迟到读取和未接入用户零入口 |
+| Rust 库 | 198 通过、1 忽略；新增 8 项规则/审计测试覆盖事务失败回滚、磁盘重开、响应丢失、显式重试、身份/映射变化、删除重用 ID、版本竞争与审计幂等。最终观测时间与完成后外部变更调整后，25 项主机模块回归再通过 |
+| Node 协议 | 132 通过；未改弱同帧通知、独立标题/正文 OCR、可见性、原始采样、scope 或 no-replay 条件 |
+| 构建、ESLint、diff | TypeScript/Vite 生产构建通过；本批所有修改 TS/TSX/MJS 的 ESLint 通过；保留既有 bundle-size 建议；diff 检查通过 |
+| Chromium 隔离 UI | 390/1280px × 中英文 × 读取表单/失败/冲突，共 12 组合；生产主机编辑器与 CSS，真实展开并读取规则，无页面或对话框横向溢出，已查看截图。模拟 IPC/服务，不能替代桌面真实 Vault 验收 |
+| 官方 Komari 1.6.0 独立实例 | `komari-live-smoke.mjs` 运行生产适配器，核验禁用/启用、宽限期写回及外部修改读取；`offlineRuleWriteReadback`、`externalOfflineRuleReadback` 均通过，节点身份不变。上游 hash 为 `1b76b7ad5bc3de6529bb7f0577069b4ac241fec3`；测试通知全局禁用、没有外部渠道，完成后清理独立实例 |
+
+边界：仅 1.6.x 离线规则，不包括负载规则、渠道编辑/迁移、定时静默或真实 Komari 投递验收。服务无 ETag/CAS，读前检查与读回不能排除任意并发覆盖；结果未知时保留意图，不重放请求。新 head 的 Linux Ops、打包 GUI 尚待 GitHub Actions 验证；上批绿色不能替代。本机运行中的 Acceptance App、真实 Vault/凭据和 12 个用户图标未修改。
+
 ### 完整阶段验收要求
 
 | 对应阶段 | 场景 | 必须取得的结果与证据 |

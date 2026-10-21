@@ -1,3 +1,4 @@
+import { HostRuleSettingsSection } from './host-notification-rules-panel'
 import { TerminalThemeGrid } from '@/components/terminal-widgets'
 import { McpSettingsSection } from '@/components/mcp-settings-section'
 import { KomariSettingsSection } from '@/components/komari-settings-section'
@@ -263,7 +264,7 @@ export function SettingsPanel({
           </div>
         </section>
         </>}
-        {category === 'monitoring' && <NotificationSettingsSection />}
+        {category === 'monitoring' && <><HostRuleSettingsSection /><NotificationSettingsSection /></>}
         {category === 'integrations' && <>
           <KomariSettingsSection />
           <AISettingsSection />
