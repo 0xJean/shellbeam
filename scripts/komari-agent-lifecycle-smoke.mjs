@@ -152,6 +152,9 @@ try {
   legacyUnitText = `[Unit]\nDescription=Isolated existing probe\nAfter=network.target\n[Service]\nType=simple\nExecStart=${artifacts[0].file} --config ${legacyConfigFile}\nWorkingDirectory=${directory}\nRestart=always\n[Install]\nWantedBy=${process.getuid() === 0 ? 'multi-user.target' : 'default.target'}\n`
   await writeFile(legacyUnitFile, legacyUnitText, { mode: 0o600, flag: 'wx' }); systemctl('daemon-reload'); systemctl('enable', '--now', legacyUnitName)
   await waitFor(async () => (await rpc('admin:getClient')).version?.replace(/^v/, '') === '1.5.10' && await watermark() > before)
+  const originalPid = systemctl('show', legacyUnitName, '--property=MainPID', '--value').toString().trim(); assert.match(originalPid, /^[1-9][0-9]*$/)
+  // Names only, never environment values or configuration/Token contents.
+  report.legacyAgentEnvironmentNames = (await readFile(`/proc/${originalPid}/environ`)).toString().split('\0').map(value => value.split('=', 1)[0]).filter(name => /^AGENT_[A-Z0-9_]+$/.test(name))
   const prepareHandoff = async extra => { const r = await remote({ action: 'inspect', ...extra }); assert.equal(r.ok, true); return r }
   const handoff = async (action, artifact, extra = {}, tokenValue = token) => {
     const baseline = await prepareHandoff(extra)

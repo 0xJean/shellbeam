@@ -212,6 +212,14 @@ def private_file(path, limit=65536):
     return path.read_bytes()
 
 
+def check_legacy_environment(environment):
+    # Exact env tags of the pinned 1.5.10/1.5.11 Config. Runner metadata such as
+    # AGENT_TOOLSDIRECTORY is unrelated; do not infer configuration by prefix.
+    fields = "AUTO_DISCOVERY_KEY DISABLE_AUTO_UPDATE DISABLE_WEB_SSH MEMORY_MODE_AVAILABLE TOKEN ENDPOINT INTERVAL IGNORE_UNSAFE_CERT MAX_RETRIES RECONNECT_INTERVAL INFO_REPORT_INTERVAL INCLUDE_NICS EXCLUDE_NICS INCLUDE_MOUNTPOINTS MONTH_ROTATE MEMORY_INCLUDE_CACHE MEMORY_REPORT_RAW_USED CUSTOM_DNS ENABLE_GPU SHOW_WARNING CUSTOM_IPV4 CUSTOM_IPV6 GET_IP_ADDR_FROM_NIC CONFIG_FILE DISABLE_COMPRESSION PREFER_IP_VERSION".split()
+    keys = {('AGENT_' + name).encode() for name in fields} | {b'HOST_PROC'}
+    require(not any(entry.partition(b'=')[0] in keys for entry in environment), 'legacy_environment_unsupported')
+
+
 class LegacyService:
     """Only a direct, same-account systemd service; never run a shell or unit hooks."""
     def __init__(self, service, name):
@@ -292,7 +300,7 @@ class LegacyService:
                     and digest((process / "exe").read_bytes()) == sha, "legacy_process_mismatch")
             require((process / "cmdline").read_bytes().rstrip(b"\0").decode().split("\0") == args, "legacy_process_mismatch")
             env = (process / "environ").read_bytes().split(b"\0")
-            require(not any(x.startswith((b"AGENT_", b"HOST_PROC=")) for x in env), "legacy_layout_unsupported")
+            check_legacy_environment(env)
         require(not require_active or active, "legacy_not_active")
         info = {"unit": self.name, "unitSha256": digest(raw), "executable": args[0], "sha256": sha,
                 "sizeBytes": len(binary), "version": version, "configPath": config_path,

@@ -281,6 +281,12 @@ class LegacyParsing(unittest.TestCase):
         with self.assertRaisesRegex(helper.Rejected, 'legacy_layout_unsupported'): self.legacy.info(self.pins, False)
 
 class ProcessRecognition(unittest.TestCase):
+    def test_only_pinned_agent_configuration_environment_is_rejected(self):
+        helper.check_legacy_environment([b'AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache', b'AGENT_ALLOW_RUNASROOT=1', b'HOME=/home/runner'])
+        for name in ('AGENT_TOKEN', 'AGENT_ENDPOINT', 'AGENT_CONFIG_FILE', 'AGENT_INCLUDE_NICS', 'AGENT_DISABLE_WEB_SSH', 'AGENT_PREFER_IP_VERSION', 'HOST_PROC'):
+            with self.assertRaisesRegex(helper.Rejected, 'legacy_environment_unsupported'):
+                helper.check_legacy_environment([(name+'=synthetic-private-value').encode()])
+
     def test_service_directory_uses_path_syntax_separate_from_command_quoting(self):
         service = object.__new__(helper.Service)
         service.root = Path('/home/test space/$name%quote"/managed')
