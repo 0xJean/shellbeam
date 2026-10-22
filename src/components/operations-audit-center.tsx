@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
@@ -258,15 +259,15 @@ function ScopedOperationsAuditCenter({ hostId, limit = 100, onRetry, source, vau
         <button type="button" data-testid="audit-tab" onClick={() => setView('audit')} className={cn('border-b-2 px-1 py-2 text-xs font-medium', view === 'audit' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground')}>{t('operations.tab.audit')}</button>
         {!source && <label className="ml-auto flex items-center gap-1.5 py-1.5 text-xs text-muted-foreground" htmlFor="operations-source-filter">
           {t('operations.source.label')}
-          <select id="operations-source-filter" data-testid="operations-source-filter" value={sourceFilter} onChange={(event) => { resetPages(); setSourceFilter(event.target.value as typeof sourceFilter) }} className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
+          <NativeSelect id="operations-source-filter" data-testid="operations-source-filter" value={sourceFilter} onChange={(event) => { resetPages(); setSourceFilter(event.target.value as typeof sourceFilter) }} className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
             {SOURCE_FILTERS.map(value => <option key={value} value={value}>{t(`operations.source.${value}`)}</option>)}
-          </select>
+          </NativeSelect>
         </label>}
         <label className={cn('flex items-center gap-1.5 py-1.5 text-xs text-muted-foreground', source && 'ml-auto')} htmlFor="operations-status-filter">
           <Search className="h-3.5 w-3.5" />
-          <select id="operations-status-filter" data-testid="operations-filter" value={status} onChange={(event) => { resetPages(); setStatus(event.target.value as OperationStatusFilter) }} className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
+          <NativeSelect id="operations-status-filter" data-testid="operations-filter" value={status} onChange={(event) => { resetPages(); setStatus(event.target.value as OperationStatusFilter) }} className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
             {STATUS_FILTERS.map((value) => <option key={value} value={value}>{t(`operations.filter.${value}`)}</option>)}
-          </select>
+          </NativeSelect>
         </label>
       </div>
 

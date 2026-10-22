@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { useVault } from '@/contexts/vault-context'
 import { useT } from '@/lib/i18n'
@@ -99,7 +100,7 @@ export function MonitoringServicePanel({ service }: { service: KomariIntegration
     <summary className="cursor-pointer text-sm font-medium">{c.title}</summary>
     <p className="my-3 max-w-3xl text-xs text-muted-foreground">{c.description}</p>
     <div className="flex flex-wrap items-center gap-2">
-      <select aria-label={c.title} className="max-w-full rounded border bg-background px-2 py-1 text-sm" value={target} disabled={busy} onChange={e => { setTarget(e.target.value as typeof target); setValues(null); setBaseline(null); setNotice(''); setError(''); setReviewing(false); setRevealed({}) }}><option value="settings">{c.settings}</option><option value="webhook">{c.channel}</option>{[...new Set([...metrics, ...(target.startsWith('retention:') ? [target.slice(10)] : [])])].map(name => <option key={name} value={`retention:${name}`}>{c.retention} · {name}</option>)}</select>
+      <NativeSelect aria-label={c.title} className="max-w-full rounded border bg-background px-2 py-1 text-sm" value={target} disabled={busy} onChange={e => { setTarget(e.target.value as typeof target); setValues(null); setBaseline(null); setNotice(''); setError(''); setReviewing(false); setRevealed({}) }}><option value="settings">{c.settings}</option><option value="webhook">{c.channel}</option>{[...new Set([...metrics, ...(target.startsWith('retention:') ? [target.slice(10)] : [])])].map(name => <option key={name} value={`retention:${name}`}>{c.retention} · {name}</option>)}</NativeSelect>
       <Button variant="outline" size="sm" disabled={busy} onClick={() => void read()}>{busy ? c.waiting : c.read}</Button>
     </div>
     {values && <div className="mt-3 space-y-3">
@@ -107,15 +108,15 @@ export function MonitoringServicePanel({ service }: { service: KomariIntegration
       {target === 'settings' ? <>
         <div className="grid gap-3 sm:grid-cols-2">{field('sitename', c.name)}{field('description', c.descriptionField)}</div>
         {toggle('private_site', c.private)}{toggle('notification_enabled', c.enabled)}
-        <label className="block text-sm">{c.method}<select className="mt-1 block max-w-full rounded border bg-background p-2" value={String(values.notification_method ?? 'none')} disabled={busy || reviewing} onChange={e => setValues({ ...values, notification_method: e.target.value })}>
+        <label className="block text-sm">{c.method}<NativeSelect className="mt-1 block max-w-full rounded border bg-background p-2" value={String(values.notification_method ?? 'none')} disabled={busy || reviewing} onChange={e => setValues({ ...values, notification_method: e.target.value })}>
           <option value="none">{c.none}</option>{[...new Set([...channels, String(values.notification_method ?? 'none')])].filter(id => id && id !== 'none').map(id => <option key={id} value={id}>{id}</option>)}
-        </select></label>
+        </NativeSelect></label>
         {values.notification_method !== 'none' && values.notification_method !== 'webhook' && <p className="text-xs text-muted-foreground">{c.unsupportedChannel}</p>}
         {field('notification_template', c.template)}{toggle('login_notification', c.login)}{toggle('expire_notification_enabled', c.expiry)}
         <div className="grid gap-3 sm:grid-cols-2">{field('expire_notification_lead_days', c.expiryDays, 'number')}{field('traffic_limit_percentage', c.traffic, 'number')}</div>
       </> : target.startsWith('retention:') ? <>{field('retention_days', c.retentionDays, 'number')}<p className="text-xs text-amber-600">{c.retentionHint}</p></> : <>
         {field('url', c.url, 'password')}
-        <label className="block text-sm">{c.httpMethod}<select className="ml-2 rounded border bg-background p-1" value={String(values.method ?? 'GET')} disabled={busy || reviewing} onChange={e => setValues({ ...values, method: e.target.value })}><option>POST</option><option>GET</option></select></label>
+        <label className="block text-sm">{c.httpMethod}<NativeSelect className="ml-2 rounded border bg-background p-1" value={String(values.method ?? 'GET')} disabled={busy || reviewing} onChange={e => setValues({ ...values, method: e.target.value })}><option>POST</option><option>GET</option></NativeSelect></label>
         {field('content_type', c.content_type)}{field('headers', c.headers, 'password')}{field('body', c.body)}
         <div className="grid gap-3 sm:grid-cols-2">{field('username', c.username)}{field('password', c.password, 'password')}</div>
       </>}

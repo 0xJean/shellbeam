@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { LocalAlertRulesPanel } from './local-alert-rules-panel'
 import { runAndPersistHealthCheck } from '@/lib/health-check-scheduler'
 import { LOCAL_OPS_CHANGED_EVENT } from '@/lib/local-ops-store'
@@ -148,10 +149,10 @@ export function HealthChecksPanel({ activeVaultId, host, resolveAuthSecret }: He
       </div>
 
       <div className="grid gap-2 rounded-lg border border-dashed border-border/60 p-3 sm:grid-cols-[auto_1fr_1.5fr_auto_auto]">
-        <select aria-label={t('workspace.healthChecks.kind')} value={draftKind} onChange={(event) => setDraftKind(event.target.value as 'tcp' | 'http')} className="h-9 rounded-md border bg-background px-2 text-xs">
+        <NativeSelect aria-label={t('workspace.healthChecks.kind')} value={draftKind} onChange={(event) => setDraftKind(event.target.value as 'tcp' | 'http')} className="h-9 rounded-md border bg-background px-2 text-xs">
           <option value="tcp">TCP</option>
           <option value="http">HTTP</option>
-        </select>
+        </NativeSelect>
         <Input aria-label={t('workspace.healthChecks.name')} placeholder={t('workspace.healthChecks.name')} value={draftName} onChange={(event) => setDraftName(event.target.value)} />
         <Input aria-label={t('workspace.healthChecks.target')} placeholder={draftKind === 'http' ? 'https://example.com/health' : host.address} value={draftTarget} onChange={(event) => setDraftTarget(event.target.value)} />
         {draftKind === 'tcp' && <Input aria-label={t('workspace.healthChecks.port')} type="number" min={1} max={65535} value={draftPort} onChange={(event) => setDraftPort(event.target.value)} />}

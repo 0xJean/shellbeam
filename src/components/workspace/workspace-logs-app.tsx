@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
@@ -101,8 +102,8 @@ export function WorkspaceLogsApp({ selectedHostId = null, hostAddress = null, ho
     <div className="flex flex-wrap items-center gap-3 rounded-xl border p-4">
       {source === 'journal' ? <>
         <input aria-label={t('workspace.diagnostics.logUnit')} placeholder={t('workspace.diagnostics.logUnit')} value={unit} disabled={following} onChange={(event) => setUnit(event.target.value)} className="rounded border bg-background p-2 text-sm" />
-        <select aria-label={t('workspace.diagnostics.logPriority')} value={priority} disabled={following} onChange={(event) => setPriority(event.target.value)} className="rounded border bg-background p-2 text-sm"><option value="">{t('workspace.diagnostics.allPriorities')}</option>{['emerg', 'alert', 'crit', 'err', 'warning', 'notice', 'info', 'debug'].map((value) => <option key={value}>{value}</option>)}</select>
-        <select aria-label={t('workspace.diagnostics.logSince')} value={since} disabled={following} onChange={(event) => setSince(event.target.value)} className="rounded border bg-background p-2 text-sm">{['5m', '1h', '24h', '7d'].map((value) => <option key={value}>{value}</option>)}</select>
+        <NativeSelect aria-label={t('workspace.diagnostics.logPriority')} value={priority} disabled={following} onChange={(event) => setPriority(event.target.value)} className="rounded border bg-background p-2 text-sm"><option value="">{t('workspace.diagnostics.allPriorities')}</option>{['emerg', 'alert', 'crit', 'err', 'warning', 'notice', 'info', 'debug'].map((value) => <option key={value}>{value}</option>)}</NativeSelect>
+        <NativeSelect aria-label={t('workspace.diagnostics.logSince')} value={since} disabled={following} onChange={(event) => setSince(event.target.value)} className="rounded border bg-background p-2 text-sm">{['5m', '1h', '24h', '7d'].map((value) => <option key={value}>{value}</option>)}</NativeSelect>
       </> : source === 'file' ? <input aria-label={t('workspace.diagnostics.logPath')} value={filePath} disabled={following} onChange={(event) => setFilePath(event.target.value)} className="min-w-64 rounded border bg-background p-2 text-sm" /> : null}
       <input aria-label={t('workspace.diagnostics.searchLogs')} placeholder={t('workspace.diagnostics.searchLogs')} value={search} onChange={(event) => setSearch(event.target.value)} className="rounded border bg-background p-2 text-sm" />
       <button type="button" disabled={loading || following} onClick={() => void loadLogs()}>{t('workspace.diagnostics.refreshLogs')}</button>

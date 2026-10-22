@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { hasSshConnection } from '@/lib/hosts'
 import { HostMetadataSyncNotice } from './host-metadata-sync-panel'
 import { matchesHostSearch } from '@/lib/host-search'
@@ -1210,16 +1211,16 @@ export function HostsDashboard({
                 <HostOpsAdvancedFilters value={advancedFilters} onChange={setAdvancedFilters} osOptions={osOptions} providerOptions={providerOptions} />
               </div>
             </details>}
-            {(hasOperations || statusFilter !== 'all') && <select
+            {(hasOperations || statusFilter !== 'all') && <NativeSelect
               aria-label={t('hosts.statusFilter')}
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value as HostStatusFilter)}
-              className="h-9 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 text-xs font-medium text-[var(--workspace-text-muted)] outline-none transition-colors hover:text-[var(--workspace-text-strong)] focus:border-[color:var(--workspace-border-glow)]"
+              className="h-8 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 text-xs font-medium text-[var(--workspace-text-muted)] outline-none transition-colors hover:text-[var(--workspace-text-strong)] focus:border-[color:var(--workspace-border-glow)]"
             >
               {(Object.keys(statusFilterLabels) as HostStatusFilter[]).map((status) => (
                 <option key={status} value={status}>{statusFilterLabels[status]}</option>
               ))}
-            </select>}
+            </NativeSelect>}
             <div className="relative">
               <button type="button" onClick={() => { setTagFilterOpen((v) => !v); setSortOpen(false) }}
                 className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',

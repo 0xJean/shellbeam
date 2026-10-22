@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useT } from '@/lib/i18n'
@@ -196,9 +197,9 @@ export function NotificationSettingsSection() {
 
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="text-sm text-muted-foreground">{t('settings.notifications.minimumSeverity')}
-            <select value={policy.minimumSeverity} onChange={(event) => update({ minimumSeverity: event.target.value as NotificationSeverity })} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-xs">
+            <NativeSelect value={policy.minimumSeverity} onChange={(event) => update({ minimumSeverity: event.target.value as NotificationSeverity })} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-xs">
               {SEVERITIES.map((severity) => <option key={severity} value={severity}>{t(`settings.notifications.severity.${severity}`)}</option>)}
-            </select>
+            </NativeSelect>
           </label>
           <label className="text-sm text-muted-foreground">{t('settings.notifications.cooldownMinutes')}
             <Input type="number" min={0} value={Math.round(policy.cooldownMs / 60_000)} onChange={(event) => update({ cooldownMs: Math.max(0, Number(event.target.value) || 0) * 60_000 })} className="mt-1" />

@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { useVault } from '@/contexts/vault-context'
 import {
   deleteKomariIntegration,
@@ -387,7 +388,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
           <label className="text-sm text-muted-foreground" htmlFor="komari-endpoint">{t('settings.komariEndpoint')}</label>
           <Input id="komari-endpoint" value={endpoint} onChange={(event) => { editForm(); setEndpoint(event.target.value) }} disabled={busy} placeholder={t('settings.komariEndpointPlaceholder')} className="mt-1" />
         </div>
-        <label className="block text-sm">{access.access}<select aria-label={access.access} className="mt-1 block max-w-full rounded border bg-background p-2" value={authMode} disabled={busy} onChange={event => { editForm(); setAuthMode(event.target.value as typeof authMode); setApiKey(''); setPassword(''); setTwoFactor('') }}><option value="authorize">{access.account}</option><option value="key">{access.key}</option><option value="initialize">{access.initialize}</option></select></label>
+        <label className="block text-sm">{access.access}<NativeSelect aria-label={access.access} className="mt-1 block max-w-full rounded border bg-background p-2" value={authMode} disabled={busy} onChange={event => { editForm(); setAuthMode(event.target.value as typeof authMode); setApiKey(''); setPassword(''); setTwoFactor('') }}><option value="authorize">{access.account}</option><option value="key">{access.key}</option><option value="initialize">{access.initialize}</option></NativeSelect></label>
         {authMode !== 'key' && <div className="space-y-3">
           <p className="text-xs text-muted-foreground">{authMode === 'initialize' ? access.initHint : access.accountHint}</p>
           <label className="block text-sm">{access.user}<Input value={username} disabled={busy} autoComplete="username" onChange={e => { editForm(); setUsername(e.target.value) }} /></label>

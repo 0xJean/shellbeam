@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -329,7 +330,7 @@ export function HostForm({
               <p className="text-xs text-muted-foreground">{t('hostForm.jumpHostDesc')}</p>
               <label className="block space-y-1 text-xs text-muted-foreground">
                 <span>{t('hostForm.jumpProfile')}</span>
-                <select data-testid="host-jump-profile" aria-label={t('hostForm.jumpProfile')} value={jumpHostId} className="h-8 w-full rounded border bg-background px-2" onChange={(event) => {
+                <NativeSelect data-testid="host-jump-profile" aria-label={t('hostForm.jumpProfile')} value={jumpHostId} className="h-8 w-full rounded border bg-background px-2" onChange={(event) => {
                   const id = event.target.value
                   setJumpHostId(id)
                   const profile = availableHosts.find((host) => host.id === id)
@@ -337,7 +338,7 @@ export function HostForm({
                 }}>
                   <option value="">{t('hostForm.jumpProfileLegacy')}</option>
                   {availableHosts.filter((host) => hasSshConnection(host) && !host.jumpHost?.trim() && !host.jumpHostId).map((host) => <option key={host.id} value={host.id}>{host.name} · {host.username}@{host.address}</option>)}
-                </select>
+                </NativeSelect>
                 <span>{t('hostForm.jumpProfileHelp')}</span>
               </label>
               <div className="grid gap-3 sm:grid-cols-3">

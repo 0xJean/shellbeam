@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -51,7 +52,7 @@ export function LocalAlertRulesPanel({ activeVaultId, hostId, host }: { activeVa
       <Button size="sm" variant="ghost" onClick={() => saveLocalAlertRules(activeVaultId, hostId, rules.filter((r) => r.id !== rule.id))}>{t('localOps.remove')}</Button>
     </div>)}
     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-      <label className="text-xs">{t('localOps.metric')}<select data-testid="local-rule-metric" aria-label={t('localOps.metric')} className="mt-1 h-9 w-full rounded-md border bg-background px-2" value={metric} onChange={(e) => setMetric(e.target.value as LocalAlertMetric)}>{(['cpu', 'memory', 'disk', 'service'] as const).map((key) => <option key={key} value={key}>{t(`localOps.metric.${key}`)}</option>)}</select></label>
+      <label className="text-xs">{t('localOps.metric')}<NativeSelect data-testid="local-rule-metric" aria-label={t('localOps.metric')} className="mt-1 h-9 w-full rounded-md border bg-background px-2" value={metric} onChange={(e) => setMetric(e.target.value as LocalAlertMetric)}>{(['cpu', 'memory', 'disk', 'service'] as const).map((key) => <option key={key} value={key}>{t(`localOps.metric.${key}`)}</option>)}</NativeSelect></label>
       <label className="text-xs">{t('localOps.name')}<Input data-testid="local-rule-name" aria-label={t('localOps.name')} value={name} onChange={(e) => setName(e.target.value)} /></label>
       {metric === 'service' ? <label className="text-xs">{t('localOps.service')}<Input data-testid="local-rule-service" aria-label={t('localOps.service')} value={target} placeholder="nginx.service" onChange={(e) => setTarget(e.target.value)} /></label> : <>
         <label className="text-xs">{t('localOps.threshold')}<Input aria-label={t('localOps.threshold')} type="number" min={0} max={100} value={threshold} onChange={(e) => setThreshold(e.target.value)} /></label>
@@ -59,7 +60,7 @@ export function LocalAlertRulesPanel({ activeVaultId, hostId, host }: { activeVa
       </>}
       <label className="text-xs">{t('localOps.duration')}<Input data-testid="local-rule-duration" aria-label={t('localOps.duration')} type="number" min={0} max={86400} value={duration} onChange={(e) => setDuration(e.target.value)} /></label>
       <label className="text-xs">{t('localOps.recoveryDuration')}<Input data-testid="local-rule-recovery-duration" aria-label={t('localOps.recoveryDuration')} type="number" min={0} max={86400} value={recoveryDuration} onChange={(e) => setRecoveryDuration(e.target.value)} /></label>
-      <label className="text-xs">{t('localOps.severity')}<select data-testid="local-rule-severity" aria-label={t('localOps.severity')} className="mt-1 h-9 w-full rounded-md border bg-background px-2" value={severity} onChange={(e) => setSeverity(e.target.value as 'warning' | 'critical')}><option value="warning">{t('localOps.warning')}</option><option value="critical">{t('localOps.critical')}</option></select></label>
+      <label className="text-xs">{t('localOps.severity')}<NativeSelect data-testid="local-rule-severity" aria-label={t('localOps.severity')} className="mt-1 h-9 w-full rounded-md border bg-background px-2" value={severity} onChange={(e) => setSeverity(e.target.value as 'warning' | 'critical')}><option value="warning">{t('localOps.warning')}</option><option value="critical">{t('localOps.critical')}</option></NativeSelect></label>
       <Button data-testid="local-rule-add" className="self-end" variant="outline" onClick={add} disabled={rules.length >= 32}>{t('localOps.add')}</Button>
     </div>
     {localOpsPersistenceError(activeVaultId, hostId) && <p role="alert" className="text-xs text-red-600">{t('localOps.persistenceFailed')}</p>}

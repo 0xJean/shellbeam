@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { hasSshConnection, hostConnections } from '@/lib/hosts'
 import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
 import type { WorkspaceAppId } from '@/lib/workspace'
@@ -163,7 +164,7 @@ function HostOpsQuickActions({ host, onOpenWorkspace, onRefresh }: { host: HostP
       onKeyDown={(event) => event.stopPropagation()}
       className="h-9 shrink-0 rounded-lg border border-border bg-background px-2 text-xs text-foreground transition-colors hover:bg-muted/40 md:h-8"
     >{t('workspace.app.services')}</button>
-    <select data-testid="host-ops-open" aria-label={t('hostOps.openForHost', { host: host.name })} value="" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={(event) => {
+    <NativeSelect data-testid="host-ops-open" aria-label={t('hostOps.openForHost', { host: host.name })} value="" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={(event) => {
     event.stopPropagation()
     if (event.target.value === 'refresh') onRefresh?.(host.id)
     else if (event.target.value) onOpenWorkspace(host.id, event.target.value as WorkspaceAppId)
@@ -175,7 +176,7 @@ function HostOpsQuickActions({ host, onOpenWorkspace, onRefresh }: { host: HostP
     <option value="logs">{t('workspace.app.logs')}</option>
     <option value="network">{t('hostOps.alertsAndChecks')}</option>
     {onRefresh && <option value="refresh">{t('hostOps.refreshProbe')}</option>}
-    </select>
+    </NativeSelect>
   </>
 }
 

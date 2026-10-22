@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
@@ -198,9 +199,9 @@ export function WorkspaceProcessesApp({
           placeholder={t('workspace.processes.filterPlaceholder')}
           className="h-10 rounded-xl border border-border/60 bg-background/80 px-3 text-sm outline-none placeholder:text-muted-foreground"
         />
-        <select aria-label={t('workspace.diagnostics.sort')} value={sort} onChange={(event) => { setSort(event.target.value as typeof sort); setPage(0) }} className="rounded border bg-background p-2 text-sm">
+        <NativeSelect aria-label={t('workspace.diagnostics.sort')} value={sort} onChange={(event) => { setSort(event.target.value as typeof sort); setPage(0) }} className="rounded border bg-background p-2 text-sm">
           <option value="cpu">CPU</option><option value="memory">{t('workspace.common.memory')}</option><option value="pid">PID</option>
-        </select>
+        </NativeSelect>
         <button type="button" onClick={() => setAscending(!ascending)}>{t(ascending ? 'workspace.diagnostics.ascending' : 'workspace.diagnostics.descending')}</button>
         <button
           type="button"

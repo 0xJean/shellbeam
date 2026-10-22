@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useVault } from '@/contexts/vault-context'
 import { useT } from '@/lib/i18n'
@@ -106,7 +107,7 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
     <details className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.policy}</summary><p className="my-2 text-muted-foreground">{c.policyHint}</p>
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void work(async current => { const value = await compatibleAgentPolicy(); if (current()) setPolicy(value) })}>{c.loadPolicy}</Button>
       {policy && <div className="mt-2 space-y-2">
-        <label className="block">{c.source}<select aria-label={c.source} disabled={busy} value={policy.source ?? 'custom'} onChange={e => setPolicy({ ...policy, source: e.target.value as 'official' | 'custom' })} className="ml-2 rounded border border-border bg-background p-1"><option value="official">{c.official}</option><option value="custom">{c.custom}</option></select></label>
+        <label className="block">{c.source}<NativeSelect aria-label={c.source} disabled={busy} value={policy.source ?? 'custom'} onChange={e => setPolicy({ ...policy, source: e.target.value as 'official' | 'custom' })} className="ml-2 rounded border border-border bg-background p-1"><option value="official">{c.official}</option><option value="custom">{c.custom}</option></NativeSelect></label>
         <label className="flex gap-2"><input type="checkbox" disabled={busy} checked={policy.enabled} onChange={e => setPolicy({ ...policy, enabled: e.target.checked })} />{c.enabled}</label>
         {policy.source !== 'official' && (['manifestUrl', 'trustedPublicKey', 'allowedHosts'] as const).map(key => <label className="block" key={key}>{key === 'manifestUrl' ? c.catalog : key === 'trustedPublicKey' ? c.publicKey : c.hosts}<Input disabled={busy} value={key === 'allowedHosts' ? policy.allowedHosts.join(', ') : policy[key]} onChange={e => setPolicy({ ...policy, [key]: key === 'allowedHosts' ? e.target.value.split(',').map(x => x.trim()).filter(Boolean) : e.target.value })} /></label>)}
         <Button size="sm" disabled={busy} onClick={() => void work(async current => { const answer = await requestUserDecision({ vaultId, risk: 'high', message: c.policyConfirm, isCurrent: current }); if (!answer.accepted || !current() || answer.isCurrent?.() === false) return; const value = await compatibleAgentPolicy(policy, true); if (current()) { setPolicy(value); setNotice(c.saved) } })}>{c.savePolicy}</Button>

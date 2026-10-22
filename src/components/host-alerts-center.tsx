@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { useState } from 'react'
 import type { HostIncident } from '@/lib/host-incidents'
 export type { HostIncident } from '@/lib/host-incidents'
@@ -32,12 +33,12 @@ export function HostAlertsCenter({ incidents, onOpenHost }: { incidents: HostInc
   return <section data-testid="host-alerts-center" className="space-y-4">
     <h2 id="host-alerts-title" className="text-lg font-semibold">{copy.alerts}</h2>
     <div className="flex flex-wrap items-center gap-3 text-sm">
-      <label>{copy.host} <select aria-label={copy.host} className="rounded border bg-background p-1.5" value={hostId} onChange={event => setHostId(event.target.value)}>
+      <label>{copy.host} <NativeSelect aria-label={copy.host} className="rounded border bg-background p-1.5" value={hostId} onChange={event => setHostId(event.target.value)}>
         <option value="">{copy.all}</option>{hosts.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-      </select></label>
-      {sources.length > 1 && <label>{copy.source} <select aria-label={copy.source} className="rounded border bg-background p-1.5" value={source} onChange={event => setSource(event.target.value)}>
+      </NativeSelect></label>
+      {sources.length > 1 && <label>{copy.source} <NativeSelect aria-label={copy.source} className="rounded border bg-background p-1.5" value={source} onChange={event => setSource(event.target.value)}>
         <option value="">{copy.all}</option>{sources.map(value => <option key={value} value={value}>{sourceLabel(value)}</option>)}
-      </select></label>}
+      </NativeSelect></label>}
       <label className="flex items-center gap-2"><input type="checkbox" checked={includeHistory} onChange={event => setIncludeHistory(event.target.checked)} />{copy.history}</label>
     </div>
     <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '确认表示已接手，归档保留处理记录；两者均不代表故障恢复或停止通知。' : 'Acknowledgement records ownership; archiving retains the record. Neither proves recovery nor silences notifications.'}</p>

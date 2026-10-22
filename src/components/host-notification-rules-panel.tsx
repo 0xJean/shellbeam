@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { useEffect, useRef, useState } from 'react'
 import { KomariApiError } from '@/lib/komari'
 import { useT } from '@/lib/i18n'
@@ -144,7 +145,7 @@ function ScopedSettings() {
   if (!hosts.length) return null
   const host = hosts.find(h => h.id === selected)
   return <section className="space-y-3 rounded-lg border p-4"><h3 className="font-semibold">{copy.title}</h3><p className="text-xs text-muted-foreground">{copy.description}</p>
-    <select aria-label={copy.host} className="h-9 w-full rounded border bg-background px-2 text-sm" value={host?.id ?? ''} onChange={e => setSelected(e.target.value)}><option value="">{copy.choose}</option>{hosts.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</select>
+    <NativeSelect aria-label={copy.host} className="h-9 w-full rounded border bg-background px-2 text-sm" value={host?.id ?? ''} onChange={e => setSelected(e.target.value)}><option value="">{copy.choose}</option>{hosts.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</NativeSelect>
     {host && <HostNotificationRulesPanel host={host} unlocked />}
   </section>
 }

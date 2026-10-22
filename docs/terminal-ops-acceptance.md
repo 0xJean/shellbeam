@@ -393,3 +393,10 @@ Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例�
 同一运行中，独立直连与保存跳板SSHD故障触发三profile的真实metrics失败和新采样恢复；六条OS开启/恢复横幅的实际窗口、完整标题/正文OCR及下载后PNG hash均已核对。两目标主机各有取消的acknowledge、已确认acknowledge和close三条metadata OperationJob，共六条；保存跳板只观察恢复，不执行告警metadata动作。jump/direct/via三个真实刷新菜单均得到原始采样时间不早于预设整秒边界且严格晚于上一样本的健康资产观察，无开放资产告警。
 
 第二次实际退出和第三次进程启动后，六条Probe metadata任务、三个新指标样本、原有四条服务任务和两个新服务观察均恢复；本地通知账本在重启前后分别观察5秒稳定且不重放。Probe阶段初始总投递数为6，最终为16，其中包含其它合法通知，不能写为仅增加六次；独立metrics daemon的历史恰为6、显示/等待均为0。`probeRecovery`与`probeNotifications`的组合证明该Linux环境中的指标故障、系统展示与重启闭环；`inventoryLifecycleVerified`、`komariLifecycleVerified`及`readReceiptVerified`仍为false，真实资产刷新成功不扩大为资产通知、Komari或已读回执验收。
+
+### 2026-10-22 — 统一下拉菜单
+
+- 所有选择控件使用统一的应用菜单：状态筛选、主机运维入口、告警/审计筛选、设置、跳板主机和探针迁移等；保留真实 select 的值、label、disabled 和 change 事件，移除 macOS 原生渐变/双箭头弹出外观。
+- 菜单支持方向键、Home/End、文字定位、Enter/Space、Escape/Tab 与外部点击关闭；选项禁用、受控动作菜单复位、主机行事件隔离保持不变。菜单在当前 dialog 内渲染，限制视口宽高并允许长选项换行。
+- 独立 macOS `.app` 使用示例主机验证真实 WKWebView：状态菜单展开/键盘选中、主机运维路由、弹窗层级与长选项均通过。此为原生 UI 控件验收，不作为真实 SSH/迁移证据。
+- 本地验证：1559 项前端通过（17 项 Linux 专用跳过）、163 项 Node 协议测试通过，修改文件 ESLint 与 diff 检查通过。安装包 WebDriver 现在点击可见应用菜单，不注入 JS、不改动原有采样、审计、通知同帧/OCR 和 no-replay 断言；新 head CI 另行记录。

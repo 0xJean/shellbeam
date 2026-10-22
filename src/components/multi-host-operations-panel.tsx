@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { hasSshConnection } from '@/lib/hosts'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -188,9 +189,9 @@ export function MultiHostOperationsPanel({
         <div className="space-y-3 rounded-lg border border-border/50 p-3">
           <div>
             <label htmlFor="multi-host-operation" className="text-xs font-semibold text-foreground">{t('multiHost.operation')}</label>
-            <select id="multi-host-operation" value={operation} onChange={(event) => { setOperation(event.target.value as MultiHostOperationKind); setError(''); setResult(null) }} disabled={disabled || running} className="mt-1.5 h-9 w-full rounded-md border border-input bg-background px-2 text-xs">
+            <NativeSelect id="multi-host-operation" value={operation} onChange={(event) => { setOperation(event.target.value as MultiHostOperationKind); setError(''); setResult(null) }} disabled={disabled || running} className="mt-1.5 h-9 w-full rounded-md border border-input bg-background px-2 text-xs">
               {OPERATION_META.map((item) => <option key={item.value} value={item.value}>{t(item.labelKey)}</option>)}
-            </select>
+            </NativeSelect>
             <p className="mt-1.5 text-[11px] text-muted-foreground">{t(operationMeta.descriptionKey)}</p>
           </div>
           {operationMeta.target && (

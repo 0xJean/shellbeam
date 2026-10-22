@@ -1,3 +1,4 @@
+import { NativeSelect } from '@/components/ui/select'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { listKomariIntegrations, type KomariIntegration } from '@/lib/komari-config'
@@ -186,14 +187,14 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
               {!node && <p className="text-xs text-amber-600">{entry.discovered ? copy.missing : copy.unavailable}</p>}
               {ambiguous && <p className="text-xs text-amber-600">{copy.ambiguous}</p>}
               <div className="flex flex-wrap items-center gap-2">
-                <select aria-label={`${copy.host}: ${entry.integration.name} / ${nodeId}`} value={selection} disabled={!vaultUnlocked || busy !== null} onChange={(event) => setSelections((values) => ({ ...values, [key]: event.target.value }))} className="h-9 min-w-44 rounded border bg-background px-2 text-xs">
+                <NativeSelect aria-label={`${copy.host}: ${entry.integration.name} / ${nodeId}`} value={selection} disabled={!vaultUnlocked || busy !== null} onChange={(event) => setSelections((values) => ({ ...values, [key]: event.target.value }))} className="h-9 min-w-44 rounded border bg-background px-2 text-xs">
                   <option value="">{copy.choose}</option>
                   {saved && !scopedHosts.some((host) => host.id === saved.hostId) && <option value={saved.hostId} disabled>{copy.hostMissing}</option>}
                   {scopedHosts.map((host) => {
                     const occupied = entry.state.mappings.some((item) => item.source === 'manual' && item.hostId === host.id && item.nodeId !== nodeId)
                     return <option key={host.id} value={host.id} disabled={occupied}>{host.name} · {host.address}{occupied ? ` (${copy.occupied})` : ''}</option>
                   })}
-                </select>
+                </NativeSelect>
                 <Button size="sm" disabled={!vaultUnlocked || busy !== null || !selection || !scopedHosts.some((host) => host.id === selection) || (saved?.source === 'manual' && saved.hostId === selection)} onClick={() => void save(entry, nodeId, selection)}>{busy === key ? copy.saving : copy.apply}</Button>
                 {node && !entry.state.mappings.some(item => item.nodeId === nodeId) && <Button size="sm" variant="outline" disabled={!vaultUnlocked || busy !== null} onClick={() => void importNode(entry, node)}>{copy.importHost}</Button>}
                 {saved && <Button size="sm" variant="outline" disabled={!vaultUnlocked || busy !== null} onClick={() => void save(entry, nodeId, null)}>{copy.reset}</Button>}

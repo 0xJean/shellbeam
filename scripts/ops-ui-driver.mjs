@@ -148,6 +148,19 @@ export class OpsUiDriver {
     for (const option of options) {
       if (await option.getAttribute('value') === value) {
         if (!await this.isEnabled(option)) throw new WebDriverError('element not interactable')
+        if (await this.attr(element, 'data-app-select') === 'true') {
+          await this.clickElement(element)
+          const menuId = await this.attr(element, 'aria-controls')
+          if (!menuId || !/^[A-Za-z0-9_:.-]+$/.test(menuId)) throw new WebDriverError('no such element')
+          const choices = await this.findAll(`[id=${JSON.stringify(menuId)}][role="listbox"] [role="option"]`)
+          for (const choice of choices) {
+            if (await this.attr(choice, 'data-value') !== value) continue
+            if (!await this.isDisplayed(choice) || await this.attr(choice, 'aria-disabled') === 'true') throw new WebDriverError('element not interactable')
+            await this.clickElement(choice)
+            return
+          }
+          throw new WebDriverError('no such element')
+        }
         // W3C's native option click selects and emits the genuine input/change
         // events. The select is visible; its closed popup need not be opened.
         await this.clickElement(option)
