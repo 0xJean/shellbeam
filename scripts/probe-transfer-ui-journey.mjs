@@ -118,6 +118,10 @@ async function audit(d,ids,statuses){
 async function jobs(d,h){return [await d.attr(transfer(h),'data-job-id'),await d.attr(transfer(h),'data-target-job-id')]}
 async function screenshot(d,h,name,checkpoint){
   await openTransfer(d,h)
+  // A real click on the read-only state list scrolls the evidence into view.
+  // No JS execution or product mutation is used to position the screenshot.
+  await d.click(`${transfer(h)} ${id('probe-transfer-observations')}`)
+  for(const side of ['source','target'])assert((await d.text(`${transfer(h)} ${id(`probe-transfer-${side}-state`)}`)).trim())
   for(const field of await d.findAll('input[type="password"],textarea'))assert(!await d.attr(field,'value'),'transfer_ui_secret_on_screen')
   assert.equal((await d.findAll('iframe')).length,0)
   await checkpoint(name)
@@ -142,6 +146,7 @@ export async function runTransferUiJourney({driver,fixture:f,record,restart,chec
     await d.click(`${transfer(b)} ${id('probe-transfer-move')}`);await confirm(d,true,[b.name,target.name,b.node,target.node])
     await wait(()=>f.servers[target.service].gate.held>0,120000)
     assert.equal(f.observe(b).filter(s=>s.processes.length).length,0);assert.equal(f.observe(target).filter(s=>s.processes.length).length,1)
+    await target.history.capture()
     const interrupted=observations(f)
     // Kill only the isolated installed application while its real HTTP request
     // is pending; then restart the same profile and unlock via the visible UI.
@@ -164,7 +169,8 @@ export async function runTransferUiJourney({driver,fixture:f,record,restart,chec
   }
   const last=observations(f);d=await restart(session.password);await stable(f,last)
   await audit(d,auditHistory.map(x=>x[0]),auditHistory.map(x=>x[1]))
-  await f.retained();for(const h of Object.values(f.hosts))assert(await f.sample(h)>0);assert.equal(f.observe(a)[0].configSha256,originalA[0].configSha256)
+  record('transfer-app-audit-history-restored',{passed:true,auditJobs:auditHistory.length})
+  await f.retained();for(const h of Object.values(f.hosts))record('transfer-app-retained-history',{role:h.role,...await h.history.retained()});assert.equal(f.observe(a)[0].configSha256,originalA[0].configSha256)
   await openTransferTools(d,e);await d.click(`${panel(e)} ${id('compatible-agent-uninstall')}`);await confirm(d,true,[e.name,e.node]);await d.until(async()=>await d.attr(panel(e),'data-status')==='retired',{timeoutMs:120000})
   assert(Object.values(f.hosts).every(h=>f.observe(h).every(s=>s.processes.length===0)))
   record('transfer-app-final-preservation-and-exit',{passed:true,auditJobs:auditHistory.length,allProbesStopped:true,originalConfigurationRetained:true,nodeCredentialsAndHistoryRetained:true,noReplayMs:5000})

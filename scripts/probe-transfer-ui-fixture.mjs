@@ -9,6 +9,7 @@ import { createServer } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import { downloadPinned } from './prepare-komari-agent-release.mjs'
 import { verifyCompatibleCatalog } from './publish-komari-agent.mjs'
+import { transferHistory } from './probe-transfer-history.mjs'
 
 const command = (cmd, args, input) => execFileSync(cmd, args, { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 120000 }).trim()
 const docker = (...args) => command('docker', args)
@@ -113,13 +114,13 @@ export async function createTransferUiFixture({ directory, project, prefix, reco
     for(const [role,machine,user,service] of specs) {
       const server=servers[service]; const node=(await server.request('/api/admin/client/add',{name:`UI migration ${role}`})).data
       const rpc=async method=>(await server.request('/api/rpc2',{jsonrpc:'2.0',id:1,method,params:{uuid:node.uuid}})).value.result
-      hosts[role]={role,name:`UI migration ${role}`,machine,user,service,address:machine===1?targetIP:'127.0.0.1',port:machine===1?22:ports[machine],privateKeyPath:key,expectedFingerprint:fingerprints[machine],node:node.uuid,token:node.token,rpc,original:await rpc('admin:getClient'),...(machine===1?{jump:'source'}:{})}
+      hosts[role]={history:transferHistory(server.request,node.uuid,wait),role,name:`UI migration ${role}`,machine,user,service,address:machine===1?targetIP:'127.0.0.1',port:machine===1?22:ports[machine],privateKeyPath:key,expectedFingerprint:fingerprints[machine],node:node.uuid,token:node.token,rpc,original:await rpc('admin:getClient'),...(machine===1?{jump:'source'}:{})}
     }
     const allKeys=new Set(Object.values(hosts).map(h=>h.token)); assert.equal(allKeys.size,4)
     record('transfer-fixture-ready',{machineIdentitiesDistinct:true,architecture,services:2,hosts:4,productionKeyId:trust.keyId,sequence:catalog.sequence,version:release.version})
     function observe(h) { return JSON.parse(command('docker',['exec','-i',machines[h.machine],'python3','-c',observer],JSON.stringify({user:h.user,token:h.token}))) }
     const sample=async h=>latest((await servers[h.service].request(`/api/recent/${h.node}`)).value)
-    const fresh=async(h,before,started)=>wait(async()=>{const time=await sample(h);const observations=observe(h);const active=observations.filter(s=>s.processes.length===1); if(!(time>before && time>=started-5000 && time>=Date.now()-60000 && active.length===1))return false; assert(time<=Date.now()+5000);const s=active[0]; assert.equal(s.processes[0].sha256,release.sha256);assert.equal(s.version,release.version);const node=await h.rpc('admin:getClient');assert.equal(node.created_at,h.original.created_at);assert.equal(node.uuid,h.node);return {originalSampleAt:time,before,started,verifiedAt:Date.now(),processSha256:s.processes[0].sha256} })
+    const fresh=async(h,before,started)=>{const evidence=await wait(async()=>{const time=await sample(h);const observations=observe(h);const active=observations.filter(s=>s.processes.length===1); if(!(time>before && time>=started-5000 && time>=Date.now()-60000 && active.length===1))return false; assert(time<=Date.now()+5000);const s=active[0]; assert.equal(s.processes[0].sha256,release.sha256);assert.equal(s.version,release.version);const node=await h.rpc('admin:getClient');assert.equal(node.created_at,h.original.created_at);assert.equal(node.uuid,h.node);return {originalSampleAt:time,before,started,verifiedAt:Date.now(),processSha256:s.processes[0].sha256} });await h.history.capture();return evidence}
     const retained=async()=>{for(const h of Object.values(hosts)){assert.equal((await h.rpc('admin:getClientToken')).token,h.token);assert.equal((await h.rpc('admin:getClient')).created_at,h.original.created_at)}}
     const hold=h=>{const gate=servers[h.service].gate;assert(!gate.node);gate.node=h.node;gate.held=0;return()=>{gate.node=null;gate.server.closeAllConnections()}}
     await rm(serverFile)

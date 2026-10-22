@@ -10,6 +10,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { downloadPinned } from './prepare-komari-agent-release.mjs'
 import { verifyCompatibleCatalog } from './publish-komari-agent.mjs'
+import { transferHistory } from './probe-transfer-history.mjs'
 if (process.env.SHELLBEAM_KOMARI_TRANSFER_SMOKE !== '1') throw new Error('explicit_isolated_transfer_opt_in_required')
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dir = await mkdtemp(join(tmpdir(), 'shellbeam-probe-transfer-')); const prefix = 'sb-transfer-' + randomBytes(5).toString('hex')
@@ -87,14 +88,15 @@ try {
     const rpc = async method => (await request('/api/rpc2', { jsonrpc: '2.0', id: 1, method, params: { uuid: created.uuid } })).value.result
     const original = await rpc('admin:getClient')
     const latest = v => Array.isArray(v) ? Math.max(0, ...v.map(latest)) : !v || typeof v !== 'object' ? 0 : ['cpu', 'ram', 'memory', 'disk', 'network', 'net', 'load'].some(k => k in v) ? Date.parse(v.time ?? v.updated_at ?? '') || 0 : Math.max(0, ...['records', 'reports', 'data', 'result'].map(k => latest(v[k])))
-    servers.push({ endpoint, token: created.token, node: created.uuid, rpc, original, mark: async () => latest((await request(`/api/recent/${created.uuid}`)).value) })
+    servers.push({ history: transferHistory(request, created.uuid, wait), endpoint, token: created.token, node: created.uuid, rpc, original, mark: async () => latest((await request(`/api/recent/${created.uuid}`)).value) })
   }
   assert.notEqual(servers[0].token, servers[1].token)
   const fresh = async (end, before, started) => wait(async () => {
     const s = servers[end.server]; const node = await s.rpc('admin:getClient'); const t = await s.mark(); const now = Date.now()
     if (!(node.uuid === s.node && node.created_at === s.original.created_at && node.version?.replace(/^v/, '') === artifact.manifest.version && t > before && t >= started - 5000 && t <= now + 5000 && t >= now - 60000)) return false
     const r = await inspect(end); if (!r.state.active || r.state.current?.sha256 !== artifact.manifest.sha256) return false
-    report.freshReports.push({ scope: end.ssh, server: end.server, nodeIdentityVerified: true, originalSampleAt: t, before, started, verifiedAt: Date.now(), processSha256: artifact.manifest.sha256 }); return true
+    const verifiedAt = Date.now(); await s.history.capture()
+    report.freshReports.push({ scope: end.ssh, server: end.server, nodeIdentityVerified: true, originalSampleAt: t, before, started, verifiedAt, processSha256: artifact.manifest.sha256 }); return true
   })
   const end = (ssh, server) => { const e = { ssh, server, deployment: randomUUID() }; deployments.push(e); return e }
   const base = { disable_auto_update: true, disable_web_ssh: true, interval: 5, info_report_interval: 1, month_rotate: 0, get_ip_addr_from_nic: true, include_nics: 'lo' }
@@ -134,7 +136,7 @@ try {
   current = await move(current, end('target-root', 1), 'cross-account-user-to-system-same-node')
   current = await move(current, end('source', 1), 'failed-target-stopped-source-restored-fresh-report', true)
   stage = 'verify retained identities credentials history and stop final target'
-  for (const s of servers) { assert.equal((await s.rpc('admin:getClientToken')).token, s.token); assert.equal((await s.rpc('admin:getClient')).created_at, s.original.created_at); assert.ok(await s.mark() > 0) }
+  for (const s of servers) { assert.equal((await s.rpc('admin:getClientToken')).token, s.token); assert.equal((await s.rpc('admin:getClient')).created_at, s.original.created_at); report.retainedHistory ??= []; report.retainedHistory.push(await s.history.retained()) }
   assert.equal((await mutate(current, 'uninstall')).ok, true); report.checks.push('all-nodes-tokens-history-retained-and-final-target-stopped'); report.result = 'passed'
 } catch (e) { report.result = 'failed'; report.failedStage = stage; report.errorClass = e?.name; report.errorCode = e?.code; report.failureLocation = String(e?.stack ?? '').split('\n').find(l => l.includes('komari-agent-transfer-smoke.mjs:'))?.match(/komari-agent-transfer-smoke\.mjs:[0-9:]+/)?.[0]; process.exitCode = 1 }
 finally {

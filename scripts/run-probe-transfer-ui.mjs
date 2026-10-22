@@ -61,6 +61,7 @@ export async function main(env=process.env) {
     const state=await setupTransferUi({driver,fixture,record});stage='migration-and-recovery'
     report.journey=await runTransferUiJourney({driver,fixture,state,record,restart,checkpoint});report.success=report.journey.passed===true
   }catch(e){
+    report.failureLocation=String(e?.stack??'').match(/(?:probe-transfer-ui-journey|probe-transfer-ui-fixture|probe-transfer-history)\.mjs:[0-9:]+/)?.[0]
     report.failedStage=stage;report.failureCode=/^[a-z0-9_ :.-]{1,100}$/i.test(e.message)?e.message:'transfer_ui_assertion_failed';report.lastInteraction=driver?.lastInteraction;process.exitCode=1
     // Read only fixed UI flags and product error codes. Never retain form
     // values, DOM dumps, server responses or arbitrary alert text.
@@ -82,7 +83,7 @@ export async function main(env=process.env) {
   }
   finally{
     try{await stop();report.applicationStopped=true}catch{report.success=false}
-    try{if(fixture)await fixture.cleanup();report.cleanup=true}catch{report.success=false}
+    try{if(fixture)await fixture.cleanup();report.cleanup=report.events.some(e=>e.name==='transfer-fixture-cleaned'&&e.containersRemoved&&e.networkRemoved&&e.serversStopped);if(!report.cleanup)report.success=false}catch{report.success=false}
     if(report.success)try{verifyTransferUiReport(report)}catch{report.success=false;report.failureCode='transfer_ui_report_incomplete'}
     await writeFile(join(env.RUNNER_TEMP,'shellbeam-transfer-ui-report.json'),JSON.stringify(report,null,2)+'\n',{mode:0o644,flag:'wx'})
   }

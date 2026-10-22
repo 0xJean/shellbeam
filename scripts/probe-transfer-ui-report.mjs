@@ -13,6 +13,9 @@ export function verifyTransferUiReport(report) {
     assert(/^[a-f0-9]{64}$/.test(e.processSha256))
   }
   assert(event('transfer-cancelled-without-remote-mutation').passed)
+  assert(event('transfer-app-audit-history-restored').auditJobs===14)
+  const history=report.events.filter(e=>e.name==='transfer-app-retained-history');assert.deepEqual(history.map(e=>e.role).sort(),['finish','restore','source','target'])
+  for(const h of history)assert(h.originalBuckets?.length>0&&h.originalBuckets.every(t=>Number.isSafeInteger(t)&&t>0&&t<=h.checkedAt)&&h.retainedBuckets>=h.originalBuckets.length)
   const interrupted=report.events.filter(e=>e.name==='transfer-interrupted-recovered-in-app');assert.equal(interrupted.length,2);assert.deepEqual(interrupted.map(e=>e.action),['restore','finish']);assert(interrupted.every(e=>e.passed&&e.bothJobsRecovered&&e.noReplayMs===5000))
   const final=event('transfer-app-final-preservation-and-exit');assert(final.passed&&final.allProbesStopped&&final.auditJobs===14&&final.originalConfigurationRetained&&final.nodeCredentialsAndHistoryRetained)
   assert.equal(report.screenshots.length,5);assert.equal(new Set(report.screenshots.map(s=>s.file)).size,5)

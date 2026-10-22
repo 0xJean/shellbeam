@@ -9,6 +9,7 @@ on:
       - 'src-tauri/src/ssh/transport.rs'
       - 'src-tauri/src/data/monitoring_service.rs'
       - 'scripts/*komari-agent*'
+      - 'scripts/probe-transfer-history.mjs'
       - 'scripts/*official-komari*'
       - 'releases/**'
       - 'scripts/fixtures/komari-lifecycle-releases.json'
