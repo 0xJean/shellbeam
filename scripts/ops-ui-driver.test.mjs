@@ -65,6 +65,32 @@ test('failed clicks retain only numeric geometry and never retry, scroll, or rea
   assert.deepEqual(driver.lastInteraction, { kind: 'click', control: 'host-save' })
 })
 
+test('unsupported geometry endpoints keep partial evidence and the original click failure', async t => {
+  const calls = []
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* No field values are retained. */ }
+    calls.push(request.url)
+    let status = 200, value = null
+    if (request.url.endsWith('/element')) value = { 'element-6066-11e4-a52e-4f735466cecf': 'target' }
+    else if (request.url.endsWith('/rect')) value = { x: 20, y: 900, width: 80, height: 30 }
+    else if (request.url.endsWith('/displayed') || request.url.endsWith('/enabled')) value = true
+    else { status = 400; value = { error: request.url.endsWith('/click') ? 'element not interactable' : 'unsupported operation', message: 'PRIVATE_FIELD_VALUE' } }
+    response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ value }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => { server.closeAllConnections(); server.close() })
+  const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`); driver.sessionId = 's'
+  await assert.rejects(driver.click('[data-testid="host-save"]'), error => error.code === 'element not interactable')
+  const report = safeDetails(driver.lastClickDiagnostics)
+  assert.equal(report.target.y, 900)
+  assert.equal(report.viewport.width, 80)
+  assert.equal(report.target.clientHeight, null)
+  assert.deepEqual(report.ancestors, [])
+  assert(report.errors.some(error => error.stage === 'ancestors' && error.code === 'unsupported-operation'))
+  assert(!JSON.stringify(report).includes('PRIVATE'))
+  assert.equal(calls.filter(path => path.endsWith('/click')).length, 1)
+  assert.equal(calls.some(path => /\/text$|\/property\/value$|\/execute\/|\/actions$/.test(path)), false)
+})
+
 test('W3C confirmation stays explicit, errors are redacted, and input state uses properties', async t => {
   const calls = []
   const server = createServer(async (request, response) => {

@@ -117,22 +117,37 @@ export class OpsUiDriver {
     // Failure observation only: no scrolling, focus, retry, JS evaluation or
     // reads of text/field values. These fixed numeric properties are safe even
     // when an ancestor contains a credential form.
-    const geometry = async target => {
-      const rect = await this.rect(target)
+    const errors = []
+    const observe = async (stage, read) => {
+      try { return await read() } catch (error) {
+        // Keep a fixed stage and allowlisted transport code, never the message.
+        const known = ['unsupported operation', 'unknown command', 'unknown error', 'stale element reference', 'no such element', 'invalid selector', 'transport failure']
+        errors.push({ stage, code: known.includes(error.code) ? error.code.replaceAll(' ', '-') : 'unavailable' })
+        return null
+      }
+    }
+    const geometry = async (target, stage) => {
+      const rect = await observe(`${stage}-rect`, () => this.rect(target))
       const result = {}
       for (const field of ['x', 'y', 'width', 'height']) {
         result[field] = typeof rect?.[field] === 'number' && Number.isFinite(rect[field]) ? rect[field] : null
       }
       for (const field of ['clientWidth', 'clientHeight', 'scrollWidth', 'scrollHeight', 'scrollLeft', 'scrollTop']) {
-        const value = await this.request('GET', await this.elementRoute(target, `/property/${field}`))
+        const value = await observe(`${stage}-${field}`, async () => this.request('GET', await this.elementRoute(target, `/property/${field}`)))
         result[field] = typeof value === 'number' && Number.isFinite(value) ? value : null
       }
       return result
     }
-    const ancestors = (await this.findAll('xpath=ancestor::*', element)).reverse().slice(0, 8)
-    const result = { available: true, displayed: await this.isDisplayed(element), enabled: await this.isEnabled(element),
-      target: await geometry(element), viewport: await geometry(await this.find('html')), ancestors: [] }
-    for (const ancestor of ancestors) result.ancestors.push(await geometry(ancestor))
+    const result = { available: true,
+      displayed: await observe('displayed', () => this.isDisplayed(element)),
+      enabled: await observe('enabled', () => this.isEnabled(element)),
+      target: await geometry(element, 'target'), viewport: null, ancestors: [], errors }
+    const viewport = await observe('viewport', () => this.find('html'))
+    if (viewport) result.viewport = await geometry(viewport, 'viewport')
+    // A driver can reject ancestor XPath or one property without invalidating
+    // the already captured target rect. Preserve each independent observation.
+    const ancestors = await observe('ancestors', () => this.findAll('xpath=ancestor::*', element))
+    for (const [index, ancestor] of (ancestors ?? []).reverse().slice(0, 8).entries()) result.ancestors.push(await geometry(ancestor, `ancestor-${index}`))
     return result
   }
   async fill(locator, value, { keyboardClear = false } = {}) {
