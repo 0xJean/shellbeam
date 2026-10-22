@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createServer } from 'node:http'
+import { forwardTransferRequest } from './probe-transfer-ui-fixture.mjs'
 import { verifyTransferUiReport } from './probe-transfer-ui-report.mjs'
 import { guardUiEnvironment } from './run-ops-ui-live.mjs'
 const report=()=>({success:true,applicationStopped:true,cleanup:true,headCommit:'a'.repeat(40),checkedOutCommit:'b'.repeat(40),journey:{passed:true,installedPackage:true,productionIpc:true,realVault:true,normalMigration:1,interruptedMigrations:2,readonlyInspections:2,explicitRestore:1,explicitFinish:1,restoredAuditJobs:14,noReplayMs:5000},screenshots:['completed','restore-readback','restore-recovered','finish-readback','finish-recovered'].map(n=>({file:`transfer-${n}.png`,sha256:'c'.repeat(64),bytes:10000,width:1280,height:900})),events:[{name:'transfer-fixture-ready',machineIdentitiesDistinct:true,architecture:'amd64',services:2,hosts:4,productionKeyId:'compatible-probe-2026-01',sequence:1792594908584},...['transfer-app-install-verified','transfer-app-cross-service-machine-account-completed','transfer-app-restore-verified','transfer-app-finish-verified'].map(name=>({name,originalSampleAt:12000,before:11000,started:11500,verifiedAt:12500,processSha256:'d'.repeat(64)})),{name:'transfer-cancelled-without-remote-mutation',passed:true},...['restore','finish'].map(action=>({name:'transfer-interrupted-recovered-in-app',action,passed:true,bothJobsRecovered:true,noReplayMs:5000})),{name:'transfer-app-final-preservation-and-exit',passed:true,allProbesStopped:true,auditJobs:14,originalConfigurationRetained:true,nodeCredentialsAndHistoryRetained:true}]})
@@ -10,3 +12,20 @@ for(const [name,change] of [
 ])test(`report gate rejects ${name}`,()=>{const r=report();change(r);assert.throws(()=>verifyTransferUiReport(r))})
 test('shell refuses an ordinary desktop before creating any fixture',()=>{const r=spawnSync('bash',['scripts/ci-probe-transfer-ui.sh'],{env:{PATH:process.env.PATH,GITHUB_ACTIONS:'false'},encoding:'utf8'});assert.equal(r.status,1);assert.match(r.stdout,/requires opt-in/)})
 test('native UI runner refuses root and self-hosted environments',()=>{assert.throws(()=>guardUiEnvironment({},'linux',0));assert.throws(()=>guardUiEnvironment({GITHUB_ACTIONS:'true',RUNNER_ENVIRONMENT:'self-hosted'},'linux',1000))})
+test('fault gateway preserves real CORS preflight, authorization and response bytes',async()=>{
+  const seen=[];const origin='http://tauri.localhost',body=Buffer.from('[{"uuid":"fixture-node"}]\n')
+  const upstream=createServer((req,res)=>{
+    seen.push({method:req.method,origin:req.headers.origin,headers:req.headers['access-control-request-headers'],authorization:req.headers.authorization})
+    res.writeHead(req.method==='OPTIONS'?204:200,{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, OPTIONS','Access-Control-Allow-Headers':'Authorization','Vary':'Origin','Content-Type':'application/json'});res.end(req.method==='OPTIONS'?undefined:body)
+  })
+  const listen=server=>new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(`http://127.0.0.1:${server.address().port}`)))
+  const endpoint=await listen(upstream),gateway=createServer((req,res)=>void forwardTransferRequest(req,res,endpoint))
+  try{
+    const url=await listen(gateway)
+    const preflight=await fetch(url+'/api/admin/client/list',{method:'OPTIONS',headers:{Origin:origin,'Access-Control-Request-Method':'GET','Access-Control-Request-Headers':'authorization'}})
+    assert.equal(preflight.status,204);assert.equal(preflight.headers.get('access-control-allow-origin'),origin);assert.equal(preflight.headers.get('access-control-allow-headers'),'Authorization');assert.equal(preflight.headers.get('vary'),'Origin')
+    const response=await fetch(url+'/api/admin/client/list',{headers:{Origin:origin,Authorization:'Bearer synthetic-fixture'}})
+    assert.equal(response.headers.get('access-control-allow-origin'),origin);assert.deepEqual(Buffer.from(await response.arrayBuffer()),body)
+    assert.deepEqual(seen,[{method:'OPTIONS',origin,headers:'authorization',authorization:undefined},{method:'GET',origin,headers:undefined,authorization:'Bearer synthetic-fixture'}])
+  }finally{for(const server of [gateway,upstream]){server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}}
+})

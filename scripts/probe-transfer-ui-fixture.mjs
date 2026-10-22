@@ -14,6 +14,17 @@ const command = (cmd, args, input) => execFileSync(cmd, args, { input, encoding:
 const docker = (...args) => command('docker', args)
 export const wait = async (read, timeout = 60000) => { const end = Date.now() + timeout; while (Date.now() < end) { const result = await read(); if (result) return result; await delay(250) } throw new Error('transfer_ui_bounded_wait') }
 const ready = async read => wait(async () => { try { return await read() } catch { return false } })
+// Keep the real server's CORS contract across the fault-injection transport.
+// The WebView performs preflights; a Node-only client would miss this boundary.
+export async function forwardTransferRequest(req,res,endpoint) {
+  const headers={}
+  for(const name of ['accept','authorization','content-type','origin','access-control-request-method','access-control-request-headers'])if(req.headers[name])headers[name]=req.headers[name]
+  const chunks=[];for await(const chunk of req)chunks.push(chunk)
+  const response=await fetch(endpoint+req.url,{method:req.method,headers,...(chunks.length?{body:Buffer.concat(chunks)}:{}),signal:AbortSignal.timeout(10000)})
+  const responseHeaders={}
+  for(const name of ['content-type','access-control-allow-origin','access-control-allow-methods','access-control-allow-headers','access-control-allow-credentials','access-control-expose-headers','access-control-max-age','vary'])if(response.headers.has(name))responseHeaders[name]=response.headers.get(name)
+  res.writeHead(response.status,responseHeaders);res.end(Buffer.from(await response.arrayBuffer()))
+}
 const latest = v => Array.isArray(v) ? Math.max(0, ...v.map(latest)) : !v || typeof v !== 'object' ? 0 : ['cpu', 'ram', 'memory', 'disk', 'network', 'net', 'load'].some(k => k in v) ? Date.parse(v.time ?? v.updated_at ?? '') || 0 : Math.max(0, ...['records', 'reports', 'data', 'result'].map(k => latest(v[k])))
 const observer = `import sys,json,pathlib,hashlib,os
 q=json.load(sys.stdin); home=pathlib.Path('/root' if q['user']=='root' else '/home/probe'); base=home/'.local/share/shellbeam/komari'; out=[]
@@ -93,9 +104,7 @@ export async function createTransferUiFixture({ directory, project, prefix, reco
           const h=Object.values(hosts).find(h=>h.node===gate.node)
           if(h && observe(h).some(s=>s.processes.length>0)) { gate.held++; return }
         }
-        const chunks=[]; for await(const chunk of req) chunks.push(chunk)
-        const response=await fetch(endpoint+req.url,{method:req.method,headers:{'Content-Type':'application/json',...(req.headers.authorization?{Authorization:req.headers.authorization}:{})},...(chunks.length?{body:Buffer.concat(chunks)}:{}),signal:AbortSignal.timeout(10000)})
-        res.writeHead(response.status,{'Content-Type':'application/json'}); res.end(Buffer.from(await response.arrayBuffer()))
+        await forwardTransferRequest(req,res,endpoint)
       } catch { res.writeHead(502);res.end() } })
       await new Promise(resolve=>gate.server.listen(0,'127.0.0.1',resolve)); gateways.push(gate)
       servers.push({name:`UI monitoring ${index}`,apiKey,endpoint:`http://127.0.0.1:${gate.server.address().port}`,agentEndpoint,request,gate})
