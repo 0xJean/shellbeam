@@ -435,3 +435,10 @@ Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例�
 范围：inspect 仅 Linux/Python 3 固定只读观察；日志按账号可见范围，站点/证书有限目录发现始终 partial。目录分页非稳定快照；snippet 命令仍具备所选 SSH 账号权限。片段变更需用户重新审阅并重建授权。
 
 基线 `6330239` 13/15 CI 成功、两项原生 GUI 点击失败仍未解决；`661d9e7` 仅补全失败几何诊断，本功能提交需重新核对全部 CI，不能继承旧 head 绿色。
+
+### 2026-10-22：原生点击失败的复现与修复
+
+- MCP head `0d07b1b` 的 15 项检查中 13 项通过；Ops GUI `39747549015` 在 via 主机保存、迁移 GUI `39747549144` 在第三个 restore 主机连接时失败，两个安装包均正常清理和退出。独立报告 `12412741132` / `12411684982` 保留部分几何：前者弹窗 clientWidth 576 / scrollWidth 609，后者主机列表 clientWidth 1054 / scrollWidth 1184、scrollLeft 0。未进入后续运维/迁移的完整验收。
+- 使用隔离 Linux GTK WebKit 2.50.4、与 Wry 相同的滚动条配置和生产组件复现：短跳板名称正常；长名称选中后，select 的文字绘制溢出其边界，弹窗出现额外横向滚动，保存按钮单次标准点击失败。对 trigger 增加文字截断后，弹窗宽度/滚动宽度均为 576，保存按钮原位置 y=728 单次点击成功。菜单继续显示完整选项，实际字段值和选择事件不变。
+- 同一原生环境复现列表连接按钮位于横向 viewport 外时，WebKit 的自动滚动没有使其可交互。两份安装包 onboarding 旅程现在先点击现有可见滚动范围控件、按 End、核对其真实终点，再单次点击连接；没有脚本滚动、点击重试或隐藏元素操作。失败诊断及通知触发后的只读 reader/guard 未改，原同帧截图、独立标题/正文 OCR、sample、scope、no-replay 和诊断步数断言保持不变。
+- 本批验证：72 项相关组件测试、167 项 Node 协议测试、TypeScript/Vite 生产构建及修改范围 ESLint 通过。原生合成组件的保存与连接回调已核对，几何记录 `/tmp/shellbeam-ci-click-fix-form.json` / `shellbeam-ci-click-fix-list.json`，操作列前后截图 `/tmp/shellbeam-list-synthetic.png` / `shellbeam-list-synthetic-navigation.png`。此为可重复的组件/驱动边界证据，不替代新 head 的完整安装包、真实 SSH、迁移或通知验收；不涉及真实 Vault、用户凭据及运行中的 App。

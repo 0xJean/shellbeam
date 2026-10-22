@@ -27,7 +27,10 @@ function readOptions(children: React.ReactNode, disabled = false): SelectOption[
 }
 
 /** An application-styled menu over a real select. Keep native value, label,
- * form and change events, but never open the platform-specific popup. */
+ * form and change events, but never open the platform-specific popup.
+ * Truncate the trigger: WebKit can otherwise paint a long selected label past
+ * its bounded box and introduce a horizontal scrollbar in its parent dialog.
+ * The application menu still shows the complete, wrapping option label. */
 export function NativeSelect({ children, className, optionDetails, disabled, onClick, onPointerDown, onMouseDown, onKeyDown, onChange, ...props }: NativeSelectProps) {
   const { t } = useT()
   const id = React.useId()
@@ -143,7 +146,7 @@ export function NativeSelect({ children, className, optionDetails, disabled, onC
   return <>
     <select {...props} ref={triggerRef} disabled={disabled} aria-expanded={expanded} aria-controls={expanded ? id : undefined}
       aria-activedescendant={expanded && active >= 0 ? `${id}-${active}` : undefined} data-app-select="true"
-      className={cn('app-select h-9 min-w-0 max-w-full rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] pl-3 text-sm font-medium text-[var(--workspace-text-muted)] transition-colors hover:text-[var(--workspace-text-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50', className)}
+      className={cn('app-select h-9 min-w-0 max-w-full truncate rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] pl-3 text-sm font-medium text-[var(--workspace-text-muted)] transition-colors hover:text-[var(--workspace-text-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50', className)}
       onPointerDown={event => { onPointerDown?.(event); event.preventDefault() }}
       onMouseDown={event => { onMouseDown?.(event); event.preventDefault() }}
       onClick={event => { onClick?.(event); event.preventDefault(); event.stopPropagation(); triggerRef.current?.focus(); if (expanded) setOpen(false); else show() }}

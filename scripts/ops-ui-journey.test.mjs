@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { JSDOM } from 'jsdom'
-import { activateOpsUiRules, classifyOpsUiConnectionFailure, findOpsUiAuditRow, initializeOpsUiVault, OPS_UI_SELECTORS, readOpsUiServiceSelection, resumeOpsUiJourney, reviewOpsUiServiceConfirmation, runOpsUiIncidents, selectOpsUiServiceRow, validateOpsUiServiceRect } from './ops-ui-journey.mjs'
+import { activateOpsUiRules, classifyOpsUiConnectionFailure, findOpsUiAuditRow, initializeOpsUiVault, OPS_UI_SELECTORS, readOpsUiServiceSelection, resumeOpsUiJourney, reviewOpsUiServiceConfirmation, revealOpsUiHostActions, runOpsUiIncidents, selectOpsUiServiceRow, validateOpsUiServiceRect } from './ops-ui-journey.mjs'
 
 function confirmationUnit({ problem } = {}) {
   const dom = new JSDOM('<div data-testid="workspace-services-app" data-host-id="host"><button data-testid="workspace-service-restart">Restart</button><div data-testid="workspace-services-error">INVALID_OPERATION: private credential detail</div></div>')
@@ -582,4 +582,42 @@ test('incident recovery awaits its evidence hook only after the matching resolve
     assert.deepEqual(responses, ['direct:cancel', 'direct:accept', 'via:cancel', 'via:accept'])
     assert.equal(document.querySelector('dialog'), null)
   } finally { release.resolve(); dom.window.close() }
+})
+
+
+test('host connection navigation uses the visible range and one End key before any connection action', async () => {
+  let position = 0
+  const range = {}, actions = []
+  const driver = {
+    async findAll(css) { assert.equal(css, '[data-testid="host-list-scroll-controls"] input[type="range"]'); return [range] },
+    async isDisplayed(element) { assert.equal(element, range); return true },
+    async attr(element, field) { assert.equal(element, range); assert(['value', 'max'].includes(field)); return String(field === 'max' ? 130 : position) },
+    async click(element) { assert.equal(element, range); actions.push('range-click'); position = 65 },
+    route(path) { return '/session/test' + path },
+    async request(method, path, body) { assert.equal(method, 'POST'); assert.equal(path, '/session/test/actions'); actions.push(body); position = 130 },
+    async until(read) { assert(await read()) },
+  }
+  await revealOpsUiHostActions(driver)
+  assert.deepEqual(actions, ['range-click', { actions: [{ type: 'key', id: 'host-list-navigation', actions: [
+    { type: 'keyDown', value: '\uE010' }, { type: 'keyUp', value: '\uE010' },
+  ] }] }])
+  await revealOpsUiHostActions(driver)
+  assert.equal(actions.length, 2, 'already visible actions require no extra navigation')
+  await revealOpsUiHostActions({ async findAll() { return [] } })
+})
+
+test('host navigation rejects ambiguous controls and preserves a failed single range click', async () => {
+  let clicks = 0, keys = 0
+  const range = {}, driver = {
+    async findAll() { return [range] }, async isDisplayed() { return true },
+    async attr(_element, field) { return field === 'max' ? '130' : '0' },
+    async click() { clicks++; throw new Error('native-click-failed') },
+    async request() { keys++ },
+  }
+  await assert.rejects(revealOpsUiHostActions(driver), /native-click-failed/)
+  assert.equal(clicks, 1); assert.equal(keys, 0)
+  await assert.rejects(revealOpsUiHostActions({ ...driver, async findAll() { return [range, range] } }), /host_scroll_control_ambiguous/)
+  await assert.rejects(revealOpsUiHostActions({ ...driver, async isDisplayed() { return false } }), /host_scroll_control_ambiguous/)
+  await assert.rejects(revealOpsUiHostActions({ ...driver, async attr() { return 'invalid' } }), /host_scroll_range_invalid/)
+  assert.equal(clicks, 1); assert.equal(keys, 0)
 })

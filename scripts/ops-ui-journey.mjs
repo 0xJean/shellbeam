@@ -80,6 +80,25 @@ async function openDashboardPage(driver, page) {
   else await driver.waitFor(S.audit)
 }
 
+// WebKit's element click can leave a partially clipped button behind a nested
+// horizontal viewport. Navigate with the same visible range/End key as a user,
+// before the one connection click; never retry that action or inject scrolling.
+export async function revealOpsUiHostActions(driver) {
+  const ranges = await driver.findAll('[data-testid="host-list-scroll-controls"] input[type="range"]')
+  if (!ranges.length) return
+  check(ranges.length === 1 && await driver.isDisplayed(ranges[0]), 'host_scroll_control_ambiguous')
+  const range = ranges[0]
+  const max = Number(await driver.attr(range, 'max'))
+  const value = Number(await driver.attr(range, 'value'))
+  check(Number.isFinite(max) && max >= 0 && Number.isFinite(value) && value >= 0 && value <= max, 'host_scroll_range_invalid')
+  if (max - value < 1) return
+  await driver.click(range)
+  await driver.request('POST', driver.route('/actions'), { actions: [{ type: 'key', id: 'host-list-navigation', actions: [
+    { type: 'keyDown', value: '\uE010' }, { type: 'keyUp', value: '\uE010' },
+  ] }] })
+  await driver.until(async () => Number(await driver.attr(range, 'value')) === Number(await driver.attr(range, 'max')))
+}
+
 async function createHost(driver, fixture, role, state, record) {
   const host = fixture.hosts[role]
   await openDashboardPage(driver, 'hosts')
@@ -122,6 +141,7 @@ async function createHost(driver, fixture, role, state, record) {
 
 async function connectAndVerify(driver, fixture, role, state, record) {
   await openDashboardPage(driver, 'hosts')
+  await revealOpsUiHostActions(driver)
   await driver.click(`${byHost(state.hostIds[role])} ${testId('host-connect')}`)
   await record(`ops-ui-${role}-connection-clicked`, { passed: true })
   const tab = `${testId('pc-session-tab')}[data-host-id=${q(state.hostIds[role])}]`
