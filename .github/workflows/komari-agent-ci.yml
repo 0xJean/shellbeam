@@ -3,6 +3,9 @@ on:
   pull_request:
     paths:
       - 'src-tauri/src/data/komari_agent/**'
+      - 'src/components/*compatible-agent*'
+      - 'src/components/probe-transfer*'
+      - 'src/lib/compatible-agent.ts'
       - 'src-tauri/src/ssh/transport.rs'
       - 'src-tauri/src/data/monitoring_service.rs'
       - 'scripts/*komari-agent*'

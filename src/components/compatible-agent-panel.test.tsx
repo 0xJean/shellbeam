@@ -146,3 +146,12 @@ describe('compatible monitoring probe lifecycle', () => {
     expect(operateCompatibleAgent).not.toHaveBeenCalled(); expect(cancelCompatibleAgent).toHaveBeenCalledWith('plan')
   })
 })
+
+it('refreshes an already open destination only for the matching Vault and host', async () => {
+  panel(); await act(async () => {}); expect(screen.getByRole('button', { name: c.install })).toBeEnabled()
+  vi.mocked(readCompatibleAgent).mockResolvedValue(row())
+  await act(async () => { window.dispatchEvent(new CustomEvent('shellbeam:probe-deployment-changed', { detail: { vaultId: 'other', hostIds: ['host'] } })) })
+  expect(screen.queryByText('durable-job')).not.toBeInTheDocument()
+  await act(async () => { window.dispatchEvent(new CustomEvent('shellbeam:probe-deployment-changed', { detail: { vaultId: 'vault', hostIds: ['host'] } })) })
+  expect(await screen.findByText('durable-job')).toBeInTheDocument(); expect(screen.getByRole('button', { name: c.install })).toBeDisabled(); expect(screen.getByRole('button', { name: c.upgrade })).toBeEnabled()
+})

@@ -15,7 +15,7 @@ const preview: api.ProbeTransferPreview = { planId: 'plan', action: 'move', sour
 const row = { id: 'migration', status: 'unknown', jobId: 'job', errorCode: null, sourceState: { active: false }, targetState: { active: true } } as api.ProbeTransfer
 const changed = vi.fn(); const pending = vi.fn()
 const mount = () => render(<I18nProvider><ProbeTransferPanel vaultId="vault" hostId="source" canMove onChanged={changed} onPending={pending} /></I18nProvider>)
-beforeEach(() => { scope.generation++; localStorage.setItem('shellbeam.locale', 'en'); vi.mocked(api.readProbeTransfer).mockResolvedValue(null); vi.mocked(api.cancelCompatibleAgent).mockResolvedValue(); vi.mocked(api.prepareProbeTransfer).mockResolvedValue(preview); vi.mocked(api.recoverProbeTransfer).mockResolvedValue(preview); vi.mocked(api.operateProbeTransfer).mockResolvedValue({ ...row, status: 'completed' }); vi.mocked(requestUserDecision).mockResolvedValue({ accepted: true, reason: 'accepted' }); vi.mocked(api.probeTransferDestinations).mockResolvedValue([{ hostId: 'target', hostName: 'Destination', connectionId: 'alternate', connectionName: 'Operations', account: 'root', address: 'target.test', integrationId: 'target-service', serviceName: 'Monitoring', nodeId: 'target-node', endpoint: 'https://target.test' }]) })
+beforeEach(() => { scope.generation++; localStorage.setItem('shellbeam.locale', 'en'); vi.mocked(api.readProbeTransfer).mockResolvedValue(null); vi.mocked(api.cancelCompatibleAgent).mockResolvedValue(); vi.mocked(api.prepareProbeTransfer).mockResolvedValue(preview); vi.mocked(api.recoverProbeTransfer).mockResolvedValue(preview); vi.mocked(api.operateProbeTransfer).mockImplementation(async () => { const result = { ...row, status: 'completed' }; vi.mocked(api.readProbeTransfer).mockResolvedValue(result); return result }); vi.mocked(requestUserDecision).mockResolvedValue({ accepted: true, reason: 'accepted' }); vi.mocked(api.probeTransferDestinations).mockResolvedValue([{ hostId: 'target', hostName: 'Destination', connectionId: 'alternate', connectionName: 'Operations', account: 'root', address: 'target.test', integrationId: 'target-service', serviceName: 'Monitoring', nodeId: 'target-node', endpoint: 'https://target.test' }]) })
 afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear() })
 async function choose() { fireEvent.click(screen.getByText(c.title)); fireEvent.click(screen.getByRole('button', { name: c.load })); fireEvent.change(await screen.findByLabelText(c.target), { target: { value: '0' } }) }
 it('uses saved target connection and shows both identities before dispatch', async () => {
@@ -38,4 +38,10 @@ it('revokes a late plan after Vault changed and prevents duplicate clicks', asyn
   let resolve!: (p: api.ProbeTransferPreview) => void; vi.mocked(api.prepareProbeTransfer).mockImplementation(() => new Promise(done => { resolve = done }))
   mount(); await choose(); fireEvent.click(screen.getByRole('button', { name: c.move })); await waitFor(() => expect(resolve).toBeTypeOf('function')); expect(screen.getByRole('button', { name: c.move })).toBeDisabled(); scope.generation++
   await act(async () => { resolve(preview) }); expect(api.operateProbeTransfer).not.toHaveBeenCalled(); expect(requestUserDecision).not.toHaveBeenCalled(); expect(api.cancelCompatibleAgent).toHaveBeenCalledWith('plan')
+})
+
+it('refreshes durable recovery state on a matching endpoint event without replay', async () => {
+  mount(); await act(async () => {}); vi.mocked(api.readProbeTransfer).mockResolvedValue(row)
+  await act(async () => { window.dispatchEvent(new CustomEvent('shellbeam:probe-deployment-changed', { detail: { vaultId: 'vault', hostIds: ['source'] } })) })
+  expect(await screen.findByText(c.pending)).toBeInTheDocument(); expect(pending).toHaveBeenCalledWith(true); expect(api.operateProbeTransfer).not.toHaveBeenCalled()
 })

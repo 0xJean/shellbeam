@@ -16,9 +16,11 @@ export function CompatibleAgentTools({ host, integrationId, bindingKey }: { host
   const [record, setRecord] = useState<CompatibleAgentRecord | null>(null)
   const [open, setOpen] = useState(false)
   useEffect(() => {
-    let live = true
-    if (host.vaultId) void readCompatibleAgent(host.vaultId, host.id).then(r => { if (live) setRecord(r) }).catch(() => {})
-    return () => { live = false }
+    let live = true; let epoch = 0
+    const reload = () => { const current = ++epoch; if (host.vaultId) void readCompatibleAgent(host.vaultId, host.id).then(r => { if (live && current === epoch) setRecord(r) }).catch(() => {}) }
+    const changed = (event: Event) => { const detail = (event as CustomEvent<{ vaultId: string; hostIds: string[] }>).detail; if (detail?.vaultId === host.vaultId && detail.hostIds.includes(host.id)) reload() }
+    reload(); window.addEventListener('shellbeam:probe-deployment-changed', changed)
+    return () => { live = false; window.removeEventListener('shellbeam:probe-deployment-changed', changed) }
   }, [host.id, host.vaultId])
   const saved = record?.hostId === host.id && record.vaultId === host.vaultId ? record : null
   const source = saved?.integrationId ?? integrationId
@@ -35,12 +37,17 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
   const [record, setRecord] = useState<CompatibleAgentRecord | null>(null)
   const [endpoint, setEndpoint] = useState(''); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState('')
   const [transferPending, setTransferPending] = useState(false)
-  const refreshTransfer = useCallback(() => { const valid = captureVaultScope(); void readCompatibleAgent(vaultId, host.id).then(r => { if (live.current && valid()) setRecord(r) }).catch(() => {}) }, [captureVaultScope, vaultId, host.id])
+  const refreshTransfer = useCallback(() => { const valid = captureVaultScope(); const epoch = ++readEpoch.current; void readCompatibleAgent(vaultId, host.id).then(r => { if (live.current && valid() && epoch === readEpoch.current) setRecord(r) }).catch(() => {}) }, [captureVaultScope, vaultId, host.id])
   const [legacyUnit, setLegacyUnit] = useState('komari-agent.service'); const [migrationEndpoint, setMigrationEndpoint] = useState('')
   const [error, setError] = useState(''); const [code, setCode] = useState(''); const [policy, setPolicy] = useState<CompatibleAgentPolicy | null>(null)
   const readEpoch = useRef(0); const live = useRef(true); const running = useRef(false); const plans = useRef(new Set<string>())
   useEffect(() => { live.current = true; const ids = plans.current; return () => { live.current = false; for (const id of ids) void cancelCompatibleAgent(id).catch(() => {}); ids.clear() } }, [])
   useEffect(() => { const epoch = ++readEpoch.current; const valid = captureVaultScope(); let current = true; void readCompatibleAgent(vaultId, host.id).then(r => { if (current && epoch === readEpoch.current && valid()) { setRecord(r); if (r) setEndpoint(r.endpoint) } }).catch(() => {}); return () => { current = false } }, [vaultId, host.id, captureVaultScope])
+  useEffect(() => {
+    const changed = (event: Event) => { const detail = (event as CustomEvent<{ vaultId: string; hostIds: string[] }>).detail; if (detail?.vaultId === vaultId && detail.hostIds.includes(host.id)) refreshTransfer() }
+    window.addEventListener('shellbeam:probe-deployment-changed', changed)
+    return () => window.removeEventListener('shellbeam:probe-deployment-changed', changed)
+  }, [vaultId, host.id, refreshTransfer])
   const explain = (cause: unknown) => {
     const raw = String(cause).match(/(?:KOMARI_AGENT|MONITORING)_[A-Z_]+/)?.[0] ?? 'KOMARI_AGENT_OPERATION_FAILED'; setCode(raw)
     return /LEGACY_UNTRUSTED|LEGACY_UNSUPPORTED/.test(raw) ? c.legacyUnsupported : /NO_UPGRADE/.test(raw) ? c.noUpgrade : /READBACK/.test(raw) ? c.readback : /ALREADY_REPORTING/.test(raw) ? c.nodeOnline : /EXTERNAL|UNMANAGED/.test(raw) ? c.external : /CHANGED|SCOPE/.test(raw) ? c.changed : /CATALOG_EXPIRED|CATALOG_ROLLBACK/.test(raw) ? c.catalogStale : /RELEASE|CATALOG|SIGNATURE|ARTIFACT|POLICY|ARCHITECTURE/.test(raw) ? c.releaseError : /REPORT/.test(raw) ? c.report : /SSH/.test(raw) ? c.connection : c.generic

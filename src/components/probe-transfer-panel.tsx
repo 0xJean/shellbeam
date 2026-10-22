@@ -17,7 +17,13 @@ export function ProbeTransferPanel({ vaultId, hostId, canMove, onChanged, onPend
   const pending = !!row && !['completed', 'restored'].includes(row.status)
   useEffect(() => { onPending(pending) }, [pending, onPending])
   useEffect(() => { alive.current = true; const ids = plans.current; return () => { alive.current = false; for (const id of ids) void cancelCompatibleAgent(id).catch(() => {}); ids.clear() } }, [])
-  useEffect(() => { const epoch = ++readEpoch.current; const valid = captureVaultScope(); let current = true; void readProbeTransfer(vaultId, hostId).then(r => { if (current && epoch === readEpoch.current && valid()) setRow(r) }).catch(() => {}); return () => { current = false } }, [vaultId, hostId, captureVaultScope])
+  useEffect(() => {
+    const valid = captureVaultScope(); let current = true
+    const reload = () => { const epoch = ++readEpoch.current; void readProbeTransfer(vaultId, hostId).then(r => { if (current && epoch === readEpoch.current && valid()) setRow(r) }).catch(() => {}) }
+    const changed = (event: Event) => { const detail = (event as CustomEvent<{ vaultId: string; hostIds: string[] }>).detail; if (detail?.vaultId === vaultId && detail.hostIds.includes(hostId)) reload() }
+    reload(); window.addEventListener('shellbeam:probe-deployment-changed', changed)
+    return () => { current = false; window.removeEventListener('shellbeam:probe-deployment-changed', changed) }
+  }, [vaultId, hostId, captureVaultScope])
   const work = async (fn: (current: () => boolean) => Promise<void>) => {
     if (running.current || activeVaultId !== vaultId) return
     running.current = true; readEpoch.current++; setBusy(true); setError(''); const valid = captureVaultScope(); const current = () => alive.current && valid()
@@ -38,6 +44,7 @@ export function ProbeTransferPanel({ vaultId, hostId, canMove, onChanged, onPend
       }
       const next = await operateProbeTransfer(id, action !== 'inspect'); if (!current()) return
       setRow(next); onPending(!['completed', 'restored'].includes(next.status)); onChanged()
+      window.dispatchEvent(new CustomEvent('shellbeam:probe-deployment-changed', { detail: { vaultId, hostIds: [hostId, next.target?.record?.hostId].filter(Boolean) } }))
     } finally { if (id) { plans.current.delete(id); await cancelCompatibleAgent(id).catch(() => {}) } }
   })
   if (!canMove && !row) return null
