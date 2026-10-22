@@ -130,20 +130,26 @@ async function audit(d,ids,statuses){
   assert.equal(pending.size,0,'transfer_ui_audit_history_missing')
 }
 async function jobs(d,h){return [await d.attr(transfer(h),'data-job-id'),await d.attr(transfer(h),'data-target-job-id')]}
+export async function revealTransferObservations(d,observations){
+  // Reveal the monitoring column through the existing visible range control.
+  // A native WebKit click may scroll vertically while leaving this column
+  // horizontally clipped. Navigation happens before the evidence frame.
+  await revealOpsUiHostActions(d)
+  const viewport=await d.request('GET',d.route('/window/rect'))
+  await d.click(observations)
+  // One real click only; subsequent paint checks are read-only. Both endpoint
+  // rows must fit inside the window AND the list's horizontal clipping area.
+  await d.until(async()=>{
+    const box=await d.rect(observations)
+    const list=await d.rect(id('host-list-scroll-viewport'))
+    return box.width>0 && box.height>0 && box.y>=40 && box.y+box.height<=viewport.height
+      && box.x>=Math.max(0,list.x) && box.x+box.width<=Math.min(viewport.width,list.x+list.width)
+  },{timeoutMs:5000})
+}
 async function screenshot(d,h,name,checkpoint){
   await openTransfer(d,h)
-  // A real click on the read-only state list scrolls the evidence into view.
-  // No JS execution or product mutation is used to position the screenshot.
   const observations=`${transfer(h)} ${id('probe-transfer-observations')}`
-  const viewport=await d.request('GET',d.route('/window/rect'))
-  await d.until(async()=>{
-    await d.click(observations)
-    // WebKit's native scroll paints asynchronously. Settle before the single
-    // evidence frame, then require both endpoint rows inside the viewport.
-    await delay(250)
-    const box=await d.rect(observations)
-    return box.y>=40 && box.y+box.height<=viewport.height
-  },{timeoutMs:5000})
+  await revealTransferObservations(d,observations)
   for(const side of ['source','target'])assert((await d.text(`${transfer(h)} ${id(`probe-transfer-${side}-state`)}`)).trim())
   for(const field of await d.findAll('input[type="password"],textarea'))assert(!await d.attr(field,'value'),'transfer_ui_secret_on_screen')
   assert.equal((await d.findAll('iframe')).length,0)

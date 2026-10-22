@@ -200,6 +200,31 @@ export class OpsUiDriver {
           for (const choice of choices) {
             if (await this.attr(choice, 'data-value') !== value) continue
             if (!await this.isDisplayed(choice) || await this.attr(choice, 'aria-disabled') === 'true') throw new WebDriverError('element not interactable')
+            // WebKit does not reveal clipped children of the custom listbox
+            // on option click. Use the product's keyboard navigation first;
+            // the active option scrolls through its normal React handler.
+            // Keep the final selection a single real, visible option click.
+            let firstEnabled = true
+            for (const candidate of choices) {
+              if (await this.attr(candidate, 'aria-disabled') === 'true') continue
+              const optionId = await this.attr(candidate, 'id')
+              if (!optionId || !optionId.startsWith(`${menuId}-`)) throw new WebDriverError('no such element')
+              const key = firstEnabled ? '\uE011' : '\uE015'
+              firstEnabled = false
+              await this.request('POST', this.route('/actions'), { actions: [{ type: 'key', id: 'menu-keyboard', actions: [
+                { type: 'keyDown', value: key }, { type: 'keyUp', value: key },
+              ] }] })
+              await this.until(async () => await this.attr(element, 'aria-activedescendant') === optionId)
+              if (candidate.id === choice.id) break
+            }
+            const menu = await this.find(`[id=${JSON.stringify(menuId)}][role="listbox"]`)
+            await this.until(async () => {
+              const read = async (target, field) => this.request('GET', await this.elementRoute(target, `/property/${field}`))
+              const top = await read(choice, 'offsetTop'), height = await read(choice, 'offsetHeight')
+              const scroll = await read(menu, 'scrollTop'), visible = await read(menu, 'clientHeight')
+              return [top, height, scroll, visible].every(Number.isFinite) && height > 0 && visible > 0
+                && top >= scroll && top + height <= scroll + visible
+            })
             await this.clickElement(choice)
             // The real change event can commit before the portal is removed.
             // Wait for dismissal before clicking the next form control; an

@@ -469,3 +469,38 @@ decision=no-range, settled=false; subsequent click geometry shows horizontal
 clipping. Cleanup passed and applicationStopped=true. This narrows investigation
 to navigation readiness/control appearance, but is not a confirmed product fix.
 The new assistant tests do not replace that outstanding GUI acceptance.
+
+### 2026-10-22: Clipped menu options and migration evidence navigation
+
+`e9e9e44` finished 13/15 checks: frontend, all three native/real-SSH platforms,
+both compatible-probe architectures and Optional Agent passed. Original GUI
+`39761814877` progressed beyond the previous host menu failure, then failed at
+`incident-operations / operations-filter`; migration GUI `39761815088` failed
+at `probe-transfer-observations` while framing the final recovery screenshot.
+Both cleanup and application exit passed. Independently downloaded artifacts
+`12419126452` and `12418213327` are under `/tmp/shellbeam-ci-e9e9e44-*-gui-audit`
+(original GUI: `/tmp/shellbeam-ci-e9e9e44-gui-audit`). Merge `ed3ce5c` has this
+head as a parent. These failed reports are not complete acceptance evidence.
+
+- Production NativeSelect reproduced the same failure in isolated GTK WebKit
+  2.50.4 with Wry's scrollbar configuration: menu clientHeight 238,
+  scrollHeight 260; the last option's single W3C click failed. The driver now
+  uses genuine Home/ArrowDown input, skips disabled options, checks the actual
+  active descendant and full option bounds within the scrolled menu, then
+  clicks that option once and waits for the original menu dismissal. The same
+  fixture now selects `cancelled` successfully. No JS injection or click retry.
+- Migration evidence previously checked only vertical visibility; downloaded
+  screenshots visibly cut off the right side. Explicit screenshot navigation
+  now uses the existing host-list range/End control before one read-only click.
+  Subsequent checks are read-only and require both axes inside the window and
+  list viewport. A synthetic tall list reproduced the horizontal clipping
+  (but not the final CI click exception); the production scroll component and
+  new helper reveal both endpoint rows. Final native evidence is in
+  `/tmp/shellbeam-clipped-transfer-fixed-1792665558109.json` and its PNG.
+- 172 Node protocol tests, modified-script ESLint and diff checks passed.
+  Regression cases cover disabled options, delayed menu scroll/dismissal,
+  independent window/list clipping and no second click after failure.
+  Notification readers/guards, same-frame title/body OCR, original samples,
+  scope, audit and no-replay assertions are unchanged. The isolated container
+  is removed; the user's running App, Vault and credentials were untouched.
+  New-head installed GUI and real-SSH reports remain required.

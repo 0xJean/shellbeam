@@ -196,28 +196,54 @@ test('controlled field replacement uses explicit keyboard actions and releases m
   assert.equal(writes[2].body.text,'32787');assert.equal(calls.some(c=>c.path.includes('/execute/')),false)
 })
 
-test('application dropdowns select a visible scoped menu option through W3C clicks', async t => {
+for (const longMenu of [false, true]) test(`application dropdowns reveal ${longMenu ? 'a clipped final' : 'a visible'} option through real keyboard navigation and one click`, async t => {
   const calls = [], element = id => ({ 'element-6066-11e4-a52e-4f735466cecf': id })
-  let menuReads = 0
+  const count = longMenu ? 9 : 1, target = count - 1
+  const disabled = new Set(longMenu ? [0, 4] : [])
+  const enabled = Array.from({ length: count }, (_, i) => i).filter(i => !disabled.has(i))
+  let menuReads = 0, active = target, scrollReads = 0
   const server = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk)
     const raw = Buffer.concat(chunks).toString(); const body = raw ? JSON.parse(raw) : null
     calls.push({ path: request.url, body })
     let value = null
-    if (request.url.endsWith('/elements')) value = body.value === 'option' ? [element('native-option')]
-      : body.value.endsWith('[role="option"]') ? [element('visible-option')]
+    const option = /\/element\/choice-(\d+)\//.exec(request.url)?.[1]
+    if (request.url.endsWith('/actions')) {
+      const keys = body.actions[0].actions
+      assert.equal(body.actions[0].id, 'menu-keyboard')
+      assert.deepEqual(keys.map(k => k.type), ['keyDown', 'keyUp'])
+      assert.equal(keys[0].value, keys[1].value)
+      if (keys[0].value === '\uE011') active = enabled[0]
+      else { assert.equal(keys[0].value, '\uE015'); active = enabled[enabled.indexOf(active) + 1] }
+    }
+    else if (request.url.endsWith('/elements')) value = body.value === 'option' ? [element('native-option')]
+      : body.value.endsWith('[role="option"]') ? Array.from({ length: count }, (_, i) => element(`choice-${i}`))
       : ++menuReads === 1 ? [element('closing-menu')] : []
-    else if (request.url.endsWith('/element')) value = element('select')
+    else if (request.url.endsWith('/element')) value = element(body.value.includes('[role="listbox"]') ? 'menu' : 'select')
     else if (request.url.endsWith('/displayed') || request.url.endsWith('/enabled')) value = true
-    else if (request.url.endsWith('/property/value') || request.url.endsWith('/attribute/data-value')) value = 'logs'
+    else if (request.url.endsWith('/property/value')) value = 'logs'
+    else if (request.url.endsWith('/attribute/data-value')) value = Number(option) === target ? 'logs' : `other-${option}`
+    else if (request.url.endsWith('/attribute/aria-disabled')) value = disabled.has(Number(option)) ? 'true' : null
+    else if (request.url.endsWith('/attribute/id')) value = `_r_1_-${option}`
+    else if (request.url.endsWith('/attribute/aria-activedescendant')) value = `_r_1_-${active}`
+    else if (request.url.endsWith('/property/offsetTop')) value = target * 36 + 4
+    else if (request.url.endsWith('/property/offsetHeight')) value = 36
+    else if (request.url.endsWith('/property/clientHeight')) value = 238
+    else if (request.url.endsWith('/property/scrollTop')) value = ++scrollReads > 1 && longMenu ? 90 : 0
     else if (request.url.endsWith('/attribute/data-app-select')) value = 'true'
     else if (request.url.endsWith('/attribute/aria-controls')) value = '_r_1_'
+    else if (request.url.includes('/choice-') && request.url.endsWith('/click')) {
+      assert.equal(Number(option), target)
+      assert.equal(active, target)
+      if (longMenu) assert(scrollReads >= 2, 'wait for the real scroll position before the only option click')
+    }
     response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ value }))
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => { server.closeAllConnections(); server.close() })
   const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`); driver.sessionId = 's'
   await driver.select('[data-testid="host-ops-open"]', 'logs')
-  assert.deepEqual(calls.filter(call => call.path.endsWith('/click')).map(call => call.path), ['/session/s/element/select/click', '/session/s/element/visible-option/click'])
+  assert.deepEqual(calls.filter(call => call.path.endsWith('/click')).map(call => call.path), ['/session/s/element/select/click', `/session/s/element/choice-${target}/click`])
+  assert.equal(calls.filter(call => call.path.endsWith('/actions')).length, enabled.length)
   assert(calls.some(call => call.body?.value === '[id="_r_1_"][role="listbox"] [role="option"]'))
   assert.equal(menuReads, 2, 'selection waits until the closing portal is no longer displayed')
   assert.equal(calls.some(call => call.path.includes('/execute/')), false)

@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { forwardTransferRequest } from './probe-transfer-ui-fixture.mjs'
 import { verifyTransferUiReport } from './probe-transfer-ui-report.mjs'
-import { classifyTransferHostError } from './probe-transfer-ui-journey.mjs'
+import { classifyTransferHostError, revealTransferObservations } from './probe-transfer-ui-journey.mjs'
 import { historyTimes, transferHistory } from './probe-transfer-history.mjs'
 import { guardUiEnvironment } from './run-ops-ui-live.mjs'
 const report=()=>({success:true,applicationStopped:true,cleanup:true,headCommit:'a'.repeat(40),checkedOutCommit:'b'.repeat(40),journey:{passed:true,installedPackage:true,productionIpc:true,realVault:true,normalMigration:1,interruptedMigrations:2,readonlyInspections:2,explicitRestore:1,explicitFinish:1,restoredAuditJobs:14,noReplayMs:5000},screenshots:['completed','restore-readback','restore-recovered','finish-readback','finish-recovered'].map(n=>({file:`transfer-${n}.png`,sha256:'c'.repeat(64),bytes:10000,width:1280,height:900})),events:[{name:'transfer-fixture-ready',machineIdentitiesDistinct:true,architecture:'amd64',services:2,hosts:4,productionKeyId:'compatible-probe-2026-01',sequence:1792594908584},...['transfer-app-install-verified','transfer-app-cross-service-machine-account-completed','transfer-app-restore-verified','transfer-app-finish-verified'].map(name=>({name,originalSampleAt:12000,before:11000,started:11500,verifiedAt:12500,processSha256:'d'.repeat(64)})),{name:'transfer-cancelled-without-remote-mutation',passed:true},...['restore','finish'].map(action=>({name:'transfer-interrupted-recovered-in-app',action,passed:true,bothJobsRecovered:true,noReplayMs:5000})),{name:'transfer-app-audit-history-restored',passed:true,auditJobs:14,jobs:Array.from({length:14},(_,i)=>({id:`00000000-0000-0000-0000-${String(i).padStart(12,'0')}`,status:i<4?'unknown':'completed'}))},...['source','target','restore','finish'].map(role=>({name:'transfer-app-retained-history',role,originalBuckets:[60000],retainedBuckets:1,checkedAt:120000})),{name:'transfer-app-final-preservation-and-exit',passed:true,allProbesStopped:true,auditJobs:14,originalConfigurationRetained:true,nodeCredentialsAndHistoryRetained:true}]})
@@ -53,4 +53,37 @@ test('host form diagnostics return fixed categories without credential-bearing m
   assert.equal(classifyTransferHostError('Private key or vault key reference is required'),'validation_failed')
   assert.equal(classifyTransferHostError('synthetic-private-key-value'),'unclassified_error')
   assert.equal(classifyTransferHostError(''),'none')
+})
+
+test('transfer evidence navigates horizontally then makes one read-only click and waits for both axes',async()=>{
+  const calls=[];let rangeValue=0,reads=0
+  const d={
+    findAll:async()=>['range'],isDisplayed:async()=>true,
+    attr:async(_,name)=>name==='max'?'130':String(rangeValue),
+    click:async target=>calls.push(['click',target]),route:path=>path,
+    request:async(method,path,body)=>{
+      calls.push([method,path])
+      if(path==='/actions'){
+        assert.deepEqual(body.actions[0].actions,[{type:'keyDown',value:'\uE010'},{type:'keyUp',value:'\uE010'}]);rangeValue=130
+      }else{assert.equal(path,'/window/rect');return {width:1280,height:800}}
+    },
+    rect:async target=>target==='observations'
+      ? ++reads===1?{x:994,y:600,width:362,height:36}:reads===2?{x:860,y:-30,width:362,height:36}:{x:860,y:600,width:362,height:36}
+      :{x:214,width:1054},
+    until:async fn=>{for(let i=0;i<3;i++)if(await fn())return;assert.fail('visibility did not settle')},
+  }
+  await revealTransferObservations(d,'observations')
+  assert.equal(reads,3,'neither horizontal nor vertical clipping is accepted')
+  assert.deepEqual(calls,[['click','range'],['POST','/actions'],['GET','/window/rect'],['click','observations']])
+})
+
+for(const issue of ['list-clip','window-clip','click-failure'])test(`transfer evidence refuses ${issue} without another click`,async()=>{
+  const clicks=[]
+  const d={findAll:async()=>[],route:path=>path,request:async()=>({width:1280,height:800}),
+    click:async target=>{clicks.push(target);if(issue==='click-failure')throw new Error('single native click failed')},
+    rect:async target=>target==='observations'?{x:issue==='list-clip'?910:950,y:600,width:362,height:36}:{x:214,width:issue==='list-clip'?1054:1200},
+    until:async(fn,options)=>{assert.equal(options.timeoutMs,5000);assert.equal(await fn(),false);throw new Error('still clipped')},
+  }
+  await assert.rejects(revealTransferObservations(d,'observations'),issue==='click-failure'?/single native click failed/:/still clipped/)
+  assert.deepEqual(clicks,['observations'])
 })
