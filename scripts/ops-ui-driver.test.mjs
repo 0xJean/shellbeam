@@ -196,12 +196,13 @@ test('controlled field replacement uses explicit keyboard actions and releases m
   assert.equal(writes[2].body.text,'32787');assert.equal(calls.some(c=>c.path.includes('/execute/')),false)
 })
 
-for (const longMenu of [false, true]) test(`application dropdowns reveal ${longMenu ? 'a clipped final' : 'a visible'} option through real keyboard navigation and one click`, async t => {
+for (const mode of ['visible', 'settling', 'outside-window']) test(`application dropdown ${mode}: keyboard navigation never clicks an option outside the window`, async t => {
+  const longMenu = mode !== 'visible', outsideWindow = mode === 'outside-window'
   const calls = [], element = id => ({ 'element-6066-11e4-a52e-4f735466cecf': id })
   const count = longMenu ? 9 : 1, target = count - 1
   const disabled = new Set(longMenu ? [0, 4] : [])
   const enabled = Array.from({ length: count }, (_, i) => i).filter(i => !disabled.has(i))
-  let menuReads = 0, active = target, scrollReads = 0
+  let menuReads = 0, active = target, scrollReads = 0, boundsReads = 0
   const server = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk)
     const raw = Buffer.concat(chunks).toString(); const body = raw ? JSON.parse(raw) : null
@@ -219,7 +220,7 @@ for (const longMenu of [false, true]) test(`application dropdowns reveal ${longM
     else if (request.url.endsWith('/elements')) value = body.value === 'option' ? [element('native-option')]
       : body.value.endsWith('[role="option"]') ? Array.from({ length: count }, (_, i) => element(`choice-${i}`))
       : ++menuReads === 1 ? [element('closing-menu')] : []
-    else if (request.url.endsWith('/element')) value = element(body.value.includes('[role="listbox"]') ? 'menu' : 'select')
+    else if (request.url.endsWith('/element')) value = element(body.value === 'html' ? 'viewport' : body.value.includes('[role="listbox"]') ? 'menu' : 'select')
     else if (request.url.endsWith('/displayed') || request.url.endsWith('/enabled')) value = true
     else if (request.url.endsWith('/property/value')) value = 'logs'
     else if (request.url.endsWith('/attribute/data-value')) value = Number(option) === target ? 'logs' : `other-${option}`
@@ -228,19 +229,35 @@ for (const longMenu of [false, true]) test(`application dropdowns reveal ${longM
     else if (request.url.endsWith('/attribute/aria-activedescendant')) value = `_r_1_-${active}`
     else if (request.url.endsWith('/property/offsetTop')) value = target * 36 + 4
     else if (request.url.endsWith('/property/offsetHeight')) value = 36
-    else if (request.url.endsWith('/property/clientHeight')) value = 238
+    else if (request.url.endsWith('/property/clientHeight')) value = request.url.includes('/viewport/') ? 800 : 238
+    else if (request.url.endsWith('/property/clientWidth')) value = 1280
+    else if (request.url.endsWith('/rect')) value = { x: 182, y: longMenu && (++boundsReads < 3 || outsideWindow) ? 2770 : 519, width: 245, height: 240 }
     else if (request.url.endsWith('/property/scrollTop')) value = ++scrollReads > 1 && longMenu ? 90 : 0
     else if (request.url.endsWith('/attribute/data-app-select')) value = 'true'
     else if (request.url.endsWith('/attribute/aria-controls')) value = '_r_1_'
     else if (request.url.includes('/choice-') && request.url.endsWith('/click')) {
       assert.equal(Number(option), target)
       assert.equal(active, target)
-      if (longMenu) assert(scrollReads >= 2, 'wait for the real scroll position before the only option click')
+      if (longMenu) {
+        assert(scrollReads >= 2, 'wait for the real scroll position before the only option click')
+        assert(boundsReads >= 3, 'an option inside a menu outside the viewport is still not clickable')
+      }
     }
     response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ value }))
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => { server.closeAllConnections(); server.close() })
   const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`); driver.sessionId = 's'
+  if (outsideWindow) {
+    // Bound this synthetic permanently-clipped fixture, not product timeouts.
+    const until = driver.until.bind(driver)
+    driver.until = fn => until(fn, { timeoutMs: 500 })
+    await assert.rejects(driver.select('[data-testid="host-ops-open"]', 'logs'), /timeout/)
+    assert.deepEqual(calls.filter(call => call.path.endsWith('/click')).map(call => call.path), ['/session/s/element/select/click'])
+    assert.equal(driver.lastClickDiagnostics.available, true)
+    assert.equal(driver.lastClickDiagnostics.target.y, 2770)
+    assert.equal(calls.some(call => call.path.includes('/execute/')), false)
+    return
+  }
   await driver.select('[data-testid="host-ops-open"]', 'logs')
   assert.deepEqual(calls.filter(call => call.path.endsWith('/click')).map(call => call.path), ['/session/s/element/select/click', `/session/s/element/choice-${target}/click`])
   assert.equal(calls.filter(call => call.path.endsWith('/actions')).length, enabled.length)

@@ -504,3 +504,27 @@ head as a parent. These failed reports are not complete acceptance evidence.
   scope, audit and no-replay assertions are unchanged. The isolated container
   is removed; the user's running App, Vault and credentials were untouched.
   New-head installed GUI and real-SSH reports remain required.
+
+`6eda0d5` follow-up: 13 checks passed, original GUI `39764948812` failed,
+and migration GUI `39764948782` was still installing native dependencies.
+Independent artifact `12419308539` is in `/tmp/shellbeam-ci-6eda0d5-gui-audit`.
+The failure is at `rule-activation / local-rule-metric`, not the host menu:
+range/End navigation completed, the direct host rule and its notification
+passed, then the next rule's option click failed. Its listbox was internally
+unclipped (clientHeight/scrollHeight both 152) but located at y=2770, outside
+the 1280x800 window. Cleanup/app exit passed; merge `0b7cdad` contains this head.
+
+The driver now also requires the entire portal inside the real HTML viewport
+within the existing readiness check and timeout. If it never becomes visible,
+the selection fails without an option click and retains read-only geometry.
+No click retry, extra navigation or longer timeout was introduced. Protocol
+regressions distinguish delayed internal scrolling from delayed whole-menu
+positioning and permanently off-window menus; all 173 Node tests and modified
+script lint/diff checks pass. A tall production LocalAlertRulesPanel fixture
+and the clipped final-option fixture pass on isolated native WebKit, including
+the new viewport check (`/tmp/shellbeam-clipped-rules-1792666800353.json`).
+The tall fixture also passed before this change: it does not reproduce the CI
+positioning race or prove its underlying cause. Full installed CI is still
+required; this change closes a demonstrated gap in click readiness, not a
+claim that all GUI failures are resolved. No product or user-data changes;
+the temporary native container was removed.

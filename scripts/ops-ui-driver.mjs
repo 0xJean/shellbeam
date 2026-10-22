@@ -218,12 +218,25 @@ export class OpsUiDriver {
               if (candidate.id === choice.id) break
             }
             const menu = await this.find(`[id=${JSON.stringify(menuId)}][role="listbox"]`)
+            const viewport = await this.find('html')
             await this.until(async () => {
               const read = async (target, field) => this.request('GET', await this.elementRoute(target, `/property/${field}`))
               const top = await read(choice, 'offsetTop'), height = await read(choice, 'offsetHeight')
               const scroll = await read(menu, 'scrollTop'), visible = await read(menu, 'clientHeight')
+              // A portal can follow an ancestor's asynchronous native scroll.
+              // Being inside the listbox is insufficient if the entire menu
+              // is still outside the window. Observe both before the click.
+              const box = await this.rect(menu)
+              const width = await read(viewport, 'clientWidth'), viewportHeight = await read(viewport, 'clientHeight')
               return [top, height, scroll, visible].every(Number.isFinite) && height > 0 && visible > 0
                 && top >= scroll && top + height <= scroll + visible
+                && [box.x, box.y, box.width, box.height, width, viewportHeight].every(Number.isFinite)
+                && box.width > 0 && box.height > 0 && box.x >= 0 && box.y >= 0
+                && box.x + box.width <= width && box.y + box.height <= viewportHeight
+            }).catch(async error => {
+              // Preserve safe geometry even when no click was attempted.
+              this.lastClickDiagnostics = await this.readClickGeometry(choice).catch(() => ({ available: false }))
+              throw error
             })
             await this.clickElement(choice)
             // The real change event can commit before the portal is removed.
