@@ -71,7 +71,13 @@ export async function main(env=process.env) {
         if(elements.length){diagnostics[key+'Visible']=await driver.isDisplayed(elements[0]);if(key!=='editor')diagnostics[key+'Enabled']=await driver.isEnabled(elements[0])}
       }
       for(const alert of await driver.findAll('[role="alert"]'))if(await driver.isDisplayed(alert)){diagnostics.alerts++;diagnostics.codes.push(...(await driver.text(alert)).match(/\b(?:KOMARI|MONITORING|VAULT)_[A-Z_]{1,80}\b/g)??[])}
+      for(const control of ['host-card','host-ops-details-toggle','compatible-agent-tools','probe-transfer-panel'])diagnostics[control]=(await driver.findAll(`[data-testid="${control}"]`)).length
       report.uiFailure=diagnostics
+      if(stage==='migration-and-recovery'){
+        let safe=true
+        for(const field of await driver.findAll('input[type="password"],textarea,#komari-api-key'))if(await driver.attr(field,'value'))safe=false
+        if(safe && !(await driver.findAll('iframe')).length)await checkpoint('transfer-failure')
+      }
     }catch{}
   }
   finally{

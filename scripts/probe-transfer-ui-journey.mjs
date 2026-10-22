@@ -70,7 +70,10 @@ export async function setupTransferUi({driver:d,fixture:f,record}) {
 export async function openTransferTools(d,h) {
   await main(d)
   const toggle=`${card(h)} ${id('host-ops-details-toggle')}`
-  if(await exists(d,toggle) && await d.attr(toggle,'aria-expanded')==='false')await d.click(toggle)
+  // The host directory restores monitoring summaries asynchronously. Waiting
+  // for their actual disclosure avoids permanently skipping a late summary.
+  await d.waitFor(toggle,{timeoutMs:60000})
+  if(await d.attr(toggle,'aria-expanded')==='false')await d.click(toggle)
   const tools=`${card(h)} ${id('compatible-agent-tools')}`
   await d.waitFor(tools,{timeoutMs:60000})
   if(await d.attr(tools,'open')===null)await d.click(`${tools} > summary`)
