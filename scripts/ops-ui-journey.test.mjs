@@ -400,6 +400,10 @@ function ruleActivationDriver() {
   const events = []
   return {
     events,
+    async findAll(css) {
+      assert.equal(css, '[data-testid="host-list-scroll-controls"] input[type="range"]')
+      return []
+    },
     async waitFor(css) {
       if (css.includes('local-alert-row')) {
         assert(css.includes('data-alert-status="active"'))

@@ -3,7 +3,7 @@
 // controls only the disposable fixture's existing exact SSHD services.
 import { createHash } from 'node:crypto'
 import { basename, isAbsolute, relative, resolve } from 'node:path'
-import { findOpsUiAuditRow, respondOpsUiConfirmation, validateOpsUiServiceRect, waitForOpsUiConfirmation } from './ops-ui-journey.mjs'
+import { findOpsUiAuditRow, respondOpsUiConfirmation, revealOpsUiHostActions, validateOpsUiServiceRect, waitForOpsUiConfirmation } from './ops-ui-journey.mjs'
 import { ensureOpsUiHostDetails, isOpsUiHostDetailsVisible } from './ops-ui-host-details.mjs'
 
 const ROLES = Object.freeze(['direct', 'via'])
@@ -170,6 +170,7 @@ export async function settleOpsUiProbeInventory({ driver, fixture, resumeState, 
     const previous = await readOpsUiProbeEvaluation(driver, probeState, role, 'inventory')
     const menu = `${card(probeState, role)} ${tid('host-ops-open')}`
     await driver.waitFor(menu)
+    await revealOpsUiHostActions(driver)
     assertScope()
     // The actual collector reports whole UTC seconds. Begin the one forced
     // collection after a future whole-second boundary, never by rounding an

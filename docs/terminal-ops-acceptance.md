@@ -442,3 +442,7 @@ Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例�
 - 使用隔离 Linux GTK WebKit 2.50.4、与 Wry 相同的滚动条配置和生产组件复现：短跳板名称正常；长名称选中后，select 的文字绘制溢出其边界，弹窗出现额外横向滚动，保存按钮单次标准点击失败。对 trigger 增加文字截断后，弹窗宽度/滚动宽度均为 576，保存按钮原位置 y=728 单次点击成功。菜单继续显示完整选项，实际字段值和选择事件不变。
 - 同一原生环境复现列表连接按钮位于横向 viewport 外时，WebKit 的自动滚动没有使其可交互。两份安装包 onboarding 旅程现在先点击现有可见滚动范围控件、按 End、核对其真实终点，再单次点击连接；没有脚本滚动、点击重试或隐藏元素操作。失败诊断及通知触发后的只读 reader/guard 未改，原同帧截图、独立标题/正文 OCR、sample、scope、no-replay 和诊断步数断言保持不变。
 - 本批验证：72 项相关组件测试、167 项 Node 协议测试、TypeScript/Vite 生产构建及修改范围 ESLint 通过。原生合成组件的保存与连接回调已核对，几何记录 `/tmp/shellbeam-ci-click-fix-form.json` / `shellbeam-ci-click-fix-list.json`，操作列前后截图 `/tmp/shellbeam-list-synthetic.png` / `shellbeam-list-synthetic-navigation.png`。此为可重复的组件/驱动边界证据，不替代新 head 的完整安装包、真实 SSH、迁移或通知验收；不涉及真实 Vault、用户凭据及运行中的 App。
+
+`2efac9d` 的 15 项 CI 已结束：14 项成功，迁移安装包工作流 `39751621250` 已完整成功（尚未独立下载审计，不能代替后续 head 证据）。原 Ops GUI `39751621263` 已越过三台主机保存/连接及系统通知四状态，在规则配置前的 `host-ops-open` 失败；独立 artifact `12412839984` 证明同一个横向 viewport 为 1054/1184、scrollLeft 0，菜单可显示/启用但中心被裁剪，cleanup/appStopped 通过。
+
+后续仅补齐验收导航：规则配置、恢复后的 Network 路由及资产刷新菜单在执行前复用现有 range/End 操作；不改变产品功能、三步服务诊断预算或任何触发后的通知 reader/guard。167 项 Node 协议测试及修改范围 lint/diff 通过；两项规则通知测试的无横向滚动夹具补充控件查询，原先等待通知证据后才进入下一台主机、失败后立即停止的断言不变。新 head 仍需完整 CI 与独立报告审计。

@@ -82,7 +82,8 @@ async function openDashboardPage(driver, page) {
 
 // WebKit's element click can leave a partially clipped button behind a nested
 // horizontal viewport. Navigate with the same visible range/End key as a user,
-// before the one connection click; never retry that action or inject scrolling.
+// before the one action; never retry that action or inject scrolling. Call only
+// from explicit navigation, never a notification-triggered reader or guard.
 export async function revealOpsUiHostActions(driver) {
   const ranges = await driver.findAll('[data-testid="host-list-scroll-controls"] input[type="range"]')
   if (!ranges.length) return
@@ -185,6 +186,7 @@ async function connectAndVerify(driver, fixture, role, state, record) {
 
 async function configureRule(driver, fixture, role, state) {
   await openDashboardPage(driver, 'hosts')
+  await revealOpsUiHostActions(driver)
   await driver.select(`${byHost(state.hostIds[role])} ${testId('host-ops-open')}`, 'network')
   const root = ruleRoot(state.hostIds[role])
   await driver.waitFor(root, { timeoutMs: 60000 })
@@ -579,6 +581,7 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     state.jobs[role] = { cancelled, completed, baseline }
     await record(`ops-ui-${role}-confirmed`, { passed: true, jobId: completed, verifiedActive: true })
     await openDashboardPage(driver, 'hosts')
+    await revealOpsUiHostActions(driver)
     await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
     await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
     await record(`ops-ui-${role}-recovered`, { passed: true })
@@ -607,6 +610,7 @@ export async function resumeOpsUiJourney({ driver, fixture, record, checkpoint, 
     await checkpoint('after-confirm', { role, unit, baseline: state.jobs[role].baseline })
     await openDashboardPage(driver, 'hosts')
     const id = state.hostIds[role]
+    await revealOpsUiHostActions(driver)
     await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
     await driver.waitFor(ruleRoot(id), { timeoutMs: 60000 })
     check(await driver.attr(ruleRoot(id), 'data-vault-id') === state.vaultId, 'restored_rule_vault_scope_mismatch')
