@@ -38,6 +38,25 @@ test('reports omit credentials and payloads while retaining visibility booleans'
   assert.deepEqual(report, { ocrTitleMatched: true, screenshot: 'notification-visible.png', jobId: '00000000-0000-4000-8000-000000000001' })
 })
 
+test('horizontal list readiness reads only numeric W3C geometry, never input values or script', async t => {
+  const calls = [], geometry = { clientWidth: 1054, scrollWidth: 1184, scrollLeft: 130 }
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* Discard locator payload. */ }
+    calls.push([request.method, request.url])
+    const value = request.url.endsWith('/element') ? { 'element-6066-11e4-a52e-4f735466cecf': 'list' }
+      : geometry[request.url.split('/').at(-1)]
+    response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ value }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => { server.closeAllConnections(); server.close() })
+  const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`); driver.sessionId = 's'
+  assert.deepEqual(await driver.horizontalScrollState('[data-testid="host-list-scroll-viewport"]'), { width: 1054, contentWidth: 1184, left: 130 })
+  assert.deepEqual(calls, [['POST', '/session/s/element'], ...['clientWidth', 'scrollWidth', 'scrollLeft'].map(name => ['GET', `/session/s/element/list/property/${name}`])])
+  geometry.scrollLeft = 'SYNTHETIC_PRIVATE_VALUE'
+  await assert.rejects(driver.horizontalScrollState('[data-testid="host-list-scroll-viewport"]'), error => error.message === 'invalid horizontal scroll geometry')
+  assert.equal(driver.lastInteraction, null)
+})
+
 test('failed clicks retain only numeric geometry and never retry, scroll, or read credential values', async t => {
   const calls = [], element = id => ({ 'element-6066-11e4-a52e-4f735466cecf': id })
   const server = createServer(async (request, response) => {

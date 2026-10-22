@@ -170,7 +170,7 @@ export async function settleOpsUiProbeInventory({ driver, fixture, resumeState, 
     const previous = await readOpsUiProbeEvaluation(driver, probeState, role, 'inventory')
     const menu = `${card(probeState, role)} ${tid('host-ops-open')}`
     await driver.waitFor(menu)
-    await revealOpsUiHostActions(driver)
+    await revealOpsUiHostActions(driver, menu)
     assertScope()
     // The actual collector reports whole UTC seconds. Begin the one forced
     // collection after a future whole-second boundary, never by rounding an

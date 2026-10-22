@@ -84,28 +84,52 @@ async function openDashboardPage(driver, page) {
 // horizontal viewport. Navigate with the same visible range/End key as a user,
 // before the one action; never retry that action or inject scrolling. Call only
 // from explicit navigation, never a notification-triggered reader or guard.
-export async function revealOpsUiHostActions(driver) {
-  const ranges = await driver.findAll('[data-testid="host-list-scroll-controls"] input[type="range"]')
-  // Retain only the decisions/reads already needed for this navigation. A
-  // later click can observe a different layout; do not infer the earlier
-  // range state from failure geometry or add reads that mask that transition.
-  const navigation = { rangeCount: ranges.length, max: null, value: null, decision: 'checking', settled: false }
+export async function revealOpsUiHostActions(driver, target) {
+  check(typeof target === 'string' && target.length > 0, 'host_navigation_target_missing')
+  const viewport = '[data-testid="host-list-scroll-viewport"]'
+  const navigation = { rangeCount: null, max: null, value: null, width: null, contentWidth: null, left: null, decision: 'waiting-for-host', settled: false }
   driver.lastHostNavigation = navigation
-  if (!ranges.length) { navigation.decision = 'no-range'; return }
-  check(ranges.length === 1 && await driver.isDisplayed(ranges[0]), 'host_scroll_control_ambiguous')
-  const range = ranges[0]
-  const max = Number(await driver.attr(range, 'max'))
-  const value = Number(await driver.attr(range, 'value'))
-  navigation.max = Number.isFinite(max) ? max : null
-  navigation.value = Number.isFinite(value) ? value : null
-  check(Number.isFinite(max) && max >= 0 && Number.isFinite(value) && value >= 0 && value <= max, 'host_scroll_range_invalid')
-  if (max - value < 1) { navigation.decision = 'already-at-end'; return }
+  // The dashboard header mounts before the host list. A missing range at that
+  // point says nothing about overflow. Wait for this host and measure the real
+  // list before deciding; all readiness reads use the existing bounded wait.
+  await driver.waitFor(target)
+  await driver.waitFor(viewport)
+  navigation.decision = 'checking'
+  let range
+  await driver.until(async () => {
+    const geometry = await driver.horizontalScrollState(viewport)
+    check([geometry.width, geometry.contentWidth, geometry.left].every(Number.isFinite)
+      && geometry.width >= 0 && geometry.contentWidth >= 0 && geometry.left >= 0, 'host_scroll_geometry_invalid')
+    Object.assign(navigation, geometry)
+    if (geometry.width === 0) return false
+    const overflow = Math.max(0, geometry.contentWidth - geometry.width)
+    const ranges = await driver.findAll('[data-testid="host-list-scroll-controls"] input[type="range"]')
+    navigation.rangeCount = ranges.length
+    check(ranges.length <= 1, 'host_scroll_control_ambiguous')
+    if (overflow <= 1) { navigation.decision = 'no-overflow'; navigation.settled = true; return true }
+    if (!ranges.length) return false
+    range = ranges[0]
+    check(await driver.isDisplayed(range), 'host_scroll_control_ambiguous')
+    const max = Number(await driver.attr(range, 'max'))
+    const value = Number(await driver.attr(range, 'value'))
+    navigation.max = Number.isFinite(max) ? max : null
+    navigation.value = Number.isFinite(value) ? value : null
+    check(Number.isFinite(max) && max >= 0 && Number.isFinite(value) && value >= 0 && value <= max, 'host_scroll_range_invalid')
+    return Math.abs(max - overflow) < 1 && Math.abs(value - geometry.left) < 1
+  })
+  if (navigation.decision === 'no-overflow') return
+  if (navigation.max - navigation.value < 1) { navigation.decision = 'already-at-end'; navigation.settled = true; return }
   navigation.decision = 'range-and-end'
   await driver.click(range)
   await driver.request('POST', driver.route('/actions'), { actions: [{ type: 'key', id: 'host-list-navigation', actions: [
     { type: 'keyDown', value: '\uE010' }, { type: 'keyUp', value: '\uE010' },
   ] }] })
-  await driver.until(async () => Number(await driver.attr(range, 'value')) === Number(await driver.attr(range, 'max')))
+  await driver.until(async () => {
+    const { width, contentWidth, left } = await driver.horizontalScrollState(viewport)
+    const max = Number(await driver.attr(range, 'max'))
+    return width > 0 && Math.abs(max - (contentWidth - width)) < 1
+      && Number(await driver.attr(range, 'value')) === max && Math.abs(left - max) < 1
+  })
   navigation.settled = true
 }
 
@@ -151,7 +175,7 @@ async function createHost(driver, fixture, role, state, record) {
 
 async function connectAndVerify(driver, fixture, role, state, record) {
   await openDashboardPage(driver, 'hosts')
-  await revealOpsUiHostActions(driver)
+  await revealOpsUiHostActions(driver, `${byHost(state.hostIds[role])} ${testId('host-connect')}`)
   await driver.click(`${byHost(state.hostIds[role])} ${testId('host-connect')}`)
   await record(`ops-ui-${role}-connection-clicked`, { passed: true })
   const tab = `${testId('pc-session-tab')}[data-host-id=${q(state.hostIds[role])}]`
@@ -195,7 +219,7 @@ async function connectAndVerify(driver, fixture, role, state, record) {
 
 async function configureRule(driver, fixture, role, state) {
   await openDashboardPage(driver, 'hosts')
-  await revealOpsUiHostActions(driver)
+  await revealOpsUiHostActions(driver, `${byHost(state.hostIds[role])} ${testId('host-ops-open')}`)
   await driver.select(`${byHost(state.hostIds[role])} ${testId('host-ops-open')}`, 'network')
   const root = ruleRoot(state.hostIds[role])
   await driver.waitFor(root, { timeoutMs: 60000 })
@@ -590,7 +614,7 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     state.jobs[role] = { cancelled, completed, baseline }
     await record(`ops-ui-${role}-confirmed`, { passed: true, jobId: completed, verifiedActive: true })
     await openDashboardPage(driver, 'hosts')
-    await revealOpsUiHostActions(driver)
+    await revealOpsUiHostActions(driver, `${byHost(id)} ${testId('host-ops-open')}`)
     await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
     await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
     await record(`ops-ui-${role}-recovered`, { passed: true })
@@ -619,7 +643,7 @@ export async function resumeOpsUiJourney({ driver, fixture, record, checkpoint, 
     await checkpoint('after-confirm', { role, unit, baseline: state.jobs[role].baseline })
     await openDashboardPage(driver, 'hosts')
     const id = state.hostIds[role]
-    await revealOpsUiHostActions(driver)
+    await revealOpsUiHostActions(driver, `${byHost(id)} ${testId('host-ops-open')}`)
     await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
     await driver.waitFor(ruleRoot(id), { timeoutMs: 60000 })
     check(await driver.attr(ruleRoot(id), 'data-vault-id') === state.vaultId, 'restored_rule_vault_scope_mismatch')

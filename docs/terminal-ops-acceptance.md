@@ -528,3 +528,46 @@ positioning race or prove its underlying cause. Full installed CI is still
 required; this change closes a demonstrated gap in click readiness, not a
 claim that all GUI failures are resolved. No product or user-data changes;
 the temporary native container was removed.
+
+### 2026-10-22: Host-list mount readiness before horizontal navigation
+
+`1d8737a` finished 14/15 checks. Original GUI `39767532373` failed at
+`rule-activation / host-ops-open`; the earlier no-range case recurred, before
+the dropdown viewport check was reached. Artifact `12420922326`, downloaded
+to `/tmp/shellbeam-ci-1d8737a-gui-audit`, records rangeCount=0/no-range followed
+by viewport width 1054, content width 1184 and scrollLeft=0. The operation
+column started at x=1163 and was clipped. Cleanup/app exit passed. Merge
+`41a81fc` has `1d8737a` as a parent.
+
+The production HostListItem/HostListScrollArea fixture on isolated GTK WebKit
+2.50.4 with Wry's scrollbar configuration now reproduces this sequence: render
+the dashboard header first, then mount the list. The previous helper returns
+before the list exists; the subsequent single menu click fails with the same
+1054/1184 geometry. The helper now waits for the specific host action and the
+list viewport, reads real numeric scroll geometry, and only treats measured
+absence of overflow as requiring no navigation. Overflow waits for a matching
+visible range; the existing single click/End sequence must also reach the
+actual viewport's end. Missing or stale controls never imply success.
+
+The same native fixture now reaches scrollLeft=130 and invokes the target
+Network callback. Before/after JSON and PNG evidence is in
+`/tmp/shellbeam-delayed-list-before.*` and `/tmp/shellbeam-delayed-list-after.*`.
+178 Node protocol tests and modified-script ESLint/diff checks pass. Coverage
+includes delayed target mount, late/stale range geometry, zero-size layout,
+permanent missing controls, actual offset confirmation and single-click
+failure. No fixed sleep, longer timeout, click retry or JS scrolling was added;
+notification-triggered readers/guards and all acceptance assertions remain
+unchanged. This is a verified synthetic navigation fix, not complete installed
+GUI acceptance for the new head. The isolated container was removed; the
+running user App, Vault and credentials were not accessed.
+
+Migration GUI `39767532325` passed on `1d8737a`. Artifact `12421890583` was
+independently downloaded to `/tmp/shellbeam-ci-1d8737a-transfer-gui-audit`:
+normal migration, two interrupted migrations, explicit restore/finish, 14
+restored audits (10 completed, 4 unknown), four original fresh samples, fixed
+production process hashes, four retained node histories and 5000ms no-replay
+checks passed. All 52 events were checked against the report contract; all
+five PNG byte counts, hashes and dimensions match, and both endpoint state
+rows are visible on manual inspection. Cleanup and application exit passed;
+the merge parent matches. This evidence belongs to `1d8737a` only and cannot
+replace the next head's full CI reports.

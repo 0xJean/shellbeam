@@ -400,6 +400,8 @@ function ruleActivationDriver() {
   const events = []
   return {
     events,
+    async horizontalScrollState() { return { width: 1054, contentWidth: 1054, left: 0 } },
+    async until(fn) { assert(await fn()) },
     async findAll(css) {
       assert.equal(css, '[data-testid="host-list-scroll-controls"] input[type="range"]')
       return []
@@ -453,6 +455,7 @@ function recoveryDriver(state, restartedAfter, allowFresh) {
   const reads = []
   return {
     reads,
+    async horizontalScrollState() { return { width: 1054, contentWidth: 1054, left: 0 } },
     async waitFor() {}, async fill() {}, async click() {},
     async findAll(css) { return css.includes('operation-audit-row') ? [css] : [] },
     async isDisplayed() { return true },
@@ -521,6 +524,7 @@ test('incident recovery awaits its evidence hook only after the matching resolve
   const diagnosed = []
   const responses = [], requests = []
   const driver = {
+    async horizontalScrollState() { return { width: 1054, contentWidth: 1054, left: 0 } },
     async waitFor(css) { if (css.includes('data-alert-status="resolved"')) { assert(css.includes(`data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}"`)); observed.push(role) } },
     async select(css, value) {
       if (css.includes('operations-')) document.querySelector(css).value = value
@@ -589,44 +593,103 @@ test('incident recovery awaits its evidence hook only after the matching resolve
 })
 
 
-test('host connection navigation uses the visible range and one End key before any connection action', async () => {
+function hostNavigationDriver() {
+  const range = {}, actions = [], waits = []
   let position = 0
-  const range = {}, actions = []
   const driver = {
+    async waitFor(css) { waits.push(css) },
+    async horizontalScrollState(css) { assert.equal(css, '[data-testid="host-list-scroll-viewport"]'); return { width: 1054, contentWidth: 1184, left: position } },
     async findAll(css) { assert.equal(css, '[data-testid="host-list-scroll-controls"] input[type="range"]'); return [range] },
     async isDisplayed(element) { assert.equal(element, range); return true },
     async attr(element, field) { assert.equal(element, range); assert(['value', 'max'].includes(field)); return String(field === 'max' ? 130 : position) },
     async click(element) { assert.equal(element, range); actions.push('range-click'); position = 65 },
     route(path) { return '/session/test' + path },
     async request(method, path, body) { assert.equal(method, 'POST'); assert.equal(path, '/session/test/actions'); actions.push(body); position = 130 },
-    async until(read) { assert(await read()) },
+    async until(read) { for (let i = 0; i < 4; i++) if (await read()) return; throw new Error('readiness_timeout') },
   }
-  await revealOpsUiHostActions(driver)
-  assert.deepEqual(driver.lastHostNavigation, { rangeCount: 1, max: 130, value: 0, decision: 'range-and-end', settled: true })
+  return { driver, range, actions, waits }
+}
+
+test('host connection navigation waits for the target and viewport, then uses one range click and End', async () => {
+  const { driver, actions, waits } = hostNavigationDriver()
+  await revealOpsUiHostActions(driver, 'target-host-action')
+  assert.deepEqual(waits, ['target-host-action', '[data-testid="host-list-scroll-viewport"]'])
+  assert.deepEqual(driver.lastHostNavigation, { rangeCount: 1, max: 130, value: 0, width: 1054, contentWidth: 1184, left: 0, decision: 'range-and-end', settled: true })
   assert.deepEqual(actions, ['range-click', { actions: [{ type: 'key', id: 'host-list-navigation', actions: [
     { type: 'keyDown', value: '\uE010' }, { type: 'keyUp', value: '\uE010' },
   ] }] }])
-  await revealOpsUiHostActions(driver)
-  assert.equal(actions.length, 2, 'already visible actions require no extra navigation')
-  assert.deepEqual(driver.lastHostNavigation, { rangeCount: 1, max: 130, value: 130, decision: 'already-at-end', settled: false })
-  const noRange = { async findAll() { return [] } }
-  await revealOpsUiHostActions(noRange)
-  assert.deepEqual(noRange.lastHostNavigation, { rangeCount: 0, max: null, value: null, decision: 'no-range', settled: false })
+  await revealOpsUiHostActions(driver, 'target-host-action')
+  assert.equal(actions.length, 2)
+  assert.equal(driver.lastHostNavigation.decision, 'already-at-end')
+  assert.equal(driver.lastHostNavigation.settled, true)
+})
+
+test('a header before list mount cannot turn missing controls into a no-overflow decision', async () => {
+  const { driver, actions } = hostNavigationDriver(), mounted = deferred(), waiting = deferred()
+  const originalWait = driver.waitFor, originalFind = driver.findAll
+  let reads = 0
+  driver.waitFor = async css => { if (css === 'target-host-action') { waiting.resolve(); await mounted.promise } await originalWait(css) }
+  driver.findAll = async css => { reads++; return originalFind(css) }
+  const work = revealOpsUiHostActions(driver, 'target-host-action')
+  try {
+    await waiting.promise
+    assert.equal(reads, 0); assert.equal(actions.length, 0)
+    assert.equal(driver.lastHostNavigation.decision, 'waiting-for-host')
+    mounted.resolve(); await work
+    assert.equal(driver.lastHostNavigation.decision, 'range-and-end')
+    assert.equal(actions.length, 2)
+  } finally { mounted.resolve() }
+})
+
+test('overflow waits for mounted controls and matching geometry; only measured no-overflow may omit navigation', async () => {
+  const { driver, actions, range } = hostNavigationDriver()
+  let reads = 0
+  driver.findAll = async () => ++reads === 1 ? [] : [range]
+  const originalAttr = driver.attr
+  driver.attr = async (element, field) => reads === 2 && field === 'max' ? '20' : originalAttr(element, field)
+  await revealOpsUiHostActions(driver, 'target')
+  assert.equal(reads, 3); assert.equal(actions.length, 2)
+  driver.findAll = async () => []
+  driver.horizontalScrollState = async () => ({ width: 1054, contentWidth: 1054, left: 0 })
+  await revealOpsUiHostActions(driver, 'target')
+  assert.equal(driver.lastHostNavigation.decision, 'no-overflow')
+  assert.equal(actions.length, 2)
+})
+
+test('missing controls with overflow and missing layout never proceed to an operation', async () => {
+  for (const width of [0, 1054]) {
+    const { driver, actions } = hostNavigationDriver()
+    driver.horizontalScrollState = async () => ({ width, contentWidth: 1184, left: 0 })
+    driver.findAll = async () => []
+    await assert.rejects(revealOpsUiHostActions(driver, 'target'), /readiness_timeout/)
+    assert.equal(actions.length, 0); assert.equal(driver.lastHostNavigation.settled, false)
+  }
+})
+
+test('range state at the end cannot replace actual viewport scroll confirmation', async () => {
+  const { driver, actions } = hostNavigationDriver()
+  let reads = 0
+  driver.horizontalScrollState = async () => ({ width: 1054, contentWidth: 1184, left: ++reads < 3 ? 0 : 130 })
+  await revealOpsUiHostActions(driver, 'target')
+  assert.equal(reads, 3); assert.equal(actions.length, 2)
+  const stuck = hostNavigationDriver()
+  stuck.driver.horizontalScrollState = async () => ({ width: 1054, contentWidth: 1184, left: 0 })
+  await assert.rejects(revealOpsUiHostActions(stuck.driver, 'target'), /readiness_timeout/)
+  assert.equal(stuck.actions.length, 2, 'failed scroll confirmation does not repeat the click or key')
 })
 
 test('host navigation rejects ambiguous controls and preserves a failed single range click', async () => {
+  const { driver, range } = hostNavigationDriver()
   let clicks = 0, keys = 0
-  const range = {}, driver = {
-    async findAll() { return [range] }, async isDisplayed() { return true },
-    async attr(_element, field) { return field === 'max' ? '130' : '0' },
-    async click() { clicks++; throw new Error('native-click-failed') },
-    async request() { keys++ },
-  }
-  await assert.rejects(revealOpsUiHostActions(driver), /native-click-failed/)
-  assert.deepEqual(driver.lastHostNavigation, { rangeCount: 1, max: 130, value: 0, decision: 'range-and-end', settled: false })
+  driver.click = async () => { clicks++; throw new Error('native-click-failed') }
+  driver.request = async () => { keys++ }
+  await assert.rejects(revealOpsUiHostActions(driver, 'target'), /native-click-failed/)
+  assert.equal(driver.lastHostNavigation.settled, false)
   assert.equal(clicks, 1); assert.equal(keys, 0)
-  await assert.rejects(revealOpsUiHostActions({ ...driver, async findAll() { return [range, range] } }), /host_scroll_control_ambiguous/)
-  await assert.rejects(revealOpsUiHostActions({ ...driver, async isDisplayed() { return false } }), /host_scroll_control_ambiguous/)
-  await assert.rejects(revealOpsUiHostActions({ ...driver, async attr() { return 'invalid' } }), /host_scroll_range_invalid/)
+  await assert.rejects(revealOpsUiHostActions({ ...driver, async findAll() { return [range, range] } }, 'target'), /host_scroll_control_ambiguous/)
+  await assert.rejects(revealOpsUiHostActions({ ...driver, async isDisplayed() { return false } }, 'target'), /host_scroll_control_ambiguous/)
+  await assert.rejects(revealOpsUiHostActions({ ...driver, async attr() { return 'invalid' } }, 'target'), /host_scroll_range_invalid/)
+  await assert.rejects(revealOpsUiHostActions({ ...driver, async horizontalScrollState() { return { width: 'private', contentWidth: 1184, left: 0 } } }, 'target'), /host_scroll_geometry_invalid/)
+  await assert.rejects(revealOpsUiHostActions(driver), /host_navigation_target_missing/)
   assert.equal(clicks, 1); assert.equal(keys, 0)
 })

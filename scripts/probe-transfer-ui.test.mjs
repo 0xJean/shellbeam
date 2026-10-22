@@ -58,6 +58,7 @@ test('host form diagnostics return fixed categories without credential-bearing m
 test('transfer evidence navigates horizontally then makes one read-only click and waits for both axes',async()=>{
   const calls=[];let rangeValue=0,reads=0
   const d={
+    waitFor:async()=>{},horizontalScrollState:async()=>({width:1054,contentWidth:1184,left:rangeValue}),
     findAll:async()=>['range'],isDisplayed:async()=>true,
     attr:async(_,name)=>name==='max'?'130':String(rangeValue),
     click:async target=>calls.push(['click',target]),route:path=>path,
@@ -79,10 +80,10 @@ test('transfer evidence navigates horizontally then makes one read-only click an
 
 for(const issue of ['list-clip','window-clip','click-failure'])test(`transfer evidence refuses ${issue} without another click`,async()=>{
   const clicks=[]
-  const d={findAll:async()=>[],route:path=>path,request:async()=>({width:1280,height:800}),
+  const d={waitFor:async()=>{},horizontalScrollState:async()=>({width:1054,contentWidth:1054,left:0}),findAll:async()=>[],route:path=>path,request:async()=>({width:1280,height:800}),
     click:async target=>{clicks.push(target);if(issue==='click-failure')throw new Error('single native click failed')},
     rect:async target=>target==='observations'?{x:issue==='list-clip'?910:950,y:600,width:362,height:36}:{x:214,width:issue==='list-clip'?1054:1200},
-    until:async(fn,options)=>{assert.equal(options.timeoutMs,5000);assert.equal(await fn(),false);throw new Error('still clipped')},
+    until:async(fn,options)=>{if(!options){assert(await fn());return}assert.equal(options.timeoutMs,5000);assert.equal(await fn(),false);throw new Error('still clipped')},
   }
   await assert.rejects(revealTransferObservations(d,'observations'),issue==='click-failure'?/single native click failed/:/still clipped/)
   assert.deepEqual(clicks,['observations'])

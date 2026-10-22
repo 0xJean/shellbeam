@@ -512,6 +512,7 @@ async function inventoryUnit(t, { sampleMode = 'fresh', alertStatus, badField } 
   unit.fixture.artifactDir = '/private/owned-desktop/artifacts'
   const viewport = document.createElement('div')
   viewport.dataset.testid = 'host-list-scroll-viewport'
+  unit.driver.horizontalScrollState = async css => { assert.equal(css, '[data-testid="host-list-scroll-viewport"]'); return { width: 300, contentWidth: 300, left: 0 } }
   document.body.append(viewport)
   viewport.insertAdjacentHTML('beforebegin', '<div data-testid="host-list-scroll-controls"></div>')
   unit.driver.rect = async () => ({ x: 10, y: 20, width: 300, height: 40 })

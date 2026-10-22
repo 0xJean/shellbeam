@@ -41,7 +41,7 @@ export async function setupTransferUi({driver:d,fixture:f,record}) {
     record('transfer-host-form-ready',{role:h.role,fieldsMatched:true,privateKeyMatched:true,explicitReference:true})
     await d.click(id('host-save'));await closed(d,`dialog[open] ${id('host-form')}`)
     const saved=`${id('host-card')}[data-host-name=${q(h.name)}]`;await d.waitFor(saved);h.id=await d.attr(saved,'data-host-id');assert(h.id)
-    await revealOpsUiHostActions(d)
+    await revealOpsUiHostActions(d, `${saved} ${id('host-connect')}`)
     await d.click(`${saved} ${id('host-connect')}`)
     await d.until(async()=>{
       const key=`dialog[open] ${id('host-key-confirm')}`
@@ -134,7 +134,7 @@ export async function revealTransferObservations(d,observations){
   // Reveal the monitoring column through the existing visible range control.
   // A native WebKit click may scroll vertically while leaving this column
   // horizontally clipped. Navigation happens before the evidence frame.
-  await revealOpsUiHostActions(d)
+  await revealOpsUiHostActions(d, observations)
   const viewport=await d.request('GET',d.route('/window/rect'))
   await d.click(observations)
   // One real click only; subsequent paint checks are read-only. Both endpoint

@@ -179,6 +179,14 @@ export class OpsUiDriver {
   async isDisplayed(locator) { return this.request('GET', await this.elementRoute(locator, '/displayed')) }
   async isEnabled(locator) { return this.request('GET', await this.elementRoute(locator, '/enabled')) }
   async rect(locator) { return this.request('GET', await this.elementRoute(locator, '/rect')) }
+  async horizontalScrollState(locator) {
+    const element = await this.find(locator)
+    const [width, contentWidth, left] = await Promise.all(['clientWidth', 'scrollWidth', 'scrollLeft'].map(
+      field => this.request('GET', this.route(`/element/${encodeURIComponent(element.id)}/property/${field}`)),
+    ))
+    if (![width, contentWidth, left].every(Number.isFinite)) throw new Error('invalid horizontal scroll geometry')
+    return { width, contentWidth, left }
+  }
   interactable(locator, options) {
     return this.until(async () => {
       const element = await this.find(locator)
