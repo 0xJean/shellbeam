@@ -480,7 +480,8 @@ export function SessionTerminalView({
       )}
       {isConnected && (
         <AICommandBar
-          visible={showAI}
+          key={sessionId}
+          visible={showAI && visible}
           onExecuteCommand={handleExecuteCommand}
           getTerminalContext={getTerminalContext}
           onClose={() => setShowAI(false)}
@@ -494,7 +495,8 @@ export function SessionTerminalView({
             onClick={handleContainerClick}
           />
           <SuggestBar
-            visible={showSuggestions && isConnected}
+            key={sessionId}
+            visible={showSuggestions && isConnected && visible}
             inputLine={currentInputLine}
             historyEntries={[]}
             terminalContext={showSuggestions ? getTerminalContext() : ''}

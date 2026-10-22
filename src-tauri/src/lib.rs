@@ -1,6 +1,7 @@
 #![allow(unexpected_cfgs)]
 
 mod agent_release;
+mod ai_cli;
 mod biometric_store;
 mod browser;
 mod collection_limits;
@@ -77,8 +78,18 @@ pub fn run() {
         .manage(komari_console::KomariConsoleState::default())
         .manage(SshSessionPool::default())
         .manage(mcp::McpState::default())
+        .manage(ai_cli::AiCliState::default())
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                use tauri::Manager;
+                window.state::<ai_cli::AiCliState>().cancel_all();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             agent_release::download_shellbeam_agent_release,
+            ai_cli::ai_cli_status,
+            ai_cli::ai_cli_start,
+            ai_cli::ai_cli_cancel,
             data::local_ops::local_ops_list,
             data::local_ops::local_ops_upsert,
             data::local_ops::local_ops_alert_action,
@@ -311,6 +322,12 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                use tauri::Manager;
+                app.state::<ai_cli::AiCliState>().shutdown();
+            }
+        });
 }

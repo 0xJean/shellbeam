@@ -26,7 +26,15 @@ export function SuggestBar({ visible, inputLine, historyEntries, terminalContext
 
   const allSuggestions = [...historyMatches.map((h) => ({ type: 'history' as const, text: h })), ...aiSuggestions.map((a) => ({ type: 'ai' as const, text: a }))]
 
-  useEffect(() => { setSelectedIdx(0) }, [inputLine])
+  const [scope, setScope] = useState({ inputLine, visible })
+  if (scope.inputLine !== inputLine || scope.visible !== visible) {
+    setScope({ inputLine, visible })
+    setSelectedIdx(0); setAiSuggestions([]); setAiLoading(false)
+  }
+  useEffect(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
+  }, [inputLine, visible])
 
   const fetchAiSuggestions = useCallback(() => {
     if (aiLoading || !inputLine) return
@@ -39,13 +47,14 @@ export function SuggestBar({ visible, inputLine, historyEntries, terminalContext
     setAiSuggestions([])
     let result = ''
     streamAICommand(settings, `Complete this command: ${inputLine}`, terminalContext, {
-      onToken: (t) => { result += t },
+      onToken: (t) => { if (!ctrl.signal.aborted && abortRef.current === ctrl) result += t },
       onDone: () => {
+        if (ctrl.signal.aborted || abortRef.current !== ctrl) return
         const cmds = result.split('\n').map((s) => s.trim()).filter(Boolean).slice(0, 3)
         setAiSuggestions(cmds)
         setAiLoading(false)
       },
-      onError: () => { setAiLoading(false) },
+      onError: () => { if (!ctrl.signal.aborted && abortRef.current === ctrl) setAiLoading(false) },
     }, ctrl.signal)
   }, [inputLine, terminalContext, aiLoading])
 

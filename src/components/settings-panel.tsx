@@ -1,3 +1,4 @@
+import { AICliSettings } from './ai-cli-settings'
 import { HostRuleSettingsSection } from './host-notification-rules-panel'
 import { TerminalThemeGrid } from '@/components/terminal-widgets'
 import { McpSettingsSection } from '@/components/mcp-settings-section'
@@ -381,6 +382,23 @@ export function AISettingsSection() {
       </h3>
       <div className="space-y-4">
         <div>
+          <span className="text-sm text-muted-foreground">{t('ai.backend')}</span>
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            {(['api', 'claude-code', 'codex-cli'] as const).map((backend) => <button key={backend} type="button"
+              aria-pressed={(settings.backend ?? 'api') === backend}
+              onClick={() => { setShowKey(false); setSettings((s) => ({ ...s, backend })) }}
+              className={cn('rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+                (settings.backend ?? 'api') === backend ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-foreground/30')}>
+              {backend === 'api' ? t('ai.backendApi') : backend === 'claude-code' ? 'Claude Code' : 'Codex CLI'}
+            </button>)}
+          </div>
+        </div>
+        {settings.backend === 'claude-code' || settings.backend === 'codex-cli' ? (
+          <AICliSettings key={settings.backend} backend={settings.backend}
+            profile={settings.cliProfiles?.[settings.backend] ?? { executable: '', model: '' }}
+            onChange={(profile) => setSettings((s) => ({ ...s, cliProfiles: { ...s.cliProfiles, [settings.backend!]: profile } }))} />
+        ) : <>
+        <div>
           <span className="text-sm text-muted-foreground">{t('settings.provider')}</span>
           <div className="mt-1.5 flex flex-wrap gap-2">
             {AI_PROVIDERS.map((p) => (
@@ -459,6 +477,7 @@ export function AISettingsSection() {
         <p className="text-xs text-muted-foreground">
           {isOllama ? t('settings.ollamaHelper') : isCustom ? t('settings.customHelper') : t('settings.apiKeyHelper')}
         </p>
+        </>}
       </div>
     </section>
   )

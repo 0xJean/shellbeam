@@ -37,12 +37,14 @@ OpenAI's general catalog includes non-chat models, which are conservatively
 filtered. OpenRouter modality metadata is used when present. Manual IDs remain
 available for custom, newly named or otherwise unlisted models. OpenAI requests
 use `max_completion_tokens`; other compatible providers retain `max_tokens`.
-The current assistant uses Chat Completions or Anthropic Messages, so a model
+The Model API backend uses Chat Completions or Anthropic Messages, so a model
 requiring another API may still be incompatible. No inference probes or paid
 automatic fallback attempts are made.
 
 External Codex and Claude Desktop integration uses [MCP](./mcp.md), independently
-of these API settings. It does not embed an agent or reuse desktop subscriptions.
+of these API settings. For CLI-backed generation within the built-in terminal
+assistant, see [Claude Code / Codex CLI backends](./ai-cli.md). These use the locally
+installed CLI and its own sign-in, without embedding either desktop client.
 
 Official references: [OpenAI models](https://developers.openai.com/api/reference/resources/models/methods/list),
 [Anthropic models](https://platform.claude.com/docs/en/api/models/list),

@@ -450,3 +450,22 @@ Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例�
 `0833630` 最终仍为 14/15：原 Ops GUI `39753040026` 在规则配置的菜单点击失败，其余检查（含迁移 GUI）成功。独立下载 artifact `12415205055`，确认 merge `6825b6a` 父提交含该 head、真实 IPC/Vault、通知四状态及 cleanup/applicationStopped；完整告警生命周期未执行。失败几何仍为视口 1054/内容 1184、scrollLeft 0，不能仅凭失败后的读数判定导航之前是否存在滚动控件、是否执行过 End 或其后布局是否变化。
 
 追加的失败报告只保留导航原有读取和分支结果（rangeCount/max/value/decision/settled），不增加 W3C 请求、等待、点击、重试、JS 或凭据/字段读取。协议回归覆盖无控件、已到末端、实际导航及原始单次点击失败，保持同帧/OCR/可见性/sample/scope/no-replay 断言。隔离 Linux WebKit 生产列表的普通/高列表和异步资源列夹具均能正常打开菜单，目前尚未复现 CI 的位置变化，不能宣称此诊断提交修复了产品根因。合成报告 `/tmp/shellbeam-menu-repro.json`、`/tmp/shellbeam-menu-race-repro.json`；不触碰真实 Vault 或运行中的 App。
+
+### 2026-10-22: Built-in terminal assistant CLI backends
+
+Model API / Claude Code / Codex CLI settings preserve API profiles and each CLI's
+configuration. Native bounded processes, per-request channels, abort/start races and
+complete-result manual Run are covered. Frontend: 1574 passed / 17 skipped; Rust:
+254 passed / 4 opt-in ignored. Installed Claude Code and Codex CLI each completed one
+request through the production Rust adapter against isolated loopback models with
+empty tool lists, no real credentials, paid requests or command execution. See
+[AI CLI evidence and limits](./ai-cli.md). The running local App was not replaced or
+restarted. Latest-head CI remains separate from local evidence.
+
+Baseline 8498d54 finished 14/15: original GUI run 39755497202 still failed at
+rule-activation/host-ops-open. Artifact 12414734913 was independently downloaded to
+/tmp/shellbeam-ci-8498d54-gui-audit. New navigation diagnostics show rangeCount=0,
+decision=no-range, settled=false; subsequent click geometry shows horizontal
+clipping. Cleanup passed and applicationStopped=true. This narrows investigation
+to navigation readiness/control appearance, but is not a confirmed product fix.
+The new assistant tests do not replace that outstanding GUI acceptance.

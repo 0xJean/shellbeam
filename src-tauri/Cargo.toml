@@ -58,7 +58,7 @@ openssl-sys = { version = "0.9", features = ["vendored"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 ssh2 = { version = "0.9", features = ["openssl-on-win32"] }
 webview2-com-sys = "0.38"
-windows = { version = "0.61.3", features = ["UI_Notifications", "Data_Xml_Dom", "Foundation"] }
+windows = { version = "0.61.3", features = ["UI_Notifications", "Data_Xml_Dom", "Foundation", "Win32_Foundation", "Win32_System_JobObjects", "Win32_Security", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"

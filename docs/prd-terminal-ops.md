@@ -592,3 +592,23 @@ Phase 0–4 保留立项和既有实现脉络，完成度以验收矩阵为准�
 - 本批不增加片段编辑、服务启停、任意模板参数、批量命令或目录递归下载。授权发生变化时审阅后重建客户端。
 
 验收以本地隔离测试与最新提交 CI 分别记账；现存安装包 GUI 点击问题不以新增能力的单元测试代替验收。
+
+## 16. Built-in terminal assistant CLI backends (2026-10-22)
+
+Model API, Claude Code and Codex CLI are independent backends for the built-in
+terminal assistant, separate from external clients using ShellBeam MCP. CLI backends
+reuse their own login without importing credentials; existing provider/key/model
+settings survive switching. Native workers generate commands in private empty
+working directories, with prompts/context only over stdin. Claude streams deltas;
+Codex returns completed messages. Only a complete successful result enables Run.
+
+Stop, terminal switch/closure and normal application exit cancel child processes.
+Concurrency, runtime and payloads are bounded. Autonomous shell, MCP, plugins and
+related agent capabilities are disabled; Codex additionally uses read-only sandbox
+and never-approve policy. Observed tool calls abort generation. No API fallback or
+replay occurs. Vault, hosts, monitoring and OperationJob data remain unchanged;
+generation is not an operations job, and Run uses existing terminal history.
+
+Desktop and recent CLIs with the required isolation options are supported. Mobile
+and browser previews fail clearly; Windows requires native exe. Executable detection
+is separate from authentication/model access. See [AI CLI integration](./ai-cli.md).
