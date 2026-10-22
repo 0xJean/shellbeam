@@ -16,3 +16,11 @@ export const prepareCompatibleAgent = (input: { vaultId: string; hostId: string;
 export const operateCompatibleAgent = (planId: string, confirmed: boolean) => invoke<CompatibleAgentRecord>('komari_agent_operate', { planId, confirmed })
 export const cancelCompatibleAgent = (planId: string) => invoke<void>('komari_agent_cancel', { planId })
 export const compatibleAgentPolicy = (value?: CompatibleAgentPolicy, confirmed?: boolean) => invoke<CompatibleAgentPolicy>('komari_agent_release_policy', { value, confirmed })
+export interface ProbeTransferDestination { hostId: string; hostName: string; connectionId: string; connectionName: string; account: string; address: string; integrationId: string; serviceName: string; nodeId: string; endpoint: string }
+export interface ProbeTransfer { id: string; status: string; jobId: string; errorCode: string | null; source: { record: CompatibleAgentRecord }; target: { record: CompatibleAgentRecord }; sourceState: { active: boolean; transfer?: { phase: string } }; targetState: { active: boolean; transfer?: { phase: string } } }
+export interface ProbeTransferPreview { planId: string; action: string; source: CompatibleAgentPreview; target: CompatibleAgentPreview }
+export const probeTransferDestinations = (vaultId: string) => invoke<ProbeTransferDestination[]>('komari_agent_transfer_destinations', { vaultId })
+export const readProbeTransfer = (vaultId: string, hostId: string) => invoke<ProbeTransfer | null>('komari_agent_transfer_record', { vaultId, hostId })
+export const prepareProbeTransfer = (input: { vaultId: string; sourceHostId: string; targetHostId: string; targetConnectionId: string; targetIntegrationId: string; endpoint?: string }) => invoke<ProbeTransferPreview>('komari_agent_transfer_prepare', { input })
+export const recoverProbeTransfer = (vaultId: string, transferId: string, action: 'inspect' | 'restore' | 'finish') => invoke<ProbeTransferPreview>('komari_agent_transfer_recover', { vaultId, transferId, action })
+export const operateProbeTransfer = (planId: string, confirmed: boolean) => invoke<ProbeTransfer>('komari_agent_transfer_operate', { planId, confirmed })

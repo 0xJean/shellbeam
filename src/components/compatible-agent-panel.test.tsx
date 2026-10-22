@@ -8,6 +8,7 @@ import { CompatibleAgentPanel, CompatibleAgentTools } from './compatible-agent-p
 const vault = vi.hoisted(() => { const state = { generation: 0 }; return { state, capture: () => { const generation = state.generation; return () => generation === state.generation } } })
 vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'vault', captureVaultScope: vault.capture }) }))
 vi.mock('@/lib/compatible-agent', () => ({ cancelCompatibleAgent: vi.fn(), compatibleAgentPolicy: vi.fn(), operateCompatibleAgent: vi.fn(), prepareCompatibleAgent: vi.fn(), readCompatibleAgent: vi.fn() }))
+vi.mock('./probe-transfer-panel', () => ({ ProbeTransferPanel: () => null }))
 vi.mock('@/lib/user-confirmation', () => ({ requestUserDecision: vi.fn() }))
 const host = { vaultId: 'vault', id: 'host', name: 'Test', address: 'host.test', port: 22, username: 'runner', authType: 'password' as const, group: 'test', tags: [], createdAt: 1, updatedAt: 2 }
 const preview: CompatibleAgentPreview = { planId: 'plan', action: 'install', hostName: 'Test', nodeId: 'node', endpoint: 'https://monitor.test', transport: 'ssh-proxyjump', account: 'runner', serviceScope: 'user', dataDirectory: '/home/runner/.local/share/shellbeam/komari/test', artifactBytes: 12000000, currentVersion: null, targetVersion: '1.5.11', status: 'absent', expiresAt: Date.now() + 300000 }

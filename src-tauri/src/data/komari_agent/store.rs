@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
+    #[serde(default)]
+    pub connection_id: Option<String>,
     pub vault_id: String,
     pub host_id: String,
     pub host_created_at: i64,
@@ -65,7 +67,7 @@ pub fn get(db: &Connection, vault: &str, host: &str) -> Result<Option<Record>, S
     text.map(|v| serde_json::from_str(&v).map_err(error))
         .transpose()
 }
-fn put(db: &Connection, record: &Record, expected: i64) -> Result<(), String> {
+pub(super) fn put(db: &Connection, record: &Record, expected: i64) -> Result<(), String> {
     let body = serde_json::to_string(record).map_err(error)?;
     let count=if expected==0 {db.execute("INSERT OR IGNORE INTO komari_agent_deployments(vault_id,host_id,body,revision) VALUES(?1,?2,?3,?4)",params![record.vault_id,record.host_id,body,record.revision])}else{db.execute("UPDATE komari_agent_deployments SET body=?3,revision=?4 WHERE vault_id=?1 AND host_id=?2 AND revision=?5",params![record.vault_id,record.host_id,body,record.revision,expected])}.map_err(error)?;
     if count != 1 {
@@ -86,6 +88,7 @@ pub fn begin(
     if get(&tx, &record.vault_id, &record.host_id)?.map_or(0, |r| r.revision) != expected {
         return Err("KOMARI_AGENT_STATE_CHANGED".into());
     }
+    super::transfer::unlocked(&tx, &record.vault_id, &record.host_id)?;
     // A new readback is a new job. Never rewrite a terminal earlier outcome.
     if let Some(previous) = get(&tx, &record.vault_id, &record.host_id)? {
         if let Some(job) = jobs::get_on(&tx, &previous.job_id)? {
@@ -176,7 +179,7 @@ pub fn begin(
     put(&tx, record, expected)?;
     tx.commit().map_err(error)
 }
-fn transition(
+pub(super) fn transition(
     db: &Connection,
     id: &str,
     status: &str,

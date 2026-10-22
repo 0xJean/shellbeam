@@ -305,4 +305,76 @@ class ProcessRecognition(unittest.TestCase):
         self.assertFalse(helper.is_agent_executable(str(root / 'releases/hash/agent'), root))
         self.assertTrue(helper.is_agent_executable('/home/test/.local/share/shellbeam/komari/other/releases/hash/agent', root))
 
+class TransferTests(unittest.TestCase):
+    installed = Lifecycle.installed
+    release = Lifecycle.release
+    inspect = Lifecycle.inspect
+    operate = Lifecycle.operate
+    tearDown = Lifecycle.tearDown
+    def setUp(self):
+        Lifecycle.setUp(self)
+        self.installed(); self.target = str(uuid.uuid4()); self.transfer = str(uuid.uuid4())
+        self.target_root = self.root.parent / self.target
+        self.old_config = (self.root / 'config.json').read_bytes()
+    def end(self, target=False):
+        return helper.perform({'action':'inspect','deployment':self.target if target else self.deployment})
+    def step(self, action, target=False, before=None, **extra):
+        before = before or self.end(target)
+        return helper.perform({'action':'transfer-'+action,'deployment':self.target if target else self.deployment,
+            'identity':before['identity'],'expected':before['state'],'transferId':self.transfer,'job':'fixture-job',**extra})
+    def stage(self):
+        config = {**self.config, 'endpoint':'https://destination.invalid', 'token':'target-key'}
+        return self.step('stage',True, release=self.release('1.5.11',b'target'),bytes=base64.b64encode(b'target').decode(),
+                         configuration=config,configSha256=helper.digest(helper.configuration_bytes(config)))
+    def test_cutover_retains_source_config_and_uses_only_target_key(self):
+        self.step('reserve'); calls=list(FakeService.calls);self.stage()
+        self.assertEqual(FakeService.calls,calls);self.assertTrue(self.end()['state']['active'])
+        self.step('stop');self.assertFalse(self.end()['state']['active']);self.step('activate',True)
+        self.step('complete',True);self.step('complete')
+        self.assertEqual(self.end()['state']['status'],'retired');self.assertTrue(self.end(True)['state']['active'])
+        self.assertEqual((self.root/'config.json').read_bytes(),self.old_config)
+        self.assertEqual(json.loads((self.target_root/'config.json').read_text())['token'],'target-key')
+        self.assertNotIn('target-key',json.dumps(self.end(True)))
+        with self.assertRaisesRegex(helper.Rejected,'transfer_in_progress'):self.operate('install',self.release('1.5.10',b'old-agent'),b'old-agent')
+    def test_reserved_source_blocks_lifecycle_and_competing_transfer(self):
+        self.step('reserve')
+        with self.assertRaisesRegex(helper.Rejected,'transfer_in_progress'):self.operate('uninstall')
+        self.transfer=str(uuid.uuid4())
+        with self.assertRaisesRegex(helper.Rejected,'transfer_identity_changed'):self.step('stop')
+        self.assertTrue(self.end()['state']['active'])
+    def test_failure_target_stops_before_source_restored(self):
+        self.step('reserve');self.stage();self.step('stop');FakeService.fail.add(helper.digest(b'target'))
+        with self.assertRaisesRegex(helper.Rejected,'activation_failed'):self.step('activate',True)
+        calls=list(FakeService.calls);before=self.end(True);self.assertEqual(FakeService.calls,calls)
+        self.step('abort',True,before=before);self.step('resume')
+        self.assertFalse(self.end(True)['state']['active']);self.assertTrue(self.end()['state']['active'])
+        self.assertEqual((self.root/'config.json').read_bytes(),self.old_config)
+    def test_readback_after_stop_interruption_does_not_restart(self):
+        self.step('reserve');self.stage()
+        with patch.object(FakeService,'remove',side_effect=RuntimeError('isolated stop loss')):
+            with self.assertRaises(RuntimeError):self.step('stop')
+        calls=list(FakeService.calls);state=self.end()['state']
+        self.assertEqual(state['status'],'paused');self.assertTrue(state['active']);self.assertEqual(FakeService.calls,calls)
+        with self.assertRaisesRegex(helper.Rejected,'transfer_phase_changed'):self.step('complete')
+    def test_tampered_target_configuration_prevents_abort_and_readback(self):
+        self.step('reserve');self.stage();config=self.target_root/'config.json';config.write_text('{}')
+        with self.assertRaisesRegex(helper.Rejected,'configuration_changed'):self.end(True)
+        self.assertTrue(self.end()['state']['active'])
+    def test_export_does_not_copy_token_or_server_credentials(self):
+        before=self.end();result=helper.perform({'action':'export-settings','deployment':self.deployment,'identity':before['identity'],'expected':before['state'],'agentToken':self.config['token']})
+        self.assertNotIn('token',result['settings']);self.assertNotIn('endpoint',result['settings'])
+        self.assertNotIn(self.config['token'],json.dumps(result))
+        with self.assertRaisesRegex(helper.Rejected,'legacy_node_mismatch'):
+            helper.perform({'action':'export-settings','deployment':self.deployment,'identity':before['identity'],'expected':before['state'],'agentToken':'wrong'})
+    def test_private_indirection_settings_rejected(self):
+        config={**self.config,'config_file':'/private/config'};helper.atomic(self.root/'config.json',helper.configuration_bytes(config))
+        with self.assertRaisesRegex(helper.Rejected,'transfer_settings_unsupported'):helper.transfer_settings(self.root,{'agentToken':self.config['token']})
+    def test_source_identity_and_target_hash_guard_before_stop(self):
+        self.step('reserve');before=self.end(True)
+        with patch.object(helper,'machine_identity',return_value='b'*32):
+            with self.assertRaisesRegex(helper.Rejected,'machine_identity_changed'):self.step('stage',True,before=before)
+        with self.assertRaisesRegex(helper.Rejected,'artifact_hash_mismatch'):
+            self.step('stage',True,release=self.release('1.5.11',b'target'),bytes=base64.b64encode(b'bad').decode())
+        self.assertTrue(self.end()['state']['active'])
+
 if __name__ == '__main__': unittest.main()

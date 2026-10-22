@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useVault } from '@/contexts/vault-context'
 import { useT } from '@/lib/i18n'
 import { hasSshConnection, type HostProfile } from '@/lib/hosts'
@@ -7,6 +7,7 @@ import { cancelCompatibleAgent, compatibleAgentPolicy, operateCompatibleAgent, p
 import { compatibleAgentCopy } from '@/lib/locales/compatible-agent'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { ProbeTransferPanel } from './probe-transfer-panel'
 
 /** No server requests on mount. Hosts without a source or prior managed probe
  * keep their ordinary connection experience, including after a source removal. */
@@ -33,6 +34,8 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
   const { activeVaultId, captureVaultScope } = useVault(); const vaultId = host.vaultId ?? activeVaultId
   const [record, setRecord] = useState<CompatibleAgentRecord | null>(null)
   const [endpoint, setEndpoint] = useState(''); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState('')
+  const [transferPending, setTransferPending] = useState(false)
+  const refreshTransfer = useCallback(() => { const valid = captureVaultScope(); void readCompatibleAgent(vaultId, host.id).then(r => { if (live.current && valid()) setRecord(r) }).catch(() => {}) }, [captureVaultScope, vaultId, host.id])
   const [legacyUnit, setLegacyUnit] = useState('komari-agent.service'); const [migrationEndpoint, setMigrationEndpoint] = useState('')
   const [error, setError] = useState(''); const [code, setCode] = useState(''); const [policy, setPolicy] = useState<CompatibleAgentPolicy | null>(null)
   const readEpoch = useRef(0); const live = useRef(true); const running = useRef(false); const plans = useRef(new Set<string>())
@@ -53,7 +56,7 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
     let id: string | undefined
     try {
       const address = action === 'migrate' ? migrationEndpoint.trim() : endpoint.trim()
-      const p = await prepareCompatibleAgent({ vaultId, hostId: host.id, integrationId, action, ...(address ? { endpoint: address } : {}), ...(action === 'adopt' ? { legacyUnit: legacyUnit.trim() } : {}) })
+      const p = await prepareCompatibleAgent({ vaultId, hostId: host.id, integrationId: record?.integrationId ?? integrationId, action, ...(address ? { endpoint: address } : {}), ...(action === 'adopt' ? { legacyUnit: legacyUnit.trim() } : {}) })
       id = p.planId; plans.current.add(id)
       if (!current()) return
       if (action !== 'inspect') {
@@ -68,7 +71,7 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
     } finally { if (id) { plans.current.delete(id); await cancelCompatibleAgent(id).catch(() => {}) } }
   })
   const status = record ? c[record.status as keyof typeof c] ?? c.unknown : c.notManaged
-  const unsettled = !!record && ['prepared', 'dispatched', 'unknown'].includes(record.status)
+  const unsettled = transferPending || record?.status === 'migrated' || !!record && ['prepared', 'dispatched', 'unknown'].includes(record.status)
   const released = record?.observation.status === 'released'
   const installed = !!record?.current && !['retired', 'absent'].includes(record.observation.status)
   return <div data-testid="compatible-agent-panel" className="min-w-0 space-y-3 py-3 text-xs" onClick={e => e.stopPropagation()}>
@@ -80,17 +83,18 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
       <dt>{c.job}</dt><dd className="break-all font-mono" title={record.jobId}>{record.jobId}</dd>
     </dl>}
     <label className="block">{c.endpoint}<Input aria-label={c.endpoint} value={endpoint} disabled={busy || !!record?.current} onChange={e => setEndpoint(e.target.value)} className="mt-1 min-w-0" /><span className="mt-1 block text-muted-foreground">{c.endpointHint}</span></label>
-    <div className="flex flex-wrap gap-2">{(['inspect', 'install', 'upgrade', 'rollback', 'uninstall'] as const).map(action => <Button key={action} size="sm" variant="outline" disabled={busy || (released && action !== 'inspect') || (action !== 'inspect' && action !== 'uninstall' && unsettled) || (action === 'install' && installed) || (action === 'upgrade' && !installed) || (action === 'rollback' && (!installed || !record?.previous)) || (action === 'uninstall' && !record?.current && !record?.requested)} onClick={() => void act(action)}>{c[action]}</Button>)}</div>
+    <div className="flex flex-wrap gap-2">{(['inspect', 'install', 'upgrade', 'rollback', 'uninstall'] as const).map(action => <Button key={action} size="sm" variant="outline" disabled={busy || transferPending || record?.status === 'migrated' || (released && action !== 'inspect') || (action !== 'inspect' && action !== 'uninstall' && unsettled) || (action === 'install' && installed) || (action === 'upgrade' && !installed) || (action === 'rollback' && (!installed || !record?.previous)) || (action === 'uninstall' && !record?.current && !record?.requested)} onClick={() => void act(action)}>{c[action]}</Button>)}</div>
     <p className="text-muted-foreground">{c.preserved}</p>
     <details className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.handoff}</summary>
       <p className="my-2 text-muted-foreground">{c.handoffHint}</p>
       {!installed && record?.observation.status !== 'retired' && <div className="space-y-2"><label className="block">{c.legacyUnit}<Input aria-label={c.legacyUnit} value={legacyUnit} disabled={busy} onChange={e => setLegacyUnit(e.target.value)} /></label><Button size="sm" variant="outline" disabled={busy || unsettled || !legacyUnit.trim()} onClick={() => void act('adopt')}>{c.adopt}</Button></div>}
       {installed && <div className="space-y-2"><label className="block">{c.migrationEndpoint}<Input aria-label={c.migrationEndpoint} value={migrationEndpoint} disabled={busy} onChange={e => setMigrationEndpoint(e.target.value)} /></label>
         <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy || unsettled || !migrationEndpoint.trim()} onClick={() => void act('migrate')}>{c.migrate}</Button>
-          {record?.previousConfiguration && <Button size="sm" variant="outline" disabled={busy} onClick={() => void act('restore-config')}>{c['restore-config']}</Button>}
+          {record?.previousConfiguration && <Button size="sm" variant="outline" disabled={busy || transferPending || record?.status === 'migrated'} onClick={() => void act('restore-config')}>{c['restore-config']}</Button>}
         </div></div>}
-      {record?.observation.legacy && record.observation.status !== 'released' && <Button className="mt-2" size="sm" variant="outline" disabled={busy} onClick={() => void act('restore-legacy')}>{c['restore-legacy']}</Button>}
+      {record?.observation.legacy && record.observation.status !== 'released' && <Button className="mt-2" size="sm" variant="outline" disabled={busy || transferPending || record?.status === 'migrated'} onClick={() => void act('restore-legacy')}>{c['restore-legacy']}</Button>}
     </details>
+    <ProbeTransferPanel vaultId={vaultId} hostId={host.id} canMove={record?.status === 'active' && !busy} onChanged={refreshTransfer} onPending={setTransferPending} />
     {(error || record?.errorCode) && <p role="alert" className="break-words text-destructive">{error || c.generic} <span className="break-all font-mono">{code || record?.errorCode}</span></p>}{notice && <p role="status">{notice}</p>}
     <details className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.policy}</summary><p className="my-2 text-muted-foreground">{c.policyHint}</p>
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void work(async current => { const value = await compatibleAgentPolicy(); if (current()) setPolicy(value) })}>{c.loadPolicy}</Button>

@@ -9,6 +9,7 @@ on:
       - 'scripts/*official-komari*'
       - 'releases/**'
       - 'scripts/fixtures/komari-lifecycle-releases.json'
+      - 'scripts/fixtures/probe-transfer/**'
       - '.github/workflows/komari-agent-ci.yml'
   workflow_dispatch:
 permissions:
@@ -21,7 +22,7 @@ jobs:
       matrix:
         runner: [ubuntu-22.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,11 +53,20 @@ jobs:
             SHELLBEAM_KOMARI_LIFECYCLE_REPORT="$RUNNER_TEMP/komari-agent-lifecycle-root.json" \
             GITHUB_SHA="$GITHUB_SHA" \
             "$(command -v node)" scripts/komari-agent-lifecycle-smoke.mjs
+      - name: Move probes across services, machines and accounts over pinned SSH
+        env:
+          SHELLBEAM_KOMARI_TRANSFER_SMOKE: '1'
+          SHELLBEAM_KOMARI_TRANSFER_REPORT: ${{ runner.temp }}/komari-agent-transfer.json
+        run: |
+          docker build -t shellbeam-probe-transfer-fixture:local scripts/fixtures/probe-transfer
+          node scripts/komari-agent-transfer-smoke.mjs
       - name: Preserve redacted lifecycle evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: compatible-probe-lifecycle-${{ matrix.runner }}
-          path: ${{ runner.temp }}/komari-agent-lifecycle*.json
+          path: |
+            ${{ runner.temp }}/komari-agent-lifecycle*.json
+            ${{ runner.temp }}/komari-agent-transfer.json
           if-no-files-found: error
           retention-days: 14

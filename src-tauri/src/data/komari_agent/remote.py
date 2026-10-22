@@ -368,7 +368,7 @@ def verify_release(root, release):
 
 
 def public_state(state):
-    return dict({"active": False, "externalAgent": False, "deployment": None, "current": None, "previous": None, "configSha256": None, "job": None, "legacy": None, "endpoint": None, "previousConfigSha256": None, "configurationProcessBefore": None}, **state)
+    return dict({"active": False, "externalAgent": False, "deployment": None, "current": None, "previous": None, "configSha256": None, "job": None, "legacy": None, "endpoint": None, "previousConfigSha256": None, "configurationProcessBefore": None, "transfer": None}, **state)
 
 
 def observe(root, deployment, service, pins=None, legacy_unit=None):
@@ -383,7 +383,7 @@ def observe(root, deployment, service, pins=None, legacy_unit=None):
         return public_state({"status": "absent", "externalAgent": bool(legacy) or existing_agent(root), "legacy": legacy})
     state = read_json(root / "state.json")
     require(state.get("deployment") == deployment, "deployment_identity_mismatch")
-    service.owned(state.get("status") in ("retired", "activating", "released") or state.get("legacy") is not None)
+    service.owned(state.get("status") in ("retired", "activating", "released", "paused", "staged") or state.get("legacy") is not None)
     if state.get("legacy") and not service.unit.exists() and not process_in(root):
         original = LegacyService(service, state["legacy"]["unit"]).match(state["legacy"], pins)
         if original[-1]:
@@ -408,6 +408,9 @@ def observe(root, deployment, service, pins=None, legacy_unit=None):
         if state.get('configurationProcessBefore') and actual != state.get('previousConfigSha256'):
             current_process = service.incarnation()
             state['active'] = state['active'] and bool(current_process) and current_process != state['configurationProcessBefore']
+        if state.get('status') in ('staged', 'paused'):
+            # A crash during stop may leave the process alive; expose that fact.
+            state['active'] = service.active(sha) or process_in(root)
         if state.get("legacy"):
             legacy = LegacyService(service, state["legacy"]["unit"]).match(state["legacy"], pins)
             state["active"] = state["active"] and not legacy[-1] and not legacy[0]["enabled"]
@@ -419,7 +422,7 @@ def observe(root, deployment, service, pins=None, legacy_unit=None):
 
 
 def configuration_bytes(config):
-    return json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+    return json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
 def planned_configuration(root, observed, service, request):
@@ -443,6 +446,85 @@ def planned_configuration(root, observed, service, request):
     return None
 
 
+# Only collection settings cross the native boundary. Authentication, discovery,
+# filesystem indirection and server-controlled execution never do.
+TRANSFER_SETTINGS = set('memory_mode_available interval max_retries reconnect_interval info_report_interval include_nics exclude_nics include_mountpoints month_rotate memory_include_cache memory_report_raw_used custom_dns enable_gpu show_warning custom_ipv4 custom_ipv6 get_ip_addr_from_nic disable_compression prefer_ip_version'.split())
+
+
+def transfer_settings(root, request):
+    config = read_json(root / 'config.json')
+    require(hmac.compare_digest(config.get('token', ''), request.get('agentToken', '')), 'legacy_node_mismatch')
+    require(set(config) <= TRANSFER_SETTINGS | {'token', 'endpoint', 'disable_auto_update', 'disable_web_ssh', 'auto_discovery_key', 'ignore_unsafe_cert', 'host_proc', 'config_file'}, 'transfer_settings_unsupported')
+    require(not any(config.get(k) for k in ('auto_discovery_key', 'ignore_unsafe_cert', 'host_proc', 'config_file')), 'transfer_settings_unsupported')
+    require(config.get('disable_auto_update') is True and config.get('disable_web_ssh') is True, 'unsafe_configuration')
+    return {k: v for k, v in config.items() if k in TRANSFER_SETTINGS}
+
+
+def perform_transfer(root, deployment, service, current, request, snapshot, identity):
+    action = request['action']; transfer = request.get('transferId', '')
+    require(str(uuid.UUID(transfer)) == transfer, 'invalid_transfer')
+    receipt = current.get('transfer')
+    if action == 'transfer-reserve':
+        require(current['status'] == 'active' and current['active'] and (not receipt or receipt['phase'] in ('completed', 'rolled-back')), 'transfer_source_not_active')
+        current.update(status='reserved', transfer={'id': transfer, 'role': 'source', 'phase': 'reserved'})
+    elif action == 'transfer-stage':
+        require(current['status'] == 'absent', 'transfer_target_not_empty')
+        release = manifest(request['release']); content = base64.b64decode(request['bytes'], validate=True)
+        require(0 < len(content) <= LIMIT and len(content) == release['sizeBytes'] and digest(content) == release['sha256'], 'artifact_hash_mismatch')
+        config = request['configuration']
+        require(set(config) <= TRANSFER_SETTINGS | {'endpoint', 'token', 'disable_auto_update', 'disable_web_ssh'}, 'transfer_settings_unsupported')
+        require(config.get('disable_auto_update') is True and config.get('disable_web_ssh') is True and isinstance(config.get('token'), str) and bool(config['token']), 'unsafe_configuration')
+        data = configuration_bytes(config)
+        require(request.get('configSha256') == digest(data), 'configuration_plan_changed')
+        directory = root / 'releases' / release['sha256']; safe_tree(directory, True)
+        atomic(directory / 'agent', content, 0o700); atomic(root / 'config.json', data)
+        verify_release(root, release); switch(root, release['sha256'])
+        current = dict(deployment=deployment, status='staged', current=release, configSha256=digest(data),
+                       endpoint=config['endpoint'], transfer={'id': transfer, 'role': 'target', 'phase': 'staged'})
+    else:
+        require(receipt and receipt['id'] == transfer, 'transfer_identity_changed')
+        role = receipt['role']; phase = receipt['phase']
+        if action == 'transfer-stop':
+            require(role == 'source' and phase in ('reserved', 'stopping', 'stopped') and current['status'] in ('reserved', 'paused'), 'transfer_phase_changed')
+            # Persist before systemd: a lost response is inspected, never replayed.
+            receipt['phase'] = 'stopping'; current['status'] = 'paused'
+            atomic(root / 'state.json', json.dumps(current).encode())
+            service.remove(); receipt['phase'] = 'stopped'
+        elif action == 'transfer-activate':
+            require(role == 'target' and phase == 'staged' and current['status'] == 'staged', 'transfer_phase_changed')
+            # A retained, disabled original unit can coexist with the new account.
+            # The coordinator pins it to the inspected source; never exempt a process.
+            ignored_unit = request.get('retainedUnit')
+            if ignored_unit:
+                require(Path(ignored_unit).is_absolute() and Path(ignored_unit).name == 'komari-agent.service', 'transfer_peer_invalid')
+            require(not existing_agent(root, ignored_unit=ignored_unit), 'external_agent_present')
+            receipt['phase'] = 'activating'; current['status'] = 'activating'
+            atomic(root / 'state.json', json.dumps(current).encode())
+            service.install(); require(service.wait_active(verify_release(root, current['current'])), 'activation_failed')
+            current['status'] = 'active'; receipt['phase'] = 'activated'
+        elif action == 'transfer-abort':
+            require(role == 'target' and phase in ('staged', 'activating', 'activated', 'aborting', 'rolled-back'), 'transfer_phase_changed')
+            receipt['phase'] = 'aborting'
+            atomic(root / 'state.json', json.dumps(current).encode())
+            service.remove(); current['status'] = 'retired'; receipt['phase'] = 'rolled-back'
+        elif action == 'transfer-resume':
+            require(role == 'source' and phase in ('reserved', 'stopping', 'stopped', 'resuming', 'rolled-back') and current['status'] in ('reserved', 'paused', 'activating', 'active'), 'transfer_phase_changed')
+            receipt['phase'] = 'resuming'; current['status'] = 'activating'
+            atomic(root / 'state.json', json.dumps(current).encode())
+            sha = verify_release(root, current['current']); switch(root, sha)
+            service.install(); require(service.wait_active(sha), 'activation_failed')
+            current['status'] = 'active'; receipt['phase'] = 'rolled-back'
+        elif action == 'transfer-complete':
+            require((role == 'source' and phase == 'stopped' and current['status'] == 'paused' and not current['active']) or (role == 'target' and phase == 'activated' and current['status'] == 'active' and current['active']), 'transfer_phase_changed')
+            if role == 'source': current['status'] = 'retired'
+            receipt['phase'] = 'completed'
+        else:
+            raise Rejected('invalid_action')
+    current.pop('active', None); current.pop('externalAgent', None); current['job'] = request['job']
+    atomic(root / 'state.json', json.dumps(current).encode())
+    return {'identity': identity, 'state': snapshot()}
+
+
 def machine_identity():
     return Path("/etc/machine-id").read_text().strip()
 
@@ -452,7 +534,7 @@ def perform(request):
     deployment = request.get("deployment", "")
     require(str(uuid.UUID(deployment)) == deployment, "invalid_deployment")
     action = request.get("action")
-    require(action in ("inspect", "install", "upgrade", "rollback", "uninstall", "adopt", "migrate", "restore-config", "restore-legacy"), "invalid_action")
+    require(action.startswith("transfer-") or action == "export-settings" or action in ("inspect", "install", "upgrade", "rollback", "uninstall", "adopt", "migrate", "restore-config", "restore-legacy"), "invalid_action")
     home = Path.home()
     require(home.is_absolute() and not any(c in str(home) for c in "\n\r\x00"), "unsafe_home")
     root = home / ".local/share/shellbeam/komari" / deployment
@@ -465,6 +547,9 @@ def perform(request):
     pins = request.get("legacyPins", {})
     snapshot = lambda: observe(root, deployment, service, pins, request.get("legacyUnit"))
     observed = snapshot()
+    if action == 'export-settings':
+        require(request.get('expected') == observed and observed['active'] and observed['status'] == 'active', 'remote_state_changed')
+        return {'identity': identity, 'state': observed, 'settings': transfer_settings(root, request)}
     if action == "inspect":
         planned = planned_configuration(root, observed, service, request)
         return {"identity": identity, "state": observed, "plannedConfig": {"sha256": digest(planned), "endpoint": json.loads(planned)["endpoint"]} if planned else None}
@@ -482,6 +567,9 @@ def perform(request):
         # Recheck under the remote lock; another client cannot silently win the race.
         current = snapshot()
         require(current == observed, "remote_state_changed")
+        if action.startswith('transfer-'):
+            return perform_transfer(root, deployment, service, current, request, snapshot, identity)
+        require(not current.get('transfer') or (current['transfer']['phase'] in ('completed', 'rolled-back') and not (current['transfer']['role'] == 'source' and current['transfer']['phase'] == 'completed')), 'transfer_in_progress')
         legacy = current.get("legacy")
         require(action in ("uninstall", "restore-legacy") or not existing_agent(root, legacy["executable"] if legacy else None, str(service.directory / legacy["unit"]) if legacy else None), "external_agent_present")
         if action == "restore-legacy":

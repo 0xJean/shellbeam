@@ -19,11 +19,12 @@ fn release(version: &str, bytes: &[u8]) -> TrustedRelease {
         public_key: STANDARD.encode(key.verifying_key().to_bytes()),
     }
 }
-fn host() -> HostProfile {
+pub(super) fn host() -> HostProfile {
     serde_json::from_value(json!({"id":"host","name":"Test","address":"fixture.invalid","port":22,"username":"runner","group":"test","authType":"password","tags":[],"createdAt":1,"updatedAt":2})).unwrap()
 }
-fn record() -> Record {
+pub(super) fn record() -> Record {
     Record {
+        connection_id: None,
         vault_id: "vault".into(),
         host_id: "host".into(),
         host_created_at: 1,

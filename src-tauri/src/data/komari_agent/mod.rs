@@ -5,6 +5,7 @@ mod official;
 mod store;
 #[cfg(test)]
 mod tests;
+pub mod transfer;
 use super::{
     hosts::{self, HostProfile},
     komari, komari_persistence, monitoring_service as service,
@@ -79,6 +80,15 @@ pub struct Observation {
     previous_config_sha256: Option<String>,
     #[serde(default)]
     configuration_process_before: Option<String>,
+    #[serde(default)]
+    transfer: Option<TransferReceipt>,
+}
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransferReceipt {
+    id: String,
+    role: String,
+    phase: String,
 }
 #[derive(Deserialize)]
 struct RemoteResult {
@@ -90,6 +100,7 @@ struct RemoteResult {
     code: Option<String>,
     #[serde(rename = "plannedConfig")]
     planned_config: Option<ConfigurationIdentity>,
+    settings: Option<Value>,
 }
 #[derive(Clone)]
 struct Plan {
@@ -98,6 +109,7 @@ struct Plan {
     session: u64,
     host: HostProfile,
     host_fingerprint: String,
+    connection_id: Option<String>,
     keys: String,
     source: Option<service::Scope>,
     mapping_fingerprint: Option<String>,
@@ -173,17 +185,40 @@ fn lease(vault: &str, host_id: &str) -> Result<Lease, String> {
     }
     Ok(Lease(key.0, key.1))
 }
-fn host(app: &tauri::AppHandle, vault: &str, id: &str) -> Result<(HostProfile, String), String> {
+fn host_connection(
+    app: &tauri::AppHandle,
+    vault: &str,
+    id: &str,
+    connection: Option<&str>,
+) -> Result<(HostProfile, String), String> {
     let all = hosts::load_hosts(app, Some(vault))?;
     let h = all
         .iter()
         .find(|h| h.id == id)
         .ok_or("KOMARI_AGENT_HOST_CHANGED")?;
+    let original = h;
+    let mut h = h.clone();
+    if let Some(id) = connection {
+        if h.connections.is_none() {
+            if id != h.id {
+                return Err("KOMARI_AGENT_HOST_CHANGED".into());
+            }
+        } else {
+            if !h.connections.as_ref().unwrap().iter().any(|c| c.id == id) {
+                return Err("KOMARI_AGENT_HOST_CHANGED".into());
+            }
+            h.default_connection_id = Some(id.into());
+            super::host_connections::normalize(&mut h)?;
+        }
+    }
+    if !super::host_connections::supports_ssh(&h) {
+        return Err("KOMARI_AGENT_SSH_CONNECTION".into());
+    }
     let jump = h
         .jump_host_id
         .as_ref()
         .and_then(|id| all.iter().find(|h| &h.id == id));
-    Ok((h.clone(), fingerprint(&(h, jump))?))
+    Ok((h.clone(), fingerprint(&(original, &h, jump))?))
 }
 fn mapping(
     app: &tauri::AppHandle,
@@ -212,7 +247,9 @@ fn check(app: &tauri::AppHandle, p: &Plan) -> Result<(), String> {
     {
         return Err("KOMARI_AGENT_SCOPE_CHANGED".into());
     }
-    if host(app, &p.vault, &p.host.id)?.1 != p.host_fingerprint {
+    if host_connection(app, &p.vault, &p.host.id, p.connection_id.as_deref())?.1
+        != p.host_fingerprint
+    {
         return Err("KOMARI_AGENT_HOST_CHANGED".into());
     }
     if let Some(scope) = &p.source {
@@ -296,8 +333,13 @@ fn fresh(value: i64, watermark: i64, started: i64, now: i64) -> bool {
 }
 fn connect(app: &tauri::AppHandle, p: &Plan) -> Result<transport::Connection, String> {
     check(app, p)?;
-    let route = transport::resolve_host_route(app, &p.vault, &p.host.id)
-        .map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
+    let route = transport::route_for_host(
+        app,
+        &p.vault,
+        &p.host,
+        &hosts::load_hosts(app, Some(&p.vault))?,
+    )
+    .map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
     let c = transport::connect(app, &route).map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
     check(app, p)?;
     if fingerprint(&c.verified_host_keys)? != p.keys {
@@ -418,7 +460,14 @@ fn state(
         || !matches!(i.architecture.as_str(), "amd64" | "arm64")
         || !matches!(
             s.status.as_str(),
-            "absent" | "active" | "activating" | "retired" | "released"
+            "absent"
+                | "active"
+                | "activating"
+                | "retired"
+                | "released"
+                | "reserved"
+                | "staged"
+                | "paused"
         )
     {
         return Err("KOMARI_AGENT_IDENTITY_CHANGED".into());
@@ -494,6 +543,7 @@ pub fn komari_agent_record(
 }
 #[tauri::command]
 pub fn komari_agent_cancel(plan_id: String) -> Result<(), String> {
+    transfer::cancel(&plan_id);
     if let Some(p) = PLANS
         .get_or_init(Default::default)
         .lock()
@@ -526,8 +576,18 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
     if !app.state::<VaultState>().is_unlocked(&input.vault_id) {
         return Err("KOMARI_AGENT_SCOPE_CHANGED".into());
     }
-    let (h, hf) = host(app, &input.vault_id, &input.host_id)?;
-    let baseline = store::get(&store::open(app)?, &input.vault_id, &h.id)?;
+    transfer::unlocked(&store::open(app)?, &input.vault_id, &input.host_id)?;
+    let baseline = store::get(&store::open(app)?, &input.vault_id, &input.host_id)?;
+    if baseline.as_ref().is_some_and(|r| r.status == "migrated") {
+        return Err("KOMARI_AGENT_TRANSFER_COMPLETED".into());
+    }
+    let connection_id = baseline.as_ref().and_then(|r| r.connection_id.clone());
+    let (h, hf) = host_connection(
+        app,
+        &input.vault_id,
+        &input.host_id,
+        connection_id.as_deref(),
+    )?;
     if baseline.as_ref().is_some_and(|r| {
         r.host_created_at != h.created_at || r.integration_id != input.integration_id
     }) {
@@ -547,12 +607,17 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
         .as_ref()
         .map(|r| r.deployment.clone())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let route = transport::resolve_host_route(app, &input.vault_id, &h.id)
-        .map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
+    let route = transport::route_for_host(
+        app,
+        &input.vault_id,
+        &h,
+        &hosts::load_hosts(app, Some(&input.vault_id))?,
+    )
+    .map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
     let c = transport::connect(app, &route).map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
     if !app.state::<VaultState>().is_unlocked(&input.vault_id)
         || app.state::<VaultState>().session_generation() != session
-        || host(app, &input.vault_id, &h.id)?.1 != hf
+        || host_connection(app, &input.vault_id, &h.id, connection_id.as_deref())?.1 != hf
     {
         return Err("KOMARI_AGENT_SCOPE_CHANGED".into());
     }
@@ -588,7 +653,7 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
         &|| {
             if app.state::<VaultState>().session_generation() != session
                 || !app.state::<VaultState>().is_unlocked(&input.vault_id)
-                || host(app, &input.vault_id, &h.id)?.1 != hf
+                || host_connection(app, &input.vault_id, &h.id, connection_id.as_deref())?.1 != hf
             {
                 Err("KOMARI_AGENT_SCOPE_CHANGED".into())
             } else {
@@ -606,6 +671,7 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
         session,
         host: h,
         host_fingerprint: hf,
+        connection_id,
         keys,
         source: None,
         mapping_fingerprint: None,
@@ -1011,6 +1077,7 @@ fn operate(app: &tauri::AppHandle, id: &str, confirmed: bool) -> Result<Record, 
         return Err("KOMARI_AGENT_CONFIRMATION_REQUIRED".into());
     }
     let _lease = lease(&p.vault, &p.host.id)?;
+    transfer::unlocked(&store::open(app)?, &p.vault, &p.host.id)?;
     check(app, &p)?;
     let expected = p.baseline.as_ref().map_or(0, |r| r.revision);
     if store::get(&store::open(app)?, &p.vault, &p.host.id)?.map_or(0, |r| r.revision) != expected {
@@ -1051,6 +1118,7 @@ fn operate(app: &tauri::AppHandle, id: &str, confirmed: bool) -> Result<Record, 
         configuration: None,
         previous_configuration: None,
         requested_configuration: None,
+        connection_id: p.connection_id.clone(),
     });
     if p.baseline.is_none() {
         record.endpoint = p.endpoint.clone();
