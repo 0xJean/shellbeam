@@ -115,8 +115,12 @@ export class OpsUiDriver {
     // token so the real editor emits a line break and a genuine input event.
     const text = String(value)
     const keys = tag === 'textarea' ? text.replaceAll('\r\n', '\n').replaceAll('\n', '\uE007') : text
-    await this.request('POST', await this.elementRoute(element, '/clear'), {})
-    await this.request('POST', await this.elementRoute(element, '/value'), { text: keys, value: [...keys] })
+    // These acceptance runners use Linux. Native Ctrl+A / Backspace emits
+    // genuine input events for React-controlled text and number fields. The
+    // WebDriver clear endpoint can leave React's value stale across a render.
+    // Release Ctrl before typing; submit no form and never retry a write.
+    const replacement = '\uE009a\uE000\uE003' + keys
+    await this.request('POST', await this.elementRoute(element, '/value'), { text: replacement, value: [...replacement] })
   }
   async text(locator) { return this.request('GET', await this.elementRoute(locator, '/text')) }
   async attr(locator, name) {

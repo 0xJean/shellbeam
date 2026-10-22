@@ -92,7 +92,7 @@ test('readiness waits for a visible enabled control before exactly one mutation'
   driver.sessionId = 's'
   await driver.fill('[data-testid="vault-master-password"]', 'SYNTHETIC-PRIVATE-INPUT')
   assert(visibleReads >= 3 && enabledReads >= 2)
-  assert.deepEqual(mutations, ['/session/s/element/e/clear', '/session/s/element/e/value'])
+  assert.deepEqual(mutations, ['/session/s/element/e/value'])
   assert.deepEqual(driver.lastInteraction, { kind: 'fill', control: 'vault-master-password' })
   assert(!JSON.stringify(driver.lastInteraction).includes('SYNTHETIC'))
 })
@@ -118,7 +118,7 @@ test('multiline input uses real W3C Enter keys and never writes through JavaScri
   await driver.fill('[data-testid="host-private-key"]', 'SYNTHETIC\r\nMULTILINE\nVALUE\n')
   const writes = calls.filter(call => call.path.endsWith('/value'))
   assert.equal(writes.length, 1)
-  assert.equal(writes[0].body.text, 'SYNTHETIC\uE007MULTILINE\uE007VALUE\uE007')
-  assert.equal(calls.filter(call => call.path.endsWith('/clear')).length, 1)
+  assert.equal(writes[0].body.text, '\uE009a\uE000\uE003SYNTHETIC\uE007MULTILINE\uE007VALUE\uE007')
+  assert.equal(calls.filter(call => call.path.endsWith('/clear')).length, 0)
   assert.equal(calls.some(call => call.path.includes('/execute/')), false)
 })
