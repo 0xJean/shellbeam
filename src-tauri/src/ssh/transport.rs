@@ -514,6 +514,43 @@ mod tests {
     use super::super::test_fixture::{server, trusted};
 
     #[test]
+    fn real_native_probe_helper_streams_beyond_exec_packet_limit() {
+        let Some(target) = server() else { return };
+        let Some(jump) = server() else { return };
+        for jump_endpoint in [None, Some(jump.endpoint.clone())] {
+            let route = Route {
+                target: target.endpoint.clone(),
+                jump: jump_endpoint,
+            };
+            let connection =
+                connect_with_verifier(&route, &mut trusted(&[&target, &jump])).unwrap();
+            let mut channel = connection.session.channel_session().unwrap();
+            let command = crate::data::komari_agent::remote_command();
+            assert!(command.len() < 1024);
+            let request = serde_json::json!({"deployment":uuid::Uuid::new_v4().to_string(),"action":"invalid-fixture-action","synthetic":"quotes '\" and Unicode 测试","padding":"x".repeat(40_000)});
+            let input = crate::data::komari_agent::remote_input(&request).unwrap();
+            assert!(input.len() > 35_000);
+            channel.exec(&command).unwrap();
+            channel.write_all(&input).unwrap();
+            channel.send_eof().unwrap();
+            let mut output = String::new();
+            channel.read_to_string(&mut output).unwrap();
+            channel.wait_close().unwrap();
+            assert_eq!(channel.exit_status().unwrap(), 0);
+            let response: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(response["ok"], false);
+            assert_eq!(
+                response["code"],
+                if cfg!(target_os = "linux") {
+                    "invalid_action"
+                } else {
+                    "linux_required"
+                }
+            );
+        }
+    }
+
+    #[test]
     fn real_direct_and_single_jump_commands_and_sftp_use_independent_keys() {
         let Some(target) = server() else {
             return;

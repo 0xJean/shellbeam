@@ -347,6 +347,19 @@ fn connect(app: &tauri::AppHandle, p: &Plan) -> Result<transport::Connection, St
     }
     Ok(c)
 }
+// libssh2 cannot send an exec request larger than a single SSH packet. Keep
+// that request small and stream the compiled helper before its JSON payload;
+// neither credentials nor the growing helper become shell arguments.
+pub(crate) fn remote_command() -> String {
+    format!("python3 -I -c 'import sys; code=sys.stdin.buffer.read({0}); assert len(code)=={0}; exec(compile(code,\"<shellbeam-compatible-probe>\",\"exec\"))'", include_bytes!("remote.py").len())
+}
+pub(crate) fn remote_input(request: &Value) -> Result<Vec<u8>, String> {
+    let mut request = request.clone();
+    request["legacyPins"] = legacy_pins();
+    let mut input = include_bytes!("remote.py").to_vec();
+    input.extend(serde_json::to_vec(&request).map_err(|_| "KOMARI_AGENT_REQUEST")?);
+    Ok(input)
+}
 fn remote(
     c: &transport::Connection,
     request: &Value,
@@ -367,14 +380,9 @@ fn remote(
         .session
         .channel_session()
         .map_err(|_| "KOMARI_AGENT_SSH_CONNECTION")?;
-    // The command contains only a compiled-in helper. Credentials and artifact
-    // bytes are stdin data, not shell words, process arguments or script logs.
-    let code = include_str!("remote.py").replace('\'', "'\\''");
-    ch.exec(&format!("python3 -I -c '{code}'"))
+    ch.exec(&remote_command())
         .map_err(|_| "KOMARI_AGENT_REMOTE_UNKNOWN")?;
-    let mut request = request.clone();
-    request["legacyPins"] = legacy_pins();
-    let input = serde_json::to_vec(&request).map_err(|_| "KOMARI_AGENT_REQUEST")?;
+    let input = remote_input(request)?;
     let mut offset = 0;
     while offset < input.len() {
         current()?;
