@@ -81,7 +81,7 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
   const unsettled = transferPending || record?.status === 'migrated' || !!record && ['prepared', 'dispatched', 'unknown'].includes(record.status)
   const released = record?.observation.status === 'released'
   const installed = !!record?.current && !['retired', 'absent'].includes(record.observation.status)
-  return <div data-testid="compatible-agent-panel" className="min-w-0 space-y-3 py-3 text-xs" onClick={e => e.stopPropagation()}>
+  return <div data-testid="compatible-agent-panel" data-status={record?.status} data-deployment={record?.deployment} data-job-id={record?.jobId} className="min-w-0 space-y-3 py-3 text-xs" onClick={e => e.stopPropagation()}>
     <p>{c.description}</p><p className="text-muted-foreground">{c.officialHint}</p><p className="text-muted-foreground">{c.requirements}</p>
     <div role="status" className="break-words">{busy ? c.working : status}</div>
     {record && <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
@@ -89,8 +89,8 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
       <dt>{c.observed}</dt><dd>{record.observedAt ? new Date(record.observedAt).toLocaleString(locale) : c.idle}</dd>
       <dt>{c.job}</dt><dd className="break-all font-mono" title={record.jobId}>{record.jobId}</dd>
     </dl>}
-    <label className="block">{c.endpoint}<Input aria-label={c.endpoint} value={endpoint} disabled={busy || !!record?.current} onChange={e => setEndpoint(e.target.value)} className="mt-1 min-w-0" /><span className="mt-1 block text-muted-foreground">{c.endpointHint}</span></label>
-    <div className="flex flex-wrap gap-2">{(['inspect', 'install', 'upgrade', 'rollback', 'uninstall'] as const).map(action => <Button key={action} size="sm" variant="outline" disabled={busy || transferPending || record?.status === 'migrated' || (released && action !== 'inspect') || (action !== 'inspect' && action !== 'uninstall' && unsettled) || (action === 'install' && installed) || (action === 'upgrade' && !installed) || (action === 'rollback' && (!installed || !record?.previous)) || (action === 'uninstall' && !record?.current && !record?.requested)} onClick={() => void act(action)}>{c[action]}</Button>)}</div>
+    <label className="block">{c.endpoint}<Input data-testid="compatible-agent-endpoint" aria-label={c.endpoint} value={endpoint} disabled={busy || !!record?.current} onChange={e => setEndpoint(e.target.value)} className="mt-1 min-w-0" /><span className="mt-1 block text-muted-foreground">{c.endpointHint}</span></label>
+    <div className="flex flex-wrap gap-2">{(['inspect', 'install', 'upgrade', 'rollback', 'uninstall'] as const).map(action => <Button key={action} data-testid={`compatible-agent-${action}`} size="sm" variant="outline" disabled={busy || transferPending || record?.status === 'migrated' || (released && action !== 'inspect') || (action !== 'inspect' && action !== 'uninstall' && unsettled) || (action === 'install' && installed) || (action === 'upgrade' && !installed) || (action === 'rollback' && (!installed || !record?.previous)) || (action === 'uninstall' && !record?.current && !record?.requested)} onClick={() => void act(action)}>{c[action]}</Button>)}</div>
     <p className="text-muted-foreground">{c.preserved}</p>
     <details className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.handoff}</summary>
       <p className="my-2 text-muted-foreground">{c.handoffHint}</p>

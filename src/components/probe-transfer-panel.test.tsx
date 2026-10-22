@@ -45,3 +45,27 @@ it('refreshes durable recovery state on a matching endpoint event without replay
   await act(async () => { window.dispatchEvent(new CustomEvent('shellbeam:probe-deployment-changed', { detail: { vaultId: 'vault', hostIds: ['source'] } })) })
   expect(await screen.findByText(c.pending)).toBeInTheDocument(); expect(pending).toHaveBeenCalledWith(true); expect(api.operateProbeTransfer).not.toHaveBeenCalled()
 })
+
+it('keeps recovery visible on a failed durable read and only retries reading', async () => {
+  vi.mocked(api.readProbeTransfer).mockRejectedValueOnce(new Error('storage unavailable'))
+  mount(); await screen.findByText(c.readFailed); fireEvent.click(screen.getByText(c.title))
+  expect(pending).toHaveBeenCalledWith(true); expect(screen.queryByRole('button', { name: c.load })).not.toBeInTheDocument()
+  vi.mocked(api.readProbeTransfer).mockResolvedValue(row);fireEvent.click(screen.getByRole('button',{name:c.reload}));await screen.findByText(c.pending)
+  expect(api.operateProbeTransfer).not.toHaveBeenCalled();expect(api.prepareProbeTransfer).not.toHaveBeenCalled()
+})
+it('refreshes source and destination when recovery is initiated from the target host', async () => {
+  const result = { ...row, status: 'restored', source: { record: { hostId: 'origin' } }, target: { record: { hostId: 'source' } } } as api.ProbeTransfer
+  vi.mocked(api.readProbeTransfer).mockResolvedValue(row);vi.mocked(api.operateProbeTransfer).mockResolvedValue(result)
+  const events: CustomEvent[] = []; const listener = (event: Event) => events.push(event as CustomEvent)
+  window.addEventListener('shellbeam:probe-deployment-changed', listener)
+  try {
+    mount();await screen.findByText(c.pending);fireEvent.click(screen.getByText(c.title));fireEvent.click(screen.getByRole('button',{name:c.restore}));await waitFor(()=>expect(events).toHaveLength(1))
+    expect(new Set(events[0].detail.hostIds)).toEqual(new Set(['origin','source']));expect(events[0].detail.vaultId).toBe('vault')
+  } finally {window.removeEventListener('shellbeam:probe-deployment-changed',listener)}
+})
+it('reads a durable interrupted intent after a lost operation response without resending', async () => {
+  vi.mocked(api.operateProbeTransfer).mockImplementation(async () => { vi.mocked(api.readProbeTransfer).mockResolvedValue(row); throw new Error('connection lost') })
+  mount();await choose();fireEvent.click(screen.getByRole('button',{name:c.move}));await screen.findByText(c.pending)
+  expect(api.operateProbeTransfer).toHaveBeenCalledExactlyOnceWith('plan',true);expect(pending).toHaveBeenCalledWith(true)
+  expect(screen.queryByRole('button',{name:c.move})).not.toBeInTheDocument();expect(screen.getByRole('button',{name:c.inspect})).toBeEnabled()
+})

@@ -112,7 +112,7 @@ async function observe(fixture, role) {
   return Object.freeze({ role, activeState, timestamp, counter })
 }
 
-async function freePort() {
+export async function freePort() {
   const server = createServer()
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
   const port = server.address().port
@@ -120,7 +120,7 @@ async function freePort() {
   return port
 }
 
-async function appProcesses(appPath) {
+export async function appProcesses(appPath) {
   const result = []
   for (const entry of await readdir('/proc')) {
     if (!/^\d+$/.test(entry)) continue
@@ -132,7 +132,7 @@ async function appProcesses(appPath) {
   return result
 }
 
-async function stopProcessGroup(child) {
+export async function stopProcessGroup(child) {
   if (!child?.pid) return
   try { process.kill(-child.pid, 'SIGTERM') } catch (error) { if (error.code !== 'ESRCH') throw error }
   const until = Date.now() + 5000
