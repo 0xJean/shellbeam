@@ -60,7 +60,20 @@ export async function main(env=process.env) {
     fixture=await createTransferUiFixture({directory,project,prefix,record});stage='launch';await launch();stage='native-onboarding'
     const state=await setupTransferUi({driver,fixture,record});stage='migration-and-recovery'
     report.journey=await runTransferUiJourney({driver,fixture,state,record,restart,checkpoint});report.success=report.journey.passed===true
-  }catch(e){report.failedStage=stage;report.failureCode=/^[a-z0-9_ :.-]{1,100}$/i.test(e.message)?e.message:'transfer_ui_assertion_failed';report.lastInteraction=driver?.lastInteraction;process.exitCode=1}
+  }catch(e){
+    report.failedStage=stage;report.failureCode=/^[a-z0-9_ :.-]{1,100}$/i.test(e.message)?e.message:'transfer_ui_assertion_failed';report.lastInteraction=driver?.lastInteraction;process.exitCode=1
+    // Read only fixed UI flags and product error codes. Never retain form
+    // values, DOM dumps, server responses or arbitrary alert text.
+    if(driver?.sessionId)try{
+      const diagnostics={editorVisible:false,saveVisible:false,saveEnabled:false,verifyVisible:false,verifyEnabled:false,alerts:0,codes:[]}
+      for(const [key,selector] of [['editor','[data-testid="komari-connection-editor"]'],['save','xpath=//*[@data-testid="komari-settings"]//button[normalize-space(.)="Save connection"]'],['verify','xpath=//*[@data-testid="komari-settings"]//button[normalize-space(.)="Verify connection and discover nodes"]']]){
+        const elements=await driver.findAll(selector)
+        if(elements.length){diagnostics[key+'Visible']=await driver.isDisplayed(elements[0]);if(key!=='editor')diagnostics[key+'Enabled']=await driver.isEnabled(elements[0])}
+      }
+      for(const alert of await driver.findAll('[role="alert"]'))if(await driver.isDisplayed(alert)){diagnostics.alerts++;diagnostics.codes.push(...(await driver.text(alert)).match(/\b(?:KOMARI|MONITORING|VAULT)_[A-Z_]{1,80}\b/g)??[])}
+      report.uiFailure=diagnostics
+    }catch{}
+  }
   finally{
     try{await stop();report.applicationStopped=true}catch{report.success=false}
     try{if(fixture)await fixture.cleanup();report.cleanup=true}catch{report.success=false}

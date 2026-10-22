@@ -46,12 +46,16 @@ export async function setupTransferUi({driver:d,fixture:f,record}) {
     const server=f.servers[i]
     await main(d,'settings');await d.click(id('settings-category-monitoring'))
     const root='//*[@data-testid="komari-settings"]'
+    record('transfer-service-editor-opening',{service:i})
     await d.click(button(root,'Add monitoring service'));await d.fill('#komari-name',server.name);await d.fill('#komari-endpoint',server.endpoint)
     await d.select(`${id('komari-settings')} select[aria-label="Authorization method"]`,'key');await d.fill('#komari-api-key',server.apiKey)
     const enabled=`xpath=${root}//label[contains(.,'Enable monitoring connection')]/input[@type='checkbox']`
     if(!await d.isSelected(enabled))await d.click(enabled)
+    record('transfer-service-saving',{service:i})
     await d.click(button(root,'Save connection'));await d.until(async()=>await d.attr('#komari-api-key','value')==='')
+    record('transfer-service-saved',{service:i})
     await d.click(button(root,'Verify connection and discover nodes'))
+    record('transfer-service-discovering',{service:i})
     for(const h of Object.values(f.hosts).filter(h=>h.service===i)) {
       const row=id(`komari-mapping-${h.node}`);await d.waitFor(row,{timeoutMs:60000});await d.select(`${row} select`,h.id)
       await d.click(button(`//*[@data-testid="komari-mapping-${h.node}"]`,'Save binding'))

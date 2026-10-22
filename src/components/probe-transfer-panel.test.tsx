@@ -26,7 +26,7 @@ it('uses saved target connection and shows both identities before dispatch', asy
 })
 it('does not enumerate targets or execute on mount and restores pending audit across sessions', async () => {
   vi.mocked(api.readProbeTransfer).mockResolvedValue(row); mount(); await screen.findByText(c.pending); fireEvent.click(screen.getByText(c.title))
-  expect(api.probeTransferDestinations).not.toHaveBeenCalled(); expect(api.operateProbeTransfer).not.toHaveBeenCalled(); expect(pending).toHaveBeenCalledWith(true)
+  expect(api.probeTransferDestinations).not.toHaveBeenCalled(); expect(api.operateProbeTransfer).not.toHaveBeenCalled(); await waitFor(() => expect(pending).toHaveBeenCalledWith(true))
   fireEvent.click(screen.getByRole('button', { name: c.inspect })); await waitFor(() => expect(api.operateProbeTransfer).toHaveBeenCalledExactlyOnceWith('plan', false)); expect(requestUserDecision).not.toHaveBeenCalled()
   expect(api.recoverProbeTransfer).toHaveBeenCalledExactlyOnceWith('vault', 'migration', 'inspect')
 })
@@ -49,7 +49,7 @@ it('refreshes durable recovery state on a matching endpoint event without replay
 it('keeps recovery visible on a failed durable read and only retries reading', async () => {
   vi.mocked(api.readProbeTransfer).mockRejectedValueOnce(new Error('storage unavailable'))
   mount(); await screen.findByText(c.readFailed); fireEvent.click(screen.getByText(c.title))
-  expect(pending).toHaveBeenCalledWith(true); expect(screen.queryByRole('button', { name: c.load })).not.toBeInTheDocument()
+  await waitFor(() => expect(pending).toHaveBeenCalledWith(true)); expect(screen.queryByRole('button', { name: c.load })).not.toBeInTheDocument()
   vi.mocked(api.readProbeTransfer).mockResolvedValue(row);fireEvent.click(screen.getByRole('button',{name:c.reload}));await screen.findByText(c.pending)
   expect(api.operateProbeTransfer).not.toHaveBeenCalled();expect(api.prepareProbeTransfer).not.toHaveBeenCalled()
 })
@@ -66,6 +66,6 @@ it('refreshes source and destination when recovery is initiated from the target 
 it('reads a durable interrupted intent after a lost operation response without resending', async () => {
   vi.mocked(api.operateProbeTransfer).mockImplementation(async () => { vi.mocked(api.readProbeTransfer).mockResolvedValue(row); throw new Error('connection lost') })
   mount();await choose();fireEvent.click(screen.getByRole('button',{name:c.move}));await screen.findByText(c.pending)
-  expect(api.operateProbeTransfer).toHaveBeenCalledExactlyOnceWith('plan',true);expect(pending).toHaveBeenCalledWith(true)
+  expect(api.operateProbeTransfer).toHaveBeenCalledExactlyOnceWith('plan',true);await waitFor(() => expect(pending).toHaveBeenCalledWith(true))
   expect(screen.queryByRole('button',{name:c.move})).not.toBeInTheDocument();expect(screen.getByRole('button',{name:c.inspect})).toBeEnabled()
 })
