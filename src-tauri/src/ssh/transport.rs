@@ -598,6 +598,126 @@ mod tests {
         sftp.unlink(&path).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn real_mcp_structured_process_observations_and_rejected_log_queries() {
+        let Some(target) = server() else {
+            panic!("MCP Linux observations require the SSH fixture")
+        };
+        let Some(jump) = server() else {
+            panic!("MCP Linux observations require the jump fixture")
+        };
+        for jump_endpoint in [None, Some(jump.endpoint.clone())] {
+            let route = Route {
+                target: target.endpoint.clone(),
+                jump: jump_endpoint,
+            };
+            let connection =
+                connect_with_verifier(&route, &mut trusted(&[&target, &jump])).unwrap();
+            let started = crate::storage::now_unix_ms();
+            let result = crate::mcp::test_remote_diagnostics(
+                &connection.session,
+                &serde_json::json!({"kind":"processes","limit":2}),
+            )
+            .unwrap();
+            assert_eq!(result["status"], "completed");
+            assert_eq!(result["entries"].as_array().unwrap().len(), 2);
+            assert!(result["observedAt"].as_i64().unwrap() >= started);
+            for row in result["entries"].as_array().unwrap() {
+                assert!(row["pid"].as_u64().unwrap() > 0);
+                assert!(row["name"].is_string());
+                assert!(row.get("command").is_none());
+                assert!(row.get("environment").is_none());
+            }
+            let denied = crate::mcp::test_remote_diagnostics(
+                &connection.session,
+                &serde_json::json!({"kind":"logs","unit":"x'; printf injected; #"}),
+            )
+            .unwrap();
+            assert_eq!(denied["status"], "failed");
+            assert_eq!(denied["reason"], "invalid-log-query");
+        }
+    }
+
+    #[test]
+    fn real_mcp_directory_pages_and_symlink_metadata_work_direct_and_via_jump() {
+        let Some(target) = server() else { return };
+        let Some(jump) = server() else { return };
+        let directory = target.directory.join("mcp-directory");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(
+            directory.join("first"),
+            b"not returned in directory metadata",
+        )
+        .unwrap();
+        std::fs::create_dir(directory.join("nested")).unwrap();
+        std::os::unix::fs::symlink(directory.join("first"), directory.join("link")).unwrap();
+        for jump_endpoint in [None, Some(jump.endpoint.clone())] {
+            let route = Route {
+                target: target.endpoint.clone(),
+                jump: jump_endpoint,
+            };
+            let connection =
+                connect_with_verifier(&route, &mut trusted(&[&target, &jump])).unwrap();
+            let query = serde_json::json!({"path":directory,"limit":2});
+            let first = crate::mcp::test_remote_browse(
+                &connection.session,
+                "list_remote_directory",
+                &query,
+            )
+            .unwrap();
+            assert_eq!(first["entries"].as_array().unwrap().len(), 2);
+            assert_eq!(first["nextOffset"], 2);
+            let second = crate::mcp::test_remote_browse(
+                &connection.session,
+                "list_remote_directory",
+                &serde_json::json!({"path":directory,"limit":2,"offset":2}),
+            )
+            .unwrap();
+            assert_eq!(second["entries"].as_array().unwrap().len(), 1);
+            assert_eq!(second["nextOffset"], serde_json::Value::Null);
+            let names: std::collections::HashSet<_> = first["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(second["entries"].as_array().unwrap())
+                .map(|e| e["name"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                names,
+                std::collections::HashSet::from(["first", "nested", "link"])
+            );
+            assert!(!first.to_string().contains("not returned"));
+            let link = crate::mcp::test_remote_browse(
+                &connection.session,
+                "stat_remote_path",
+                &serde_json::json!({"path":directory.join("link")}),
+            )
+            .unwrap();
+            assert_eq!(link["entry"]["type"], "symlink");
+            assert_eq!(link["followsSymlinks"], false);
+            let empty = crate::mcp::test_remote_browse(
+                &connection.session,
+                "list_remote_directory",
+                &serde_json::json!({"path":directory.join("nested")}),
+            )
+            .unwrap();
+            assert_eq!(empty["entries"], serde_json::json!([]));
+            assert!(crate::mcp::test_remote_browse(
+                &connection.session,
+                "list_remote_directory",
+                &serde_json::json!({"path":directory.join("missing")})
+            )
+            .is_err());
+            assert!(crate::mcp::test_remote_browse(
+                &connection.session,
+                "stat_remote_path",
+                &serde_json::json!({"path":"/../etc"})
+            )
+            .is_err());
+        }
+    }
+
     #[test]
     fn real_jump_auth_and_host_key_failures_remain_distinct() {
         let Some(target) = server() else {

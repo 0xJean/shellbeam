@@ -33,7 +33,7 @@ fn connect(
     let identity =
         crate::ssh::transport::route_identity(&route, &host.id, host.jump_host_id.as_deref());
     let connection = crate::ssh::transport::connect(app, &route)?;
-    super::recheck(app, client, host)?;
+    super::recheck_connection(app, client, host)?;
     if !app.state::<VaultState>().is_unlocked(&client.vault_id) {
         return Err("VAULT_LOCKED".into());
     }
@@ -79,6 +79,68 @@ pub fn validate_path(path: &str) -> Result<(), String> {
         return Err("INVALID_PATH: use an absolute remote file path without '..'".into());
     }
     Ok(())
+}
+
+pub fn validate_browse_path(path: &str) -> Result<(), String> {
+    if path == "/" {
+        Ok(())
+    } else {
+        validate_path(path)
+    }
+}
+
+fn stat_value(stat: &ssh2::FileStat) -> Value {
+    json!({"type":if stat.is_dir(){"directory"}else if stat.is_file(){"file"}else if stat.file_type().is_symlink(){"symlink"}else{"other"},
+        "size":stat.size,"mode":stat.perm,"modifiedAtSeconds":stat.mtime,"accessedAtSeconds":stat.atime})
+}
+
+pub(crate) fn browse(session: &ssh2::Session, tool: &str, args: &Value) -> Result<Value, String> {
+    let path = args["path"].as_str().ok_or("INVALID_PATH")?;
+    validate_browse_path(path)?;
+    session.set_timeout(limits().remote.mcp_file_timeout_ms);
+    let sftp = session.sftp().map_err(|e| e.to_string())?;
+    if tool == "stat_remote_path" {
+        return Ok(
+            json!({"status":"completed","path":path,"entry":stat_value(&sftp.lstat(Path::new(path)).map_err(|e|e.to_string())?),"followsSymlinks":false}),
+        );
+    }
+    let offset = args["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = args["limit"].as_u64().unwrap_or(100).clamp(1, 200) as usize;
+    let mut dir = sftp.opendir(Path::new(path)).map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    let mut rows = Vec::new();
+    let mut seen = 0usize;
+    let mut more = false;
+    loop {
+        if started.elapsed() > Duration::from_millis(limits().remote.mcp_file_timeout_ms.into()) {
+            return Err("DIRECTORY_READ_TIMEOUT".into());
+        }
+        match dir.readdir() {
+            Ok((name, stat)) => {
+                if name == Path::new(".") || name == Path::new("..") {
+                    continue;
+                }
+                if seen >= offset + limit {
+                    more = true;
+                    break;
+                }
+                if seen >= offset {
+                    rows.push(
+                        json!({"name":name.to_string_lossy(),"attributes":stat_value(&stat)}),
+                    );
+                }
+                seen += 1;
+            }
+            // ssh2::File::readdir maps a zero-byte response to LIBSSH2_ERROR_FILE,
+            // matching ssh2::Sftp::readdir (the protocol's SFTP EOF is not exposed).
+            Err(e) if e.code() == ssh2::ErrorCode::Session(-16) => break,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(
+        json!({"status":"completed","path":path,"entries":rows,"nextOffset":more.then_some(seen),"ordering":"server","observedAt":crate::storage::now_unix_ms(),
+        "notice":"Non-recursive, bounded page. Directory changes between requests can move entries; this is not a stable snapshot."}),
+    )
 }
 
 fn file_operation(
@@ -174,6 +236,29 @@ fn file_operation(
     result
 }
 
+pub(crate) fn diagnostics(session: &ssh2::Session, args: &Value) -> Result<Value, String> {
+    let script = include_str!("readonly_ops.py");
+    let query = serde_json::to_string(args).map_err(|_| "INVALID_DIAGNOSTIC_QUERY")?;
+    let output = command(
+        session,
+        &format!("python3 -c {} {}", quote(script), quote(&query)),
+        35,
+    )?;
+    if output["status"] != "completed" || output["truncated"] == true {
+        return Ok(json!({
+            "status": "failed", "error": "DIAGNOSTICS_UNAVAILABLE",
+            "notice": "Requires Linux/Python 3 and permission to read the selected service; no empty healthy state is inferred."
+        }));
+    }
+    let mut data: Value = serde_json::from_str(output["stdout"].as_str().unwrap_or(""))
+        .map_err(|_| "INVALID_DIAGNOSTICS_OUTPUT")?;
+    if !data.is_object() || !matches!(data["status"].as_str(), Some("completed" | "failed")) {
+        return Err("INVALID_DIAGNOSTICS_OUTPUT".into());
+    }
+    data["observedAt"] = json!(crate::storage::now_unix_ms());
+    Ok(data)
+}
+
 pub fn run(
     app: &tauri::AppHandle,
     client: &Client,
@@ -190,7 +275,7 @@ pub fn run(
         )? {
             let age = crate::storage::now_unix_ms() - cached["sampledAt"].as_i64().unwrap_or(0);
             if (0..limits().cadence.mcp_probe_cache_ms).contains(&age) {
-                super::recheck(app, client, host)?;
+                super::recheck_connection(app, client, host)?;
                 cached["cached"] = json!(true);
                 return Ok(cached);
             }
@@ -200,6 +285,16 @@ pub fn run(
     let (connection, secrets, identity) = connect(app, client, host)?;
     let session = &connection.session;
     let result = match tool {
+        "list_remote_directory" | "stat_remote_path" => browse(session, tool, args),
+        "get_server_diagnostics" => diagnostics(session, args),
+        "run_snippet" => {
+            let text = super::snippets::command(app, client, args)?;
+            command(
+                session,
+                &text,
+                args["timeoutSeconds"].as_u64().unwrap_or(90).clamp(1, 600),
+            )
+        }
         "run_command" => command(
             &session,
             args["command"].as_str().unwrap(),

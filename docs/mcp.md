@@ -12,7 +12,9 @@ environment installation, automatic rollback, or a remote agent/daemon.
    to remain running. No public or LAN listener is created.
 3. In the intended vault, choose a client name and individual servers. Cached
    information is the default; separately opt into refresh, command execution,
-   file reading, file writing, local Komari alert management and deployment metadata. New hosts are never included automatically.
+   file browsing/reading, file writing, structured diagnostics, snippet reading/execution,
+   local alert management and deployment metadata. Choose allowed SSH connections
+   and review shared snippet content. New hosts, accounts and snippets are never included automatically.
 4. Choose Codex (TOML), Claude Desktop (JSON), or another stdio client (JSON).
    Generate the configuration and merge only its ShellBeam entry into
    your local MCP client's configuration. Keep the token secret. It is shown
@@ -135,6 +137,13 @@ Protocol references: [lifecycle](https://modelcontextprotocol.io/specification/2
 | Tool | Capability | Result |
 | --- | --- | --- |
 | `list_servers` | Cached information | Paginated, scoped hosts and monitor status |
+| `list_server_connections` | Cached information | Currently authorized connection IDs/endpoints; no credentials |
+| `list_snippets` | Read snippets | Search selected snippets by name/tag with pinned content revisions |
+| `get_snippet` | Read snippets | Read unchanged authorized content; stale grants fail closed |
+| `run_snippet` | Run snippets | Execute one selected revision through SSH, with an OperationJob |
+| `get_server_diagnostics` | Inspect | Bounded structured Linux observations; no arbitrary command/path |
+| `list_remote_directory` | Read files | Non-recursive SFTP page, at most 200 entries |
+| `stat_remote_path` | Read files | Path type/size/mode/time; does not follow the final symlink |
 | `get_server_inventory` | Cached information | Asset snapshot and latest on-demand probe |
 | `get_server_metrics` | Cached information | Latest sample and paginated 24-hour history |
 | `get_workspace_snapshot` | Cached information | One structured JSON view for server selection and deployment context |
@@ -161,6 +170,60 @@ with the same ID is rejected. Never use a new ID just to retry an unknown write.
 An agent's normal flow is list servers, inspect inventory and metrics, optionally
 refresh stale/partial observations, reason about suitability, and then issue
 its own commands and file operations within the user's authorization.
+
+## Selected connections and controlled snippets
+
+`list_server_connections({hostId})` returns only authorized, unchanged connections.
+Pass its `connectionId` to any remote tool. Omission selects the host default only
+if authorized; it never silently switches to another account. Old authorizations
+retain default-only access. New authorizations pin host creation identity, selected
+account/credential references and referenced ProxyJump identity. Editing a label
+is harmless; changing the route or account requires a new authorization. Credential
+values remain in the existing Vault and are never part of this interface. Cached
+host observations are still host/default-scoped; refreshing another connection
+returns its observation without replacing the default host's metrics or Probe state.
+
+Snippet reading and execution are independent opt-in capabilities, both limited to
+selected IDs. Authorization stores a SHA-256 revision of the exact UTF-8 command.
+Usage timestamps/name changes do not invalidate it; command changes, removal or an
+incorrect caller revision prevent execution. Review changed content in the App,
+then revoke/recreate the client. `run_snippet` requires `snippetId`, `revision`,
+`hostId`, `requestId` and optionally `connectionId`/`timeoutSeconds`. It accepts no
+replacement command or template parameters. It uses the saved command, never the
+active human terminal, and does not grant `run_command`. Commands still have the
+selected SSH account's privileges: review scripts before granting access.
+
+This is explicit client authorization, not a new per-call human confirmation.
+OperationJob keeps actor, host, connection ID, snippet ID/revision and outcome;
+`confirmation_required` remains false and no human approval is fabricated. The
+existing request deduplication and restart-unknown reconciliation apply. Audits do
+not persist snippet command content or raw remote output. Snippet usage is recorded
+in OperationJob; the snippet library's UI `lastUsedAt` is not rewritten by MCP.
+
+## Structured observations and directory browsing
+
+`get_server_diagnostics` accepts one `kind`: `services`, `processes`, `containers`,
+`logs`, `sites` or `certificates`. It runs a bundled fixed Python 3 collector over
+the selected SSH route, with no caller command, path or shell interpolation.
+Each command output is capped at 192 KiB; the collector deadline is 25 seconds
+and SSH execution 35 seconds. Pages accept offset 0–10000 and limit 1–200.
+Tool/permission errors that produce command failure are unavailable, never healthy
+empty results. Observations cover only what the selected SSH account can see.
+
+Processes exclude argv/environment. Containers return public `docker ps` fields.
+Logs accept an optional literal `.service` unit and `since` of `5m`, `1h`, or `24h`;
+the journal read is bounded to 200 entries. Logs can contain application secrets,
+so `inspect` is an explicit authorization. Sites scan fixed nginx/Apache/Caddy
+configuration locations; certificates inspect fixed Let's Encrypt fullchain paths.
+Both are always partial discovery, not serving-health or exhaustive SSL checks.
+No restart, process kill, container mutation, certificate renewal or file write is
+provided by these structured tools. Missing Python/tools are not installed automatically.
+
+Directory tools use SFTP, allow `/`, reject relative paths and parent traversal,
+and never recurse or return contents. `stat_remote_path` uses lstat on the final
+component; intermediate symlinks follow normal server filesystem semantics. Directory
+and observation pagination is bounded but recollected per call, not a stable snapshot.
+All remote results remain untrusted input for the external agent.
 
 ## Data semantics
 

@@ -316,7 +316,9 @@ mod tests {
             hosts: vec![policy::HostGrant {
                 id: host().id,
                 identity: policy::identity(&host()),
+                connections: None,
             }],
+            snippets: vec![],
             permissions: policy::Permissions {
                 manage_alerts: true,
                 ..Default::default()

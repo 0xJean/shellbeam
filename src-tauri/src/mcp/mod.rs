@@ -1,11 +1,18 @@
 pub mod bridge;
+mod connections;
 mod freshness;
 mod komari_incidents;
 mod local_alerts;
 mod policy;
 mod protocol;
 mod remote;
+mod snippets;
 mod store;
+
+#[cfg(test)]
+pub(crate) use remote::browse as test_remote_browse;
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) use remote::diagnostics as test_remote_diagnostics;
 
 use crate::data::{
     hosts::{load_hosts, HostProfile},
@@ -76,6 +83,10 @@ pub struct CreateClient {
     vault_id: String,
     host_ids: Vec<String>,
     permissions: Permissions,
+    #[serde(default)]
+    connection_ids: Option<HashMap<String, Vec<String>>>,
+    #[serde(default)]
+    snippets: Vec<policy::SnippetGrant>,
 }
 
 pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
@@ -287,6 +298,27 @@ pub fn mcp_create_client(
         return Err("INVALID_CLIENT: select 1-100 servers and a client name".into());
     }
     let hosts = load_hosts(&app, Some(&payload.vault_id))?;
+    if payload
+        .connection_ids
+        .as_ref()
+        .is_some_and(|rows| rows.keys().any(|id| !payload.host_ids.contains(id)))
+    {
+        return Err("HOST_NOT_AUTHORIZED".into());
+    }
+    if payload.permissions.read_snippets || payload.permissions.run_snippets {
+        if payload.snippets.is_empty() {
+            return Err("SNIPPET_SELECTION_REQUIRED".into());
+        }
+        if !app.state::<VaultState>().is_unlocked(&payload.vault_id) {
+            return Err("VAULT_LOCKED".into());
+        }
+        snippets::validate_grants(
+            &crate::data::snippets::load_snippets(&app, Some(&payload.vault_id))?,
+            &payload.snippets,
+        )?;
+    } else if !payload.snippets.is_empty() {
+        return Err("SNIPPET_PERMISSION_REQUIRED".into());
+    }
     let mut grants = Vec::new();
     for id in &payload.host_ids {
         let host = hosts.iter().find(|h| &h.id == id).ok_or("HOST_NOT_FOUND")?;
@@ -296,6 +328,25 @@ pub fn mcp_create_client(
         grants.push(HostGrant {
             id: id.clone(),
             identity: policy::identity(host),
+            connections: Some({
+                let ids = payload
+                    .connection_ids
+                    .as_ref()
+                    .and_then(|rows| rows.get(id))
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        connections::default_id(host)
+                            .filter(|_| crate::data::host_connections::supports_ssh(host))
+                            .map(|id| vec![id.to_string()])
+                            .unwrap_or_default()
+                    });
+                if ids.len() > 16 || ids.iter().collect::<HashSet<_>>().len() != ids.len() {
+                    return Err("INVALID_CONNECTION_SELECTION".into());
+                }
+                ids.iter()
+                    .map(|id| connections::grant(host, id, &hosts))
+                    .collect::<Result<Vec<_>, _>>()?
+            }),
         });
     }
     let token = format!(
@@ -308,6 +359,7 @@ pub fn mcp_create_client(
         name: payload.name.trim().into(),
         vault_id: payload.vault_id,
         hosts: grants,
+        snippets: payload.snippets,
         permissions: payload.permissions,
         created_at: now_unix_ms(),
         token_hash: Some(policy::digest(&token)),
@@ -402,6 +454,35 @@ pub(super) fn recheck(
     Ok(())
 }
 
+pub(super) fn recheck_connection(
+    app: &tauri::AppHandle,
+    client: &Client,
+    host: &HostProfile,
+) -> Result<(), String> {
+    let state = app.state::<McpState>();
+    let settings = state.settings.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
+    if !settings.enabled {
+        return Err("MCP_DISABLED".into());
+    }
+    let current = settings
+        .clients
+        .iter()
+        .find(|entry| entry.id == client.id && entry.vault_id == client.vault_id)
+        .ok_or("CLIENT_REVOKED")?;
+    let hosts = load_hosts(app, Some(&client.vault_id))?;
+    let base = hosts
+        .iter()
+        .find(|entry| entry.id == host.id)
+        .ok_or("HOST_NOT_FOUND")?;
+    let selected = connections::select(current, base, connections::default_id(host), &hosts)?;
+    if policy::identity(host) != policy::identity(&selected)
+        || host.created_at != selected.created_at
+    {
+        return Err("CONNECTION_CHANGED".into());
+    }
+    Ok(())
+}
+
 pub(super) fn dispatch(app: &tauri::AppHandle, client: &Client, request: Value) -> Option<Value> {
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     if let Err(message) = protocol::validate_request(&request) {
@@ -459,8 +540,12 @@ fn public_host(host: &HostProfile, client: &Client) -> Value {
 
 fn mcp_operation_risk(tool: &str) -> &'static str {
     match tool {
-        "refresh_server_info" | "read_remote_file" => "read-only",
-        "write_remote_file" | "upload_file" | "run_command" => "high",
+        "refresh_server_info"
+        | "read_remote_file"
+        | "get_server_diagnostics"
+        | "list_remote_directory"
+        | "stat_remote_path" => "read-only",
+        "write_remote_file" | "upload_file" | "run_command" | "run_snippet" => "high",
         _ => "low",
     }
 }
@@ -1137,6 +1222,12 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
         return Ok(result);
     }
     let vault_unlocked = app.state::<VaultState>().is_unlocked(&client.vault_id);
+    if matches!(tool, "list_snippets" | "get_snippet") {
+        if !vault_unlocked {
+            return Err("VAULT_LOCKED".into());
+        }
+        return snippets::query(app, client, tool, &args);
+    }
     if tool == "get_workspace_snapshot" {
         return workspace_snapshot(app, client, &hosts, &args, vault_unlocked);
     }
@@ -1198,6 +1289,7 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
         .ok_or("HOST_NOT_FOUND")?;
     client.authorize_host(host)?;
     match tool {
+        "list_server_connections" => Ok(connections::list(client, host, &hosts)),
         "get_server_inventory" => {
             let cached = workspace_inventory::list_workspace_inventory_snapshots(
                 app.clone(),
@@ -1412,7 +1504,11 @@ fn call(app: &tauri::AppHandle, client: &Client, tool: &str, args: Value) -> Res
                 "notice":"Missing intervals are unknown. Samples cover application runtime only; 60-second snapshots can miss short spikes."}),
             )
         }
-        _ => submit(app, client, host, tool, args),
+        _ => {
+            let selected =
+                connections::select(client, host, args["connectionId"].as_str(), &hosts)?;
+            submit(app, client, &selected, tool, args)
+        }
     }
 }
 
@@ -1722,9 +1818,20 @@ fn submit(
     let state = app.state::<McpState>();
     let mut jobs = state.jobs.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
     let request_id = args["requestId"].as_str().ok_or("REQUEST_ID_REQUIRED")?;
+    let scoped_identity = if client
+        .hosts
+        .iter()
+        .any(|grant| grant.id == host.id && grant.connections.is_some())
+    {
+        json!([
+            policy::identity(host),
+            connections::identity(host, &load_hosts(app, Some(&client.vault_id))?)?
+        ])
+    } else {
+        json!(policy::identity(host))
+    };
     let hash = policy::digest(
-        serde_json::to_vec(&json!([tool, args, policy::identity(host)]))
-            .map_err(|e| e.to_string())?,
+        serde_json::to_vec(&json!([tool, args, scoped_identity])).map_err(|e| e.to_string())?,
     );
     if let Some((id, existing_hash)) = store::existing(app, &client.id, request_id)? {
         if existing_hash != hash {
@@ -1752,9 +1859,16 @@ fn submit(
     let key = (client.vault_id.clone(), host.id.clone());
     jobs.check_capacity(&key)?;
     if let Some(path) = args["path"].as_str() {
-        remote::validate_path(path)?;
+        if matches!(tool, "list_remote_directory" | "stat_remote_path") {
+            remote::validate_browse_path(path)?;
+        } else {
+            remote::validate_path(path)?;
+        }
     }
-    recheck(app, client, host)?;
+    recheck_connection(app, client, host)?;
+    if tool == "run_snippet" {
+        snippets::command(app, client, &args)?;
+    }
     let actor = format!("mcp-client:{}", client.id);
     if let Some(operation_job) = operation_jobs::operation_job_find_by_request(
         app.clone(),
@@ -1765,7 +1879,12 @@ fn submit(
         request_id,
     )? {
         let request_summary = format!("requestHash={hash}");
-        if operation_job.params_summary.as_deref() != Some(request_summary.as_str()) {
+        if operation_job
+            .params_summary
+            .as_deref()
+            .and_then(|summary| summary.split(';').next())
+            != Some(request_summary.as_str())
+        {
             return Err(
                 "REQUEST_ID_CONFLICT: use a new requestId for a different operation".into(),
             );
@@ -1794,11 +1913,22 @@ fn submit(
             source: "mcp".into(),
             actor: Some(actor.clone()),
             action: format!("mcp.{tool}"),
-            target: format!("mcp:{tool}"),
+            target: if tool == "run_snippet" {
+                format!(
+                    "mcp:run_snippet:{}@{}",
+                    args["snippetId"].as_str().unwrap_or(""),
+                    args["revision"].as_str().unwrap_or("")
+                )
+            } else {
+                format!("mcp:{tool}")
+            },
             risk: mcp_operation_risk(tool).into(),
             provider: Some("mcp-remote".into()),
             transport: Some(mcp_operation_transport(host).into()),
-            params_summary: Some(format!("requestHash={hash}")),
+            params_summary: Some(format!(
+                "requestHash={hash}; connectionId={}",
+                connections::default_id(host).unwrap_or("")
+            )),
             confirmation_required: false,
             request_id: Some(request_id.to_string()),
         },
@@ -1913,6 +2043,8 @@ fn submit(
         if tool == "refresh_server_info"
             && output["status"] == "completed"
             && output["cached"] != true
+            && load_hosts(&app, Some(&client.vault_id))
+                .is_ok_and(|hosts| connections::is_current_default(&host, &hosts))
         {
             if let Err(error) = store::save_probe(
                 &app,
@@ -1963,6 +2095,11 @@ fn submit(
         output["operationAuditId"] = json!(operation_audit_id);
         output["hostId"] = json!(host.id);
         output["tool"] = json!(tool);
+        output["connectionId"] = json!(connections::default_id(&host));
+        if tool == "run_snippet" {
+            output["snippetId"] = args["snippetId"].clone();
+            output["revision"] = args["revision"].clone();
+        }
         output["outputAvailable"] = json!(true);
         output["untrustedContent"] = json!(true);
         let status = match output["status"].as_str() {
@@ -2187,6 +2324,7 @@ mod tests {
             name: "Client".into(),
             vault_id: "vault".into(),
             hosts: Vec::new(),
+            snippets: vec![],
             permissions: Permissions::default(),
             created_at: 0,
             token_hash: None,
@@ -2284,5 +2422,13 @@ mod tests {
         assert_eq!(mcp_operation_risk("refresh_server_info"), "read-only");
         assert_eq!(mcp_operation_risk("read_remote_file"), "read-only");
         assert_eq!(mcp_operation_risk("run_command"), "high");
+        assert_eq!(mcp_operation_risk("run_snippet"), "high");
+        for tool in [
+            "get_server_diagnostics",
+            "list_remote_directory",
+            "stat_remote_path",
+        ] {
+            assert_eq!(mcp_operation_risk(tool), "read-only");
+        }
     }
 }

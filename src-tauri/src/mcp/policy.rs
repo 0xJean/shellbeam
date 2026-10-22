@@ -6,6 +6,12 @@ use crate::data::hosts::HostProfile;
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Permissions {
+    #[serde(default)]
+    pub read_snippets: bool,
+    #[serde(default)]
+    pub run_snippets: bool,
+    #[serde(default)]
+    pub inspect: bool,
     pub execute: bool,
     pub read_files: bool,
     pub write_files: bool,
@@ -24,6 +30,23 @@ pub struct Permissions {
 pub struct HostGrant {
     pub id: String,
     pub identity: String,
+    /// None is a legacy grant for the default connection only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connections: Option<Vec<ConnectionGrant>>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConnectionGrant {
+    pub id: String,
+    pub identity: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SnippetGrant {
+    pub id: String,
+    pub revision: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -33,6 +56,8 @@ pub struct Client {
     pub name: String,
     pub vault_id: String,
     pub hosts: Vec<HostGrant>,
+    #[serde(default)]
+    pub snippets: Vec<SnippetGrant>,
     pub permissions: Permissions,
     pub created_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -101,10 +126,16 @@ impl Client {
             | "get_server_metrics"
             | "get_server_operations"
             | "get_command_result" => true,
+            "list_server_connections" => true,
+            "list_snippets" | "get_snippet" => self.permissions.read_snippets,
+            "run_snippet" => self.permissions.run_snippets,
+            "get_server_diagnostics" => self.permissions.inspect,
             "acknowledge_server_alert" | "close_server_alert" => self.permissions.manage_alerts,
             "refresh_server_info" => self.permissions.refresh,
             "run_command" => self.permissions.execute,
-            "read_remote_file" => self.permissions.read_files,
+            "read_remote_file" | "list_remote_directory" | "stat_remote_path" => {
+                self.permissions.read_files
+            }
             "write_remote_file" | "upload_file" => self.permissions.write_files,
             "record_project_deployment" => self.permissions.record_deployments,
             _ => false,
@@ -141,12 +172,42 @@ pub fn authenticate(settings: &Settings, id: &str, token: &str) -> Result<Client
 mod tests {
     use super::*;
 
+    #[test]
+    fn new_capabilities_are_separate_and_legacy_settings_default_off() {
+        let mut client = client();
+        for tool in [
+            "list_snippets",
+            "get_snippet",
+            "run_snippet",
+            "get_server_diagnostics",
+            "list_remote_directory",
+            "stat_remote_path",
+        ] {
+            assert!(!client.allows(tool));
+        }
+        client.permissions.read_snippets = true;
+        assert!(client.allows("list_snippets"));
+        assert!(client.allows("get_snippet"));
+        assert!(!client.allows("run_snippet"));
+        client.permissions.run_snippets = true;
+        assert!(client.allows("run_snippet"));
+        assert!(!client.allows("run_command"));
+        client.permissions.inspect = true;
+        assert!(client.allows("get_server_diagnostics"));
+        assert!(!client.allows("read_remote_file"));
+        client.permissions.read_files = true;
+        assert!(client.allows("list_remote_directory"));
+        assert!(client.allows("stat_remote_path"));
+        assert!(!client.allows("write_remote_file"));
+    }
+
     fn client() -> Client {
         Client {
             id: "a".into(),
             name: "Agent".into(),
             vault_id: "default".into(),
             hosts: vec![],
+            snippets: vec![],
             permissions: Permissions::default(),
             created_at: 0,
             token_hash: Some(digest("a".repeat(64))),
@@ -204,6 +265,7 @@ mod tests {
         client.hosts.push(HostGrant {
             id: host.id.clone(),
             identity: identity(&host),
+            connections: None,
         });
         assert!(client.authorize_host(&host).is_ok());
         host.name = "Renamed".into();

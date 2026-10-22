@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 
 export interface McpPermissions {
+  readSnippets?: boolean
+  runSnippets?: boolean
+  inspect?: boolean
   refresh: boolean
   execute: boolean
   readFiles: boolean
@@ -13,6 +16,9 @@ export interface McpPermissions {
 }
 
 export const DEFAULT_MCP_PERMISSIONS: McpPermissions = {
+  readSnippets: false,
+  runSnippets: false,
+  inspect: false,
   refresh: false,
   execute: false,
   readFiles: false,
@@ -25,7 +31,8 @@ export interface McpClient {
   id: string
   name: string
   vaultId: string
-  hosts: { id: string; identity: string }[]
+  hosts: { id: string; identity: string; connections?: { id: string; identity: string }[] }[]
+  snippets?: { id: string; revision: string }[]
   permissions: McpPermissions
   createdAt: number
 }
@@ -123,8 +130,16 @@ export function createMcpClient(payload: {
   vaultId: string
   hostIds: string[]
   permissions: McpPermissions
+  connectionIds?: Record<string, string[]>
+  snippets?: { id: string; revision: string }[]
 }) {
   return invoke<{ client: McpClient; configuration: McpConfiguration }>('mcp_create_client', { payload })
+}
+
+/** Content revision matches the native SHA-256 check; usage timestamps are irrelevant. */
+export async function mcpSnippetRevision(command: string): Promise<string> {
+  const bytes = new TextEncoder().encode(command)
+  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 export function revokeMcpClient(clientId: string) {

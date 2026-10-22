@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import { invoke } from '@tauri-apps/api/core'
+import { DEFAULT_MCP_PERMISSIONS } from '@/lib/mcp'
+import { webcrypto } from 'node:crypto'
 import { McpSettingsSection } from './mcp-settings-section'
 import en from '@/lib/locales/en'
 import zhCN from '@/lib/locales/zh-CN'
@@ -15,6 +17,7 @@ const host = { id: 'h1', name: 'Dev Server', address: '192.0.2.10', username: 'd
 
 describe('MCP settings', () => {
   beforeEach(() => {
+    vi.stubGlobal('crypto', webcrypto)
     localStorage.setItem('shellbeam.locale', 'en')
     vi.mocked(invoke).mockReset()
     vi.mocked(invoke).mockImplementation(async (command) => {
@@ -24,7 +27,54 @@ describe('MCP settings', () => {
       return undefined
     })
   })
-  afterEach(cleanup)
+  afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+
+  it('grants an exact snippet revision and selected connection without arbitrary command permission', async () => {
+    vi.mocked(invoke).mockImplementation(async command => {
+      if (command === 'mcp_status') return { enabled: false, running: false, desktopSupported: true, clients: [], activeOperations: 0, audit: [] }
+      if (command === 'list_hosts') return [{ ...host, defaultConnectionId: 'ops', connections: [
+        { id: 'ops', label: 'Operations account', address: host.address, port: 22, username: 'ops' },
+        { id: 'admin', label: 'Administrator account', address: host.address, port: 2222, username: 'admin' },
+      ] }]
+      if (command === 'list_snippets') return [{ id: 'snippet-a', name: 'Inspect uptime', command: 'uptime', tags: [], createdAt: 1, updatedAt: 1 }]
+      if (command === 'mcp_create_client') return { client, configuration: { mcpServers: { shellbeam: { command: '/app', args: [], env: { SHELLBEAM_MCP_TOKEN: 'test' } } } } }
+    })
+    render(<McpSettingsSection />)
+    await screen.findByText('Dev Server')
+    expect(invoke).not.toHaveBeenCalledWith('list_snippets', expect.anything())
+    fireEvent.change(screen.getByLabelText('Client name'), { target: { value: 'Snippet agent' } })
+    fireEvent.click(screen.getByLabelText(/Dev Server/))
+    expect(screen.getByLabelText(/Operations account/)).toBeChecked()
+    expect(screen.getByLabelText(/Administrator account/)).not.toBeChecked()
+    fireEvent.click(screen.getByLabelText(/Operations account/))
+    fireEvent.click(screen.getByLabelText(/Administrator account/))
+    fireEvent.click(screen.getByLabelText(en['mcp.permission.runSnippets']))
+    expect(screen.getByRole('button', { name: 'Authorize and generate configuration' })).toBeDisabled()
+    fireEvent.click(await screen.findByLabelText('Inspect uptime'))
+    expect(screen.getByText('uptime')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize and generate configuration' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('mcp_create_client', { payload: {
+      name: 'Snippet agent', vaultId: 'vault-a', hostIds: ['h1'], connectionIds: { h1: ['admin'] },
+      permissions: { ...DEFAULT_MCP_PERMISSIONS, runSnippets: true },
+      snippets: [{ id: 'snippet-a', revision: expect.stringMatching(/^[a-f0-9]{64}$/) }],
+    } }))
+    expect(screen.getByLabelText(en['mcp.permission.execute'])).not.toBeChecked()
+    expect(screen.getByLabelText(en['mcp.permission.readSnippets'])).not.toBeChecked()
+  })
+
+  it('discards a pending snippet load when sharing is disabled', async () => {
+    let finish!: (rows: unknown) => void
+    const original = vi.mocked(invoke).getMockImplementation()!
+    vi.mocked(invoke).mockImplementation((command, args) => command === 'list_snippets' ? new Promise(resolve => { finish = resolve }) : original(command, args))
+    render(<McpSettingsSection />)
+    await screen.findByText('Dev Server')
+    fireEvent.click(screen.getByLabelText(en['mcp.permission.readSnippets']))
+    await waitFor(() => expect(finish).toBeDefined())
+    fireEvent.click(screen.getByLabelText(en['mcp.permission.readSnippets']))
+    finish([{ id: 'late', name: 'Late snippet', command: 'uptime', tags: [] }])
+    await waitFor(() => expect(screen.queryByText(en['mcp.snippets'])).not.toBeInTheDocument())
+    expect(screen.queryByLabelText('Late snippet')).not.toBeInTheDocument()
+  })
 
   it('starts disabled without granting any remote permissions or selecting servers', async () => {
     render(<McpSettingsSection />)
@@ -44,7 +94,8 @@ describe('MCP settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Authorize and generate configuration' }))
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('mcp_create_client', { payload: {
       name: 'Agent A', vaultId: 'vault-a', hostIds: ['h1'],
-      permissions: { refresh: false, execute: true, readFiles: false, writeFiles: false, recordDeployments: false, manageAlerts: false },
+      permissions: { ...DEFAULT_MCP_PERMISSIONS, execute: true },
+      connectionIds: { h1: ['h1'] }, snippets: [],
     } }))
     expect((await screen.findByLabelText('MCP client configuration') as HTMLTextAreaElement).value).toContain('one-time-token')
     fireEvent.click(screen.getByRole('button', { name: 'Hide and discard configuration' }))
@@ -62,7 +113,8 @@ describe('MCP settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Authorize and generate configuration' }))
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('mcp_create_client', { payload: {
       name: 'Alert Agent', vaultId: 'vault-a', hostIds: ['h1'],
-      permissions: { refresh: false, execute: false, readFiles: false, writeFiles: false, recordDeployments: false, manageAlerts: true },
+      permissions: { ...DEFAULT_MCP_PERMISSIONS, manageAlerts: true },
+      connectionIds: { h1: ['h1'] }, snippets: [],
     } }))
   })
 

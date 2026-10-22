@@ -3,12 +3,13 @@ import { Cable, Copy, ShieldAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useVault } from '@/contexts/vault-context'
-import { listHosts, type HostProfile } from '@/lib/hosts'
+import { hostConnections, listHosts, type HostProfile } from '@/lib/hosts'
+import { listSnippets, type SnippetEntry } from '@/lib/snippets'
 import { useT } from '@/lib/i18n'
 import OperationsAuditCenter from '@/components/operations-audit-center'
 import {
   createMcpClient, DEFAULT_MCP_PERMISSIONS, getMcpStatus, revokeMcpClient, setMcpEnabled,
-  formatMcpConfiguration, testMcpConnection,
+  formatMcpConfiguration, testMcpConnection, mcpSnippetRevision,
   type McpClientTarget, type McpConfiguration, type McpPermissions, type McpStatus,
 } from '@/lib/mcp'
 
@@ -18,6 +19,9 @@ export function McpSettingsSection() {
   const [status, setStatus] = useState<McpStatus | null>(null)
   const [hosts, setHosts] = useState<HostProfile[]>([])
   const [hostIds, setHostIds] = useState<string[]>([])
+  const [connectionIds, setConnectionIds] = useState<Record<string, string[]>>({})
+  const [snippets, setSnippets] = useState<Array<SnippetEntry & { revision: string }>>([])
+  const [snippetIds, setSnippetIds] = useState<string[]>([])
   const [permissions, setPermissions] = useState<McpPermissions>({ ...DEFAULT_MCP_PERMISSIONS })
   const [name, setName] = useState('')
   const [target, setTarget] = useState<McpClientTarget>('codex')
@@ -51,6 +55,8 @@ export function McpSettingsSection() {
     const scope = generation.current
     setHosts([])
     setHostIds([])
+    setConnectionIds({})
+    setSnippetIds([])
     scope.value++
     setGenerated(null)
     setDiagnostic('')
@@ -60,6 +66,18 @@ export function McpSettingsSection() {
     }).catch((cause) => { if (!cancelled) setError(String(cause)) })
     return () => { cancelled = true; scope.value++ }
   }, [activeVaultId])
+
+  const sharingSnippets = !!(permissions.readSnippets || permissions.runSnippets)
+  useEffect(() => {
+    let cancelled = false
+    setSnippets([])
+    setSnippetIds([])
+    if (sharingSnippets) void listSnippets(activeVaultId).then(async rows => {
+      const next = await Promise.all(rows.map(async row => ({ ...row, revision: await mcpSnippetRevision(row.command) })))
+      if (!cancelled) setSnippets(next)
+    }).catch(cause => { if (!cancelled) setError(String(cause)) })
+    return () => { cancelled = true }
+  }, [activeVaultId, sharingSnippets])
 
   async function action(run: () => Promise<void>) {
     setBusy(true)
@@ -76,7 +94,10 @@ export function McpSettingsSection() {
     setGenerated(null)
     setDiagnostic('')
     await action(async () => {
-      const result = await createMcpClient({ name: name.trim(), vaultId: activeVaultId, hostIds, permissions })
+      const result = await createMcpClient({ name: name.trim(), vaultId: activeVaultId, hostIds, permissions,
+        connectionIds: Object.fromEntries(hostIds.map(id => [id, connectionIds[id] ?? []])),
+        snippets: sharingSnippets ? snippets.filter(row => snippetIds.includes(row.id)).map(({ id, revision }) => ({ id, revision })) : [],
+      })
       if (version !== generation.current.value) return
       setGenerated({ clientId: result.client.id, configuration: result.configuration })
       setCopied(false)
@@ -155,27 +176,50 @@ export function McpSettingsSection() {
             <p className="mb-2 text-xs text-muted-foreground">{t('mcp.serversDescription')}</p>
             <div className="max-h-44 space-y-2 overflow-y-auto">
               {hosts.map((host) => (
-                <label key={host.id} className="flex items-start gap-2 text-xs">
+                <div key={host.id}><label className="flex items-start gap-2 text-xs">
                   <input type="checkbox" checked={hostIds.includes(host.id)} className="mt-0.5"
-                    onChange={(event) => setHostIds((previous) => event.target.checked ? [...previous, host.id] : previous.filter((id) => id !== host.id))} />
+                    onChange={(event) => {
+                      setHostIds((previous) => event.target.checked ? [...previous, host.id] : previous.filter((id) => id !== host.id))
+                      const defaultId = host.defaultConnectionId ?? (host.connections == null ? host.id : null)
+                      setConnectionIds(previous => ({ ...previous, [host.id]: event.target.checked && defaultId ? [defaultId] : [] }))
+                    }} />
                   <span className="min-w-0 break-words">{host.name} <span className="text-muted-foreground">{host.username}@{host.address}:{host.port}</span></span>
                 </label>
+                {hostIds.includes(host.id) && hostConnections(host).length > 1 && <div className="ml-5 mt-2 space-y-2">
+                  <p className="text-xs text-muted-foreground">{t('mcp.connectionsDescription')}</p>
+                  {hostConnections(host).map(connection => <label key={connection.id} className="flex items-start gap-2 text-xs">
+                    <input type="checkbox" checked={(connectionIds[host.id] ?? []).includes(connection.id)} onChange={event => setConnectionIds(previous => ({ ...previous, [host.id]: event.target.checked ? [...(previous[host.id] ?? []), connection.id] : (previous[host.id] ?? []).filter(id => id !== connection.id) }))} />
+                    <span className="break-all">{connection.label} · {connection.username}@{connection.address}:{connection.port}</span>
+                  </label>)}
+                </div>}</div>
               ))}
               {hosts.length === 0 && <p className="text-xs text-muted-foreground">{t('mcp.noServers')}</p>}
             </div>
           </fieldset>
           <fieldset data-tour="mcp-permissions" disabled={busy} className="space-y-2">
             <legend className="mb-2 text-xs text-muted-foreground">{t('mcp.permissionsDescription')}</legend>
-            {(['refresh', 'execute', 'readFiles', 'writeFiles', 'recordDeployments', 'manageAlerts'] as const).map((permission) => (
+            {(['refresh', 'inspect', 'readSnippets', 'runSnippets', 'execute', 'readFiles', 'writeFiles', 'recordDeployments', 'manageAlerts'] as const).map((permission) => (
               <label key={permission} className="flex items-start gap-2 text-xs">
-                <input type="checkbox" checked={permissions[permission]} className="mt-0.5"
+                <input type="checkbox" checked={!!permissions[permission]} className="mt-0.5"
                   onChange={(event) => setPermissions((previous) => ({ ...previous, [permission]: event.target.checked }))} />
                 <span>{t(`mcp.permission.${permission}`)}</span>
               </label>
             ))}
           </fieldset>
+          {sharingSnippets && <fieldset disabled={busy} className="space-y-2 rounded-md border p-3">
+            <legend className="px-1 text-xs font-medium">{t('mcp.snippets')}</legend>
+            <p className="text-xs text-muted-foreground">{t('mcp.snippetsDescription')}</p>
+            <div className="max-h-64 space-y-3 overflow-auto">
+              {snippets.map(row => <div key={row.id} className="space-y-1">
+                <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={snippetIds.includes(row.id)} onChange={event => setSnippetIds(previous => event.target.checked ? [...previous, row.id] : previous.filter(id => id !== row.id))}/><span>{row.name}</span></label>
+                <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/30 p-2 text-xs">{row.command}</pre>
+                <p className="break-all font-mono text-[10px] text-muted-foreground">SHA-256: {row.revision}</p>
+              </div>)}
+              {snippets.length === 0 && <p className="text-xs text-muted-foreground">{t('mcp.noSnippets')}</p>}
+            </div>
+          </fieldset>}
           <p className="text-xs text-muted-foreground">{t('mcp.alertsDescription')}</p>
-          <Button data-tour="mcp-create" size="sm" disabled={busy || testing || !name.trim() || hostIds.length === 0 || hostIds.length > 100} onClick={() => void create()}>
+          <Button data-tour="mcp-create" size="sm" disabled={busy || testing || !name.trim() || hostIds.length === 0 || hostIds.length > 100 || (sharingSnippets && (snippetIds.length === 0 || snippetIds.length > 100))} onClick={() => void create()}>
             {t('mcp.create')}
           </Button>
           {configuration && (
