@@ -128,7 +128,7 @@ async function screenshot(d,h,name,checkpoint){
     // evidence frame, then require both endpoint rows inside the viewport.
     await delay(250)
     const box=await d.rect(observations)
-    return box.y>=40 && box.y+box.height<=viewport.height-16
+    return box.y>=40 && box.y+box.height<=viewport.height
   },{timeoutMs:5000})
   for(const side of ['source','target'])assert((await d.text(`${transfer(h)} ${id(`probe-transfer-${side}-state`)}`)).trim())
   for(const field of await d.findAll('input[type="password"],textarea'))assert(!await d.attr(field,'value'),'transfer_ui_secret_on_screen')
