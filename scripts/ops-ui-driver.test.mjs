@@ -145,12 +145,15 @@ test('controlled field replacement uses explicit keyboard actions and releases m
 
 test('application dropdowns select a visible scoped menu option through W3C clicks', async t => {
   const calls = [], element = id => ({ 'element-6066-11e4-a52e-4f735466cecf': id })
+  let menuReads = 0
   const server = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk)
     const raw = Buffer.concat(chunks).toString(); const body = raw ? JSON.parse(raw) : null
     calls.push({ path: request.url, body })
     let value = null
-    if (request.url.endsWith('/elements')) value = body.value === 'option' ? [element('native-option')] : [element('visible-option')]
+    if (request.url.endsWith('/elements')) value = body.value === 'option' ? [element('native-option')]
+      : body.value.endsWith('[role="option"]') ? [element('visible-option')]
+      : ++menuReads === 1 ? [element('closing-menu')] : []
     else if (request.url.endsWith('/element')) value = element('select')
     else if (request.url.endsWith('/displayed') || request.url.endsWith('/enabled')) value = true
     else if (request.url.endsWith('/property/value') || request.url.endsWith('/attribute/data-value')) value = 'logs'
@@ -163,5 +166,6 @@ test('application dropdowns select a visible scoped menu option through W3C clic
   await driver.select('[data-testid="host-ops-open"]', 'logs')
   assert.deepEqual(calls.filter(call => call.path.endsWith('/click')).map(call => call.path), ['/session/s/element/select/click', '/session/s/element/visible-option/click'])
   assert(calls.some(call => call.body?.value === '[id="_r_1_"][role="listbox"] [role="option"]'))
+  assert.equal(menuReads, 2, 'selection waits until the closing portal is no longer displayed')
   assert.equal(calls.some(call => call.path.includes('/execute/')), false)
 })

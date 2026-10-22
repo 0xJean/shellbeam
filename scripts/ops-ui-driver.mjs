@@ -157,6 +157,15 @@ export class OpsUiDriver {
             if (await this.attr(choice, 'data-value') !== value) continue
             if (!await this.isDisplayed(choice) || await this.attr(choice, 'aria-disabled') === 'true') throw new WebDriverError('element not interactable')
             await this.clickElement(choice)
+            // The real change event can commit before the portal is removed.
+            // Wait for dismissal before clicking the next form control; an
+            // enabled button alone does not prove the menu stopped covering it.
+            await this.until(async () => {
+              for (const menu of await this.findAll(`[id=${JSON.stringify(menuId)}][role="listbox"]`)) {
+                if (await this.isDisplayed(menu)) return false
+              }
+              return true
+            })
             return
           }
           throw new WebDriverError('no such element')
