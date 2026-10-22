@@ -13,7 +13,10 @@ export function verifyTransferUiReport(report) {
     assert(/^[a-f0-9]{64}$/.test(e.processSha256))
   }
   assert(event('transfer-cancelled-without-remote-mutation').passed)
-  assert(event('transfer-app-audit-history-restored').auditJobs===14)
+  const audit=event('transfer-app-audit-history-restored');assert(audit.passed&&audit.auditJobs===14&&audit.jobs?.length===14)
+  assert.equal(new Set(audit.jobs.map(job=>job.id)).size,14)
+  assert(audit.jobs.every(job=>/^[a-f0-9-]{36}$/.test(job.id)&&['completed','unknown'].includes(job.status)))
+  assert.equal(audit.jobs.filter(job=>job.status==='unknown').length,4)
   const history=report.events.filter(e=>e.name==='transfer-app-retained-history');assert.deepEqual(history.map(e=>e.role).sort(),['finish','restore','source','target'])
   for(const h of history)assert(h.originalBuckets?.length>0&&h.originalBuckets.every(t=>Number.isSafeInteger(t)&&t>0&&t<=h.checkedAt)&&h.retainedBuckets>=h.originalBuckets.length)
   const interrupted=report.events.filter(e=>e.name==='transfer-interrupted-recovered-in-app');assert.equal(interrupted.length,2);assert.deepEqual(interrupted.map(e=>e.action),['restore','finish']);assert(interrupted.every(e=>e.passed&&e.bothJobsRecovered&&e.noReplayMs===5000))

@@ -120,7 +120,16 @@ async function screenshot(d,h,name,checkpoint){
   await openTransfer(d,h)
   // A real click on the read-only state list scrolls the evidence into view.
   // No JS execution or product mutation is used to position the screenshot.
-  await d.click(`${transfer(h)} ${id('probe-transfer-observations')}`)
+  const observations=`${transfer(h)} ${id('probe-transfer-observations')}`
+  const viewport=await d.request('GET',d.route('/window/rect'))
+  await d.until(async()=>{
+    await d.click(observations)
+    // WebKit's native scroll paints asynchronously. Settle before the single
+    // evidence frame, then require both endpoint rows inside the viewport.
+    await delay(250)
+    const box=await d.rect(observations)
+    return box.y>=40 && box.y+box.height<=viewport.height-16
+  },{timeoutMs:5000})
   for(const side of ['source','target'])assert((await d.text(`${transfer(h)} ${id(`probe-transfer-${side}-state`)}`)).trim())
   for(const field of await d.findAll('input[type="password"],textarea'))assert(!await d.attr(field,'value'),'transfer_ui_secret_on_screen')
   assert.equal((await d.findAll('iframe')).length,0)
@@ -167,12 +176,13 @@ export async function runTransferUiJourney({driver,fixture:f,record,restart,chec
     await screenshot(d,target,`transfer-${action}-recovered`,checkpoint);await audit(d,recoveredJobs,['completed','completed'])
     record(`transfer-app-${action}-verified`,{passed:true,...fresh,twoHostAudit:true,priorAuditPreserved:true,cancelledRecoveryNoMutation:true})
   }
+  assert.equal(auditHistory.length,14);assert.equal(new Set(auditHistory.map(([id])=>id)).size,14,'transfer_ui_duplicate_audit')
   const last=observations(f);d=await restart(session.password);await stable(f,last)
   await audit(d,auditHistory.map(x=>x[0]),auditHistory.map(x=>x[1]))
-  record('transfer-app-audit-history-restored',{passed:true,auditJobs:auditHistory.length})
-  await f.retained();for(const h of Object.values(f.hosts))record('transfer-app-retained-history',{role:h.role,...await h.history.retained()});assert.equal(f.observe(a)[0].configSha256,originalA[0].configSha256)
+  record('transfer-app-audit-history-restored',{passed:true,auditJobs:auditHistory.length,jobs:auditHistory.map(([id,status])=>({id,status}))})
   await openTransferTools(d,e);await d.click(`${panel(e)} ${id('compatible-agent-uninstall')}`);await confirm(d,true,[e.name,e.node]);await d.until(async()=>await d.attr(panel(e),'data-status')==='retired',{timeoutMs:120000})
   assert(Object.values(f.hosts).every(h=>f.observe(h).every(s=>s.processes.length===0)))
+  await f.retained();for(const h of Object.values(f.hosts))record('transfer-app-retained-history',{role:h.role,...await h.history.retained()});assert.equal(f.observe(a)[0].configSha256,originalA[0].configSha256)
   record('transfer-app-final-preservation-and-exit',{passed:true,auditJobs:auditHistory.length,allProbesStopped:true,originalConfigurationRetained:true,nodeCredentialsAndHistoryRetained:true,noReplayMs:5000})
   return {passed:true,installedPackage:true,productionIpc:true,realVault:true,normalMigration:1,interruptedMigrations:2,readonlyInspections:2,explicitRestore:1,explicitFinish:1,restoredAuditJobs:auditHistory.length,noReplayMs:5000}
 }
