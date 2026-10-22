@@ -602,12 +602,16 @@ test('host connection navigation uses the visible range and one End key before a
     async until(read) { assert(await read()) },
   }
   await revealOpsUiHostActions(driver)
+  assert.deepEqual(driver.lastHostNavigation, { rangeCount: 1, max: 130, value: 0, decision: 'range-and-end', settled: true })
   assert.deepEqual(actions, ['range-click', { actions: [{ type: 'key', id: 'host-list-navigation', actions: [
     { type: 'keyDown', value: '\uE010' }, { type: 'keyUp', value: '\uE010' },
   ] }] }])
   await revealOpsUiHostActions(driver)
   assert.equal(actions.length, 2, 'already visible actions require no extra navigation')
-  await revealOpsUiHostActions({ async findAll() { return [] } })
+  assert.deepEqual(driver.lastHostNavigation, { rangeCount: 1, max: 130, value: 130, decision: 'already-at-end', settled: false })
+  const noRange = { async findAll() { return [] } }
+  await revealOpsUiHostActions(noRange)
+  assert.deepEqual(noRange.lastHostNavigation, { rangeCount: 0, max: null, value: null, decision: 'no-range', settled: false })
 })
 
 test('host navigation rejects ambiguous controls and preserves a failed single range click', async () => {
@@ -619,6 +623,7 @@ test('host navigation rejects ambiguous controls and preserves a failed single r
     async request() { keys++ },
   }
   await assert.rejects(revealOpsUiHostActions(driver), /native-click-failed/)
+  assert.deepEqual(driver.lastHostNavigation, { rangeCount: 1, max: 130, value: 0, decision: 'range-and-end', settled: false })
   assert.equal(clicks, 1); assert.equal(keys, 0)
   await assert.rejects(revealOpsUiHostActions({ ...driver, async findAll() { return [range, range] } }), /host_scroll_control_ambiguous/)
   await assert.rejects(revealOpsUiHostActions({ ...driver, async isDisplayed() { return false } }), /host_scroll_control_ambiguous/)

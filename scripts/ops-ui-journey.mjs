@@ -86,18 +86,27 @@ async function openDashboardPage(driver, page) {
 // from explicit navigation, never a notification-triggered reader or guard.
 export async function revealOpsUiHostActions(driver) {
   const ranges = await driver.findAll('[data-testid="host-list-scroll-controls"] input[type="range"]')
-  if (!ranges.length) return
+  // Retain only the decisions/reads already needed for this navigation. A
+  // later click can observe a different layout; do not infer the earlier
+  // range state from failure geometry or add reads that mask that transition.
+  const navigation = { rangeCount: ranges.length, max: null, value: null, decision: 'checking', settled: false }
+  driver.lastHostNavigation = navigation
+  if (!ranges.length) { navigation.decision = 'no-range'; return }
   check(ranges.length === 1 && await driver.isDisplayed(ranges[0]), 'host_scroll_control_ambiguous')
   const range = ranges[0]
   const max = Number(await driver.attr(range, 'max'))
   const value = Number(await driver.attr(range, 'value'))
+  navigation.max = Number.isFinite(max) ? max : null
+  navigation.value = Number.isFinite(value) ? value : null
   check(Number.isFinite(max) && max >= 0 && Number.isFinite(value) && value >= 0 && value <= max, 'host_scroll_range_invalid')
-  if (max - value < 1) return
+  if (max - value < 1) { navigation.decision = 'already-at-end'; return }
+  navigation.decision = 'range-and-end'
   await driver.click(range)
   await driver.request('POST', driver.route('/actions'), { actions: [{ type: 'key', id: 'host-list-navigation', actions: [
     { type: 'keyDown', value: '\uE010' }, { type: 'keyUp', value: '\uE010' },
   ] }] })
   await driver.until(async () => Number(await driver.attr(range, 'value')) === Number(await driver.attr(range, 'max')))
+  navigation.settled = true
 }
 
 async function createHost(driver, fixture, role, state, record) {

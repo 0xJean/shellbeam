@@ -446,3 +446,7 @@ Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例�
 `2efac9d` 的 15 项 CI 已结束：14 项成功，迁移安装包工作流 `39751621250` 已完整成功（尚未独立下载审计，不能代替后续 head 证据）。原 Ops GUI `39751621263` 已越过三台主机保存/连接及系统通知四状态，在规则配置前的 `host-ops-open` 失败；独立 artifact `12412839984` 证明同一个横向 viewport 为 1054/1184、scrollLeft 0，菜单可显示/启用但中心被裁剪，cleanup/appStopped 通过。
 
 后续仅补齐验收导航：规则配置、恢复后的 Network 路由及资产刷新菜单在执行前复用现有 range/End 操作；不改变产品功能、三步服务诊断预算或任何触发后的通知 reader/guard。167 项 Node 协议测试及修改范围 lint/diff 通过；两项规则通知测试的无横向滚动夹具补充控件查询，原先等待通知证据后才进入下一台主机、失败后立即停止的断言不变。新 head 仍需完整 CI 与独立报告审计。
+
+`0833630` 最终仍为 14/15：原 Ops GUI `39753040026` 在规则配置的菜单点击失败，其余检查（含迁移 GUI）成功。独立下载 artifact `12415205055`，确认 merge `6825b6a` 父提交含该 head、真实 IPC/Vault、通知四状态及 cleanup/applicationStopped；完整告警生命周期未执行。失败几何仍为视口 1054/内容 1184、scrollLeft 0，不能仅凭失败后的读数判定导航之前是否存在滚动控件、是否执行过 End 或其后布局是否变化。
+
+追加的失败报告只保留导航原有读取和分支结果（rangeCount/max/value/decision/settled），不增加 W3C 请求、等待、点击、重试、JS 或凭据/字段读取。协议回归覆盖无控件、已到末端、实际导航及原始单次点击失败，保持同帧/OCR/可见性/sample/scope/no-replay 断言。隔离 Linux WebKit 生产列表的普通/高列表和异步资源列夹具均能正常打开菜单，目前尚未复现 CI 的位置变化，不能宣称此诊断提交修复了产品根因。合成报告 `/tmp/shellbeam-menu-repro.json`、`/tmp/shellbeam-menu-race-repro.json`；不触碰真实 Vault 或运行中的 App。

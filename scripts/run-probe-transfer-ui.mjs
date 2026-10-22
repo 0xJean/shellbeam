@@ -62,7 +62,7 @@ export async function main(env=process.env) {
     report.journey=await runTransferUiJourney({driver,fixture,state,record,restart,checkpoint});report.success=report.journey.passed===true
   }catch(e){
     report.failureLocation=String(e?.stack??'').match(/(?:probe-transfer-ui-journey|probe-transfer-ui-fixture|probe-transfer-history)\.mjs:[0-9:]+/)?.[0]
-    report.failedStage=stage;report.failureCode=/^[a-z0-9_ :.-]{1,100}$/i.test(e.message)?e.message:'transfer_ui_assertion_failed';report.lastInteraction=driver?.lastInteraction;report.clickGeometry=driver?.lastClickDiagnostics;process.exitCode=1
+    report.failedStage=stage;report.failureCode=/^[a-z0-9_ :.-]{1,100}$/i.test(e.message)?e.message:'transfer_ui_assertion_failed';report.lastInteraction=driver?.lastInteraction;report.clickGeometry=driver?.lastClickDiagnostics;report.hostNavigation=driver?.lastHostNavigation;process.exitCode=1
     // Read only fixed UI flags and product error codes. Never retain form
     // values, DOM dumps, server responses or arbitrary alert text.
     if(driver?.sessionId)try{
