@@ -8,7 +8,7 @@ import { verifyTransferUiReport } from './probe-transfer-ui-report.mjs'
 import { OpsUiDriver } from './ops-ui-driver.mjs'
 import { guardUiEnvironment, safeDetails, freePort, appProcesses, stopProcessGroup } from './run-ops-ui-live.mjs'
 import { createTransferUiFixture } from './probe-transfer-ui-fixture.mjs'
-import { setupTransferUi, runTransferUiJourney } from './probe-transfer-ui-journey.mjs'
+import { setupTransferUi, runTransferUiJourney, classifyTransferHostError } from './probe-transfer-ui-journey.mjs'
 
 export async function main(env=process.env) {
   guardUiEnvironment(env)
@@ -73,6 +73,12 @@ export async function main(env=process.env) {
       }
       for(const alert of await driver.findAll('[role="alert"]'))if(await driver.isDisplayed(alert)){diagnostics.alerts++;diagnostics.codes.push(...(await driver.text(alert)).match(/\b(?:KOMARI|MONITORING|VAULT)_[A-Z_]{1,80}\b/g)??[])}
       for(const control of ['host-card','host-ops-details-toggle','compatible-agent-tools','probe-transfer-panel'])diagnostics[control]=(await driver.findAll(`[data-testid="${control}"]`)).length
+      diagnostics.hostFormVisible=await driver.findAll('dialog[open] [data-testid="host-form"]').then(v=>v.length>0)
+      if(diagnostics.hostFormVisible){
+        diagnostics.hostSaveEnabled=await driver.isEnabled('[data-testid="host-save"]')
+        const errors=await driver.findAll('[data-testid="host-form"] p.text-destructive')
+        diagnostics.hostFormError=classifyTransferHostError(errors.length?await driver.text(errors[0]):'')
+      }
       report.uiFailure=diagnostics
       if(stage==='migration-and-recovery'){
         let safe=true

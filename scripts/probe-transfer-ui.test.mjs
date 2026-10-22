@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { forwardTransferRequest } from './probe-transfer-ui-fixture.mjs'
 import { verifyTransferUiReport } from './probe-transfer-ui-report.mjs'
+import { classifyTransferHostError } from './probe-transfer-ui-journey.mjs'
 import { historyTimes, transferHistory } from './probe-transfer-history.mjs'
 import { guardUiEnvironment } from './run-ops-ui-live.mjs'
 const report=()=>({success:true,applicationStopped:true,cleanup:true,headCommit:'a'.repeat(40),checkedOutCommit:'b'.repeat(40),journey:{passed:true,installedPackage:true,productionIpc:true,realVault:true,normalMigration:1,interruptedMigrations:2,readonlyInspections:2,explicitRestore:1,explicitFinish:1,restoredAuditJobs:14,noReplayMs:5000},screenshots:['completed','restore-readback','restore-recovered','finish-readback','finish-recovered'].map(n=>({file:`transfer-${n}.png`,sha256:'c'.repeat(64),bytes:10000,width:1280,height:900})),events:[{name:'transfer-fixture-ready',machineIdentitiesDistinct:true,architecture:'amd64',services:2,hosts:4,productionKeyId:'compatible-probe-2026-01',sequence:1792594908584},...['transfer-app-install-verified','transfer-app-cross-service-machine-account-completed','transfer-app-restore-verified','transfer-app-finish-verified'].map(name=>({name,originalSampleAt:12000,before:11000,started:11500,verifiedAt:12500,processSha256:'d'.repeat(64)})),{name:'transfer-cancelled-without-remote-mutation',passed:true},...['restore','finish'].map(action=>({name:'transfer-interrupted-recovered-in-app',action,passed:true,bothJobsRecovered:true,noReplayMs:5000})),{name:'transfer-app-audit-history-restored',passed:true,auditJobs:14,jobs:Array.from({length:14},(_,i)=>({id:`00000000-0000-0000-0000-${String(i).padStart(12,'0')}`,status:i<4?'unknown':'completed'}))},...['source','target','restore','finish'].map(role=>({name:'transfer-app-retained-history',role,originalBuckets:[60000],retainedBuckets:1,checkedAt:120000})),{name:'transfer-app-final-preservation-and-exit',passed:true,allProbesStopped:true,auditJobs:14,originalConfigurationRetained:true,nodeCredentialsAndHistoryRetained:true}]})
@@ -44,4 +45,12 @@ test('history proof rejects another node, missing original times and uncaptured 
   assert.throws(()=>historyTimes({data:{records:[{client:'other',cpu:1,time:'2026-10-22T05:00:00Z'}]}},'node'),/node_mismatch/)
   assert.throws(()=>historyTimes({client:'node',cpu:1},'node'),/original_time_missing/)
   await assert.rejects(transferHistory(async()=>({value:{}}),'node',async()=>false).retained(),/baseline_missing/)
+})
+
+test('host form diagnostics return fixed categories without credential-bearing messages',()=>{
+  assert.equal(classifyTransferHostError('Failed to save to Vault: database is locked'),'storage_busy')
+  assert.equal(classifyTransferHostError('Failed to save to Vault: synthetic-private-key-value'),'vault_save_failed')
+  assert.equal(classifyTransferHostError('Private key or vault key reference is required'),'validation_failed')
+  assert.equal(classifyTransferHostError('synthetic-private-key-value'),'unclassified_error')
+  assert.equal(classifyTransferHostError(''),'none')
 })

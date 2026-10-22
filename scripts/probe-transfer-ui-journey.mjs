@@ -18,14 +18,27 @@ const exists=async(d,s)=>(await d.findAll(s)).length>0
 const main=async(d,page='hosts')=>{await d.click(id('pc-dashboard'));await d.click(id(`pc-nav-${page}`))}
 const closed=async(d,s)=>d.until(async()=>!await exists(d,s))
 
+export function classifyTransferHostError(message) {
+  if (/database is locked|database is busy/i.test(message)) return 'storage_busy'
+  if (/vault.*locked|locked.*vault/i.test(message)) return 'vault_locked'
+  if (/Failed to save to Vault/i.test(message)) return 'vault_save_failed'
+  if (/required|Port must be|HOST_CONNECTION|HOST_DEFAULT_CONNECTION/i.test(message)) return 'validation_failed'
+  return message ? 'unclassified_error' : 'none'
+}
+
 export async function setupTransferUi({driver:d,fixture:f,record}) {
   const password='Ui1'+randomBytes(24).toString('hex')
   await initializeOpsUiVault({driver:d,password,record})
   for(const h of Object.values(f.hosts)) {
     await main(d);await d.click('[data-tour="host-create"]');await d.waitFor(`dialog[open] ${id('host-form')}`)
-    for(const [field,value] of Object.entries({address:h.address,port:String(h.port),username:h.user,name:h.name})) await d.fill(id(`host-${field}`),value)
-    await d.click(id('host-auth-private-key'));await d.fill(id('host-private-key'),await readFile(h.privateKeyPath,'utf8'));await d.fill(id('host-secret-name'),`transfer-${h.role}-key`)
+    const fields={address:h.address,port:String(h.port),username:h.user,name:h.name}
+    for(const [field,value] of Object.entries(fields))await d.fill(id(`host-${field}`),value)
+    for(const [field,value] of Object.entries(fields))assert((await d.attr(id(`host-${field}`),'value'))===value,'transfer_ui_host_fields_not_entered')
+    await d.click(id('host-auth-private-key'));const key=await readFile(h.privateKeyPath,'utf8');await d.fill(id('host-private-key'),key)
+    assert(String(await d.attr(id('host-private-key'),'value')).replaceAll('\r\n','\n')===key.replaceAll('\r\n','\n'),'transfer_ui_private_key_roundtrip_failed')
+    await d.fill(id('host-secret-name'),`transfer-${h.role}-key`);assert(await d.attr(id('host-secret-name'),'value')===`transfer-${h.role}-key`,'transfer_ui_secret_reference_not_explicit')
     if(h.jump){await d.click(id('host-jump-toggle'));await d.select(id('host-jump-profile'),f.hosts[h.jump].id)}
+    record('transfer-host-form-ready',{role:h.role,fieldsMatched:true,privateKeyMatched:true,explicitReference:true})
     await d.click(id('host-save'));await closed(d,`dialog[open] ${id('host-form')}`)
     const saved=`${id('host-card')}[data-host-name=${q(h.name)}]`;await d.waitFor(saved);h.id=await d.attr(saved,'data-host-id');assert(h.id)
     await d.click(`${saved} ${id('host-connect')}`)
