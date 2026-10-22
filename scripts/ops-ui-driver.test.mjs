@@ -92,7 +92,7 @@ test('readiness waits for a visible enabled control before exactly one mutation'
   driver.sessionId = 's'
   await driver.fill('[data-testid="vault-master-password"]', 'SYNTHETIC-PRIVATE-INPUT')
   assert(visibleReads >= 3 && enabledReads >= 2)
-  assert.deepEqual(mutations, ['/session/s/element/e/value'])
+  assert.deepEqual(mutations, ['/session/s/element/e/clear', '/session/s/element/e/value'])
   assert.deepEqual(driver.lastInteraction, { kind: 'fill', control: 'vault-master-password' })
   assert(!JSON.stringify(driver.lastInteraction).includes('SYNTHETIC'))
 })
@@ -118,7 +118,27 @@ test('multiline input uses real W3C Enter keys and never writes through JavaScri
   await driver.fill('[data-testid="host-private-key"]', 'SYNTHETIC\r\nMULTILINE\nVALUE\n')
   const writes = calls.filter(call => call.path.endsWith('/value'))
   assert.equal(writes.length, 1)
-  assert.equal(writes[0].body.text, '\uE009a\uE000\uE003SYNTHETIC\uE007MULTILINE\uE007VALUE\uE007')
-  assert.equal(calls.filter(call => call.path.endsWith('/clear')).length, 0)
+  assert.equal(writes[0].body.text, 'SYNTHETIC\uE007MULTILINE\uE007VALUE\uE007')
+  assert.equal(calls.filter(call => call.path.endsWith('/clear')).length, 1)
   assert.equal(calls.some(call => call.path.includes('/execute/')), false)
+})
+
+test('controlled field replacement uses explicit keyboard actions and releases modifiers before typing', async t => {
+  const calls=[]
+  const server=createServer(async(request,response)=>{
+    const chunks=[];for await(const chunk of request)chunks.push(chunk)
+    const raw=Buffer.concat(chunks).toString();calls.push({path:request.url,...(raw?{body:JSON.parse(raw)}:{})})
+    let value=null
+    if(request.url.endsWith('/element'))value={'element-6066-11e4-a52e-4f735466cecf':'e'}
+    else if(request.url.endsWith('/displayed')||request.url.endsWith('/enabled'))value=true
+    else if(request.url.endsWith('/name'))value='input'
+    response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({value}))
+  })
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{server.closeAllConnections();server.close()})
+  const driver=new OpsUiDriver(`http://127.0.0.1:${server.address().port}`);driver.sessionId='s'
+  await driver.fill('[data-testid="host-port"]','32787',{keyboardClear:true})
+  const writes=calls.filter(c=>c.path.endsWith('/actions')||c.path.endsWith('/click')||c.path.endsWith('/clear')||c.path.endsWith('/value'))
+  assert.deepEqual(writes.map(c=>c.path),['/session/s/element/e/click','/session/s/actions','/session/s/element/e/value'])
+  assert.deepEqual(writes[1].body.actions,[{type:'key',id:'field-keyboard',actions:[{type:'keyDown',value:'\uE009'},{type:'keyDown',value:'a'},{type:'keyUp',value:'a'},{type:'keyUp',value:'\uE009'},{type:'keyDown',value:'\uE003'},{type:'keyUp',value:'\uE003'}]}])
+  assert.equal(writes[2].body.text,'32787');assert.equal(calls.some(c=>c.path.includes('/execute/')),false)
 })

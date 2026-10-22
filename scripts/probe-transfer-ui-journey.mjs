@@ -32,7 +32,7 @@ export async function setupTransferUi({driver:d,fixture:f,record}) {
   for(const h of Object.values(f.hosts)) {
     await main(d);await d.click('[data-tour="host-create"]');await d.waitFor(`dialog[open] ${id('host-form')}`)
     const fields={address:h.address,port:String(h.port),username:h.user,name:h.name}
-    for(const [field,value] of Object.entries(fields))await d.fill(id(`host-${field}`),value)
+    for(const [field,value] of Object.entries(fields))await d.fill(id(`host-${field}`),value,{keyboardClear:true})
     for(const [field,value] of Object.entries(fields))assert((await d.attr(id(`host-${field}`),'value'))===value,`transfer_ui_host_${field}_not_entered`)
     await d.click(id('host-auth-private-key'));const key=await readFile(h.privateKeyPath,'utf8');await d.fill(id('host-private-key'),key)
     assert(String(await d.attr(id('host-private-key'),'value')).replaceAll('\r\n','\n')===key.replaceAll('\r\n','\n'),'transfer_ui_private_key_roundtrip_failed')
