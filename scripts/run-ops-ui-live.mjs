@@ -314,6 +314,7 @@ export async function main(env = process.env) {
   } catch (error) {
     report.failure = { stage, code: error?.code && /^[a-z ]{1,64}$/.test(error.code) ? error.code : /^ops_ui_[a-z0-9_]{1,100}$/.test(error?.message ?? '') ? error.message : 'acceptance-failed' }
     report.lastInteraction = safeDetails(driver?.lastInteraction)
+    report.clickGeometry = safeDetails(driver?.lastClickDiagnostics)
     console.error(`ShellBeam UI: ${stage} failed`)
   } finally {
     if (probeNotifications) {

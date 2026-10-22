@@ -408,3 +408,9 @@ Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例�
 - 验证：1561 项前端测试覆盖（17 项 Linux 限定跳过）；首次全量中两个 shell 子进程测试受同时原生编译负载超时，独立重跑该两文件 7 项通过，未修改超时或断言。最终 SFTP/主机定向 78 项通过，作用域组件调整后另 4 项通过。SFTP 原生 4 项通过（含 worker 让出调用线程和本地文件真实写入/读取/枚举），163 项 Node 协议测试通过，生产构建、修改组件 ESLint、Rust fmt 和 diff 检查通过。
 - macOS 隔离安装包 `app.shellbeam.sftpcheck20261022` 使用真实 SFTP IPC 与回环慢 SSH 握手，等待中另一按钮即时更新；截图 `/tmp/shellbeam-sftp-native-responsive.png` 与 `/tmp/shellbeam-host-basics-native-light-grid.png` 核对列表/卡片、暗/亮主题地区和指标。使用合成主机和临时测试端点，未触碰真实 Vault/凭据，验收 App 已退出。此证据验证线程响应和组件显示，不冒充真实 SSH 认证/传输端到端验收。
 - 上版 `4e70ed6` 的 GUI run `39736677130` 在 via 主机保存时 `element not interactable`，清理/退出通过。报告 `/tmp/shellbeam-ci-4e70ed6-gui-audit/shellbeam-ops-ui-live-report.json` 无凭据或截图。独立测试提交等待真实菜单消失后再点击下一个表单控件；增加延迟卸载回归，未使用脚本点击、放宽可见性或通知断言。根因仍需最新 head 的安装包 CI 验证，旧 14/15 结果不算本轮通过。
+
+### 2026-10-22：安装包点击失败诊断（尚未解决）
+
+- `78a20a3` 的 15 项检查中 13 项通过，两个打包 GUI 失败：Ops run `39739845820` 在 via 主机 `host-save`；迁移 run `39739845687` 已保存 target 主机，在 `host-connect` 失败。两者均为 `element not interactable`，各自清理与进程退出通过。没有进入后续真实运维或迁移阶段，不能声称本 head 端到端通过。
+- 隔离 Linux WebKit 2.50.4 的生产 HostForm 在展开跳板机后，保存按钮位于滚动区外；1280×800 和 1280×900 的标准 WebDriver 点击均能滚动并提交。这证明单纯“按钮屏幕外”不足以解释打包应用失败，菜单关闭等待也未解决 CI，根因仍待确定。
+- 新增失败时的只读 W3C 几何诊断：固定控件、视口及最多八层祖先的矩形/滚动数字、显示和启用布尔值。保留原失败，不重试、不滚动、不注入 JavaScript、不读取文本/表单值。两份报告均携带诊断；协议回归验证只点击一次及凭据不进入报告，所有原验收断言保持不变。

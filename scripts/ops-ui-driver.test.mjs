@@ -38,6 +38,33 @@ test('reports omit credentials and payloads while retaining visibility booleans'
   assert.deepEqual(report, { ocrTitleMatched: true, screenshot: 'notification-visible.png', jobId: '00000000-0000-4000-8000-000000000001' })
 })
 
+test('failed clicks retain only numeric geometry and never retry, scroll, or read credential values', async t => {
+  const calls = [], element = id => ({ 'element-6066-11e4-a52e-4f735466cecf': id })
+  const server = createServer(async (request, response) => {
+    const chunks = []; for await (const chunk of request) chunks.push(chunk)
+    const raw = Buffer.concat(chunks).toString(); const body = raw ? JSON.parse(raw) : null
+    calls.push({ method: request.method, path: request.url, body })
+    let value = null, status = 200
+    if (request.url.endsWith('/elements')) value = [element('outer'), element('inner')]
+    else if (request.url.endsWith('/element')) value = element(body.value === 'html' ? 'viewport' : 'target')
+    else if (request.url.endsWith('/displayed') || request.url.endsWith('/enabled')) value = true
+    else if (request.url.endsWith('/rect')) value = { x: 50, y: 900, width: 80, height: 30, private: 'SYNTHETIC_CREDENTIAL' }
+    else if (request.url.includes('/property/')) value = request.url.endsWith('/scrollTop') ? 100 : request.url.endsWith('/scrollLeft') ? 'SYNTHETIC_CREDENTIAL' : 800
+    else if (request.url.endsWith('/click')) { status = 400; value = { error: 'element not interactable', message: 'SYNTHETIC_CREDENTIAL' } }
+    response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ value }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => { server.closeAllConnections(); server.close() })
+  const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`); driver.sessionId = 's'
+  await assert.rejects(driver.click('[data-testid="host-save"]'), error => error.code === 'element not interactable')
+  const report = safeDetails(driver.lastClickDiagnostics)
+  assert.equal(report.available, true); assert.equal(report.target.y, 900); assert.equal(report.target.scrollTop, 100)
+  assert.equal(report.target.scrollLeft, null); assert.equal(report.ancestors.length, 2)
+  assert(!JSON.stringify(report).includes('SYNTHETIC'))
+  assert.deepEqual(calls.filter(call => call.method === 'POST' && !/\/elements?$/.test(call.path)).map(call => call.path), ['/session/s/element/target/click'])
+  assert.equal(calls.some(call => /\/text$|\/property\/value$|\/execute\/|\/actions$/.test(call.path)), false)
+  assert.deepEqual(driver.lastInteraction, { kind: 'click', control: 'host-save' })
+})
+
 test('W3C confirmation stays explicit, errors are redacted, and input state uses properties', async t => {
   const calls = []
   const server = createServer(async (request, response) => {

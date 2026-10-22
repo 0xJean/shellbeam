@@ -32,6 +32,7 @@ export class OpsUiDriver {
     this.requestTimeoutMs = requestTimeoutMs
     this.sessionId = null
     this.lastInteraction = null
+    this.lastClickDiagnostics = null
   }
   async request(method, path, body) {
     let response
@@ -99,12 +100,40 @@ export class OpsUiDriver {
     this.lastInteraction = { kind, control: control ?? 'native-control' }
   }
   async clickElement(element) {
+    this.lastClickDiagnostics = null
     try { return await this.request('POST', await this.elementRoute(element, '/click'), {}) }
     catch (error) {
       // The click has opened a real modal. Leave it for the caller's explicit
       // accept/dismiss; never retry a click or automatically consent.
-      if (error.code !== 'unexpected alert open') throw error
+      if (error.code !== 'unexpected alert open') {
+        if (['element not interactable', 'element click intercepted'].includes(error.code)) {
+          this.lastClickDiagnostics = await this.readClickGeometry(element).catch(() => ({ available: false }))
+        }
+        throw error
+      }
     }
+  }
+  async readClickGeometry(element) {
+    // Failure observation only: no scrolling, focus, retry, JS evaluation or
+    // reads of text/field values. These fixed numeric properties are safe even
+    // when an ancestor contains a credential form.
+    const geometry = async target => {
+      const rect = await this.rect(target)
+      const result = {}
+      for (const field of ['x', 'y', 'width', 'height']) {
+        result[field] = typeof rect?.[field] === 'number' && Number.isFinite(rect[field]) ? rect[field] : null
+      }
+      for (const field of ['clientWidth', 'clientHeight', 'scrollWidth', 'scrollHeight', 'scrollLeft', 'scrollTop']) {
+        const value = await this.request('GET', await this.elementRoute(target, `/property/${field}`))
+        result[field] = typeof value === 'number' && Number.isFinite(value) ? value : null
+      }
+      return result
+    }
+    const ancestors = (await this.findAll('xpath=ancestor::*', element)).reverse().slice(0, 8)
+    const result = { available: true, displayed: await this.isDisplayed(element), enabled: await this.isEnabled(element),
+      target: await geometry(element), viewport: await geometry(await this.find('html')), ancestors: [] }
+    for (const ancestor of ancestors) result.ancestors.push(await geometry(ancestor))
+    return result
   }
   async fill(locator, value, { keyboardClear = false } = {}) {
     this.noteInteraction('fill', locator)
