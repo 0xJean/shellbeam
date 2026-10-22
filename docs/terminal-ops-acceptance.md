@@ -400,3 +400,11 @@ Services窄屏字段布局本地回归：前端1261项通过、17项Linux用例�
 - 菜单支持方向键、Home/End、文字定位、Enter/Space、Escape/Tab 与外部点击关闭；选项禁用、受控动作菜单复位、主机行事件隔离保持不变。菜单在当前 dialog 内渲染，限制视口宽高并允许长选项换行。
 - 独立 macOS `.app` 使用示例主机验证真实 WKWebView：状态菜单展开/键盘选中、主机运维路由、弹窗层级与长选项均通过。此为原生 UI 控件验收，不作为真实 SSH/迁移证据。
 - 本地验证：1559 项前端通过（17 项 Linux 专用跳过）、163 项 Node 协议测试通过，修改文件 ESLint 与 diff 检查通过。安装包 WebDriver 现在点击可见应用菜单，不注入 JS、不改动原有采样、审计、通知同帧/OCR 和 no-replay 断言；新 head CI 另行记录。
+
+### 2026-10-22：SFTP 响应与主机基础信息恢复
+
+- 原因：SFTP 的 SSH 握手、目录枚举及文件传输使用同步 Tauri 命令；慢 I/O 会占住窗口线程。改为异步入口 + blocking worker，保留原有身份校验、ProxyJump、读写确认、路径验证和 OperationJob。初始本地读取立即显示加载状态；读取当前账号真实 home；切换主机/Vault 后丢弃过期读取结果，文件操作期间禁止切换目标；复用日期格式器减少文件列表重复渲染开销。
+- 主机页默认恢复地区/旗帜，已有 CPU、内存、磁盘、网络与运行时间直接显示。无资源样本时六列，有样本时七列；详细运维摘要九列，表头与主行一致，告警/诊断/审计仍默认折叠。保留旧展示偏好，开关不再隐藏基础资料，也不改变采集和通知。VPS 资产页无改动，两页继续共用主机资料。
+- 验证：1561 项前端测试覆盖（17 项 Linux 限定跳过）；首次全量中两个 shell 子进程测试受同时原生编译负载超时，独立重跑该两文件 7 项通过，未修改超时或断言。最终 SFTP/主机定向 78 项通过，作用域组件调整后另 4 项通过。SFTP 原生 4 项通过（含 worker 让出调用线程和本地文件真实写入/读取/枚举），163 项 Node 协议测试通过，生产构建、修改组件 ESLint、Rust fmt 和 diff 检查通过。
+- macOS 隔离安装包 `app.shellbeam.sftpcheck20261022` 使用真实 SFTP IPC 与回环慢 SSH 握手，等待中另一按钮即时更新；截图 `/tmp/shellbeam-sftp-native-responsive.png` 与 `/tmp/shellbeam-host-basics-native-light-grid.png` 核对列表/卡片、暗/亮主题地区和指标。使用合成主机和临时测试端点，未触碰真实 Vault/凭据，验收 App 已退出。此证据验证线程响应和组件显示，不冒充真实 SSH 认证/传输端到端验收。
+- 上版 `4e70ed6` 的 GUI run `39736677130` 在 via 主机保存时 `element not interactable`，清理/退出通过。报告 `/tmp/shellbeam-ci-4e70ed6-gui-audit/shellbeam-ops-ui-live-report.json` 无凭据或截图。独立测试提交等待真实菜单消失后再点击下一个表单控件；增加延迟卸载回归，未使用脚本点击、放宽可见性或通知断言。根因仍需最新 head 的安装包 CI 验证，旧 14/15 结果不算本轮通过。

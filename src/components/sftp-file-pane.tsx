@@ -32,9 +32,11 @@ function formatSize(bytes?: number) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
+const entryTimeFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+
 function formatTime(ms?: number) {
   if (!ms) return '-'
-  return new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return entryTimeFormatter.format(ms)
 }
 
 export interface FilePaneProps {

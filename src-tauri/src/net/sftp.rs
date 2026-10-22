@@ -8,7 +8,24 @@ use tauri::Emitter;
 use uuid::Uuid;
 
 use crate::error::{sftp_error_from_raw, sftp_error_payload};
-use crate::ssh::SshSessionPool;
+
+// SSH handshakes, directory enumeration and file transfers must never run on
+// the window thread or occupy the async executor while waiting for I/O.
+async fn run_file_io<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|_| {
+            sftp_error_payload(
+                "io_task_failed",
+                "client",
+                false,
+                "File operation worker failed",
+                None,
+            )
+        })?
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -168,7 +185,6 @@ fn emit_sftp_progress(
 /// Every SFTP handshake uses the same verified route as terminal/commands.
 fn checkout_with_sftp(
     app: &tauri::AppHandle,
-    _pool: &SshSessionPool,
     host_id: Option<&str>,
     vault_id: Option<&str>,
     host: &str,
@@ -215,9 +231,15 @@ fn checkout_with_sftp(
 }
 
 #[tauri::command]
-pub fn sftp_stat_path(
+pub async fn sftp_stat_path(
     app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
+    payload: SftpRequest,
+) -> Result<SftpPathState, String> {
+    run_file_io(move || sftp_stat_path_blocking(app, payload)).await
+}
+
+fn sftp_stat_path_blocking(
+    app: tauri::AppHandle,
     payload: SftpRequest,
 ) -> Result<SftpPathState, String> {
     if payload.remote_path.trim().is_empty() {
@@ -231,7 +253,6 @@ pub fn sftp_stat_path(
     }
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -258,14 +279,19 @@ pub fn sftp_stat_path(
 }
 
 #[tauri::command]
-pub fn sftp_list_dir(
+pub async fn sftp_list_dir(
     app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
+    payload: SftpRequest,
+) -> Result<Vec<SftpEntry>, String> {
+    run_file_io(move || sftp_list_dir_blocking(app, payload)).await
+}
+
+fn sftp_list_dir_blocking(
+    app: tauri::AppHandle,
     payload: SftpRequest,
 ) -> Result<Vec<SftpEntry>, String> {
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -316,14 +342,13 @@ pub fn sftp_list_dir(
 }
 
 #[tauri::command]
-pub fn sftp_home_dir(
-    app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
-    payload: SftpRequest,
-) -> Result<String, String> {
+pub async fn sftp_home_dir(app: tauri::AppHandle, payload: SftpRequest) -> Result<String, String> {
+    run_file_io(move || sftp_home_dir_blocking(app, payload)).await
+}
+
+fn sftp_home_dir_blocking(app: tauri::AppHandle, payload: SftpRequest) -> Result<String, String> {
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -380,9 +405,15 @@ fn read_download(
 }
 
 #[tauri::command]
-pub fn sftp_download_file(
+pub async fn sftp_download_file(
     app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
+    payload: SftpRequest,
+) -> Result<SftpFileData, String> {
+    run_file_io(move || sftp_download_file_blocking(app, payload)).await
+}
+
+fn sftp_download_file_blocking(
+    app: tauri::AppHandle,
     payload: SftpRequest,
 ) -> Result<SftpFileData, String> {
     if payload.remote_path.trim().is_empty() {
@@ -400,7 +431,6 @@ pub fn sftp_download_file(
         .unwrap_or_else(|| format!("download-{}", Uuid::new_v4()));
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -470,9 +500,15 @@ pub fn sftp_download_file(
 }
 
 #[tauri::command]
-pub fn sftp_upload_file(
+pub async fn sftp_upload_file(
     app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
+    payload: SftpUploadRequest,
+) -> Result<(), String> {
+    run_file_io(move || sftp_upload_file_blocking(app, payload)).await
+}
+
+fn sftp_upload_file_blocking(
+    app: tauri::AppHandle,
     payload: SftpUploadRequest,
 ) -> Result<(), String> {
     if payload.remote_path.trim().is_empty() {
@@ -494,7 +530,6 @@ pub fn sftp_upload_file(
     let total_size = content.len() as u64;
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -558,11 +593,11 @@ pub fn sftp_upload_file(
 }
 
 #[tauri::command]
-pub fn sftp_delete_path(
-    app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
-    payload: SftpRequest,
-) -> Result<(), String> {
+pub async fn sftp_delete_path(app: tauri::AppHandle, payload: SftpRequest) -> Result<(), String> {
+    run_file_io(move || sftp_delete_path_blocking(app, payload)).await
+}
+
+fn sftp_delete_path_blocking(app: tauri::AppHandle, payload: SftpRequest) -> Result<(), String> {
     if payload.remote_path.trim().is_empty() {
         return Err(sftp_error_payload(
             "validation_error",
@@ -574,7 +609,6 @@ pub fn sftp_delete_path(
     }
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -610,9 +644,15 @@ pub fn sftp_delete_path(
 }
 
 #[tauri::command]
-pub fn sftp_rename_path(
+pub async fn sftp_rename_path(
     app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
+    payload: SftpRenameRequest,
+) -> Result<(), String> {
+    run_file_io(move || sftp_rename_path_blocking(app, payload)).await
+}
+
+fn sftp_rename_path_blocking(
+    app: tauri::AppHandle,
     payload: SftpRenameRequest,
 ) -> Result<(), String> {
     if payload.old_remote_path.trim().is_empty() || payload.new_remote_path.trim().is_empty() {
@@ -626,7 +666,6 @@ pub fn sftp_rename_path(
     }
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -657,11 +696,11 @@ pub fn sftp_rename_path(
 }
 
 #[tauri::command]
-pub fn sftp_create_dir(
-    app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
-    payload: SftpRequest,
-) -> Result<(), String> {
+pub async fn sftp_create_dir(app: tauri::AppHandle, payload: SftpRequest) -> Result<(), String> {
+    run_file_io(move || sftp_create_dir_blocking(app, payload)).await
+}
+
+fn sftp_create_dir_blocking(app: tauri::AppHandle, payload: SftpRequest) -> Result<(), String> {
     if payload.remote_path.trim().is_empty() {
         return Err(sftp_error_payload(
             "validation_error",
@@ -673,7 +712,6 @@ pub fn sftp_create_dir(
     }
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -700,11 +738,11 @@ pub fn sftp_create_dir(
 }
 
 #[tauri::command]
-pub fn sftp_create_file(
-    app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
-    payload: SftpRequest,
-) -> Result<(), String> {
+pub async fn sftp_create_file(app: tauri::AppHandle, payload: SftpRequest) -> Result<(), String> {
+    run_file_io(move || sftp_create_file_blocking(app, payload)).await
+}
+
+fn sftp_create_file_blocking(app: tauri::AppHandle, payload: SftpRequest) -> Result<(), String> {
     if payload.remote_path.trim().is_empty() {
         return Err(sftp_error_payload(
             "validation_error",
@@ -716,7 +754,6 @@ pub fn sftp_create_file(
     }
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -747,9 +784,15 @@ pub fn sftp_create_file(
 }
 
 #[tauri::command]
-pub fn sftp_write_file(
+pub async fn sftp_write_file(
     app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
+    payload: SftpUploadRequest,
+) -> Result<(), String> {
+    run_file_io(move || sftp_write_file_blocking(app, payload)).await
+}
+
+fn sftp_write_file_blocking(
+    app: tauri::AppHandle,
     payload: SftpUploadRequest,
 ) -> Result<(), String> {
     if payload.remote_path.trim().is_empty() {
@@ -766,7 +809,6 @@ pub fn sftp_write_file(
         .map_err(|err| sftp_error_from_raw("client", "decode file content", err.to_string()))?;
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -822,11 +864,11 @@ pub struct SftpChmodRequest {
 }
 
 #[tauri::command]
-pub fn sftp_chmod(
-    app: tauri::AppHandle,
-    pool: tauri::State<'_, SshSessionPool>,
-    payload: SftpChmodRequest,
-) -> Result<(), String> {
+pub async fn sftp_chmod(app: tauri::AppHandle, payload: SftpChmodRequest) -> Result<(), String> {
+    run_file_io(move || sftp_chmod_blocking(app, payload)).await
+}
+
+fn sftp_chmod_blocking(app: tauri::AppHandle, payload: SftpChmodRequest) -> Result<(), String> {
     if payload.remote_path.trim().is_empty() {
         return Err(sftp_error_payload(
             "validation_error",
@@ -838,7 +880,6 @@ pub fn sftp_chmod(
     }
     let (session, sftp, jump_tunnel) = checkout_with_sftp(
         &app,
-        &pool,
         payload.host_id.as_deref(),
         payload.vault_id.as_deref(),
         &payload.host,
@@ -888,7 +929,11 @@ pub struct LocalListRequest {
 }
 
 #[tauri::command]
-pub fn local_list_dir(payload: LocalListRequest) -> Result<Vec<LocalEntry>, String> {
+pub async fn local_list_dir(payload: LocalListRequest) -> Result<Vec<LocalEntry>, String> {
+    run_file_io(move || local_list_dir_blocking(payload)).await
+}
+
+fn local_list_dir_blocking(payload: LocalListRequest) -> Result<Vec<LocalEntry>, String> {
     let dir = PathBuf::from(&payload.dir_path);
     if !dir.is_dir() {
         return Err(format!("Not a directory: {}", payload.dir_path));
@@ -939,7 +984,11 @@ pub fn local_home_dir() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn local_read_file_b64(path: String) -> Result<String, String> {
+pub async fn local_read_file_b64(path: String) -> Result<String, String> {
+    run_file_io(move || local_read_file_b64_blocking(path)).await
+}
+
+fn local_read_file_b64_blocking(path: String) -> Result<String, String> {
     let mut file = std::fs::File::open(&path).map_err(|_| "LOCAL_FILE_READ_FAILED")?;
     let data = read_download(
         &mut file,
@@ -951,7 +1000,11 @@ pub fn local_read_file_b64(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn local_write_file_b64(path: String, content_b64: String) -> Result<(), String> {
+pub async fn local_write_file_b64(path: String, content_b64: String) -> Result<(), String> {
+    run_file_io(move || local_write_file_b64_blocking(path, content_b64)).await
+}
+
+fn local_write_file_b64_blocking(path: String, content_b64: String) -> Result<(), String> {
     let data = BASE64_STANDARD
         .decode(&content_b64)
         .map_err(|e| format!("Decode base64: {}", e))?;
@@ -1042,5 +1095,64 @@ mod bounded_download_tests {
         .unwrap();
         assert_eq!(unknown.is_file, None);
         assert_eq!(unknown.permissions, None);
+    }
+}
+
+#[cfg(test)]
+mod nonblocking_io_tests {
+    use super::*;
+    use std::{
+        future::Future,
+        sync::{mpsc, Arc},
+        task::{Context, Poll, Wake, Waker},
+    };
+
+    struct NoopWake;
+    impl Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    #[test]
+    fn slow_file_io_yields_to_the_caller_and_runs_on_a_worker() {
+        let caller = std::thread::current().id();
+        let (release, wait) = mpsc::channel();
+        let mut request = Box::pin(run_file_io(move || {
+            // Bound the test's failure path if someone makes this run inline.
+            wait.recv_timeout(std::time::Duration::from_secs(2))
+                .map_err(|_| "worker blocked caller".to_string())?;
+            Ok(std::thread::current().id())
+        }));
+        let waker = Waker::from(Arc::new(NoopWake));
+        assert!(matches!(
+            request.as_mut().poll(&mut Context::from_waker(&waker)),
+            Poll::Pending
+        ));
+        release.send(()).unwrap();
+        let worker = tauri::async_runtime::block_on(request).unwrap();
+        assert_ne!(caller, worker);
+    }
+
+    #[test]
+    fn async_local_file_commands_keep_listing_and_transfer_results() {
+        tauri::async_runtime::block_on(async {
+            let directory =
+                std::env::temp_dir().join(format!("shellbeam-sftp-test-{}", Uuid::new_v4()));
+            std::fs::create_dir(&directory).unwrap();
+            let path = directory.join("sample.txt").to_string_lossy().into_owned();
+            let encoded = BASE64_STANDARD.encode(b"sample");
+            local_write_file_b64(path.clone(), encoded.clone())
+                .await
+                .unwrap();
+            assert_eq!(local_read_file_b64(path).await.unwrap(), encoded);
+            let entries = local_list_dir(LocalListRequest {
+                dir_path: directory.to_string_lossy().into_owned(),
+            })
+            .await
+            .unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].file_name, "sample.txt");
+            assert_eq!(entries[0].size, Some(6));
+            std::fs::remove_dir_all(directory).unwrap();
+        });
     }
 }

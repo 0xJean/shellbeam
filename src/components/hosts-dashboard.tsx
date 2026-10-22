@@ -51,7 +51,7 @@ import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
-import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS } from './host-list-layout'
+import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS, HOST_RESOURCE_COLUMNS } from './host-list-layout'
 import MultiHostOperationsPanel, { type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
@@ -1149,6 +1149,8 @@ export function HostsDashboard({
     return !!(view?.metrics || view?.resource || (view && view.health.provider !== 'unknown') || sharedStates[hostKey(host)]?.inventory?.resource)
   })
   const showMonitoring = hasMonitoring && currentPresentation.monitoring
+  const showResources = showMonitoring || hosts.some(host => !!(hostOpsViews[host.id]?.metrics
+    || hostOpsViews[host.id]?.resource || sharedStates[hostKey(host)]?.inventory?.resource))
   const providerOptions = [...new Set(Object.values(hostOpsViews).map(view => view.health.provider))]
   const incidents = [...new Map([
     ...(integrationIncidents.generation === alertScopeGeneration && vaultUnlocked ? integrationIncidents.incidents : []),
@@ -1476,15 +1478,15 @@ export function HostsDashboard({
                     )}
                   </div>
                 </div>
-                <HostListScrollArea monitoring={showMonitoring}>
-                    <div data-testid="host-list-header" data-monitoring={showMonitoring} className={cn("mx-3 hidden border-x border-transparent border-b border-b-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)] xl:grid xl:items-center", showMonitoring ? HOST_LIST_COLUMNS : HOST_CONNECTION_COLUMNS)}>
+                <HostListScrollArea monitoring={showMonitoring} resources={showResources}>
+                    <div data-testid="host-list-header" data-monitoring={showMonitoring} className={cn("mx-3 hidden border-x border-transparent border-b border-b-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)] xl:grid xl:items-center", showMonitoring ? HOST_LIST_COLUMNS : showResources ? HOST_RESOURCE_COLUMNS : HOST_CONNECTION_COLUMNS)}>
                       <span>{t('hosts.columnIndex')}</span>
                       <span>{t('hosts.columnHost')}</span>
-                      {showMonitoring && <span>{t('hosts.columnLocation')}</span>}
+                      <span>{t('hosts.columnLocation')}</span>
                       <span>{t('hosts.columnIp')}</span>
-                      {showMonitoring && <><span>{t('hosts.columnUpdated')}</span>
-                      <span>{t('hosts.columnResource')}</span>
-                      <span>{t('hosts.columnOperations')}</span></>}
+                      {showMonitoring && <span>{t('hosts.columnUpdated')}</span>}
+                      {showResources && <span>{t('hosts.columnResource')}</span>}
+                      {showMonitoring && <span>{t('hosts.columnOperations')}</span>}
                       <span>{t('hosts.columnStatus')}</span>
                       <span className="text-right">{t('hosts.columnActions')}</span>
                     </div>
@@ -1496,6 +1498,7 @@ export function HostsDashboard({
                           host={host}
                           isSelected={selectedHostId === host.id}
                           status={displayStatus(host)}
+                          resources={showResources}
                           monitoring={showMonitoring}
                           batchSelection={batchSelection(host)}
                           resource={hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource}

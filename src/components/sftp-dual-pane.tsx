@@ -56,7 +56,11 @@ interface SftpDualPaneProps {
   className?: string
 }
 
-export function SftpDualPane({ hosts, selectedHostId, vaultId, resolveAuthSecret, className }: SftpDualPaneProps) {
+export function SftpDualPane(props: SftpDualPaneProps) {
+  return <SftpSession key={props.vaultId} {...props} />
+}
+
+function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, className }: SftpDualPaneProps) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
   const containerWidth = useContainerWidth(containerRef)
@@ -68,12 +72,13 @@ export function SftpDualPane({ hosts, selectedHostId, vaultId, resolveAuthSecret
 
   const [localDir, setLocalDir] = useState('')
   const [localEntries, setLocalEntries] = useState<UnifiedEntry[]>([])
-  const [localLoading, setLocalLoading] = useState(false)
+  const [localLoading, setLocalLoading] = useState(true)
   const [localFilter, setLocalFilter] = useState('')
   const [localSelected, setLocalSelected] = useState<Set<string>>(new Set())
-  const localInitRef = useRef(false)
+  const localRequestRef = useRef(0)
+  const remoteRequestRef = useRef(0)
 
-  const [remoteDir, setRemoteDir] = useState('/root')
+  const [remoteDir, setRemoteDir] = useState('')
   const [remoteEntries, setRemoteEntries] = useState<UnifiedEntry[]>([])
   const [remoteLoading, setRemoteLoading] = useState(false)
   const [remoteFilter, setRemoteFilter] = useState('')
@@ -91,16 +96,39 @@ export function SftpDualPane({ hosts, selectedHostId, vaultId, resolveAuthSecret
     [remoteHost, resolveAuthSecret, vaultId],
   )
 
+  // Invalidate pending reads before painting a different connection. A slow
+  // response must never populate the next host (or release its loading state).
+  const remoteScope = JSON.stringify([vaultId, remoteHost?.id, remoteHost?.updatedAt,
+    remoteHost?.address, remoteHost?.port, remoteHost?.username, remoteHost?.authType,
+    remoteHost?.jumpHost, remoteHost?.jumpPort, remoteHost?.jumpUser])
+  useLayoutEffect(() => {
+    const requests = remoteRequestRef
+    requests.current++
+    autoConnectHostRef.current = null
+    setRemoteDir('')
+    setRemoteEntries([])
+    setRemoteSelected(new Set())
+    setRemoteConnected(false)
+    setRemoteLoading(false)
+    setTransferStatus('')
+    return () => { requests.current++ }
+  }, [remoteScope])
+
   useEffect(() => {
-    if (localInitRef.current) return
-    localInitRef.current = true
-    localHomeDir()
-      .then((dir) => {
-        setLocalDir(dir)
-        return localListDir(dir)
-      })
-      .then((entries) => setLocalEntries(entries.map((e) => ({ ...e }))))
-      .catch(() => setLocalDir('/'))
+    const requests = localRequestRef
+    const request = ++requests.current
+    setLocalLoading(true)
+    void localHomeDir().then(async (dir) => {
+      if (request !== requests.current) return
+      setLocalDir(dir)
+      const entries = await localListDir(dir)
+      if (request === requests.current) setLocalEntries(entries)
+    }).catch((err) => {
+      if (request === requests.current) setTransferStatus(`Local error: ${err}`)
+    }).finally(() => {
+      if (request === requests.current) setLocalLoading(false)
+    })
+    return () => { requests.current++ }
   }, [])
 
   useEffect(() => {
@@ -110,34 +138,40 @@ export function SftpDualPane({ hosts, selectedHostId, vaultId, resolveAuthSecret
   const loadLocalDir = useCallback(async (dir?: string) => {
     const target = dir ?? localDir
     if (!target) return
+    const request = ++localRequestRef.current
     setLocalLoading(true)
     setLocalSelected(new Set())
     try {
       const entries = await localListDir(target)
-      setLocalEntries(entries.map((e) => ({ ...e })))
+      if (request === localRequestRef.current) setLocalEntries(entries)
     } catch (err) {
-      setTransferStatus(`Local error: ${err}`)
+      if (request === localRequestRef.current) setTransferStatus(`Local error: ${err}`)
     } finally {
-      setLocalLoading(false)
+      if (request === localRequestRef.current) setLocalLoading(false)
     }
   }, [localDir])
 
   const loadRemoteDir = useCallback(async (dir?: string) => {
     if (!remoteHost || !remoteFs) return
+    const request = ++remoteRequestRef.current
     const target = dir ?? remoteDir
     setRemoteLoading(true)
     setRemoteSelected(new Set())
     try {
-      const entries = await remoteFs.listDir(target)
+      const resolvedDir = target || await remoteFs.getHomeDir()
+      if (request !== remoteRequestRef.current) return
+      const entries = await remoteFs.listDir(resolvedDir)
+      if (request !== remoteRequestRef.current) return
+      setRemoteDir(resolvedDir)
       setRemoteEntries(entries.map((e: SftpEntry) => ({
         path: e.path, fileName: e.fileName, isDir: e.isDir,
         size: e.size, modifiedAt: e.modifiedAt,
       })))
       setRemoteConnected(true)
     } catch (err) {
-      setTransferStatus(`Remote error: ${err}`)
+      if (request === remoteRequestRef.current) setTransferStatus(`Remote error: ${err}`)
     } finally {
-      setRemoteLoading(false)
+      if (request === remoteRequestRef.current) setRemoteLoading(false)
     }
   }, [remoteHost, remoteDir, remoteFs])
 
@@ -146,18 +180,12 @@ export function SftpDualPane({ hosts, selectedHostId, vaultId, resolveAuthSecret
     if (autoConnectHostRef.current === selectedRemoteHostId) return
 
     autoConnectHostRef.current = selectedRemoteHostId
-    setRemoteLoading(true)
-    requestAnimationFrame(() => {
-      void loadRemoteDir()
-    })
+    void loadRemoteDir('')
   }, [selectedRemoteHostId, remoteHost, remoteConnected, remoteLoading, loadRemoteDir])
 
   function handleConnectRemote() {
     if (!remoteHost) return
-    setRemoteLoading(true)
-    requestAnimationFrame(() => {
-      void loadRemoteDir()
-    })
+    void loadRemoteDir()
   }
 
   async function transferToRemote() {
@@ -387,6 +415,7 @@ export function SftpDualPane({ hosts, selectedHostId, vaultId, resolveAuthSecret
         <div className="ml-auto flex items-center gap-2">
           <span className="hidden text-xs text-muted-foreground sm:inline">{t('sftp.remote')}</span>
           <Select
+            disabled={transferring}
             value={selectedRemoteHostId ?? ''}
             onChange={(v) => {
               const id = v || null

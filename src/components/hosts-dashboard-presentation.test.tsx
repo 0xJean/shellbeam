@@ -57,7 +57,7 @@ describe('progressive host presentation', () => {
     if (mode === 'grid') fireEvent.click(screen.getByTitle('Grid view'))
     else {
       expect(screen.getByTestId('host-list-header')).toHaveAttribute('data-monitoring', 'false')
-      expect(screen.getByTestId('host-list-header').children).toHaveLength(5)
+      expect(screen.getByTestId('host-list-header').children).toHaveLength(6)
     }
     expect(screen.getAllByTestId('host-card')).toHaveLength(3)
     for (const id of ['host-ops-summary', 'host-ops-details-toggle', 'host-resource-summary', 'host-view-options', 'host-alerts-open', 'multi-host-operations-panel', 'komari-alert-panel', 'komari-mappings-panel']) expect(screen.queryByTestId(id)).not.toBeInTheDocument()
@@ -69,15 +69,16 @@ describe('progressive host presentation', () => {
     expect(runWorkspaceRemoteCommand).not.toHaveBeenCalled()
   })
 
-  it('starts with five connection columns even when SSH metrics already exist, without suppressing real alerts', async () => {
+  it('keeps region and available SSH metrics visible by default without expanding diagnostics or suppressing alerts', async () => {
     vi.mocked(loadHostOpsViews).mockImplementation(async profiles => {
       const views = buildHostOpsViews({ hosts: profiles, localAlertStates: { 'host-1': { version: 1, alerts: [localAlert('host-1')], audit: [], evaluations: [] } } })
       views['host-1'] = observe(views['host-1']); return views
     })
     render(element()); await settled()
     expect(screen.getByTestId('host-list-header')).toHaveAttribute('data-monitoring', 'false')
-    expect(screen.getByTestId('host-list-header').children).toHaveLength(5)
-    expect(screen.queryByTestId('host-resource-summary')).not.toBeInTheDocument()
+    expect(screen.getByTestId('host-list-header').children).toHaveLength(7)
+    expect(within(card('host-1')).getByTestId('host-resource-summary')).toBeVisible()
+    expect(within(card('host-1')).getByTestId('host-ops-details')).not.toBeVisible()
     expect(screen.getByTestId('host-alerts-open')).toHaveTextContent('1 open')
     const toggle = await openViewOptions()
     expect(toggle).not.toBeChecked()
@@ -180,8 +181,9 @@ describe('progressive host presentation', () => {
     fireEvent.click(await openViewOptions())
     await act(async () => {})
     expect(screen.getByTestId('host-list-header')).toHaveAttribute('data-monitoring', 'false')
-    expect(screen.getByTestId('host-list-header').children).toHaveLength(5)
-    expect(screen.queryByTestId('host-resource-summary')).not.toBeInTheDocument()
+    expect(screen.getByTestId('host-list-header').children).toHaveLength(7)
+    expect(screen.getAllByTestId('host-resource-summary')).toHaveLength(3)
+    expect(screen.getAllByTestId('host-resource-summary').every(item => !item.closest('[hidden]'))).toBe(true)
     expect(localStorage.getItem('shellbeam:host-monitoring-summary:vault-a')).toBe('hidden')
     expect(loadHostOpsViews).toHaveBeenCalledTimes(loads)
     expect(invoke).toHaveBeenCalledTimes(nativeCalls)

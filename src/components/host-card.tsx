@@ -25,7 +25,7 @@ import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { KomariProbeOpsView } from './komari-probe-ops-view'
 import { CompatibleAgentTools } from './compatible-agent-panel'
-import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS } from './host-list-layout'
+import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS, HOST_RESOURCE_COLUMNS } from './host-list-layout'
 
 type TFn = (key: string, params?: Record<string, string | number>) => string
 
@@ -305,7 +305,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
             className="text-xs text-[var(--workspace-text-muted)]"
             iconClassName="h-3.5 w-3.5"
           />
-          {monitoring && (metrics || resource) && <HostResourceSummary resource={resource} metrics={metrics} t={t} />}
+          {(metrics || resource) && <HostResourceSummary resource={resource} metrics={metrics} t={t} />}
           {operations && <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} compactOnly={!monitoring} onToggle={() => setDisclosure({ owner, expanded: !detailsOpen })} />}
           <div className="flex items-center gap-1 overflow-hidden">
             {host.tags && host.tags.length > 0 ? (
@@ -330,7 +330,6 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
         </div>
 
         {operations && <section id={detailsId} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!detailsOpen} className="border-t border-[color:var(--workspace-border-soft)] p-4">
-          {detailsOpen && !monitoring && (metrics || resource) && <div className="mb-4 max-w-lg"><HostResourceSummary resource={resource} metrics={metrics} t={t} /></div>}
           <HostOperationalMeta host={host} summary={operations} t={t} expanded />
         </section>}
         <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
@@ -357,6 +356,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
 
 interface HostListItemProps {
   monitoring?: boolean
+  resources?: boolean
   batchSelection?: { selected: boolean; disabled: boolean; onChange: () => void }
   index: number
   host: HostProfile
@@ -897,7 +897,7 @@ function getNetworkScopeLabel(network: HostNetworkDisplay | undefined, t: TFn) {
   return t('hosts.networkUnknown')
 }
 
-export function HostListItem({ index, host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, monitoring = true, batchSelection }: HostListItemProps) {
+export function HostListItem({ resources, index, host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, monitoring = true, batchSelection }: HostListItemProps) {
   const { t, locale } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t, operations?.provider, hostPresentationCopy[locale])
@@ -909,6 +909,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
   if (detailsState.owner !== detailsOwner) {
     setDetailsState({ owner: detailsOwner, expanded: false })
   }
+  const showResources = monitoring || (resources ?? !!(resource || metrics))
   const updatedAt = host.updatedAt > 0
     ? new Date(host.updatedAt).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })
     : t('hosts.noActivity')
@@ -935,7 +936,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
               onSelect(host.id)
             }
           }}
-          className={cn('grid min-w-0 cursor-pointer gap-3 rounded-2xl px-4 py-4 sm:grid-cols-2 xl:items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-border-glow)]', monitoring ? HOST_LIST_COLUMNS : HOST_CONNECTION_COLUMNS)}>
+          className={cn('grid min-w-0 cursor-pointer gap-3 rounded-2xl px-4 py-4 sm:grid-cols-2 xl:items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-border-glow)]', monitoring ? HOST_LIST_COLUMNS : showResources ? HOST_RESOURCE_COLUMNS : HOST_CONNECTION_COLUMNS)}>
         <div className={cn('font-mono text-lg font-semibold text-[var(--workspace-text-strong)]', !batchSelection && 'hidden xl:block')}>
           {batchSelection ? <input type="checkbox" aria-label={`${hostPresentationCopy[locale].selectHost} · ${host.name}`} checked={batchSelection.selected} disabled={batchSelection.disabled} onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onChange={batchSelection.onChange} /> : String(index).padStart(2, '0')}
         </div>
@@ -956,7 +957,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
           </div>
         </div>
 
-        {monitoring && <div className="min-w-0 xl:self-center">
+        <div className="min-w-0 xl:self-center">
           <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[var(--workspace-text-strong)]">
             <HostRegionMeta
               network={network}
@@ -967,7 +968,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
             {network?.locationStatus === 'loading' && <RefreshCw className="h-3 w-3 shrink-0 animate-spin text-[var(--workspace-text-subtle)]" />}
           </div>
           <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{scopeLabel}</div>
-        </div>}
+        </div>
 
         <div className="min-w-0 xl:self-center">
           <div className="truncate font-mono text-sm font-semibold text-[var(--workspace-text-strong)]">{host.address || '—'}</div>
@@ -980,7 +981,7 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
           <span className="whitespace-nowrap font-mono text-sm font-semibold text-[var(--workspace-text-strong)]">{updatedAt}</span>
         </div>}
 
-        {monitoring && (resource || metrics ? <HostResourceSummary resource={resource} metrics={metrics} t={t} />
+        {showResources && (resource || metrics ? <HostResourceSummary resource={resource} metrics={metrics} t={t} />
           : <span className="text-xs text-[var(--workspace-text-subtle)]">—</span>)}
 
         {monitoring && <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} onToggle={() => setDetailsState({ owner: detailsOwner, expanded: !detailsOpen })} />}
@@ -1014,7 +1015,6 @@ export function HostListItem({ index, host, isSelected, status, resource, metric
         </div>
         {operations && <section id={detailsId} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!detailsOpen}
           className="cursor-default rounded-b-2xl border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4">
-          {detailsOpen && !monitoring && (metrics || resource) && <div className="mb-4 max-w-lg"><HostResourceSummary resource={resource} metrics={metrics} t={t} /></div>}
           <HostOperationalMeta host={host} summary={operations} t={t} expanded />
         </section>}
       </div>

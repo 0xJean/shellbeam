@@ -8,6 +8,7 @@ import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-aler
 import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import type { HostOpsProbeEvaluation } from '@/lib/host-ops-view'
 import { I18nProvider } from '@/lib/i18n'
+import { classifyHostAddress } from '@/lib/ip-metadata'
 
 const host = {
   id: 'host-1',
@@ -88,17 +89,19 @@ describe('host list item', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 
-  it.each(['grid', 'list'] as const)('keeps connection and alert handling available without resource placeholders in %s connection mode', (mode) => {
+  it.each(['grid', 'list'] as const)('keeps existing metrics, region and connection actions visible with diagnostics collapsed in %s connection mode', (mode) => {
     const onConnect = vi.fn(), onSelect = vi.fn(), onLocalAlertAction = vi.fn()
     const operations: HostOperationalSummary = {
       serviceTotal: 4, serviceActive: 3, serviceFailed: 1, processTotal: 2, processRunning: 2, auditCount: 0, transport: 'direct', provider: 'ssh-agentless', localAlertOpen: 1,
       localAlerts: [{ ruleId: 'cpu-hot', hostId: host.id, name: 'CPU pressure', metric: 'cpu', severity: 'warning', status: 'active', openedAt: 1, updatedAt: 2, resolvedAt: null, value: 99, source: 'ssh-agentless', transport: 'direct' }], onLocalAlertAction,
     }
-    const props = { host, monitoring: false, metrics: sampledMetrics, resource: oldResource, operations, isSelected: false, onConnect, onSelect, onEdit: vi.fn(), onDelete: vi.fn() }
+    const props = { host, network: { ...classifyHostAddress(host.address), locationLabel: 'France', resolvedLocationLabel: 'France · Paris', locationStatus: 'ready' as const, canLookupLocation: true, countryCode: 'FR', countryName: 'France' }, monitoring: false, metrics: sampledMetrics, resource: oldResource, operations, isSelected: false, onConnect, onSelect, onEdit: vi.fn(), onDelete: vi.fn() }
     render(mode === 'grid' ? <HostGridCard {...props} /> : <HostListItem {...props} index={1} />)
-    expect(screen.queryByRole('meter')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('host-resource-throughput')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('host-resource-uptime')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('meter')).toHaveLength(3)
+    expect(screen.getByTestId('host-resource-throughput')).toBeVisible()
+    expect(screen.getByTestId('host-resource-uptime')).toBeVisible()
+    expect(screen.getByText('France · Paris')).toBeVisible()
+    expect(screen.getByTitle('France (FR)').querySelector('img')).toHaveAttribute('src', 'https://flagcdn.com/24x18/fr.png')
     expect(screen.queryByTestId('host-ops-compact-source')).not.toBeInTheDocument()
     expect(screen.getByTestId('host-ops-local-alerts')).toBeVisible()
     expect(screen.getByTestId('host-ops-details')).not.toBeVisible()

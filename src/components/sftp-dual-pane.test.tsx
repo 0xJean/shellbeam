@@ -1,11 +1,12 @@
 import { webcrypto } from 'node:crypto'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SftpDualPane } from './sftp-dual-pane'
 
 const localHomeDir = vi.fn()
 const localListDir = vi.fn()
 const sftpListDir = vi.fn()
+const sftpHomeDir = vi.fn()
 const fetchAndAddKnownHost = vi.fn()
 const sftpDeletePath = vi.fn()
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
@@ -19,6 +20,7 @@ vi.mock('@/lib/i18n', () => ({
 vi.mock('@/lib/sftp', () => ({
   localHomeDir: () => localHomeDir(),
   localListDir: (dir: string) => localListDir(dir),
+  sftpHomeDir: (payload: unknown) => sftpHomeDir(payload),
   sftpListDir: (payload: unknown) => sftpListDir(payload),
   sftpDownloadFile: vi.fn(),
   sftpUploadFile: vi.fn(),
@@ -40,6 +42,7 @@ describe('sftp dual pane', () => {
     localHomeDir.mockReset()
     localListDir.mockReset()
     sftpListDir.mockReset()
+    sftpHomeDir.mockReset().mockResolvedValue('/root')
     fetchAndAddKnownHost.mockReset()
     sftpDeletePath.mockReset()
     invoke.mockReset()
@@ -95,6 +98,47 @@ describe('sftp dual pane', () => {
         remotePath: '/root',
       })
     })
+  })
+
+  it('shows local loading immediately and lets the local pane stay usable while a remote request is pending', async () => {
+    let finishLocal!: (entries: unknown[]) => void
+    localListDir.mockReturnValue(new Promise(resolve => { finishLocal = resolve }))
+    sftpListDir.mockReturnValue(new Promise(() => {}))
+    render(<SftpDualPane hosts={[{
+      id: 'a', name: 'Slow', address: '10.0.0.1', port: 22, username: 'root',
+      authType: 'password', group: '', tags: [], createdAt: 0, updatedAt: 0,
+    }]} selectedHostId="a" resolveAuthSecret={async () => 'test'} />)
+    expect(screen.getByTestId('sftp-file-pane-skeleton')).toBeVisible()
+    await waitFor(() => expect(sftpListDir).toHaveBeenCalledOnce())
+    await act(async () => { finishLocal([{ path: '/Users/demo/local.txt', fileName: 'local.txt', isDir: false }]) })
+    fireEvent.click(screen.getByText('local.txt'))
+    expect(screen.getByText('sftpPane.selected')).toBeVisible()
+    expect(sftpListDir).toHaveBeenCalledOnce()
+  })
+
+  it('resolves each account home and ignores a previous host response after switching during a slow read', async () => {
+    let finishOld!: (entries: unknown[]) => void
+    const profiles = ['a', 'b'].map(id => ({ id, name: id, address: `10.0.0.${id === 'a' ? 1 : 2}`, port: 22,
+      username: id, authType: 'password' as const, group: '', tags: [], createdAt: 0, updatedAt: 0 }))
+    sftpHomeDir.mockImplementation(async payload => `/home/${payload.username}`)
+    sftpListDir.mockImplementation(payload => payload.username === 'a'
+      ? new Promise(resolve => { finishOld = resolve })
+      : Promise.resolve([{ path: '/home/b/current', fileName: 'current', isDir: false }]))
+    render(<SftpDualPane hosts={profiles} selectedHostId="a" resolveAuthSecret={async () => 'test'} />)
+    fireEvent.click(screen.getByRole('button', { name: 'sftp.remoteTab' }))
+    await waitFor(() => expect(sftpListDir).toHaveBeenCalledWith(expect.objectContaining({ username: 'a', remotePath: '/home/a' })))
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'b' } })
+    expect(await screen.findByText('current')).toBeVisible()
+    await act(async () => { finishOld([{ path: '/home/a/stale', fileName: 'stale', isDir: false }]) })
+    expect(screen.queryByText('stale')).not.toBeInTheDocument()
+    expect(screen.getByText('current')).toBeVisible()
+    expect(sftpListDir).toHaveBeenCalledTimes(2)
+    expect(sftpListDir).toHaveBeenLastCalledWith(expect.objectContaining({ username: 'b', remotePath: '/home/b' }))
+    sftpListDir.mockResolvedValue([{ path: '/home/a/returned', fileName: 'returned', isDir: false }])
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'a' } })
+    expect(await screen.findByText('returned')).toBeVisible()
+    expect(screen.queryByText('current')).not.toBeInTheDocument()
+    expect(sftpListDir).toHaveBeenLastCalledWith(expect.objectContaining({ username: 'a', remotePath: '/home/a' }))
   })
 
   it('reviews a multi-selection once, then creates one completed audit job per deleted target', async () => {
