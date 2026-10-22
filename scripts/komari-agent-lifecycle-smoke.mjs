@@ -2,7 +2,7 @@
 /** Opt-in isolated Linux systemd contract. Uses actual pinned official binaries,
  * synthetic credentials and the unchanged production helper; never an existing Vault. */
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
@@ -18,7 +18,11 @@ const pins = JSON.parse(await readFile(join(project, 'scripts/fixtures/komari-li
 const arch = process.arch === 'x64' ? 'amd64' : process.arch === 'arm64' ? 'arm64' : null
 assert.ok(arch)
 const directory = await mkdtemp(join(homedir(), '.shellbeam-komari-smoke-')); await chmod(directory, 0o700)
-const deployment = randomUUID(); const managedRoot = join(homedir(), '.local/share/shellbeam/komari', deployment)
+let deployment = randomUUID(); let managedRoot = join(homedir(), '.local/share/shellbeam/komari', deployment)
+const ownedDeployments = [deployment]; let legacyUnitFile; let legacyUnitText; let legacyUnitName
+const system = process.getuid() === 0 ? [] : ['--user']
+const systemctl = (...args) => execFileSync('systemctl', [...system, ...args], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 })
+const legacyPins = JSON.parse(await readFile(join(project, 'releases/compatible-probe-pins.json'))).versions
 const helper = join(project, 'src-tauri/src/data/komari_agent/remote.py')
 const { privateKey } = generateKeyPairSync('ed25519'); const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' })
 const delay = ms => new Promise(done => setTimeout(done, ms))
@@ -39,7 +43,7 @@ async function remote(request) {
     p.stdout.on('data', value => { bytes = Buffer.concat([bytes, value]); if (bytes.length > 131072) { p.kill(); reject(new Error('helper_output_bound')) } })
     p.once('error', () => { clearTimeout(timer); reject(new Error('helper_spawn')) })
     p.once('close', code => { clearTimeout(timer); try { assert.equal(code, 0); const value = JSON.parse(bytes); report.remoteChecks.push({ action: request.action, ok: value.ok, code: value.code, category: value.category, locations: value.locations, serviceStep: value.serviceStep, status: value.state?.status, active: value.state?.active, rollback: value.rollback }); done(value) } catch { reject(new Error('helper_response')) } })
-    p.stdin.on('error', () => {}); p.stdin.end(JSON.stringify({ ...request, deployment }))
+    p.stdin.on('error', () => {}); p.stdin.end(JSON.stringify({ legacyPins, ...request, deployment }))
   })
 }
 async function inspect() { const result = await remote({ action: 'inspect' }); assert.equal(result.ok, true, 'inspection failed'); inspected = result; return result }
@@ -97,7 +101,7 @@ try {
       const node = await rpc('admin:getClient'); const time = await watermark()
       if (!(node.uuid === nodeId && node.created_at === originalNode.created_at && node.version?.replace(/^v/, '') === version && time > before && time >= started - 5000 && time <= Date.now() + 5000 && time >= Date.now() - 60000)) return false
       const current = await inspect()
-      if (!current.state.active || current.state.current?.sha256 !== expectedSha256 || time < Date.now() - 60000 || time > Date.now() + 5000) return false
+      if (!(current.state.status === 'released' ? current.state.legacy?.sha256 === expectedSha256 : current.state.active && current.state.current?.sha256 === expectedSha256) || time < Date.now() - 60000 || time > Date.now() + 5000) return false
       report.freshReports.push({ version, nodeIdentityVerified: true, originalSampleAt: time, before, started, verifiedAt: Date.now(), processSha256: expectedSha256 })
       return true
     })
@@ -136,15 +140,76 @@ try {
   before = await watermark(); const removed = await operate('uninstall'); assert.equal(removed.ok, true); assert.equal(removed.state.status, 'retired'); assert.equal(removed.state.active, false)
   assert.deepEqual(await readFile(join(managedRoot, 'config.json')), configBytes); assert.ok((await readdir(join(managedRoot, 'releases'))).length >= 3)
   assert.equal((await rpc('admin:getClientToken')).token, tokenBefore); assert.equal((await rpc('admin:getClient')).created_at, originalNode.created_at); assert.ok(await watermark() >= before)
-  report.checks.push('uninstall-with-node-key-data-preservation'); report.result = 'passed'
+  report.checks.push('uninstall-with-node-key-data-preservation')
+  stage = 'create a direct same-account existing official probe service'
+  deployment = randomUUID(); ownedDeployments.push(deployment); managedRoot = join(homedir(), '.local/share/shellbeam/komari', deployment)
+  legacyUnitName = `komari-acceptance-${randomUUID()}.service`
+  const unitDirectory = process.getuid() === 0 ? '/etc/systemd/system' : join(homedir(), '.config/systemd/user')
+  await mkdir(unitDirectory, { recursive: true })
+  legacyUnitFile = join(unitDirectory, legacyUnitName)
+  const legacyConfigFile = join(directory, 'existing-config.json'); const legacyConfig = Buffer.from(JSON.stringify({ ...config, include_nics: 'lo' }))
+  await writeFile(legacyConfigFile, legacyConfig, { mode: 0o600, flag: 'wx' })
+  legacyUnitText = `[Unit]\nDescription=Isolated existing probe\nAfter=network.target\n[Service]\nType=simple\nExecStart=${artifacts[0].file} --config ${legacyConfigFile}\nWorkingDirectory=${directory}\nRestart=always\n[Install]\nWantedBy=${process.getuid() === 0 ? 'multi-user.target' : 'default.target'}\n`
+  await writeFile(legacyUnitFile, legacyUnitText, { mode: 0o600, flag: 'wx' }); systemctl('daemon-reload'); systemctl('enable', '--now', legacyUnitName)
+  await waitFor(async () => (await rpc('admin:getClient')).version?.replace(/^v/, '') === '1.5.10' && await watermark() > before)
+  const prepareHandoff = async extra => { const r = await remote({ action: 'inspect', ...extra }); assert.equal(r.ok, true); return r }
+  const handoff = async (action, artifact, extra = {}, tokenValue = token) => {
+    const baseline = await prepareHandoff(extra)
+    return await remote({ action, identity: baseline.identity, expected: baseline.state, job: randomUUID(), release: artifact?.manifest,
+      bytes: artifact?.bytes?.toString('base64'), plannedConfig: baseline.plannedConfig, agentToken: tokenValue, ...extra })
+  }
+  stage = 'reject adoption of a different monitoring node without stopping existing service'
+  const wrongNode = await handoff('adopt', artifacts[1], { legacyUnit: legacyUnitName }, 'wrong-isolated-node')
+  assert.equal(wrongNode.ok, false); assert.equal(wrongNode.code, 'legacy_node_mismatch'); systemctl('is-active', legacyUnitName)
+  report.checks.push('adoption-rejects-other-node-without-stopping-original')
+  stage = 'failed adoption restores original service and a new original sample'
+  before = await watermark(); started = Date.now()
+  const failedAdoption = await handoff('adopt', broken, { legacyUnit: legacyUnitName })
+  assert.equal(failedAdoption.ok, true); assert.equal(failedAdoption.rollback, 'verified'); assert.equal(failedAdoption.state.status, 'released')
+  await fresh('1.5.10', before, started); report.checks.push('failed-adoption-restores-original-service-and-report')
+  stage = 'adopt existing official probe into signed managed service'
+  before = await watermark(); started = Date.now()
+  const adopted = await handoff('adopt', artifacts[1], { legacyUnit: legacyUnitName })
+  assert.equal(adopted.ok, true); assert.equal(adopted.state.active, true)
+  await fresh('1.5.11', before, started)
+  assert.deepEqual(await readFile(legacyConfigFile), legacyConfig); assert.equal(await readFile(legacyUnitFile, 'utf8'), legacyUnitText)
+  assert.equal(JSON.parse(await readFile(join(managedRoot, 'config.json'))).token, token)
+  assert.equal(JSON.parse(await readFile(join(managedRoot, 'config.json'))).include_nics, 'lo')
+  report.checks.push('adoption-preserves-original-files-node-token-and-settings')
+  stage = 'migrate address of same monitoring node and verify fresh sample'
+  before = await watermark(); started = Date.now()
+  const migrated = await handoff('migrate', null, { targetEndpoint: `http://localhost:${port}` })
+  assert.equal(migrated.ok, true); assert.equal(migrated.state.endpoint, `http://localhost:${port}`)
+  await fresh('1.5.11', before, started); report.checks.push('address-migration-with-fresh-report')
+  stage = 'restore previous exact configuration without downloading an artifact'
+  before = await watermark(); started = Date.now()
+  const restoredConfig = await handoff('restore-config', null, { restoreConfig: true })
+  assert.equal(restoredConfig.ok, true); assert.equal(restoredConfig.state.endpoint, endpoint)
+  await fresh('1.5.11', before, started); report.checks.push('address-restore-with-fresh-report')
+  stage = 'return ownership to untouched original service and verify new sample'
+  before = await watermark(); started = Date.now()
+  const returned = await handoff('restore-legacy')
+  assert.equal(returned.ok, true); assert.equal(returned.state.status, 'released')
+  await fresh('1.5.10', before, started)
+  assert.equal(await readFile(legacyUnitFile, 'utf8'), legacyUnitText); assert.deepEqual(await readFile(legacyConfigFile), legacyConfig)
+  assert.equal((await rpc('admin:getClientToken')).token, tokenBefore); assert.equal((await rpc('admin:getClient')).created_at, originalNode.created_at)
+  const handoffState = join(managedRoot, 'state.json'); const journalBytes = await readFile(handoffState); const journalTime = (await stat(handoffState)).mtimeMs
+  await inspect(); await inspect(); assert.deepEqual(await readFile(handoffState), journalBytes); assert.equal((await stat(handoffState)).mtimeMs, journalTime)
+  report.checks.push('original-service-restoration-data-preservation-and-no-replay'); report.result = 'passed'
 } catch { failed = true; report.result = 'failed'; report.failedStage = stage; process.exitCode = 1 }
 finally {
   try {
-    if (inspected) {
+    for (const owned of ownedDeployments) {
+      deployment = owned; managedRoot = join(homedir(), '.local/share/shellbeam/komari', owned)
       const state = await inspect()
-      if (!['absent', 'retired'].includes(state.state.status)) { const r = await remote({ action: 'uninstall', identity: state.identity, expected: state.state, job: randomUUID() }); assert.equal(r.ok, true) }
-      const final = await inspect(); assert.ok(['absent', 'retired'].includes(final.state.status)); assert.equal(final.state.active, false)
+      if (!['absent', 'retired', 'released'].includes(state.state.status)) { const r = await remote({ action: 'uninstall', identity: state.identity, expected: state.state, job: randomUUID() }); assert.equal(r.ok, true) }
+      const final = await inspect(); assert.ok(['absent', 'retired', 'released'].includes(final.state.status)); assert.equal(final.state.active, false)
       await rm(managedRoot, { recursive: true, force: true })
+    }
+    if (legacyUnitFile && legacyUnitText) {
+      assert.equal(await readFile(legacyUnitFile, 'utf8'), legacyUnitText)
+      systemctl('disable', '--now', legacyUnitName); await rm(legacyUnitFile); systemctl('daemon-reload')
+      await rm(join(homedir(), '.local/share/shellbeam/komari', `.handoff-${legacyUnitName}.lock`), { force: true })
     }
     report.cleanup = true
   } catch { process.exitCode = 1; report.result = 'failed'; report.cleanup = false }

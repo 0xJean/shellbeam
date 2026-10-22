@@ -55,6 +55,9 @@ fn record() -> Record {
         observed_at: None,
         updated_at: 1,
         error_code: None,
+        configuration: None,
+        previous_configuration: None,
+        requested_configuration: None,
     }
 }
 #[test]
@@ -401,4 +404,148 @@ fn builtin_production_catalog_and_binaries_verify_without_user_configuration() {
         let bytes = artifact::download(&r, &policy).unwrap();
         artifact::verify_bytes(&r, &STANDARD.decode(bytes).unwrap()).unwrap();
     }
+}
+
+#[test]
+fn legacy_adoption_accepts_only_reviewed_architecture_bytes_and_safe_identity() {
+    let mut legacy = Legacy {
+        unit: "komari-agent.service".into(),
+        unit_sha256: "a".repeat(64),
+        executable: "/opt/komari/agent".into(),
+        sha256: legacy_pins()["1.5.10"]["amd64"]["sha256"]
+            .as_str()
+            .unwrap()
+            .into(),
+        size_bytes: 12556545,
+        version: "1.5.10".into(),
+        config_path: None,
+        config_sha256: "b".repeat(64),
+        endpoint: "https://monitor.test".into(),
+        enabled: true,
+    };
+    validate_legacy(&legacy, "amd64").unwrap();
+    assert!(validate_legacy(&legacy, "arm64").is_err());
+    legacy.sha256 = "c".repeat(64);
+    assert!(validate_legacy(&legacy, "amd64").is_err());
+    legacy.sha256 = legacy_pins()["1.5.10"]["amd64"]["sha256"]
+        .as_str()
+        .unwrap()
+        .into();
+    legacy.unit = "../../another.service".into();
+    assert!(validate_legacy(&legacy, "amd64").is_err());
+}
+
+#[test]
+fn migration_reads_only_confirmed_configuration_hashes_and_preserves_exact_rollback_identity() {
+    let mut r = record();
+    let release = r.requested.clone().unwrap();
+    r.current = Some(release.clone());
+    r.observation = Observation {
+        status: "active".into(),
+        active: true,
+        deployment: Some(r.deployment.clone()),
+        current: Some(release.manifest.clone()),
+        config_sha256: Some("a".repeat(64)),
+        endpoint: Some(r.endpoint.clone()),
+        ..Default::default()
+    };
+    r.requested_configuration = Some(ConfigurationIdentity {
+        sha256: "b".repeat(64),
+        endpoint: "https://new.test".into(),
+    });
+    let mut observed = r.observation.clone();
+    observed.config_sha256 = Some("c".repeat(64));
+    observed.endpoint = Some("https://unapproved.test".into());
+    assert!(apply_observation(&mut r, observed.clone()).is_err());
+    observed.config_sha256 = Some("b".repeat(64));
+    assert!(apply_observation(&mut r, observed.clone()).is_err());
+    observed.endpoint = Some("https://new.test".into());
+    observed.previous_config_sha256 = Some("a".repeat(64));
+    apply_observation(&mut r, observed.clone()).unwrap();
+    assert_eq!(r.endpoint, "https://new.test");
+    assert_eq!(
+        r.previous_configuration.as_ref().unwrap().endpoint,
+        "https://monitor.test"
+    );
+    observed.config_sha256 = Some("a".repeat(64));
+    observed.endpoint = Some("https://monitor.test".into());
+    observed.previous_config_sha256 = Some("b".repeat(64));
+    apply_observation(&mut r, observed).unwrap();
+    assert_eq!(r.endpoint, "https://monitor.test");
+    assert_eq!(
+        r.previous_configuration.as_ref().unwrap().endpoint,
+        "https://new.test"
+    );
+}
+
+#[test]
+fn pre_handoff_records_remain_readable_without_migrating_ids_or_credentials() {
+    let mut value = serde_json::to_value(record()).unwrap();
+    for field in [
+        "configuration",
+        "previousConfiguration",
+        "requestedConfiguration",
+    ] {
+        value.as_object_mut().unwrap().remove(field);
+    }
+    let old: Record = serde_json::from_value(value).unwrap();
+    assert_eq!(old.vault_id, "vault");
+    assert_eq!(old.host_id, "host");
+    assert!(old.configuration.is_none());
+    assert!(old.requested_configuration.is_none());
+    let result: RemoteResult = serde_json::from_value(
+        json!({"ok":true,"plannedConfig":{"sha256":"a".repeat(64),"endpoint":"https://new.test"}}),
+    )
+    .unwrap();
+    assert_eq!(result.planned_config.unwrap().endpoint, "https://new.test");
+}
+
+#[test]
+fn migration_intent_and_audit_survive_reopen_without_replaying_or_rewriting_old_jobs() {
+    let path = std::env::temp_dir().join(format!("probe-handoff-{}.sqlite3", Uuid::new_v4()));
+    let mut db = crate::data::operation_jobs::open_database(&path).unwrap();
+    store::initialize(&db).unwrap();
+    let mut r = record();
+    r.action = "migrate".into();
+    r.requested_configuration = Some(ConfigurationIdentity {
+        sha256: "b".repeat(64),
+        endpoint: "https://new.test".into(),
+    });
+    store::begin(&mut db, &mut r, &host(), "ssh-proxyjump", 0).unwrap();
+    let old = r.job_id.clone();
+    r.status = "dispatched".into();
+    store::save(&mut db, &mut r, None).unwrap();
+    drop(db);
+    let mut db = crate::data::operation_jobs::open_database(&path).unwrap();
+    let mut r = store::get(&db, "vault", "host").unwrap().unwrap();
+    assert_eq!(
+        r.requested_configuration.as_ref().unwrap().endpoint,
+        "https://new.test"
+    );
+    let old_job = super::super::operation_jobs::get_on(&db, &old)
+        .unwrap()
+        .unwrap();
+    assert_eq!(old_job.action, "monitoring.agent.migrate");
+    assert_eq!(old_job.confirmation_status, "confirmed");
+    assert!(old_job.params_summary.unwrap().contains("https://new.test"));
+    r.action = "inspect".into();
+    let revision = r.revision;
+    store::begin(&mut db, &mut r, &host(), "ssh-proxyjump", revision).unwrap();
+    store::save(&mut db, &mut r, Some("completed")).unwrap();
+    assert!(!super::super::operation_jobs::get_on(&db, &r.job_id)
+        .unwrap()
+        .unwrap()
+        .params_summary
+        .unwrap()
+        .contains("https://new.test"));
+    assert_eq!(
+        super::super::operation_jobs::get_on(&db, &old)
+            .unwrap()
+            .unwrap()
+            .status,
+        "unknown"
+    );
+    assert_ne!(r.job_id, old);
+    drop(db);
+    std::fs::remove_file(path).unwrap();
 }

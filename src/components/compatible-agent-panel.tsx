@@ -33,13 +33,14 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
   const { activeVaultId, captureVaultScope } = useVault(); const vaultId = host.vaultId ?? activeVaultId
   const [record, setRecord] = useState<CompatibleAgentRecord | null>(null)
   const [endpoint, setEndpoint] = useState(''); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState('')
+  const [legacyUnit, setLegacyUnit] = useState('komari-agent.service'); const [migrationEndpoint, setMigrationEndpoint] = useState('')
   const [error, setError] = useState(''); const [code, setCode] = useState(''); const [policy, setPolicy] = useState<CompatibleAgentPolicy | null>(null)
   const readEpoch = useRef(0); const live = useRef(true); const running = useRef(false); const plans = useRef(new Set<string>())
   useEffect(() => { live.current = true; const ids = plans.current; return () => { live.current = false; for (const id of ids) void cancelCompatibleAgent(id).catch(() => {}); ids.clear() } }, [])
   useEffect(() => { const epoch = ++readEpoch.current; const valid = captureVaultScope(); let current = true; void readCompatibleAgent(vaultId, host.id).then(r => { if (current && epoch === readEpoch.current && valid()) { setRecord(r); if (r) setEndpoint(r.endpoint) } }).catch(() => {}); return () => { current = false } }, [vaultId, host.id, captureVaultScope])
   const explain = (cause: unknown) => {
     const raw = String(cause).match(/(?:KOMARI_AGENT|MONITORING)_[A-Z_]+/)?.[0] ?? 'KOMARI_AGENT_OPERATION_FAILED'; setCode(raw)
-    return /NO_UPGRADE/.test(raw) ? c.noUpgrade : /READBACK/.test(raw) ? c.readback : /ALREADY_REPORTING/.test(raw) ? c.nodeOnline : /EXTERNAL|UNMANAGED/.test(raw) ? c.external : /CHANGED|SCOPE/.test(raw) ? c.changed : /CATALOG_EXPIRED|CATALOG_ROLLBACK/.test(raw) ? c.catalogStale : /RELEASE|CATALOG|SIGNATURE|ARTIFACT|POLICY|ARCHITECTURE/.test(raw) ? c.releaseError : /REPORT/.test(raw) ? c.report : /SSH/.test(raw) ? c.connection : c.generic
+    return /LEGACY_UNTRUSTED|LEGACY_UNSUPPORTED/.test(raw) ? c.legacyUnsupported : /NO_UPGRADE/.test(raw) ? c.noUpgrade : /READBACK/.test(raw) ? c.readback : /ALREADY_REPORTING/.test(raw) ? c.nodeOnline : /EXTERNAL|UNMANAGED/.test(raw) ? c.external : /CHANGED|SCOPE/.test(raw) ? c.changed : /CATALOG_EXPIRED|CATALOG_ROLLBACK/.test(raw) ? c.catalogStale : /RELEASE|CATALOG|SIGNATURE|ARTIFACT|POLICY|ARCHITECTURE/.test(raw) ? c.releaseError : /REPORT/.test(raw) ? c.report : /SSH/.test(raw) ? c.connection : c.generic
   }
   const work = async (fn: (current: () => boolean) => Promise<void>) => {
     if (running.current || vaultId !== activeVaultId) return
@@ -51,11 +52,13 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
   const act = (action: CompatibleAgentAction) => work(async current => {
     let id: string | undefined
     try {
-      const p = await prepareCompatibleAgent({ vaultId, hostId: host.id, integrationId, action, ...(endpoint.trim() ? { endpoint: endpoint.trim() } : {}) })
+      const address = action === 'migrate' ? migrationEndpoint.trim() : endpoint.trim()
+      const p = await prepareCompatibleAgent({ vaultId, hostId: host.id, integrationId, action, ...(address ? { endpoint: address } : {}), ...(action === 'adopt' ? { legacyUnit: legacyUnit.trim() } : {}) })
       id = p.planId; plans.current.add(id)
       if (!current()) return
       if (action !== 'inspect') {
-        const answer = await requestUserDecision({ vaultId, risk: 'high', message: `${c[action]} · ${p.hostName}\n${p.nodeId}\n${p.endpoint}\n${p.transport} · ${c.account}: ${p.account} · ${p.serviceScope === 'system' ? c.systemService : c.userService}\nKomari Agent · ${p.currentVersion ?? '—'} → ${p.targetVersion ?? '—'} · ${c.artifact}: ${p.artifactBytes ? (p.artifactBytes / 1048576).toFixed(1) + ' MiB' : '—'}\n${p.dataDirectory}\n${c.cadence}\n${c.confirm}\n${c.preserved}`, isCurrent: current })
+        const handoff = ['adopt', 'migrate', 'restore-config', 'restore-legacy'].includes(action)
+        const answer = await requestUserDecision({ vaultId, risk: 'high', message: `${c[action]} · ${p.hostName}\n${p.nodeId}\n${p.previousEndpoint ? p.previousEndpoint + ' → ' : ''}${p.endpoint}\n${p.legacyUnit ?? ''}\n${p.transport} · ${c.account}: ${p.account} · ${p.serviceScope === 'system' ? c.systemService : c.userService}\nKomari Agent · ${p.currentVersion ?? '—'} → ${p.targetVersion ?? '—'} · ${c.artifact}: ${p.artifactBytes ? (p.artifactBytes / 1048576).toFixed(1) + ' MiB' : '—'}\n${p.dataDirectory}\n${handoff ? c.handoffConfirm : c.cadence + '\n' + c.confirm}\n${c.preserved}`, isCurrent: current })
         if (!answer.accepted || answer.isCurrent?.() === false || !current()) return
       }
       const next = await operateCompatibleAgent(id, action !== 'inspect')
@@ -66,6 +69,7 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
   })
   const status = record ? c[record.status as keyof typeof c] ?? c.unknown : c.notManaged
   const unsettled = !!record && ['prepared', 'dispatched', 'unknown'].includes(record.status)
+  const released = record?.observation.status === 'released'
   const installed = !!record?.current && !['retired', 'absent'].includes(record.observation.status)
   return <div data-testid="compatible-agent-panel" className="min-w-0 space-y-3 py-3 text-xs" onClick={e => e.stopPropagation()}>
     <p>{c.description}</p><p className="text-muted-foreground">{c.officialHint}</p><p className="text-muted-foreground">{c.requirements}</p>
@@ -76,8 +80,17 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
       <dt>{c.job}</dt><dd className="break-all font-mono" title={record.jobId}>{record.jobId}</dd>
     </dl>}
     <label className="block">{c.endpoint}<Input aria-label={c.endpoint} value={endpoint} disabled={busy || !!record?.current} onChange={e => setEndpoint(e.target.value)} className="mt-1 min-w-0" /><span className="mt-1 block text-muted-foreground">{c.endpointHint}</span></label>
-    <div className="flex flex-wrap gap-2">{(['inspect', 'install', 'upgrade', 'rollback', 'uninstall'] as const).map(action => <Button key={action} size="sm" variant="outline" disabled={busy || (action !== 'inspect' && action !== 'uninstall' && unsettled) || (action === 'install' && installed) || (action === 'upgrade' && !installed) || (action === 'rollback' && (!installed || !record?.previous)) || (action === 'uninstall' && !record?.current && !record?.requested)} onClick={() => void act(action)}>{c[action]}</Button>)}</div>
+    <div className="flex flex-wrap gap-2">{(['inspect', 'install', 'upgrade', 'rollback', 'uninstall'] as const).map(action => <Button key={action} size="sm" variant="outline" disabled={busy || (released && action !== 'inspect') || (action !== 'inspect' && action !== 'uninstall' && unsettled) || (action === 'install' && installed) || (action === 'upgrade' && !installed) || (action === 'rollback' && (!installed || !record?.previous)) || (action === 'uninstall' && !record?.current && !record?.requested)} onClick={() => void act(action)}>{c[action]}</Button>)}</div>
     <p className="text-muted-foreground">{c.preserved}</p>
+    <details className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.handoff}</summary>
+      <p className="my-2 text-muted-foreground">{c.handoffHint}</p>
+      {!installed && record?.observation.status !== 'retired' && <div className="space-y-2"><label className="block">{c.legacyUnit}<Input aria-label={c.legacyUnit} value={legacyUnit} disabled={busy} onChange={e => setLegacyUnit(e.target.value)} /></label><Button size="sm" variant="outline" disabled={busy || unsettled || !legacyUnit.trim()} onClick={() => void act('adopt')}>{c.adopt}</Button></div>}
+      {installed && <div className="space-y-2"><label className="block">{c.migrationEndpoint}<Input aria-label={c.migrationEndpoint} value={migrationEndpoint} disabled={busy} onChange={e => setMigrationEndpoint(e.target.value)} /></label>
+        <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy || unsettled || !migrationEndpoint.trim()} onClick={() => void act('migrate')}>{c.migrate}</Button>
+          {record?.previousConfiguration && <Button size="sm" variant="outline" disabled={busy} onClick={() => void act('restore-config')}>{c['restore-config']}</Button>}
+        </div></div>}
+      {record?.observation.legacy && record.observation.status !== 'released' && <Button className="mt-2" size="sm" variant="outline" disabled={busy} onClick={() => void act('restore-legacy')}>{c['restore-legacy']}</Button>}
+    </details>
     {(error || record?.errorCode) && <p role="alert" className="break-words text-destructive">{error || c.generic} <span className="break-all font-mono">{code || record?.errorCode}</span></p>}{notice && <p role="status">{notice}</p>}
     <details className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.policy}</summary><p className="my-2 text-muted-foreground">{c.policyHint}</p>
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void work(async current => { const value = await compatibleAgentPolicy(); if (current()) setPolicy(value) })}>{c.loadPolicy}</Button>

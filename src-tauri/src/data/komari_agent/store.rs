@@ -1,4 +1,4 @@
-use super::{artifact::TrustedRelease, Identity, Observation};
+use super::{artifact::TrustedRelease, ConfigurationIdentity, Identity, Observation};
 use crate::{
     data::{
         hosts::HostProfile,
@@ -35,6 +35,12 @@ pub struct Record {
     pub observed_at: Option<i64>,
     pub updated_at: i64,
     pub error_code: Option<String>,
+    #[serde(default)]
+    pub configuration: Option<ConfigurationIdentity>,
+    #[serde(default)]
+    pub previous_configuration: Option<ConfigurationIdentity>,
+    #[serde(default)]
+    pub requested_configuration: Option<ConfigurationIdentity>,
 }
 fn error(_: impl std::fmt::Display) -> String {
     "KOMARI_AGENT_STORAGE".into()
@@ -95,8 +101,51 @@ pub fn begin(
         }
     }
     let read_only = record.action == "inspect";
-    let job=jobs::create_on(&tx,CreateOperationJobRequest{
-        host_id:Some(host.id.clone()),vault_id:Some(record.vault_id.clone()),host_name:Some(host.name.clone()),host_address:Some(host.address.clone()),username:Some(host.username.clone()),source:"workspace".into(),actor:Some("user".into()),action:format!("monitoring.agent.{}",record.action),target:record.deployment.clone(),risk:if read_only{"read-only"}else{"high"}.into(),provider:Some("komari".into()),transport:Some(transport.into()),params_summary:Some("Managed compatible probe; preserve monitoring node, configuration, releases and history".into()),confirmation_required:!read_only,request_id:None})?;
+    let destination = match record.action.as_str() {
+        "adopt" | "migrate" | "restore-config" => record
+            .requested_configuration
+            .as_ref()
+            .map(|c| c.endpoint.as_str()),
+        "restore-legacy" => record
+            .observation
+            .legacy
+            .as_ref()
+            .map(|l| l.endpoint.as_str()),
+        _ => None,
+    }
+    .unwrap_or(&record.endpoint);
+    let summary = format!(
+        "{}; original service: {}; address: {} -> {}; retain node, key, files and history",
+        record.action,
+        record
+            .observation
+            .legacy
+            .as_ref()
+            .map(|l| l.unit.as_str())
+            .unwrap_or("none"),
+        record.endpoint,
+        destination
+    );
+    let job = jobs::create_on(
+        &tx,
+        CreateOperationJobRequest {
+            host_id: Some(host.id.clone()),
+            vault_id: Some(record.vault_id.clone()),
+            host_name: Some(host.name.clone()),
+            host_address: Some(host.address.clone()),
+            username: Some(host.username.clone()),
+            source: "workspace".into(),
+            actor: Some("user".into()),
+            action: format!("monitoring.agent.{}", record.action),
+            target: record.deployment.clone(),
+            risk: if read_only { "read-only" } else { "high" }.into(),
+            provider: Some("komari".into()),
+            transport: Some(transport.into()),
+            params_summary: Some(summary),
+            confirmation_required: !read_only,
+            request_id: None,
+        },
+    )?;
     record.job_id = job.job_id;
     if !read_only {
         jobs::update_on(
