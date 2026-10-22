@@ -571,3 +571,60 @@ five PNG byte counts, hashes and dimensions match, and both endpoint state
 rows are visible on manual inspection. Cleanup and application exit passed;
 the merge parent matches. This evidence belongs to `1d8737a` only and cannot
 replace the next head's full CI reports.
+
+## 2026-10-22 — PRD 0.5 C load policies, scheduled silence and managed channels
+
+This batch adds native forms and an optional bundled server extension for exact
+Komari 1.6.0. No existing user service, Vault, credentials, running App, probe
+release environment or untracked icon was modified. The user selected the
+server-extension approach; load evaluation continues while the App is closed.
+Scope is explicitly **extension load notifications only**, not global service
+silence. Installed managed channel fields and built-in Javascript are editable;
+remote HTML, unknown field types and unrecognized extension bytes remain blocked.
+
+Validation completed before commit:
+
+- Full frontend: **1583 passed, 17 Linux-only skipped**; targeted native-form tests
+  **20 passed**, including scope replacement, fixed installation target with high
+  risk confirmation, node creation identity, secrets hidden, unknown data retained,
+  read-only review and removal of the last rule not expanding an active silence.
+- Full Rust library: **259 passed, 4 opt-in ignored**, including real direct and
+  ProxyJump SSH/SFTP tests. New tests check channel declaration identity, typed
+  selector encoding, policy bounds, revision rebase, same-field conflicts and
+  recreated extension rejection. Existing sealed intent/audit transaction tests
+  still pass.
+- Node scripts: **192 passed**. Fourteen extension policy/runtime tests cover UTC
+  cross-midnight windows, raw/future/repeated/stale samples, sustain/hysteresis,
+  restart/no-replay, public-site authorization, failed disk persistence, global
+  notification disable and configuration changes during dispatch and rename preserving unknown dispatch markers.
+- Production frontend build, modified TS/TSX ESLint, cargo fmt, diff and deterministic
+  ZIP/source equality checks passed. Prior large-chunk build warning remains.
+- Official unmodified 1.6.0 source commit
+  `1b76b7ad5bc3de6529bb7f0577069b4ac241fec3`, built with its matching official frontend,
+  passed **12 real server checks** in a private disposable loopback instance.
+  A separately listening HTTP receiver received exactly **3 extension messages**:
+  load, recovery and fresh post-silence load. Disabled notification delivery,
+  private/public authentication, permission approval, node identity/CAS, script
+  channel and a real installed managed-plugin channel, selector JSON encoding,
+  unknown values, persistence/restart/no-replay and cleanup were checked.
+  Report: `/tmp/shellbeam-monitoring-extension-live-report.json`;
+  `cleanup=true`, `serverStopped=true`. No real credentials or notifications used.
+- CUA checked actual production form components with synthetic data in a background
+  browser: Chinese dark rule/silence/event forms and English light channel fields,
+  at 1280px. PNGs in `/tmp/shellbeam-monitoring-policy-ui`; all viewed, test tab and
+  temporary Vite closed. This is component layout evidence, not a packaged App
+  or mobile E2E claim.
+
+CI now checks the deterministic embedded ZIP and runtime tests. A separate job
+uses the existing reviewed official Linux 1.6.0 binary SHA-256/size pin and runs
+all 12 server checks, retaining a redacted report. Latest-head CI is pending until
+the new commit runs; earlier green reports cannot replace it. No existing Ops GUI,
+OCR, same-frame, raw-sample, visibility, scope or no-replay assertion was changed.
+
+Remaining boundaries: native installation coordinator packaged UI E2E, automatic
+subscription of these load events into the unified host alert center, arbitrary
+plugin channels, extension upgrade/uninstall, global service silence and native
+account lifecycle are not claimed complete. Channel writes and first extension
+installation retain the documented upstream concurrency window. See
+[load extension contract](./monitoring-load-extension.md) for retention, permissions
+and at-most-once dispatch semantics.

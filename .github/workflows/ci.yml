@@ -38,6 +38,11 @@ jobs:
       - name: Fixed read-only MCP collector guards
         run: python3 scripts/mcp-readonly-ops.test.py
 
+      - name: Verify bundled monitoring extension and policy runtime
+        run: |
+          node scripts/package-monitoring-extension.mjs --check
+          node --test scripts/monitoring-extension*.test.mjs
+
       - name: Build frontend
         run: npm run build
 
@@ -106,3 +111,38 @@ jobs:
           retention-days: 7
       - name: Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+  monitoring-extension:
+    name: Monitoring extension server contract
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify embedded package and download pinned official server
+        run: |
+          node scripts/package-monitoring-extension.mjs --check
+          node --input-type=module <<'JS'
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { downloadPinned } from './scripts/prepare-komari-agent-release.mjs';
+          const { server } = JSON.parse(await readFile('scripts/fixtures/komari-lifecycle-releases.json'));
+          const bytes = await downloadPinned(`https://github.com/komari-monitor/komari/releases/download/${server.version}/komari-linux-amd64`, server.amd64, 64 * 1024 * 1024);
+          await writeFile(join(process.env.RUNNER_TEMP, 'komari-extension-contract'), bytes, { mode: 0o700, flag: 'wx' });
+          JS
+      - name: Server load, recovery, silence, permissions and restart without replay
+        env:
+          SHELLBEAM_MONITORING_EXTENSION_REPORT: ${{ runner.temp }}/monitoring-extension-report.json
+        run: node scripts/monitoring-extension-live.mjs --binary "$RUNNER_TEMP/komari-extension-contract"
+      - name: Retain redacted contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-extension-contract
+          path: ${{ runner.temp }}/monitoring-extension-report.json
+          if-no-files-found: error
+          retention-days: 14

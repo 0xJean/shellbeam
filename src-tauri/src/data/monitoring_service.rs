@@ -2,6 +2,7 @@
 //! remote responses and secret-bearing configuration never enter the audit.
 use super::{
     komari::{self, KomariIntegration},
+    monitoring_channels as channels,
     operation_jobs::{self as jobs, CreateOperationJobRequest, UpdateOperationJobRequest},
 };
 use crate::{
@@ -274,10 +275,10 @@ fn exchange(
         .unwrap_or(value))
 }
 pub(crate) struct Remote<'a> {
-    app: &'a tauri::AppHandle,
-    scope: &'a Scope,
-    endpoint: String,
-    client: Client,
+    pub(super) app: &'a tauri::AppHandle,
+    pub(super) scope: &'a Scope,
+    pub(super) endpoint: String,
+    pub(super) client: Client,
 }
 impl<'a> Remote<'a> {
     pub(crate) fn new(app: &'a tauri::AppHandle, scope: &'a Scope) -> Result<Self, String> {
@@ -346,6 +347,24 @@ impl<'a> Remote<'a> {
                     .cloned()
                     .ok_or_else(|| "MONITORING_INVALID_RESPONSE".into())
             }
+            target if target.starts_with("channel:") => {
+                let id = channels::channel_id(target)?;
+                let response = self.call(
+                    &format!(
+                        "/api/admin/notification/channel/configuration?id={}",
+                        urlencoding::encode(id)
+                    ),
+                    None,
+                    Some(token),
+                    None,
+                )?;
+                channels::read(id, response)
+            }
+            "extension" => self.extension_status(token),
+            "load-policy" => {
+                self.require_extension(token)?;
+                self.call("/api/shellbeam-alerts/v1/policy", None, Some(token), None)
+            }
             target if target.starts_with("retention:") => {
                 let name = &target[10..];
                 let definitions=self.call("/api/rpc2",Some(&json!({"jsonrpc":"2.0","id":1,"method":"admin:listMetricDefinitions","params":{}})),Some(token),None)?;
@@ -364,12 +383,20 @@ impl<'a> Remote<'a> {
         }
     }
     fn write(&self, target: &str, value: &Value, token: &str) -> Result<(), String> {
+        if target == "extension" {
+            return self.enable_extension(token);
+        }
         let (path, body) = match target {
             "settings" => ("/api/admin/settings/", value.clone()),
             "webhook" => (
                 "/api/admin/notification/channel/configuration",
                 json!({"id":"webhook","data":value}),
             ),
+            target if target.starts_with("channel:") => (
+                "/api/admin/notification/channel/configuration",
+                json!({"id":channels::channel_id(target)?, "data":channels::payload(value)?}),
+            ),
+            "load-policy" => ("/api/shellbeam-alerts/v1/policy", value.clone()),
             target if target.starts_with("retention:") => (
                 "/api/rpc2",
                 json!({"jsonrpc":"2.0","id":1,"method":"admin:updateMetricDefinition","params":{"name":&target[10..],"retention_days":value["retention_days"]}}),
@@ -388,8 +415,18 @@ fn changed(edit: &Edit) -> Vec<String> {
         .cloned()
         .collect()
 }
+fn same_object(a: &Value, b: &Value) -> bool {
+    [
+        "metric_identity",
+        channels::IDENTITY,
+        channels::SCHEMA,
+        "extension_identity",
+    ]
+    .iter()
+    .all(|k| a.get(*k) == b.get(*k))
+}
 fn matches_desired(edit: &Edit, remote: &Value) -> bool {
-    if edit.baseline.get("metric_identity") != remote.get("metric_identity") {
+    if !same_object(&edit.baseline, remote) {
         return false;
     }
     changed(edit)
@@ -397,7 +434,7 @@ fn matches_desired(edit: &Edit, remote: &Value) -> bool {
         .all(|k| remote.get(k) == edit.desired.get(k))
 }
 fn merge(edit: &Edit, remote: &Value) -> Result<Value, String> {
-    if edit.baseline.get("metric_identity") != remote.get("metric_identity") {
+    if !same_object(&edit.baseline, remote) {
         return Err("MONITORING_SCOPE_CHANGED".into());
     }
     let mut next = remote
@@ -419,9 +456,23 @@ fn validate(target: &str, edit: &Edit) -> Result<(), String> {
     {
         return Err("MONITORING_INVALID_EDIT".into());
     }
+    if target.starts_with("channel:") {
+        channels::channel_id(target)?;
+        channels::validate(&edit.baseline, &edit.desired)?;
+        return if changed(edit).is_empty() {
+            Err("MONITORING_NO_CHANGES".into())
+        } else {
+            Ok(())
+        };
+    }
+    if target == "load-policy" {
+        super::monitoring_load_policy::validate(&edit.desired)?;
+    }
     let allowed = match target {
         "settings" => SETTINGS,
         "webhook" => WEBHOOK,
+        "load-policy" => &["rules", "silences"],
+        "extension" => &["installed", "enabled"],
         name if name.starts_with("retention:")
             && name.len() <= 200
             && name[10..]
@@ -448,6 +499,8 @@ fn validate(target: &str, edit: &Edit) -> Result<(), String> {
         }
         let v = &edit.desired[&k];
         let valid = match k.as_str() {
+            "installed" | "enabled" => v == true,
+            "rules" | "silences" => v.as_array().is_some_and(|r| r.len() <= 64),
             "private_site"
             | "notification_enabled"
             | "login_notification"
@@ -626,6 +679,9 @@ fn prepare(
                 target,
                 "monitoring.service.update",
                 if target.starts_with("retention:")
+                    || target.starts_with("channel:")
+                    || target == "load-policy"
+                    || target == "extension"
                     || (edit.baseline["private_site"] == true
                         && edit.desired["private_site"] == false)
                 {
@@ -730,7 +786,7 @@ fn edit_action(
         finish(app, scope, &mut row, &edit, "verified", None)?;
         return Ok(view(&row, &edit));
     }
-    if edit.baseline.get("metric_identity") != observed.get("metric_identity") {
+    if !same_object(&edit.baseline, &observed) {
         return Err("MONITORING_SCOPE_CHANGED".into());
     }
     if input.action == "retry" {
@@ -772,6 +828,15 @@ fn edit_action(
         }
         return Ok(view(&row, &edit));
     }
+    // Revalidate against the fresh server declaration, not a schema supplied by UI.
+    validate(
+        &row.target,
+        &Edit {
+            baseline: observed.clone(),
+            desired: merged.clone(),
+            observed: observed.clone(),
+        },
+    )?;
     // Persist the dispatch boundary before the only write. On crash, subsequent
     // calls can read/reconcile but cannot automatically re-enter this branch.
     let sealed = seal(app, scope, &edit)?;
@@ -1013,6 +1078,35 @@ fn run(app: &tauri::AppHandle, input: Request) -> Result<Value, String> {
     remote.version(Some(&token))?;
     match input.action.as_str() {
         "read" => remote.read(&input.target, &token),
+        "load-status" => {
+            remote.require_extension(&token)?;
+            remote.call("/api/shellbeam-alerts/v1/status", None, Some(&token), None)
+        }
+        "channel-nodes" => {
+            let rows = remote.call("/api/admin/client/list", None, Some(&token), None)?;
+            Ok(json!(rows
+                .as_array()
+                .ok_or("MONITORING_INVALID_RESPONSE")?
+                .iter()
+                .filter_map(|r| Some(json!({"id":r["uuid"].as_str()?,"name":r["name"].as_str().unwrap_or(""),"createdAt":r["created_at"].as_str()?})))
+                .collect::<Vec<_>>()))
+        }
+        "channel-pingtasks" => {
+            let rows = remote.call(
+                "/api/rpc2",
+                Some(&json!({"jsonrpc":"2.0","id":1,"method":"admin:getAllPingTasks","params":{}})),
+                Some(&token),
+                None,
+            )?;
+            Ok(json!(rows
+                .as_array()
+                .ok_or("MONITORING_INVALID_RESPONSE")?
+                .iter()
+                .filter_map(|r| Some(
+                    json!({"id":r["id"].as_u64()?,"name":r["name"].as_str().unwrap_or("")})
+                ))
+                .collect::<Vec<_>>()))
+        }
         "metrics" => remote.call(
             "/api/rpc2",
             Some(
@@ -1110,6 +1204,43 @@ mod tests {
             desired: json!({"sitename":"After","private_site":false}),
             observed: Value::Null,
         }
+    }
+    #[test]
+    fn load_policy_rebases_revision_but_rejects_recreated_extension_and_same_field_conflicts() {
+        let base = json!({"extension_identity":"original","revision":1,"rules":[],"silences":[]});
+        let mut e = Edit {
+            baseline: base.clone(),
+            desired: base.clone(),
+            observed: Value::Null,
+        };
+        e.desired["silences"] = json!([{"id":"night","name":"Night","enabled":true,"ruleIds":[],"kind":"weekly","timezone":"UTC","days":[1],"startMinute":1320,"endMinute":420}]);
+        validate("load-policy", &e).unwrap();
+        let mut remote = base.clone();
+        remote["revision"] = json!(2);
+        assert_eq!(merge(&e, &remote).unwrap()["revision"], 2);
+        remote["silences"] = json!([{"id":"external"}]);
+        assert_eq!(merge(&e, &remote).unwrap_err(), "MONITORING_CONFLICT");
+        remote = e.desired.clone();
+        remote["extension_identity"] = json!("recreated");
+        assert!(!matches_desired(&e, &remote));
+        assert_eq!(merge(&e, &remote).unwrap_err(), "MONITORING_SCOPE_CHANGED");
+        e.desired["revision"] = json!(99);
+        assert!(validate("load-policy", &e).is_err());
+    }
+    #[test]
+    fn channel_schema_change_is_never_treated_as_verified_or_rebased() {
+        let base = channels::read("mail", json!({"configuration":{"type":"managed","data":[{"key":"token","type":"string"}]},"data":{"token":"synthetic"}})).unwrap();
+        let mut e = Edit {
+            baseline: base.clone(),
+            desired: base.clone(),
+            observed: Value::Null,
+        };
+        e.desired["token"] = json!("changed");
+        validate("channel:mail", &e).unwrap();
+        let mut remote = e.desired.clone();
+        remote[channels::IDENTITY] = json!("different-schema");
+        assert!(!matches_desired(&e, &remote));
+        assert!(merge(&e, &remote).is_err());
     }
     #[test]
     fn merges_disjoint_remote_change_without_overwriting_it() {

@@ -1,0 +1,4 @@
+# Embedded archive verification compares exact source bytes on every platform.
+monitoring-extension/*.cjs text eol=lf
+monitoring-extension/komari-plugin.json text eol=lf
+src-tauri/resources/monitoring-extension.zip -text

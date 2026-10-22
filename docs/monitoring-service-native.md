@@ -18,7 +18,7 @@ PRD 0.5 C，2026-10-21。ShellBeam 承接日常接入、主机和通知设置，
 | 管理员授权 | `/api/login`，支持 `2fa_code`；从管理员设置复用已有 Key，仅为空时生成；通过 `/api/admin/client/list` 认证后直接写入 Vault；结束时注销短时登录 |
 | 服务配置 | GET/POST `/api/admin/settings/`，只允许标题、说明、访问认证及受支持通知字段；只 POST 本次改变的字段，读回验证 |
 | Webhook | `/api/admin/notification/channel/configuration`；GET 的完整渠道数据作为基线；编辑白名单字段并保留未知字段，提交后读回 |
-| 渠道选择 | `/api/admin/notification/channels`；可保留和选择已有渠道 ID，原生配置编辑仅支持 Webhook |
+| 渠道选择 | `/api/admin/notification/channels`；可保留和选择已有渠道 ID，原生配置包括 Webhook、Javascript 和已安装 managed 声明的渠道，详见负载与静默契约 |
 | 历史保留 | RPC `admin:listMetricDefinitions` 与 `admin:updateMetricDefinition`；绑定 metric 名称及创建时间，允许 1–3650 天，禁止零天清空 |
 | 测试通知 | 检查已启用有效渠道后仅调用一次 `/api/admin/test/sendMessage`；UI 报告服务接受，收件方需另行核实 |
 
@@ -41,9 +41,11 @@ HTTP 在原生层执行，20 秒超时、2 MiB 响应上限，不跟随重定向
 
 ## 当前缺口
 
-- 兼容 Komari Agent 的原生安装、升级、签名发布、失败回退和卸载；不能用 ShellBeam Agent 的已有验证替代。
-- 1.6.x 没有已核验的定时静默/负载规则管理接口；不把本地确认/归档包装成关闭服务器通知。
-- 脚本及插件专属通知渠道、账户全生命周期管理尚未原生覆盖；已有配置保持原样。
+- 兼容探针生命周期与跨端迁移已在后续 D 批次交付，详见 PRD 和验收矩阵；不以本文件的服务配置证据替代。
+- 1.6.x 缺少原有定时静默/负载规则接口；2026-10-22 为固定 1.6.0 补齐可选扩展的原生配置。静默仅覆盖扩展负载通知，不冒充全服务静默。
+- 脚本与已安装 managed 插件渠道已补齐；raw/redirect 渠道、账户全生命周期仍未覆盖。已有配置保持原样。
 - 完整资产字段、跨设备端到端冲突、多绑定删除/迁移及桌面/移动端安装包新流程验收仍需继续。
 
 本批真实通知证据使用独立回环官方服务、合成上报及独立 HTTP 接收端，实际收到 Test/Offline/Online；没有修改用户 Vault 或重启正在运行的验收 App。详见验收矩阵。
+
+后续协议、风险和当前完整边界见 [原生负载规则、静默与渠道配置](./monitoring-load-extension.md)。

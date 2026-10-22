@@ -122,3 +122,34 @@ describe('native service management', () => {
     expect(screen.queryByText(/raw-password/)).not.toBeInTheDocument()
   })
 })
+
+it('requires high-risk confirmation for extension install and dispatches only its fixed target', async () => {
+  const before = { installed: false, enabled: false }
+  const intent = { ...row(), intent: { ...row().intent, target: 'extension' }, baseline: before, desired: { installed: true, enabled: true }, observed: before }
+  vi.mocked(serviceRequest).mockImplementation(async (_scope, action) => (action === 'list' ? [] : action === 'read' ? before : intent) as never)
+  vi.mocked(serviceIntentAction).mockResolvedValue({ ...intent, intent: { ...intent.intent, status: 'verified' }, observed: intent.desired })
+  renderPanel(); await act(async () => {})
+  fireEvent.click(screen.getByText(c.title, { selector: 'summary' })); fireEvent.change(screen.getByLabelText(c.title), { target: { value: 'load-policy' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Enable server load alerts' }))
+  await waitFor(() => expect(serviceIntentAction).toHaveBeenCalledExactlyOnceWith(scope, intent, 'apply'))
+  expect(requestUserDecision).toHaveBeenCalledWith(expect.objectContaining({ risk: 'high', message: expect.stringContaining('administrator RPC') }))
+  expect(serviceRequest).toHaveBeenCalledWith(scope, 'prepare', { target: 'extension', baseline: before, desired: intent.desired, confirmed: true })
+})
+it('saves native load rules with creation identity and policy revision in the durable intent', async () => {
+  const policy = { extension_identity: 'server-original', revision: 12, rules: [], silences: [] }
+  vi.mocked(serviceRequest).mockImplementation(async (_scope, action) => (action === 'list' ? [] : action === 'channel-nodes' ? [{ id: 'node', name: 'WEB', createdAt: 'created' }] : action === 'load-status' ? { evaluations: {}, events: [] } : action === 'read' ? policy : row()) as never)
+  renderPanel(); await act(async () => {})
+  fireEvent.click(screen.getByText(c.title, { selector: 'summary' })); fireEvent.change(screen.getByLabelText(c.title), { target: { value: 'load-policy' } }); fireEvent.click(screen.getByRole('button', { name: c.read }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Add load rule' })).toBeEnabled()); fireEvent.click(screen.getByRole('button', { name: 'Add load rule' })); fireEvent.click(screen.getByRole('button', { name: c.save }))
+  await waitFor(() => expect(serviceRequest).toHaveBeenCalledWith(scope, 'prepare', expect.objectContaining({ target: 'load-policy', baseline: policy, desired: { ...policy, rules: [expect.objectContaining({ nodeId: 'node', nodeCreatedAt: 'created' })] }, confirmed: true })))
+})
+it('discards late configuration from a replaced service and revokes its old context', async () => {
+  let resolve!: (value: unknown) => void
+  vi.mocked(serviceRequest).mockImplementation(async (_scope, action) => (action === 'read' ? await new Promise(done => { resolve = done }) : []) as never)
+  const view = renderPanel(); await act(async () => {})
+  fireEvent.click(screen.getByText(c.title, { selector: 'summary' })); fireEvent.click(screen.getByRole('button', { name: c.read })); await waitFor(() => expect(resolve).toBeTypeOf('function'))
+  view.rerender(<I18nProvider><MonitoringServicePanel service={{ ...service, endpoint: 'https://replacement.test', updatedAt: 3 }} /></I18nProvider>)
+  await act(async () => { resolve(config) })
+  expect(screen.queryByDisplayValue('Server')).not.toBeInTheDocument(); expect(closeServiceScope).toHaveBeenCalledWith(scope)
+  expect(serviceIntentAction).not.toHaveBeenCalled()
+})

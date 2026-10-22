@@ -469,6 +469,8 @@ Phase 0–4 保留立项和既有实现脉络，完成度以验收矩阵为准�
 
 第四批边界：仅已验证的 1.6.x 管理接口；初始化按其安装契约实施，安装路由尚不能事前返回服务版本，初始化后仍核验版本。Webhook 以外的插件/脚本渠道配置、服务端定时静默和负载规则尚未原生接管；原生账户全生命周期、完整资产字段、兼容 Komari Agent 安装/升级/回退/卸载、多设备端到端并发、移动端安装包验收仍未完成。没有上游 CAS，读前检查和读后验证不保证排除第三方并发覆盖。实现契约及不支持范围见 [原生服务管理](./monitoring-service-native.md)。
 
+后续补齐：2026-10-22 原生负载规则、定时静默与已安装渠道配置见第 17 节；上述描述保留为第四批交付时边界。
+
 **第五批：兼容监控探针生命周期（2026-10-21）**
 
 主机现有运维工具中增加按需的“监控探针”，支持 Linux systemd 下兼容 Agent 的原生安装、升级、回滚和保留数据的卸载。共享默认 SSH/ProxyJump 路由，复用节点与 Token，独立签名信任根；原子意图和 OperationJob 确认审计、身份/修订检查、失败补偿以及跨会话只读核验贯通。未接入用户不增加界面，纯监控主机先添加 SSH 连接。详细语义、发布工具与验收层次见 [兼容监控探针](./compatible-monitoring-agent.md)。
@@ -612,3 +614,17 @@ generation is not an operations job, and Run uses existing terminal history.
 Desktop and recent CLIs with the required isolation options are supported. Mobile
 and browser previews fail clearly; Windows requires native exe. Executable detection
 is separate from authentication/model access. See [AI CLI integration](./ai-cli.md).
+
+
+## 17. PRD 0.5 C：服务端负载规则、定时静默与原生渠道（2026-10-22）
+
+用户选择可选服务端扩展方案。1.6.0 已移除负载规则接口且没有定时静默接口；本批使用 App 内置、经明确确认安装的固定服务端扩展，不把客户端定时器当作持续监控。
+
+- 原生配置 CPU、内存、磁盘、load1，超限/恢复阈值、持续时间及启停；绑定节点创建身份。
+- 一次性绝对时间与每周 UTC 静默，可跨午夜、限定规则。只影响该扩展负载通知，既有离线/到期和其他通知不变。
+- 服务端 15 秒评估原始带时间样本，断档/陈旧不制造恢复；原子保存状态、CAS 配置、重启不重发未知通知。规则最多 64 条，计划最多 64 条。
+- 已安装 managed 通知渠道与内置 Javascript 原生编辑；保留未知配置、隐藏文本、声明指纹检查和选择器编码。raw/redirect 界面保留只读。
+- 配置沿用加密持久化意图与 OperationJob；固定扩展安装高风险确认，失败可读回、显式重试，切换 Vault/服务撤销旧上下文。
+- 服务管理原生展示最近负载事件，区分异常事实、静默、渠道关闭、服务受理及发送未知。历史事件最多保留 500 条，本地原有审计不截断。
+
+范围与验收限制：扩展仅固定 1.6.0；不是全服务静默、通知插件市场、扩展升级/卸载或所有插件投递证明。负载事件尚未订阅进入主机统一告警中心；原生账户全生命周期及多设备安装包端到端并发仍待补齐。真实服务协议证据与打包 App 协调器证据分别记账，不宣称 C 阶段全部完成。详见 [原生负载与静默契约](./monitoring-load-extension.md)。

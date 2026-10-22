@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { KomariIntegration } from './komari-config'
 
 export interface ServiceScope { vaultId: string; integrationId: string; configVersion: number; session: number; contextId: string; configurationIdentity: string }
-export type ServiceValues = Record<string, string | number | boolean>
+export type ServiceValues = Record<string, unknown>
 export interface ServiceIntent {
   intent: { id: string; scope: ServiceScope; target: string; revision: number; status: 'prepared' | 'applying' | 'verified' | 'uncertain' | 'retry' | 'conflict' | 'cancelled'; jobId: string; observedAt: number; updatedAt: number; errorCode?: string }
   baseline: ServiceValues; desired: ServiceValues; observed: ServiceValues
