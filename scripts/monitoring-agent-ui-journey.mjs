@@ -9,6 +9,22 @@ import { verifyCompatibleCatalog } from './publish-komari-agent.mjs'
 import { historicalCatalog, historicalCatalogPin, rawCpuSamples, reviewed, verifyFreshCpu } from './monitoring-agent-ui-evidence.mjs'
 import { revealExtensionAudit } from './extension-ui-journey.mjs'
 
+export function verifyAgentAuditScope(actual, expected, vaultId) {
+  assert(/^[a-f0-9-]{36}$/.test(actual.vaultId), 'agent_ui_audit_vault_missing')
+  if (vaultId) assert.equal(actual.vaultId, vaultId, 'agent_ui_audit_vault_changed')
+  for (const key of ['hostId', 'action', 'transport']) assert.equal(actual[key], expected[key], `agent_ui_audit_${key}_changed`)
+  return actual.vaultId
+}
+
+export async function verifyAgentPolicyReadback(d, load, select, source, fields = [], alerts) {
+  await d.click(load)
+  await d.until(async () => await d.isEnabled(load))
+  if (alerts) assert.equal((await d.findAll(alerts)).length, 0, 'agent_ui_policy_read_error')
+  const actual = await d.attr(select, 'value')
+  assert.equal(actual, source, 'agent_ui_policy_source_readback')
+  for (const [selector, expected] of fields) assert.equal(await d.attr(selector, 'value'), expected, 'agent_ui_policy_field_readback')
+}
+
 const id = name => `[data-testid="${name}"]`
 const panel = h => `${id('host-card')}[data-host-id="${h.id}"] ${id('compatible-agent-panel')}`
 const control = (h, name) => `${panel(h)} ${id('compatible-agent-' + name)}`
@@ -26,24 +42,30 @@ async function policy(d, h, f, source) {
   if (await d.attr(box, 'open') === null) await d.click(box + ' > summary')
   await d.click(control(h, 'policy-load')); await d.waitFor(control(h, 'policy-source'))
   await d.select(control(h, 'policy-source'), source)
+  const fields = source === 'custom' ? Object.entries({ manifestUrl: historicalCatalog, trustedPublicKey: f.trust.publicKey, allowedHosts: f.trust.allowedHosts.join(', ') }).map(([key, value]) => [control(h, 'policy-' + key), value]) : []
   if (source === 'custom') {
     // Public production key and immutable original catalog, never a fixture key
     // or a rollback of the current production catalog / monotonic watermark.
-    for (const [key, value] of Object.entries({ manifestUrl: historicalCatalog, trustedPublicKey: f.trust.publicKey, allowedHosts: f.trust.allowedHosts.join(', ') })) await d.fill(control(h, 'policy-' + key), value)
+    for (const [selector, value] of fields) await d.fill(selector, value)
   }
   await d.click(control(h, 'policy-save')); await confirm(d, ['trusted publisher and download sources'])
   await d.until(async () => await d.isEnabled(control(h, 'policy-save')))
-  await d.click(control(h, 'policy-load')); assert.equal(await d.attr(control(h, 'policy-source'), 'value'), source)
+  await verifyAgentPolicyReadback(d, control(h, 'policy-load'), control(h, 'policy-source'), source, fields, panel(h) + ' [role="alert"]')
   await d.click(box + ' > summary')
 }
-async function audit(d, jobs) {
+async function audit(d, jobs, vaultId) {
   await d.click(id('pc-dashboard')); await d.click(id('pc-nav-activity')); await d.click(id('audit-tab')); await d.click(id('operations-refresh'))
   const found = new Set(); let selected
   for (let page = 0; page < 20; page++) {
     await d.waitFor(id('operation-audit-row')); selected = undefined
     for (const row of await d.findAll(id('operation-audit-row'))) {
       const job = await d.attr(row, 'data-job-id'), status = await d.attr(row, 'data-status')
-      if (jobs.get(job) === status) { found.add(job); selected = { id: job, status } }
+      const expected = jobs.get(job)
+      if (expected?.status === status) {
+        const actual = { vaultId: await d.attr(row, 'data-vault-id'), hostId: await d.attr(row, 'data-host-id'), action: await d.attr(row, 'data-action'), transport: await d.attr(row, 'data-transport') }
+        vaultId = verifyAgentAuditScope(actual, expected, vaultId)
+        found.add(job); selected = { id: job, status, vaultId }
+      }
     }
     if (found.size === jobs.size) { assert(selected); return selected }
     if (!await d.isEnabled(id('operations-older'))) break
@@ -60,12 +82,14 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
   const old = verifyCompatibleCatalog(oldRaw, f.trust, oldRaw.publishedAt).artifacts.find(m => m.architecture === f.architecture)
   assert.equal(old.version, '1.5.11'); assert.equal(old.sha256, reviewed['1.5.11'][f.architecture].sha256)
   const { source: fresh, target: upgrade } = f.hosts, jobs = new Map(), original = new Map()
+  let vaultId
   record('agent-production-release-verified', { keyId: f.trust.keyId, sequence: f.catalog.sequence, version: f.release.version, architecture: f.architecture, signatureVerified: true, historicalCatalogPinned: true, server: 'ShellBeam Server' })
   const snapshot = () => Object.fromEntries(Object.values(f.hosts).map(h => [h.role, f.observe(h)]))
   const stable = async before => { await delay(5000); assert.deepEqual(snapshot(), before, 'agent_ui_unexpected_remote_replay') }
   const sample = async h => rawCpuSamples((await f.servers[h.service].request(`/api/recent/${h.node}`)).value, h.node).sort((a, b) => b.time - a.time)[0]
-  const remember = async (h, status = 'completed') => {
-    const job = await d.attr(panel(h), 'data-job-id'); assert(/^[a-f0-9-]{36}$/.test(job)); assert(!jobs.has(job), 'agent_ui_reused_audit'); jobs.set(job, status); return job
+  const remember = async (h, action, status = 'completed') => {
+    const job = await d.attr(panel(h), 'data-job-id'); assert(/^[a-f0-9-]{36}$/.test(job)); assert(!jobs.has(job), 'agent_ui_reused_audit')
+    jobs.set(job, { status, hostId: h.id, action: `monitoring.agent.${action}`, transport: h.jump ? 'ssh-proxyjump' : 'ssh-direct' }); return job
   }
   const prove = async (h, version, before, started, name) => {
     const pin = reviewed[version][f.architecture]
@@ -95,10 +119,13 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
     const before = (await sample(h))?.time ?? 0, started = Date.now()
     await d.click(control(h, action)); await confirm(d, [h.name, h.node, version])
     await d.until(async () => await d.attr(panel(h), 'data-status') === 'active' && await d.attr(panel(h), 'data-version') === version && await d.isEnabled(control(h, 'inspect')), { timeoutMs: 120000 })
-    await remember(h); await prove(h, version, before, started, name)
+    await remember(h, action); await prove(h, version, before, started, name)
   }
   // Fresh production install has never opened or configured publisher policy.
   await operate(fresh, 'install', '1.5.12', 'agent-fresh-install')
+  // Capture the real owner from the first persisted audit before any restart;
+  // subsequent reads must retain that owner and each operation's host/route.
+  vaultId = (await audit(d, jobs)).vaultId
   record('agent-no-user-key-configuration', { passed: true })
   await policy(d, upgrade, f, 'custom'); await operate(upgrade, 'install', '1.5.11', 'agent-old-install')
   await policy(d, upgrade, f, 'official'); await operate(upgrade, 'upgrade', '1.5.12', 'agent-upgraded')
@@ -111,22 +138,22 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
   assert.equal(f.observe(upgrade)[0].processes[0].sha256, f.release.sha256)
   const interrupted = snapshot(); d = await restart(session.password); release(); await stable(interrupted)
   await openTransferTools(d, upgrade); assert(['dispatched', 'unknown'].includes(await d.attr(panel(upgrade), 'data-status')))
-  const unknown = await remember(upgrade, 'unknown'); await audit(d, new Map([[unknown, 'unknown']]))
+  const unknown = await remember(upgrade, 'upgrade', 'unknown'); await audit(d, new Map([[unknown, jobs.get(unknown)]]), vaultId)
   await openTransferTools(d, upgrade); await d.click(control(upgrade, 'inspect'))
   await d.until(async () => await d.attr(panel(upgrade), 'data-status') === 'active' && await d.isEnabled(control(upgrade, 'inspect')), { timeoutMs: 120000 })
-  await remember(upgrade); await stable(interrupted)
+  await remember(upgrade, 'inspect'); await stable(interrupted)
   await prove(upgrade, '1.5.12', before, started, 'agent-reupgrade-recovered')
   assert.equal(await d.attr(panel(upgrade), 'data-previous-version'), '1.5.11')
   record('agent-interrupted-readonly-recovery', { passed: true, noReplayMs: 5000, unknownAuditRetained: true })
   for (const h of [fresh, upgrade]) {
     await openTransferTools(d, h); await d.click(control(h, 'uninstall')); await confirm(d, [h.name, h.node])
-    await d.until(async () => await d.attr(panel(h), 'data-status') === 'retired' && await d.isEnabled(control(h, 'inspect')), { timeoutMs: 120000 }); await remember(h)
+    await d.until(async () => await d.attr(panel(h), 'data-status') === 'retired' && await d.isEnabled(control(h, 'inspect')), { timeoutMs: 120000 }); await remember(h, 'uninstall')
     assert(f.observe(h).every(s => s.processes.length === 0)); assert.equal(f.observe(h)[0].configSha256, original.get(h.role).configSha256)
     record('agent-history-retained', { role: h.role, ...await h.history.retained() })
   }
   await f.retained(); const final = snapshot(); d = await restart(session.password); await stable(final)
-  assert.equal(jobs.size, 8); const selected = await audit(d, jobs); const visible = await revealExtensionAudit(d, selected)
+  assert.equal(jobs.size, 8); const selected = await audit(d, jobs, vaultId); const visible = await revealExtensionAudit(d, selected)
   await checkpoint('agent-audit-restored')
-  record('agent-audit-restored', { ...visible, passed: true, noReplayMs: 5000, jobs: [...jobs].map(([id, status]) => ({ id, status })), allProbesStopped: true, nodeCredentialsAndHistoryRetained: true })
+  record('agent-audit-restored', { ...visible, passed: true, noReplayMs: 5000, jobs: [...jobs].map(([id, scope]) => ({ id, ...scope })), sameVaultOwnerRetained: true, auditScopesRetained: true, allProbesStopped: true, nodeCredentialsAndHistoryRetained: true })
   return { passed: true, installedPackage: true, productionIpc: true, realVault: true, nativeShellBeamPages: true, installs: 2, upgrades: 2, rollbacks: 1, readonlyRecovery: 1, restoredAuditJobs: 8, noReplayMs: 5000 }
 }

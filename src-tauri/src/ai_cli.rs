@@ -583,7 +583,17 @@ impl Process {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
         }
-        let child = command.spawn().map_err(|_| "failed")?;
+        let child = command.spawn().map_err(|_error| {
+            // Unit-test diagnostics contain only OS classification, never the
+            // executable, arguments, environment, stdout or stderr.
+            #[cfg(test)]
+            eprintln!(
+                "ai_cli_spawn_failed kind={:?} os_code={:?}",
+                _error.kind(),
+                _error.raw_os_error()
+            );
+            "failed"
+        })?;
         #[cfg(windows)]
         let job = match windows_job::Job::assign(&child) {
             Ok(job) => job,
@@ -705,6 +715,8 @@ fn run_process(
             return if status.success() {
                 Ok(())
             } else {
+                #[cfg(test)]
+                eprintln!("ai_cli_exit_failed status={status}");
                 Err("failed".into())
             };
         }

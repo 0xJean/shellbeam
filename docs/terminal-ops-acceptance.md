@@ -814,10 +814,36 @@ containers/network were cleaned. Evidence:
 `/tmp/shellbeam-agent-provenance-ui/`. No real Vault, credential, production
 secret or installed user App was accessed for this development/testing.
 
-**Pending:** protected production release run `39915753275` is awaiting the
-required reviewer; stable feed still advertises 1.5.11. This client's new
-installed-App workflow refuses to start its journey until production 1.5.12 is
-promoted (`agent_ui_production_release_not_promoted`). No passing 1.5.12
-production-root installed-App report is claimed yet. After approval/promotion,
-run and independently inspect the exact head's report, executable/sample proof,
-audit history, screenshot hashes/visibility and cleanup before marking complete.
+Production release `39915753275` attempt 2 succeeded with unchanged protected
+root and candidate. The stable catalog now contains 1.5.12 at sequence
+`1792739251381`. Original client run `39919677392` attempt 1 correctly stopped
+before App launch (`agent_ui_production_release_not_promoted`). Attempt 2 on
+`552c891` reached the real fresh install: original CPU 96.11650485437237 at
+1792742428902 and amd64 executable hash `daf4ec3bc514f0cc1e8150a55a2c02737dc3cec76890ca0f79de5c52b5a1480d`,
+node/Token/config checks and cleanup passed. It then failed at the policy-source
+readback immediately following an asynchronous native read. The readback now
+waits for that same read button to become enabled before asserting the actual
+stored source. No timeout increase, extra save/click retry or altered trust.
+This remains partial evidence, not a complete upgrade/rollback/recovery pass.
+
+Migration UI `39919677302` on the same head began with production 1.5.11 and
+completed its initial/restore steps with that hash; the feed advanced during
+the journey and the final destination displayed 1.5.12. Its fixed expected-hash
+assertion rejected the changed release. Rerun only after the feed stabilized;
+keep the exact hash assertion. Linux native CI separately failed the oversized
+CLI output test with `failed` instead of `invalid_output`; diagnosis remains
+separate from these release/UI failures. A local anonymous native download hit
+`artifact_download_timeout`; do not count it as a successful native download.
+The native test build now retains only spawn OS kind/code or exit status on
+failure, without paths, command arguments, environment or process output.
+This is diagnostic instrumentation, not a claimed fix. Local CLI tests passed
+9 with 1 opt-in ignored; Node contracts passed 256, including delayed readback,
+changed public configuration and owner/host/action/route rejection checks.
+
+Audit evidence now captures the first persisted job's actual Vault ID before
+restart and binds every recovered job to that owner, host, action and transport.
+Only the historical 1.5.11 bootstrap uses explicit custom policy with the
+production public key; fresh 1.5.12 leaves built-in trust untouched and subsequent
+upgrade/rollback/re-upgrade restore official policy. Installed UI evidence is
+amd64; arm64 artifact/helper evidence is separate. Full exact-head report,
+screenshots, recovery/no-replay and clean exit are still required.

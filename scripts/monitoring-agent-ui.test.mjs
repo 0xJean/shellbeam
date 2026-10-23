@@ -3,6 +3,38 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { rawCpuSamples, verifyFreshCpu, verifyServerIdentity, serverIdentity, reviewed } from './monitoring-agent-ui-evidence.mjs'
 import { verifyMonitoringAgentUiReport } from './monitoring-agent-ui-report.mjs'
+import { verifyAgentAuditScope, verifyAgentPolicyReadback } from './monitoring-agent-ui-journey.mjs'
+
+test('policy readback waits for the native read to finish and still rejects a different stored source', async () => {
+  let reading = false, stored = 'custom', clicks = 0, alert = false, key = 'public-key'
+  const driver = {
+    click: async () => { reading = true; clicks++ },
+    isEnabled: async () => !reading,
+    until: async check => { assert.equal(await check(), false); reading = false; assert.equal(await check(), true) },
+    attr: async selector => { assert.equal(reading, false); return selector === 'key' ? key : stored },
+    findAll: async () => alert ? ['error'] : [],
+  }
+  await verifyAgentPolicyReadback(driver, 'load', 'source', 'custom')
+  assert.equal(clicks, 1)
+  stored = 'official'
+  await assert.rejects(verifyAgentPolicyReadback(driver, 'load', 'source', 'custom'), /policy_source_readback/)
+  assert.equal(clicks, 2)
+  stored = 'custom'
+  await verifyAgentPolicyReadback(driver, 'load', 'source', 'custom', [['key', 'public-key']], 'alert')
+  key = 'different-key'
+  await assert.rejects(verifyAgentPolicyReadback(driver, 'load', 'source', 'custom', [['key', 'public-key']], 'alert'), /field_readback/)
+  key = 'public-key'; alert = true
+  await assert.rejects(verifyAgentPolicyReadback(driver, 'load', 'source', 'custom', [['key', 'public-key']], 'alert'), /read_error/)
+})
+
+test('persisted audit scope binds the original Vault, host, action and route', () => {
+  const expected = { hostId: 'host-a', action: 'monitoring.agent.install', transport: 'ssh-direct' }
+  const actual = { ...expected, vaultId: '00000000-0000-0000-0000-000000000001' }
+  const owner = verifyAgentAuditScope(actual, expected)
+  assert.equal(verifyAgentAuditScope(actual, expected, owner), owner)
+  for (const key of ['vaultId', 'hostId', 'action', 'transport']) assert.throws(() => verifyAgentAuditScope({ ...actual, [key]: 'other' }, expected, owner))
+  assert.throws(() => verifyAgentAuditScope({ ...actual, vaultId: '00000000-0000-0000-0000-000000000002' }, expected, owner), /vault_changed/)
+})
 
 test('original CPU proof accepts real zero but rejects heartbeat substitution and wrong node', () => {
   const time = '2026-10-23T06:00:00Z'
@@ -32,7 +64,7 @@ const report = () => ({
     { name: 'agent-no-user-key-configuration', passed: true },
     ...names.map((name, i) => { const version = [1, 3].includes(i) ? '1.5.11' : '1.5.12'; return { name, version, originalSampleAt: 12000, cpu: 12, before: 11000, started: 11500, verifiedAt: 12500, processSha256: reviewed[version].amd64.sha256, configurationRetained: true, nodeAndTokenRetained: true } }),
     { name: 'agent-interrupted-readonly-recovery', passed: true, noReplayMs: 5000, unknownAuditRetained: true },
-    { name: 'agent-audit-restored', passed: true, noReplayMs: 5000, allProbesStopped: true, nodeCredentialsAndHistoryRetained: true, jobs: Array.from({ length: 8 }, (_, i) => ({ id: `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`, status: i === 4 ? 'unknown' : 'completed' })), auditRowVisible: true, auditRowJobId: '00000000-0000-0000-0000-000000000004', auditRowStatus: 'unknown' },
+    { name: 'agent-audit-restored', passed: true, noReplayMs: 5000, sameVaultOwnerRetained: true, auditScopesRetained: true, allProbesStopped: true, nodeCredentialsAndHistoryRetained: true, jobs: ['install', 'install', 'upgrade', 'rollback', 'upgrade', 'inspect', 'uninstall', 'uninstall'].map((action, i) => ({ id: `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`, hostId: `10000000-0000-0000-0000-00000000000${[0, 6].includes(i) ? 1 : 2}`, action: `monitoring.agent.${action}`, transport: [0, 6].includes(i) ? 'ssh-direct' : 'ssh-proxyjump', status: i === 4 ? 'unknown' : 'completed' })), auditRowVisible: true, auditRowJobId: '00000000-0000-0000-0000-000000000004', auditRowStatus: 'unknown' },
     ...['source', 'target'].map(role => ({ name: 'agent-history-retained', role, originalBuckets: [60000], retainedBuckets: 1, checkedAt: 120000 })),
     { name: 'transfer-fixture-cleaned', containersRemoved: true, networkRemoved: true, serversStopped: true },
   ],
@@ -47,6 +79,11 @@ for (const [name, edit] of [
   ['changed configuration', r => { r.events[6].configurationRetained = false }],
   ['rewritten unknown audit', r => { r.events[10].jobs[4].status = 'completed' }],
   ['duplicate audit', r => { r.events[10].jobs[2] = r.events[10].jobs[1] }],
+  ['changed Vault owner', r => { r.events[10].sameVaultOwnerRetained = false }],
+  ['unverified audit scope', r => { r.events[10].auditScopesRetained = false }],
+  ['audit action changed', r => { r.events[10].jobs[4].action = 'monitoring.agent.inspect' }],
+  ['audit route changed', r => { r.events[10].jobs[1].transport = 'ssh-direct' }],
+  ['audit host missing', r => { delete r.events[10].jobs[0].hostId }],
   ['partial visibility', r => { r.events[10].auditRowVisible = false }],
   ['history missing', r => { r.events[11].originalBuckets = [] }],
   ['not installed app', r => { r.journey.productionIpc = false }],
