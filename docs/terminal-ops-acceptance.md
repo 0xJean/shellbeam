@@ -1015,3 +1015,26 @@ Agent、迁移及扩展安装包工作流固定构建 ShellBeam Server `ff2dc11a
 本地原生 276 项通过、4 opt-in 忽略；Node 协议 264 项通过；生产构建、修改范围 ESLint、cargo fmt、diff 检查通过。85 项接入/凭据/探针面板定向回归通过，包括中英文身份拒绝后不写凭据、不显示保存成功且保留输入。首次全量前端 1638 通过、1 项旧文案断言仍要求「兼容监控服务」失败；按新产品范围改为明确要求 ShellBeam Server 且不得宣传泛兼容接入，其他原断言/超时不变。最终 `TMPDIR=/tmp npx vitest run --maxWorkers=1` 完整复测 1639 通过、17 项 Linux 限定跳过。
 
 前一展示提交 `e8fa543` 已有 19 项 Actions 成功，仅属历史基线。本批准入提交需要重新核验最新 head 的全部 CI 与独立报告。Helper/native 仍保留上游测试作为旧部署兼容证据；当前新增业务的安装包证据必须使用自有 Server。未修改真实 App、Vault、凭据、发布私钥/配置、既有签名域/信任根或 12 个用户未跟踪图标。
+
+`f2f4ec5` installed-Agent run `39958768683` failed after fresh 1.5.12 install
+and native adoption of the actual unmanaged 1.5.11 service. Artifact
+`12504016747` shows the native managed state active and verified; its independent
+observer exited before recording the adopted sample. The helper creates a
+sibling `.handoff-komari-agent.service.lock` file. Python `Path.glob('*')`
+includes this hidden file, and the observer attempted to read its `config.json`,
+raising `NotADirectoryError`. Cleanup and App exit passed. This run is not full
+installed-Agent acceptance.
+
+The read-only observer now enumerates directories before reading deployment
+state. It retains token scoping, state/configuration hashes, process pins and
+corrupt-state failures; it does not broadly swallow I/O errors. A real temporary
+directory regression reproduces the old exception with a handoff lock and
+checks the corrected result, wrong-token isolation, unchanged file bytes and
+rejection of corrupt deployment JSON. All 265 Node protocol checks, scoped
+ESLint and diff checks passed. A separate isolated ARM64 fixture performed
+actual adoption through the production helper, observed the managed process
+with the lock present and verified original files/node/Token retention;
+`/tmp/shellbeam-own-server-adoption-observer.json` records successful cleanup.
+This is helper evidence (`appCoordinator:false`), not a substitute for the
+next installed-App run. Product code and every fresh-sample/history/audit/
+visibility/no-replay assertion are unchanged.

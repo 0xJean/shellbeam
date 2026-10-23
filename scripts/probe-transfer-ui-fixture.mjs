@@ -28,22 +28,28 @@ export async function forwardTransferRequest(req,res,endpoint) {
   res.writeHead(response.status,responseHeaders);res.end(Buffer.from(await response.arrayBuffer()))
 }
 const latest = v => Array.isArray(v) ? Math.max(0, ...v.map(latest)) : !v || typeof v !== 'object' ? 0 : ['cpu', 'ram', 'memory', 'disk', 'network', 'net', 'load'].some(k => k in v) ? Date.parse(v.time ?? v.updated_at ?? '') || 0 : Math.max(0, ...['records', 'reports', 'data', 'result'].map(k => latest(v[k])))
-const observer = `import sys,json,pathlib,hashlib,os
-q=json.load(sys.stdin); home=pathlib.Path('/root' if q['user']=='root' else '/home/probe'); base=home/'.local/share/shellbeam/komari'; out=[]
-for root in base.glob('*'):
- try:
-  raw=(root/'config.json').read_bytes(); config=json.loads(raw)
-  if config.get('token')!=q['token']: continue
-  stateRaw=(root/'state.json').read_bytes(); state=json.loads(stateRaw); procs=[]
-  for proc in pathlib.Path('/proc').glob('[0-9]*'):
-   try:
-    exe=os.readlink(proc/'exe')
-    if not exe.startswith(str(root)+'/'): continue
-    procs.append(dict(pid=int(proc.name),start=(proc/'stat').read_text().split(') ')[1].split()[19],sha256=hashlib.sha256((proc/'exe').read_bytes()).hexdigest()))
-   except (OSError,ValueError): pass
-  out.append(dict(deployment=root.name,status=state['status'],receipt=state.get('transfer'),stateSha256=hashlib.sha256(stateRaw).hexdigest(),configSha256=hashlib.sha256(raw).hexdigest(),processes=procs,version=(state.get('current') or {}).get('version')))
- except FileNotFoundError: pass
-print(json.dumps(sorted(out,key=lambda r:r['deployment'])))`
+export const transferObserver = `import sys,json,pathlib,hashlib,os
+def observe_deployments(base, token):
+ out=[]
+ for root in base.glob('*'):
+  # Handoff locks are siblings of deployment directories, not deployments.
+  if not root.is_dir(): continue
+  try:
+   raw=(root/'config.json').read_bytes(); config=json.loads(raw)
+   if config.get('token')!=token: continue
+   stateRaw=(root/'state.json').read_bytes(); state=json.loads(stateRaw); procs=[]
+   for proc in pathlib.Path('/proc').glob('[0-9]*'):
+    try:
+     exe=os.readlink(proc/'exe')
+     if not exe.startswith(str(root)+'/'): continue
+     procs.append(dict(pid=int(proc.name),start=(proc/'stat').read_text().split(') ')[1].split()[19],sha256=hashlib.sha256((proc/'exe').read_bytes()).hexdigest()))
+    except (OSError,ValueError): pass
+   out.append(dict(deployment=root.name,status=state['status'],receipt=state.get('transfer'),stateSha256=hashlib.sha256(stateRaw).hexdigest(),configSha256=hashlib.sha256(raw).hexdigest(),processes=procs,version=(state.get('current') or {}).get('version')))
+  except FileNotFoundError: pass
+ return sorted(out,key=lambda r:r['deployment'])
+if __name__=='__main__':
+ q=json.load(sys.stdin); home=pathlib.Path('/root' if q['user']=='root' else '/home/probe')
+ print(json.dumps(observe_deployments(home/'.local/share/shellbeam/komari',q['token'])))`
 
 export async function createTransferUiFixture({ directory, project, prefix, record, monitoringAgentServer, topology = 'transfer' }) {
   assert(monitoringAgentServer, 'transfer_ui_shellbeam_server_required')
@@ -123,7 +129,7 @@ export async function createTransferUiFixture({ directory, project, prefix, reco
     }
     const allKeys=new Set(Object.values(hosts).map(h=>h.token)); assert.equal(allKeys.size,topology==='agent'?2:4)
     record('transfer-fixture-ready',{machineIdentitiesDistinct:true,architecture,services:2,hosts:Object.keys(hosts).length,productionKeyId:trust.keyId,sequence:catalog.sequence,version:release.version})
-    function observe(h) { return JSON.parse(command('docker',['exec','-i',machines[h.machine],'python3','-c',observer],JSON.stringify({user:h.user,token:h.token}))) }
+    function observe(h) { return JSON.parse(command('docker',['exec','-i',machines[h.machine],'python3','-c',transferObserver],JSON.stringify({user:h.user,token:h.token}))) }
     const sample=async h=>latest((await servers[h.service].request(`/api/recent/${h.node}`)).value)
     const fresh=async(h,before,started)=>{const evidence=await wait(async()=>{const time=await sample(h);const observations=observe(h);const active=observations.filter(s=>s.processes.length===1); if(!(time>before && time>=started-5000 && time>=Date.now()-60000 && active.length===1))return false; assert(time<=Date.now()+5000);const s=active[0]; assert.equal(s.processes[0].sha256,release.sha256);assert.equal(s.version,release.version);const node=await h.rpc('admin:getClient');assert.equal(node.created_at,h.original.created_at);assert.equal(node.uuid,h.node);return {originalSampleAt:time,before,started,verifiedAt:Date.now(),processSha256:s.processes[0].sha256} });await h.history.capture();return evidence}
     const retained=async()=>{for(const h of Object.values(hosts)){assert.equal((await h.rpc('admin:getClientToken')).token,h.token);assert.equal((await h.rpc('admin:getClient')).created_at,h.original.created_at)}}

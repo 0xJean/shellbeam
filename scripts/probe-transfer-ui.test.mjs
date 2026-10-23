@@ -3,11 +3,42 @@ import assert from 'node:assert/strict'
 import { serverIdentity } from './monitoring-agent-ui-evidence.mjs'
 import { spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { forwardTransferRequest } from './probe-transfer-ui-fixture.mjs'
+import { forwardTransferRequest, transferObserver } from './probe-transfer-ui-fixture.mjs'
 import { verifyTransferUiReport } from './probe-transfer-ui-report.mjs'
 import { classifyTransferHostError, revealTransferObservations } from './probe-transfer-ui-journey.mjs'
 import { historyTimes, transferHistory } from './probe-transfer-history.mjs'
 import { guardUiEnvironment } from './run-ops-ui-live.mjs'
+
+test('read-only deployment observer handles handoff locks without hiding corrupt deployments', () => {
+  const script = `import sys,json,pathlib,tempfile,hashlib
+namespace={'__name__':'observer_test'}
+exec(json.load(sys.stdin),namespace)
+observe=namespace['observe_deployments']
+with tempfile.TemporaryDirectory() as directory:
+ base=pathlib.Path(directory)
+ lock=base/'.handoff-komari-agent.service.lock'; lock.write_bytes(b'')
+ root=base/'00000000-0000-0000-0000-000000000001'; root.mkdir()
+ config=json.dumps({'token':'synthetic-token'}).encode(); (root/'config.json').write_bytes(config)
+ state=json.dumps({'status':'active','current':{'version':'1.5.11'}}).encode(); (root/'state.json').write_bytes(state)
+ before={p.relative_to(base):p.read_bytes() for p in base.rglob('*') if p.is_file()}
+ rows=observe(base,'synthetic-token')
+ assert len(rows)==1 and rows[0]['deployment']==root.name
+ assert rows[0]['status']=='active' and rows[0]['version']=='1.5.11'
+ assert rows[0]['configSha256']==hashlib.sha256(config).hexdigest()
+ assert rows[0]['stateSha256']==hashlib.sha256(state).hexdigest()
+ assert observe(base,'other-synthetic-token')==[]
+ assert before=={p.relative_to(base):p.read_bytes() for p in base.rglob('*') if p.is_file()}
+ (root/'state.json').write_bytes(b'corrupt')
+ try: observe(base,'synthetic-token')
+ except json.JSONDecodeError: pass
+ else: raise AssertionError('corrupt state was hidden')
+ print('observer_lock_and_state_checks_passed')`
+  const python = process.platform === 'darwin' ? '/usr/bin/python3' : 'python3'
+  const result = spawnSync(python, ['-c', script], { input: JSON.stringify(transferObserver), encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout.trim(), 'observer_lock_and_state_checks_passed')
+})
+
 const report=()=>({success:true,applicationStopped:true,cleanup:true,headCommit:'a'.repeat(40),checkedOutCommit:'b'.repeat(40),journey:{passed:true,installedPackage:true,productionIpc:true,realVault:true,normalMigration:1,interruptedMigrations:2,readonlyInspections:2,explicitRestore:1,explicitFinish:1,restoredAuditJobs:14,noReplayMs:5000},screenshots:['completed','restore-readback','restore-recovered','finish-readback','finish-recovered'].map(n=>({file:`transfer-${n}.png`,sha256:'c'.repeat(64),bytes:10000,width:1280,height:900})),events:[{name:'transfer-fixture-ready',machineIdentitiesDistinct:true,architecture:'amd64',services:2,hosts:4,productionKeyId:'compatible-probe-2026-01',sequence:1792594908584},...['transfer-app-install-verified','transfer-app-cross-service-machine-account-completed','transfer-app-restore-verified','transfer-app-finish-verified'].map(name=>({name,originalSampleAt:12000,before:11000,started:11500,verifiedAt:12500,processSha256:'d'.repeat(64)})),{name:'transfer-cancelled-without-remote-mutation',passed:true},...['restore','finish'].map(action=>({name:'transfer-interrupted-recovered-in-app',action,passed:true,bothJobsRecovered:true,noReplayMs:5000})),{name:'transfer-app-audit-history-restored',passed:true,auditJobs:14,jobs:Array.from({length:14},(_,i)=>({id:`00000000-0000-0000-0000-${String(i).padStart(12,'0')}`,status:i<4?'unknown':'completed'}))},...['source','target','restore','finish'].map(role=>({name:'transfer-app-retained-history',role,originalBuckets:[60000],retainedBuckets:1,checkedAt:120000})),{name:'transfer-app-final-preservation-and-exit',passed:true,allProbesStopped:true,auditJobs:14,originalConfigurationRetained:true,nodeCredentialsAndHistoryRetained:true},...[0,1].map(service=>({name:'agent-server-identity-verified',service,product:serverIdentity.product,commit:serverIdentity.hash,preInstallIdentityVerified:true,binarySha256:'e'.repeat(64)}))]})
 test('report gate accepts a complete synthetic contract example',()=>assert(verifyTransferUiReport(report())))
 for(const [name,change] of [
