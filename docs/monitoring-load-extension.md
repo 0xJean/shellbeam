@@ -63,3 +63,28 @@ PRD 0.5 C，2026-10-22。监控服务仍是可选能力；未接入的用户不�
 中断、写响应丢失、App 重开只允许读取结果，不重放写请求。明确重试创建新审计任务并复用原检查点；已经完成同一操作的合并由回执识别，不重复上传覆盖。卸载后恢复，或失败升级后恢复未改变且已停止的结果，使用原审阅版本及备份状态。未知代码、新实例、不同配置/状态或重新运行后的新观测会阻止覆盖；不会把历史备份强行写回正在运行的服务。重新启用可能继续通知，确认会说明这一点。
 
 边界：固定官方 1.6.0、仅本扩展 0.1.0/0.2.0，不是通用插件市场或跨服务备份导入。备份仍受现有服务意图数量上限约束，不做自动清理。上游停用/替换/删除没有 CAS；每个写前检查不能排除最后检查与另一管理员操作之间的竞争，不应在其他管理端同时维护同一扩展。服务身份采用冻结的集成配置和扩展实例，不提供服务端机器的密码学证明。此批原生 HTTP/生命周期引擎在隔离官方实例验收，完整打包 App + 真实 Vault 的此生命周期旅程尚未验证。
+
+## Packaged App lifecycle acceptance
+
+`extension-ui-ci.yml` installs the production release Debian package and drives
+only its standard WebDriver surface as an ordinary user. Two disposable official
+1.6.0 services cover fresh installation and a reviewed 0.1.0 legacy extension.
+A transport gateway holds deletion before dispatch or withholds a merge response
+after the real service commits. The App is killed, reopens the same Vault, reads
+back without writes for 5 seconds, then retries or restores only after confirmation.
+The legacy fixture preserves a disabled rule/silence, event receipts, an unknown
+delivery marker, future JSON fields and configuration. Both services have real
+stored metric buckets and node credentials whose continuity is checked separately.
+
+The observer opens only the disposable App database in SQLite read-only mode. It
+checks encrypted checkpoint shape before mutation and retained audit jobs after
+restart. The production App proves decryption and usability by restoring through
+its own UI. It does not seed App storage or call IPC directly. The final audit is
+also located in the ordinary activity/audit page. Reports omit secrets, request
+bodies and state backups; six safe screenshots carry byte counts/dimensions/hashes.
+Cleanup requires both official servers and the installed App to exit.
+
+All frontend pages use ShellBeam components. The unused embedded Komari website
+component has been removed; an upstream website cannot satisfy this acceptance.
+This workflow is Linux installed-package coverage, not evidence of macOS/Windows
+GUI coverage, concurrent multi-device CAS, arbitrary plugins or all PRD 0.5 tasks.

@@ -717,3 +717,36 @@ safe historical backfill, arbitrary plugin channels, extension upgrade/uninstall
 global service silence and account lifecycle. New-head CI and independent reports
 are still required; the prior 47d3a8e Ops GUI failure must not be marked passed
 based on local component evidence.
+
+### 2026-10-23 — installed App extension lifecycle journey
+
+Added a separate release Debian UI workflow, real Vault/IPC onboarding and native
+ShellBeam confirmations. The journey covers fresh install/cancellation, backup
+before uninstall, restart restoration, lost successful upgrade response, pre-delete
+interruption, explicit retry/restore, running-state conflict rejection and audit
+continuity. It retains node credentials and real metric-store history in two
+isolated official 1.6.0 services; unknown dispatch/event/receipt and future fields
+are checked. Read-only recovery has a 5000 ms no-write guard, with no duplicate
+package merge after an unknown response. No App database seeding, fake IPC or
+Komari frontend is used. The obsolete unused embedded website component is removed.
+
+Local validation before the first CI run: 23 new Node fault/report guard tests;
+216 complete Node tests; 21 production panel tests; production build and changed
+source ESLint/diff pass. The official isolated macOS service fixture creates fresh
+and reviewed legacy instances, preserves original stored history, and cleans up.
+This fixture-only check is **not** installed App proof. Complete current-head UI
+report, six PNG hash/dimension/visual checks, encrypted intents, retained original
+unknown audit jobs and process cleanup remain mandatory before marking this row
+passed. Existing Ops/migration/extension server/native evidence is not substituted.
+
+The first full frontend run found an existing timestamp-fixture race in
+`probe-alert-lifecycle.test.ts`: each synthetic sample used a new `Date.now()`, so
+an intended older `+20` sample could become newer than `+100` under parallel load.
+The fixture now captures one epoch per test. Original ordering/freshness assertions
+and product behavior are unchanged; the targeted file and panel are rerun.
+Credential continuity additionally compares hashes of the disposable Vault's
+unchanged encrypted file and both saved integration credential references.
+
+Final full frontend rerun: **1607 passed, 17 Linux-only skipped** (three obsolete
+embedded-website tests removed with their unused component). The 37 targeted
+panel/late-observation tests pass. Current-head installed UI remains pending.

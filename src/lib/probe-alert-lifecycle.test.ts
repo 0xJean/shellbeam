@@ -19,11 +19,13 @@ let notices: NotificationPayload[]
 let beforeList: (() => Promise<void>) | undefined
 let beforeWrite: (() => Promise<void>) | undefined
 let failWrite: boolean
+let eventEpoch: number
 let nativeDescriptor: PropertyDescriptor | undefined
 const onNotice = (event: Event) => { notices.push((event as CustomEvent<NotificationPayload>).detail) }
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
 
 beforeEach(() => {
+  eventEpoch = Date.now() - 1_000
   vi.stubGlobal('crypto', webcrypto)
   localStorage.clear(); clearLocalOpsMemory(); resetLocalOpsPersistenceMemory()
   nativeDescriptor = Object.getOwnPropertyDescriptor(window, '__TAURI_INTERNALS__')
@@ -58,7 +60,8 @@ afterEach(() => {
 })
 
 async function event(outcome: 'success' | 'failure' | 'unknown', index = 0, section: ProbeCollectionSection = 'metrics', host = target): Promise<ProbeCollectionEvent> {
-  const completedAt = Date.now() - 1_000 + index
+  // All indices in this test share one observation clock, even under CI load.
+  const completedAt = eventEpoch + index
   return { eventId: crypto.randomUUID(), vaultId: host.vaultId!, hostId: host.id, configRevision: await getProbeCollectionConfigRevision(host),
     provider: { kind: 'ssh-agentless', id: 'ssh-agentless' }, transport: host.jumpHostId ? 'proxy-jump' : 'direct', startedAt: completedAt - 1, startedSequence: beginProbeCollectionSequence(), completedAt,
     sections: [{ section, outcome, sampledAt: outcome === 'success' ? completedAt : null, reason: outcome === 'success' ? 'observed' : outcome === 'failure' ? 'collection-unavailable' : 'observation-unavailable' }] }
