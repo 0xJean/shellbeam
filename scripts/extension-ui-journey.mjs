@@ -69,6 +69,19 @@ async function audit(d,expected) {
   }
   assert.equal(found.size,expected.length,'extension_ui_audit_not_restored')
 }
+export async function revealExtensionAudit(d) {
+  const target=id('operation-audit-row')
+  // An inert audit row has no action handler. One native click reveals it
+  // vertically; subsequent inspection is read-only and must prove both axes.
+  await d.click(target)
+  await d.until(async()=>{
+    const box=await d.rect(target)
+    const width=Number(await d.request('GET',await d.elementRoute('html','/property/clientWidth')))
+    const height=Number(await d.request('GET',await d.elementRoute('html','/property/clientHeight')))
+    return [box.x,box.y,box.width,box.height,width,height].every(Number.isFinite)&&box.width>0&&box.height>0&&box.x>=0&&box.y>=0&&box.x+box.width<=width&&box.y+box.height<=height
+  })
+  return {auditRowVisible:true,auditRowStatus:await d.attr(target,'data-status')}
+}
 
 export async function setupExtensionUi({driver:d,fixture:f,record}) {
   const password='Ui1'+randomBytes(24).toString('hex');await initializeOpsUiVault({driver:d,password,record})
@@ -153,7 +166,7 @@ export async function runExtensionUiJourney({driver,fixture:f,state,record,resta
   for(const [job,status] of jobs){const actual=persisted.jobs.find(x=>x.id===job);assert.equal(actual?.status,status,'extension_ui_original_audit_rewritten')}
   // Include reconciliation/cancellation jobs as well, not just final success.
   const audits=persisted.jobs;assert(audits.length>=jobs.size);assert(audits.every(x=>x.vault===audits[0].vault && ['completed','failed','cancelled','unknown'].includes(x.status)))
-  await audit(d,audits);record('extension-app-audit-restored',{jobs:audits.map(({id,status,action})=>({id,status,action})),encryptedIntents:persisted.intents.length,oneVault:true,credentialRecordsUnchanged:true});await checkpoint('extension-audit')
+  await audit(d,audits);const visible=await revealExtensionAudit(d);record('extension-app-audit-restored',{...visible,jobs:audits.map(({id,status,action})=>({id,status,action})),encryptedIntents:persisted.intents.length,oneVault:true,credentialRecordsUnchanged:true});await checkpoint('extension-audit')
   assert(f.services.every(s=>s.gateway.trace.every(r=>r.path.startsWith('/api/'))),'extension_ui_web_frontend_requested')
   return {passed:true,installedPackage:true,productionIpc:true,realVault:true,nativeShellBeamPages:true,install:1,uninstall:1,restore:2,interrupted:2,upgrade:1,conflict:1,noReplayMs:5000,auditJobs:audits.length}
 }

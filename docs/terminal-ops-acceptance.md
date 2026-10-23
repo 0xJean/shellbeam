@@ -750,3 +750,17 @@ unchanged encrypted file and both saved integration credential references.
 Final full frontend rerun: **1607 passed, 17 Linux-only skipped** (three obsolete
 embedded-website tests removed with their unused component). The 37 targeted
 panel/late-observation tests pass. Current-head installed UI remains pending.
+
+First installed extension run **39905147659** on `b77bed4` succeeded: real
+production package/Vault, both transport interruptions, 8 encrypted intents,
+12 jobs (5 completed, 3 unknown, 2 failed readbacks, 2 cancelled readbacks),
+unchanged encrypted credential records and both original metric buckets. Artifact
+`12480791726` identifies merge `1a9baeef`, whose parent includes this head.
+All six PNG byte counts/hashes/dimensions are checked; five lifecycle screenshots
+visibly show the native controls and state. The final audit screenshot showed
+only the audit header below the activity feed, although the W3C audit reads had
+found all jobs. Follow-up strengthens screenshot preparation: one real click on
+an inert audit row, then read-only W3C rectangle/viewport inspection requiring
+both axes fully visible. No mutation, JS scrolling, click retry or timeout change.
+A fresh installed run is required for that visual proof; the first screenshot is
+not claimed to show the audit rows. Existing notification readers remain unchanged.

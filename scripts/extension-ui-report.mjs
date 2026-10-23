@@ -15,7 +15,7 @@ export function verifyExtensionUiReport(r) {
   const conflict=event('extension-app-conflict-preserved');assert(conflict.runningStateNotOverwritten&&conflict.backupRetained)
   const history=r.events.filter(e=>e.name==='extension-retained-node-history');assert.deepEqual(history.map(e=>e.role),['fresh','legacy'])
   for(const e of history)assert(e.credentialStillWorks&&e.originalBuckets.length>0&&e.originalBuckets.every(t=>Number.isSafeInteger(t)&&t>0&&t<=e.checkedAt)&&e.retainedBuckets>=e.originalBuckets.length)
-  const audit=event('extension-app-audit-restored');assert(audit.oneVault&&audit.credentialRecordsUnchanged&&audit.encryptedIntents>=8&&audit.jobs.length===j.auditJobs)
+  const audit=event('extension-app-audit-restored');assert(audit.oneVault&&audit.auditRowVisible&&['completed','unknown','failed','cancelled','queued','running'].includes(audit.auditRowStatus)&&audit.credentialRecordsUnchanged&&audit.encryptedIntents>=8&&audit.jobs.length===j.auditJobs)
   assert.equal(new Set(audit.jobs.map(x=>x.id)).size,audit.jobs.length)
   assert(audit.jobs.every(x=>/^[a-f0-9-]{36}$/.test(x.id)&&['completed','unknown','failed','cancelled'].includes(x.status)))
   assert.equal(audit.jobs.filter(x=>x.status==='unknown').length,3)
