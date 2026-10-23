@@ -105,7 +105,7 @@ async function audit(d, jobs, vaultId) {
 }
 export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: session, record, restart, checkpoint }) {
   let d = driver
-  assert.equal(f.release.version, '1.5.12', 'agent_ui_production_release_not_promoted')
+  assert.equal(f.release.version, '1.5.13', 'agent_ui_production_release_not_promoted')
   const oldBytes = await downloadPinned(historicalCatalog, historicalCatalogPin, 65536), oldRaw = JSON.parse(oldBytes)
   // Historical catalog is pinned byte-for-byte. Check its signatures at issue
   // time, as a historical document; current official feed still uses wall time.
@@ -135,8 +135,8 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
     }, 90000)
     await h.history.capture()
     assert.equal(await d.attr(panel(h), 'data-version'), version)
-    assert.equal(await d.attr(panel(h), 'data-product'), version === '1.5.12' ? 'shellbeam' : 'upstream')
-    assert((await d.text(control(h, 'origin'))).includes(version === '1.5.12' ? 'ShellBeam Monitoring Agent' : 'Komari Agent (compatible)'))
+    assert.equal(await d.attr(panel(h), 'data-product'), version === '1.5.13' ? 'shellbeam' : 'upstream')
+    assert((await d.text(control(h, 'origin'))).includes(version === '1.5.13' ? 'ShellBeam Monitoring Agent' : 'Komari Agent (compatible)'))
     record(name, evidence)
     await revealTransferObservations(d, control(h, 'identity'), control(h, 'endpoint') + ' + span')
     for (const field of await d.findAll('input[type="password"],textarea,#komari-api-key')) assert(!await d.attr(field, 'value'), 'agent_ui_secret_visible')
@@ -157,7 +157,7 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
     await remember(h, action); await prove(h, version, before, started, name)
   }
   // Fresh production install has never opened or configured publisher policy.
-  await operate(fresh, 'install', '1.5.12', 'agent-fresh-install')
+  await operate(fresh, 'install', '1.5.13', 'agent-fresh-install')
   // Capture the real owner from the first persisted audit before any restart;
   // subsequent reads must retain that owner and each operation's host/route.
   vaultId = (await audit(d, jobs)).vaultId
@@ -167,12 +167,12 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
   await operate(upgrade, 'adopt', '1.5.11', 'agent-existing-adopted')
   legacy.retained()
   record('agent-legacy-checkpoint-preserved', { passed: true, sameReviewedBinary: true, originalFilesRetained: true })
-  await policy(d, upgrade, f, 'official'); await operate(upgrade, 'upgrade', '1.5.12', 'agent-upgraded')
+  await policy(d, upgrade, f, 'official'); await operate(upgrade, 'upgrade', '1.5.13', 'agent-upgraded')
   assert.equal(await d.attr(panel(upgrade), 'data-previous-version'), '1.5.11')
   await operate(upgrade, 'rollback', '1.5.11', 'agent-rolled-back')
-  assert.equal(await d.attr(panel(upgrade), 'data-previous-version'), '1.5.12')
-  const before = (await sample(upgrade)).time, started = Date.now(), release = f.hold(upgrade, '1.5.12')
-  await d.click(control(upgrade, 'upgrade')); await confirm(d, [upgrade.name, upgrade.node, '1.5.12'])
+  assert.equal(await d.attr(panel(upgrade), 'data-previous-version'), '1.5.13')
+  const before = (await sample(upgrade)).time, started = Date.now(), release = f.hold(upgrade, '1.5.13')
+  await d.click(control(upgrade, 'upgrade')); await confirm(d, [upgrade.name, upgrade.node, '1.5.13'])
   await wait(() => f.servers[upgrade.service].gate.held > 0, 120000)
   assert.equal(f.observe(upgrade)[0].processes[0].sha256, f.release.sha256)
   const interrupted = snapshot(); d = await restart(session.password); release(); await stable(interrupted)
@@ -181,7 +181,7 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
   await openTransferTools(d, upgrade); await d.click(control(upgrade, 'inspect'))
   await d.until(async () => await d.attr(panel(upgrade), 'data-status') === 'active' && await d.isEnabled(control(upgrade, 'inspect')), { timeoutMs: 120000 })
   await remember(upgrade, 'inspect'); await stable(interrupted)
-  await prove(upgrade, '1.5.12', before, started, 'agent-reupgrade-recovered')
+  await prove(upgrade, '1.5.13', before, started, 'agent-reupgrade-recovered')
   assert.equal(await d.attr(panel(upgrade), 'data-previous-version'), '1.5.11')
   record('agent-interrupted-readonly-recovery', { passed: true, noReplayMs: 5000, unknownAuditRetained: true })
   for (const h of [fresh, upgrade]) {

@@ -12,11 +12,11 @@ export function verifyMonitoringAgentUiReport(r) {
   assert.deepEqual(servers.map(s => s.service), [0, 1])
   assert(servers.every(s => s.preInstallIdentityVerified && s.product === serverIdentity.product && s.commit === serverIdentity.hash && /^[a-f0-9]{64}$/.test(s.binarySha256)))
   const p = event('agent-production-release-verified')
-  assert(p.keyId === 'compatible-probe-2026-01' && p.sequence > 1792594908584 && p.version === '1.5.12' && p.signatureVerified && p.historicalCatalogPinned)
+  assert(p.keyId === 'compatible-probe-2026-01' && p.sequence > 1792594908584 && p.version === '1.5.13' && p.signatureVerified && p.historicalCatalogPinned)
   assert(['amd64', 'arm64'].includes(p.architecture)); assert(event('agent-no-user-key-configuration').passed)
   const names = ['agent-fresh-install', 'agent-existing-adopted', 'agent-upgraded', 'agent-rolled-back', 'agent-reupgrade-recovered']
   for (const [i, name] of names.entries()) {
-    const e = event(name), version = i === 1 || i === 3 ? '1.5.11' : '1.5.12'
+    const e = event(name), version = i === 1 || i === 3 ? '1.5.11' : '1.5.13'
     assert.equal(e.version, version); verifyFreshCpu({ time: e.originalSampleAt, cpu: e.cpu }, e)
     assert.equal(e.processSha256, reviewed[version][p.architecture].sha256)
     assert(e.configurationRetained && e.nodeAndTokenRetained)

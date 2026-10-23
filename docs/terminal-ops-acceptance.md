@@ -1038,3 +1038,36 @@ with the lock present and verified original files/node/Token retention;
 This is helper evidence (`appCoordinator:false`), not a substitute for the
 next installed-App run. Product code and every fresh-sample/history/audit/
 visibility/no-replay assertion are unchanged.
+
+## Second owned probe release preparation (2026-10-24)
+
+ShellBeam Monitoring Agent 1.5.13 source `a7154f8151222c2eff3146e2acb7b3c8c1b6276c`
+is an explicitly documented maintenance release: no new collection behavior or
+schema migration. Source CI 39983161969 and release build 39983163294 passed
+both native Linux checks and all eleven platform builds. Independent checks
+verified exact binaries, archive bytes, aliases, provenance and legal files.
+The local macOS Agent/Server smoke passed ten real checks, including original
+CPU samples and both process restart/reconnect paths. Its observer needed an
+installed `/api/me` readiness check plus Python 3.9 nanosecond normalization;
+three timestamp regressions pass. This local fixture is not signed Linux or
+installed-App evidence.
+
+Release-only maintenance PR #4 merged at `db9cb7498c1387f542d645826c6e5f8d9566f8c7`.
+Production signing workflow 39984678647 succeeded on attempt 2, using the unchanged
+protected environment and root. Attempt 1 created an empty draft and interrupted
+before asset upload; it did not advance stable. Recovery checked that exact draft
+and original reviewed inputs, then published without asset replacement. The first
+interruption's underlying GitHub/CLI cause is not asserted as proven.
+Published `monitoring-probe-v1.5.13-r1` has sequence 1792771888603. Public signatures
+and both reviewed executable hashes were independently verified; the original
+1.5.12 signed fixture and artifact pins remain unchanged.
+
+App regression adds both CPU provenance checks and a signed-record reload test
+that retains original 1.5.12 signatures/identity while observing 1.5.13 and retained
+rollback. Packaged agent acceptance now targets production 1.5.13 while keeping
+legacy adoption, all eight audit jobs, five original samples, six screenshots and
+5000ms no-replay checks. Local frontend: 1641 passed / 17 Linux-only skipped;
+Node protocols: 265 passed; Rust library: 277 passed / 4 opt-in ignored, including
+the new real-signature reload/rollback regression; production build, cargo fmt
+and scoped ESLint passed.
+Actual WEB upgrade/rollback evidence will be recorded after native App execution.

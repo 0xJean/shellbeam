@@ -629,3 +629,96 @@ fn new_deployments_require_production_signed_own_bytes_while_legacy_adoption_rem
     }
     assert!(artifact::require_shellbeam(&release("1.5.12", b"signed unrelated binary")).is_err());
 }
+
+#[test]
+fn second_owned_release_retains_original_signed_rollback_across_record_reload() {
+    let old: Value = serde_json::from_str(include_str!(
+        "../../../../scripts/fixtures/shellbeam-agent-production-catalog.json"
+    ))
+    .unwrap();
+    let new: Value = serde_json::from_str(include_str!(
+        "../../../../scripts/fixtures/shellbeam-agent-production-catalog-1.5.13.json"
+    ))
+    .unwrap();
+    for arch in ["amd64", "arm64"] {
+        let from = |catalog: &Value| TrustedRelease {
+            manifest: serde_json::from_value(
+                catalog["artifacts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|entry| entry["architecture"] == arch)
+                    .unwrap()
+                    .clone(),
+            )
+            .unwrap(),
+            public_key: official::trust().public_key,
+        };
+        let old = from(&old);
+        let new = from(&new);
+        assert_eq!(old.manifest.version, "1.5.12");
+        assert_eq!(new.manifest.version, "1.5.13");
+        artifact::require_shellbeam(&old).unwrap();
+        artifact::require_shellbeam(&new).unwrap();
+        assert_ne!(old.manifest.sha256, new.manifest.sha256);
+        let mut renamed = old.clone();
+        renamed.manifest.version = "1.5.13".into();
+        assert!(artifact::require_shellbeam(&renamed).is_err());
+        let mut r = record();
+        r.identity.architecture = arch.into();
+        r.current = Some(old.clone());
+        r.requested = Some(new.clone());
+        r.job_id = "original-upgrade-job".into();
+        let original_identity = (
+            r.vault_id.clone(),
+            r.host_id.clone(),
+            r.node_id.clone(),
+            r.deployment.clone(),
+            r.job_id.clone(),
+        );
+        let deployment = r.deployment.clone();
+        apply_observation(
+            &mut r,
+            Observation {
+                status: "active".into(),
+                active: true,
+                deployment: Some(deployment),
+                current: Some(new.manifest.clone()),
+                previous: Some(old.manifest.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        r = serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
+        r.requested = None;
+        assert_eq!(
+            r.previous.as_ref().unwrap().manifest.signature,
+            old.manifest.signature
+        );
+        let deployment = r.deployment.clone();
+        apply_observation(
+            &mut r,
+            Observation {
+                status: "active".into(),
+                active: true,
+                deployment: Some(deployment),
+                current: Some(old.manifest.clone()),
+                previous: Some(new.manifest.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            r.current.as_ref().unwrap().manifest.sha256,
+            old.manifest.sha256
+        );
+        assert_eq!(
+            r.previous.as_ref().unwrap().manifest.sha256,
+            new.manifest.sha256
+        );
+        assert_eq!(
+            (r.vault_id, r.host_id, r.node_id, r.deployment, r.job_id),
+            original_identity
+        );
+    }
+}

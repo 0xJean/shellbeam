@@ -61,7 +61,7 @@ export async function main(env=process.env) {
     report.screenshots.push({file:name+'.png',sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.length,width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)})
   }
   try {
-    const trust=JSON.parse(await readFile(join(project,'src-tauri/src/data/komari_agent/official-trust.json')));const catalog=verifyCompatibleCatalog(JSON.parse(await downloadPinned(trust.catalogUrl,null,65536)),trust);assert(catalog.artifacts.every(m=>m.version==='1.5.12'),'agent_ui_production_release_not_promoted');
+    const trust=JSON.parse(await readFile(join(project,'src-tauri/src/data/komari_agent/official-trust.json')));const catalog=verifyCompatibleCatalog(JSON.parse(await downloadPinned(trust.catalogUrl,null,65536)),trust);assert(catalog.artifacts.every(m=>m.version==='1.5.13'),'agent_ui_production_release_not_promoted');
     const monitoringAgentServer=join(env.RUNNER_TEMP,'shellbeam-server-input/shellbeam-server');const binary=await lstat(monitoringAgentServer);assert(binary.isFile()&&!binary.isSymbolicLink());
     fixture=await createTransferUiFixture({directory,project,prefix,record,monitoringAgentServer,topology:'agent'});stage='launch';await launch();stage='native-onboarding'
     const state=await setupTransferUi({driver,fixture,record});stage='agent-upgrade-and-recovery'

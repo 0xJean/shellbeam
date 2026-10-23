@@ -11,6 +11,11 @@ describe('reviewed probe provenance', () => {
   it.each(['amd64', 'arm64'] as const)('identifies the exact reviewed fork bytes on %s', architecture => {
     expect(probeReleaseIdentity(artifact('1.5.12', architecture))).toEqual({ product: 'shellbeam', repository: '0xJean/shellbeam-monitoring-agent', commit: '4e81478e4bde5c22b7b65e422ae87ca40a6c877a', upstreamVersion: '1.5.11' })
   })
+  it.each(['amd64', 'arm64'] as const)('identifies the second owned release and keeps the first rollback identity on %s', architecture => {
+    expect(probeReleaseIdentity(artifact('1.5.13', architecture))).toEqual({ product: 'shellbeam', repository: '0xJean/shellbeam-monitoring-agent', commit: 'a7154f8151222c2eff3146e2acb7b3c8c1b6276c', upstreamVersion: '1.5.11' })
+    expect(probeReleaseIdentity(artifact('1.5.12', architecture))?.commit).toBe('4e81478e4bde5c22b7b65e422ae87ca40a6c877a')
+    expect(probeReleaseIdentity({ ...artifact('1.5.13', architecture), sha256: artifact('1.5.12', architecture).sha256 })).toBeNull()
+  })
   it.each(['1.5.10', '1.5.11'] as const)('retains the upstream identity for saved %s releases', version => {
     expect(probeReleaseIdentity(artifact(version))).toEqual({ product: 'upstream', repository: 'komari-monitor/komari-agent', commit: null, upstreamVersion: version })
   })
