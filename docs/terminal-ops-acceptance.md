@@ -628,3 +628,7 @@ account lifecycle are not claimed complete. Channel writes and first extension
 installation retain the documented upstream concurrency window. See
 [load extension contract](./monitoring-load-extension.md) for retention, permissions
 and at-most-once dispatch semantics.
+
+### 2026-10-23 — native monitoring configuration CI type correction
+
+`ae7109e` finished with 10/16 checks successful. All six failures (frontend, three native platforms and both packaged GUI jobs) stopped at the same TypeScript error in the deferred service-scope test: the generic mock inferred `Promise<never>` for an untyped deferred promise. No packaged GUI journey ran on that head. Explicit `Promise<unknown>` preserves the late-response and scope-revocation assertions. Validation: forced clean TypeScript build (`tsc -b --force`) and the service-panel test file pass. New-head CI is required; older green runs are not evidence for this correction.

@@ -145,7 +145,7 @@ it('saves native load rules with creation identity and policy revision in the du
 })
 it('discards late configuration from a replaced service and revokes its old context', async () => {
   let resolve!: (value: unknown) => void
-  vi.mocked(serviceRequest).mockImplementation(async (_scope, action) => (action === 'read' ? await new Promise(done => { resolve = done }) : []) as never)
+  vi.mocked(serviceRequest).mockImplementation(async (_scope, action) => (action === 'read' ? await new Promise<unknown>(done => { resolve = done }) : []) as never)
   const view = renderPanel(); await act(async () => {})
   fireEvent.click(screen.getByText(c.title, { selector: 'summary' })); fireEvent.click(screen.getByRole('button', { name: c.read })); await waitFor(() => expect(resolve).toBeTypeOf('function'))
   view.rerender(<I18nProvider><MonitoringServicePanel service={{ ...service, endpoint: 'https://replacement.test', updatedAt: 3 }} /></I18nProvider>)
