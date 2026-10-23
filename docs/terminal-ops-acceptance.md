@@ -925,3 +925,30 @@ Node versions, Rust caching, production/publisher workflows, test timeouts and
 all installed-App assertions remain unchanged. This is an infrastructure fix,
 not successful Agent business acceptance. The new head still requires the full
 upgrade/rollback/interruption/recovery report and independent evidence.
+
+
+`0745c45` Agent run `39932308676` crossed the cache issue and verified actual
+fresh 1.5.12, historical 1.5.11 installation, upgrade to 1.5.12, previous-version
+rollback to 1.5.11 and the post-crash 1.5.12 read-only recovery. All five original
+CPU samples, process pins, node/Token and configuration preservation passed.
+It then failed at the recovered identity screenshot: the table's center was
+clickable but its final row extended below the 800px window. The full-region
+visibility assertion correctly rejected the frame. Final uninstall and the
+eight-job restored audit were not reached; cleanup/App exit passed. Artifact
+`12492696960` belongs to merge `26c0c171`, whose parent contains `0745c45`.
+
+A synthetic production CompatibleAgentTools/HostListScrollArea fixture under
+GTK WebKit 2.50.4 and Wry's scrollbar configuration reproduced this behavior:
+a single table click left y=770,height=128 in an 800px window after successful
+horizontal scrolling. A single native click on the existing static endpoint
+caption below the table moved the entire table to y=536,height=128. The Agent
+journey uses that read-only caption as its navigation anchor; the shared helper
+still verifies the entire identity region against both window and list bounds
+with the original timeout. Default migration navigation is unchanged. No second
+click, JavaScript scroll, larger screenshot, model/IPC injection or relaxed
+visibility/raw sample/audit/no-replay assertion was added. Evidence:
+`/tmp/shellbeam-agent-identity-before-1792748902790.{json,png}` and
+`/tmp/shellbeam-agent-identity-after-1792748909890.{json,png}`. Both images were
+inspected; the disposable container and Vite server were stopped. All 258 Node
+protocol tests (including 56 targeted) and changed-script ESLint/diff passed.
+This component evidence does not substitute for the new full installed-App run.

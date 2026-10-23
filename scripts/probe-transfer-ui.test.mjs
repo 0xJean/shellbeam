@@ -88,3 +88,20 @@ for(const issue of ['list-clip','window-clip','click-failure'])test(`transfer ev
   await assert.rejects(revealTransferObservations(d,'observations'),issue==='click-failure'?/single native click failed/:/still clipped/)
   assert.deepEqual(clicks,['observations'])
 })
+
+for (const clipped of [false, true]) test(`identity evidence uses one read-only caption click and ${clipped ? 'rejects remaining clipping' : 'still checks the full table'}`, async () => {
+  const calls = [], reads = []
+  const d = {
+    waitFor: async () => {}, horizontalScrollState: async () => ({ width: 1054, contentWidth: 1054, left: 0 }),
+    findAll: async () => [], route: p => p,
+    request: async (method, path) => { assert.equal(method, 'GET'); assert.equal(path, '/window/rect'); return { width: 1280, height: 800 } },
+    click: async target => { calls.push(target) },
+    rect: async target => { reads.push(target); return target === 'identity' ? { x: 864, y: clipped ? 680 : 536, width: 362, height: 148 } : { x: 200, width: 1054 } },
+    until: async (read, options) => { if (options) assert.equal(options.timeoutMs, 5000); if (!await read()) throw Error('identity still clipped') },
+  }
+  const result = revealTransferObservations(d, 'identity', 'endpoint-caption')
+  if (clipped) await assert.rejects(result, /identity still clipped/)
+  else await result
+  assert.deepEqual(calls, ['endpoint-caption'])
+  assert.deepEqual(reads, ['identity', '[data-testid="host-list-scroll-viewport"]'])
+})

@@ -130,13 +130,15 @@ async function audit(d,ids,statuses){
   assert.equal(pending.size,0,'transfer_ui_audit_history_missing')
 }
 async function jobs(d,h){return [await d.attr(transfer(h),'data-job-id'),await d.attr(transfer(h),'data-target-job-id')]}
-export async function revealTransferObservations(d,observations){
+export async function revealTransferObservations(d,observations,anchor=observations){
   // Reveal the monitoring column through the existing visible range control.
   // A native WebKit click may scroll vertically while leaving this column
   // horizontally clipped. Navigation happens before the evidence frame.
   await revealOpsUiHostActions(d, observations)
   const viewport=await d.request('GET',d.route('/window/rect'))
-  await d.click(observations)
+  // A larger identity table can be partially visible without WebKit scrolling
+  // its bottom on click. Callers may use a static read-only caption below it.
+  await d.click(anchor)
   // One real click only; subsequent paint checks are read-only. Both endpoint
   // rows must fit inside the window AND the list's horizontal clipping area.
   await d.until(async()=>{
