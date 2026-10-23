@@ -1,0 +1,29 @@
+name: Monitoring probe release contract
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/komari-agent-release*.yml'
+      - 'scripts/*komari-agent*.mjs'
+      - 'scripts/*official-komari*.mjs'
+      - 'scripts/fixtures/official-compatible-catalog-test.json'
+      - 'releases/**'
+      - 'src-tauri/src/data/komari_agent/official-trust.json'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/komari-agent-release*.yml'
+      - 'scripts/*komari-agent*.mjs'
+      - 'scripts/*official-komari*.mjs'
+      - 'releases/**'
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: node --test scripts/publish-komari-agent.test.mjs scripts/official-komari-agent-release.test.mjs scripts/prepare-komari-agent-release.test.mjs
+      - run: git diff --check

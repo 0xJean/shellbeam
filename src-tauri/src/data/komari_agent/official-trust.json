@@ -1,0 +1,11 @@
+{
+  "keyId": "compatible-probe-2026-01",
+  "publicKey": "wqB0YMovwZWS2LK0I8/yga9MO4lf32EvG+Un/UoVFDk=",
+  "catalogUrl": "https://raw.githubusercontent.com/0xJean/shellbeam/monitoring-probe-releases/stable/catalog.json",
+  "allowedHosts": [
+    "raw.githubusercontent.com",
+    "github.com",
+    "release-assets.githubusercontent.com"
+  ],
+  "minimumSequence": 1
+}
