@@ -847,3 +847,22 @@ production public key; fresh 1.5.12 leaves built-in trust untouched and subseque
 upgrade/rollback/re-upgrade restore official policy. Installed UI evidence is
 amd64; arm64 artifact/helper evidence is separate. Full exact-head report,
 screenshots, recovery/no-replay and clean exit are still required.
+
+### Linux synthetic CLI executable race
+
+Extracting the unchanged production `Process`/`run_process` into a standalone
+Linux harness reproduced the native test failure under eight concurrent workers:
+`ExecutableFileBusy` / OS code 26 at iterations 42 and 52. The failure precedes
+stdout parsing: a newly written temporary executable can remain open in another
+concurrently spawned child's descriptor table. The test fixture now points its
+private spaced path at a checked-in immutable synthetic script. It retains the
+same stdin, malformed output, 1,100,000-byte output, descendant cancellation,
+timeout and full CLI adapter assertions; product process behavior is unchanged.
+The same Linux harness with this fixture passed all 8,000 executions. Evidence:
+`/tmp/shellbeam-ai-cli-production-spawn-repro.log` and
+`/tmp/shellbeam-ai-cli-production-fixed-repro.log`; the disposable container was
+removed. Full local Rust regression passed 268 with 4 opt-in ignored. Its first
+run, concurrent with stress work, hit the unrelated 80ms SSH execution deadline
+before remote execution; the unchanged case passed alone and the subsequent full
+run passed. No timeout or outcome assertions were changed. Latest-head CI is
+still required, and standalone Linux harness evidence is not full native CI.

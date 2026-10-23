@@ -145,23 +145,28 @@ fn generation_arguments_never_include_user_input_and_keep_isolation() {
     assert_eq!(args.last().unwrap(), "-");
 }
 #[cfg(unix)]
-fn fixture(script: &str) -> (Scratch, PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
+fn fixture() -> (Scratch, PathBuf) {
     let dir = Scratch::create().unwrap();
     let path = dir.0.join("fake cli");
-    std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // Keep the executable bytes immutable. Parallel process creation can
+    // briefly inherit a newly written script's descriptor on Linux (ETXTBSY).
+    // The private symlink still exercises an executable path with spaces.
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ai-cli.sh"),
+        &path,
+    )
+    .unwrap();
     (dir, path)
 }
 #[cfg(unix)]
 #[test]
 fn real_child_uses_stdin_without_shell_interpolation_or_stderr_leak() {
-    let (dir, path) = fixture("cat; printf 'private error' >&2");
+    let (dir, path) = fixture();
     let mut result = String::new();
     let input = b"$(touch should-not-exist)\n";
     run_process(
         &path,
-        &[],
+        &["echo-stdin".into()],
         &dir.0,
         Some(input.to_vec()),
         &AtomicBool::new(false),
@@ -179,7 +184,7 @@ fn real_child_uses_stdin_without_shell_interpolation_or_stderr_leak() {
 #[test]
 fn cancellation_and_timeout_kill_the_entire_process_group() {
     for cancel_request in [true, false] {
-        let (dir, path) = fixture("(sleep 0.6; touch survived) &\nwait");
+        let (dir, path) = fixture();
         let cancel = Arc::new(AtomicBool::new(false));
         if cancel_request {
             let cancel = cancel.clone();
@@ -190,7 +195,7 @@ fn cancellation_and_timeout_kill_the_entire_process_group() {
         }
         let result = run_process(
             &path,
-            &[],
+            &["descendants".into()],
             &dir.0,
             None,
             &cancel,
@@ -212,12 +217,12 @@ fn cancellation_and_timeout_kill_the_entire_process_group() {
 #[cfg(unix)]
 #[test]
 fn malformed_and_excessive_output_terminate_and_fail_closed() {
-    let (dir, path) = fixture("printf 'not json\\n'; sleep 10");
+    let (dir, path) = fixture();
     let mut parser = Parser::new(Backend::CodexCli);
     assert_eq!(
         run_process(
             &path,
-            &[],
+            &["malformed".into()],
             &dir.0,
             None,
             &AtomicBool::new(false),
@@ -228,11 +233,11 @@ fn malformed_and_excessive_output_terminate_and_fail_closed() {
         "invalid_output"
     );
     // invalid_output (rather than timeout) proves early rejection without a CPU-speed assertion.
-    let (dir, path) = fixture("head -c 1100000 /dev/zero");
+    let (dir, path) = fixture();
     assert_eq!(
         run_process(
             &path,
-            &[],
+            &["excessive".into()],
             &dir.0,
             None,
             &AtomicBool::new(false),
@@ -246,14 +251,7 @@ fn malformed_and_excessive_output_terminate_and_fail_closed() {
 #[cfg(unix)]
 #[test]
 fn full_native_adapter_checks_capabilities_and_parses_the_child() {
-    let (dir, path) = fixture(
-        r#"case "$1" in
---version) echo 'codex-cli 0.160.1'; exit;;
-exec) echo '--ignore-user-config --ignore-rules --ephemeral --sandbox --json'; exit;;
-esac
-cat >/dev/null
-printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"uname -a"}}' '{"type":"turn.completed"}'"#,
-    );
+    let (dir, path) = fixture();
     let mut r = request();
     r.executable = path.to_str().unwrap().into();
     let mut events = Vec::new();
