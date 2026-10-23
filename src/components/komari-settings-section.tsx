@@ -1,3 +1,4 @@
+import { monitoringDiagnostic } from '@/lib/monitoring-presentation'
 import { NativeSelect } from '@/components/ui/select'
 import { useVault } from '@/contexts/vault-context'
 import {
@@ -373,7 +374,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
         {editorOpen && <Button variant="ghost" size="sm" onClick={resetForm} disabled={busy}>{navigation.closeEditor}</Button>}
       </div>
       {!unlocked && <p className="mt-3 text-xs text-muted-foreground">{t('settings.komariUnlockHint')}</p>}
-      {!editorOpen && error && <p role="alert" className="mt-3 text-xs text-red-500">{error}</p>}
+      {!editorOpen && error && <p role="alert" className="mt-3 text-xs text-red-500">{monitoringDiagnostic(error, locale)}</p>}
       {editorOpen && unlocked && <div data-testid="komari-connection-editor">
       <ol className="mt-4 flex flex-wrap gap-3 text-xs text-muted-foreground" aria-label={copy.title}>
         {(['connection', 'mapping', 'complete'] as const).map((item) => <li key={item} aria-current={step === item ? 'step' : undefined} className={step === item ? 'font-semibold text-foreground' : undefined}>{copy[item]}</li>)}
@@ -410,7 +411,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
           <input type="checkbox" checked={enabled} onChange={(event) => { editForm(); setEnabled(event.target.checked) }} disabled={busy} className="rounded" />
           {t('settings.komariEnabled')}
         </label>
-        {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
+        {error && <p role="alert" className="text-xs text-red-500">{monitoringDiagnostic(error, locale)}</p>}
         {savedNotice && <p role="status" className="text-xs text-muted-foreground">{t('settings.komariSaved')}</p>}
         {!unlocked && <p className="text-xs text-amber-600 dark:text-amber-400">{t('settings.komariUnlockHint')}</p>}
         <div className="flex flex-wrap gap-2">

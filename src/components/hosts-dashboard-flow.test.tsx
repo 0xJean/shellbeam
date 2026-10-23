@@ -290,7 +290,7 @@ describe('host operations filter workflow', () => {
       })
       expect(screen.queryByRole('button', { name: 'Check probe' })).not.toBeInTheDocument()
       expect(screen.getAllByTestId('host-ops-summary')).toHaveLength(1)
-      expect(within(screen.getByTestId('host-ops-summary')).getByTitle('ssh-agentless')).toHaveTextContent('SSH')
+      expect(within(screen.getByTestId('host-ops-summary')).getByTitle('SSH')).toHaveTextContent('SSH')
       await waitFor(() => expect(sync).toHaveBeenCalledTimes(1))
       await act(async () => { finishOldCheck({ revision: 1, mappings: [mapping('host-1')] }) })
       expect(operation).not.toHaveBeenCalled()

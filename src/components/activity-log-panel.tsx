@@ -1,3 +1,4 @@
+import { monitoringOperationTarget } from '@/lib/monitoring-presentation'
 import { useEffect, useState, useCallback } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
@@ -64,7 +65,7 @@ interface ActivityLogPanelProps {
 }
 
 export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
   const [entries, setEntries] = useState<ActivityEntry[]>([])
   const [loading, setLoading] = useState(true)
   const inventoryStates = useWorkspaceInventoryStates()
@@ -84,13 +85,13 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
           hostAddress: entry.hostAddress || '',
           username: undefined,
           authType: undefined,
-          detail: `${entry.action} ${entry.target} · ${entry.status} · audit ${entry.auditId}`,
+          detail: `${entry.action} ${monitoringOperationTarget(entry.target, entry.action, locale)} · ${entry.status} · audit ${entry.auditId}`,
           createdAt: entry.createdAt,
         }))
         setEntries([...activity, ...operationEntries].sort((a, b) => b.createdAt - a.createdAt))
       })
       .finally(() => setLoading(false))
-  }, [])
+  }, [locale])
 
   useEffect(() => { refresh() }, [refresh])
 

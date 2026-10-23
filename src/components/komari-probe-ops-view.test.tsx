@@ -47,7 +47,7 @@ describe('KomariProbeOpsView', () => {
     const current = { ...link, komari: { ...link.komari, sampledAt: 1000, lastSyncedAt: 2000 } }
     const view = render(<I18nProvider><KomariProbeOpsView host={host} link={current} /></I18nProvider>)
     const sync = screen.getByTestId('komari-host-last-sync')
-    expect(sync).toHaveTextContent('Komari last synchronized')
+    expect(sync).toHaveTextContent('Service data last refreshed')
     expect(sync.querySelector('time')).toHaveAttribute('datetime', new Date(2000).toISOString())
     expect(sync.querySelector('time')).not.toHaveAttribute('datetime', new Date(1000).toISOString())
     view.rerender(<I18nProvider><KomariProbeOpsView host={host} link={{ ...current, komari: { ...current.komari, lastSyncedAt: null } }} /></I18nProvider>)

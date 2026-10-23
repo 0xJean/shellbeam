@@ -33,6 +33,7 @@ describe('Provider metric history range view', () => {
     expect(await screen.findByRole('img', { name: /CPU, memory and disk/ })).toBeInTheDocument()
     expect(listProviderMetricHistory).toHaveBeenCalledWith(expect.objectContaining({ vaultId: 'vault-a', hostId: 'edge', limit: 2000 }))
     expect(screen.getByRole('combobox', { name: 'Source' })).toHaveValue('komari:komari-main:node-1')
+    expect(screen.getByRole('combobox', { name: 'Source' })).toHaveTextContent('Monitoring service · komari-main:node-1')
     expect(screen.getByText('Memory: unknown')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '7d' }))
     await waitFor(() => expect(listProviderMetricHistory).toHaveBeenCalledTimes(2))

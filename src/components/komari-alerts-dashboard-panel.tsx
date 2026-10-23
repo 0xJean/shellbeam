@@ -1,3 +1,4 @@
+import { monitoringAlertTitle } from '@/lib/monitoring-presentation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import type { HostProfile } from '@/lib/hosts'
@@ -263,7 +264,7 @@ function VaultAlertsDashboard({ activeVaultId, hosts = EMPTY_HOSTS, onOpenHost, 
           ttlMs: persisted.syncState?.ttlMs,
           confirmMessage: t(
             action === 'acknowledge' ? 'hosts.alert.confirmAcknowledge' : 'hosts.alert.confirmClose',
-            { host: host.name, alert: alert.title },
+            { host: host.name, alert: monitoringAlertTitle(alert, locale) },
           ),
         }))
       : await persistKomariAlertAction(action, {
@@ -280,7 +281,7 @@ function VaultAlertsDashboard({ activeVaultId, hosts = EMPTY_HOSTS, onOpenHost, 
     // action helper above receives the complete journal; this refresh writes
     // only delivery metadata and never persists a filtered lifecycle state.
     await reload()
-  }, [activeVaultId, t, scope, reload])
+  }, [activeVaultId, t, locale, scope, reload])
 
   useEffect(() => {
     if (!headless || !additionalCallback.current) return
@@ -297,7 +298,7 @@ function VaultAlertsDashboard({ activeVaultId, hosts = EMPTY_HOSTS, onOpenHost, 
         return [{
           key: host ? `komari:${host.id}:${entry.integrationId}:${alert.alertId}` : `komari:additional:${entry.integrationId}:${alert.alertId}`, hostId: host?.id ?? '',
           hostName: host?.name ?? entry.source.integration.name,
-          title: alert.title, source: 'komari', status: alert.status, updatedAt: alert.lastSeenAt, busy: loading,
+          title: alert.title, monitoringKind: alert.kind, source: 'komari', status: alert.status, updatedAt: alert.lastSeenAt, busy: loading,
           historyOnly: !currentUnassigned,
           evidenceUnavailable: alert.evidenceStatus === 'unverified-rule-count',
           audit: entry.state.audit.filter(row => memberAlertIds.includes(row.alertId)),

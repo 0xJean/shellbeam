@@ -56,6 +56,19 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear() })
 
 describe('host Komari alert scope guards', () => {
+  it('uses display wording in confirmation while retaining the saved lifecycle and action identity', async () => {
+    displayed.title = 'Komari monitoring source is offline'
+    const before = JSON.stringify(state)
+    render(element()); await fresh(); await clickAction()
+    await waitFor(() => expect(runKomariAlertAction).toHaveBeenCalledOnce())
+    const options = vi.mocked(runKomariAlertAction).mock.calls[0][1]
+    expect(options.confirmMessage).toContain('Monitoring source is offline')
+    expect(options.confirmMessage).not.toContain('Komari monitoring source')
+    expect(options.alertId).toBe(displayed.alertId)
+    expect(options.state.alerts[0].title).toBe(displayed.title)
+    expect(JSON.stringify(state)).toBe(before)
+  })
+
   it.each(['vault-return', 'lock-return', 'host', 'host-return', 'remove-host', 'mapping', 'unmount'] as const)('abandons a late ledger read after %s, without a forced refresh or operation', async (change) => {
     const read = deferred<KomariPersistedState>()
     vi.mocked(loadKomariPersistence).mockReturnValueOnce(read.promise)

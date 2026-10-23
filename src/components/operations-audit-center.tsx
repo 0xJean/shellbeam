@@ -1,3 +1,4 @@
+import { monitoringDiagnostic, monitoringOperationTarget, monitoringProviderLabel } from '@/lib/monitoring-presentation'
 import { NativeSelect } from '@/components/ui/select'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -297,7 +298,7 @@ function ScopedOperationsAuditCenter({ hostId, limit = 100, onRetry, source, vau
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-sm">{first.action}</span>
-                    <span className="truncate text-xs text-muted-foreground">{first.target}</span>
+                    <span className="truncate text-xs text-muted-foreground">{monitoringOperationTarget(first.target, first.action, locale)}</span>
                     <StatusBadge status={group.status} />
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
@@ -317,9 +318,9 @@ function ScopedOperationsAuditCenter({ hostId, limit = 100, onRetry, source, vau
                       <span className="text-[11px] text-muted-foreground">{formatTime(job.updatedAt || job.queuedAt, locale)}</span>
                       <span className="font-mono text-[10px] text-muted-foreground">job={job.jobId}</span>
                       <span className="font-mono text-[10px] text-muted-foreground">audit={job.auditId}</span>
-                      <span className="text-[10px] text-muted-foreground">{job.source} · {job.provider} · {job.transport}</span>
+                      <span className="text-[10px] text-muted-foreground">{job.source} · {monitoringProviderLabel(job.provider, locale)} · {job.transport}</span>
                       {canRetry && <button type="button" data-testid="operation-retry" onClick={() => void retry(job)} disabled={retryingJobId !== null} className="inline-flex items-center gap-1 rounded border border-border/60 px-2 py-1 text-[10px] text-foreground hover:bg-muted disabled:opacity-50">{retryingJobId === job.jobId ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}{t('operations.retry')}</button>}
-                      {job.errorSummary && <span className="basis-full truncate text-[11px] text-muted-foreground">{job.errorSummary}</span>}
+                      {job.errorSummary && <span className="basis-full truncate text-[11px] text-muted-foreground">{monitoringDiagnostic(job.errorSummary, locale)}</span>}
                       {job.status === 'unknown' && <span className="basis-full text-[11px] text-amber-700 dark:text-amber-300">{t('operations.reconcileBeforeRetry')}</span>}
                     </div>
                   )
@@ -339,16 +340,16 @@ function ScopedOperationsAuditCenter({ hostId, limit = 100, onRetry, source, vau
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="font-medium">{entry.event}</span>
-                  <span className="text-muted-foreground">{entry.action} · {entry.target}</span>
+                  <span className="text-muted-foreground">{entry.action} · {monitoringOperationTarget(entry.target, entry.action, locale)}</span>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                   <span>{entry.hostName || entry.hostAddress || t('operations.unknownHost')}</span>
                   <span>{formatTime(entry.createdAt, locale)}</span>
                   <span className="font-mono">audit={entry.auditId}</span>
-                  <span>{entry.source} · {entry.provider} · {entry.transport}</span>
+                  <span>{entry.source} · {monitoringProviderLabel(entry.provider, locale)} · {entry.transport}</span>
                   {job?.requestId && <span className="font-mono">{t('operations.requestId', { id: job.requestId })}</span>}
                 </div>
-                {(entry.errorSummary || entry.resultSummary) && <p className="mt-1 truncate text-[11px] text-muted-foreground">{entry.errorSummary ?? entry.resultSummary}</p>}
+                {(entry.errorSummary || entry.resultSummary) && <p className="mt-1 truncate text-[11px] text-muted-foreground">{monitoringDiagnostic(entry.errorSummary ?? entry.resultSummary ?? '', locale)}</p>}
               </div>
             </div>
           )

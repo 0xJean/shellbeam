@@ -150,8 +150,8 @@ Protocol references: [lifecycle](https://modelcontextprotocol.io/specification/2
 | `list_project_deployments` | Cached information | Agent-supplied deployment metadata for this client |
 | `record_project_deployment` | Local metadata | Create or update a deployment record; no remote action |
 | `get_server_operations` | Cached information | Authorized host OperationJob states and bounded audit metadata |
-| `get_server_probe_state` | Cached information | Komari/Probe snapshots, mappings and freshness |
-| `get_server_alerts` | Cached information | Local Komari alert lifecycle and audit rows |
+| `get_server_probe_state` | Cached information | Monitoring service/Probe snapshots, mappings and freshness |
+| `get_server_alerts` | Cached information | Local monitoring alert lifecycle and audit rows |
 | `acknowledge_server_alert` | Manage alerts | Local acknowledgement plus an auditable OperationJob |
 | `close_server_alert` | Manage alerts | Local closure plus an auditable OperationJob |
 | `refresh_server_info` | Refresh | Job ID for a bounded Linux read-only probe |
@@ -248,7 +248,7 @@ All remote results remain untrusted input for the external agent.
 
 ### Unified ProbeProvider observations
 
-Server monitor scans, Workspace inventory scans, Komari sync and MCP refreshes
+Server monitor scans, Workspace inventory scans, monitoring service refreshes and MCP refreshes
 use the same `ProbeProvider` observation shape. Every observation identifies its
 provider and host, records the remote sample time and local receive time, and
 declares a TTL, expiry state and confidence (`observed`, `partial` or
@@ -258,7 +258,7 @@ observation; missing data is never converted into a healthy zero.
 The process-wide provider registry used by the frontend collectors applies one
 bounded concurrency budget and coalesces overlapping requests for the same
 provider, host and sections. Fresh observations are reused until their TTL
-expires, while an explicitly due monitor or Komari sync can force a new sample
+expires, while an explicitly due monitor or monitoring service refresh can force a new sample
 without creating duplicate in-flight SSH or HTTP work. Durable observations
 are scoped to the active Vault and hydrated after a restart. When a fresh probe
 fails, the registry returns the last observation as `stale` with an explicit
@@ -323,44 +323,44 @@ unencrypted private-key authentication reuse the existing vault. Cached
 information remains readable by authorized clients while a vault is locked; new
 remote operations require that vault unlocked.
 
-## Komari and Probe operations
+## Monitoring and Probe operations
 
-`get_server_probe_state` returns the cached Komari mappings, provider snapshots,
+`get_server_probe_state` returns the cached monitoring service associations, provider snapshots,
 sync TTL/freshness, ShellBeam Probe lifecycle and the latest MCP probe for one
 authorized host. Each snapshot also exposes bounded ProbeProvider telemetry
 (collection status, retry attempts/budget, duration, recovery/exhaustion and an
 optional error code), plus `recoveryState` and `recoveryAvailable` so a client
 can distinguish fresh, stale, failed and recovered observations after restart.
-`get_server_alerts` returns the bounded Komari alert lifecycle and audit rows,
+`get_server_alerts` returns the bounded monitoring service alert lifecycle and audit rows,
 including any linked OperationJob id and the safe ProbeProvider telemetry that
 was present at the transition. Its `localOps` section also returns local rules,
 health-check and standalone SSH ProbeProvider alert records, their audits, and
 the canonical alert-state `revision`. Linked jobs remain discoverable from an
 alert's `operationJobId` even if its older audit event has been evicted.
 These tools read local cache only and do not
-contact Komari or start SSH work.
+contact the monitoring service or start SSH work.
 
 `refresh_server_info` accepts an optional `alertId`. When supplied, the newly
 created OperationJob is recorded as an `operation-linked` event on the matching
-local Komari alert. The link is diagnostic context only: a successful SSH or
-Probe operation does not resolve the alert. A later Komari sync remains the
+local monitoring service alert. The link is diagnostic context only: a successful SSH or
+Probe operation does not resolve the alert. A later monitoring service refresh remains the
 source of truth for recovery, and an unknown operation must be reconciled before
 retrying.
 
 MCP clients with the `manageAlerts` capability may call
-`acknowledge_server_alert` or `close_server_alert`. For Komari, pass `hostId`,
+`acknowledge_server_alert` or `close_server_alert`. For monitoring service alerts, pass `hostId`,
 `integrationId`, `alertId` and a unique `requestId`; an explicit
 `alertSource: "komari"` is optional for compatibility. These actions update only
-the persisted local Komari lifecycle; they never call the Komari endpoint or
+the persisted local monitoring lifecycle; they never call the monitoring service endpoint or
 change the remote host. Each request creates a linked `OperationJob` with
 `source=mcp`, `provider=komari-local` and `transport=local`, moves through
 queued/running/completed or failed, and appends both an OperationAudit row and a
-Komari lifecycle audit event. Reusing the same request ID and payload returns
+monitoring lifecycle audit event. Reusing the same request ID and payload returns
 the canonical OperationJob, while a payload conflict is rejected. Query
 `get_server_operations` or `get_server_alerts` after a restart to recover the
 operation and alert audit state.
 
-Komari cache responses also expose `incidents`: scoped projections with
+Monitoring service cache responses also expose `incidents`: scoped projections with
 `memberAlertIds`, while the original `alerts`, IDs and audit rows remain
 available. An exact legacy missing-observation fan-out (unknown health,
 metrics empty, retry exhausted) is grouped without deleting its members.
@@ -380,7 +380,7 @@ describe the local incident lifecycle.
 For a local service, health-check or standalone SSH ProbeProvider alert, first
 read `get_server_alerts.localOps`. Pass `hostId`, `alertSource: "local-ops"`,
 the alert's `ruleId`, that document's `revision` as `expectedRevision`, and a
-unique `requestId`. Do not mix these fields with Komari integration/alert IDs.
+unique `requestId`. Do not mix these fields with monitoring service integration/alert IDs.
 A revision conflict requires rereading the alert state and a new reviewed
 request, rather than retrying a stale payload.
 
@@ -392,4 +392,10 @@ current client/Vault/host grant, job identity/status and document revision.
 The desktop's separate confirmation requirement is unchanged. Identical
 concurrent requests share one durable job; after a restart, even a nonterminal
 job is returned without replaying the mutation. Neither alert source executes
-SSH, calls Komari, or grants command execution.
+SSH, calls a monitoring service, or grants command execution.
+
+Monitoring service tools retain the compatibility values `provider: "komari"`,
+`alertSource: "komari"` and `provider: "komari-local"`. These are stable protocol
+identifiers, not a claim that every connected service runs the upstream product.
+ShellBeam Server and compatible external services share this adapter; saved
+service names, alert identities and audit records are preserved.

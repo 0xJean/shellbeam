@@ -10,6 +10,8 @@ describe('host operations advanced filters', () => {
     render(<I18nProvider><HostOpsAdvancedFilters value={{ ...DEFAULT_HOST_OPS_FILTERS, provider: 'komari' }} onChange={onChange} osOptions={['Ubuntu']} /></I18nProvider>)
     fireEvent.change(screen.getByLabelText('Capability'), { target: { value: 'docker' } })
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ provider: 'komari', capability: 'docker' }))
+    expect(screen.getByLabelText('Probe provider')).toHaveValue('komari')
+    expect(screen.getByLabelText('Probe provider')).toHaveTextContent('Monitoring service')
     expect(screen.getByLabelText('Operating system')).toBeInTheDocument()
     expect(screen.getByLabelText('Highest open alert severity')).toBeInTheDocument()
     expect(screen.getByLabelText('Resource threshold')).toBeInTheDocument()

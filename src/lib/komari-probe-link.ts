@@ -315,7 +315,7 @@ export async function runKomariLinkedProbeOperation(options: {
     vaultId: options.vaultId,
     installPath: options.installPath,
     version: options.version,
-    confirmMessage: options.confirmMessage ?? `Confirm ${options.action} for the ShellBeam Probe linked to Komari node ${target.nodeId}?`,
+    confirmMessage: options.confirmMessage ?? `Confirm ${options.action} for the ShellBeam Probe linked to monitoring node ${target.nodeId}?`,
     onRecord: options.onRecord,
     beforeExecute: () => options.validateTarget?.(target) ?? Promise.resolve(),
   })

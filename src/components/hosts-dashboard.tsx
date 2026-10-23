@@ -1,3 +1,4 @@
+import { monitoringAlertTitle } from '@/lib/monitoring-presentation'
 import { NativeSelect } from '@/components/ui/select'
 import { hasSshConnection } from '@/lib/hosts'
 import { HostMetadataSyncNotice } from './host-metadata-sync-panel'
@@ -774,7 +775,7 @@ export function HostsDashboard({
         ttlMs: persisted.syncState?.ttlMs,
         confirmMessage: t(
           action === 'acknowledge' ? 'hosts.alert.confirmAcknowledge' : 'hosts.alert.confirmClose',
-          { host: host.name, alert: current.title },
+          { host: host.name, alert: monitoringAlertTitle(current, locale) },
         ),
       })
     } catch (error) {
@@ -786,7 +787,7 @@ export function HostsDashboard({
       if (komariAlertPending.current?.sequence === sequence) komariAlertPending.current = null
       setKomariAlertAction((current) => current?.sequence === sequence ? null : current)
     }
-  }, [activeVaultId, vaultUnlocked, refreshHostOps, t])
+  }, [activeVaultId, vaultUnlocked, refreshHostOps, t, locale])
 
   const handleLocalAlertAction = useCallback(async (host: HostProfile, alert: LocalAlertRecord, action: 'acknowledge' | 'close') => {
     if (!activeVaultId || !vaultUnlocked) return

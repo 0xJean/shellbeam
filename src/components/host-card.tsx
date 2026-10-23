@@ -1,3 +1,4 @@
+import { monitoringAlertTitle, monitoringDiagnostic, monitoringOperationTarget, monitoringProviderLabel } from '@/lib/monitoring-presentation'
 import { NativeSelect } from '@/components/ui/select'
 import { hasSshConnection, hostConnections } from '@/lib/hosts'
 import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
@@ -592,11 +593,11 @@ function HostOperationsCell({ host, summary, expanded, detailsId, onToggle, comp
       </span>}
     </div>
     {!compactOnly && summary.provider && <div data-testid="host-ops-compact-source" className="flex min-w-0 items-center gap-2 text-[11px] text-[var(--workspace-text-subtle)]">
-      <span className="truncate" title={summary.provider}>{summary.provider === 'ssh-agentless' ? 'SSH' : summary.provider === 'komari' ? 'Komari' : summary.provider}</span>
+      <span className="truncate" title={monitoringProviderLabel(summary.provider, locale)}>{monitoringProviderLabel(summary.provider, locale)}</span>
       {summary.sampledAt && <span className="shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>}
     </div>}
     {attention && <div data-testid="host-monitoring-source-attention" data-source="komari" data-state={attention.komari.waitingForFirstReport ? 'waiting' : attention.komari.state} className={cn('text-[11px]', attention.komari.waitingForFirstReport ? 'text-[var(--workspace-text-subtle)]' : 'text-[color:var(--workspace-status-warn-text)]')}>
-      Komari · {attention.komari.waitingForFirstReport ? copy.waitingForFirstReport : t(`workspace.komariProbe.state.${attention.komari.state}`)}
+      {copy.komariSource} · {attention.komari.waitingForFirstReport ? copy.waitingForFirstReport : t(`workspace.komariProbe.state.${attention.komari.state}`)}
       {attention.status !== 'linked' ? ` · ${t(`workspace.komariProbe.mapping.${attention.status}`)}` : ''}
     </div>}
     {failed && <div data-testid="host-ops-attention" className="flex items-center gap-1 text-[color:var(--workspace-status-bad-text)]"><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />{copy.reviewRequired}</div>}
@@ -619,7 +620,7 @@ function HostOperationalMeta({ host, summary, t, expanded = false }: { host: Hos
 
   const latest = summary.latestAudit
   const latestLabel = latest
-    ? `${latest.action}${latest.target ? ` ${latest.target}` : ''} · ${latest.status}`
+    ? `${latest.action}${latest.target ? ` ${monitoringOperationTarget(latest.target, latest.action, locale)}` : ''} · ${latest.status}`
     : t('hosts.opsNoAudit')
   const transportLabel = summary.transport === 'proxy-jump' ? t('hosts.opsProxyJump') : t('hosts.opsDirect')
   const formatCount = (value: number | null) => value == null ? '—' : String(value)
@@ -692,8 +693,8 @@ function HostOperationalMeta({ host, summary, t, expanded = false }: { host: Hos
             const canClose = !!summary.onKomariAlertAction
             return (
               <div key={alert.alertId} className={cn('flex min-w-0 gap-1.5', expanded ? 'flex-wrap items-start' : 'items-center')}>
-                <span className={cn('min-w-0 flex-1', expanded ? 'basis-full break-words [overflow-wrap:anywhere]' : 'truncate')} title={alert.title}>
-                  <span className="font-medium text-[var(--workspace-text-strong)]">{alert.title}</span>
+                <span className={cn('min-w-0 flex-1', expanded ? 'basis-full break-words [overflow-wrap:anywhere]' : 'truncate')} title={monitoringAlertTitle(alert, locale)}>
+                  <span className="font-medium text-[var(--workspace-text-strong)]">{monitoringAlertTitle(alert, locale)}</span>
                   <span className="ml-1 text-[var(--workspace-text-subtle)]">· {t(`komariAlerts.status.${alert.status}`)}</span>
                   {expanded && alert.loadEvidence && <span className="mt-1 block text-[var(--workspace-text-subtle)]">{loadEvidenceCopy(alert.loadEvidence, locale)}</span>}
                 </span>
@@ -747,9 +748,9 @@ function HostOperationalMeta({ host, summary, t, expanded = false }: { host: Hos
       <div className="min-w-0 space-y-1.5">
       {expanded && <h4 className="mb-3 font-semibold text-[var(--workspace-text-strong)]">{sourceCopy.operationsSource}</h4>}
       <div className="flex min-w-0 flex-wrap items-center gap-2 text-[var(--workspace-text-subtle)]" data-testid="host-current-source">
-        <span className="inline-flex min-w-0 items-center gap-1 truncate" title={summary.provider || t('hosts.opsNoProvider')}>
+        <span className="inline-flex min-w-0 items-center gap-1 truncate" title={summary.provider ? monitoringProviderLabel(summary.provider, locale) : t('hosts.opsNoProvider')}>
           <ShieldCheck className="h-3 w-3 shrink-0" />
-          <span className="truncate">{summary.provider || t('hosts.opsNoProvider')}</span>
+          <span className="truncate">{summary.provider ? monitoringProviderLabel(summary.provider, locale) : t('hosts.opsNoProvider')}</span>
         </span>
         <span className="min-w-0 break-words">{transportLabel}{summary.jumpHostName ? ` · ${summary.jumpHostName}` : ''}</span>
         <span className="ml-auto shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
@@ -781,7 +782,7 @@ function HostOperationalMeta({ host, summary, t, expanded = false }: { host: Hos
           summary.probeState === 'fresh' ? 'text-[color:var(--workspace-status-good-text)]' :
             summary.probeState === 'error' ? 'text-[color:var(--workspace-status-bad-text)]' :
               'text-[color:var(--workspace-status-warn-text)]',
-        )} title={summary.probeError || t('hosts.opsProbeState')}>
+        )} title={summary.probeError ? monitoringDiagnostic(summary.probeError, locale) : t('hosts.opsProbeState')}>
           <ShieldCheck className="h-3 w-3 shrink-0" />
           <span className="shrink-0">{t('hosts.opsProbeState')}</span>
           <strong className="truncate font-medium">{t(`hosts.opsProbe.${summary.probeState}`)}</strong>
@@ -794,7 +795,7 @@ function HostOperationalMeta({ host, summary, t, expanded = false }: { host: Hos
             </span>
           )}
           {summary.probeErrorCode && <span className="min-w-0 break-all font-mono text-[var(--workspace-text-subtle)]">· {summary.probeErrorCode}</span>}
-          {summary.probeError && <span className="min-w-0 break-words text-[var(--workspace-text-subtle)]" title={summary.probeError}>· {summary.probeError}</span>}
+          {summary.probeError && <span className="min-w-0 break-words text-[var(--workspace-text-subtle)]" title={monitoringDiagnostic(summary.probeError, locale)}>· {monitoringDiagnostic(summary.probeError, locale)}</span>}
         </div>
       )}
       <div data-testid="host-ops-capabilities" className="flex flex-wrap gap-1" title={t('hosts.opsFilters.capabilitiesHint')}>

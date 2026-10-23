@@ -49,7 +49,7 @@ describe('Workspace Provider presentation', () => {
     render(<WorkspaceProviderSummary state={state(komari, [komari, ssh])} />)
     const current = screen.getByTestId('workspace-current-source')
     expect(current).toBeVisible()
-    expect(current).toHaveTextContent('Komari')
+    expect(current).toHaveTextContent(locale === 'en' ? 'Monitoring service' : '监控服务')
     expect(current).toHaveTextContent(new Date(komari.sampledAt!).toLocaleString(locale))
     const disclosure = screen.getByTestId('workspace-data-source-details')
     expect(disclosure).not.toHaveAttribute('open')
@@ -83,7 +83,7 @@ describe('Workspace Provider presentation', () => {
     render(<WorkspaceProviderSummary state={state({ ...komari, lastSyncedAt: null, capabilities: [], syncError: true })} />)
     expect(screen.getByTestId('workspace-provider-synced')).toHaveTextContent(/^Unknown$/)
     expect(screen.getByLabelText('Provider capabilities')).toHaveTextContent('No capabilities reported')
-    expect(screen.getByRole('status')).toHaveTextContent('The current Komari synchronization status could not be read.')
+    expect(screen.getByRole('status')).toHaveTextContent('The monitoring service refresh status could not be read.')
   })
 
   it.each(['en', 'zh-CN'] as const)('explains stale Komari fallback in %s while retaining the original Komari state', (locale) => {

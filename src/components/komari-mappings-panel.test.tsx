@@ -71,8 +71,8 @@ describe('Komari manual mapping workflow', () => {
     render(panel())
     fireEvent.click(screen.getByText(locale === 'en' ? 'Monitored hosts' : '监控主机'))
     expect(await screen.findByText(locale === 'en'
-      ? 'No server API key is saved for this integration in this Vault. In Settings → Monitoring data sources → Komari, select this server, paste its API key and save.'
-      : '当前 Vault 尚未为此集成保存服务器 API 密钥。请在设置 → 监控数据源 → Komari 中选择此服务器，粘贴 API 密钥并保存。')).toBeVisible()
+      ? 'No server API key is saved for this service in this Vault. In Settings → Monitoring & notifications, select the saved service, enter its API key and save.'
+      : '当前 Vault 尚未为此服务保存服务器 API 密钥。请在设置 → 监控与通知中选择已保存的服务，填写 API 密钥并保存。')).toBeVisible()
     expect(listKomariClients).not.toHaveBeenCalled()
     expect(screen.getByText(locale === 'en' ? 'Manual binding · second' : '手动绑定 · second')).toBeVisible()
     expect(screen.queryByText(/Node discovery completed|节点发现已完成/)).not.toBeInTheDocument()
@@ -96,10 +96,10 @@ describe('Komari manual mapping workflow', () => {
   })
 
   it.each([
-    ['permission', 'Komari rejected API access. Check the saved server API key and its permissions.'],
-    ['unavailable', 'Komari could not be reached from this app. Check the server address, SSH forwarding and network access.'],
-    ['timeout', 'Komari node discovery timed out. Check the connection and try again.'],
-    ['server-error', 'Komari did not return a usable node list. Check the server version and try again.'],
+    ['permission', 'The monitoring service rejected API access. Check the saved server API key and its permissions.'],
+    ['unavailable', 'The monitoring service could not be reached from this app. Check the server address, SSH forwarding and network access.'],
+    ['timeout', 'Monitoring node discovery timed out. Check the connection and try again.'],
+    ['server-error', 'The monitoring service did not return a usable node list. Check the server version and try again.'],
   ])('explains %s discovery failures using fixed copy without the upstream payload', async (code, message) => {
     vi.mocked(listKomariClients).mockRejectedValue(new KomariApiError('secret-token private-address upstream-body', { code }))
     render(panel())

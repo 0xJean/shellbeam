@@ -105,7 +105,7 @@ describe('MCP settings', () => {
   it('keeps Komari and local alert metadata acknowledgement and closure behind an explicit capability', async () => {
     render(<McpSettingsSection />)
     await screen.findByText('Dev Server')
-    const alertPermission = screen.getByLabelText(/Acknowledge or close Komari, service, health-check and ProbeProvider alert metadata/)
+    const alertPermission = screen.getByLabelText(/Acknowledge or close monitoring, service, health-check and ProbeProvider alert metadata/)
     expect(alertPermission).not.toBeChecked()
     fireEvent.change(screen.getByLabelText('Client name'), { target: { value: 'Alert Agent' } })
     fireEvent.click(screen.getByLabelText(/Dev Server/))

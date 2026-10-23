@@ -165,7 +165,7 @@ export async function runKomariAlertAction(
     transport: 'local',
     paramsSummary: `integrationId=${options.integrationId}; alertId=${options.alertId}; action=${action}`,
     isCurrent: options.isCurrent,
-    confirmMessage: options.confirmMessage ?? `Confirm ${action} for this local monitoring incident (${options.alertId})? This updates ShellBeam only; Komari server state is unchanged.`,
+    confirmMessage: options.confirmMessage ?? `Confirm ${action} for this local monitoring incident (${options.alertId})? This updates ShellBeam only; remote health and server notifications are unchanged.`,
     onJob: (nextJob) => { operationJobId = nextJob.jobId },
     execute: async (context) => {
       if (!operationJobId) throw new Error('Operation job id was not created')

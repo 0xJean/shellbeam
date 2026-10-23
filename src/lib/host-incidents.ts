@@ -9,6 +9,8 @@ export interface HostIncident {
   hostId: string
   hostName: string
   title: string
+  /** Original kind permits safe display of known system diagnostics only. */
+  monitoringKind?: string
   source: string
   status: string
   updatedAt: number
@@ -39,7 +41,7 @@ export function buildHostIncidents(hosts: HostProfile[], summaries: Map<string, 
       .filter(({ alert }) => !alert.hostId || alert.hostId === host.id).map(({ alert, memberAlertIds }) => ({
         key: `komari:${host.id}:${alert.integrationId}:${alert.alertId}`, hostId: host.id, hostName: host.name,
         lastObservation: komariAlertLastObservation(alert),
-        title: alert.title, source: 'komari', status: alert.status, updatedAt: alert.lastSeenAt,
+        title: alert.title, monitoringKind: alert.kind, source: 'komari', status: alert.status, updatedAt: alert.lastSeenAt,
         busy: !!summary.komariAlertBusy,
         historyOnly: isHistoricalKomariAlert(alert),
         loadEvidence: alert.loadEvidence,

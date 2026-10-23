@@ -1,3 +1,4 @@
+import { monitoringAlertTitle } from '@/lib/monitoring-presentation'
 import { NativeSelect } from '@/components/ui/select'
 import { useState } from 'react'
 import type { HostIncident } from '@/lib/host-incidents'
@@ -47,7 +48,7 @@ export function HostAlertsCenter({ incidents, onOpenHost }: { incidents: HostInc
     {rows.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">{copy.noAlerts}</p>}
     <div className="max-h-[65vh] space-y-3 overflow-y-auto">
       {rows.map(row => <article key={row.key} data-testid="host-incident" data-host-id={row.hostId} data-source={row.source} className="rounded-lg border p-3">
-        <p className="break-words text-sm font-medium">{row.title}</p>
+        <p className="break-words text-sm font-medium">{row.source === 'komari' && row.monitoringKind ? monitoringAlertTitle({ kind: row.monitoringKind, title: row.title }, locale) : row.title}</p>
         {row.loadEvidence && <p data-testid="load-alert-evidence" className="mt-1 break-words text-xs text-muted-foreground">{loadEvidenceCopy(row.loadEvidence, locale)}
           {row.loadEvidence.sampledAt > 0 && row.loadEvidence.sampledAt <= Date.now() ? ` · ${locale === 'zh-CN' ? '采样' : 'Sample'} ${new Date(row.loadEvidence.sampledAt).toLocaleString(locale)}` : ''}
         </p>}

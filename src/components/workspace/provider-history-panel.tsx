@@ -1,3 +1,4 @@
+import { monitoringHistorySourceLabel } from '@/lib/monitoring-presentation'
 import { NativeSelect } from '@/components/ui/select'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -26,7 +27,7 @@ function ScopedProviderHistoryDisclosure(props: ProviderHistoryPanelProps) {
 }
 
 export function ProviderHistoryPanel({ vaultId, hostId, providerId }: { vaultId: string; hostId: string; providerId?: string }) {
-  const { t } = useT()
+  const { t, locale } = useT()
   const [hours, setHours] = useState(24)
   const [revision, setRevision] = useState(0)
   const [source, setSource] = useState('')
@@ -65,7 +66,7 @@ export function ProviderHistoryPanel({ vaultId, hostId, providerId }: { vaultId:
       </div>
       {!current ? <p role="status" className="mt-4 text-xs text-muted-foreground">{t('provider.history.loading')}</p> : current.error ? <p role="alert" className="mt-4 text-xs text-destructive">{t('provider.history.failed')}</p> : points.length === 0 ? <p className="mt-4 text-xs text-muted-foreground">{t('provider.history.empty')}</p> : <>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <label>{t('provider.history.source')} <NativeSelect aria-label={t('provider.history.source')} value={selectedSource} onChange={(event) => { setSource(event.target.value); setCursor(0) }} className="ml-1 max-w-80 rounded border border-border bg-background p-1">{sources.map((value) => <option key={value} value={value}>{value}</option>)}</NativeSelect></label>
+          <label>{t('provider.history.source')} <NativeSelect aria-label={t('provider.history.source')} value={selectedSource} onChange={(event) => { setSource(event.target.value); setCursor(0) }} className="ml-1 max-w-80 rounded border border-border bg-background p-1">{sources.map((value) => <option key={value} value={value}>{monitoringHistorySourceLabel(value, locale)}</option>)}</NativeSelect></label>
           <span>{t('provider.history.latest')}: {latest ? new Date(latest.sampledAt).toLocaleString() : '—'} · {latest && latest.expiresAt < to ? t('provider.history.stale') : t('provider.history.fresh')}</span>
         </div>
         {points.some((point) => point.historyPartial) && <p role="status" className="mt-2 text-xs text-amber-600">{t('provider.history.partial')}</p>}

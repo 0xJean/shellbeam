@@ -2,7 +2,7 @@ export const monitoringSourcesCopy = {
   en: {
     currentSource: 'Monitoring source',
     details: 'Data source details',
-    komariSource: 'Komari source',
+    komariSource: 'Monitoring service',
     remoteAlerts: 'Notification rules (not incidents)',
     waitingForFirstReport: 'Waiting for first report',
     expandOperations: 'Operations details',
@@ -15,7 +15,7 @@ export const monitoringSourcesCopy = {
   'zh-CN': {
     currentSource: '监控来源',
     details: '数据源详情',
-    komariSource: 'Komari 数据源',
+    komariSource: '监控数据源',
     remoteAlerts: '通知规则（非故障）',
     waitingForFirstReport: '等待首次上报',
     expandOperations: '运维详情',

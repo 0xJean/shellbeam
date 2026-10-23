@@ -988,3 +988,16 @@ added. Agent's passing explicit caption anchor is unchanged. The disposable
 fixture container was removed; no user App, Vault or remote service was touched.
 All 261 Node protocol checks and changed-script ESLint/diff passed after this
 navigation change; missing caption geometry rejects before any click.
+
+
+### ShellBeam 监控展示收敛（2026-10-23）
+
+覆盖中英监控设置/接入、主机来源与筛选、节点关联、统一告警及已删除主机历史、确认弹窗、Workspace、指标历史和审计来源、MCP 工具说明。已保存名称、地址、规则名和任意上游原文不改；自有 1.5.12 与旧上游 1.5.11 的真实来源标签继续由固定制品身份判断。
+
+采用纯展示投影保留历史 canonical 告警标题与错误：TS/Rust incident 聚合函数及原生成器字节不变，通知只投影 title/message，eventId/auditId/fingerprint 不变。回归用旧文案先投递，再以新文案再次分发同一事件，确认只投递一次；同时验证原记录、回调身份、附加历史 kind、自定义 server-load 名称、原生固定错误前缀及 constructor/toString/__proto__ 等任意上游文本不会丢失。
+
+独立浏览器使用生产 HostGridCard、HostAlertsCenter、KomariSettingsSection 和 CompatibleAgentTools 的合成数据，检查 640/1280 内容宽度、中英文、明暗主题共 8 个界面组合及展开的已核验来源。证据位于 `/tmp/shellbeam-brand-ui-evidence`，无真实凭据或远端操作；这不是本地用户安装包或完整桌面 E2E。旧 head `e3e93eb` 的 19 项全绿只属于基线，本批推送后须重新核对全部最新 head CI。
+
+最终本地 `TMPDIR=/tmp npx vitest run --maxWorkers=1`：1637 通过、17 项 Linux 限定跳过；原断言与超时不变。默认临时目录运行曾出现 shell collector 超时，后续并行全量还有两项 shell 子进程超时和两个主机面板查找失败；四个文件以 `/tmp` 串行独立复测 54 项通过，再完整串行复测通过。未确认宿主时序/临时目录因素的唯一根因，未修改相关业务或放宽测试。日志保留在 `/tmp/shellbeam-brand-final-suite.log`、`/tmp/shellbeam-brand-scoped-recheck.log` 和 `/tmp/shellbeam-brand-tmpdir-suite.log`。
+
+261 项 Node 协议、5 项 Rust MCP 协议、生产构建、cargo fmt 和 diff 检查通过。修改范围 ESLint 除 ActivityLogPanel 已有的 `set-state-in-effect` 外无其他错误或警告；将 HEAD 原文件经相同 ESLint stdin 检查确认相同基线错误，本批未用规则禁用掩盖。九个告警生成/聚合、通知去重及制品身份文件对 HEAD 的字节比对不变；完整新 head 安装包及真实服务报告仍须 CI 独立验收。

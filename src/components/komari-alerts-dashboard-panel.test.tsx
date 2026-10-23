@@ -8,7 +8,7 @@ import { persistKomariAlertAction, runKomariAlertAction } from '@/lib/komari-ale
 import { reconcileKomariAlerts, type KomariAlertState } from '@/lib/komari-alerts'
 import type { HostProfile } from '@/lib/hosts'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
-import type { HostIncident } from './host-alerts-center'
+import { HostAlertsCenter, type HostIncident } from './host-alerts-center'
 
 vi.mock('@/lib/komari-config', () => ({ listKomariIntegrations: vi.fn() }))
 vi.mock('@/lib/komari-persistence', async (original) => ({
@@ -128,6 +128,28 @@ describe('scoped monitoring alert entry', () => {
     expect(options.isCurrent?.()).toBe(false)
     await act(async () => view.rerender(panel('b')))
     expect(options.isCurrent?.()).toBe(false)
+  })
+
+  it('projects deleted-host diagnostic history while preserving a user rule name and original records', async () => {
+    const original = state()
+    const former = { ...original.alerts[0], alertId: 'former-system', hostId: 'removed', nodeId: 'removed-node', kind: 'probe-error:metrics', title: 'Komari monitoring source is offline' }
+    const custom = { ...former, alertId: 'former-custom', fingerprint: 'custom', kind: 'server-load', title: 'Komari custom CPU rule' }
+    const stored = { ...original, alerts: [former, custom] }
+    const before = JSON.stringify(stored)
+    vi.mocked(loadKomariPersistence).mockResolvedValue(persisted(stored))
+    const incidents = vi.fn<(rows: HostIncident[]) => void>()
+    render(<I18nProvider><KomariAlertsDashboardPanel headless activeVaultId="a" vaultUnlocked hosts={[host]} onAdditionalIncidents={incidents} /></I18nProvider>)
+    await waitFor(() => expect(incidents.mock.calls.at(-1)?.[0]).toHaveLength(2))
+    const rows = incidents.mock.calls.at(-1)![0]
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ monitoringKind: former.kind, title: former.title, historyOnly: true, act: undefined }),
+      expect.objectContaining({ monitoringKind: custom.kind, title: custom.title, historyOnly: true, act: undefined }),
+    ]))
+    render(<I18nProvider><HostAlertsCenter incidents={rows}/></I18nProvider>)
+    fireEvent.click(screen.getByLabelText('Include history'))
+    expect(screen.getByText('Monitoring source is offline')).toBeVisible()
+    expect(screen.getByText(custom.title)).toBeVisible()
+    expect(JSON.stringify(stored)).toBe(before)
   })
 
   it('dispatches only current mapped alerts while preserving the complete stored journal', async () => {

@@ -1,3 +1,4 @@
+import { monitoringAlertTitle } from './monitoring-presentation'
 import { groupKomariAlertIncidents, isUnverifiedKomariRuleAlert } from './komari-alert-incidents'
 import {
   dispatchNotification,
@@ -125,7 +126,7 @@ function recordForAudit(state: KomariAlertState, audit: KomariAlertAuditEntry) {
 }
 
 function lifecycleMessage(event: KomariAlertAuditEvent, record: KomariAlertRecord) {
-  const title = safeText(record.title, `${record.kind} alert`)
+  const title = safeText(monitoringAlertTitle(record, 'en'), `${record.kind} alert`)
   switch (event) {
     case 'opened': return `${title} opened`
     case 'reopened': return `${title} reopened`
@@ -146,7 +147,7 @@ export function komariAlertNotificationEvent(
   audit: KomariAlertAuditEntry,
 ): NotificationEvent {
   const event = audit.event
-  const title = safeText(record.title, `${record.kind} alert`)
+  const title = safeText(monitoringAlertTitle(record, 'en'), `${record.kind} alert`)
   const probeTelemetry = audit.probeTelemetry ?? record.probeTelemetry
   return {
     eventId: safeText(audit.auditId, `${record.alertId}:${event}:${audit.at}`),
