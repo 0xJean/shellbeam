@@ -5,25 +5,31 @@ import { rawCpuSamples, verifyFreshCpu, verifyServerIdentity, serverIdentity, re
 import { verifyMonitoringAgentUiReport } from './monitoring-agent-ui-report.mjs'
 import { verifyAgentAuditScope, verifyAgentPolicyReadback } from './monitoring-agent-ui-journey.mjs'
 
-test('policy readback waits for the native read to finish and still rejects a different stored source', async () => {
-  let reading = false, stored = 'custom', clicks = 0, alert = false, key = 'public-key'
+test('policy readback requires a new native result, not an enabled pre-click frame or an existing draft', async () => {
+  let phase = 'empty', stored = 'custom', clicks = 0, alert = false, key = 'public-key'
   const driver = {
-    click: async () => { reading = true; clicks++ },
-    isEnabled: async () => !reading,
-    until: async check => { assert.equal(await check(), false); reading = false; assert.equal(await check(), true) },
-    attr: async selector => { assert.equal(reading, false); return selector === 'key' ? key : stored },
-    findAll: async () => alert ? ['error'] : [],
+    click: async () => { phase = 'pre-click'; clicks++ },
+    isEnabled: async () => phase !== 'reading',
+    until: async check => {
+      assert.equal(await check(), false) // Enabled, but native read has not started.
+      phase = 'reading'; assert.equal(await check(), false)
+      phase = 'complete'; assert.equal(await check(), true)
+    },
+    attr: async selector => { assert.equal(phase, 'complete'); return selector === 'key' ? key : stored },
+    findAll: async selector => selector === 'alert' ? (phase === 'complete' && alert ? ['error'] : []) : (phase === 'complete' ? ['source'] : []),
   }
   await verifyAgentPolicyReadback(driver, 'load', 'source', 'custom')
   assert.equal(clicks, 1)
-  stored = 'official'
+  await assert.rejects(verifyAgentPolicyReadback(driver, 'load', 'source', 'custom'), /draft_not_discarded/)
+  assert.equal(clicks, 1) // A pre-existing draft never triggers another read.
+  phase = 'empty'; stored = 'official'
   await assert.rejects(verifyAgentPolicyReadback(driver, 'load', 'source', 'custom'), /policy_source_readback/)
   assert.equal(clicks, 2)
-  stored = 'custom'
+  phase = 'empty'; stored = 'custom'
   await verifyAgentPolicyReadback(driver, 'load', 'source', 'custom', [['key', 'public-key']], 'alert')
-  key = 'different-key'
+  phase = 'empty'; key = 'different-key'
   await assert.rejects(verifyAgentPolicyReadback(driver, 'load', 'source', 'custom', [['key', 'public-key']], 'alert'), /field_readback/)
-  key = 'public-key'; alert = true
+  phase = 'empty'; key = 'public-key'; alert = true
   await assert.rejects(verifyAgentPolicyReadback(driver, 'load', 'source', 'custom', [['key', 'public-key']], 'alert'), /read_error/)
 })
 

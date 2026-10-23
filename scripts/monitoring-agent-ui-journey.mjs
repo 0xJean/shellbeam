@@ -17,10 +17,18 @@ export function verifyAgentAuditScope(actual, expected, vaultId) {
   return actual.vaultId
 }
 
-export async function verifyAgentPolicyReadback(d, load, select, source, fields = [], alerts) {
+async function readAgentPolicy(d, load, select, alerts) {
+  // A fresh panel has no policy form until the native read returns. An enabled
+  // button alone can still be the pre-click frame before React commits busy.
+  assert.equal((await d.findAll(select)).length, 0, 'agent_ui_policy_draft_not_discarded')
   await d.click(load)
-  await d.until(async () => await d.isEnabled(load))
-  if (alerts) assert.equal((await d.findAll(alerts)).length, 0, 'agent_ui_policy_read_error')
+  await d.until(async () => {
+    if (alerts) assert.equal((await d.findAll(alerts)).length, 0, 'agent_ui_policy_read_error')
+    return (await d.findAll(select)).length === 1 && await d.isEnabled(load)
+  })
+}
+export async function verifyAgentPolicyReadback(d, load, select, source, fields = [], alerts) {
+  await readAgentPolicy(d, load, select, alerts)
   const actual = await d.attr(select, 'value')
   assert.equal(actual, source, 'agent_ui_policy_source_readback')
   for (const [selector, expected] of fields) assert.equal(await d.attr(selector, 'value'), expected, 'agent_ui_policy_field_readback')
@@ -40,8 +48,17 @@ async function confirm(d, names, accept = true) {
 async function policy(d, h, f, source) {
   await openTransferTools(d, h)
   const box = control(h, 'policy')
-  if (await d.attr(box, 'open') === null) await d.click(box + ' > summary')
-  await d.click(control(h, 'policy-load')); await d.waitFor(control(h, 'policy-source'))
+  const tools = `${id('host-card')}[data-host-id="${h.id}"] ${id('compatible-agent-tools')}`
+  const reopen = async () => {
+    // Use the real disclosure to unmount the editor, not a second read over
+    // the same draft. No IPC, state injection or replayed save is involved.
+    await d.click(tools + ' > summary')
+    await d.until(async () => !(await d.findAll(panel(h))).length)
+    await d.click(tools + ' > summary'); await d.waitFor(panel(h))
+    await d.click(box + ' > summary')
+  }
+  await reopen()
+  await readAgentPolicy(d, control(h, 'policy-load'), control(h, 'policy-source'), panel(h) + ' [role="alert"]')
   await d.select(control(h, 'policy-source'), source)
   const fields = source === 'custom' ? Object.entries({ manifestUrl: historicalCatalog, trustedPublicKey: f.trust.publicKey, allowedHosts: f.trust.allowedHosts.join(', ') }).map(([key, value]) => [control(h, 'policy-' + key), value]) : []
   if (source === 'custom') {
@@ -50,7 +67,13 @@ async function policy(d, h, f, source) {
     for (const [selector, value] of fields) await d.fill(selector, value)
   }
   await d.click(control(h, 'policy-save')); await confirm(d, ['trusted publisher and download sources'])
-  await d.until(async () => await d.isEnabled(control(h, 'policy-save')))
+  await d.until(async () => {
+    for (const status of await d.findAll(panel(h) + ' [role="status"]')) {
+      if (await d.text(status) === 'Release trust saved.' && await d.isEnabled(control(h, 'policy-save'))) return true
+    }
+    return false
+  })
+  await reopen()
   await verifyAgentPolicyReadback(d, control(h, 'policy-load'), control(h, 'policy-source'), source, fields, panel(h) + ' [role="alert"]')
   await d.click(box + ' > summary')
 }

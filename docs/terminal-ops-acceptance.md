@@ -875,3 +875,19 @@ owner format: the product's default Vault ID is `personal`, not a UUID
 additional Vault's UUID while still comparing the captured owner byte-for-byte
 across restart. Missing/unknown IDs and switches between personal/UUID or two
 UUIDs are rejected. This fixes a fixture assumption, not Vault storage or access.
+
+`beaf30e` installed-Agent run `39924247346` passed the default Vault audit and
+actual fresh 1.5.12 installation, then failed the release-source readback gate.
+The failure image still showed the native read busy with the custom editor;
+waiting for an enabled button can observe its pre-click frame and does not
+prove the current read finished. The journey now requires the actual saved
+notice, closes the tools disclosure, verifies the panel unmounted, and reopens
+it. The policy form must be absent before a single read and newly appear after
+the native response, with the button enabled and no error. Only then are source,
+historical URL, public key and allowed hosts compared exactly. No save is
+replayed and no timeout, polling interval or product behavior changed.
+Protocol tests reject an enabled pre-click frame, retained draft, wrong stored
+source/key and read error; a production-component test verifies disclosure
+unmount removes an unsaved draft and a deferred native read supplies the new
+form. The complete installed-App upgrade/rollback/recovery remains pending;
+these targeted tests are not a substitute for that report.

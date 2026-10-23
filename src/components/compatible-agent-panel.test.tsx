@@ -129,6 +129,31 @@ describe('compatible monitoring probe lifecycle', () => {
     expect(screen.getByRole('button', { name: c.uninstall })).toBeEnabled()
     expect(operateCompatibleAgent).not.toHaveBeenCalled()
   })
+  it('discards the policy draft on disclosure close and renders only a completed native read after reopening', async () => {
+    const stored = { source: 'official' as const, enabled: true, manifestUrl: 'https://official.test/catalog.json', trustedPublicKey: 'compiled-root', allowedHosts: ['official.test'] }
+    vi.mocked(compatibleAgentPolicy).mockResolvedValueOnce(stored)
+    render(<I18nProvider><CompatibleAgentTools host={host} integrationId="source" /></I18nProvider>)
+    const details = screen.getByTestId('compatible-agent-tools') as HTMLDetailsElement
+    const toggle = async (open: boolean) => { await act(async () => { details.open = open; fireEvent(details, new Event('toggle')) }) }
+    await toggle(true)
+    fireEvent.click(screen.getByText(c.policy)); fireEvent.click(screen.getByRole('button', { name: c.loadPolicy }))
+    const source = await screen.findByRole('combobox', { name: c.source })
+    fireEvent.change(source, { target: { value: 'custom' } })
+    expect(source).toHaveValue('custom')
+    await toggle(false); expect(screen.queryByTestId('compatible-agent-panel')).not.toBeInTheDocument()
+    await toggle(true); fireEvent.click(screen.getByText(c.policy))
+    expect(screen.queryByRole('combobox', { name: c.source })).not.toBeInTheDocument()
+    let complete!: (value: typeof stored) => void
+    vi.mocked(compatibleAgentPolicy).mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    fireEvent.click(screen.getByRole('button', { name: c.loadPolicy }))
+    expect(screen.queryByRole('combobox', { name: c.source })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: c.loadPolicy })).toBeDisabled()
+    await act(async () => { complete(stored) })
+    expect(screen.getByRole('combobox', { name: c.source })).toHaveValue('official')
+    expect(screen.getByRole('button', { name: c.loadPolicy })).toBeEnabled()
+    expect(compatibleAgentPolicy).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(compatibleAgentPolicy).mock.calls).toEqual([[], []])
+  })
   it('previews adoption of an explicit service and stops after rejected confirmation', async () => {
     vi.mocked(prepareCompatibleAgent).mockResolvedValue({ ...preview, action: 'adopt', legacyUnit: 'existing.service', currentVersion: '1.5.10' })
     vi.mocked(requestUserDecision).mockResolvedValue({ accepted: false, reason: 'rejected' })
