@@ -910,3 +910,18 @@ source/enabled state before saving, and fails immediately on a native alert.
 No production credentials, catalog, public root or user App were changed.
 The native Agent upgrade/rollback/recovery proof still requires the new head;
 18 older green checks do not substitute for it.
+
+
+`438fa52` Agent run `39930326108` did not reach application execution: npm
+cache restoration stalled at 79.5% and reported `Egress is over the account
+limit` at 09:15:32 UTC, then remained in setup-node until cancellation at
+09:24:56. The corresponding extension run `39930326025` independently showed
+the same npm cache error, then recovered only after roughly ten minutes. Its
+subsequent Rust cache restored all 610,607,156 bytes in eight seconds and the
+extension acceptance passed; there is no evidence that this Rust cache is
+stalled. Main CI and the four installed-App acceptance workflows now omit npm
+cache restoration and continue to use the unchanged `npm ci` lockfile install.
+Node versions, Rust caching, production/publisher workflows, test timeouts and
+all installed-App assertions remain unchanged. This is an infrastructure fix,
+not successful Agent business acceptance. The new head still requires the full
+upgrade/rollback/interruption/recovery report and independent evidence.
