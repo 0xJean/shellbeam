@@ -5,6 +5,7 @@ export interface ServiceScope { vaultId: string; integrationId: string; configVe
 export type ServiceValues = Record<string, unknown>
 export interface ServiceIntent {
   intent: { id: string; scope: ServiceScope; target: string; revision: number; status: 'prepared' | 'applying' | 'verified' | 'uncertain' | 'retry' | 'conflict' | 'cancelled'; jobId: string; observedAt: number; updatedAt: number; errorCode?: string }
+  extension?: { operation: 'upgrade' | 'uninstall' | 'restore'; stage: string; backupAvailable: boolean; backupVersion?: string } | null
   baseline: ServiceValues; desired: ServiceValues; observed: ServiceValues
 }
 export async function serviceScope(service: KomariIntegration): Promise<ServiceScope> {

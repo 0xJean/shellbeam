@@ -26,7 +26,7 @@ function runtime(files = new Map()) {
 async function save(r, rules = [rule], silences = []) { const view = (await r.request('GET', '/policy')).body; return r.request('POST', '/policy', { ...view, rules, silences }) }
 test('runtime authenticates public-site routes and rejects stale and recreated identities', async () => {
   const r = runtime(); assert.equal(r.registered(), true)
-  for (const [m, p] of [['GET', '/policy'], ['GET', '/status'], ['POST', '/policy']]) assert.equal((await r.request(m, p, {}, false)).status, 403)
+  for (const [m, p] of [['GET', '/policy'], ['GET', '/status'], ['GET', '/lifecycle'], ['POST', '/policy']]) assert.equal((await r.request(m, p, {}, false)).status, 403)
   const old = (await r.request('GET', '/policy')).body; assert.equal((await save(r)).status, 200)
   assert.equal((await r.request('POST', '/policy', old)).status, 409)
   assert.equal((await save(r, [{ ...rule, nodeCreatedAt: 'new' }])).status, 409)
@@ -61,4 +61,11 @@ test('renaming preserves unknown dispatch markers and semantic edits require new
   await save(r, [{ ...rule, name: 'Renamed' }]); await r.tick(); assert.equal(r.sends.length, 1)
   await save(r, [{ ...rule, threshold: 85 }]); await r.tick(); assert.equal(r.sends.length, 1)
   await new Promise(resolve => setTimeout(resolve, 5)); r.sample(95); await r.tick(); assert.equal(r.sends.length, 2)
+})
+
+test('lifecycle proves loaded code and original state without modifying dispatch markers', async () => {
+  const r = runtime(); await save(r); await r.tick();
+  const before = JSON.stringify([...r.files.entries()]); const lifecycle = (await r.request('GET', '/lifecycle')).body
+  assert.equal(lifecycle.version, '0.2.0'); assert.equal(lifecycle.identity, (await r.request('GET', '/policy')).body.extension_identity); assert.equal(lifecycle.stateSchema, 1)
+  assert.equal(JSON.stringify([...r.files.entries()]), before); assert.equal(r.sends.length, 1)
 })

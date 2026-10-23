@@ -23,6 +23,9 @@ use std::{
 use tauri::Manager;
 use uuid::Uuid;
 
+#[path = "monitoring_extension_lifecycle.rs"]
+mod extension_lifecycle;
+
 const SETTINGS: &[&str] = &[
     "sitename",
     "description",
@@ -91,6 +94,8 @@ struct Intent {
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Edit {
+    #[serde(default)]
+    extension: Option<super::monitoring_extension::Checkpoint>,
     baseline: Value,
     desired: Value,
     observed: Value,
@@ -217,7 +222,7 @@ pub(crate) fn secret(app: &tauri::AppHandle, scope: &Scope) -> Result<String, St
     .filter(|s| !s.trim().is_empty())
     .ok_or_else(|| "MONITORING_AUTH_REQUIRED".into())
 }
-fn exchange(
+pub(super) fn exchange(
     client: &Client,
     endpoint: &str,
     path: &str,
@@ -450,6 +455,9 @@ fn merge(edit: &Edit, remote: &Value) -> Result<Value, String> {
     Ok(Value::Object(next))
 }
 fn validate(target: &str, edit: &Edit) -> Result<(), String> {
+    if target == "extension-lifecycle" {
+        return extension_lifecycle::validate(edit);
+    }
     if !edit.baseline.is_object()
         || !edit.desired.is_object()
         || edit.desired.to_string().len() > 65536
@@ -628,7 +636,7 @@ fn decode(app: &tauri::AppHandle, row: &Intent) -> Result<Edit, String> {
     .map_err(err)
 }
 fn view(row: &Intent, edit: &Edit) -> Value {
-    json!({"intent":row,"baseline":edit.baseline,"desired":edit.desired,"observed":edit.observed})
+    json!({"intent":row,"baseline":edit.baseline,"desired":edit.desired,"observed":edit.observed,"extension":edit.extension.as_ref().map(|cp| json!({"operation":cp.operation,"stage":cp.stage,"backupAvailable":cp.backup.is_some(),"backupVersion":cp.backup.as_ref().map(|b| &b.version)}))})
 }
 fn transaction<T>(
     app: &tauri::AppHandle,
@@ -677,11 +685,20 @@ fn prepare(
                 conn,
                 scope,
                 target,
-                "monitoring.service.update",
+                if target == "extension-lifecycle" {
+                    match edit.extension.as_ref().map(|c| c.operation.as_str()) {
+                        Some("upgrade") => "monitoring.extension.upgrade",
+                        Some("uninstall") => "monitoring.extension.uninstall",
+                        _ => "monitoring.extension.restore",
+                    }
+                } else {
+                    "monitoring.service.update"
+                },
                 if target.starts_with("retention:")
                     || target.starts_with("channel:")
                     || target == "load-policy"
                     || target == "extension"
+                    || target == "extension-lifecycle"
                     || (edit.baseline["private_site"] == true
                         && edit.desired["private_site"] == false)
                 {
@@ -779,6 +796,9 @@ fn edit_action(
         return Ok(view(&row, &edit));
     }
     remote.version(Some(token))?;
+    if row.target == "extension-lifecycle" {
+        return extension_lifecycle::act(app, input, remote, token, row, edit);
+    }
     let observed = remote.read(&row.target, token)?;
     edit.observed = observed.clone();
     row.observed_at = now_unix_ms();
@@ -802,6 +822,7 @@ fn edit_action(
             scope,
             &row.target,
             Edit {
+                extension: None,
                 baseline: observed.clone(),
                 desired,
                 observed,
@@ -832,6 +853,7 @@ fn edit_action(
     validate(
         &row.target,
         &Edit {
+            extension: None,
             baseline: observed.clone(),
             desired: merged.clone(),
             observed: observed.clone(),
@@ -1019,7 +1041,11 @@ fn authorize(app: &tauri::AppHandle, input: &Request, remote: &Remote) -> Result
     result
 }
 fn require_confirmation(action: &str, confirmed: bool) -> Result<(), String> {
-    if matches!(action, "prepare" | "retry" | "test" | "initialize") && !confirmed {
+    if matches!(
+        action,
+        "prepare" | "retry" | "test" | "initialize" | "extension-prepare" | "extension-restore"
+    ) && !confirmed
+    {
         return Err("MONITORING_CONFIRMATION_REQUIRED".into());
     }
     Ok(())
@@ -1040,6 +1066,7 @@ fn run(app: &tauri::AppHandle, input: Request) -> Result<Value, String> {
             scope,
             &input.target,
             Edit {
+                extension: None,
                 observed: baseline.clone(),
                 baseline,
                 desired,
@@ -1071,12 +1098,24 @@ fn run(app: &tauri::AppHandle, input: Request) -> Result<Value, String> {
     let token = secret(app, scope)?;
     if matches!(
         input.action.as_str(),
+        "extension-prepare" | "extension-restore"
+    ) {
+        return extension_lifecycle::prepare_request(app, &input, &remote, &token);
+    }
+    if matches!(
+        input.action.as_str(),
         "apply" | "reconcile" | "retry" | "cancel"
     ) {
         return edit_action(app, &input, &remote, &token);
     }
     remote.version(Some(&token))?;
     match input.action.as_str() {
+        "extension-status" => {
+            super::monitoring_extension::inspect(&super::monitoring_extension::Connection {
+                remote: &remote,
+                token: &token,
+            })
+        }
         "read" => remote.read(&input.target, &token),
         "load-status" => {
             remote.require_extension(&token)?;
@@ -1200,6 +1239,7 @@ mod tests {
     use super::*;
     fn edit() -> Edit {
         Edit {
+            extension: None,
             baseline: json!({"sitename":"Before","private_site":false}),
             desired: json!({"sitename":"After","private_site":false}),
             observed: Value::Null,
@@ -1209,6 +1249,7 @@ mod tests {
     fn load_policy_rebases_revision_but_rejects_recreated_extension_and_same_field_conflicts() {
         let base = json!({"extension_identity":"original","revision":1,"rules":[],"silences":[]});
         let mut e = Edit {
+            extension: None,
             baseline: base.clone(),
             desired: base.clone(),
             observed: Value::Null,
@@ -1231,6 +1272,7 @@ mod tests {
     fn channel_schema_change_is_never_treated_as_verified_or_rebased() {
         let base = channels::read("mail", json!({"configuration":{"type":"managed","data":[{"key":"token","type":"string"}]},"data":{"token":"synthetic"}})).unwrap();
         let mut e = Edit {
+            extension: None,
             baseline: base.clone(),
             desired: base.clone(),
             observed: Value::Null,
@@ -1278,6 +1320,7 @@ mod tests {
     #[test]
     fn validates_webhook_without_dropping_plugin_fields() {
         let e = Edit {
+            extension: None,
             baseline: json!({"url":"https://old.test","custom":"keep"}),
             desired: json!({"url":"https://new.test","custom":"keep"}),
             observed: Value::Null,
@@ -1299,7 +1342,14 @@ mod tests {
     }
     #[test]
     fn mutations_require_explicit_confirmation_but_recovery_remains_read_only() {
-        for action in ["prepare", "retry", "test", "initialize"] {
+        for action in [
+            "prepare",
+            "retry",
+            "test",
+            "initialize",
+            "extension-prepare",
+            "extension-restore",
+        ] {
             assert_eq!(
                 require_confirmation(action, false).unwrap_err(),
                 "MONITORING_CONFIRMATION_REQUIRED"
@@ -1313,6 +1363,7 @@ mod tests {
     #[test]
     fn retention_changes_never_clear_history_or_cross_recreated_metrics() {
         let mut edit = Edit {
+            extension: None,
             baseline: json!({"retention_days":30,"metric_identity":"cpu:original"}),
             desired: json!({"retention_days":7,"metric_identity":"cpu:original"}),
             observed: Value::Null,
@@ -1404,6 +1455,58 @@ mod tests {
         assert!(load(&conn, "committed", &other).is_err());
         drop(conn);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn extension_backups_never_leave_the_sealed_edit_or_change_legacy_decoding() {
+        let legacy: Edit =
+            serde_json::from_value(json!({"baseline":{},"desired":{},"observed":{}})).unwrap();
+        assert!(legacy.extension.is_none());
+        assert!(validate("extension-lifecycle", &legacy).is_err());
+        let scope = Scope {
+            vault_id: "v".into(),
+            integration_id: "s".into(),
+            config_version: 1,
+            session: 1,
+            context_id: "c".into(),
+            configuration_identity: "i".into(),
+        };
+        let row = Intent {
+            id: "x".into(),
+            scope,
+            target: "extension-lifecycle".into(),
+            revision: 2,
+            status: "uncertain".into(),
+            job_id: "job".into(),
+            updated_at: 1,
+            observed_at: 1,
+            error_code: None,
+            sealed: "ciphertext".into(),
+        };
+        let mut e = legacy;
+        e.extension = Some(super::super::monitoring_extension::Checkpoint {
+            operation: "uninstall".into(),
+            nonce: Uuid::new_v4().to_string(),
+            stage: "backed-up".into(),
+            baseline: json!({}),
+            previous_nonce: None,
+            backup: Some(super::super::monitoring_extension::Snapshot {
+                version: "0.1.0".into(),
+                state: json!({"synthetic-secret-state":true}),
+                configuration: json!({"synthetic-secret-config":true}),
+                enabled: true,
+            }),
+        });
+        let rendered = view(&row, &e);
+        assert_eq!(rendered["extension"]["backupAvailable"], true);
+        assert_eq!(rendered["extension"]["backupVersion"], "0.1.0");
+        let text = rendered.to_string();
+        assert!(!text.contains("synthetic-secret") && !text.contains("ciphertext"));
+        let retained: Edit = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
+        assert_eq!(
+            retained.extension.unwrap().backup.unwrap().configuration["synthetic-secret-config"],
+            true
+        );
     }
 
     #[test]
@@ -1666,6 +1769,8 @@ mod tests {
             call("/api/admin/settings/", None, Some(&key), None).unwrap()["notification_enabled"],
             false
         );
+        let extension_report =
+            crate::data::monitoring_extension::tests::live(&client, &endpoint, &key);
         let _ = client
             .get(format!("{endpoint}/api/logout"))
             .header("Cookie", cookie)
@@ -1677,5 +1782,14 @@ mod tests {
             None
         )
         .is_err());
+        drop(_cleanup);
+        assert!(!root.exists());
+        if let Ok(path) = std::env::var("SHELLBEAM_EXTENSION_LIFECYCLE_REPORT") {
+            let mut report = extension_report;
+            report["cleanup"] = json!(true);
+            report["serverStopped"] = json!(true);
+            report["sourceCommit"] = json!(std::env::var("GITHUB_SHA").ok());
+            std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        }
     }
 }

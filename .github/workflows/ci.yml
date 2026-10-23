@@ -78,6 +78,28 @@ jobs:
         env:
           SHELLBEAM_OFFICIAL_PROBE_RELEASE_LIVE: '1'
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib builtin_production_catalog_and_binaries_verify_without_user_configuration -- --ignored
+      - name: Native extension lifecycle against the pinned official server
+        if: runner.os == 'Linux'
+        env:
+          SHELLBEAM_KOMARI_TEST_BINARY: ${{ runner.temp }}/komari-native-extension-contract
+          SHELLBEAM_EXTENSION_LIFECYCLE_REPORT: ${{ runner.temp }}/monitoring-extension-lifecycle.json
+        run: |
+          node --input-type=module <<'JS'
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { downloadPinned } from './scripts/prepare-komari-agent-release.mjs';
+          const { server } = JSON.parse(await readFile('scripts/fixtures/komari-lifecycle-releases.json'));
+          const bytes = await downloadPinned(`https://github.com/komari-monitor/komari/releases/download/${server.version}/komari-linux-amd64`, server.amd64, 64 * 1024 * 1024);
+          await writeFile(process.env.SHELLBEAM_KOMARI_TEST_BINARY, bytes, { mode: 0o700, flag: 'wx' });
+          JS
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib official_service_wire_contract -- --ignored
+      - name: Retain native extension lifecycle evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-extension-native-lifecycle
+          path: ${{ runner.temp }}/monitoring-extension-lifecycle.json
+          if-no-files-found: error
+          retention-days: 14
       - name: MCP stdio integration
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test mcp_stdio
       - name: Reject notifications without a real desktop notification daemon

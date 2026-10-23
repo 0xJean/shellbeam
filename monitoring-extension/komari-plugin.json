@@ -3,7 +3,7 @@
   "name": {"en":"ShellBeam load alerts", "zh_CN":"ShellBeam 负载告警"},
   "description": "Server-side load rules and scoped notification silence; managed from ShellBeam.",
   "author": "ShellBeam",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "komari": "1.6.0",
   "entry": "server.cjs",
   "permissions": {"node":true,"allowRoutes":true,"allowSystemRPC":true,"timeout":20,"maxHTTPBodyBytes":262144},

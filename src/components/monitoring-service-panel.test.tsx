@@ -153,3 +153,77 @@ it('discards late configuration from a replaced service and revokes its old cont
   expect(screen.queryByDisplayValue('Server')).not.toBeInTheDocument(); expect(closeServiceScope).toHaveBeenCalledWith(scope)
   expect(serviceIntentAction).not.toHaveBeenCalled()
 })
+
+const extensionIntent = (status: ServiceIntent['intent']['status'] = 'prepared'): ServiceIntent => ({ ...row(status), intent: { ...row(status).intent, target: 'extension-lifecycle' }, baseline: { installed: true, version: '0.1.0', identity: 'same-instance' }, desired: { operation: 'uninstall' }, observed: {}, extension: { operation: 'uninstall', stage: 'backed-up', backupAvailable: true, backupVersion: '0.1.0' } })
+async function openExtension() {
+  fireEvent.click(screen.getByText(c.title, { selector: 'summary' }))
+  fireEvent.change(screen.getByLabelText(c.title), { target: { value: 'load-policy' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Check extension' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Uninstall and retain backup' })).toBeEnabled())
+}
+it.each(['upgrade', 'uninstall'] as const)('confirms extension %s, then prepares once and applies only its durable intent', async operation => {
+  const pending = { ...extensionIntent(), extension: { ...extensionIntent().extension!, operation } }
+  vi.mocked(serviceRequest).mockImplementation(async (_scope, action) => (action === 'list' ? [] : action === 'extension-status' ? { installed: true, version: '0.1.0', running: true } : pending) as never)
+  vi.mocked(serviceIntentAction).mockResolvedValue({ ...pending, intent: { ...pending.intent, status: 'verified' } })
+  renderPanel(); await act(async () => {}); await openExtension()
+  fireEvent.click(screen.getByRole('button', { name: operation === 'upgrade' ? 'Upgrade to bundled version' : 'Uninstall and retain backup' }))
+  await waitFor(() => expect(serviceIntentAction).toHaveBeenCalledExactlyOnceWith(scope, pending, 'apply'))
+  expect(requestUserDecision).toHaveBeenCalledWith(expect.objectContaining({ risk: 'high', vaultId: service.vaultId, message: expect.stringContaining('Monitor') }))
+  expect(serviceRequest).toHaveBeenCalledWith(scope, 'extension-prepare', { target: operation, confirmed: true })
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Uninstall and retain backup' })).not.toBeInTheDocument())
+})
+it('declined uninstall performs no prepare or remote mutation', async () => {
+  vi.mocked(serviceRequest).mockImplementation(async (_scope, action) => (action === 'list' ? [] : { installed: true, version: '0.2.0', running: true }) as never)
+  vi.mocked(requestUserDecision).mockResolvedValue({ accepted: false, reason: 'rejected' })
+  renderPanel(); await act(async () => {}); await openExtension()
+  expect(screen.getByRole('button', { name: 'Upgrade to bundled version' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Uninstall and retain backup' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Uninstall and retain backup' })).toBeEnabled())
+  expect(serviceRequest).not.toHaveBeenCalledWith(scope, 'extension-prepare', expect.anything())
+  expect(serviceIntentAction).not.toHaveBeenCalled()
+})
+it('restores a retained backup only through a new confirmed intent with exact id and revision', async () => {
+  const retained = extensionIntent('verified'); const pending = { ...extensionIntent(), extension: { ...extensionIntent().extension!, operation: 'restore' as const } }
+  vi.mocked(serviceRequest).mockImplementation(async (_scope, action) => (action === 'list' ? [retained] : pending) as never)
+  renderPanel(); await screen.findByText(/audit-job/)
+  fireEvent.click(screen.getByText(c.title, { selector: 'summary' })); fireEvent.click(screen.getByText(/Changes & verification/, { selector: 'summary' }))
+  expect(serviceIntentAction).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Restore retained extension' }))
+  await waitFor(() => expect(serviceIntentAction).toHaveBeenCalledExactlyOnceWith(scope, pending, 'apply'))
+  expect(requestUserDecision).toHaveBeenCalledWith(expect.objectContaining({ risk: 'high', message: expect.stringContaining('notifications may resume') }))
+  expect(serviceRequest).toHaveBeenCalledWith(scope, 'extension-restore', { target: 'restore', id: retained.intent.id, revision: retained.intent.revision, confirmed: true })
+})
+it('keeps interrupted extension recovery read-only until explicit retry', async () => {
+  const retained = extensionIntent('uncertain')
+  vi.mocked(serviceRequest).mockImplementation(async () => [retained] as never)
+  vi.mocked(serviceIntentAction).mockResolvedValue({ ...retained, intent: { ...retained.intent, status: 'retry' } })
+  renderPanel(); await screen.findByText(/audit-job/)
+  fireEvent.click(screen.getByText(c.title, { selector: 'summary' })); fireEvent.click(screen.getByText(/Changes & verification/, { selector: 'summary' }))
+  fireEvent.click(screen.getByRole('button', { name: c.review }))
+  expect(screen.queryByRole('button', { name: c.save })).not.toBeInTheDocument()
+  expect(screen.getByText(/encrypted recovery data/)).toBeInTheDocument()
+  expect(serviceIntentAction).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: c.recover }))
+  await waitFor(() => expect(serviceIntentAction).toHaveBeenCalledExactlyOnceWith(scope, retained, 'reconcile', false))
+  expect(requestUserDecision).not.toHaveBeenCalled()
+})
+it('does not apply a prepared uninstall after the Vault session changes', async () => {
+  let resolve!: (value: ServiceIntent) => void
+  vi.mocked(serviceRequest).mockImplementation(async (_scope, action) => (action === 'list' ? [] : action === 'extension-prepare' ? await new Promise<ServiceIntent>(done => { resolve = done }) : { installed: true, version: '0.1.0', running: true }) as never)
+  renderPanel(); await act(async () => {}); await openExtension()
+  fireEvent.click(screen.getByRole('button', { name: 'Uninstall and retain backup' }))
+  await waitFor(() => expect(resolve).toBeTypeOf('function')); vault.state.generation++
+  await act(async () => { resolve(extensionIntent()) })
+  expect(serviceIntentAction).not.toHaveBeenCalled(); expect(closeServiceScope).toHaveBeenCalledWith(scope)
+})
+
+it('explains extension conflicts while keeping the backup and never automatically retrying', async () => {
+  const pending = extensionIntent(); const failed = { ...extensionIntent('uncertain'), intent: { ...extensionIntent('uncertain').intent, errorCode: 'MONITORING_CONFLICT' } }
+  vi.mocked(serviceRequest).mockImplementation(async (_scope, action) => (action === 'list' ? [failed] : action === 'extension-status' ? { installed: true, version: '0.1.0', running: true } : pending) as never)
+  vi.mocked(serviceIntentAction).mockResolvedValue(failed)
+  renderPanel(); await act(async () => {}); await openExtension()
+  fireEvent.click(screen.getByRole('button', { name: 'Uninstall and retain backup' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('The backup remains')
+  expect(serviceIntentAction).toHaveBeenCalledExactlyOnceWith(scope, pending, 'apply')
+  expect(screen.getByText(/Encrypted recovery backup retained/)).toBeInTheDocument()
+})

@@ -23,6 +23,8 @@ function admin(req, res) {
   return true
 }
 const view = () => ({ extension_identity: state.identity, revision: state.revision, rules: state.policy.rules, silences: state.policy.silences })
+// A native upgrade verifies the loaded runtime, not only the files on disk.
+server.route('GET', PATH + '/lifecycle', (req, res) => { if (admin(req, res)) json(res, 200, { version: '0.2.0', identity: state.identity, revision: state.revision, stateSchema: 1 }) })
 server.route('GET', PATH + '/policy', (req, res) => { if (admin(req, res)) json(res, 200, view()) })
 server.route('GET', PATH + '/status', (req, res) => { if (admin(req, res)) json(res, 200, { revision: state.revision, evaluations: state.evaluations, events: state.events, receipts: state.receipts || [], scope: 'extension-load-notifications' }) })
 let saving = false
