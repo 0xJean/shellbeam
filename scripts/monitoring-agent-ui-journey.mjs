@@ -64,10 +64,16 @@ async function policy(d, h, f, source) {
   if (source === 'custom') {
     // Public production key and immutable original catalog, never a fixture key
     // or a rollback of the current production catalog / monotonic watermark.
-    for (const [selector, value] of fields) await d.fill(selector, value)
+    for (const [selector, value] of fields) {
+      await d.fill(selector, value, { keyboardClear: true })
+      assert.equal(await d.attr(selector, 'value'), value, 'agent_ui_policy_field_not_entered')
+    }
   }
+  assert.equal(await d.attr(control(h, 'policy-source'), 'value'), source, 'agent_ui_policy_source_not_selected')
+  assert(await d.isSelected(box + ' input[type="checkbox"]'), 'agent_ui_policy_disabled')
   await d.click(control(h, 'policy-save')); await confirm(d, ['trusted publisher and download sources'])
   await d.until(async () => {
+    assert.equal((await d.findAll(panel(h) + ' [role="alert"]')).length, 0, 'agent_ui_policy_save_error')
     for (const status of await d.findAll(panel(h) + ' [role="status"]')) {
       if (await d.text(status) === 'Release trust saved.' && await d.isEnabled(control(h, 'policy-save'))) return true
     }

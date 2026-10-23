@@ -891,3 +891,22 @@ source/key and read error; a production-component test verifies disclosure
 unmount removes an unsaved draft and a deferred native read supplies the new
 form. The complete installed-App upgrade/rollback/recovery remains pending;
 these targeted tests are not a substitute for that report.
+
+`4853e4d` finished 18/19 checks, with all corresponding Linux Ops, server/native
+extension, dual-architecture helper, migration UI, extension UI and original Ops
+UI reports independently verified against merge `61dd06e`. The Agent UI's first
+attempt stalled on slow/retried Azure Ubuntu mirror downloads and was cancelled
+before App execution; the same-head second attempt reached a real
+`KOMARI_AGENT_POLICY_INVALID` after entering the historical custom policy.
+The completed-save gate correctly rejected it. A character-by-character
+production-component regression reproduced the defect: typing the first comma
+in allowed hosts immediately removed it because `split/trim/filter` ran on
+every change, concatenating later domains. The editor now retains raw text
+while editing and normalizes only for an explicitly confirmed save, then shows
+the native response. Cancelling leaves the draft and persistence untouched.
+Rust URL/key/allowed-host validation is unchanged. The UI journey also uses real
+keyboard clearing, checks each public field's exact entered value and selected
+source/enabled state before saving, and fails immediately on a native alert.
+No production credentials, catalog, public root or user App were changed.
+The native Agent upgrade/rollback/recovery proof still requires the new head;
+18 older green checks do not substitute for it.

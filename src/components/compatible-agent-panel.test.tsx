@@ -129,6 +129,30 @@ describe('compatible monitoring probe lifecycle', () => {
     expect(screen.getByRole('button', { name: c.uninstall })).toBeEnabled()
     expect(operateCompatibleAgent).not.toHaveBeenCalled()
   })
+  it('preserves separators while typing allowed hosts and normalizes only the confirmed save', async () => {
+    const stored = { source: 'custom' as const, enabled: true, manifestUrl: 'https://github.com/catalog.json', trustedPublicKey: 'public-key', allowedHosts: ['old.test'] }
+    vi.mocked(compatibleAgentPolicy).mockImplementation(async value => value ?? stored)
+    panel(); await act(async () => {})
+    fireEvent.click(screen.getByText(c.policy)); fireEvent.click(screen.getByRole('button', { name: c.loadPolicy }))
+    const field = await screen.findByLabelText(c.hosts) as HTMLInputElement
+    fireEvent.change(field, { target: { value: '' } })
+    const typed = 'raw.githubusercontent.com, github.com, , release-assets.githubusercontent.com, '
+    let prefix = ''
+    for (const character of typed) {
+      prefix += character
+      fireEvent.change(field, { target: { value: field.value + character } })
+      expect(field).toHaveValue(prefix)
+    }
+    vi.mocked(requestUserDecision).mockResolvedValueOnce({ accepted: false, reason: 'rejected' })
+    fireEvent.click(screen.getByRole('button', { name: c.savePolicy }))
+    await waitFor(() => expect(screen.getByRole('button', { name: c.savePolicy })).toBeEnabled())
+    expect(compatibleAgentPolicy).toHaveBeenCalledTimes(1); expect(field).toHaveValue(typed)
+    fireEvent.click(screen.getByRole('button', { name: c.savePolicy }))
+    await screen.findByText(c.saved)
+    const allowedHosts = ['raw.githubusercontent.com', 'github.com', 'release-assets.githubusercontent.com']
+    expect(compatibleAgentPolicy).toHaveBeenLastCalledWith({ ...stored, allowedHosts }, true)
+    expect(field).toHaveValue(allowedHosts.join(', '))
+  })
   it('discards the policy draft on disclosure close and renders only a completed native read after reopening', async () => {
     const stored = { source: 'official' as const, enabled: true, manifestUrl: 'https://official.test/catalog.json', trustedPublicKey: 'compiled-root', allowedHosts: ['official.test'] }
     vi.mocked(compatibleAgentPolicy).mockResolvedValueOnce(stored)
