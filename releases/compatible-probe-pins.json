@@ -47,6 +47,33 @@
           "size": 12579071
         }
       }
+    },
+    "1.5.13": {
+      "source": {
+        "repository": "0xJean/shellbeam-monitoring-agent",
+        "tag": "v1.5.13",
+        "commit": "a7154f8151222c2eff3146e2acb7b3c8c1b6276c",
+        "upstreamVersion": "1.5.11",
+        "upstreamCommit": "c7bafb79b1a73ed9e14e2c248ae4d4163e506036"
+      },
+      "archives": {
+        "amd64": {
+          "sha256": "760b2677800d82e5aabcfbad82059cf51c946951c842ea60e93f29512489c935",
+          "size": 14045906
+        },
+        "arm64": {
+          "sha256": "a25d1f8ca6d27ad253db577b98c5ae59de51192f2d682cec715f5398e49dfa09",
+          "size": 12669802
+        }
+      },
+      "amd64": {
+        "sha256": "53708f015e53618be1722668b49766376a70bd432d44911c75e116c4e227df73",
+        "size": 12148920
+      },
+      "arm64": {
+        "sha256": "b2531bc213b4cb84a340d81f77fde4629d093c0f9129a3a37c843f5ed64c1c56",
+        "size": 11468984
+      }
     }
   }
 }

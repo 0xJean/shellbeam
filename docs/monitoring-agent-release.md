@@ -65,3 +65,23 @@ verified manifest and exact local executable. Native client acceptance should
 cover a fresh 1.5.12 installation and 1.5.11 → 1.5.12 → retained 1.5.11 → 1.5.12,
 checking the real process hash, original fresh reports, same node/token/config,
 SSH/Vault ownership and recovery/audit state against ShellBeam Server.
+
+## Reviewed 1.5.13 inputs
+
+Second owned maintenance release: source `a7154f8151222c2eff3146e2acb7b3c8c1b6276c`,
+tag `v1.5.13`, source CI `39983161969` and release build `39983163294`.
+Collection behavior/configuration remain compatible with 1.5.12. Both native
+Linux checks and all eleven release platform builds passed. Exact Linux binaries
+and complete legal archives were downloaded from that draft, checked against
+its checksum files and inspected for original source identity and attribution.
+
+- amd64: `53708f015e53618be1722668b49766376a70bd432d44911c75e116c4e227df73`, 12148920 bytes.
+- arm64: `b2531bc213b4cb84a340d81f77fde4629d093c0f9129a3a37c843f5ed64c1c56`, 11468984 bytes.
+
+The new pin row is additive; original 1.5.10/1.5.11/1.5.12 artifact metadata,
+release assets, signatures and the production root remain unchanged. After this
+release metadata reaches main, dispatch version 1.5.13/revision 1 through the
+existing protected environment. No private key is copied to the workstation.
+Clients with the prior compiled allowlist need an updated App before admitting
+1.5.13. Rollback explicitly restores retained 1.5.12 bytes; it never rewinds the
+public stable feed. Real WEB acceptance is tracked in PR #2 separately.
