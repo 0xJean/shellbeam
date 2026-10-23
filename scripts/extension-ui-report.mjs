@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
+import { verifyServerIdentity } from './monitoring-agent-ui-evidence.mjs'
 export function verifyExtensionUiReport(r) {
   assert(r.success && r.cleanup && r.applicationStopped)
   assert(/^[a-f0-9]{40}$/.test(r.headCommit)&&/^[a-f0-9]{40}$/.test(r.checkedOutCommit))
   const j=r.journey;assert(j.passed&&j.installedPackage&&j.productionIpc&&j.realVault&&j.nativeShellBeamPages)
   for(const [key,value] of Object.entries({install:1,uninstall:1,restore:2,interrupted:2,upgrade:1,conflict:1,noReplayMs:5000}))assert.equal(j[key],value)
   const event=name=>{const e=r.events.filter(e=>e.name===name);assert.equal(e.length,1,name);return e[0]}
-  const f=event('extension-fixture-ready');assert(f.officialVersion==='1.6.0'&&f.pinnedServer&&f.services===2)
+  const f=event('extension-fixture-ready');assert(f.officialVersion==='1.6.0'&&f.pinnedServer&&f.services===2);verifyServerIdentity(f.serverIdentity);assert(f.preInstallIdentityVerified&&/^[a-f0-9]{64}$/.test(f.binarySha256))
   assert(event('extension-cancelled-without-mutation').passed)
   const installed=event('extension-app-installed');assert(installed.version==='0.2.0'&&installed.fixedBytes&&installed.explicitConfirmation)
   const removed=event('extension-app-uninstalled');assert(removed.backupRetained&&removed.explicitConfirmation)

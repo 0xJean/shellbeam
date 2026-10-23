@@ -750,7 +750,7 @@ const en: Record<string, string> = {
   'settings.customHelper': 'Enter your OpenAI-compatible base URL and model ID. Changing the URL clears its active API key; enter the key after confirming the destination. Prefer HTTPS for nonlocal endpoints.',
   'settings.apiKeyHelper': 'Your API key is stored locally and never sent to ShellBeam servers.',
   'settings.komariTitle': 'ShellBeam monitoring',
-  'settings.komariDescription': 'Connect ShellBeam Server or a compatible monitoring service for host metrics. API keys stay in the active Vault.',
+  'settings.komariDescription': 'Connect ShellBeam Server for host metrics. API keys stay in the active Vault.',
   'settings.komariRefresh': 'Refresh monitoring services',
   'settings.komariNew': 'New',
   'settings.komariName': 'Name',

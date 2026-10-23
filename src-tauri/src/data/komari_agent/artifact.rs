@@ -115,6 +115,62 @@ pub fn verify(release: &TrustedRelease) -> Result<(), String> {
         .verify_strict(&canonical(m), &signature)
         .map_err(|_| "KOMARI_AGENT_SIGNATURE_INVALID".into())
 }
+// New deployments are an own-product boundary, separate from the historical
+// signature format. Keep generic verify() unchanged for retained rollback.
+pub fn require_shellbeam(release: &TrustedRelease) -> Result<(), String> {
+    verify(release)?;
+    if release.public_key != super::official::trust().public_key {
+        return Err("KOMARI_AGENT_SHELLBEAM_REQUIRED".into());
+    }
+    let pins: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../releases/compatible-probe-pins.json"
+    ))
+    .map_err(|_| "KOMARI_AGENT_SHELLBEAM_REQUIRED")?;
+    let row = &pins["versions"][&release.manifest.version];
+    let source = &row["source"];
+    if source["repository"] != "0xJean/shellbeam-monitoring-agent"
+        || source["commit"]
+            .as_str()
+            .is_none_or(|v| v.len() != 40 || !v.bytes().all(|c| c.is_ascii_hexdigit()))
+        || !matches_pin(&row[&release.manifest.architecture], &release.manifest)
+    {
+        return Err("KOMARI_AGENT_SHELLBEAM_REQUIRED".into());
+    }
+    Ok(())
+}
+fn matches_pin(pin: &serde_json::Value, m: &Manifest) -> bool {
+    pin["sha256"].as_str() == Some(m.sha256.as_str())
+        && pin["size"].as_u64() == Some(m.size_bytes as u64)
+}
+// Adoption may preserve the exact already-running reviewed legacy binary to
+// establish a reversible migration checkpoint. It is never a fresh install,
+// upgrade or transfer exemption, and still requires its original signature.
+pub fn require_deployment(
+    release: &TrustedRelease,
+    adopted: Option<&super::Legacy>,
+) -> Result<(), String> {
+    verify(release)?;
+    if require_shellbeam(release).is_ok() {
+        return Ok(());
+    }
+    let m = &release.manifest;
+    if let Some(old) = adopted {
+        let pins: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../releases/compatible-probe-pins.json"
+        ))
+        .map_err(|_| "KOMARI_AGENT_SHELLBEAM_REQUIRED")?;
+        if release.public_key == super::official::trust().public_key
+            && matches!(m.version.as_str(), "1.5.10" | "1.5.11")
+            && old.version == m.version
+            && old.sha256 == m.sha256
+            && old.size_bytes == m.size_bytes
+            && matches_pin(&pins["versions"][&m.version][&m.architecture], m)
+        {
+            return Ok(());
+        }
+    }
+    Err("KOMARI_AGENT_SHELLBEAM_REQUIRED".into())
+}
 fn custom_source() -> String {
     "custom".into()
 }

@@ -14,6 +14,7 @@ pub mod komari_persistence;
 pub mod local_ops;
 pub mod monitoring_channels;
 pub mod monitoring_extension;
+mod monitoring_identity;
 pub mod monitoring_load_policy;
 pub mod monitoring_service;
 pub mod operation_jobs;

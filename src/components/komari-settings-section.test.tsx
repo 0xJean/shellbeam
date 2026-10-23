@@ -118,6 +118,23 @@ describe('optional Komari data sources', () => {
   })
 })
 
+describe('new destination product admission', () => {
+  it.each(['en', 'zh-CN'] as const)('preserves the draft and never writes credentials when server identity is rejected (%s)', async locale => {
+    localStorage.setItem('shellbeam.locale', locale)
+    const text = locale === 'en' ? en : zhCN
+    await renderEditor()
+    vi.mocked(upsertKomariIntegration).mockRejectedValueOnce(new Error('MONITORING_SHELLBEAM_REQUIRED'))
+    fireEvent.change(screen.getByLabelText(text['settings.komariEndpoint']), { target: { value: 'https://upstream.example' } })
+    fireEvent.change(screen.getByLabelText(text['settings.komariApiKey']), { target: { value: 'unsaved-key' } })
+    fireEvent.click(screen.getByRole('button', { name: text['settings.komariSave'] }))
+    expect(await screen.findByText(monitoringServiceCopy[locale].ownServer)).toBeVisible()
+    expect(vault.saveSecret).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
+    expect(screen.getByLabelText(text['settings.komariApiKey'])).toHaveValue('unsaved-key')
+    expect(screen.queryByText(text['settings.komariSaved'])).not.toBeInTheDocument()
+  })
+})
+
 describe('native Komari connection flow', () => {
   it.each(['en', 'zh-CN'] as const)('verifies the saved custom credential, discovers nodes, and completes without opening a console (%s)', async (locale) => {
     localStorage.setItem('shellbeam.locale', locale)

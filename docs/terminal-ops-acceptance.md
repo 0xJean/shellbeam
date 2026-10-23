@@ -1001,3 +1001,17 @@ navigation change; missing caption geometry rejects before any click.
 最终本地 `TMPDIR=/tmp npx vitest run --maxWorkers=1`：1637 通过、17 项 Linux 限定跳过；原断言与超时不变。默认临时目录运行曾出现 shell collector 超时，后续并行全量还有两项 shell 子进程超时和两个主机面板查找失败；四个文件以 `/tmp` 串行独立复测 54 项通过，再完整串行复测通过。未确认宿主时序/临时目录因素的唯一根因，未修改相关业务或放宽测试。日志保留在 `/tmp/shellbeam-brand-final-suite.log`、`/tmp/shellbeam-brand-scoped-recheck.log` 和 `/tmp/shellbeam-brand-tmpdir-suite.log`。
 
 261 项 Node 协议、5 项 Rust MCP 协议、生产构建、cargo fmt 和 diff 检查通过。修改范围 ESLint 除 ActivityLogPanel 已有的 `set-state-in-effect` 外无其他错误或警告；将 HEAD 原文件经相同 ESLint stdin 检查确认相同基线错误，本批未用规则禁用掩盖。九个告警生成/聚合、通知去重及制品身份文件对 HEAD 的字节比对不变；完整新 head 安装包及真实服务报告仍须 CI 独立验收。
+
+### ShellBeam 自有服务与探针准入（2026-10-23）
+
+新的监控连接/地址在原生保存前匿名读取产品身份，拒绝仅有兼容版本、未知产品、重定向与不可用目标。保存后跨 Vault/session 与并发记录变化仍拒绝覆盖，已有相同地址的离线编辑不需网络。管理员初始化/登录再次核验身份，初始化路由切换以正常 `/api/me` 可用为准。新探针安装/升级、跨主机迁移目标和地址迁移，以及扩展新安装/启用、升级准备/提交使用自有 Server 门禁；保留回滚、检查、卸载和已保存备份恢复。
+
+新制品准入要求内置生产公钥、原签名、已审 fork 来源 commit 与两 CPU 架构的精确哈希/大小。真实公开 1.5.12 manifest 正测；同字节以自定义测试 key 重签、改名旧版、改大小、任意签名字节均拒绝。通用签名/保留回滚不改。唯一旧版接管例外是原生产签名与当前真实旧服务完全相同的固定 1.5.10/1.5.11 二进制，并继续核验账号/配置/原地址/节点 Token；不允许旧版全新安装、升级或跨机器新派送。
+
+Agent、迁移及扩展安装包工作流固定构建 ShellBeam Server `ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b`，初始化前后校验产品/构建身份；迁移仍为四主机、双机器/服务/账号。Agent 升级旅程改为真实非托管 1.5.11 → App 接管同字节 → 生产 1.5.12 升级 → 保留的 1.5.11 回滚 → 再升级中断/只读恢复，原 8 条任务、5 个 CPU 新样本、6 张 PNG、5000ms 无重放及历史保留断言不减。没有 App 数据库种子或新安装门禁例外。
+
+本地隔离 arm64 双容器预检通过：固定自有 Server 在安装前后均返回真实身份，实际旧 systemd 服务/二进制进程与原 CPU 上报验证后，生产 remote helper 接管预检成功；两容器/网络/服务均清理。证据 `/tmp/shellbeam-own-server-legacy-fixture.json`，明确 `appCoordinator:false`，不能代替安装包全链路。初次夹具写二进制使用 tee 把制品回显到 stdout，触发进程缓冲区限制；已改为固定 Python 从 stdin 写文件且不回显，无扩大 buffer、超时或放宽断言。日志只涉及公开制品，未读取真实用户凭据。
+
+本地原生 276 项通过、4 opt-in 忽略；Node 协议 264 项通过；生产构建、修改范围 ESLint、cargo fmt、diff 检查通过。85 项接入/凭据/探针面板定向回归通过，包括中英文身份拒绝后不写凭据、不显示保存成功且保留输入。首次全量前端 1638 通过、1 项旧文案断言仍要求「兼容监控服务」失败；按新产品范围改为明确要求 ShellBeam Server 且不得宣传泛兼容接入，其他原断言/超时不变。最终 `TMPDIR=/tmp npx vitest run --maxWorkers=1` 完整复测 1639 通过、17 项 Linux 限定跳过。
+
+前一展示提交 `e8fa543` 已有 19 项 Actions 成功，仅属历史基线。本批准入提交需要重新核验最新 head 的全部 CI 与独立报告。Helper/native 仍保留上游测试作为旧部署兼容证据；当前新增业务的安装包证据必须使用自有 Server。未修改真实 App、Vault、凭据、发布私钥/配置、既有签名域/信任根或 12 个用户未跟踪图标。

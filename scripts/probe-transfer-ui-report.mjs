@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { serverIdentity } from './monitoring-agent-ui-evidence.mjs'
 export function verifyTransferUiReport(report) {
   assert(report.success===true && report.applicationStopped===true && report.cleanup===true)
   assert(/^[a-f0-9]{40}$/.test(report.headCommit) && /^[a-f0-9]{40}$/.test(report.checkedOutCommit))
@@ -8,6 +9,9 @@ export function verifyTransferUiReport(report) {
   const event=name=>{const matches=report.events.filter(e=>e.name===name);assert.equal(matches.length,1,name);return matches[0]}
   const fixture=event('transfer-fixture-ready');assert(fixture.machineIdentitiesDistinct && fixture.services===2 && fixture.hosts===4 && fixture.productionKeyId==='compatible-probe-2026-01' && fixture.sequence>=1792594908584)
   assert(['amd64','arm64'].includes(fixture.architecture))
+  const servers=report.events.filter(e=>e.name==='agent-server-identity-verified')
+  assert.deepEqual(servers.map(s=>s.service),[0,1])
+  assert(servers.every(s=>s.product===serverIdentity.product&&s.commit===serverIdentity.hash&&s.preInstallIdentityVerified&&/^[a-f0-9]{64}$/.test(s.binarySha256)))
   for(const name of ['transfer-app-install-verified','transfer-app-cross-service-machine-account-completed','transfer-app-restore-verified','transfer-app-finish-verified']) {
     const e=event(name);assert(Number.isSafeInteger(e.originalSampleAt)&&e.originalSampleAt>e.before&&e.originalSampleAt>=e.started-5000&&e.originalSampleAt>=e.verifiedAt-60000&&e.originalSampleAt<=e.verifiedAt+5000)
     assert(/^[a-f0-9]{64}$/.test(e.processSha256))

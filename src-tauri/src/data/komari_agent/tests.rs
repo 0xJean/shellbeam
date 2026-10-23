@@ -550,3 +550,82 @@ fn migration_intent_and_audit_survive_reopen_without_replaying_or_rewriting_old_
     drop(db);
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn new_deployments_require_production_signed_own_bytes_while_legacy_adoption_remains_reversible() {
+    let own: Value = serde_json::from_str(include_str!(
+        "../../../../scripts/fixtures/shellbeam-agent-production-catalog.json"
+    ))
+    .unwrap();
+    let old: Value = serde_json::from_str(include_str!(
+        "../../../../releases/compatible-probe-bootstrap.json"
+    ))
+    .unwrap();
+    for arch in ["amd64", "arm64"] {
+        let from = |catalog: &Value| TrustedRelease {
+            manifest: serde_json::from_value(
+                catalog["artifacts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|m| m["architecture"] == arch)
+                    .unwrap()
+                    .clone(),
+            )
+            .unwrap(),
+            public_key: official::trust().public_key,
+        };
+        let own = from(&own);
+        assert_eq!(own.manifest.version, "1.5.12");
+        artifact::require_shellbeam(&own).unwrap();
+        artifact::require_deployment(&own, None).unwrap();
+        let mut resigned = own.clone();
+        let key = SigningKey::from_bytes(&[7; 32]);
+        resigned.public_key = STANDARD.encode(key.verifying_key().to_bytes());
+        resigned.manifest.signature = STANDARD.encode(
+            key.sign(&artifact::canonical(&resigned.manifest))
+                .to_bytes(),
+        );
+        artifact::verify(&resigned).unwrap();
+        assert_eq!(
+            artifact::require_shellbeam(&resigned).unwrap_err(),
+            "KOMARI_AGENT_SHELLBEAM_REQUIRED"
+        );
+        let mut tampered = own.clone();
+        tampered.manifest.size_bytes += 1;
+        assert!(artifact::require_shellbeam(&tampered).is_err());
+        let old = from(&old);
+        assert_eq!(old.manifest.version, "1.5.11");
+        artifact::verify(&old).unwrap();
+        assert!(artifact::require_deployment(&old, None).is_err());
+        let mut legacy = Legacy {
+            unit: "komari-agent.service".into(),
+            unit_sha256: "a".repeat(64),
+            executable: "/opt/legacy/agent".into(),
+            sha256: old.manifest.sha256.clone(),
+            size_bytes: old.manifest.size_bytes,
+            version: "1.5.11".into(),
+            config_path: Some("/opt/legacy/config.json".into()),
+            config_sha256: "b".repeat(64),
+            endpoint: "https://existing.example".into(),
+            enabled: true,
+        };
+        artifact::require_deployment(&old, Some(&legacy)).unwrap();
+        let mut alternate_root = old.clone();
+        alternate_root.public_key = STANDARD.encode(key.verifying_key().to_bytes());
+        alternate_root.manifest.signature = STANDARD.encode(
+            key.sign(&artifact::canonical(&alternate_root.manifest))
+                .to_bytes(),
+        );
+        assert!(artifact::require_deployment(&alternate_root, Some(&legacy)).is_err());
+        legacy.version = "1.5.10".into();
+        assert!(artifact::require_deployment(&old, Some(&legacy)).is_err());
+        legacy.version = "1.5.11".into();
+        legacy.sha256 = "0".repeat(64);
+        assert!(artifact::require_deployment(&old, Some(&legacy)).is_err());
+        let mut renamed = old;
+        renamed.manifest.version = "1.5.12".into();
+        assert!(artifact::require_shellbeam(&renamed).is_err());
+    }
+    assert!(artifact::require_shellbeam(&release("1.5.12", b"signed unrelated binary")).is_err());
+}

@@ -6,21 +6,23 @@ export function verifyMonitoringAgentUiReport(r) {
   assert(/^[a-f0-9]{40}$/.test(r.headCommit) && /^[a-f0-9]{40}$/.test(r.checkedOutCommit))
   const j = r.journey
   assert(j?.passed && j.installedPackage && j.productionIpc && j.realVault && j.nativeShellBeamPages)
-  assert(j.installs === 2 && j.upgrades === 2 && j.rollbacks === 1 && j.readonlyRecovery === 1 && j.restoredAuditJobs === 8 && j.noReplayMs === 5000)
+  assert(j.installs === 1 && j.adoptions === 1 && j.upgrades === 2 && j.rollbacks === 1 && j.readonlyRecovery === 1 && j.restoredAuditJobs === 8 && j.noReplayMs === 5000)
   const event = name => { const values = r.events.filter(e => e.name === name); assert.equal(values.length, 1, name); return values[0] }
   const servers = r.events.filter(e => e.name === 'agent-server-identity-verified')
   assert.deepEqual(servers.map(s => s.service), [0, 1])
-  assert(servers.every(s => s.product === serverIdentity.product && s.commit === serverIdentity.hash && /^[a-f0-9]{64}$/.test(s.binarySha256)))
+  assert(servers.every(s => s.preInstallIdentityVerified && s.product === serverIdentity.product && s.commit === serverIdentity.hash && /^[a-f0-9]{64}$/.test(s.binarySha256)))
   const p = event('agent-production-release-verified')
   assert(p.keyId === 'compatible-probe-2026-01' && p.sequence > 1792594908584 && p.version === '1.5.12' && p.signatureVerified && p.historicalCatalogPinned)
   assert(['amd64', 'arm64'].includes(p.architecture)); assert(event('agent-no-user-key-configuration').passed)
-  const names = ['agent-fresh-install', 'agent-old-install', 'agent-upgraded', 'agent-rolled-back', 'agent-reupgrade-recovered']
+  const names = ['agent-fresh-install', 'agent-existing-adopted', 'agent-upgraded', 'agent-rolled-back', 'agent-reupgrade-recovered']
   for (const [i, name] of names.entries()) {
     const e = event(name), version = i === 1 || i === 3 ? '1.5.11' : '1.5.12'
     assert.equal(e.version, version); verifyFreshCpu({ time: e.originalSampleAt, cpu: e.cpu }, e)
     assert.equal(e.processSha256, reviewed[version][p.architecture].sha256)
     assert(e.configurationRetained && e.nodeAndTokenRetained)
   }
+  const legacy=event('agent-existing-unmanaged-prepared');assert(legacy.version==='1.5.11'&&legacy.appDatabaseUntouched&&legacy.processSha256===reviewed['1.5.11'][p.architecture].sha256&&Number.isSafeInteger(legacy.originalSampleAt)&&legacy.originalSampleAt>0)
+  const retained=event('agent-legacy-checkpoint-preserved');assert(retained.passed&&retained.sameReviewedBinary&&retained.originalFilesRetained)
   const recovery = event('agent-interrupted-readonly-recovery'); assert(recovery.passed && recovery.noReplayMs === 5000 && recovery.unknownAuditRetained)
   const audit = event('agent-audit-restored')
   assert(audit.passed && audit.noReplayMs === 5000 && audit.allProbesStopped && audit.nodeCredentialsAndHistoryRetained && audit.jobs.length === 8)
@@ -36,7 +38,7 @@ export function verifyMonitoringAgentUiReport(r) {
     scopes.set(job.hostId, job.transport)
   }
   assert.equal(scopes.size, 2); assert.equal(new Set(scopes.values()).size, 2)
-  assert.deepEqual(audit.jobs.map(j => j.action).sort(), ['install', 'install', 'upgrade', 'upgrade', 'rollback', 'inspect', 'uninstall', 'uninstall'].map(a => `monitoring.agent.${a}`).sort())
+  assert.deepEqual(audit.jobs.map(j => j.action).sort(), ['install', 'adopt', 'upgrade', 'upgrade', 'rollback', 'inspect', 'uninstall', 'uninstall'].map(a => `monitoring.agent.${a}`).sort())
   assert.equal(audit.jobs.find(j => j.status === 'unknown').action, 'monitoring.agent.upgrade')
   assert(audit.auditRowVisible && audit.jobs.some(j => j.id === audit.auditRowJobId && j.status === audit.auditRowStatus))
   const history = r.events.filter(e => e.name === 'agent-history-retained'); assert.deepEqual(history.map(e => e.role), ['source', 'target'])

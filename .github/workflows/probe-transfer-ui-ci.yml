@@ -19,6 +19,17 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Check out the reviewed ShellBeam Server
+        uses: actions/checkout@v4
+        with:
+          repository: 0xJean/shellbeam-server
+          ref: ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b
+          path: .tmp/monitoring-server-input
+          persist-credentials: false
+      - name: Build exact server for isolated targets
+        run: |
+          test "$(git -C .tmp/monitoring-server-input rev-parse HEAD)" = ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b
+          docker build --target artifacts --build-arg VERSION_HASH=ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b --output "type=local,dest=$RUNNER_TEMP/shellbeam-server-input" .tmp/monitoring-server-input
       - uses: actions/setup-node@v4
         with:
           node-version: 24

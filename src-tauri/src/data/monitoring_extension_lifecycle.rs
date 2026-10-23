@@ -21,6 +21,14 @@ pub(super) fn prepare_request(
     token: &str,
 ) -> Result<Value, String> {
     let scope = &input.scope;
+    if input.action == "extension-prepare" && input.target == "upgrade" {
+        super::super::monitoring_identity::require_shellbeam(&remote.call(
+            "/api/version",
+            None,
+            None,
+            None,
+        )?)?;
+    }
     let cp = if input.action == "extension-restore" {
         let mut row = load(&db(app)?, &input.id, scope)?;
         if input.revision != Some(row.revision)
@@ -137,6 +145,14 @@ pub(super) fn act(
             Some("MONITORING_READBACK_REQUIRED"),
         )?;
         return Ok(view(&row, &edit));
+    }
+    if cp.operation == "upgrade" {
+        super::super::monitoring_identity::require_shellbeam(&remote.call(
+            "/api/version",
+            None,
+            None,
+            None,
+        )?)?;
     }
     let result = ext::apply(&io, &mut cp, |next| {
         checkpoint(app, scope, &mut row, &mut edit, next)

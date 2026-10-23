@@ -1,6 +1,6 @@
 export const komariOnboardingCopy = {
   en: {
-    title: 'ShellBeam monitoring', description: 'Connect ShellBeam Server or a compatible monitoring service to existing hosts. Daily monitoring and operations stay in ShellBeam.',
+    title: 'ShellBeam monitoring', description: 'Connect ShellBeam Server to existing hosts. Daily monitoring and operations stay in ShellBeam.',
     connection: '1. Connection', mapping: '2. Host associations', complete: '3. Finish',
     connectHint: 'Enter the service address, then sign in or supply an API key. Leave an existing key blank to keep it.',
     verify: 'Verify connection and discover nodes', verifying: 'Verifying connection…', saveFirst: 'Save changes before verifying this connection.',
@@ -20,7 +20,7 @@ export const komariOnboardingCopy = {
     nativeHint: 'Connect with a service API key or administrator sign-in. New services can be initialized in ShellBeam.',
   },
   'zh-CN': {
-    title: 'ShellBeam 监控', description: '将 ShellBeam Server 或兼容监控服务关联到已有主机，日常监控和运维统一在 ShellBeam 完成。',
+    title: 'ShellBeam 监控', description: '将 ShellBeam Server关联到已有主机，日常监控和运维统一在 ShellBeam 完成。',
     connection: '1. 连接', mapping: '2. 关联主机', complete: '3. 完成',
     connectHint: '填写服务地址后，选择管理员登录或 API 密钥接入。编辑已有服务时，密钥留空即可保留现有凭据。',
     verify: '验证连接并发现节点', verifying: '正在验证连接…', saveFirst: '请先保存修改，再验证此连接。',

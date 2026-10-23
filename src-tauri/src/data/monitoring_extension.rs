@@ -537,6 +537,12 @@ impl Remote<'_> {
         Ok(())
     }
     pub(super) fn enable_extension(&self, token: &str) -> Result<(), String> {
+        super::monitoring_identity::require_shellbeam(&self.call(
+            "/api/version",
+            None,
+            None,
+            None,
+        )?)?;
         let io = Connection {
             remote: self,
             token,

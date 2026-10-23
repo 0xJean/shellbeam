@@ -279,7 +279,7 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
         }
       }
     } catch (cause) {
-      if (alive.current && isCurrentVault()) { const code = serviceErrorCode(cause); setError(authMode === 'key' ? (cause instanceof Error ? cause.message : String(cause)) : code.includes('PERMISSION') ? access.permission : code.includes('UNSUPPORTED') ? access.unsupported : code.includes('INVALID') ? access.invalid : access.network) }
+      if (alive.current && isCurrentVault()) { const code = serviceErrorCode(cause); setError(code === 'MONITORING_SHELLBEAM_REQUIRED' ? access.ownServer : code === 'MONITORING_IDENTITY_UNAVAILABLE' ? access.identityUnavailable : authMode === 'key' ? (cause instanceof Error ? cause.message : String(cause)) : code.includes('PERMISSION') ? access.permission : code.includes('UNSUPPORTED') ? access.unsupported : code.includes('INVALID') ? access.invalid : access.network) }
     } finally {
       if (alive.current) setBusy(false)
     }

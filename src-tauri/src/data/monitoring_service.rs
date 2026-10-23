@@ -960,6 +960,14 @@ fn authorize(app: &tauri::AppHandle, input: &Request, remote: &Remote) -> Result
     })?;
     let mut cookie = None;
     let result = (|| {
+        // Product identity must precede installation/login and credential
+        // submission, including when opening a retained legacy connection.
+        super::monitoring_identity::require_shellbeam(&remote.call(
+            "/api/version",
+            None,
+            None,
+            None,
+        )?)?;
         if input.action == "initialize" {
             let status = remote.call("/api/install/status", None, None, None)?;
             if status["required"] != true {
@@ -973,12 +981,15 @@ fn authorize(app: &tauri::AppHandle, input: &Request, remote: &Remote) -> Result
             // A new service switches from its install router asynchronously.
             // Bounded reads are safe; installation itself is never replayed.
             for _ in 0..20 {
-                if remote.version(None).is_ok() {
+                if remote.call("/api/me", None, None, None).is_ok() {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
         }
+        // /api/version is also available before initialization. Only a normal
+        // read route proves the install router has finished transitioning.
+        remote.call("/api/me", None, None, None)?;
         remote.version(None)?;
         let login=remote.call("/api/login",Some(&json!({"username":username,"password":password,"2fa_code":input.two_factor.as_deref().unwrap_or("")})),None,None)?;
         let session = login["set-cookie"]["session_token"]

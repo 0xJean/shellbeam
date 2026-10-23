@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { serverIdentity } from './monitoring-agent-ui-evidence.mjs'
 import { createServer } from 'node:http'
 import { spawnSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -34,7 +35,7 @@ test('preservation proof rejects lost state, receipts, dispatch markers and conf
 function report() {
   const jobs=Array.from({length:13},(_,i)=>({id:`00000000-0000-0000-0000-${String(i).padStart(12,'0')}`,status:i<3?'unknown':'completed',action:['monitoring.service.update','monitoring.extension.upgrade','monitoring.extension.uninstall','monitoring.extension.restore'][i%4]}))
   return {success:true,cleanup:true,applicationStopped:true,headCommit:'a'.repeat(40),checkedOutCommit:'b'.repeat(40),journey:{passed:true,installedPackage:true,productionIpc:true,realVault:true,nativeShellBeamPages:true,install:1,uninstall:1,restore:2,interrupted:2,upgrade:1,conflict:1,noReplayMs:5000,auditJobs:jobs.length},events:[
-    {name:'extension-fixture-ready',officialVersion:'1.6.0',pinnedServer:true,services:2},
+    {name:'extension-fixture-ready',officialVersion:'1.6.0',pinnedServer:true,services:2,serverIdentity,preInstallIdentityVerified:true,binarySha256:'e'.repeat(64)},
     {name:'extension-cancelled-without-mutation',passed:true},
     {name:'extension-app-installed',version:'0.2.0',fixedBytes:true,explicitConfirmation:true},
     {name:'extension-app-uninstalled',backupRetained:true,explicitConfirmation:true},
@@ -64,4 +65,10 @@ test('audit screenshot reveals one inert row and waits for complete viewport vis
   assert.deepEqual(await revealExtensionAudit(d,expected),{auditRowVisible:true,auditRowJobId:expected.id,auditRowStatus:'unknown'});assert.equal(clicks,1)
   d.rect=async()=>({x:1200,y:100,width:300,height:50});d.until=async read=>{assert.equal(await read(),false);throw Error('viewport_not_ready')}
   await assert.rejects(revealExtensionAudit(d,expected),/viewport_not_ready/);assert.equal(clicks,2)
+})
+
+test('installed extension evidence requires own server identity before initialization',()=>{
+  for(const mutate of [f=>{f.serverIdentity={...serverIdentity,product:'Komari'}},f=>{f.preInstallIdentityVerified=false}]){
+    const r=report();mutate(r.events.find(e=>e.name==='extension-fixture-ready'));assert.throws(()=>verifyExtensionUiReport(r))
+  }
 })

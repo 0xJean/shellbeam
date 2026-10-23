@@ -60,7 +60,7 @@ export async function main(env=process.env) {
     report.screenshots.push({file:name+'.png',sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.length,width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)})
   }
   try {
-    fixture=await createExtensionUiFixture({directory,project,record});stage='launch';await launch();stage='native-onboarding'
+    fixture=await createExtensionUiFixture({directory,project,record,monitoringServer:join(env.RUNNER_TEMP,'shellbeam-server-input/shellbeam-server')});stage='launch';await launch();stage='native-onboarding'
     const state=await setupExtensionUi({driver,fixture,record});stage='extension-lifecycle'
     report.journey=await runExtensionUiJourney({driver,fixture,state,record,restart,checkpoint,observeAudit:()=>observeExtensionAudit(directory)});report.success=report.journey.passed===true
   }catch(e){

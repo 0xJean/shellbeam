@@ -545,6 +545,12 @@ fn prepare_transfer(app: &tauri::AppHandle, input: Input) -> Result<TransferPrev
     }
     let s = service::monitoring_service_context(app.clone(), integration.clone())?;
     let api = service::Remote::new(app, &s)?;
+    super::super::monitoring_identity::require_shellbeam(&api.call(
+        "/api/version",
+        None,
+        None,
+        None,
+    )?)?;
     let token = service::secret(app, &s)?;
     api.version(Some(&token))?;
     let (created, _) = node(&api, &token, &node_id)?;
@@ -557,6 +563,7 @@ fn prepare_transfer(app: &tauri::AppHandle, input: Input) -> Result<TransferPrev
     service::monitoring_service_cancel_context(s.context_id)?;
     let policy = artifact::policy(app)?;
     let release = artifact::select(app, &policy, &identity.architecture)?;
+    artifact::require_shellbeam(&release)?;
     let target = Record {
         connection_id: Some(
             h.default_connection_id
@@ -778,6 +785,24 @@ fn run(app: &tauri::AppHandle, id: &str, confirmed: bool) -> Result<Transfer, St
         })?;
     let result = (|| {
         if p.action == "move" {
+            artifact::require_shellbeam(
+                p.target
+                    .release
+                    .as_ref()
+                    .ok_or("KOMARI_AGENT_RELEASE_REQUIRED")?,
+            )?;
+            let scope = p
+                .target
+                .source
+                .as_ref()
+                .ok_or("KOMARI_AGENT_SOURCE_REQUIRED")?;
+            let api = service::Remote::new(app, scope)?;
+            super::super::monitoring_identity::require_shellbeam(&api.call(
+                "/api/version",
+                None,
+                None,
+                None,
+            )?)?;
             let bytes = artifact::download(
                 p.target
                     .release

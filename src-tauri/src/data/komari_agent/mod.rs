@@ -747,6 +747,14 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
             p.service_identity = source_identity;
             let s = p.source.as_ref().unwrap();
             let r = service::Remote::new(app, s)?;
+            if matches!(p.action.as_str(), "install" | "upgrade" | "migrate") {
+                super::monitoring_identity::require_shellbeam(&r.call(
+                    "/api/version",
+                    None,
+                    None,
+                    None,
+                )?)?;
+            }
             let token = service::secret(app, s)?;
             r.version(Some(&token))?;
             let (created, _) = node(&r, &token, &p.node)?;
@@ -803,6 +811,14 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
             let policy = artifact::policy(app)?;
             p.policy_fingerprint = Some(fingerprint(&policy)?);
             let release = artifact::select(app, &policy, &p.identity.architecture)?;
+            artifact::require_deployment(
+                &release,
+                if p.action == "adopt" {
+                    p.observed.legacy.as_ref()
+                } else {
+                    None
+                },
+            )?;
             if p.action == "adopt"
                 && p.observed.legacy.as_ref().is_some_and(|l| {
                     artifact::version(&l.version).unwrap_or(u64::MAX)
@@ -818,6 +834,18 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
                 })
             {
                 return Err("KOMARI_AGENT_NO_UPGRADE".into());
+            }
+            if p.action == "adopt" && artifact::require_shellbeam(&release).is_ok() {
+                let r = service::Remote::new(
+                    app,
+                    p.source.as_ref().ok_or("KOMARI_AGENT_SOURCE_REQUIRED")?,
+                )?;
+                super::monitoring_identity::require_shellbeam(&r.call(
+                    "/api/version",
+                    None,
+                    None,
+                    None,
+                )?)?;
             }
             p.release = Some(release);
         } else if matches!(p.action.as_str(), "migrate" | "restore-config") {
@@ -1166,6 +1194,14 @@ fn operate(app: &tauri::AppHandle, id: &str, confirmed: bool) -> Result<Record, 
         let mut response = None;
         if p.action != "inspect" {
             let bytes = if matches!(p.action.as_str(), "install" | "upgrade" | "adopt") {
+                artifact::require_deployment(
+                    p.release.as_ref().unwrap(),
+                    if p.action == "adopt" {
+                        observed.legacy.as_ref()
+                    } else {
+                        None
+                    },
+                )?;
                 Some(artifact::download(
                     p.release.as_ref().unwrap(),
                     &artifact::policy(app)?,
@@ -1178,6 +1214,19 @@ fn operate(app: &tauri::AppHandle, id: &str, confirmed: bool) -> Result<Record, 
             let mut watermark = p.watermark;
             if let Some(s) = &p.source {
                 let r = service::Remote::new(app, s)?;
+                if matches!(p.action.as_str(), "install" | "upgrade" | "migrate")
+                    || (p.action == "adopt"
+                        && p.release
+                            .as_ref()
+                            .is_some_and(|r| artifact::require_shellbeam(r).is_ok()))
+                {
+                    super::monitoring_identity::require_shellbeam(&r.call(
+                        "/api/version",
+                        None,
+                        None,
+                        None,
+                    )?)?;
+                }
                 let token = service::secret(app, s)?;
                 if node(&r, &token, &p.node)?.0 != p.node_created {
                     return Err("KOMARI_AGENT_NODE_CHANGED".into());

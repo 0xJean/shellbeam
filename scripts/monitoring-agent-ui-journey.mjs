@@ -145,9 +145,14 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
   }
   const operate = async (h, action, version, name) => {
     await openTransferTools(d, h)
-    if (action === 'install') await d.fill(control(h, 'endpoint'), f.servers[h.service].agentEndpoint)
+    if (action === 'install' || action === 'adopt') await d.fill(control(h, 'endpoint'), f.servers[h.service].agentEndpoint)
+    if (action === 'adopt') {
+      const handoff = `${panel(h)} [data-testid="compatible-agent-handoff"]`
+      if (await d.attr(handoff, 'open') === null) await d.click(handoff + ' > summary')
+      await d.fill(`${panel(h)} input[aria-label="Existing systemd service"]`, legacy.unit)
+    }
     const before = (await sample(h))?.time ?? 0, started = Date.now()
-    await d.click(control(h, action)); await confirm(d, [h.name, h.node, version])
+    await d.click(action === 'adopt' ? `${panel(h)} button[data-testid="compatible-agent-adopt"]` : control(h, action)); await confirm(d, [h.name, h.node, version])
     await d.until(async () => await d.attr(panel(h), 'data-status') === 'active' && await d.attr(panel(h), 'data-version') === version && await d.isEnabled(control(h, 'inspect')), { timeoutMs: 120000 })
     await remember(h, action); await prove(h, version, before, started, name)
   }
@@ -157,7 +162,11 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
   // subsequent reads must retain that owner and each operation's host/route.
   vaultId = (await audit(d, jobs)).vaultId
   record('agent-no-user-key-configuration', { passed: true })
-  await policy(d, upgrade, f, 'custom'); await operate(upgrade, 'install', '1.5.11', 'agent-old-install')
+  const legacy = await f.prepareLegacy(upgrade, old)
+  await policy(d, upgrade, f, 'custom')
+  await operate(upgrade, 'adopt', '1.5.11', 'agent-existing-adopted')
+  legacy.retained()
+  record('agent-legacy-checkpoint-preserved', { passed: true, sameReviewedBinary: true, originalFilesRetained: true })
   await policy(d, upgrade, f, 'official'); await operate(upgrade, 'upgrade', '1.5.12', 'agent-upgraded')
   assert.equal(await d.attr(panel(upgrade), 'data-previous-version'), '1.5.11')
   await operate(upgrade, 'rollback', '1.5.11', 'agent-rolled-back')
@@ -181,9 +190,9 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
     assert(f.observe(h).every(s => s.processes.length === 0)); assert.equal(f.observe(h)[0].configSha256, original.get(h.role).configSha256)
     record('agent-history-retained', { role: h.role, ...await h.history.retained() })
   }
-  await f.retained(); const final = snapshot(); d = await restart(session.password); await stable(final)
+  legacy.retained(); await f.retained(); const final = snapshot(); d = await restart(session.password); await stable(final)
   assert.equal(jobs.size, 8); const selected = await audit(d, jobs, vaultId); const visible = await revealExtensionAudit(d, selected)
   await checkpoint('agent-audit-restored')
   record('agent-audit-restored', { ...visible, passed: true, noReplayMs: 5000, jobs: [...jobs].map(([id, scope]) => ({ id, ...scope })), sameVaultOwnerRetained: true, auditScopesRetained: true, allProbesStopped: true, nodeCredentialsAndHistoryRetained: true })
-  return { passed: true, installedPackage: true, productionIpc: true, realVault: true, nativeShellBeamPages: true, installs: 2, upgrades: 2, rollbacks: 1, readonlyRecovery: 1, restoredAuditJobs: 8, noReplayMs: 5000 }
+  return { passed: true, installedPackage: true, productionIpc: true, realVault: true, nativeShellBeamPages: true, installs: 1, adoptions: 1, upgrades: 2, rollbacks: 1, readonlyRecovery: 1, restoredAuditJobs: 8, noReplayMs: 5000 }
 }

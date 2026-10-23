@@ -750,7 +750,7 @@ const zhCN: Record<string, string> = {
   'settings.customHelper': '输入 OpenAI 兼容基础 URL 和模型 ID。修改地址会清空当前密钥，请确认目标地址后再填写密钥；非本地接口建议使用 HTTPS。',
   'settings.apiKeyHelper': 'API 密钥仅存储在本地，不会发送到 ShellBeam 服务器。',
   'settings.komariTitle': 'ShellBeam 监控',
-  'settings.komariDescription': '连接 ShellBeam Server 或兼容的监控服务，获取主机指标。API 密钥保存在当前保管库中。',
+  'settings.komariDescription': '连接 ShellBeam Server，获取主机指标。API 密钥保存在当前保管库中。',
   'settings.komariRefresh': '刷新监控服务',
   'settings.komariNew': '新建',
   'settings.komariName': '名称',

@@ -57,7 +57,7 @@ export async function main(env=process.env) {
     report.screenshots.push({file:name+'.png',sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.length,width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)})
   }
   try {
-    fixture=await createTransferUiFixture({directory,project,prefix,record});stage='launch';await launch();stage='native-onboarding'
+    fixture=await createTransferUiFixture({directory,project,prefix,record,monitoringAgentServer:join(env.RUNNER_TEMP,'shellbeam-server-input/shellbeam-server')});stage='launch';await launch();stage='native-onboarding'
     const state=await setupTransferUi({driver,fixture,record});stage='migration-and-recovery'
     report.journey=await runTransferUiJourney({driver,fixture,state,record,restart,checkpoint});report.success=report.journey.passed===true
   }catch(e){

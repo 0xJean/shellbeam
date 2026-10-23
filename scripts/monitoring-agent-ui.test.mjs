@@ -65,19 +65,21 @@ test('runner refuses the real desktop before creating infrastructure', () => {
   const r = spawnSync('bash', ['scripts/ci-monitoring-agent-ui.sh'], { env: { PATH: process.env.PATH, GITHUB_ACTIONS: 'false' }, encoding: 'utf8' })
   assert.equal(r.status, 1); assert.match(r.stdout, /requires opt-in/)
 })
-const names = ['agent-fresh-install', 'agent-old-install', 'agent-upgraded', 'agent-rolled-back', 'agent-reupgrade-recovered']
+const names = ['agent-fresh-install', 'agent-existing-adopted', 'agent-upgraded', 'agent-rolled-back', 'agent-reupgrade-recovered']
 const report = () => ({
   success: true, cleanup: true, applicationStopped: true, headCommit: 'a'.repeat(40), checkedOutCommit: 'b'.repeat(40),
-  journey: { passed: true, installedPackage: true, productionIpc: true, realVault: true, nativeShellBeamPages: true, installs: 2, upgrades: 2, rollbacks: 1, readonlyRecovery: 1, restoredAuditJobs: 8, noReplayMs: 5000 },
+  journey: { passed: true, installedPackage: true, productionIpc: true, realVault: true, nativeShellBeamPages: true, installs: 1, adoptions: 1, upgrades: 2, rollbacks: 1, readonlyRecovery: 1, restoredAuditJobs: 8, noReplayMs: 5000 },
   screenshots: [...names, 'agent-audit-restored'].map(n => ({ file: n + '.png', sha256: 'a'.repeat(64), bytes: 10000, width: 1280, height: 900 })),
   events: [
-    ...[0, 1].map(service => ({ name: 'agent-server-identity-verified', service, commit: serverIdentity.hash, product: serverIdentity.product, binarySha256: 'e'.repeat(64) })),
+    ...[0, 1].map(service => ({ name: 'agent-server-identity-verified', service, commit: serverIdentity.hash, product: serverIdentity.product, preInstallIdentityVerified:true, binarySha256: 'e'.repeat(64) })),
     { name: 'agent-production-release-verified', keyId: 'compatible-probe-2026-01', sequence: 1792594908585, version: '1.5.12', signatureVerified: true, historicalCatalogPinned: true, architecture: 'amd64' },
     { name: 'agent-no-user-key-configuration', passed: true },
     ...names.map((name, i) => { const version = [1, 3].includes(i) ? '1.5.11' : '1.5.12'; return { name, version, originalSampleAt: 12000, cpu: 12, before: 11000, started: 11500, verifiedAt: 12500, processSha256: reviewed[version].amd64.sha256, configurationRetained: true, nodeAndTokenRetained: true } }),
     { name: 'agent-interrupted-readonly-recovery', passed: true, noReplayMs: 5000, unknownAuditRetained: true },
-    { name: 'agent-audit-restored', passed: true, noReplayMs: 5000, sameVaultOwnerRetained: true, auditScopesRetained: true, allProbesStopped: true, nodeCredentialsAndHistoryRetained: true, jobs: ['install', 'install', 'upgrade', 'rollback', 'upgrade', 'inspect', 'uninstall', 'uninstall'].map((action, i) => ({ id: `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`, hostId: `10000000-0000-0000-0000-00000000000${[0, 6].includes(i) ? 1 : 2}`, action: `monitoring.agent.${action}`, transport: [0, 6].includes(i) ? 'ssh-direct' : 'ssh-proxyjump', status: i === 4 ? 'unknown' : 'completed' })), auditRowVisible: true, auditRowJobId: '00000000-0000-0000-0000-000000000004', auditRowStatus: 'unknown' },
+    { name: 'agent-audit-restored', passed: true, noReplayMs: 5000, sameVaultOwnerRetained: true, auditScopesRetained: true, allProbesStopped: true, nodeCredentialsAndHistoryRetained: true, jobs: ['install', 'adopt', 'upgrade', 'rollback', 'upgrade', 'inspect', 'uninstall', 'uninstall'].map((action, i) => ({ id: `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`, hostId: `10000000-0000-0000-0000-00000000000${[0, 6].includes(i) ? 1 : 2}`, action: `monitoring.agent.${action}`, transport: [0, 6].includes(i) ? 'ssh-direct' : 'ssh-proxyjump', status: i === 4 ? 'unknown' : 'completed' })), auditRowVisible: true, auditRowJobId: '00000000-0000-0000-0000-000000000004', auditRowStatus: 'unknown' },
     ...['source', 'target'].map(role => ({ name: 'agent-history-retained', role, originalBuckets: [60000], retainedBuckets: 1, checkedAt: 120000 })),
+    {name:'agent-existing-unmanaged-prepared',version:'1.5.11',appDatabaseUntouched:true,processSha256:reviewed['1.5.11'].amd64.sha256,originalSampleAt:1000},
+    {name:'agent-legacy-checkpoint-preserved',passed:true,sameReviewedBinary:true,originalFilesRetained:true},
     { name: 'transfer-fixture-cleaned', containersRemoved: true, networkRemoved: true, serversStopped: true },
   ],
 })
@@ -106,3 +108,9 @@ for (const [name, edit] of [
   ['server running', r => { r.events.at(-1).serversStopped = false }],
   ['app running', r => { r.applicationStopped = false }],
 ]) test(`report rejects ${name}`, () => { const r = report(); edit(r); assert.throws(() => verifyMonitoringAgentUiReport(r)) })
+
+test('legacy upgrade evidence requires a real unmanaged input and retained adoption checkpoint',()=>{
+  for(const mutate of [r=>{r.journey.installs=2;r.journey.adoptions=0},r=>{r.events.find(e=>e.name==='agent-existing-unmanaged-prepared').appDatabaseUntouched=false},r=>{r.events.find(e=>e.name==='agent-legacy-checkpoint-preserved').originalFilesRetained=false},r=>{r.events[0].preInstallIdentityVerified=false}]){
+    const r=report();mutate(r);assert.throws(()=>verifyMonitoringAgentUiReport(r))
+  }
+})

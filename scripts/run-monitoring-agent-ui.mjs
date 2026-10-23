@@ -63,7 +63,7 @@ export async function main(env=process.env) {
   try {
     const trust=JSON.parse(await readFile(join(project,'src-tauri/src/data/komari_agent/official-trust.json')));const catalog=verifyCompatibleCatalog(JSON.parse(await downloadPinned(trust.catalogUrl,null,65536)),trust);assert(catalog.artifacts.every(m=>m.version==='1.5.12'),'agent_ui_production_release_not_promoted');
     const monitoringAgentServer=join(env.RUNNER_TEMP,'shellbeam-server-input/shellbeam-server');const binary=await lstat(monitoringAgentServer);assert(binary.isFile()&&!binary.isSymbolicLink());
-    fixture=await createTransferUiFixture({directory,project,prefix,record,monitoringAgentServer});stage='launch';await launch();stage='native-onboarding'
+    fixture=await createTransferUiFixture({directory,project,prefix,record,monitoringAgentServer,topology:'agent'});stage='launch';await launch();stage='native-onboarding'
     const state=await setupTransferUi({driver,fixture,record});stage='agent-upgrade-and-recovery'
     report.journey=await runMonitoringAgentUiJourney({driver,fixture,state,record,restart,checkpoint});report.success=report.journey.passed===true
   }catch(e){

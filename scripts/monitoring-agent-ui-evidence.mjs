@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-export const serverIdentity = Object.freeze({ product: 'ShellBeam Server', product_version: '0.1.0-dev', version: '1.6.0', hash: '0bbcac62ef6a012357e935108090c1e16900126c', upstream_version: '1.6.0', upstream_commit: '1b76b7ad5bc3de6529bb7f0577069b4ac241fec3' })
+export const serverIdentity = Object.freeze({ product: 'ShellBeam Server', product_version: '0.1.0-dev', version: '1.6.0', hash: 'ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b', upstream_version: '1.6.0', upstream_commit: '1b76b7ad5bc3de6529bb7f0577069b4ac241fec3' })
 export function verifyServerIdentity(actual) {
   for (const [key, value] of Object.entries(serverIdentity)) assert.equal(actual[key], value, 'agent_ui_server_identity')
 }

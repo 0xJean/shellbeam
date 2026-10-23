@@ -8,7 +8,7 @@ import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import JSZip from 'jszip'
-import { downloadPinned } from './prepare-komari-agent-release.mjs'
+import { verifyServerIdentity, serverIdentity } from './monitoring-agent-ui-evidence.mjs'
 import { freePort } from './run-ops-ui-live.mjs'
 import { transferHistory } from './probe-transfer-history.mjs'
 
@@ -46,12 +46,11 @@ export function extensionGateway(endpoint) {
   return {server,trace,gate,mutations:()=>trace.filter(r=>isMutation(r.method,r.path)),arm(mode){assert(!gate.mode);assert(['before-delete','after-merge'].includes(mode));gate.mode=mode;gate.held=0},release(){gate.mode=null;server.closeAllConnections()}}
 }
 
-export async function createExtensionUiFixture({directory,project,record,binaryOverride}) {
+export async function createExtensionUiFixture({directory,project,record,monitoringServer}) {
   const architecture=process.arch==='arm64'?'arm64':'amd64'
-  const pins=JSON.parse(await readFile(join(project,'scripts/fixtures/komari-lifecycle-releases.json')))
+  assert(monitoringServer, 'extension_ui_shellbeam_server_required')
   const binary=join(directory,'official-komari'),services=[]
-  const bytes=binaryOverride?await readFile(binaryOverride):await downloadPinned(`https://github.com/komari-monitor/komari/releases/download/${pins.server.version}/komari-linux-${architecture}`,pins.server[architecture],64*1024*1024)
-  if(!binaryOverride)assert.equal(digest(bytes),pins.server[architecture].sha256)
+  const bytes=await readFile(monitoringServer)
   await writeFile(binary,bytes,{mode:0o700,flag:'wx'})
   const cleanup=async()=>{
     for(const s of services){s.gateway.release();await new Promise(resolve=>s.gateway.server.close(resolve));s.child.kill('SIGTERM');await bounded(()=>s.exited,10000);await s.log.close()}
@@ -71,9 +70,11 @@ export async function createExtensionUiFixture({directory,project,record,binaryO
         assert.equal(r.status,200,'extension_ui_official_http_status');const value=await r.json();assert.equal(value.error,undefined);return {value,data:value.data??value.result??value,response:r}
       }
       await bounded(async()=>{assert(!service.exited);try{return (await request('/api/install/status')).data.required===true}catch{return false}})
+      verifyServerIdentity((await request('/api/version',undefined,{})).data)
       const username='fixture',password='Sb1'+randomBytes(24).toString('hex')
       await request('/api/install/complete',{username,password,sitename:service.name,metric_dsn:join(home,'metrics.db')})
-      await bounded(async()=>{try{return (await request('/api/version')).data.version==='1.6.0'}catch{return false}})
+      await bounded(async()=>{try{return (await request('/api/me',undefined,{})).response.status===200}catch{return false}})
+      verifyServerIdentity((await request('/api/version',undefined,{})).data)
       const cookie=(await request('/api/login',{username,password})).response.headers.get('set-cookie')?.split(';')[0];assert(cookie)
       await request('/api/admin/settings',{api_key:apiKey,private_site:true,geo_ip_enabled:false,notification_enabled:false,eula_accepted:true},{Cookie:cookie,Origin:endpoint})
       const api=async(path,body)=>(await request(path,body)).data
@@ -111,7 +112,7 @@ export async function createExtensionUiFixture({directory,project,record,binaryO
       await new Promise(resolve=>gateway.server.listen(0,'127.0.0.1',resolve))
       Object.assign(service,{endpoint:`http://127.0.0.1:${gateway.server.address().port}`,observe,retained,original:role==='legacy'?await observe():null})
     }
-    record('extension-fixture-ready',{officialVersion:'1.6.0',architecture,services:2,pinnedServer:!binaryOverride})
+    record('extension-fixture-ready',{officialVersion:'1.6.0',architecture,services:2,pinnedServer:true,serverIdentity,preInstallIdentityVerified:true,binarySha256:digest(bytes)})
     return {services,cleanup}
   }catch(e){await cleanup();throw e}
 }

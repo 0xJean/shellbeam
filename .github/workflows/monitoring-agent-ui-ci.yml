@@ -23,13 +23,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xJean/shellbeam-server
-          ref: 0bbcac62ef6a012357e935108090c1e16900126c
+          ref: ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b
           path: .tmp/monitoring-server-input
           persist-credentials: false
       - name: Build exact server for isolated targets
         run: |
-          test "$(git -C .tmp/monitoring-server-input rev-parse HEAD)" = 0bbcac62ef6a012357e935108090c1e16900126c
-          docker build --target artifacts --build-arg VERSION_HASH=0bbcac62ef6a012357e935108090c1e16900126c --output "type=local,dest=$RUNNER_TEMP/shellbeam-server-input" .tmp/monitoring-server-input
+          test "$(git -C .tmp/monitoring-server-input rev-parse HEAD)" = ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b
+          docker build --target artifacts --build-arg VERSION_HASH=ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b --output "type=local,dest=$RUNNER_TEMP/shellbeam-server-input" .tmp/monitoring-server-input
       - uses: actions/setup-node@v4
         with:
           node-version: 24
