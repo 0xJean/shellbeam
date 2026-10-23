@@ -105,3 +105,25 @@ for (const clipped of [false, true]) test(`identity evidence uses one read-only 
   assert.deepEqual(calls, ['endpoint-caption'])
   assert.deepEqual(reads, ['identity', '[data-testid="host-list-scroll-viewport"]'])
 })
+
+for (const above of [true, false]) test(`state evidence reveals the ${above ? 'upper' : 'lower'} clipped edge using one static caption`, async () => {
+  const clicks = [], reads = []; let navigated = false
+  const d = {
+    waitFor: async () => {}, horizontalScrollState: async () => { navigated = true; return { width: 1054, contentWidth: 1054, left: 0 } },
+    findAll: async () => [], route: p => p,
+    request: async (method, path) => { assert.equal(method, 'GET'); assert.equal(path, '/window/rect'); return { width: 1280, height: 800 } },
+    click: async selector => clicks.push(selector),
+    rect: async selector => { assert(navigated); reads.push(selector); if (selector === 'above') return { y: above ? -140 : 600 }; return selector === 'states' ? { x: 864, y: 300, width: 362, height: 36 } : { x: 200, width: 1054 } },
+    until: async (read, options) => { if (options) assert.equal(options.timeoutMs, 5000); assert(await read()) },
+  }
+  await revealTransferObservations(d, 'states', { above: 'above', below: 'below' })
+  assert.deepEqual(clicks, [above ? 'above' : 'below'])
+  assert.deepEqual(reads, ['above', 'states', '[data-testid="host-list-scroll-viewport"]'])
+})
+
+test('state caption selection refuses missing geometry before any click', async () => {
+  const d = { waitFor: async () => {}, horizontalScrollState: async () => ({ width: 1054, contentWidth: 1054, left: 0 }),
+    findAll: async () => [], route: p => p, request: async () => ({ width: 1280, height: 800 }), rect: async () => ({ y: null }),
+    until: async read => assert(await read()), click: async () => assert.fail('missing geometry must not trigger navigation') }
+  await assert.rejects(revealTransferObservations(d, 'states', { above: 'above', below: 'below' }), /caption_geometry_missing/)
+})

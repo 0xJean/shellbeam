@@ -952,3 +952,39 @@ visibility/raw sample/audit/no-replay assertion was added. Evidence:
 inspected; the disposable container and Vite server were stopped. All 258 Node
 protocol tests (including 56 targeted) and changed-script ESLint/diff passed.
 This component evidence does not substitute for the new full installed-App run.
+
+
+`bc956c7` installed-Agent run `39934659704` completed the entire native journey.
+Artifact `12493541491` independently verifies both exact ShellBeam Server
+identities, production 1.5.12 root/sequence, five real CPU samples and executable
+pins across fresh/historical/upgrade/rollback/interrupted recovery, retained
+node/Token/configuration/history, both final uninstalls and eight same-owner
+scoped audits (seven completed, one unknown retained). All six PNG byte hashes,
+dimensions and complete identity/audit views were inspected. No-replay is
+5000ms, cleanup and application exit passed; merge `4121640b` contains the head.
+This is installed amd64 App evidence, not an arm64 desktop claim.
+
+The separate migration run `39934659680` failed when capturing the final
+completed destination: `probe-transfer-observations` click was not interactable,
+while horizontal navigation was already at its real 130px end. The failure
+image shows the state rows partially above the 40px app header. Actual normal
+migration, explicit restore, both interrupted readbacks and their no-replay
+checks had passed, but final screenshot/audit completion had not. Artifact
+`12493218027` has successful cleanup/App exit; this is not a green migration run.
+
+Migration evidence now chooses the existing static caption above or below the
+state table using its actual position after horizontal navigation, makes one
+native click, then retains the original full-table x/y visibility gate. A
+production ProbeTransferPanel/HostListScrollArea fixture with the list already
+scrolled horizontally and state table above the viewport lands at y=40 with
+the old click and y=268 with the upper caption. It did not reproduce the exact
+CI click exception, so full new-head acceptance remains required. Evidence:
+`/tmp/shellbeam-transfer-caption-before-1792749709359.{json,png}` and
+`/tmp/shellbeam-transfer-caption-after-1792749723395.{json,png}`. A lower-caption
+case also passed at y=692 (`after-1792749641443`). An artificial zero-top clip
+variant was rejected at the range control and is not evidence for the migration
+failure. No retry, injected scroll, larger timeout or weakened evidence gate was
+added. Agent's passing explicit caption anchor is unchanged. The disposable
+fixture container was removed; no user App, Vault or remote service was touched.
+All 261 Node protocol checks and changed-script ESLint/diff passed after this
+navigation change; missing caption geometry rejects before any click.

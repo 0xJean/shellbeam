@@ -136,9 +136,16 @@ export async function revealTransferObservations(d,observations,anchor=observati
   // horizontally clipped. Navigation happens before the evidence frame.
   await revealOpsUiHostActions(d, observations)
   const viewport=await d.request('GET',d.route('/window/rect'))
-  // A larger identity table can be partially visible without WebKit scrolling
-  // its bottom on click. Callers may use a static read-only caption below it.
-  await d.click(anchor)
+  // Clicking a partially visible table can leave its edge clipped or under
+  // the fixed header. Navigate via a nearby static caption, then verify the
+  // full table. Choose direction only after horizontal navigation settles.
+  let target = anchor
+  if (typeof anchor !== 'string') {
+    const { y } = await d.rect(anchor.above)
+    assert(Number.isFinite(y), 'transfer_ui_caption_geometry_missing')
+    target = y < 40 ? anchor.above : anchor.below
+  }
+  await d.click(target)
   // One real click only; subsequent paint checks are read-only. Both endpoint
   // rows must fit inside the window AND the list's horizontal clipping area.
   await d.until(async()=>{
@@ -151,7 +158,7 @@ export async function revealTransferObservations(d,observations,anchor=observati
 async function screenshot(d,h,name,checkpoint){
   await openTransfer(d,h)
   const observations=`${transfer(h)} ${id('probe-transfer-observations')}`
-  await revealTransferObservations(d,observations)
+  await revealTransferObservations(d,observations,{above:`${transfer(h)} > div > p:first-child`,below:`${observations} + p`})
   for(const side of ['source','target'])assert((await d.text(`${transfer(h)} ${id(`probe-transfer-${side}-state`)}`)).trim())
   for(const field of await d.findAll('input[type="password"],textarea'))assert(!await d.attr(field,'value'),'transfer_ui_secret_on_screen')
   assert.equal((await d.findAll('iframe')).length,0)
