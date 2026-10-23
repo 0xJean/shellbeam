@@ -1,8 +1,9 @@
 export const compatibleAgentCopy = {
   en: {
+    distributions: { shellbeam: 'ShellBeam Monitoring Agent', upstream: 'Komari Agent (compatible)', compatible: 'Compatible monitoring probe' }, provenance: 'Reviewed source',
     handoff: 'Adopt or migrate a probe', legacyUnit: 'Existing systemd service', migrationEndpoint: 'New address for the same monitoring node',
     adopt: 'Adopt existing probe', migrate: 'Migrate monitoring address', 'restore-config': 'Restore previous address', 'restore-legacy': 'Return to original service', released: 'Original service and fresh report verified; management returned',
-    handoffHint: 'Adoption supports reviewed upstream 1.5.10/1.5.11 binaries in a direct systemd service owned by this SSH account. The node and Token must match. Address migration keeps the same node. To move to another service, machine or account, use the separate migration form below.',
+    handoffHint: 'Adoption supports reviewed ShellBeam Monitoring Agent 1.5.12 and upstream 1.5.10/1.5.11 binaries in a direct systemd service owned by this SSH account. The node and Token must match. Address migration keeps the same node. To move to another service, machine or account, use the separate migration form below.',
     handoffConfirm: 'This can briefly interrupt monitoring. Adoption backs up and disables the original service, keeps its files and key, and starts a signed managed probe with server-side remote control and auto-update disabled. Migration changes only the address and preserves the previous configuration. Restore returns to the selected previous configuration or original service, including its previous remote-control settings. Every switch needs a new report to be verified; a lost response is inspected without replay.',
     legacyUnsupported: 'The existing service layout, ownership or binary could not be verified. No automatic overwrite is allowed. Supported direct services use a JSON --config file or the documented installer flags, without environment overrides or unit hooks.',
     source: 'Release source', official: 'ShellBeam stable releases', custom: 'Custom publisher', officialHint: 'Install and upgrade use verified ShellBeam releases by default. Existing custom publisher settings are retained.', catalogStale: 'The release catalog has expired or is older than a previously verified catalog. Try again after the publisher updates it; existing deployment checks, rollback and uninstall remain available.',
@@ -27,9 +28,10 @@ export const compatibleAgentCopy = {
     nodeOnline: 'This node is already reporting. Check its existing agent before installing another one.',
   },
   'zh-CN': {
+    distributions: { shellbeam: 'ShellBeam 监控探针', upstream: 'Komari Agent（兼容版本）', compatible: '兼容监控探针' }, provenance: '已核验来源',
     handoff: '接管与迁移', legacyUnit: '已有 systemd 服务名', migrationEndpoint: '同一监控节点的新访问地址',
     adopt: '接管已有探针', migrate: '迁移监控地址', 'restore-config': '恢复此前地址', 'restore-legacy': '交还原服务', released: '原服务及新上报已核验，已交还管理',
-    handoffHint: '支持同一 SSH 账号下直接运行已核验的上游 1.5.10/1.5.11 二进制的 systemd 服务，节点与 Token 必须一致。地址迁移保留原节点；跨服务、跨机器或跨账号请使用下方迁移表单。',
+    handoffHint: '支持同一 SSH 账号下直接运行已核验的 ShellBeam 监控探针 1.5.12 或上游 1.5.10/1.5.11 二进制的 systemd 服务，节点与 Token 必须一致。地址迁移保留原节点；跨服务、跨机器或跨账号请使用下方迁移表单。',
     handoffConfirm: '切换可能短暂中断监控。接管会备份并停用原服务，保留原文件和密钥，启动签名托管探针并禁用服务端远程控制与自动升级。地址迁移仅更改访问地址并保留此前配置。恢复将交回此前配置或原服务，包括其原有远程控制设置。每次切换均需核验新上报；响应丢失后只读检查，不自动重复执行。',
     legacyUnsupported: '无法核验已有服务的布局、归属或二进制，不会自动覆盖。支持直接使用 JSON --config 文件或已支持安装参数的服务，不支持环境覆盖或额外 unit 钩子。',
     source: '发布来源', official: 'ShellBeam 稳定版本', custom: '自定义发布者', officialHint: '安装和升级默认使用 ShellBeam 验证的版本，无需配置公钥。已有自定义发布配置仍保留。', catalogStale: '版本目录已过期或早于此前核验的目录，请在发布源更新后重试；检查、回滚和卸载已有部署仍可使用。',

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { ProbeArtifactIdentity } from './probe-release-identity'
 export type CompatibleAgentAction = 'inspect' | 'install' | 'upgrade' | 'rollback' | 'uninstall' | 'adopt' | 'migrate' | 'restore-config' | 'restore-legacy'
-export interface CompatibleRelease { manifest: { version: string; sha256: string }; publicKey: string }
+export interface CompatibleRelease { manifest: ProbeArtifactIdentity; publicKey: string }
 export interface CompatibleAgentRecord {
   vaultId: string; hostId: string; hostCreatedAt: number; integrationId: string; deployment: string; revision: number;
   observation: { status: string; active: boolean; legacy?: { unit: string; version: string; endpoint: string } | null; previousConfigSha256?: string | null };
@@ -9,7 +10,7 @@ export interface CompatibleAgentRecord {
   observedAt: number | null; updatedAt: number; errorCode: string | null;
   previousConfiguration?: { sha256: string; endpoint: string } | null;
 }
-export interface CompatibleAgentPreview { planId: string; action: CompatibleAgentAction; hostName: string; nodeId: string; endpoint: string; transport: string; account: string; serviceScope: 'system' | 'user'; dataDirectory: string; artifactBytes: number | null; currentVersion: string | null; targetVersion: string | null; status: string; expiresAt: number; legacyUnit?: string | null; previousEndpoint?: string | null }
+export interface CompatibleAgentPreview { planId: string; action: CompatibleAgentAction; hostName: string; nodeId: string; endpoint: string; transport: string; account: string; serviceScope: 'system' | 'user'; dataDirectory: string; artifactBytes: number | null; currentVersion: string | null; targetVersion: string | null; currentArtifact?: ProbeArtifactIdentity | null; targetArtifact?: ProbeArtifactIdentity | null; status: string; expiresAt: number; legacyUnit?: string | null; previousEndpoint?: string | null }
 export interface CompatibleAgentPolicy { source?: 'official' | 'custom'; enabled: boolean; manifestUrl: string; trustedPublicKey: string; allowedHosts: string[] }
 export const readCompatibleAgent = (vaultId: string, hostId: string) => invoke<CompatibleAgentRecord | null>('komari_agent_record', { vaultId, hostId })
 export const prepareCompatibleAgent = (input: { vaultId: string; hostId: string; integrationId: string; action: CompatibleAgentAction; endpoint?: string; legacyUnit?: string }) => invoke<CompatibleAgentPreview>('komari_agent_prepare', { input })

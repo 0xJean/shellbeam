@@ -66,7 +66,7 @@ try {
   stage = 'verify production release and fixed official servers'
   const root = JSON.parse(await readFile(join(project, 'src-tauri/src/data/komari_agent/official-trust.json')))
   const catalog = verifyCompatibleCatalog(JSON.parse(await downloadPinned(root.catalogUrl, null, 65536)), root); const manifest = catalog.artifacts.find(a => a.architecture === architecture)
-  const pin = pins.agents.find(a => a.version === manifest.version)[architecture]; assert.equal(manifest.sha256, pin.sha256)
+  const pin = legacyPins[manifest.version]?.[architecture]; assert(pin); assert.equal(manifest.sha256, pin.sha256); assert.equal(manifest.sizeBytes, pin.size)
   artifact = { manifest, bytes: await downloadPinned(manifest.url, pin) }; report.productionRelease = { keyId: root.keyId, sequence: catalog.sequence, version: manifest.version, signatureVerified: true, bytesVerified: true, noUserConfiguration: true }
   stage = 'download fixed official server'
   const serverBytes = await downloadPinned(`https://github.com/komari-monitor/komari/releases/download/${pins.server.version}/komari-linux-${architecture}`, pins.server[architecture], 64 * 1024 * 1024)

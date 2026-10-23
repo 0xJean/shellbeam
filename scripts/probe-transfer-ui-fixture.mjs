@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { downloadPinned } from './prepare-komari-agent-release.mjs'
 import { verifyCompatibleCatalog } from './publish-komari-agent.mjs'
 import { transferHistory } from './probe-transfer-history.mjs'
+import { verifyServerIdentity } from './monitoring-agent-ui-evidence.mjs'
 
 const command = (cmd, args, input) => execFileSync(cmd, args, { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 120000 }).trim()
 const docker = (...args) => command('docker', args)
@@ -44,7 +45,7 @@ for root in base.glob('*'):
  except FileNotFoundError: pass
 print(json.dumps(sorted(out,key=lambda r:r['deployment'])))`
 
-export async function createTransferUiFixture({ directory, project, prefix, record }) {
+export async function createTransferUiFixture({ directory, project, prefix, record, monitoringAgentServer }) {
   assert(/^sb-ui-transfer-[a-f0-9]{12}$/.test(prefix))
   const network = prefix + '-net', machines = [prefix + '-a', prefix + '-b'], gateways = [], servers = [], hosts = {}
   let stopped = false
@@ -84,8 +85,9 @@ export async function createTransferUiFixture({ directory, project, prefix, reco
     const trust=JSON.parse(await readFile(join(project,'src-tauri/src/data/komari_agent/official-trust.json')))
     const catalog=verifyCompatibleCatalog(JSON.parse(await downloadPinned(trust.catalogUrl,null,65536)),trust)
     const release=catalog.artifacts.find(a=>a.architecture===architecture); assert(release)
-    assert.equal(release.sha256,pins.agents.find(a=>a.version===release.version)[architecture].sha256)
-    const serverFile=join(directory,'server'); await writeFile(serverFile,await downloadPinned(`https://github.com/komari-monitor/komari/releases/download/${pins.server.version}/komari-linux-${architecture}`,pins.server[architecture],64*1024*1024),{mode:0o700})
+    const reviewed=JSON.parse(await readFile(join(project,'releases/compatible-probe-pins.json'))).versions[release.version]?.[architecture]
+    assert(reviewed);assert.equal(release.sha256,reviewed.sha256);assert.equal(release.sizeBytes,reviewed.size)
+    const serverFile=join(directory,'server'); await writeFile(serverFile,monitoringAgentServer ? await readFile(monitoringAgentServer) : await downloadPinned(`https://github.com/komari-monitor/komari/releases/download/${pins.server.version}/komari-linux-${architecture}`,pins.server[architecture],64*1024*1024),{mode:0o700})
     for(let index=0;index<2;index++) {
       const name=machines[index], endpoint=`http://127.0.0.1:${apiPorts[index]}`, agentEndpoint=`http://${name}:25700`, apiKey=randomBytes(32).toString('hex')
       docker('cp',serverFile,name+':/opt/fixture/server'); docker('exec','-d',name,'/opt/fixture/server','server','--listen','0.0.0.0:25700','--database','/opt/fixture/primary.db')
@@ -94,6 +96,7 @@ export async function createTransferUiFixture({ directory, project, prefix, reco
       const username='fixture',password='Sb1'+randomBytes(24).toString('hex')
       await request('/api/install/complete',{username,password,sitename:'Transfer UI fixture',metric_dsn:'/opt/fixture/metrics.db'})
       await ready(async ()=>(await request('/api/version')).data.version==='1.6.0')
+      if(monitoringAgentServer){verifyServerIdentity((await request('/api/version')).data);record('agent-server-identity-verified',{service:index,commit:'0bbcac62ef6a012357e935108090c1e16900126c',product:'ShellBeam Server',binarySha256:createHash('sha256').update(await readFile(serverFile)).digest('hex')})}
       const cookie=(await request('/api/login',{username,password})).response.headers.get('set-cookie')?.split(';')[0]; assert(cookie)
       await request('/api/admin/settings',{api_key:apiKey,private_site:true,geo_ip_enabled:false,notification_enabled:false,eula_accepted:true},{Cookie:cookie,Origin:endpoint})
       const gate={node:null,held:0,server:null}
@@ -103,7 +106,7 @@ export async function createTransferUiFixture({ directory, project, prefix, reco
         // app exit (or its normal timeout). All other calls go to upstream.
         if(gate.node && req.url===`/api/recent/${gate.node}`) {
           const h=Object.values(hosts).find(h=>h.node===gate.node)
-          if(h && observe(h).some(s=>s.processes.length>0)) { gate.held++; return }
+          if(h && observe(h).some(s=>s.processes.length>0 && (!gate.version || s.version===gate.version))) { gate.held++; return }
         }
         await forwardTransferRequest(req,res,endpoint)
       } catch { res.writeHead(502);res.end() } })
@@ -111,19 +114,19 @@ export async function createTransferUiFixture({ directory, project, prefix, reco
       servers.push({name:`UI monitoring ${index}`,apiKey,endpoint:`http://127.0.0.1:${gate.server.address().port}`,agentEndpoint,request,gate})
     }
     const specs=[['source',0,'root',0],['target',1,'probe',1],['restore',1,'root',1],['finish',0,'root',1]]
-    for(const [role,machine,user,service] of specs) {
+    for(const [role,machine,user,service] of (monitoringAgentServer?specs.slice(0,2):specs)) {
       const server=servers[service]; const node=(await server.request('/api/admin/client/add',{name:`UI migration ${role}`})).data
       const rpc=async method=>(await server.request('/api/rpc2',{jsonrpc:'2.0',id:1,method,params:{uuid:node.uuid}})).value.result
       hosts[role]={history:transferHistory(server.request,node.uuid,wait),role,name:`UI migration ${role}`,machine,user,service,address:machine===1?targetIP:'127.0.0.1',port:machine===1?22:ports[machine],privateKeyPath:key,expectedFingerprint:fingerprints[machine],node:node.uuid,token:node.token,rpc,original:await rpc('admin:getClient'),...(machine===1?{jump:'source'}:{})}
     }
-    const allKeys=new Set(Object.values(hosts).map(h=>h.token)); assert.equal(allKeys.size,4)
-    record('transfer-fixture-ready',{machineIdentitiesDistinct:true,architecture,services:2,hosts:4,productionKeyId:trust.keyId,sequence:catalog.sequence,version:release.version})
+    const allKeys=new Set(Object.values(hosts).map(h=>h.token)); assert.equal(allKeys.size,monitoringAgentServer?2:4)
+    record('transfer-fixture-ready',{machineIdentitiesDistinct:true,architecture,services:2,hosts:Object.keys(hosts).length,productionKeyId:trust.keyId,sequence:catalog.sequence,version:release.version})
     function observe(h) { return JSON.parse(command('docker',['exec','-i',machines[h.machine],'python3','-c',observer],JSON.stringify({user:h.user,token:h.token}))) }
     const sample=async h=>latest((await servers[h.service].request(`/api/recent/${h.node}`)).value)
     const fresh=async(h,before,started)=>{const evidence=await wait(async()=>{const time=await sample(h);const observations=observe(h);const active=observations.filter(s=>s.processes.length===1); if(!(time>before && time>=started-5000 && time>=Date.now()-60000 && active.length===1))return false; assert(time<=Date.now()+5000);const s=active[0]; assert.equal(s.processes[0].sha256,release.sha256);assert.equal(s.version,release.version);const node=await h.rpc('admin:getClient');assert.equal(node.created_at,h.original.created_at);assert.equal(node.uuid,h.node);return {originalSampleAt:time,before,started,verifiedAt:Date.now(),processSha256:s.processes[0].sha256} });await h.history.capture();return evidence}
     const retained=async()=>{for(const h of Object.values(hosts)){assert.equal((await h.rpc('admin:getClientToken')).token,h.token);assert.equal((await h.rpc('admin:getClient')).created_at,h.original.created_at)}}
-    const hold=h=>{const gate=servers[h.service].gate;assert(!gate.node);gate.node=h.node;gate.held=0;return()=>{gate.node=null;gate.server.closeAllConnections()}}
+    const hold=(h,version)=>{const gate=servers[h.service].gate;assert(!gate.node);gate.node=h.node;gate.version=version;gate.held=0;return()=>{gate.node=null;gate.version=null;gate.server.closeAllConnections()}}
     await rm(serverFile)
-    return {hosts,servers,release,observe,sample,fresh,retained,hold,cleanup,architecture}
+    return {hosts,servers,release,observe,sample,fresh,retained,hold,cleanup,architecture,trust,catalog}
   } catch(e) {await cleanup();throw e}
 }

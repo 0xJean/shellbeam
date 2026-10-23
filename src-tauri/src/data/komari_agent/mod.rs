@@ -146,6 +146,8 @@ pub struct Preview {
     artifact_bytes: Option<usize>,
     current_version: Option<String>,
     target_version: Option<String>,
+    current_artifact: Option<Manifest>,
+    target_artifact: Option<Manifest>,
     status: String,
     expires_at: i64,
     legacy_unit: Option<String>,
@@ -882,6 +884,15 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
         .into(),
         data_directory: p.identity.root.clone(),
         artifact_bytes: p.release.as_ref().map(|r| r.manifest.size_bytes),
+        current_artifact: p.observed.current.clone(),
+        target_artifact: if p.action == "restore-legacy" {
+            None
+        } else {
+            p.release
+                .as_ref()
+                .map(|r| r.manifest.clone())
+                .or_else(|| p.observed.current.clone())
+        },
         current_version: p
             .observed
             .current

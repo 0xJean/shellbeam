@@ -5,6 +5,7 @@ import { compatibleAgentCopy } from '@/lib/locales/compatible-agent'
 import { cancelCompatibleAgent, compatibleAgentPolicy, operateCompatibleAgent, prepareCompatibleAgent, readCompatibleAgent, type CompatibleAgentPreview, type CompatibleAgentRecord } from '@/lib/compatible-agent'
 import { requestUserDecision } from '@/lib/user-confirmation'
 import { CompatibleAgentPanel, CompatibleAgentTools } from './compatible-agent-panel'
+import pins from '../../releases/compatible-probe-pins.json'
 const vault = vi.hoisted(() => { const state = { generation: 0 }; return { state, capture: () => { const generation = state.generation; return () => generation === state.generation } } })
 vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'vault', captureVaultScope: vault.capture }) }))
 vi.mock('@/lib/compatible-agent', () => ({ cancelCompatibleAgent: vi.fn(), compatibleAgentPolicy: vi.fn(), operateCompatibleAgent: vi.fn(), prepareCompatibleAgent: vi.fn(), readCompatibleAgent: vi.fn() }))
@@ -19,6 +20,28 @@ const panel = () => render(<I18nProvider><CompatibleAgentPanel host={host} integ
 beforeEach(() => { localStorage.setItem('shellbeam.locale', 'en'); vault.state.generation++; vi.mocked(readCompatibleAgent).mockResolvedValue(null); vi.mocked(prepareCompatibleAgent).mockResolvedValue(preview); vi.mocked(operateCompatibleAgent).mockResolvedValue(row()); vi.mocked(cancelCompatibleAgent).mockResolvedValue(); vi.mocked(requestUserDecision).mockResolvedValue({ accepted: true, reason: 'accepted' }) })
 afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear() })
 describe('compatible monitoring probe lifecycle', () => {
+  it.each(['en', 'zh-CN'] as const)('shows reviewed distribution and both upgrade/rollback identities (%s)', async locale => {
+    localStorage.setItem('shellbeam.locale', locale)
+    const copy = compatibleAgentCopy[locale]
+    const manifest = (version: '1.5.11' | '1.5.12') => ({ runtime: 'komari', platform: 'linux', architecture: 'amd64', version, sha256: pins.versions[version].amd64.sha256, sizeBytes: pins.versions[version].amd64.size })
+    const current = { manifest: manifest('1.5.12'), publicKey: 'public' }
+    const previous = { manifest: manifest('1.5.11'), publicKey: 'public' }
+    vi.mocked(readCompatibleAgent).mockResolvedValue({ ...row(), current, previous })
+    vi.mocked(requestUserDecision).mockResolvedValue({ accepted: false, reason: 'rejected' })
+    panel()
+    expect(await screen.findByTestId('compatible-agent-origin')).toHaveTextContent(copy.distributions.shellbeam)
+    expect(screen.getByTestId('compatible-agent-origin')).toHaveTextContent('0xJean/shellbeam-monitoring-agent · 4e81478e4bde')
+    expect(screen.getByTestId('compatible-agent-panel')).toHaveAttribute('data-previous-version', '1.5.11')
+    for (const action of ['rollback', 'upgrade'] as const) {
+      const from = action === 'rollback' ? current : previous, to = action === 'rollback' ? previous : current
+      vi.mocked(prepareCompatibleAgent).mockResolvedValue({ ...preview, action, currentVersion: from.manifest.version, currentArtifact: from.manifest, targetVersion: to.manifest.version, targetArtifact: to.manifest })
+      fireEvent.click(screen.getByRole('button', { name: copy[action] }))
+      await waitFor(() => expect(screen.getByRole('button', { name: copy[action] })).toBeEnabled())
+      const message = vi.mocked(requestUserDecision).mock.calls.at(-1)?.[0].message
+      expect(message).toContain(`${action === 'rollback' ? copy.distributions.shellbeam : copy.distributions.upstream} ${from.manifest.version} → ${action === 'rollback' ? copy.distributions.upstream : copy.distributions.shellbeam} ${to.manifest.version}`)
+    }
+    expect(operateCompatibleAgent).not.toHaveBeenCalled()
+  })
   it('keeps unconfigured hosts unchanged and never contacts the server on mount', async () => {
     const view = render(<I18nProvider><CompatibleAgentTools host={host} /></I18nProvider>)
     await act(async () => {})

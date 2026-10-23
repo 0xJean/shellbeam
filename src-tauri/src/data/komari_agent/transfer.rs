@@ -416,6 +416,8 @@ fn preview(p: &Plan) -> Preview {
         artifact_bytes: p.release.as_ref().map(|r| r.manifest.size_bytes),
         current_version: p.observed.current.as_ref().map(|m| m.version.clone()),
         target_version: p.release.as_ref().map(|r| r.manifest.version.clone()),
+        current_artifact: p.observed.current.clone(),
+        target_artifact: p.release.as_ref().map(|r| r.manifest.clone()),
         status: p.observed.status.clone(),
         expires_at: p.expires,
         legacy_unit: p.legacy_unit.clone(),

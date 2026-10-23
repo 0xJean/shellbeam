@@ -8,6 +8,8 @@ import { Button } from './ui/button'
 import { Input } from './ui/input'
 
 import { probeTransferCopy } from '@/lib/locales/probe-transfer'
+import { compatibleAgentCopy } from '@/lib/locales/compatible-agent'
+import { probeReleaseDisplay } from '@/lib/probe-release-identity'
 
 export function ProbeTransferPanel({ vaultId, hostId, canMove, onChanged, onPending }: { vaultId: string; hostId: string; canMove: boolean; onChanged: () => void; onPending: (value: boolean) => void }) {
   const { locale } = useT(); const c = probeTransferCopy[locale]
@@ -39,7 +41,7 @@ export function ProbeTransferPanel({ vaultId, hostId, canMove, onChanged, onPend
       if (action === 'move' && (!target || selection === '')) return
       const p = action === 'move' ? await prepareProbeTransfer({ vaultId, sourceHostId: hostId, targetHostId: target!.hostId, targetConnectionId: target!.connectionId, targetIntegrationId: target!.integrationId, ...(endpoint.trim() ? { endpoint: endpoint.trim() } : {}) }) : await recoverProbeTransfer(vaultId, row!.id, action)
       id = p.planId; plans.current.add(id); if (!current()) return
-      const describe = (e: CompatibleAgentPreview) => `${e.hostName} · ${e.account} · ${e.transport} · ${e.serviceScope}\n${e.endpoint}\n${e.nodeId}\n${e.dataDirectory}\n${e.currentVersion ?? '—'} → ${e.targetVersion ?? '—'}`
+      const describe = (e: CompatibleAgentPreview) => `${e.hostName} · ${e.account} · ${e.transport} · ${e.serviceScope}\n${e.endpoint}\n${e.nodeId}\n${e.dataDirectory}\n${probeReleaseDisplay(e.currentArtifact, e.currentVersion, compatibleAgentCopy[locale].distributions)} → ${probeReleaseDisplay(e.targetArtifact, e.targetVersion, compatibleAgentCopy[locale].distributions)}`
       if (action !== 'inspect') {
         const decision = await requestUserDecision({ vaultId, risk: 'high', message: `${c[action]}\n${c.source}: ${describe(p.source)}\n${c.destination}: ${describe(p.target)}\n${c.confirm}`, isCurrent: current })
         if (!decision.accepted || decision.isCurrent?.() === false || !current()) return

@@ -1,0 +1,132 @@
+// Installed production app, real SSH/systemd and original server observations.
+// All lifecycle changes, release policy and Vault recovery use visible UI.
+import assert from 'node:assert/strict'
+import { setTimeout as delay } from 'node:timers/promises'
+import { openTransferTools, revealTransferObservations } from './probe-transfer-ui-journey.mjs'
+import { wait } from './probe-transfer-ui-fixture.mjs'
+import { downloadPinned } from './prepare-komari-agent-release.mjs'
+import { verifyCompatibleCatalog } from './publish-komari-agent.mjs'
+import { historicalCatalog, historicalCatalogPin, rawCpuSamples, reviewed, verifyFreshCpu } from './monitoring-agent-ui-evidence.mjs'
+import { revealExtensionAudit } from './extension-ui-journey.mjs'
+
+const id = name => `[data-testid="${name}"]`
+const panel = h => `${id('host-card')}[data-host-id="${h.id}"] ${id('compatible-agent-panel')}`
+const control = (h, name) => `${panel(h)} ${id('compatible-agent-' + name)}`
+async function confirm(d, names, accept = true) {
+  const dialog = `dialog[open] ${id('user-confirmation')}`
+  await d.waitFor(dialog, { timeoutMs: 120000 }); assert.equal(await d.attr(dialog, 'data-risk'), 'high')
+  const message = await d.text(id('user-confirmation-message'))
+  for (const name of names) assert(message.includes(name), 'agent_ui_confirmation_scope')
+  await d.click(id('user-confirmation-' + (accept ? 'accept' : 'cancel')))
+  await d.until(async () => !(await d.findAll(dialog)).length)
+}
+async function policy(d, h, f, source) {
+  await openTransferTools(d, h)
+  const box = control(h, 'policy')
+  if (await d.attr(box, 'open') === null) await d.click(box + ' > summary')
+  await d.click(control(h, 'policy-load')); await d.waitFor(control(h, 'policy-source'))
+  await d.select(control(h, 'policy-source'), source)
+  if (source === 'custom') {
+    // Public production key and immutable original catalog, never a fixture key
+    // or a rollback of the current production catalog / monotonic watermark.
+    for (const [key, value] of Object.entries({ manifestUrl: historicalCatalog, trustedPublicKey: f.trust.publicKey, allowedHosts: f.trust.allowedHosts.join(', ') })) await d.fill(control(h, 'policy-' + key), value)
+  }
+  await d.click(control(h, 'policy-save')); await confirm(d, ['trusted publisher and download sources'])
+  await d.until(async () => await d.isEnabled(control(h, 'policy-save')))
+  await d.click(control(h, 'policy-load')); assert.equal(await d.attr(control(h, 'policy-source'), 'value'), source)
+  await d.click(box + ' > summary')
+}
+async function audit(d, jobs) {
+  await d.click(id('pc-dashboard')); await d.click(id('pc-nav-activity')); await d.click(id('audit-tab')); await d.click(id('operations-refresh'))
+  const found = new Set(); let selected
+  for (let page = 0; page < 20; page++) {
+    await d.waitFor(id('operation-audit-row')); selected = undefined
+    for (const row of await d.findAll(id('operation-audit-row'))) {
+      const job = await d.attr(row, 'data-job-id'), status = await d.attr(row, 'data-status')
+      if (jobs.get(job) === status) { found.add(job); selected = { id: job, status } }
+    }
+    if (found.size === jobs.size) { assert(selected); return selected }
+    if (!await d.isEnabled(id('operations-older'))) break
+    const before = await d.text(id('operations-page')); await d.click(id('operations-older')); await d.until(async () => await d.text(id('operations-page')) !== before)
+  }
+  assert.fail('agent_ui_persisted_audit_missing')
+}
+export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: session, record, restart, checkpoint }) {
+  let d = driver
+  assert.equal(f.release.version, '1.5.12', 'agent_ui_production_release_not_promoted')
+  const oldBytes = await downloadPinned(historicalCatalog, historicalCatalogPin, 65536), oldRaw = JSON.parse(oldBytes)
+  // Historical catalog is pinned byte-for-byte. Check its signatures at issue
+  // time, as a historical document; current official feed still uses wall time.
+  const old = verifyCompatibleCatalog(oldRaw, f.trust, oldRaw.publishedAt).artifacts.find(m => m.architecture === f.architecture)
+  assert.equal(old.version, '1.5.11'); assert.equal(old.sha256, reviewed['1.5.11'][f.architecture].sha256)
+  const { source: fresh, target: upgrade } = f.hosts, jobs = new Map(), original = new Map()
+  record('agent-production-release-verified', { keyId: f.trust.keyId, sequence: f.catalog.sequence, version: f.release.version, architecture: f.architecture, signatureVerified: true, historicalCatalogPinned: true, server: 'ShellBeam Server' })
+  const snapshot = () => Object.fromEntries(Object.values(f.hosts).map(h => [h.role, f.observe(h)]))
+  const stable = async before => { await delay(5000); assert.deepEqual(snapshot(), before, 'agent_ui_unexpected_remote_replay') }
+  const sample = async h => rawCpuSamples((await f.servers[h.service].request(`/api/recent/${h.node}`)).value, h.node).sort((a, b) => b.time - a.time)[0]
+  const remember = async (h, status = 'completed') => {
+    const job = await d.attr(panel(h), 'data-job-id'); assert(/^[a-f0-9-]{36}$/.test(job)); assert(!jobs.has(job), 'agent_ui_reused_audit'); jobs.set(job, status); return job
+  }
+  const prove = async (h, version, before, started, name) => {
+    const pin = reviewed[version][f.architecture]
+    const evidence = await wait(async () => {
+      const cpu = await sample(h), states = f.observe(h), active = states.filter(s => s.processes.length)
+      if (!cpu || cpu.time <= before || cpu.time < started - 5000 || cpu.time < Date.now() - 60000 || active.length !== 1) return false
+      const value = active[0]; assert.equal(value.processes.length, 1); assert.equal(value.processes[0].sha256, pin.sha256); assert.equal(value.version, version)
+      const verifiedAt = Date.now(); verifyFreshCpu(cpu, { before, started, verifiedAt })
+      const node = await h.rpc('admin:getClient'); assert.equal(node.uuid, h.node); assert.equal(node.created_at, h.original.created_at); assert.equal(node.version.replace(/^v/, ''), version)
+      await f.retained()
+      if (original.has(h.role)) { assert.equal(value.deployment, original.get(h.role).deployment); assert.equal(value.configSha256, original.get(h.role).configSha256) } else original.set(h.role, value)
+      return { version, cpu: cpu.cpu, originalSampleAt: cpu.time, before, started, verifiedAt, processSha256: value.processes[0].sha256, configurationRetained: true, nodeAndTokenRetained: true }
+    }, 90000)
+    await h.history.capture()
+    assert.equal(await d.attr(panel(h), 'data-version'), version)
+    assert.equal(await d.attr(panel(h), 'data-product'), version === '1.5.12' ? 'shellbeam' : 'upstream')
+    assert((await d.text(control(h, 'origin'))).includes(version === '1.5.12' ? 'ShellBeam Monitoring Agent' : 'Komari Agent (compatible)'))
+    record(name, evidence)
+    await revealTransferObservations(d, control(h, 'identity'))
+    for (const field of await d.findAll('input[type="password"],textarea,#komari-api-key')) assert(!await d.attr(field, 'value'), 'agent_ui_secret_visible')
+    assert.equal((await d.findAll('iframe')).length, 0)
+    await checkpoint(name)
+  }
+  const operate = async (h, action, version, name) => {
+    await openTransferTools(d, h)
+    if (action === 'install') await d.fill(control(h, 'endpoint'), f.servers[h.service].agentEndpoint)
+    const before = (await sample(h))?.time ?? 0, started = Date.now()
+    await d.click(control(h, action)); await confirm(d, [h.name, h.node, version])
+    await d.until(async () => await d.attr(panel(h), 'data-status') === 'active' && await d.attr(panel(h), 'data-version') === version && await d.isEnabled(control(h, 'inspect')), { timeoutMs: 120000 })
+    await remember(h); await prove(h, version, before, started, name)
+  }
+  // Fresh production install has never opened or configured publisher policy.
+  await operate(fresh, 'install', '1.5.12', 'agent-fresh-install')
+  record('agent-no-user-key-configuration', { passed: true })
+  await policy(d, upgrade, f, 'custom'); await operate(upgrade, 'install', '1.5.11', 'agent-old-install')
+  await policy(d, upgrade, f, 'official'); await operate(upgrade, 'upgrade', '1.5.12', 'agent-upgraded')
+  assert.equal(await d.attr(panel(upgrade), 'data-previous-version'), '1.5.11')
+  await operate(upgrade, 'rollback', '1.5.11', 'agent-rolled-back')
+  assert.equal(await d.attr(panel(upgrade), 'data-previous-version'), '1.5.12')
+  const before = (await sample(upgrade)).time, started = Date.now(), release = f.hold(upgrade, '1.5.12')
+  await d.click(control(upgrade, 'upgrade')); await confirm(d, [upgrade.name, upgrade.node, '1.5.12'])
+  await wait(() => f.servers[upgrade.service].gate.held > 0, 120000)
+  assert.equal(f.observe(upgrade)[0].processes[0].sha256, f.release.sha256)
+  const interrupted = snapshot(); d = await restart(session.password); release(); await stable(interrupted)
+  await openTransferTools(d, upgrade); assert(['dispatched', 'unknown'].includes(await d.attr(panel(upgrade), 'data-status')))
+  const unknown = await remember(upgrade, 'unknown'); await audit(d, new Map([[unknown, 'unknown']]))
+  await openTransferTools(d, upgrade); await d.click(control(upgrade, 'inspect'))
+  await d.until(async () => await d.attr(panel(upgrade), 'data-status') === 'active' && await d.isEnabled(control(upgrade, 'inspect')), { timeoutMs: 120000 })
+  await remember(upgrade); await stable(interrupted)
+  await prove(upgrade, '1.5.12', before, started, 'agent-reupgrade-recovered')
+  assert.equal(await d.attr(panel(upgrade), 'data-previous-version'), '1.5.11')
+  record('agent-interrupted-readonly-recovery', { passed: true, noReplayMs: 5000, unknownAuditRetained: true })
+  for (const h of [fresh, upgrade]) {
+    await openTransferTools(d, h); await d.click(control(h, 'uninstall')); await confirm(d, [h.name, h.node])
+    await d.until(async () => await d.attr(panel(h), 'data-status') === 'retired' && await d.isEnabled(control(h, 'inspect')), { timeoutMs: 120000 }); await remember(h)
+    assert(f.observe(h).every(s => s.processes.length === 0)); assert.equal(f.observe(h)[0].configSha256, original.get(h.role).configSha256)
+    record('agent-history-retained', { role: h.role, ...await h.history.retained() })
+  }
+  await f.retained(); const final = snapshot(); d = await restart(session.password); await stable(final)
+  assert.equal(jobs.size, 8); const selected = await audit(d, jobs); const visible = await revealExtensionAudit(d, selected)
+  await checkpoint('agent-audit-restored')
+  record('agent-audit-restored', { ...visible, passed: true, noReplayMs: 5000, jobs: [...jobs].map(([id, status]) => ({ id, status })), allProbesStopped: true, nodeCredentialsAndHistoryRetained: true })
+  return { passed: true, installedPackage: true, productionIpc: true, realVault: true, nativeShellBeamPages: true, installs: 2, upgrades: 2, rollbacks: 1, readonlyRecovery: 1, restoredAuditJobs: 8, noReplayMs: 5000 }
+}

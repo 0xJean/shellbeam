@@ -57,12 +57,13 @@ try {
     const root = JSON.parse(await readFile(join(project, 'src-tauri/src/data/komari_agent/official-trust.json')))
     const catalog = verifyCompatibleCatalog(JSON.parse(await downloadPinned(root.catalogUrl, null, 65536)), root)
     const manifest = catalog.artifacts.find(a => a.architecture === arch)
-    const pinned = pins.agents.find(a => a.version === manifest.version)?.[arch]
+    const pinned = legacyPins[manifest.version]?.[arch]
     assert.ok(pinned); assert.equal(manifest.sha256, pinned.sha256); assert.equal(manifest.sizeBytes, pinned.size)
     const bytes = await downloadPinned(manifest.url, pinned)
     artifacts[1] = { bytes, manifest }
     report.productionRelease = { keyId: root.keyId, sequence: catalog.sequence, version: manifest.version, signatureVerified: true, bytesVerified: true, noUserConfiguration: true }
   }
+  const upgradeVersion = artifacts[1].manifest.version
   stage = 'initialize isolated loopback server'
   const listener = createServer(); await new Promise(done => listener.listen(0, '127.0.0.1', done)); const port = listener.address().port; await new Promise(done => listener.close(done))
   const endpoint = `http://127.0.0.1:${port}`
@@ -119,10 +120,10 @@ try {
   stage = 'reject changed artifact before activation'
   const previous = await inspect(); const rejected = await operate('upgrade', artifacts[1], Buffer.from('changed artifact').toString('base64'))
   assert.equal(rejected.ok, false); assert.equal(rejected.code, 'artifact_hash_mismatch'); assert.deepEqual(await inspect(), previous); report.checks.push('hash-rejection-without-service-change')
-  stage = 'upgrade actual 1.5.11 and verify original node identity'
+  stage = 'upgrade reviewed release and verify original node identity'
   before = await watermark(); started = Date.now()
   const upgraded = await operate('upgrade', artifacts[1]); assert.equal(upgraded.ok, true); assert.equal(upgraded.state.active, true); assert.equal(upgraded.rollback, 'not-needed')
-  await fresh('1.5.11', before, started); report.checks.push('upgrade-process-and-fresh-report')
+  await fresh(upgradeVersion, before, started); report.checks.push('upgrade-process-and-fresh-report')
   stage = 'rollback retained 1.5.10 without download'
   before = await watermark(); started = Date.now()
   const reverted = await operate('rollback', { manifest: artifacts[0].manifest }); assert.equal(reverted.ok, true); assert.equal(reverted.state.active, true)
@@ -174,7 +175,7 @@ try {
   before = await watermark(); started = Date.now()
   const adopted = await handoff('adopt', artifacts[1], { legacyUnit: legacyUnitName })
   assert.equal(adopted.ok, true); assert.equal(adopted.state.active, true)
-  await fresh('1.5.11', before, started)
+  await fresh(upgradeVersion, before, started)
   assert.deepEqual(await readFile(legacyConfigFile), legacyConfig); assert.equal(await readFile(legacyUnitFile, 'utf8'), legacyUnitText)
   assert.equal(JSON.parse(await readFile(join(managedRoot, 'config.json'))).token, token)
   assert.equal(JSON.parse(await readFile(join(managedRoot, 'config.json'))).include_nics, 'lo')
@@ -183,12 +184,12 @@ try {
   before = await watermark(); started = Date.now()
   const migrated = await handoff('migrate', null, { targetEndpoint: `http://localhost:${port}` })
   assert.equal(migrated.ok, true); assert.equal(migrated.state.endpoint, `http://localhost:${port}`)
-  await fresh('1.5.11', before, started); report.checks.push('address-migration-with-fresh-report')
+  await fresh(upgradeVersion, before, started); report.checks.push('address-migration-with-fresh-report')
   stage = 'restore previous exact configuration without downloading an artifact'
   before = await watermark(); started = Date.now()
   const restoredConfig = await handoff('restore-config', null, { restoreConfig: true })
   assert.equal(restoredConfig.ok, true); assert.equal(restoredConfig.state.endpoint, endpoint)
-  await fresh('1.5.11', before, started); report.checks.push('address-restore-with-fresh-report')
+  await fresh(upgradeVersion, before, started); report.checks.push('address-restore-with-fresh-report')
   stage = 'return ownership to untouched original service and verify new sample'
   before = await watermark(); started = Date.now()
   const returned = await handoff('restore-legacy')

@@ -6,6 +6,7 @@ import { hasSshConnection, type HostProfile } from '@/lib/hosts'
 import { requestUserDecision } from '@/lib/user-confirmation'
 import { cancelCompatibleAgent, compatibleAgentPolicy, operateCompatibleAgent, prepareCompatibleAgent, readCompatibleAgent, type CompatibleAgentAction, type CompatibleAgentPolicy, type CompatibleAgentRecord } from '@/lib/compatible-agent'
 import { compatibleAgentCopy } from '@/lib/locales/compatible-agent'
+import { probeReleaseDisplay, probeReleaseIdentity } from '@/lib/probe-release-identity'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { ProbeTransferPanel } from './probe-transfer-panel'
@@ -69,7 +70,7 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
       if (!current()) return
       if (action !== 'inspect') {
         const handoff = ['adopt', 'migrate', 'restore-config', 'restore-legacy'].includes(action)
-        const answer = await requestUserDecision({ vaultId, risk: 'high', message: `${c[action]} · ${p.hostName}\n${p.nodeId}\n${p.previousEndpoint ? p.previousEndpoint + ' → ' : ''}${p.endpoint}\n${p.legacyUnit ?? ''}\n${p.transport} · ${c.account}: ${p.account} · ${p.serviceScope === 'system' ? c.systemService : c.userService}\nKomari Agent · ${p.currentVersion ?? '—'} → ${p.targetVersion ?? '—'} · ${c.artifact}: ${p.artifactBytes ? (p.artifactBytes / 1048576).toFixed(1) + ' MiB' : '—'}\n${p.dataDirectory}\n${handoff ? c.handoffConfirm : c.cadence + '\n' + c.confirm}\n${c.preserved}`, isCurrent: current })
+        const answer = await requestUserDecision({ vaultId, risk: 'high', message: `${c[action]} · ${p.hostName}\n${p.nodeId}\n${p.previousEndpoint ? p.previousEndpoint + ' → ' : ''}${p.endpoint}\n${p.legacyUnit ?? ''}\n${p.transport} · ${c.account}: ${p.account} · ${p.serviceScope === 'system' ? c.systemService : c.userService}\n${probeReleaseDisplay(p.currentArtifact, p.currentVersion, c.distributions)} → ${probeReleaseDisplay(p.targetArtifact, p.targetVersion, c.distributions)} · ${c.artifact}: ${p.artifactBytes ? (p.artifactBytes / 1048576).toFixed(1) + ' MiB' : '—'}\n${p.dataDirectory}\n${handoff ? c.handoffConfirm : c.cadence + '\n' + c.confirm}\n${c.preserved}`, isCurrent: current })
         if (!answer.accepted || answer.isCurrent?.() === false || !current()) return
       }
       const next = await operateCompatibleAgent(id, action !== 'inspect')
@@ -78,15 +79,18 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
       if (next.errorCode) setError(explain(next.errorCode))
     } finally { if (id) { plans.current.delete(id); await cancelCompatibleAgent(id).catch(() => {}) } }
   })
-  const status = record ? c[record.status as keyof typeof c] ?? c.unknown : c.notManaged
+  const statusValue = record ? c[record.status as keyof typeof c] : c.notManaged
+  const status = typeof statusValue === 'string' ? statusValue : c.unknown
   const unsettled = transferPending || record?.status === 'migrated' || !!record && ['prepared', 'dispatched', 'unknown'].includes(record.status)
   const released = record?.observation.status === 'released'
   const installed = !!record?.current && !['retired', 'absent'].includes(record.observation.status)
-  return <div data-testid="compatible-agent-panel" data-status={record?.status} data-deployment={record?.deployment} data-job-id={record?.jobId} className="min-w-0 space-y-3 py-3 text-xs" onClick={e => e.stopPropagation()}>
+  const origin = probeReleaseIdentity(record?.current?.manifest)
+  return <div data-testid="compatible-agent-panel" data-status={record?.status} data-deployment={record?.deployment} data-job-id={record?.jobId} data-version={record?.current?.manifest.version} data-previous-version={record?.previous?.manifest.version} data-product={origin?.product ?? 'compatible'} className="min-w-0 space-y-3 py-3 text-xs" onClick={e => e.stopPropagation()}>
     <p>{c.description}</p><p className="text-muted-foreground">{c.officialHint}</p><p className="text-muted-foreground">{c.requirements}</p>
     <div role="status" className="break-words">{busy ? c.working : status}</div>
-    {record && <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+    {record && <dl data-testid="compatible-agent-identity" className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
       <dt>{c.version}</dt><dd>{record.current?.manifest.version ?? '—'}</dd><dt>{c.previous}</dt><dd>{record.previous?.manifest.version ?? '—'}</dd>
+      {origin && <><dt>{c.provenance}</dt><dd data-testid="compatible-agent-origin" className="break-words">{c.distributions[origin.product]}<span className="block text-muted-foreground break-all">{origin.repository}{origin.commit ? ` · ${origin.commit.slice(0, 12)}` : ''}</span></dd></>}
       <dt>{c.observed}</dt><dd>{record.observedAt ? new Date(record.observedAt).toLocaleString(locale) : c.idle}</dd>
       <dt>{c.job}</dt><dd className="break-all font-mono" title={record.jobId}>{record.jobId}</dd>
     </dl>}
@@ -104,13 +108,13 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
     </details>
     <ProbeTransferPanel vaultId={vaultId} hostId={host.id} canMove={record?.status === 'active' && !busy} onChanged={refreshTransfer} onPending={setTransferPending} />
     {(error || record?.errorCode) && <p role="alert" className="break-words text-destructive">{error || c.generic} <span className="break-all font-mono">{code || record?.errorCode}</span></p>}{notice && <p role="status">{notice}</p>}
-    <details className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.policy}</summary><p className="my-2 text-muted-foreground">{c.policyHint}</p>
-      <Button size="sm" variant="outline" disabled={busy} onClick={() => void work(async current => { const value = await compatibleAgentPolicy(); if (current()) setPolicy(value) })}>{c.loadPolicy}</Button>
+    <details data-testid="compatible-agent-policy" className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.policy}</summary><p className="my-2 text-muted-foreground">{c.policyHint}</p>
+      <Button data-testid="compatible-agent-policy-load" size="sm" variant="outline" disabled={busy} onClick={() => void work(async current => { const value = await compatibleAgentPolicy(); if (current()) setPolicy(value) })}>{c.loadPolicy}</Button>
       {policy && <div className="mt-2 space-y-2">
-        <label className="block">{c.source}<NativeSelect aria-label={c.source} disabled={busy} value={policy.source ?? 'custom'} onChange={e => setPolicy({ ...policy, source: e.target.value as 'official' | 'custom' })} className="ml-2 rounded border border-border bg-background p-1"><option value="official">{c.official}</option><option value="custom">{c.custom}</option></NativeSelect></label>
+        <label className="block">{c.source}<NativeSelect data-testid="compatible-agent-policy-source" aria-label={c.source} disabled={busy} value={policy.source ?? 'custom'} onChange={e => setPolicy({ ...policy, source: e.target.value as 'official' | 'custom' })} className="ml-2 rounded border border-border bg-background p-1"><option value="official">{c.official}</option><option value="custom">{c.custom}</option></NativeSelect></label>
         <label className="flex gap-2"><input type="checkbox" disabled={busy} checked={policy.enabled} onChange={e => setPolicy({ ...policy, enabled: e.target.checked })} />{c.enabled}</label>
-        {policy.source !== 'official' && (['manifestUrl', 'trustedPublicKey', 'allowedHosts'] as const).map(key => <label className="block" key={key}>{key === 'manifestUrl' ? c.catalog : key === 'trustedPublicKey' ? c.publicKey : c.hosts}<Input disabled={busy} value={key === 'allowedHosts' ? policy.allowedHosts.join(', ') : policy[key]} onChange={e => setPolicy({ ...policy, [key]: key === 'allowedHosts' ? e.target.value.split(',').map(x => x.trim()).filter(Boolean) : e.target.value })} /></label>)}
-        <Button size="sm" disabled={busy} onClick={() => void work(async current => { const answer = await requestUserDecision({ vaultId, risk: 'high', message: c.policyConfirm, isCurrent: current }); if (!answer.accepted || !current() || answer.isCurrent?.() === false) return; const value = await compatibleAgentPolicy(policy, true); if (current()) { setPolicy(value); setNotice(c.saved) } })}>{c.savePolicy}</Button>
+        {policy.source !== 'official' && (['manifestUrl', 'trustedPublicKey', 'allowedHosts'] as const).map(key => <label className="block" key={key}>{key === 'manifestUrl' ? c.catalog : key === 'trustedPublicKey' ? c.publicKey : c.hosts}<Input data-testid={`compatible-agent-policy-${key}`} disabled={busy} value={key === 'allowedHosts' ? policy.allowedHosts.join(', ') : policy[key]} onChange={e => setPolicy({ ...policy, [key]: key === 'allowedHosts' ? e.target.value.split(',').map(x => x.trim()).filter(Boolean) : e.target.value })} /></label>)}
+        <Button data-testid="compatible-agent-policy-save" size="sm" disabled={busy} onClick={() => void work(async current => { const answer = await requestUserDecision({ vaultId, risk: 'high', message: c.policyConfirm, isCurrent: current }); if (!answer.accepted || !current() || answer.isCurrent?.() === false) return; const value = await compatibleAgentPolicy(policy, true); if (current()) { setPolicy(value); setNotice(c.saved) } })}>{c.savePolicy}</Button>
       </div>}
     </details>
   </div>

@@ -773,3 +773,51 @@ job, preferring a retained `unknown` outcome. It still uses one inert-row
 click and the existing read-only geometry check; intermediate/wrong-job rows
 cannot satisfy the report gate. This is evidence precision, not a change to
 product state transitions or a replacement for the next installed-App run.
+
+## ShellBeam Monitoring Agent 1.5.12 client preparation (2026-10-23)
+
+Merged reviewed release preparation from main (`ac132f9`) in `a022811`, retaining
+the existing 1.5.10/1.5.11 pins and adding the precise fork source/asset pins.
+The publisher workflow, production root, signing domains and URL restrictions
+remain unchanged by the client changes. The host panel and confirmations match
+runtime/platform/architecture/version/hash/size to reviewed bytes; incomplete or
+custom observations do not acquire the ShellBeam label from a version string.
+
+Prepared a separate installed-package workflow, `monitoring-agent-ui-ci.yml`:
+real ShellBeam Server commit `0bbcac62ef6a012357e935108090c1e16900126c`,
+two isolated systemd machines, ordinary/root SSH accounts and ProxyJump,
+new Vault with synthetic credentials, current production-root 1.5.12 install,
+immutable signed 1.5.11 baseline via the existing custom-source UI, return to
+built-in policy, upgrade, retained-previous rollback, and interrupted re-upgrade
+followed by read-only recovery. The gate requires five original CPU samples,
+exact `/proc/<pid>/exe` hashes, preserved node/Token/config/history, eight
+distinct persisted jobs (seven completed and the retained unknown), five-second
+no-replay windows, six fully visible identity/audit screenshots and clean exit.
+The old catalog is pinned to SHA-256
+`3e30865c816e0dd87d50438378a542b589bcf2b4d754933c0745ff33b2863b69`;
+it is a historical baseline, never a rollback of the production feed/watermark.
+Existing lifecycle/helper/migration gates now resolve the exact reviewed
+production version rather than assuming the feed remains 1.5.11.
+
+Local checks: **1622 frontend passed, 17 Linux-only skipped; 268 Rust library
+passed, 4 opt-in ignored; 249 Node tests passed**, production build, edited-file
+ESLint, cargo fmt and diff checks. The 43 focused frontend tests include both
+languages, exact source recognition and upgrade/rollback confirmation. Three
+synthetic production-component screenshots cover Chinese dark content widths
+640/320 and English light 640, including long source/hash wrapping. These are
+component evidence, not installed-App E2E.
+
+The pinned server was built locally and both real arm64 fixture services started;
+product/version/commit envelopes and synthetic node/Token readback passed, both
+containers/network were cleaned. Evidence:
+`/tmp/shellbeam-agent-ui-server-fixture.json` (`appCoordinator:false`) and
+`/tmp/shellbeam-agent-provenance-ui/`. No real Vault, credential, production
+secret or installed user App was accessed for this development/testing.
+
+**Pending:** protected production release run `39915753275` is awaiting the
+required reviewer; stable feed still advertises 1.5.11. This client's new
+installed-App workflow refuses to start its journey until production 1.5.12 is
+promoted (`agent_ui_production_release_not_promoted`). No passing 1.5.12
+production-root installed-App report is claimed yet. After approval/promotion,
+run and independently inspect the exact head's report, executable/sample proof,
+audit history, screenshot hashes/visibility and cleanup before marking complete.
