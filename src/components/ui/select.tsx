@@ -81,12 +81,17 @@ export function NativeSelect({ children, className, optionDetails, disabled, onC
       const left = viewport?.offsetLeft ?? 0
       const height = viewport?.height ?? window.innerHeight
       const width = viewport?.width ?? window.innerWidth
-      const below = top + height - rect.bottom - 8
-      const above = rect.top - top - 8
+      // Native focus/scroll can move the trigger outside the viewport while a
+      // portal is open. Clamp its anchor as well as its width: negative bottom
+      // offsets otherwise place the entire listbox below a long page.
+      const anchorTop = Math.max(top + 8, Math.min(rect.top, top + height - 8))
+      const anchorBottom = Math.max(top + 8, Math.min(rect.bottom, top + height - 8))
+      const below = Math.max(0, top + height - anchorBottom - 12)
+      const above = Math.max(0, anchorTop - top - 12)
       const goUp = below < Math.min(options.length * 36 + 8, 240) && above > below
       const menuHeight = Math.max(0, Math.min(240, goUp ? above : below))
-      const menuWidth = Math.min(Math.max(rect.width, 208), width - 16)
-      setPosition({ top: goUp ? undefined : rect.bottom + 4, bottom: goUp ? window.innerHeight - rect.top + 4 : undefined,
+      const menuWidth = Math.max(0, Math.min(Math.max(rect.width, 208), width - 16))
+      setPosition({ top: goUp ? undefined : anchorBottom + 4, bottom: goUp ? window.innerHeight - anchorTop + 4 : undefined,
         left: Math.max(left + 8, Math.min(rect.left, left + width - menuWidth - 8)), width: menuWidth, maxHeight: menuHeight })
     }
     update()
@@ -99,18 +104,28 @@ export function NativeSelect({ children, className, optionDetails, disabled, onC
     window.addEventListener('scroll', update, true)
     window.addEventListener('resize', update)
     window.visualViewport?.addEventListener('resize', update)
+    window.visualViewport?.addEventListener('scroll', update)
     return () => {
       document.removeEventListener('pointerdown', dismiss, true)
       document.removeEventListener('focusin', dismiss)
       window.removeEventListener('scroll', update, true)
       window.removeEventListener('resize', update)
       window.visualViewport?.removeEventListener('resize', update)
+      window.visualViewport?.removeEventListener('scroll', update)
     }
   }, [expanded, options.length])
 
-  React.useEffect(() => {
-    if (expanded) listRef.current?.querySelector<HTMLElement>(`[data-option-index="${active}"]`)?.scrollIntoView?.({ block: 'nearest' })
-  }, [active, expanded])
+  React.useLayoutEffect(() => {
+    const list = listRef.current
+    const option = list?.querySelector<HTMLElement>(`[data-option-index="${active}"]`)
+    if (!expanded || !list || !option) return
+    // Reveal inside the menu only. scrollIntoView also scrolls its document
+    // ancestors in WebKit, moving the trigger and portal during selection.
+    if (option.offsetTop < list.scrollTop) list.scrollTop = option.offsetTop
+    else if (option.offsetTop + option.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = option.offsetTop + option.offsetHeight - list.clientHeight
+    }
+  }, [active, expanded, portalRoot, position.maxHeight])
 
   function keyDown(event: React.KeyboardEvent<HTMLSelectElement>) {
     onKeyDown?.(event)
@@ -149,7 +164,7 @@ export function NativeSelect({ children, className, optionDetails, disabled, onC
       className={cn('app-select h-9 min-w-0 max-w-full truncate rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] pl-3 text-sm font-medium text-[var(--workspace-text-muted)] transition-colors hover:text-[var(--workspace-text-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50', className)}
       onPointerDown={event => { onPointerDown?.(event); event.preventDefault() }}
       onMouseDown={event => { onMouseDown?.(event); event.preventDefault() }}
-      onClick={event => { onClick?.(event); event.preventDefault(); event.stopPropagation(); triggerRef.current?.focus(); if (expanded) setOpen(false); else show() }}
+      onClick={event => { onClick?.(event); event.preventDefault(); event.stopPropagation(); triggerRef.current?.focus({ preventScroll: true }); if (expanded) setOpen(false); else show() }}
       onKeyDown={keyDown} onChange={event => { setOpen(false); setUncontrolledValue(event.target.value); onChange?.(event) }}>
       {children}
     </select>

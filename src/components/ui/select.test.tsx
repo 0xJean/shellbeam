@@ -91,4 +91,32 @@ describe('application select menu', () => {
     fireEvent.click(field)
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
+
+  it.each([-3000, 3000])('keeps a portal inside the window when its trigger moves to y=%s', y => {
+    vi.spyOn(HTMLSelectElement.prototype, 'getBoundingClientRect').mockReturnValue({ top: y, bottom: y + 36, left: 182, right: 427, width: 245, height: 36, x: 182, y, toJSON() {} })
+    render(<NativeSelect aria-label="Moved field" value="all">{options}</NativeSelect>)
+    fireEvent.click(screen.getByRole('combobox'))
+    const menu = screen.getByRole('listbox')
+    const maxHeight = Number.parseFloat(menu.style.maxHeight)
+    const top = menu.style.top ? Number.parseFloat(menu.style.top) : window.innerHeight - Number.parseFloat(menu.style.bottom) - maxHeight
+    expect(top).toBeGreaterThanOrEqual(0)
+    expect(top + maxHeight).toBeLessThanOrEqual(window.innerHeight)
+  })
+
+  it('reveals a keyboard option by scrolling its menu without scrolling document ancestors', () => {
+    render(<NativeSelect aria-label="Status" value="all">{options}</NativeSelect>)
+    const field = screen.getByRole('combobox')
+    fireEvent.click(field)
+    const menu = screen.getByRole('listbox')
+    const last = within(menu).getByRole('option', { name: 'Offline' })
+    Object.defineProperty(menu, 'clientHeight', { configurable: true, value: 100 })
+    Object.defineProperty(last, 'offsetTop', { configurable: true, value: 140 })
+    Object.defineProperty(last, 'offsetHeight', { configurable: true, value: 36 })
+    const scrollAncestors = vi.fn()
+    last.scrollIntoView = scrollAncestors
+    fireEvent.keyDown(field, { key: 'End' })
+    expect(menu.scrollTop).toBe(76)
+    expect(scrollAncestors).not.toHaveBeenCalled()
+    expect(field.getAttribute('aria-activedescendant')).toBe(last.id)
+  })
 })

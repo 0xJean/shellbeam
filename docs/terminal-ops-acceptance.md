@@ -632,3 +632,30 @@ and at-most-once dispatch semantics.
 ### 2026-10-23 — native monitoring configuration CI type correction
 
 `ae7109e` finished with 10/16 checks successful. All six failures (frontend, three native platforms and both packaged GUI jobs) stopped at the same TypeScript error in the deferred service-scope test: the generic mock inferred `Promise<never>` for an untyped deferred promise. No packaged GUI journey ran on that head. Explicit `Promise<unknown>` preserves the late-response and scope-revocation assertions. Validation: forced clean TypeScript build (`tsc -b --force`) and the service-panel test file pass. New-head CI is required; older green runs are not evidence for this correction.
+
+### 2026-10-23 — contain select portals and keyboard scrolling
+
+`47d3a8e` finished with **15/16 checks successful**. The TypeScript build blocker
+is gone on all platforms; packaged migration and the monitoring extension server
+contract passed. The Ops GUI (`39898221539`, artifact `12477842422`) failed at
+`rule-activation / local-rule-metric`: the menu rectangle was at y=2935 in an
+800px window, despite its internal content fitting. Host range navigation had
+settled correctly. Cleanup and application exit passed. The redacted report is
+`/tmp/shellbeam-ci-47d3a8e-gui-audit/shellbeam-ops-ui-live-report.json`.
+
+The production select now bounds its anchor to the visual viewport, listens to
+visual viewport scrolling, uses menu-local `scrollTop` for keyboard revelation,
+and focuses the trigger without scrolling. This prevents negative bottom offsets
+and `scrollIntoView` moving document ancestors. Three new component cases cover
+out-of-window anchors and menu-only scrolling. An isolated GTK WebKit 2.50.4
+production rule form and clipped-menu fixture both pass real W3C selection:
+`/tmp/shellbeam-select-contained-rules.json` and `menu.json`. The long-form fixture
+also passed before this change, so this is **not** a reproduction of the complete
+CI timing failure or proof of a passing packaged journey. New-head GUI is required.
+
+Final local suite including the pending host-alert feature: **1604 frontend passed,
+17 Linux-only skipped**, **192 Node passed**, production build, changed-file ESLint,
+and embedded extension ZIP/source equality passed. The prior chunk-size warning
+remains. No driver retries, timeouts, visibility/OCR/same-frame/sample/scope/no-replay
+assertions or post-notification reader/guard were changed. The test container,
+browser and temporary Vite were cleaned up; the installed user App was untouched.
