@@ -43,12 +43,12 @@ function report() {
     {name:'extension-app-interrupted-removal-restored',backupBeforeDelete:true,originalIdentity:true,unknownDispatchRetained:true,explicitRestore:true,noReplayMs:5000},
     {name:'extension-app-conflict-preserved',runningStateNotOverwritten:true,backupRetained:true},
     ...['fresh','legacy'].map(role=>({name:'extension-retained-node-history',role,credentialStillWorks:true,originalBuckets:[1000],checkedAt:2000,retainedBuckets:1})),
-    {name:'extension-app-audit-restored',oneVault:true,auditRowVisible:true,auditRowStatus:'completed',credentialRecordsUnchanged:true,encryptedIntents:8,jobs},
+    {name:'extension-app-audit-restored',oneVault:true,auditRowVisible:true,auditRowStatus:jobs[0].status,auditRowJobId:jobs[0].id,credentialRecordsUnchanged:true,encryptedIntents:8,jobs},
     {name:'extension-fixture-cleaned',serversStopped:true}],screenshots:['installed','uninstalled','restored','upgrade-recovered','removal-recovered','audit'].map(n=>({file:`extension-${n}.png`,sha256:'c'.repeat(64),bytes:10000,width:1280,height:900}))}
 }
 test('complete report contract accepts all lifecycle and evidence fields',()=>assert(verifyExtensionUiReport(report())))
 for(const [name,change] of [
-  ['audit row offscreen',r=>r.events[10].auditRowVisible=false],['no app coordinator',r=>r.journey.productionIpc=false],['web frontend',r=>r.journey.nativeShellBeamPages=false],['no vault',r=>r.journey.realVault=false],['incomplete cleanup',r=>r.cleanup=false],['app still running',r=>r.applicationStopped=false],['no interruption',r=>r.journey.interrupted=0],['short no replay',r=>r.journey.noReplayMs=1],['untrusted server',r=>r.events[0].pinnedServer=false],['repeated merge',r=>r.events[5].noDuplicateMerge=false],['lost unknown dispatch',r=>r.events[5].unknownDispatchRetained=false],['deleted before backup',r=>r.events[6].backupBeforeDelete=false],['overwritten conflict',r=>r.events[7].runningStateNotOverwritten=false],['lost history',r=>r.events[8].originalBuckets=[]],['missing credential',r=>r.events[8].credentialStillWorks=false],['rewritten audit',r=>r.events[10].jobs[0].status='completed'],['duplicate audit',r=>r.events[10].jobs[1]=r.events[10].jobs[0]],['missing screenshots',r=>r.screenshots.pop()],['missing encryption',r=>r.events[10].encryptedIntents=0],
+  ['audit row offscreen',r=>r.events[10].auditRowVisible=false],['audit intermediate event',r=>r.events[10].auditRowStatus='running'],['audit wrong task',r=>r.events[10].auditRowJobId='ffffffff-ffff-ffff-ffff-ffffffffffff'],['no app coordinator',r=>r.journey.productionIpc=false],['web frontend',r=>r.journey.nativeShellBeamPages=false],['no vault',r=>r.journey.realVault=false],['incomplete cleanup',r=>r.cleanup=false],['app still running',r=>r.applicationStopped=false],['no interruption',r=>r.journey.interrupted=0],['short no replay',r=>r.journey.noReplayMs=1],['untrusted server',r=>r.events[0].pinnedServer=false],['repeated merge',r=>r.events[5].noDuplicateMerge=false],['lost unknown dispatch',r=>r.events[5].unknownDispatchRetained=false],['deleted before backup',r=>r.events[6].backupBeforeDelete=false],['overwritten conflict',r=>r.events[7].runningStateNotOverwritten=false],['lost history',r=>r.events[8].originalBuckets=[]],['missing credential',r=>r.events[8].credentialStillWorks=false],['rewritten audit',r=>r.events[10].jobs[0].status='completed'],['duplicate audit',r=>r.events[10].jobs[1]=r.events[10].jobs[0]],['missing screenshots',r=>r.screenshots.pop()],['missing encryption',r=>r.events[10].encryptedIntents=0],
 ])test(`report gate rejects ${name}`,()=>{const r=report();change(r);assert.throws(()=>verifyExtensionUiReport(r))})
 test('ordinary desktop launch refused before any fixture is created',()=>{
   const result=spawnSync('bash',['scripts/ci-extension-ui.sh'],{env:{PATH:process.env.PATH,GITHUB_ACTIONS:'false'},encoding:'utf8'});assert.equal(result.status,1);assert.match(result.stdout,/requires opt-in/)
@@ -59,9 +59,9 @@ test('bounded inspection never implicitly retries a mutation',async()=>{
 
 
 test('audit screenshot reveals one inert row and waits for complete viewport visibility',async()=>{
-  let clicks=0,reads=0
-  const d={click:async()=>{clicks++},rect:async()=>({x:200,y:reads++?400:1000,width:1000,height:120}),elementRoute:async(_,p)=>p,request:async(_,p)=>p.endsWith('Width')?1280:800,attr:async()=> 'completed',until:async read=>{assert.equal(await read(),false);assert.equal(await read(),true)}}
-  assert.deepEqual(await revealExtensionAudit(d),{auditRowVisible:true,auditRowStatus:'completed'});assert.equal(clicks,1)
+  let clicks=0,reads=0;const expected={id:'00000000-0000-0000-0000-000000000001',status:'unknown'}
+  const d={click:async target=>{clicks++;assert(target.includes(expected.id)&&target.includes('data-status="unknown"'))},rect:async()=>({x:200,y:reads++?400:1000,width:1000,height:120}),elementRoute:async(_,p)=>p,request:async(_,p)=>p.endsWith('Width')?1280:800,attr:async(_,name)=>name==='data-job-id'?expected.id:expected.status,until:async read=>{assert.equal(await read(),false);assert.equal(await read(),true)}}
+  assert.deepEqual(await revealExtensionAudit(d,expected),{auditRowVisible:true,auditRowJobId:expected.id,auditRowStatus:'unknown'});assert.equal(clicks,1)
   d.rect=async()=>({x:1200,y:100,width:300,height:50});d.until=async read=>{assert.equal(await read(),false);throw Error('viewport_not_ready')}
-  await assert.rejects(revealExtensionAudit(d),/viewport_not_ready/);assert.equal(clicks,2)
+  await assert.rejects(revealExtensionAudit(d,expected),/viewport_not_ready/);assert.equal(clicks,2)
 })

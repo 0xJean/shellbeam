@@ -764,3 +764,12 @@ an inert audit row, then read-only W3C rectangle/viewport inspection requiring
 both axes fully visible. No mutation, JS scrolling, click retry or timeout change.
 A fresh installed run is required for that visual proof; the first screenshot is
 not claimed to show the audit rows. Existing notification readers remain unchanged.
+
+The `f4d6474` extension UI run (`39906442414`, artifact `12481206662`)
+passed the complete journey and showed an audit row, but its first row was a
+retained intermediate `running` event. The next screenshot guard selects a
+row whose job ID and terminal status match the independently read persistent
+job, preferring a retained `unknown` outcome. It still uses one inert-row
+click and the existing read-only geometry check; intermediate/wrong-job rows
+cannot satisfy the report gate. This is evidence precision, not a change to
+product state transitions or a replacement for the next installed-App run.

@@ -56,21 +56,22 @@ async function stable(s,ms=5000){
 }
 async function audit(d,expected) {
   await d.click(id('pc-dashboard'));await d.click(id('pc-nav-activity'));await d.click(id('audit-tab'));await d.click(id('operations-refresh'))
-  const found=new Map()
+  const found=new Map();let selected
   for(let page=0;page<30;page++) {
-    await d.waitFor(id('operation-audit-row'))
+    await d.waitFor(id('operation-audit-row'));selected=undefined
     for(const element of await d.findAll(id('operation-audit-row'))) {
       const job=await d.attr(element,'data-job-id'),status=await d.attr(element,'data-status')
-      if(expected.some(e=>e.id===job&&e.status===status))found.set(job,status)
+      if(expected.some(e=>e.id===job&&e.status===status)){found.set(job,status);if(!selected||status==='unknown')selected={id:job,status}}
     }
     if(found.size===expected.length)break
     if(!await d.isEnabled(id('operations-older')))break
     const before=await d.text(id('operations-page'));await d.click(id('operations-older'));await d.until(async()=>await d.text(id('operations-page'))!==before)
   }
-  assert.equal(found.size,expected.length,'extension_ui_audit_not_restored')
+  assert.equal(found.size,expected.length,'extension_ui_audit_not_restored');assert(selected);return selected
 }
-export async function revealExtensionAudit(d) {
-  const target=id('operation-audit-row')
+export async function revealExtensionAudit(d,expected) {
+  assert(/^[a-f0-9-]{36}$/.test(expected.id)&&['completed','unknown','failed','cancelled'].includes(expected.status))
+  const target=`${id('operation-audit-row')}[data-job-id="${expected.id}"][data-status="${expected.status}"]`
   // An inert audit row has no action handler. One native click reveals it
   // vertically; subsequent inspection is read-only and must prove both axes.
   await d.click(target)
@@ -80,7 +81,8 @@ export async function revealExtensionAudit(d) {
     const height=Number(await d.request('GET',await d.elementRoute('html','/property/clientHeight')))
     return [box.x,box.y,box.width,box.height,width,height].every(Number.isFinite)&&box.width>0&&box.height>0&&box.x>=0&&box.y>=0&&box.x+box.width<=width&&box.y+box.height<=height
   })
-  return {auditRowVisible:true,auditRowStatus:await d.attr(target,'data-status')}
+  assert.equal(await d.attr(target,'data-job-id'),expected.id);assert.equal(await d.attr(target,'data-status'),expected.status)
+  return {auditRowVisible:true,auditRowJobId:expected.id,auditRowStatus:expected.status}
 }
 
 export async function setupExtensionUi({driver:d,fixture:f,record}) {
@@ -166,7 +168,7 @@ export async function runExtensionUiJourney({driver,fixture:f,state,record,resta
   for(const [job,status] of jobs){const actual=persisted.jobs.find(x=>x.id===job);assert.equal(actual?.status,status,'extension_ui_original_audit_rewritten')}
   // Include reconciliation/cancellation jobs as well, not just final success.
   const audits=persisted.jobs;assert(audits.length>=jobs.size);assert(audits.every(x=>x.vault===audits[0].vault && ['completed','failed','cancelled','unknown'].includes(x.status)))
-  await audit(d,audits);const visible=await revealExtensionAudit(d);record('extension-app-audit-restored',{...visible,jobs:audits.map(({id,status,action})=>({id,status,action})),encryptedIntents:persisted.intents.length,oneVault:true,credentialRecordsUnchanged:true});await checkpoint('extension-audit')
+  const selected=await audit(d,audits);const visible=await revealExtensionAudit(d,selected);record('extension-app-audit-restored',{...visible,jobs:audits.map(({id,status,action})=>({id,status,action})),encryptedIntents:persisted.intents.length,oneVault:true,credentialRecordsUnchanged:true});await checkpoint('extension-audit')
   assert(f.services.every(s=>s.gateway.trace.every(r=>r.path.startsWith('/api/'))),'extension_ui_web_frontend_requested')
   return {passed:true,installedPackage:true,productionIpc:true,realVault:true,nativeShellBeamPages:true,install:1,uninstall:1,restore:2,interrupted:2,upgrade:1,conflict:1,noReplayMs:5000,auditJobs:audits.length}
 }
