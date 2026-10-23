@@ -1070,4 +1070,57 @@ legacy adoption, all eight audit jobs, five original samples, six screenshots an
 Node protocols: 265 passed; Rust library: 277 passed / 4 opt-in ignored, including
 the new real-signature reload/rollback regression; production build, cargo fmt
 and scoped ESLint passed.
-Actual WEB upgrade/rollback evidence will be recorded after native App execution.
+Actual WEB upgrade/rollback evidence is recorded below.
+
+### WEB native App upgrade and retained rollback (2026-10-24, Asia/Shanghai)
+
+The installed macOS App at product commit `232586e` completed the real WEB cycle
+through its native host → monitoring probe panel and both confirmation dialogs:
+owned **1.5.12 → 1.5.13 → retained 1.5.12**. No terminal/helper invocation performed
+the lifecycle writes. Independent SSH observations were read-only apart from
+appending a private acceptance receipt; no credential values left the server.
+
+| Stage | Native completion | OperationJob | Actual process SHA-256 | Independent original CPU sample |
+| --- | --- | --- | --- | --- |
+| Upgrade | 00:42:19 | `9fff9c6c-2775-418a-8570-d8bed1181faf` | `53708f015e53618be1722668b49766376a70bd432d44911c75e116c4e227df73` | `2026-10-23T16:42:41.086426801Z`, 0.37578288142508964% |
+| Rollback | 00:43:38 | `4b14bab0-d198-4b3e-a6dd-cd684b3e8f1a` | `daf4ec3bc514f0cc1e8150a55a2c02737dc3cec76890ca0f79de5c52b5a1480d` | `2026-10-23T16:43:46.581631623Z`, 1.4214046826152533% |
+
+Both samples belong to the original bound node, are newer than the observation
+before the action, and fall within the original 60-second freshness window.
+Both process IDs changed and the server-reported version matched the expected
+version. A subsequent read-only observation after 33,665 ms found the same
+rollback job/process, another fresh original sample and no lifecycle replay.
+The App's history page visibly retained the upgrade and rollback completed
+events, respectively `f6f97111-e1bf-4874-b60b-0e06eae59228` and
+`38bd8117-0a2e-4627-99b6-49d744b1b3f3`. Leaving and reopening the native host page
+loaded the same saved rollback record. The pre-existing unrelated unknown task
+was retained, not relabeled as success or deleted.
+
+The existing application identifier, Vault, SSH reference, API credential,
+deployment and monitoring node were reused. Before the cycle, private backups
+on WEB retained both SQLite databases, the original configuration/unit and
+1.5.12 executable. Exact configuration bytes and node identity/Token matched
+that snapshot after each action. All 14 original metric series, the original
+label set and all 406 original aggregate bucket identities remained; aggregate
+rows increased to 924 during the read-only check. Both Server and probe remained
+enabled/active after completion. The stable signed catalog stayed at 1.5.13;
+rollback used retained signed 1.5.12 bytes without lowering the public catalog.
+WEB is intentionally left running 1.5.12 after the requested rollback, with
+1.5.13 available in the App. No database rollback or credential replacement occurred.
+
+Local evidence: `/tmp/shellbeam-web-second-probe-receipt.json`,
+`/tmp/shellbeam-web-probe-upgraded-1.5.13.jpg`,
+`/tmp/shellbeam-web-probe-rolled-back-1.5.12.jpg`, and the separate upgrade/rollback
+audit screenshots. These are live WEB observations, not synthetic CI hosts.
+The prior transient window-read timeout cleared before restart; one stack sample
+showed local observation JSON parsing on the main thread, but does not establish
+a proven persistent deadlock. The old App bundle is retained as a backup.
+
+Separately, installed Linux agent workflow 39986185020 at `232586e` passed;
+artifact 12515943240 was independently checked, including exact signed 1.5.13
+bytes, legacy adoption/rollback, five original fresh samples, eight audit jobs
+(seven completed, one unknown), 5-second no replay, cleanup/exit and all six PNG
+byte counts/hashes/dimensions plus visual review. Merge
+`0c3bae21c1054a4d0effe7c75d1bc5863f52da35` contains that product head. This isolated
+legacy-to-owned journey is distinct from the owned-to-owned WEB cycle above.
+The later documentation-only commit does not replace that CI head identity.
