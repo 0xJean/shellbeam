@@ -10,7 +10,8 @@ import { historicalCatalog, historicalCatalogPin, rawCpuSamples, reviewed, verif
 import { revealExtensionAudit } from './extension-ui-journey.mjs'
 
 export function verifyAgentAuditScope(actual, expected, vaultId) {
-  assert(/^[a-f0-9-]{36}$/.test(actual.vaultId), 'agent_ui_audit_vault_missing')
+  // The product's default Vault is "personal"; additional Vaults use UUIDs.
+  assert(actual.vaultId === 'personal' || /^[a-f0-9-]{36}$/.test(actual.vaultId), 'agent_ui_audit_vault_missing')
   if (vaultId) assert.equal(actual.vaultId, vaultId, 'agent_ui_audit_vault_changed')
   for (const key of ['hostId', 'action', 'transport']) assert.equal(actual[key], expected[key], `agent_ui_audit_${key}_changed`)
   return actual.vaultId

@@ -34,6 +34,12 @@ test('persisted audit scope binds the original Vault, host, action and route', (
   assert.equal(verifyAgentAuditScope(actual, expected, owner), owner)
   for (const key of ['vaultId', 'hostId', 'action', 'transport']) assert.throws(() => verifyAgentAuditScope({ ...actual, [key]: 'other' }, expected, owner))
   assert.throws(() => verifyAgentAuditScope({ ...actual, vaultId: '00000000-0000-0000-0000-000000000002' }, expected, owner), /vault_changed/)
+  const personal = { ...actual, vaultId: 'personal' }
+  assert.equal(verifyAgentAuditScope(personal, expected), 'personal')
+  assert.equal(verifyAgentAuditScope(personal, expected, 'personal'), 'personal')
+  assert.throws(() => verifyAgentAuditScope(actual, expected, 'personal'), /vault_changed/)
+  assert.throws(() => verifyAgentAuditScope(personal, expected, owner), /vault_changed/)
+  for (const vaultId of [undefined, null, '', 'unknown']) assert.throws(() => verifyAgentAuditScope({ ...actual, vaultId }, expected), /vault_missing/)
 })
 
 test('original CPU proof accepts real zero but rejects heartbeat substitution and wrong node', () => {

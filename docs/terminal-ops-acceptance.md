@@ -866,3 +866,12 @@ run, concurrent with stress work, hit the unrelated 80ms SSH execution deadline
 before remote execution; the unchanged case passed alone and the subsequent full
 run passed. No timeout or outcome assertions were changed. Latest-head CI is
 still required, and standalone Linux harness evidence is not full native CI.
+
+`6dd0d5f` main CI (including the Linux CLI regression, real SSH and native
+production download) passed. Agent installed-App run `39923154197` again passed
+the actual 1.5.12 fresh install and clean exit, then rejected the first audit's
+owner format: the product's default Vault ID is `personal`, not a UUID
+(`vault/meta.rs`). The gate now accepts exactly that reserved default ID or an
+additional Vault's UUID while still comparing the captured owner byte-for-byte
+across restart. Missing/unknown IDs and switches between personal/UUID or two
+UUIDs are rejected. This fixes a fixture assumption, not Vault storage or access.
