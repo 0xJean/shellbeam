@@ -1,7 +1,8 @@
 import { hasOnlyKomariMissingReport } from './komari-first-report'
-import { groupKomariAlertIncidents, normalizeKomariAlertIncidents, isUnverifiedKomariRuleAlert } from './komari-alert-incidents'
+import { groupKomariAlertIncidents, normalizeKomariAlertIncidents, isUnverifiedKomariRuleAlert, isHistoricalKomariAlert } from './komari-alert-incidents'
 import type { KomariAlertSummary } from './komari'
 import type { ProbeProviderTelemetry, ProbeSnapshot } from './probe-provider'
+import { parseMonitoringLoadEvidence, type MonitoringLoadEvidence } from './monitoring-load-evidence'
 
 /** The local lifecycle deliberately stays smaller than a notification system.
  * Komari remains the source of truth for whether a rule is firing; ShellBeam
@@ -48,6 +49,7 @@ export interface KomariProbeAlertTelemetry {
 }
 
 export interface KomariAlertRecord {
+  loadEvidence?: MonitoringLoadEvidence
   schemaVersion: 1
   evidenceStatus?: 'unverified-rule-count'
   source: 'komari'
@@ -429,7 +431,7 @@ export function reconcileKomariAlerts(
 
   if (options.complete) {
     for (const record of alerts) {
-      if (isUnverifiedKomariRuleAlert(record) || record.kind.startsWith('probe-') || seen.has(record.fingerprint) || record.status === 'resolved' || record.status === 'closed') continue
+      if (isUnverifiedKomariRuleAlert(record) || record.kind === 'server-load' || record.kind.startsWith('probe-') || seen.has(record.fingerprint) || record.status === 'resolved' || record.status === 'closed') continue
       record.status = 'resolved'
       record.resolvedAt = now
       audit.push(auditFor(record, 'resolved', now, actor, record.relatedOperationJobId, audit.length))
@@ -476,7 +478,7 @@ export function summarizeKomariAlertState(
   now = Date.now(),
   baseSummary?: KomariAlertSummary | null,
 ): KomariAlertLifecycleSummary {
-  const incidents = groupKomariAlertIncidents(alerts).map((incident) => incident.alert).filter(alert => !isUnverifiedKomariRuleAlert(alert))
+  const incidents = groupKomariAlertIncidents(alerts).map((incident) => incident.alert).filter(alert => !isHistoricalKomariAlert(alert))
   const acknowledged = incidents.filter((alert) => alert.status === 'acknowledged').length
   const active = incidents.filter((alert) => alert.status === 'active').length
   const resolved = incidents.filter((alert) => alert.status === 'resolved').length
@@ -524,7 +526,9 @@ export function parseKomariAlertState(value: unknown): KomariAlertState | null {
     const telemetry = normalizeProbeTelemetry(record.probeTelemetry)
     const sanitizedRecord = { ...record } as unknown as KomariAlertRecord
     delete sanitizedRecord.probeTelemetry
-    return [{ ...sanitizedRecord, ...(telemetry ? { probeTelemetry: telemetry } : {}) }]
+    delete sanitizedRecord.loadEvidence
+    const loadEvidence = record.kind === 'server-load' ? parseMonitoringLoadEvidence(record.loadEvidence) : undefined
+    return [{ ...sanitizedRecord, ...(telemetry ? { probeTelemetry: telemetry } : {}), ...(loadEvidence ? { loadEvidence } : {}) }]
   }).slice(-500)
   const audit = raw.audit.flatMap((item): KomariAlertAuditEntry[] => {
     if (!item || typeof item !== 'object') return []

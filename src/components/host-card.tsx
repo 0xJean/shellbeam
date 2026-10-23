@@ -15,7 +15,8 @@ import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { KomariAlertAuditEntry, KomariAlertRecord } from '@/lib/komari-alerts'
-import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
+import { isHistoricalKomariAlert, groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
+import { loadEvidenceCopy } from '@/lib/monitoring-load-evidence'
 import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import { hostProbeEvaluations, validHostOpsSampleTime, type HostOpsCapability, type HostOpsProbeEvaluation } from '@/lib/host-ops-view'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
@@ -569,7 +570,7 @@ function HostOperationsCell({ host, summary, expanded, detailsId, onToggle, comp
   const local = (summary.localAlerts ?? []).filter((alert) => alert.hostId === host.id)
   const localOpen = summary.localAlertOpen ?? local.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length
   const komariOpen = summary.alertOpen ?? (incidents.length > 0
-    ? incidents.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged').length
+    ? incidents.filter((alert) => !isHistoricalKomariAlert(alert) && (alert.status === 'active' || alert.status === 'acknowledged')).length
     : summary.alertUnsupported ? undefined : summary.alertActive)
   const open = (komariOpen ?? 0) + localOpen
   const hasCounts = komariOpen != null || localOpen > 0 || (!summary.alertUnsupported
@@ -694,6 +695,7 @@ function HostOperationalMeta({ host, summary, t, expanded = false }: { host: Hos
                 <span className={cn('min-w-0 flex-1', expanded ? 'basis-full break-words [overflow-wrap:anywhere]' : 'truncate')} title={alert.title}>
                   <span className="font-medium text-[var(--workspace-text-strong)]">{alert.title}</span>
                   <span className="ml-1 text-[var(--workspace-text-subtle)]">· {t(`komariAlerts.status.${alert.status}`)}</span>
+                  {expanded && alert.loadEvidence && <span className="mt-1 block text-[var(--workspace-text-subtle)]">{loadEvidenceCopy(alert.loadEvidence, locale)}</span>}
                 </span>
                 {canAcknowledge && (
                   <button

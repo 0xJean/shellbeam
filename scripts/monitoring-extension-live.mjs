@@ -4,6 +4,7 @@
  * it never reads an existing database or installs a user/system service. */
 import assert from 'node:assert/strict'
 import JSZip from 'jszip'
+import { build } from 'vite'
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { open, mkdtemp, chmod, realpath, rm, readFile, writeFile } from 'node:fs/promises'
@@ -11,7 +12,7 @@ import { createServer as createNetServer } from 'node:net'
 import { createServer as createHttpServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -56,6 +57,12 @@ async function stop() {
   return stopped
 }
 try {
+  // Exercise the exact production host-alert adapter against the official
+  // service. This is a protocol/projection test, not a packaged App journey.
+  await build({ configFile: false, logLevel: 'silent', build: { outDir: join(root, 'projection'), emptyOutDir: true,
+    lib: { entry: { alerts: join(project, 'src/lib/monitoring-load-alerts.ts'), lifecycle: join(project, 'src/lib/komari-alerts.ts') }, formats: ['es'], fileName: (_format, name) => `${name}.mjs` } } })
+  const projection = await import(pathToFileURL(join(root, 'projection/alerts.mjs')).href)
+  const lifecycle = await import(pathToFileURL(join(root, 'projection/lifecycle.mjs')).href)
   const listener = createNetServer()
   await new Promise((done, reject) => { listener.once('error', reject); listener.listen(0, '127.0.0.1', done) })
   const port = listener.address().port
@@ -203,9 +210,29 @@ try {
   const fired = await api(base + '/status'); assert.equal(fired.evaluations[rule.id].firing, true)
   assert.ok(fired.events.some(e => e.kind === 'firing' && e.delivery === 'service-accepted'))
   checked('fresh raw report fired and independent receiver received load notification')
+  let hostAlerts = { schemaVersion: 1, alerts: [], audit: [], summary: lifecycle.summarizeKomariAlertState([]) }
+  const projectHostAlerts = async () => {
+    const observed = await projection.readMonitoringLoad({ endpoint, token: apiKey })
+    assert.ok(observed)
+    const result = await projection.reconcileMonitoringLoad({ integrationId: 'isolated-monitor', endpoint,
+      hosts: [{ id: 'host', createdAt: 1 }], clients: [{ uuid: nodeId, raw: originalNode }],
+      mappings: [{ hostId: 'host', nodeId }], state: hostAlerts, read: observed, now: Date.now() })
+    hostAlerts = result.state
+    return result
+  }
+  assert.deepEqual((await projectHostAlerts()).audit.map(a => a.event), ['opened'])
+  assert.equal(hostAlerts.alerts[0].loadEvidence.sampledAt, fired.evaluations[rule.id].sampledAt)
+  const acknowledged = lifecycle.acknowledgeKomariAlert(hostAlerts.alerts[0], 'isolated-user')
+  hostAlerts = { ...hostAlerts, alerts: [acknowledged.alert], audit: [...hostAlerts.audit, acknowledged.audit] }
+  assert.deepEqual((await projectHostAlerts()).audit, [])
+  assert.equal(hostAlerts.alerts[0].status, 'acknowledged')
+  checked('production host adapter imports raw firing evidence once and preserves local acknowledgement')
   stage = 'server-only recovery delivery'
   await delay(1100); await report(5)
   await waitFor(async () => delivered.some(x => x.includes('ShellBeamLoadRecovered')), 45000)
+  assert.deepEqual((await projectHostAlerts()).audit.map(a => a.event), ['resolved'])
+  assert.equal(hostAlerts.alerts[0].count, 0)
+  checked('production host adapter resolves only on newer actual server recovery sample')
   checked('fresh recovery report delivered recovery notification')
   stage = 'one-time silence preserves alert fact and suppresses delivery'
   policy = await api(base + '/policy', { ...policy, silences: [{ id: 'silence-1', name: 'Synthetic maintenance', enabled: true, ruleIds: [rule.id], kind: 'once', startAt: Date.now() - 1000, endAt: Date.now() + 120000 }] })
@@ -214,6 +241,10 @@ try {
   await waitFor(async () => (await api(base + '/status')).evaluations[rule.id]?.status === 'silenced', 45000)
   assert.equal(delivered.length, count)
   assert.ok((await api(base + '/status')).events.some(e => e.kind === 'firing' && e.suppressed))
+  assert.deepEqual((await projectHostAlerts()).audit.map(a => a.event), ['reopened'])
+  assert.equal(hostAlerts.alerts[0].loadEvidence.notification, 'silenced')
+  const archived = lifecycle.closeKomariAlert(hostAlerts.alerts[0], 'isolated-user')
+  hostAlerts = { ...hostAlerts, alerts: [archived.alert], audit: [...hostAlerts.audit, archived.audit] }
   checked('silence suppressed delivery without resolving the alert')
   stage = 'restart retains schedules and does not replay notifications'
   const beforeRestart = await api(base + '/status')
@@ -225,6 +256,10 @@ try {
   await delay(17000)
   assert.equal(delivered.length, count)
   assert.deepEqual((await api(base + '/status')).events, beforeRestart.events)
+  hostAlerts = lifecycle.parseKomariAlertState(JSON.parse(JSON.stringify(hostAlerts)))
+  assert.deepEqual((await projectHostAlerts()).audit, [])
+  assert.equal(hostAlerts.alerts[0].status, 'closed')
+  checked('production host journal survives restart without reopening archived firing event')
   checked('server restart retained policy and dispatch markers without replay')
   stage = 'end silence requires a new observation before notification'
   policy = await api(base + '/policy', { ...policy, silences: policy.silences.map(s => ({ ...s, endAt: Date.now() - 1 })) })
@@ -238,7 +273,7 @@ try {
   const finalState = await api(base + '/status')
   checked('node identity token and unknown channel fields retained')
   assert.equal(delivered.length, 3)
-  resultReport = { result: 'passed', version: '1.6.0', checks, notificationsReceived: delivered.length, rawSamples: finalState.events.map(e => ({ kind: e.kind, sampledAt: e.sampledAt, suppressed: e.suppressed, delivery: e.delivery })), scope: 'extension-load-notifications', productionAppCoordinator: false, sourceCommit: process.env.GITHUB_SHA ?? null }
+  resultReport = { result: 'passed', version: '1.6.0', checks, notificationsReceived: delivered.length, hostAlertProjection: { productionAdapter: true, auditEvents: hostAlerts.audit.map(a => a.event), originalSample: hostAlerts.alerts[0].loadEvidence.sampledAt, archived: hostAlerts.alerts[0].status === 'closed' }, rawSamples: finalState.events.map(e => ({ kind: e.kind, sampledAt: e.sampledAt, suppressed: e.suppressed, delivery: e.delivery })), scope: 'extension-load-notifications', productionAppCoordinator: false, sourceCommit: process.env.GITHUB_SHA ?? null }
   console.log(JSON.stringify({ result: 'passed', checks: checks.length, notificationsReceived: delivered.length }))
 } catch (error) {
   console.error(JSON.stringify({ result: 'failed', stage, frames: String(error.stack).split('\n').filter(x => x.trim().startsWith('at ')).slice(0, 5), completed: checks.map(c => c.name) })); process.exitCode = 1

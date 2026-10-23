@@ -5,6 +5,7 @@ export type { HostIncident } from '@/lib/host-incidents'
 import { hostPresentationCopy } from '@/lib/locales/host-presentation'
 import { useT } from '@/lib/i18n'
 import { Button } from './ui/button'
+import { loadEvidenceCopy } from '@/lib/monitoring-load-evidence'
 
 export function HostAlertsCenter({ incidents, onOpenHost }: { incidents: HostIncident[]; onOpenHost?: (hostId: string) => void }) {
   const { t, locale } = useT()
@@ -22,7 +23,7 @@ export function HostAlertsCenter({ incidents, onOpenHost }: { incidents: HostInc
   const currentSource = sources.includes(source) ? source : ''
   if (currentHostId !== hostId) setHostId(currentHostId)
   if (currentSource !== source) setSource(currentSource)
-  const sourceLabel = (value: string) => value === 'komari' ? 'Komari' : value === 'ssh-agentless' ? 'SSH' : value === 'local' ? copy.local : value
+  const sourceLabel = (value: string) => value === 'komari' ? (locale === 'zh-CN' ? '监控服务' : 'Monitoring service') : value === 'ssh-agentless' ? 'SSH' : value === 'local' ? copy.local : value
   const rows = incidents.filter(row => (!currentHostId || row.hostId === currentHostId) && (!currentSource || row.source === currentSource)
     && (includeHistory || (!row.historyOnly && (row.status === 'active' || row.status === 'acknowledged'))))
   async function act(row: HostIncident, action: 'acknowledge' | 'close') {
@@ -47,6 +48,9 @@ export function HostAlertsCenter({ incidents, onOpenHost }: { incidents: HostInc
     <div className="max-h-[65vh] space-y-3 overflow-y-auto">
       {rows.map(row => <article key={row.key} data-testid="host-incident" data-host-id={row.hostId} data-source={row.source} className="rounded-lg border p-3">
         <p className="break-words text-sm font-medium">{row.title}</p>
+        {row.loadEvidence && <p data-testid="load-alert-evidence" className="mt-1 break-words text-xs text-muted-foreground">{loadEvidenceCopy(row.loadEvidence, locale)}
+          {row.loadEvidence.sampledAt > 0 && row.loadEvidence.sampledAt <= Date.now() ? ` · ${locale === 'zh-CN' ? '采样' : 'Sample'} ${new Date(row.loadEvidence.sampledAt).toLocaleString(locale)}` : ''}
+        </p>}
         {row.evidenceUnavailable && <p className="mt-1 text-xs text-muted-foreground">{locale === 'zh-CN' ? '历史规则统计缺少事件证据，未计入当前异常。' : 'Historical rule count without event evidence; excluded from current incidents.'}</p>}
         {row.historyOnly && <p className="mt-1 text-xs text-muted-foreground">{copy.historicalSource}</p>}
         <p className="mt-1 text-xs text-muted-foreground">{row.hostName} · {sourceLabel(row.source)} · {row.status === 'closed' ? (locale === 'zh-CN' ? '已归档' : 'Archived') : t(`localOps.status.${row.status}`)}

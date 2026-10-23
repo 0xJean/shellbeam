@@ -1,7 +1,8 @@
 import type { HostProfile } from './hosts'
 import type { HostOperationalSummary } from '@/components/host-card'
-import { groupKomariAlertIncidents, komariAlertLastObservation } from './komari-alert-incidents'
+import { groupKomariAlertIncidents, isHistoricalKomariAlert, komariAlertLastObservation } from './komari-alert-incidents'
 import type { KomariAlertAuditEntry } from './komari-alerts'
+import type { MonitoringLoadEvidence } from './monitoring-load-evidence'
 
 export interface HostIncident {
   key: string
@@ -17,6 +18,7 @@ export interface HostIncident {
   evidenceUnavailable?: boolean
   lastObservation?: 'abnormal' | 'recovered' | 'unknown'
   audit?: KomariAlertAuditEntry[]
+  loadEvidence?: MonitoringLoadEvidence
   act?: (action: 'acknowledge' | 'close') => void | Promise<void>
 }
 
@@ -39,7 +41,8 @@ export function buildHostIncidents(hosts: HostProfile[], summaries: Map<string, 
         lastObservation: komariAlertLastObservation(alert),
         title: alert.title, source: 'komari', status: alert.status, updatedAt: alert.lastSeenAt,
         busy: !!summary.komariAlertBusy,
-        historyOnly: alert.evidenceStatus === 'unverified-rule-count',
+        historyOnly: isHistoricalKomariAlert(alert),
+        loadEvidence: alert.loadEvidence,
         evidenceUnavailable: alert.evidenceStatus === 'unverified-rule-count',
         audit: summary.komariAlertAudits?.filter(entry => memberAlertIds.includes(entry.alertId)),
         act: summary.onKomariAlertAction ? action => summary.onKomariAlertAction!(action, alert) : undefined,

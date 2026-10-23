@@ -1,4 +1,5 @@
 import type { KomariAlertRecord, KomariAlertStatus } from './komari-alerts'
+import { isHistoricalLoadEvidence, loadEvidenceObservation } from './monitoring-load-evidence'
 
 export interface KomariAlertIncident {
   /** A display projection of an existing record; never a replacement ID. */
@@ -15,8 +16,14 @@ export function isUnverifiedKomariRuleAlert(alert: Pick<KomariAlertRecord, 'kind
 
 export function komariAlertLastObservation(alert: KomariAlertRecord): 'abnormal' | 'recovered' | 'unknown' {
   if (isUnverifiedKomariRuleAlert(alert)) return 'unknown'
+  if (alert.kind === 'server-load') return alert.loadEvidence ? loadEvidenceObservation(alert.loadEvidence) : 'unknown'
   if (alert.resolvedAt !== null || alert.count === 0) return 'recovered'
   return (alert.count ?? 0) > 0 ? 'abnormal' : 'unknown'
+}
+
+/** Keep retired rule/instance history without counting it as a current fault. */
+export function isHistoricalKomariAlert(alert: KomariAlertRecord): boolean {
+  return isUnverifiedKomariRuleAlert(alert) || (alert.kind === 'server-load' && (!alert.loadEvidence || isHistoricalLoadEvidence(alert.loadEvidence)))
 }
 
 function scopeKey(alert: KomariAlertRecord): string {

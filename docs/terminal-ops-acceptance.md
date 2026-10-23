@@ -649,7 +649,8 @@ and focuses the trigger without scrolling. This prevents negative bottom offsets
 and `scrollIntoView` moving document ancestors. Three new component cases cover
 out-of-window anchors and menu-only scrolling. An isolated GTK WebKit 2.50.4
 production rule form and clipped-menu fixture both pass real W3C selection:
-`/tmp/shellbeam-select-contained-rules.json` and `menu.json`. The long-form fixture
+`/tmp/shellbeam-select-contained-rules.json` and
+`/tmp/shellbeam-select-contained-menu.json`. The long-form fixture
 also passed before this change, so this is **not** a reproduction of the complete
 CI timing failure or proof of a passing packaged journey. New-head GUI is required.
 
@@ -659,3 +660,49 @@ and embedded extension ZIP/source equality passed. The prior chunk-size warning
 remains. No driver retries, timeouts, visibility/OCR/same-frame/sample/scope/no-replay
 assertions or post-notification reader/guard were changed. The test container,
 browser and temporary Vite were cleaned up; the installed user App was untouched.
+
+
+### 2026-10-23 — server load facts in the unified host alert center
+
+Current server evaluator facts now join the existing host incident journal and
+OperationJob handling. Three bounded GETs (policy/status/policy) reject a concurrent
+revision/instance change. Polling uses the existing enabled-integration TTL and
+runs after metric workers, preserving concurrency bounds. A fingerprint binds the
+endpoint, extension instance, node creation, host creation and rule semantics.
+No new alert is manufactured from rule counts or unscoped old server event rows.
+
+Acknowledgement/archive remains local handling. New raw recovery evidence records
+recovery even for archived incidents without unarchiving them; a subsequent new
+fault reopens. Missing, stale, future, regressing and contradictory same-sample
+observations cannot recover a fault. Disabled/retired records remain historical
+even when later reads fail. Service delivery/silence is displayed separately;
+App local/system/webhook dispatch skips server-load records and cannot duplicate
+or bypass the server's notification policy. Existing Probe/local rules are unchanged.
+Existing IDs, credentials, persisted records and OperationJob audits are retained;
+the existing 500-record/1000-lifecycle-audit read windows remain unchanged.
+
+Validation:
+
+- **1604 frontend passed, 17 Linux-only skipped** (includes the select correction),
+  **192 Node passed**; production build, all modified/new source ESLint,
+  deterministic extension ZIP/source equality and diff checks pass. Rust production
+  code and the installed extension bytes/protocol were not changed in this batch.
+- The exact production TypeScript adapter is bundled into the disposable official
+  1.6.0 live test. **15 checks** pass, preserving the previous 12. Independent HTTP
+  receiver gets exactly **3** messages. New checks cover original-sample projection,
+  local acknowledgement, actual recovery, silence, persisted archive and restart
+  no-replay. `/tmp/shellbeam-host-alerts-live-report.json`: passed,
+  productionAdapter=true, productionAppCoordinator=false, cleanup/serverStopped=true.
+  Audit events: opened, acknowledged, resolved, reopened, closed. Test credentials
+  and nodes are synthetic; user services and secrets were not accessed.
+- CUA viewed production HostAlertsCenter in Chinese dark and English light, including
+  a 640px **content area inside a 1280px browser**, acknowledgement/archive and
+  observation text. Evidence: `/tmp/shellbeam-host-alert-ui/`. This is component
+  evidence, not a mobile viewport or installed App E2E claim. Test tab/Vite/container
+  have been closed. The running user App still has its prior build.
+
+Remaining: packaged App installation coordinator E2E, external handling sync and
+safe historical backfill, arbitrary plugin channels, extension upgrade/uninstall,
+global service silence and account lifecycle. New-head CI and independent reports
+are still required; the prior 47d3a8e Ops GUI failure must not be marked passed
+based on local component evidence.

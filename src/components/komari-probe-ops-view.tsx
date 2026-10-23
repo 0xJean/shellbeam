@@ -4,7 +4,7 @@ import type { KomariProbeLink } from '@/lib/komari-probe-link'
 import type { OperationAuditEntry } from '@/lib/operation-job'
 import { komariHostSyncCopy } from '@/lib/locales/komari-host-sync'
 import { monitoringSourcesCopy } from '@/lib/locales/monitoring-sources'
-import { groupKomariAlertIncidents, isUnverifiedKomariRuleAlert } from '@/lib/komari-alert-incidents'
+import { groupKomariAlertIncidents, isHistoricalKomariAlert } from '@/lib/komari-alert-incidents'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AlertTriangle, CheckCircle2, Clock3, Route, ShieldAlert, Wrench } from 'lucide-react'
@@ -85,7 +85,7 @@ export function KomariProbeOpsView({ host, link, operationAudits = [], onAction,
     : null
   const alertSummary = link.komari.alerts
   const scopedAlerts = link.alertState?.alerts.filter((alert) => alert.nodeId === link.nodeId || alert.hostId === host.id) ?? []
-  const incidents = groupKomariAlertIncidents(scopedAlerts).map(({ alert }) => alert).filter(alert => !isUnverifiedKomariRuleAlert(alert))
+  const incidents = groupKomariAlertIncidents(scopedAlerts).map(({ alert }) => alert).filter(alert => !isHistoricalKomariAlert(alert))
   const openAlerts = incidents.filter((alert) => (alert.status === 'active' || alert.status === 'acknowledged')
     && (alert.nodeId === link.nodeId || alert.hostId === host.id)) ?? []
   const acknowledgedAlerts = incidents.filter((alert) => alert.status === 'acknowledged')

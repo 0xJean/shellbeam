@@ -300,7 +300,7 @@ export async function dispatchKomariAlertNotifications(
     if (!eventTypes.has(audit.event)) continue
     const incident = incidentByMember.get(audit.alertId)
     const record = incident?.alert ?? recordForAudit(state, audit)
-    if (!record || isUnverifiedKomariRuleAlert(record)) {
+    if (!record || isUnverifiedKomariRuleAlert(record) || record.kind === 'server-load') {
       skipped += 1
       continue
     }

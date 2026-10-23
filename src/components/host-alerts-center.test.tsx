@@ -244,3 +244,26 @@ describe('unified host alerts center', () => {
     expect(within(closed).queryByRole('button')).not.toBeInTheDocument()
   })
 })
+
+it('shows server load evidence and silence independently of local handling and keeps disabled rules in history', async () => {
+  const now = Date.now()
+  const loadEvidence = { endpoint: 'https://monitor.test', extensionIdentity: 'a'.repeat(48), ruleId: 'cpu', nodeCreatedAt: 'created', hostCreatedAt: 1,
+    metric: 'cpu' as const, sampledAt: now - 1000, observedAt: now, state: 'firing' as const, notification: 'silenced' as const, value: 95 }
+  const onAction = vi.fn().mockResolvedValue(undefined)
+  const alert = komari({ kind: 'server-load', title: 'Sustained CPU load', loadEvidence, lastSeenAt: now - 1000 })
+  const rows = buildHostIncidents([host], new Map([[host.id, summary({ komariAlerts: [alert], onKomariAlertAction: onAction })]]), 'vault-a')
+  const view = render(panel(rows))
+  expect(screen.getByTestId('load-alert-evidence')).toHaveTextContent('Load notifications silenced')
+  expect(screen.getByText('Last observation: Abnormal')).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Acknowledge' }))
+  await waitFor(() => expect(onAction).toHaveBeenCalledExactlyOnceWith('acknowledge', expect.objectContaining({ loadEvidence })))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Archive' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
+  await waitFor(() => expect(onAction).toHaveBeenCalledTimes(2))
+  expect(onAction.mock.calls[1][1].loadEvidence).toEqual(loadEvidence)
+  const disabled = { ...alert, loadEvidence: { ...loadEvidence, state: 'disabled' as const } }
+  view.rerender(panel(buildHostIncidents([host], new Map([[host.id, summary({ komariAlerts: [disabled] })]]), 'vault-a')))
+  expect(screen.queryAllByTestId('host-incident')).toHaveLength(0)
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Include history' }))
+  expect(screen.getByTestId('load-alert-evidence')).toHaveTextContent('Rule disabled; recovery is not proven')
+})

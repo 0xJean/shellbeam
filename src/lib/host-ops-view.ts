@@ -1,4 +1,4 @@
-import { groupKomariAlertIncidents, isUnverifiedKomariRuleAlert } from './komari-alert-incidents'
+import { groupKomariAlertIncidents, isHistoricalKomariAlert } from './komari-alert-incidents'
 import { observationVaultIds, scopeObservationHosts } from './host-observation-scope'
 import { hydrateLocalOpsHost } from './local-ops-persistence'
 import type { HostProfile } from './hosts'
@@ -404,7 +404,7 @@ function komariAlertStateForHost(
     .filter((alert) => alert.hostId === host.id || providerNodes.some((provider) => provider.integrationId === alert.integrationId && provider.nodeId === alert.nodeId))
     .filter((alert) => !sources || isCurrentKomariAlert(alert, host, sources, snapshots))
   if (alerts.length === 0) return null
-  const incidents = groupKomariAlertIncidents(alerts).map((incident) => incident.alert).filter(alert => !isUnverifiedKomariRuleAlert(alert))
+  const incidents = groupKomariAlertIncidents(alerts).map((incident) => incident.alert).filter(alert => !isHistoricalKomariAlert(alert))
   const alertIds = new Set(alerts.map((alert) => alert.alertId))
   const audits = states
     .flatMap((state) => state.audit)
@@ -617,7 +617,7 @@ export function buildHostOpsViews({
     const alertState = komariAlertStateForHost(host, allProbeSnapshots, komariAlertStates, komariSources)
     const localAlerts = (localAlertStates[host.id]?.alerts ?? []).filter((alert) => alert.hostId === host.id)
     const openLocal = localAlerts.filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
-    const openKomari = groupKomariAlertIncidents(alertState?.alerts ?? []).map((incident) => incident.alert).filter(alert => !isUnverifiedKomariRuleAlert(alert)).filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
+    const openKomari = groupKomariAlertIncidents(alertState?.alerts ?? []).map((incident) => incident.alert).filter(alert => !isHistoricalKomariAlert(alert)).filter((alert) => alert.status === 'active' || alert.status === 'acknowledged')
     const severityRanks = ['info', 'warning', 'critical']
     const highestAlertSeverity = [...openLocal, ...openKomari].map((alert) => alert.severity).sort((a, b) => severityRanks.indexOf(b) - severityRanks.indexOf(a))[0] ?? null
     const komariOpenCount = alertState?.summary.open ?? 0

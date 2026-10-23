@@ -13,6 +13,7 @@ import {
 import { mapKomariNodesToHosts, type KomariMappingResult } from './komari-mapping'
 import { createKomariProbeProvider } from './komari-probe-provider'
 import type { ProbeSnapshot } from './probe-provider'
+import { readMonitoringLoad, reconcileMonitoringLoad } from './monitoring-load-alerts'
 import { ProbeProviderRegistry, refreshProbeSnapshotFreshness } from './probe-scheduler'
 import {
   komariAlertObservationsFromSummary,
@@ -261,6 +262,8 @@ export async function syncKomariIntegration(options: {
     },
   )
   const normalizedSnapshots = snapshots.filter((snapshot): snapshot is ProbeSnapshot => snapshot !== null)
+  // Read after metric workers release their slots; preserve the integration's concurrency limit.
+  const loadRead = options.includeAlerts === false ? null : await readMonitoringLoad(options.config, options.fetchImpl)
   const completedAt = options.now ?? Date.now()
   const historical = { probeBaselines: options.alertState?.probeBaselines }
   for (const previous of options.previousSnapshots ?? []) {
@@ -302,6 +305,12 @@ export async function syncKomariIntegration(options: {
       audit: [...(options.alertState?.audit ?? []), ...reconciled.audit].slice(-1000),
       summary: reconciled.summary,
     }
+  }
+  if (options.includeAlerts !== false && alertState) {
+    const projected = await reconcileMonitoringLoad({ integrationId: options.integrationId, endpoint: options.config.endpoint,
+      hosts: options.hosts, clients, mappings: mapping.mappings, state: alertState, read: loadRead, now: options.now ?? Date.now() })
+    alertState = projected.state
+    alertAudit.push(...projected.audit)
   }
   return {
     integrationId: options.integrationId,

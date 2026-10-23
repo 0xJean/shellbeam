@@ -332,3 +332,30 @@ describe('Komari sync orchestration', () => {
     expect(peak).toBeLessThanOrEqual(2)
   })
 })
+
+it('refreshes mapped load facts in the ordinary sync and preserves them across cached refresh and read failure', async () => {
+  const policy = { extension_identity: 'a'.repeat(48), revision: 1, rules: [{ id: 'cpu', name: 'Server CPU high', nodeId: 'node-1', nodeCreatedAt: 'created', metric: 'cpu', enabled: true, threshold: 80, recovery: 50, durationSeconds: 0, recoverySeconds: 0 }] }
+  let missing = false
+  const fetchImpl = vi.fn<typeof fetch>(async input => {
+    const url = String(input)
+    if (url.endsWith('/api/admin/client/list')) return new Response(JSON.stringify([{ uuid: 'node-1', name: 'prod', ipv4: host.address, created_at: 'created' }]))
+    if (url.includes('/shellbeam-alerts/')) {
+      if (missing) return new Response('{}', { status: 404 })
+      return new Response(JSON.stringify(url.endsWith('/policy') ? policy : { revision: 1, scope: 'extension-load-notifications', evaluations: { cpu: { sampledAt: 1900, firing: true, status: 'silenced', value: 95 } } }))
+    }
+    if (url.includes('/notification/')) return new Response('[]')
+    return new Response(JSON.stringify([{ time: 1.9, cpu: 95 }]))
+  })
+  const options = { integrationId: 'load-sync', config: { endpoint: 'https://monitor.test' }, hosts: [host], explicitMappings: { [host.id]: 'node-1' }, now: 2000, fetchImpl }
+  const synced = await syncKomariIntegration(options)
+  expect(synced.alertState?.alerts).toContainEqual(expect.objectContaining({ kind: 'server-load', hostId: host.id, count: 1, loadEvidence: expect.objectContaining({ sampledAt: 1900, notification: 'silenced' }) }))
+  const hydrated = reconcileKomariProbeAlerts({ integrationId: options.integrationId, snapshots: synced.snapshots, alertState: synced.alertState, now: 2100 })
+  expect(hydrated.alertState.alerts.find(a => a.kind === 'server-load')).toEqual(synced.alertState!.alerts.find(a => a.kind === 'server-load'))
+  const calls = fetchImpl.mock.calls.length
+  await syncKomariIntegration({ ...options, lastSyncedAt: 2000, now: 2200, alertState: hydrated.alertState })
+  expect(fetchImpl.mock.calls).toHaveLength(calls)
+  missing = true
+  const failed = await syncKomariIntegration({ ...options, now: 2300, alertState: hydrated.alertState })
+  expect(failed.alertState?.alerts.find(a => a.kind === 'server-load')).toMatchObject({ count: 1, status: 'active', loadEvidence: { state: 'unavailable', sampledAt: 1900 } })
+  expect(failed.alertAudit.filter(a => a.event === 'resolved')).toHaveLength(0)
+})

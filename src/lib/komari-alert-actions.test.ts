@@ -144,3 +144,19 @@ describe('persistKomariAlertAction', () => {
     expect(retriedClose.state.audit).toHaveLength(2)
   })
 })
+
+it('audits server load handling without changing server facts or notification ownership', async () => {
+  invoke.mockReset()
+  invoke.mockResolvedValueOnce({ jobId: 'load-job', auditId: 'load-audit', status: 'queued' })
+    .mockResolvedValueOnce({ jobId: 'load-job', auditId: 'load-audit', status: 'running' })
+    .mockResolvedValueOnce({ jobId: 'load-job', auditId: 'load-audit', status: 'completed' })
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  const loadEvidence = { endpoint: 'https://monitor.test', extensionIdentity: 'a'.repeat(48), ruleId: 'cpu', nodeCreatedAt: 'created', hostCreatedAt: 0,
+    metric: 'cpu' as const, sampledAt: 1, observedAt: 2, state: 'firing' as const, notification: 'silenced' as const, value: 95 }
+  const loadState = { ...state, alerts: [{ ...state.alerts[0], kind: 'server-load', loadEvidence }] }
+  const result = await runKomariAlertAction('close', { integrationId: 'i', host, vaultId: 'vault-1', state: loadState, alertId: 'a1', now: 10 })
+  expect(result!.alert).toMatchObject({ status: 'closed', count: 1, resolvedAt: null, loadEvidence })
+  expect(result!.state.audit.map(a => [a.event, a.operationJobId])).toEqual([['operation-linked', 'load-job'], ['closed', 'load-job']])
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(['operation_job_create', 'operation_job_update', 'operation_job_update'])
+  expect(vi.mocked(persistKomariAlertState).mock.lastCall?.[0].state.alerts[0].loadEvidence).toEqual(loadEvidence)
+})

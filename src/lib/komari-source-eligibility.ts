@@ -66,6 +66,11 @@ export function isCurrentKomariAlert(alert: KomariAlertRecord, host: HostProfile
   if (isUnverifiedKomariRuleAlert(alert)) return false
   const entry = sourceFor(host, alert.integrationId, sources)
   if (!entry || (alert.hostId && alert.hostId !== host.id)) return false
+  if (alert.kind === 'server-load') {
+    const evidence = alert.loadEvidence
+    if (!evidence || evidence.hostCreatedAt !== host.createdAt || !alert.nodeId || !mapped(entry, host.id, alert.nodeId)) return false
+    try { return evidence.endpoint === normalizeKomariEndpoint(entry.integration.endpoint) } catch { return false }
+  }
   const baselines = parseKomariAlertState(entry.state?.syncState?.alertSummary)?.probeBaselines ?? []
   const matchingBaselines = baselines.filter(baseline => baseline.integrationId === alert.integrationId
     && baseline.hostId === host.id && (!alert.nodeId || baseline.nodeId === alert.nodeId)
