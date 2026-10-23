@@ -20,6 +20,33 @@
         "sha256": "a49f9a77d9b2f212120864b691a26bd2f603296c9009519abc3426e07df24975",
         "size": 11884056
       }
+    },
+    "1.5.12": {
+      "amd64": {
+        "sha256": "daf4ec3bc514f0cc1e8150a55a2c02737dc3cec76890ca0f79de5c52b5a1480d",
+        "size": 12148920
+      },
+      "arm64": {
+        "sha256": "d053c98fe7c8ed2252d3516deb22ef932a793b16f94c5228fbd9bda9fe37c478",
+        "size": 11468984
+      },
+      "source": {
+        "repository": "0xJean/shellbeam-monitoring-agent",
+        "tag": "v1.5.12",
+        "commit": "4e81478e4bde5c22b7b65e422ae87ca40a6c877a",
+        "upstreamVersion": "1.5.11",
+        "upstreamCommit": "c7bafb79b1a73ed9e14e2c248ae4d4163e506036"
+      },
+      "archives": {
+        "amd64": {
+          "sha256": "81d286f5feb554179346474ee4a8ac3c23f662610d98fe86a487d405626fc7a5",
+          "size": 13932260
+        },
+        "arm64": {
+          "sha256": "0ced9a3b553d853a44cace6243b06faca56b48bd724d3bd8d3e0a51212d1c090",
+          "size": 12579071
+        }
+      }
     }
   }
 }

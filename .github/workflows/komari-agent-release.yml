@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Reviewed upstream version in releases/compatible-probe-pins.json
+        description: Reviewed version in releases/compatible-probe-pins.json
         required: true
-        default: '1.5.11'
+        default: '1.5.12'
       revision:
         description: New immutable release revision (increment when refreshing the catalog)
         required: true
@@ -16,17 +16,31 @@ concurrency:
   group: compatible-probe-production-release
   cancel-in-progress: false
 jobs:
-  validate:
+  prepare:
     if: github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
-      - run: node --test scripts/publish-komari-agent.test.mjs scripts/official-komari-agent-release.test.mjs
+      - name: Test signing, source pins and publication recovery
+        run: node --test scripts/publish-komari-agent.test.mjs scripts/official-komari-agent-release.test.mjs scripts/prepare-komari-agent-release.test.mjs
+      - name: Fetch exact reviewed artifacts without signing credentials
+        env:
+          PROBE_VERSION: ${{ inputs.version }}
+          PROBE_REVISION: ${{ inputs.revision }}
+        run: node scripts/prepare-komari-agent-release.mjs "$PROBE_VERSION" "$PROBE_REVISION" "$RUNNER_TEMP/compatible-probe-release"
+      - name: Retain reviewable exact release inputs before environment approval
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: compatible-probe-reviewed-inputs
+          path: ${{ runner.temp }}/compatible-probe-release/
+          retention-days: 7
+          if-no-files-found: error
   publish:
-    needs: validate
+    needs: prepare
     if: github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-22.04
     timeout-minutes: 15
@@ -38,11 +52,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
-      - name: Fetch reviewed upstream artifacts without signing credentials
-        env:
-          PROBE_VERSION: ${{ inputs.version }}
-          PROBE_REVISION: ${{ inputs.revision }}
-        run: node scripts/prepare-komari-agent-release.mjs "$PROBE_VERSION" "$PROBE_REVISION" "$RUNNER_TEMP/compatible-probe-release"
+      - name: Restore the reviewed release inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: compatible-probe-reviewed-inputs
+          path: ${{ runner.temp }}/compatible-probe-release
       - name: Recover an already signed catalog after an interrupted publication
         env:
           GH_TOKEN: ${{ github.token }}
