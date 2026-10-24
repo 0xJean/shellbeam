@@ -1,6 +1,6 @@
 import { HostForm } from '@/components/host-form'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
-import type { HostProfileDraft } from '@/lib/hosts'
+import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 
 interface HostCreateDialogProps {
   open: boolean
@@ -12,6 +12,7 @@ interface HostCreateDialogProps {
   vaultName?: string
   existingGroups?: string[]
   existingTags?: string[]
+  availableHosts?: HostProfile[]
   onSubmit: (draft: HostProfileDraft) => Promise<void>
   onCancel: () => void
 }
@@ -26,6 +27,7 @@ export function HostCreateDialog({
   vaultName,
   existingGroups,
   existingTags,
+  availableHosts,
   onSubmit,
   onCancel,
 }: HostCreateDialogProps) {
@@ -41,6 +43,7 @@ export function HostCreateDialog({
           vaultName={vaultName}
           existingGroups={existingGroups}
           existingTags={existingTags}
+          availableHosts={availableHosts}
           onSubmit={onSubmit}
           onCancel={onCancel}
         />

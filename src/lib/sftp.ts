@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import type { AuthType } from '@/lib/ssh'
 
 export interface SftpRequest {
+  hostId?: string
+  vaultId?: string
   host: string
   port: number
   username: string
@@ -15,6 +17,7 @@ export interface SftpRequest {
   jumpUser?: string
   remotePath: string
   transferId?: string
+  followSymlinks?: boolean
 }
 
 export interface SftpUploadRequest extends SftpRequest {
@@ -38,6 +41,14 @@ export interface SftpFileData {
   path: string
   contentB64: string
   sizeBytes: number
+}
+
+export interface SftpPathState {
+  exists: boolean
+  isDir?: boolean | null
+  isFile?: boolean | null
+  size?: number | null
+  permissions?: number | null
 }
 
 export interface SftpTransferProgressEvent {
@@ -115,6 +126,10 @@ export async function sftpListDir(payload: SftpRequest) {
   return invoke<SftpEntry[]>('sftp_list_dir', { payload })
 }
 
+export async function sftpStatPath(payload: SftpRequest) {
+  return invoke<SftpPathState>('sftp_stat_path', { payload })
+}
+
 export async function sftpDownloadFile(payload: SftpRequest) {
   return invoke<SftpFileData>('sftp_download_file', { payload })
 }
@@ -148,6 +163,8 @@ export async function sftpHomeDir(payload: SftpRequest) {
 }
 
 export interface SftpChmodRequest {
+  hostId?: string
+  vaultId?: string
   host: string
   port: number
   username: string

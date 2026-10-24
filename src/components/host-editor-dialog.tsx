@@ -1,4 +1,6 @@
-import { HostForm } from '@/components/host-form'
+import { HostNotificationRulesPanel } from './host-notification-rules-panel'
+import { HostMetadataSyncPanel } from './host-metadata-sync-panel'
+import { HostDirectoryEditor } from './host-directory-editor'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 
@@ -12,6 +14,7 @@ interface HostEditorDialogProps {
   vaultName?: string
   existingGroups?: string[]
   existingTags?: string[]
+  availableHosts?: HostProfile[]
   onSubmit: (host: HostProfile, draft: HostProfileDraft) => Promise<void>
   onCancel: () => void
 }
@@ -26,6 +29,7 @@ export function HostEditorDialog({
   vaultName,
   existingGroups,
   existingTags,
+  availableHosts,
   onSubmit,
   onCancel,
 }: HostEditorDialogProps) {
@@ -33,8 +37,9 @@ export function HostEditorDialog({
     <Dialog open={!!host} onOpenChange={(open) => { if (!open) onCancel() }}>
       <DialogContent>
         {host && (
-          <HostForm
-            initial={host}
+          <HostDirectoryEditor
+            key={`${host.vaultId}:${host.id}`}
+            host={host}
             defaultUsername={defaultUsername}
             vaultKeys={vaultKeys}
             vaultUnlocked={vaultUnlocked}
@@ -43,6 +48,8 @@ export function HostEditorDialog({
             vaultName={vaultName}
             existingGroups={existingGroups}
             existingTags={existingTags}
+            availableHosts={availableHosts}
+            metadataControls={<><HostMetadataSyncPanel host={host} unlocked={!!vaultUnlocked} /><HostNotificationRulesPanel host={host} unlocked={!!vaultUnlocked} /></>}
             onSubmit={(draft) => onSubmit(host, draft)}
             onCancel={onCancel}
           />

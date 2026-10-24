@@ -337,6 +337,7 @@ export function SessionTerminalView({
 
   return (
     <div
+      data-testid="terminal-session" data-session-id={sessionId} data-host-name={hostName} data-host-id={session?.hostId} data-status={isConnected ? 'connected' : isDisconnected ? 'disconnected' : 'connecting'}
       className={cn('relative flex flex-col', chromeOnly ? 'shrink-0' : 'h-full')}
       style={{
         ...(chromeOnly ? {} : { background: bg }),
@@ -479,7 +480,8 @@ export function SessionTerminalView({
       )}
       {isConnected && (
         <AICommandBar
-          visible={showAI}
+          key={sessionId}
+          visible={showAI && visible}
           onExecuteCommand={handleExecuteCommand}
           getTerminalContext={getTerminalContext}
           onClose={() => setShowAI(false)}
@@ -493,7 +495,8 @@ export function SessionTerminalView({
             onClick={handleContainerClick}
           />
           <SuggestBar
-            visible={showSuggestions && isConnected}
+            key={sessionId}
+            visible={showSuggestions && isConnected && visible}
             inputLine={currentInputLine}
             historyEntries={[]}
             terminalContext={showSuggestions ? getTerminalContext() : ''}

@@ -1,4 +1,6 @@
-import type { HostProfile } from '@/lib/hosts'
+import { COLLECTION_LIMITS, collectionConcurrency } from './collection-limits'
+import { observationVaultIds, scopeObservationHosts } from './host-observation-scope'
+import { hasSshConnection, type HostProfile } from '@/lib/hosts'
 import {
   getServerMonitorHostKey,
   listServerMonitorHistory,
@@ -15,16 +17,18 @@ import {
   pruneServerMonitorStates,
   type ServerMonitorHostState,
 } from './server-monitor-state'
-import { createAgentlessSshProbeProvider } from './probe-provider'
+import { getProbeProviderRegistry } from './probe-scheduler'
+import { isUnsupportedProbeError } from './unified-probe'
 
-export const SERVER_MONITOR_INTERVAL_MS = 60 * 1000
-export const SERVER_MONITOR_HISTORY_MS = 24 * 60 * 60 * 1000
-export const SERVER_MONITOR_CONCURRENCY = 3
+export const SERVER_MONITOR_INTERVAL_MS = COLLECTION_LIMITS.cadence.monitorIntervalMs
+export const SERVER_MONITOR_HISTORY_MS = COLLECTION_LIMITS.history.monitorRetentionMs
+export const SERVER_MONITOR_CONCURRENCY = COLLECTION_LIMITS.scheduler.concurrency
 
-const serverMonitorProbeProvider = createAgentlessSshProbeProvider()
+const probeRegistry = getProbeProviderRegistry()
 
 interface ScanOptions {
   hosts: HostProfile[]
+  vaultId?: string
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   concurrency?: number
   isCurrent?: () => boolean
@@ -71,7 +75,7 @@ export async function loadPersistedServerMonitorStates(
 ) {
   if (!isCurrent()) return
   pruneServerMonitorStates(hosts)
-  const latest = await listServerMonitorLatest()
+  const latest = await listServerMonitorLatest(observationVaultIds(hosts))
   if (!isCurrent()) return
   const hostKeys = new Set(hosts.map(getServerMonitorHostKey))
   const latestByKey = latest.filter((entry) => hostKeys.has(entry.hostKey))
@@ -100,6 +104,7 @@ export async function loadPersistedServerMonitorStates(
 
 export async function scanServerMonitorHosts({
   hosts,
+  vaultId,
   resolveAuthSecret,
   concurrency = SERVER_MONITOR_CONCURRENCY,
   isCurrent = () => true,
@@ -108,6 +113,7 @@ export async function scanServerMonitorHosts({
     return { scannedHosts: [], skippedHosts: hosts }
   }
 
+  hosts = scopeObservationHosts(hosts, vaultId).filter(hasSshConnection)
   pruneServerMonitorStates(hosts)
   const pending = hosts.slice()
   const scannedHosts: HostProfile[] = []
@@ -137,20 +143,49 @@ export async function scanServerMonitorHosts({
       const attemptAt = Date.now()
 
       try {
-        const probe = await serverMonitorProbeProvider.probe({
+        const scheduled = await probeRegistry.probe({
           host,
+          vaultId,
           resolveAuthSecret,
           sections: ['metrics'],
+          providerId: 'ssh-agentless',
+          // Monitor cadence is the source of truth for its 60-second history;
+          // the registry still coalesces overlapping scans for this host.
+          force: true,
         })
-        if (!probe.metrics) {
+        const probe = scheduled.snapshot
+        if (probe.health === 'unsupported') {
+          if (!isCurrent()) return
+          const latest = createServerMonitorLatest(host, 'unsupported', attemptAt, previous?.latest, {
+            snapshot: null, error: probe.errors[0]?.message ?? 'unsupported_os', probeTelemetry: probe.telemetry ?? null,
+          })
+          await saveServerMonitorResult({ latest }).catch(() => undefined)
+          mergeServerMonitorStates({ [key]: { latest, history: historyForState(previous) } })
+          scannedHosts.push(host)
+          continue
+        }
+        if (!probe.metrics || (scheduled.recovered && !vaultId)) {
           throw new Error(probe.errors[0]?.message || 'server monitor returned no usable Linux metrics')
         }
         const snapshot = probe.metrics.data
         if (!isCurrent()) return
 
-        const latest = createServerMonitorLatest(host, 'online', attemptAt, previous?.latest, {
+        // A durable fallback is useful for continuity, but it is not a new
+        // successful sample. Keep its sampledAt/lastSuccessAt and surface the
+        // provider error so the host card can show stale data explicitly.
+        const recovered = Boolean(scheduled.recovered)
+          || String(probe.health) === 'stale'
+          || probe.metrics.freshness.expired
+        const status = recovered ? 'stale' : 'online'
+        const lastSuccessAt = Math.max(
+          snapshot.sampledAt,
+          previous?.latest?.lastSuccessAt ?? 0,
+        ) || snapshot.sampledAt
+        const latest = createServerMonitorLatest(host, status, attemptAt, previous?.latest, {
           snapshot,
-          lastSuccessAt: snapshot.sampledAt,
+          lastSuccessAt,
+          probeTelemetry: probe.telemetry ?? null,
+          ...(recovered && probe.errors[0]?.message ? { error: probe.errors[0].message } : {}),
         })
         const historyPoint: ServerMonitorHistoryPoint = {
           hostKey: key,
@@ -158,25 +193,31 @@ export async function scanServerMonitorHosts({
           snapshot,
         }
         try {
-          await saveServerMonitorResult(buildLatestPayload(latest, historyPoint))
+          // Stale fallback data must not create a fresh history point. The
+          // latest row remains durable, while the previous history remains the
+          // source of truth until a real sample succeeds.
+          await saveServerMonitorResult(buildLatestPayload(latest, recovered ? undefined : historyPoint))
         } catch (persistError) {
           latest.error = `Saved in memory; local history failed: ${errorMessage(persistError)}`
         }
         mergeServerMonitorStates({
           [key]: {
             latest,
-            history: mergeHistory(historyForState(previous), historyPoint),
+            history: recovered
+              ? historyForState(previous)
+              : mergeHistory(historyForState(previous), historyPoint),
           },
         })
         scannedHosts.push(host)
       } catch (error) {
         if (!isCurrent()) return
 
-        const status = isServerMonitorVaultUnavailableError(error)
+        const status = isUnsupportedProbeError(error) ? 'unsupported' : isServerMonitorVaultUnavailableError(error)
           ? 'paused'
           : getServerMonitorFailureStatus(previous?.latest, Date.now())
         const latest = createServerMonitorLatest(host, status, attemptAt, previous?.latest, {
           error: errorMessage(error),
+          ...(status === 'unsupported' ? { snapshot: null } : {}),
         })
         try {
           await saveServerMonitorResult({ latest })
@@ -196,7 +237,7 @@ export async function scanServerMonitorHosts({
 
   await Promise.all(
     Array.from(
-      { length: Math.max(1, Math.min(concurrency, hosts.length)) },
+      { length: Math.max(1, Math.min(collectionConcurrency(concurrency), hosts.length)) },
       () => worker(),
     ),
   )

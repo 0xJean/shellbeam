@@ -92,7 +92,7 @@ export function SessionConnectPlaceholder({
                   {t('terminalConnect.failedStatus')}
                 </div>
               </div>
-              <div className="mt-3 break-words text-sm leading-6 text-foreground">
+              <div data-testid="session-connection-error" className="mt-3 break-words text-sm leading-6 text-foreground">
                 {errorMessage || t('terminalConnect.failedFallback')}
               </div>
               <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">

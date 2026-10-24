@@ -3,7 +3,7 @@ use ssh2::{Channel, Session};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
+use std::sync::mpsc::{self, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -12,7 +12,6 @@ use uuid::Uuid;
 use tauri::{Emitter, Manager};
 
 use crate::error::{standard_error_from_raw, standard_error_payload};
-use crate::ssh::connect_and_authenticate_with_progress;
 use crate::storage::now_unix_ms;
 
 fn default_cols() -> u32 {
@@ -22,10 +21,12 @@ fn default_rows() -> u32 {
     24
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InteractiveSessionCreateRequest {
+    expected_connection_key: Option<String>,
     host_id: Option<String>,
+    vault_id: Option<String>,
     host: String,
     port: u16,
     username: String,
@@ -47,7 +48,7 @@ pub struct InteractiveSessionCreateRequest {
     #[serde(default)]
     jump_user: Option<String>,
     #[serde(default)]
-    accept_host_key: Option<bool>,
+    accepted_host_key: Option<crate::ssh::transport::HostKeyAcceptance>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +87,12 @@ pub struct LocalTerminalRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InteractiveSessionInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    connection_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vault_id: Option<String>,
     session_id: String,
     host_id: Option<String>,
     host: String,
@@ -136,12 +143,15 @@ enum SessionCommand {
 }
 
 struct SessionRecord {
+    vault_id: Option<String>,
+    verified_host_keys: Vec<crate::ssh::transport::VerifiedHostKey>,
     info: InteractiveSessionInfo,
     command_tx: mpsc::Sender<SessionCommand>,
     output: Arc<Mutex<Vec<InteractiveOutputChunk>>>,
     _seq_counter: Arc<AtomicU64>,
     status: Arc<Mutex<String>>,
     reusable_transport: Option<Session>,
+    _tunnel: Option<Arc<crate::ssh::transport::TunnelLease>>,
 }
 
 #[derive(Default)]
@@ -150,12 +160,36 @@ pub struct InteractiveSessionState {
 }
 
 impl InteractiveSessionState {
-    pub fn clone_reusable_transport(&self, session_id: &str) -> Option<Session> {
-        self.sessions.lock().ok().and_then(|sessions| {
-            sessions
-                .get(session_id)
-                .and_then(|record| record.reusable_transport.clone())
-        })
+    pub fn clone_verified_connection(
+        &self,
+        app: &tauri::AppHandle,
+        session_id: &str,
+    ) -> Result<Option<crate::ssh::transport::Connection>, String> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| "SESSION_STATE_UNAVAILABLE")?;
+        let Some(record) = sessions.get(session_id) else {
+            return Ok(None);
+        };
+        crate::ssh::transport::ensure_vault_unlocked(app, record.vault_id.as_deref())?;
+        if record
+            .status
+            .lock()
+            .map_err(|_| "SESSION_STATE_UNAVAILABLE")?
+            .as_str()
+            != "running"
+        {
+            return Ok(None);
+        }
+        Ok(record
+            .reusable_transport
+            .clone()
+            .map(|session| crate::ssh::transport::Connection {
+                verified_host_keys: record.verified_host_keys.clone(),
+                session,
+                tunnel: record._tunnel.clone(),
+            }))
     }
 }
 
@@ -262,6 +296,9 @@ fn new_shared_state() -> (SharedOutput, SharedSeq, Arc<Mutex<String>>) {
 fn make_info(session_id: &str, p: &InteractiveSessionCreateRequest) -> InteractiveSessionInfo {
     let now = now_unix_ms();
     InteractiveSessionInfo {
+        connection_key: None,
+        port: Some(p.port),
+        vault_id: p.vault_id.clone(),
         session_id: session_id.to_string(),
         host_id: p.host_id.clone(),
         host: p.host.clone(),
@@ -550,168 +587,6 @@ fn session_io_loop(
     }
 }
 
-fn create_via_system_ssh(
-    app: &tauri::AppHandle,
-    payload: &InteractiveSessionCreateRequest,
-    session_id: &str,
-) -> Result<SessionRecord, String> {
-    use crate::storage::data_file_path;
-    use std::fs;
-    use std::process::{Command, Stdio};
-
-    let private_key = payload.private_key.as_deref().ok_or_else(|| {
-        standard_error_payload(
-            "validation_error",
-            "interactive",
-            false,
-            "Jump host requires privateKey auth",
-            None,
-        )
-    })?;
-
-    let key_path = data_file_path(app, &format!("interactive-{session_id}.key"))
-        .map_err(|e| standard_error_from_raw("interactive", "create session", e))?;
-    fs::write(&key_path, private_key)
-        .map_err(|e| standard_error_from_raw("interactive", "write key", e.to_string()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600));
-    }
-
-    let mut cmd = Command::new("ssh");
-    cmd.arg("-tt")
-        .arg("-p")
-        .arg(payload.port.to_string())
-        .arg("-i")
-        .arg(&key_path)
-        .arg("-o")
-        .arg("StrictHostKeyChecking=no")
-        .arg("-o")
-        .arg("UserKnownHostsFile=/dev/null")
-        .arg("-o")
-        .arg(format!(
-            "ServerAliveInterval={}",
-            payload.keep_alive_interval_secs.unwrap_or(30)
-        ));
-    if let Some(ref jh) = payload.jump_host {
-        if !jh.trim().is_empty() {
-            let ju = payload.jump_user.as_deref().unwrap_or(&payload.username);
-            cmd.arg("-J")
-                .arg(format!("{ju}@{jh}:{}", payload.jump_port.unwrap_or(22)));
-        }
-    }
-    cmd.arg(format!("{}@{}", payload.username, payload.host))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|e| {
-        let _ = fs::remove_file(&key_path);
-        standard_error_from_raw("interactive", "spawn ssh", format!("Spawn failed: {e}"))
-    })?;
-
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| standard_error_payload("io_error", "interactive", true, "No stdin", None))?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        standard_error_payload("io_error", "interactive", true, "No stdout", None)
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        standard_error_payload("io_error", "interactive", true, "No stderr", None)
-    })?;
-
-    let (output, seq_counter, status) = new_shared_state();
-    spawn_pipe_reader(
-        app.clone(),
-        session_id.to_string(),
-        stdout,
-        output.clone(),
-        seq_counter.clone(),
-        "stdout",
-    );
-    spawn_pipe_reader(
-        app.clone(),
-        session_id.to_string(),
-        stderr,
-        output.clone(),
-        seq_counter.clone(),
-        "stderr",
-    );
-
-    let (command_tx, command_rx) = mpsc::channel::<SessionCommand>();
-    let status_clone = status.clone();
-    let kp = key_path.clone();
-    let session_id_owned = session_id.to_string();
-    let app_handle = app.clone();
-    thread::spawn(move || {
-        loop {
-            match command_rx.recv_timeout(Duration::from_millis(20)) {
-                Ok(SessionCommand::Input(data)) => {
-                    let _ = stdin.write_all(&data);
-                    let _ = stdin.flush();
-                }
-                Ok(SessionCommand::Resize(_, _)) => {}
-                Ok(SessionCommand::Close) => {
-                    let _ = child.kill();
-                    let code = child.wait().ok().and_then(|exit| exit.code()).unwrap_or(-1);
-                    set_status(
-                        &app_handle,
-                        &session_id_owned,
-                        &status_clone,
-                        format!("closed({code})"),
-                    );
-                    break;
-                }
-                Err(RecvTimeoutError::Timeout) => match child.try_wait() {
-                    Ok(Some(exit)) => {
-                        let code = exit.code().unwrap_or(-1);
-                        set_status(
-                            &app_handle,
-                            &session_id_owned,
-                            &status_clone,
-                            format!("closed({code})"),
-                        );
-                        break;
-                    }
-                    Ok(None) => {}
-                    Err(_) => {
-                        set_status(
-                            &app_handle,
-                            &session_id_owned,
-                            &status_clone,
-                            "closed(-1)".to_string(),
-                        );
-                        break;
-                    }
-                },
-                Err(RecvTimeoutError::Disconnected) => {
-                    let _ = child.kill();
-                    let code = child.wait().ok().and_then(|exit| exit.code()).unwrap_or(-1);
-                    set_status(
-                        &app_handle,
-                        &session_id_owned,
-                        &status_clone,
-                        format!("closed({code})"),
-                    );
-                    break;
-                }
-            }
-        }
-        let _ = fs::remove_file(&kp);
-    });
-
-    Ok(SessionRecord {
-        info: make_info(session_id, payload),
-        command_tx,
-        output,
-        _seq_counter: seq_counter,
-        status,
-        reusable_transport: None,
-    })
-}
-
 #[tauri::command]
 pub async fn create_interactive_session(
     app: tauri::AppHandle,
@@ -720,39 +595,47 @@ pub async fn create_interactive_session(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<InteractiveSessionState>();
         let session_id = Uuid::new_v4().to_string();
-        let has_jump = payload
-            .jump_host
-            .as_ref()
-            .map_or(false, |jh| !jh.trim().is_empty());
-
-        let record = if has_jump {
+        let record = {
             emit_progress(&app, &session_id, "resolve_host");
-            emit_progress(&app, &session_id, "open_tcp");
+            let mut connection_key = None;
+            let route = if let (Some(host_id), Some(vault_id)) =
+                (payload.host_id.as_deref(), payload.vault_id.as_deref())
+            {
+                let hosts = crate::data::hosts::load_hosts(&app, Some(vault_id))?;
+                let host = hosts
+                    .iter()
+                    .find(|h| h.id == host_id)
+                    .ok_or("HOST_NOT_FOUND")?;
+                crate::data::host_connections::require_connection_key(
+                    host,
+                    payload.expected_connection_key.as_deref(),
+                )?;
+                connection_key = Some(crate::data::host_connections::connection_key(host));
+                crate::ssh::transport::route_for_host(&app, vault_id, host, &hosts)?
+            } else {
+                crate::ssh::transport::legacy_route(
+                    &payload.host,
+                    payload.port,
+                    &payload.username,
+                    &payload.auth_type,
+                    payload.password.as_deref(),
+                    payload.private_key.as_deref(),
+                    payload.passphrase.as_deref(),
+                    payload.jump_host.as_deref(),
+                    payload.jump_port,
+                    payload.jump_user.as_deref(),
+                )
+            };
             emit_progress(&app, &session_id, "secure_session");
-            emit_progress(&app, &session_id, "prepare_workspace");
-            create_via_system_ssh(&app, &payload, &session_id)?
-        } else {
-            let mut progress = |stage: &str| emit_progress(&app, &session_id, stage);
-            let session = connect_and_authenticate_with_progress(
-                &payload.host,
-                payload.port,
-                &payload.username,
-                &payload.auth_type,
-                payload.password.as_deref(),
-                payload.private_key.as_deref(),
-                payload.passphrase.as_deref(),
-                Some(&app),
-                payload.accept_host_key.unwrap_or(true),
-                Some(&mut progress),
-            )
-            .map_err(|err| {
-                if err.contains("host_key_unknown") || err.contains("host_key_mismatch") {
-                    err
-                } else {
-                    standard_error_from_raw("interactive", "connect", err)
-                }
-            })?;
-
+            let connection = crate::ssh::transport::connect_accepting_fingerprint(
+                &app,
+                &route,
+                payload.accepted_host_key.as_ref(),
+            )?;
+            crate::ssh::transport::ensure_vault_unlocked(&app, payload.vault_id.as_deref())?;
+            let verified_host_keys = connection.verified_host_keys;
+            let session = connection.session;
+            let tunnel = connection.tunnel;
             session.set_keepalive(true, payload.keep_alive_interval_secs.unwrap_or(30));
 
             emit_progress(&app, &session_id, "prepare_workspace");
@@ -779,7 +662,9 @@ pub async fn create_interactive_session(
             let (o, s2, st) = (output.clone(), seq_counter.clone(), status.clone());
             let app_handle = app.clone();
             let session_id_owned = session_id.clone();
+            let thread_tunnel = tunnel.clone();
             thread::spawn(move || {
+                let _tunnel_lease = thread_tunnel;
                 session_io_loop(
                     app_handle,
                     session_id_owned,
@@ -793,13 +678,21 @@ pub async fn create_interactive_session(
                 )
             });
 
+            let mut info = make_info(&session_id, &payload);
+            info.connection_key = connection_key;
+            info.host = route.target.host.clone();
+            info.username = route.target.username.clone();
+            info.port = Some(route.target.port);
             SessionRecord {
-                info: make_info(&session_id, &payload),
+                vault_id: payload.vault_id.clone(),
+                verified_host_keys,
+                info,
                 command_tx,
                 output,
                 _seq_counter: seq_counter,
                 status,
                 reusable_transport: Some(reusable_transport),
+                _tunnel: tunnel,
             }
         };
 
@@ -1113,6 +1006,9 @@ pub fn create_local_terminal(
 
     let now = now_unix_ms();
     let info = InteractiveSessionInfo {
+        connection_key: None,
+        port: None,
+        vault_id: None,
         session_id: session_id.clone(),
         host_id: None,
         host: "local".to_string(),
@@ -1122,12 +1018,15 @@ pub fn create_local_terminal(
         status: "running".to_string(),
     };
     let record = SessionRecord {
+        vault_id: None,
+        verified_host_keys: Vec::new(),
         info: info.clone(),
         command_tx,
         output,
         _seq_counter: seq_counter,
         status,
         reusable_transport: None,
+        _tunnel: None,
     };
     state
         .sessions

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { HostProfile } from '@/lib/hosts'
 import { parseWorkspaceInventory, type WorkspaceInventoryCache } from '@/lib/workspace-inventory'
-import { buildProjectDeploymentRows, getProjectDeploymentSignals } from './project-deployments-panel'
+import { buildProjectDeploymentRows, getAgentDeploymentVerification, getProjectDeploymentSignals } from './project-deployments-panel'
 
 const host: HostProfile = {
   id: 'host-1',
@@ -77,5 +77,14 @@ __SB_PROJECT=/opt/satoshi-dao/current|compose|current|2026-05-01 10:21
       kind: 'compose · node',
       name: 'satoshi',
     })
+  })
+
+  it('keeps Agent supplied verification separate from deployment status', () => {
+    const now = 1_000_000
+    expect(getAgentDeploymentVerification({ lastVerifiedAt: now - 60_000 }, now, 120_000)).toBe('verified')
+    expect(getAgentDeploymentVerification({ lastVerifiedAt: now - 180_000 }, now, 120_000)).toBe('stale')
+    expect(getAgentDeploymentVerification({ lastVerifiedAt: null }, now, 120_000)).toBe('unverified')
+    expect(getAgentDeploymentVerification({}, now, 120_000)).toBe('unverified')
+    expect(getAgentDeploymentVerification({ lastVerifiedAt: now + 10 * 60 * 1000 }, now, 120_000)).toBe('unverified')
   })
 })

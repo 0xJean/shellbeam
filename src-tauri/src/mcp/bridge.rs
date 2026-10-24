@@ -43,6 +43,19 @@ fn read_frame(stream: &mut impl Read) -> Result<Value, String> {
     serde_json::from_slice(&data).map_err(|_| "INVALID_IPC_FRAME".into())
 }
 
+fn prepare_accepted_stream(stream: &TcpStream, timeout: Duration) -> Result<(), String> {
+    // accept() inherits O_NONBLOCK on some platforms, including macOS. A
+    // read timeout alone does not make read_exact wait for a delayed first
+    // frame on such a socket. Keep accept nonblocking, each worker bounded.
+    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|e| e.to_string())
+}
+
 pub(super) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     if cfg!(mobile) {
         return Err("MCP_DESKTOP_ONLY".into());
@@ -79,8 +92,9 @@ pub(super) fn start(app: &tauri::AppHandle) -> Result<(), String> {
                     );
                     std::thread::spawn(move || {
                         let _guard = ConnectionGuard(connections);
-                        let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
-                        let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
+                        if prepare_accepted_stream(&stream, Duration::from_secs(10)).is_err() {
+                            return;
+                        }
                         let Ok(envelope) = read_frame(&mut stream) else {
                             return;
                         };
@@ -138,8 +152,13 @@ fn forward(
     token: &str,
     request: &Value,
 ) -> Result<Value, String> {
-    let content = std::fs::read(endpoint_path)
-        .map_err(|_| "SHELLBEAM_UNAVAILABLE: open ShellBeam and enable MCP")?;
+    let content = std::fs::read(endpoint_path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "SHELLBEAM_NOT_RUNNING: open ShellBeam and enable MCP".to_string()
+        } else {
+            "SHELLBEAM_ENDPOINT_UNREADABLE: check ShellBeam MCP data".to_string()
+        }
+    })?;
     if content.len() > 4096 {
         return Err("INVALID_ENDPOINT_FILE".into());
     }
@@ -147,8 +166,15 @@ fn forward(
         serde_json::from_slice(&content).map_err(|_| "INVALID_ENDPOINT_FILE")?;
     // The discovery file can specify a port, never an arbitrary destination host.
     let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, endpoint.port);
-    let mut stream = TcpStream::connect_timeout(&address.into(), Duration::from_secs(3))
-        .map_err(|_| "SHELLBEAM_UNAVAILABLE: open ShellBeam and enable MCP")?;
+    let mut stream =
+        TcpStream::connect_timeout(&address.into(), Duration::from_secs(3)).map_err(|error| {
+            match error.kind() {
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut => {
+                    "SHELLBEAM_NOT_RUNNING: open ShellBeam and enable MCP".to_string()
+                }
+                _ => "SHELLBEAM_UNAVAILABLE: open ShellBeam and enable MCP".to_string(),
+            }
+        })?;
     stream
         .set_read_timeout(Some(Duration::from_secs(30)))
         .map_err(|e| e.to_string())?;
@@ -202,6 +228,7 @@ fn check_diagnostic_response(response: &Value, id: u64) -> Result<(), String> {
         // Report only known diagnostics, never arbitrary transport response contents.
         return Err(match error["message"].as_str().unwrap_or("") {
             "MCP_DISABLED" => "MCP_DISABLED",
+            message if message.starts_with("SHELLBEAM_NOT_RUNNING") => "SHELLBEAM_UNAVAILABLE",
             "CLIENT_REVOKED" | "UNAUTHORIZED" => "MCP_AUTHENTICATION_FAILED",
             "MCP_INSTANCE_EXPIRED" => "MCP_INSTANCE_EXPIRED",
             _ => "MCP_CONNECTION_REJECTED",
@@ -298,6 +325,37 @@ pub fn run_stdio(endpoint_path: &str, client_id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn accepted_nonblocking_socket_waits_for_a_real_delayed_first_frame() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let (connected, accepted) = std::sync::mpsc::channel();
+        let (release, send_frame) = std::sync::mpsc::channel();
+        let client = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).unwrap();
+            connected.send(()).unwrap();
+            send_frame.recv_timeout(Duration::from_secs(2)).unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            write_frame(
+                &mut stream,
+                &json!({"jsonrpc":"2.0","id":1,"method":"ping"}),
+            )
+            .unwrap();
+        });
+        accepted.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        // Make the inherited state explicit so Linux/Windows exercise the
+        // same failure mode instead of accidentally passing only on macOS.
+        stream.set_nonblocking(true).unwrap();
+        prepare_accepted_stream(&stream, Duration::from_secs(1)).unwrap();
+        release.send(()).unwrap();
+        assert_eq!(
+            read_frame(&mut stream).unwrap(),
+            json!({"jsonrpc":"2.0","id":1,"method":"ping"})
+        );
+        client.join().unwrap();
+    }
     #[test]
     fn local_diagnostic_only_initializes_and_lists_tools() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();

@@ -11,6 +11,7 @@ const SftpDualPane = lazy(async () => {
 interface WorkspaceFileTransferAppProps {
   selectedHostId?: string | null
   selectedHostAddress?: string | null
+  vaultId?: string
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   presentation?: 'panel' | 'window' | 'mobile'
@@ -19,6 +20,7 @@ interface WorkspaceFileTransferAppProps {
 export function WorkspaceFileTransferApp({
   selectedHostId = null,
   selectedHostAddress = null,
+  vaultId,
   hosts,
   resolveAuthSecret,
   presentation = 'panel',
@@ -66,6 +68,7 @@ export function WorkspaceFileTransferApp({
             className={paneClassName}
             hosts={hosts}
             selectedHostId={activeHostId}
+            vaultId={vaultId}
             resolveAuthSecret={resolveAuthSecret}
           />
         </Suspense>

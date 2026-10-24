@@ -1,12 +1,17 @@
 #![allow(unexpected_cfgs)]
 
+mod agent_release;
+mod ai_cli;
 mod biometric_store;
 mod browser;
+mod collection_limits;
 mod data;
 mod error;
 mod keys;
+mod komari_console;
 mod mcp;
 mod net;
+mod notifications;
 mod ssh;
 mod storage;
 mod sync;
@@ -66,13 +71,42 @@ pub fn run() {
     };
     builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_biometry::init())
         .manage(InteractiveSessionState::default())
         .manage(VaultState::default())
+        .manage(komari_console::KomariConsoleState::default())
         .manage(SshSessionPool::default())
         .manage(mcp::McpState::default())
+        .manage(ai_cli::AiCliState::default())
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                use tauri::Manager;
+                window.state::<ai_cli::AiCliState>().cancel_all();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            agent_release::download_shellbeam_agent_release,
+            ai_cli::ai_cli_status,
+            ai_cli::ai_cli_start,
+            ai_cli::ai_cli_cancel,
+            data::local_ops::local_ops_list,
+            data::local_ops::local_ops_upsert,
+            data::local_ops::local_ops_alert_action,
+            data::provider_history::append_provider_metric_history,
+            data::provider_history::list_provider_metric_history,
+            data::provider_history::clear_provider_metric_history,
+            data::provider_history::get_provider_history_cursor,
+            data::provider_history::append_provider_history_page,
+            notifications::system_notification_permission,
+            notifications::request_system_notification_permission,
+            notifications::send_system_notification,
+            komari_console::komari_console_mode,
+            komari_console::prepare_mobile_komari_console,
+            komari_console::cancel_mobile_komari_console,
+            komari_console::open_mobile_komari_console,
             mcp::mcp_status,
+            mcp::mcp_list_project_deployments,
             mcp::mcp_set_enabled,
             mcp::mcp_create_client,
             mcp::mcp_revoke_client,
@@ -88,21 +122,47 @@ pub fn run() {
             net::known_hosts::fetch_and_add_known_host,
             net::known_hosts::remove_known_host,
             data::hosts::list_hosts,
+            data::komari_persistence::import_monitoring_host,
             data::hosts::create_host,
             data::hosts::update_host,
             data::hosts::delete_host,
+            data::host_notification_rules::save_host_notification_rule,
+            data::host_notification_rules::host_notification_rule_action,
+            data::host_notification_rules::list_host_notification_rules,
+            data::host_metadata::host_metadata_session,
+            data::host_metadata::list_host_metadata_sync,
+            data::host_metadata::enable_host_metadata_sync,
+            data::host_metadata::host_metadata_sync_action,
             data::komari::list_komari_integrations,
+            data::komari_agent::komari_agent_record,
+            data::komari_agent::komari_agent_prepare,
+            data::komari_agent::transfer::komari_agent_transfer_destinations,
+            data::komari_agent::transfer::komari_agent_transfer_prepare,
+            data::komari_agent::transfer::komari_agent_transfer_record,
+            data::komari_agent::transfer::komari_agent_transfer_recover,
+            data::komari_agent::transfer::komari_agent_transfer_operate,
+            data::komari_agent::komari_agent_operate,
+            data::komari_agent::komari_agent_cancel,
+            data::komari_agent::artifact::komari_agent_release_policy,
+            data::monitoring_service::monitoring_service,
+            data::monitoring_service::monitoring_service_context,
+            data::monitoring_service::monitoring_service_cancel_context,
             data::komari::upsert_komari_integration,
             data::komari::delete_komari_integration,
             data::komari_persistence::list_komari_snapshots,
             data::komari_persistence::upsert_komari_snapshot,
             data::komari_persistence::list_komari_mappings,
+            data::komari_persistence::get_komari_mapping_state,
+            data::komari_persistence::edit_komari_mapping,
             data::komari_persistence::upsert_komari_mapping,
             data::komari_persistence::replace_komari_mappings,
             data::komari_persistence::persist_komari_sync,
             data::komari_persistence::get_komari_sync_state,
             data::komari_persistence::upsert_komari_sync_state,
             data::komari_persistence::clear_komari_persistence,
+            data::probe_persistence::list_probe_snapshots,
+            data::probe_persistence::upsert_probe_snapshot,
+            data::probe_persistence::delete_probe_snapshots,
             data::workspace_inventory::list_workspace_inventory_snapshots,
             data::workspace_inventory::upsert_workspace_inventory_snapshot,
             data::workspace_inventory::delete_workspace_inventory_snapshot,
@@ -129,6 +189,7 @@ pub fn run() {
             ssh::commands::run_ssh_command,
             net::sftp::sftp_home_dir,
             net::sftp::sftp_list_dir,
+            net::sftp::sftp_stat_path,
             net::sftp::sftp_download_file,
             net::sftp::sftp_upload_file,
             net::sftp::sftp_delete_path,
@@ -261,6 +322,12 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                use tauri::Manager;
+                app.state::<ai_cli::AiCliState>().shutdown();
+            }
+        });
 }

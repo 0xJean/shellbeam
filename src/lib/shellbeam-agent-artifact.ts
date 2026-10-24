@@ -1,8 +1,12 @@
 import type { HostProfile } from './hosts'
-import { operationTransport, runConfirmedOperation, updateOperationJob, type OperationJob } from './operation-job'
+import { OperationScopeChangedError, operationTransport, runConfirmedOperation, updateOperationJob, type OperationJob } from './operation-job'
 import { sftpHomeDir, sftpUploadFile } from './sftp'
-import { normalizeShellbeamAgentRecord, upsertShellbeamAgent, type ShellbeamAgentRecord } from './shellbeam-agent'
+import { checkShellbeamAgent, listShellbeamAgents, normalizeShellbeamAgentRecord, upsertShellbeamAgent, type ShellbeamAgentRecord } from './shellbeam-agent'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
+import { downloadShellbeamAgentBytes } from './shellbeam-agent-download'
+import { upsertPersistedProbeSnapshot } from './probe-persistence'
+import { remoteOperationStatus } from './operation-verification'
+import { DEFAULT_VAULT_ID } from './vaults'
 
 /**
  * A release manifest is treated as untrusted input until its URL, digest and
@@ -86,7 +90,7 @@ const SAFE_ID_RE = /^[A-Za-z0-9._@+-]+$/
 
 function text(value: unknown, max = 240) {
   if (typeof value !== 'string') return null
-  const clean = value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim()
+  const clean = [...value].map((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 ? ' ' : character).join('').trim()
   return clean ? clean.slice(0, max) : null
 }
 
@@ -125,7 +129,7 @@ function allowedArtifactHost(hostname: string, allowedHosts: string[]) {
 
 function safeRemotePath(value: string) {
   const normalized = value.trim()
-  if (!normalized || normalized.length > 400 || normalized.includes('..') || normalized.includes('\\') || /[\u0000-\u001f\u007f]/.test(normalized)) {
+  if (!normalized || normalized.length > 400 || normalized.includes('..') || normalized.includes('\\') || [...normalized].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) {
     throw new Error('artifact_path_invalid')
   }
   if (!normalized.startsWith('/')) throw new Error('artifact_path_invalid')
@@ -207,7 +211,13 @@ export async function verifyShellbeamAgentArtifactBytes(bytes: Uint8Array, valid
 
 export async function downloadAndVerifyShellbeamAgentArtifact(manifestInput: unknown, policy: ShellbeamAgentArtifactPolicy, options: { fetchImpl?: typeof fetch; signal?: AbortSignal; now?: number } = {}): Promise<VerifiedShellbeamAgentArtifact> {
   const validated = validateShellbeamAgentArtifactManifest(manifestInput, policy)
-  const response = await (options.fetchImpl ?? fetch)(validated.url, { method: 'GET', redirect: 'error', signal: options.signal })
+  if (!options.fetchImpl) {
+    const bytes = await downloadShellbeamAgentBytes(validated.url.toString(), policy.allowedHosts, policy.maxBytes ?? DEFAULT_SHELLBEAM_AGENT_ARTIFACT_MAX_BYTES)
+    if (!bytes.length || (validated.manifest.sizeBytes && bytes.length !== validated.manifest.sizeBytes)) throw new Error('artifact_size_invalid')
+    await verifyShellbeamAgentArtifactBytes(bytes, validated, policy.trustedPublicKeyBase64)
+    return { ...validated, bytes, verifiedAt: options.now ?? Date.now() }
+  }
+  const response = await options.fetchImpl(validated.url, { method: 'GET', redirect: 'error', signal: options.signal })
   if (!response.ok) throw new Error(`artifact_download_http_${response.status}`)
   const limit = policy.maxBytes ?? DEFAULT_SHELLBEAM_AGENT_ARTIFACT_MAX_BYTES
   const contentLength = Number(response.headers.get('content-length') || 0)
@@ -274,15 +284,16 @@ export function buildShellbeamAgentArtifactInstallPlan(options: { version: strin
   const expectedPreviousSha256 = validateExpectedHash(options.previousSha256, false)
   const digestScript = `digest_file() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else return 127; fi; }`
   const expectedPreviousGuard = expectedPreviousSha256
-    ? `if [ -e ${shellQuote(installPath)} ] && [ "$(digest_file ${shellQuote(installPath)})" != ${shellQuote(expectedPreviousSha256)} ]; then exit 23; fi`
+    ? `if [ ! -f ${shellQuote(installPath)} ] || [ "$(digest_file ${shellQuote(installPath)})" != ${shellQuote(expectedPreviousSha256)} ]; then exit 23; fi`
     : `if [ -e ${shellQuote(installPath)} ]; then exit 23; fi`
   const rollback = [
     `rollback_install() {`,
     `if [ -n ${shellQuote(expectedPreviousSha256 ?? '')} ] && [ -e ${shellQuote(backupPath)} ] && [ "$(digest_file ${shellQuote(backupPath)})" = ${shellQuote(expectedPreviousSha256 ?? '')} ]; then`,
-    `if cp -p ${shellQuote(backupPath)} ${shellQuote(installPath)} && [ "$(digest_file ${shellQuote(installPath)})" = ${shellQuote(expectedPreviousSha256 ?? '')} ]; then printf '%s\\n' '__SB_AGENT_ROLLBACK=verified'; return 0; fi;`,
+    `if cp -p ${shellQuote(backupPath)} ${shellQuote(installPath + ".rollback")} && mv -f ${shellQuote(installPath + ".rollback")} ${shellQuote(installPath)} && [ "$(digest_file ${shellQuote(installPath)})" = ${shellQuote(expectedPreviousSha256 ?? '')} ] && ${shellQuote(installPath)} install --json --path ${shellQuote(installPath)}; then printf '%s\\n' '__SB_AGENT_ROLLBACK=verified'; return 0; fi;`,
     `printf '%s\\n' '__SB_AGENT_ROLLBACK=failed'; return 1;`,
     `fi;`,
-    `if rm -f ${shellQuote(installPath)} && [ ! -e ${shellQuote(installPath)} ]; then printf '%s\\n' '__SB_AGENT_ROLLBACK=removed'; return 0; fi;`,
+    `if [ -e ${shellQuote(installPath)} ] && ! ${shellQuote(installPath)} uninstall --json --path ${shellQuote(installPath)}; then printf '%s\\n' '__SB_AGENT_ROLLBACK=failed'; return 1; fi;`,
+    `if [ ! -e ${shellQuote(installPath)} ]; then printf '%s\\n' '__SB_AGENT_ROLLBACK=removed'; return 0; fi;`,
     `printf '%s\\n' '__SB_AGENT_ROLLBACK=failed'; return 1;`,
     `}`,
   ].join(' ')
@@ -296,17 +307,19 @@ export function buildShellbeamAgentArtifactInstallPlan(options: { version: strin
     rollback,
     `if ! mv -f ${shellQuote(stagingPath)} ${shellQuote(installPath)}; then if rollback_install; then exit 25; else exit 27; fi; fi`,
     `if [ "$(digest_file ${shellQuote(installPath)})" != ${shellQuote(expectedSha256)} ]; then if rollback_install; then exit 26; else exit 28; fi; fi`,
-    `if chmod 0755 ${shellQuote(installPath)}; then printf '%s\\n' '__SB_AGENT_STATUS=installed'; else if rollback_install; then exit 29; else exit 30; fi; fi`,
+    `if chmod 0755 ${shellQuote(installPath)} && ${shellQuote(installPath)} install --json --path ${shellQuote(installPath)}; then printf '%s\\n' '__SB_AGENT_STATUS=installed'; else if rollback_install; then exit 29; else exit 30; fi; fi`,
   ].join('; ')
   const rollbackCommand = expectedPreviousSha256
     ? [
       'set -eu', digestScript,
       `test -f ${shellQuote(backupPath)}`,
       `test "$(digest_file ${shellQuote(backupPath)})" = ${shellQuote(expectedPreviousSha256)}`,
-      `cp -p ${shellQuote(backupPath)} ${shellQuote(installPath)}`,
+      `cp -p ${shellQuote(backupPath)} ${shellQuote(installPath + ".rollback")}`,
+      `mv -f ${shellQuote(installPath + ".rollback")} ${shellQuote(installPath)}`,
       `test "$(digest_file ${shellQuote(installPath)})" = ${shellQuote(expectedPreviousSha256)}`,
+      `${shellQuote(installPath)} install --json --path ${shellQuote(installPath)}`,
     ].join('; ')
-    : `set -eu; rm -f ${shellQuote(installPath)}; test ! -e ${shellQuote(installPath)}`
+    : `set -eu; if [ -e ${shellQuote(installPath)} ]; then ${shellQuote(installPath)} uninstall --json --path ${shellQuote(installPath)}; fi; test ! -e ${shellQuote(installPath)}`
   return { version, installPath, stagingPath, backupPath, expectedSha256, expectedPreviousSha256, installCommand, rollbackCommand }
 }
 
@@ -341,41 +354,93 @@ export async function runShellbeamAgentArtifactOperation(options: {
   policy: ShellbeamAgentArtifactPolicy
   action?: 'install' | 'upgrade'
   previousSha256?: string
+  releaseSummary?: string
   vaultId?: string
   confirmMessage?: string
   onRecord?: (record: ShellbeamAgentRecord) => void
+  /** The initiating host/Vault must remain current throughout staged work. */
+  isCurrent?: () => boolean
 }): Promise<ShellbeamAgentArtifactOperationResult | null> {
-  const { host, resolveAuthSecret, manifest, policy, action = 'install', previousSha256, vaultId = 'local', confirmMessage, onRecord } = options
+  const { host, resolveAuthSecret, manifest, policy, action = 'install', previousSha256, releaseSummary, confirmMessage, onRecord } = options
+  if (options.vaultId !== undefined && host.vaultId && options.vaultId !== host.vaultId) throw new Error('WORKSPACE_VAULT_SCOPE_MISMATCH')
+  const vaultId = options.vaultId ?? host.vaultId ?? DEFAULT_VAULT_ID
+  let scopeCurrent = () => {
+    try { return options.isCurrent?.() !== false } catch { return false }
+  }
+  if (!scopeCurrent()) return null
   // Validate metadata before creating the job so the confirmation dialog can
   // show the signed release version without downloading anything. The actual
   // fetch and signature verification happen only after explicit confirmation.
   const validated = validateShellbeamAgentArtifactManifest(manifest, policy)
+  const previousRecord = (await listShellbeamAgents({ vaultId, hostId: host.id }).catch(() => []))[0]
+  if (!scopeCurrent()) return null
   let remoteStagePath = ''
   const initial = normalizeShellbeamAgentRecord({ vaultId, hostId: host.id, status: action === 'upgrade' ? 'upgrading' : 'installing', version: validated.manifest.version, installPath: '$HOME/.local/bin/shellbeam-agent', transport: operationTransport(host), capabilities: [], heartbeatTtlMs: 5 * 60 * 1000, lastCheckedAt: Date.now(), installMethod: 'ssh-confirmed' }, Date.now())
   onRecord?.(initial)
-  let execution: { value: { artifact: VerifiedShellbeamAgentArtifact; exitCode: number; durationMs: number; stdout: string; stderr: string; plan: ShellbeamAgentArtifactInstallPlan }; job: OperationJob } | null
+  let execution: { value: { artifact: VerifiedShellbeamAgentArtifact; exitCode: number; durationMs: number; stdout: string; stderr: string; plan: ShellbeamAgentArtifactInstallPlan; phase: 'prepare' | 'activate' }; job: OperationJob } | null
   try {
     execution = await runConfirmedOperation({
-      host, action: `agent.${action}.artifact`, target: `shellbeam-agent ${action} ${validated.manifest.version}`, risk: 'high', provider: 'shellbeam-agent', transport: operationTransport(host),
-      paramsSummary: `artifact=${validated.manifest.artifactId}; version=${validated.manifest.version}; sha256=${validated.sha256}`,
+      host, vaultId, isCurrent: options.isCurrent, action: `agent.${action}.artifact`, target: `shellbeam-agent ${action} ${validated.manifest.version}`, risk: 'high', provider: 'shellbeam-agent', transport: operationTransport(host),
+      paramsSummary: `artifact=${validated.manifest.artifactId}; version=${validated.manifest.version}; sha256=${validated.sha256}${releaseSummary ? `; ${releaseSummary.slice(0, 240)}` : ''}`,
       confirmMessage: confirmMessage ?? `Confirm ${action} of ShellBeam Probe ${validated.manifest.version} on ${host.name}?`,
-      execute: async () => {
-        const artifact = await downloadAndVerifyShellbeamAgentArtifact(manifest, policy)
-        const secret = await resolveAuthSecret(host)
-        const auth = { host: host.address, port: host.port || 22, username: host.username || 'root', authType: host.authType, ...(host.authType === 'password' ? { password: secret } : {}), ...(host.authType === 'privateKey' ? { privateKey: secret } : {}), jumpHost: host.jumpHost, jumpPort: host.jumpPort, jumpUser: host.jumpUser }
-        const home = await sftpHomeDir({ ...auth, remotePath: '.' })
-        const paths = remotePathForVersion(home, artifact.manifest.version, artifact.manifest.artifactId)
-        const installPlan = buildShellbeamAgentArtifactInstallPlan({ ...paths, version: artifact.manifest.version, sha256: artifact.sha256, previousSha256 })
-        remoteStagePath = installPlan.stagingPath
-        await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: `mkdir -p ${shellQuote(paths.stagingPath.slice(0, paths.stagingPath.lastIndexOf('/')))} ${shellQuote(paths.backupPath.slice(0, paths.backupPath.lastIndexOf('/')))} && chmod 0700 ${shellQuote(paths.root)}` })
-        await sftpUploadFile({ ...auth, remotePath: installPlan.stagingPath, contentB64: base64FromBytes(artifact.bytes) })
-        const commandResult = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: installPlan.installCommand })
-        return { ...commandResult, artifact, plan: installPlan }
+      execute: async (context) => {
+        scopeCurrent = context.isCurrent
+        let sent = false
+        const assertCurrent = () => { if (!scopeCurrent()) throw new OperationScopeChangedError(sent) }
+        try {
+          assertCurrent()
+          const artifact = await downloadAndVerifyShellbeamAgentArtifact(manifest, policy)
+          assertCurrent()
+          const secret = vaultId && host.id ? '' : await resolveAuthSecret(host)
+          assertCurrent()
+          const auth = { vaultId, hostId: host.id, host: host.address, port: host.port || 22, username: host.username || 'root', authType: host.authType, ...(host.authType === 'password' ? { password: secret } : {}), ...(host.authType === 'privateKey' ? { privateKey: secret } : {}), jumpHost: host.jumpHost, jumpPort: host.jumpPort, jumpUser: host.jumpUser }
+          const home = await sftpHomeDir({ ...auth, remotePath: '.' })
+          assertCurrent()
+          const paths = remotePathForVersion(home, artifact.manifest.version, artifact.manifest.artifactId)
+          let previousHash = previousSha256
+          if (action === 'upgrade' && !previousHash) {
+            const current = await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: `if command -v sha256sum >/dev/null 2>&1; then sha256sum ${shellQuote(paths.installPath)}; else shasum -a 256 ${shellQuote(paths.installPath)}; fi` })
+            assertCurrent()
+            previousHash = safeHash(current.stdout.trim().split(/\s+/)[0]) ?? undefined
+            if (remoteOperationStatus(current) !== 'completed' || !previousHash) throw new Error('artifact_previous_hash_unavailable')
+          }
+          const installPlan = buildShellbeamAgentArtifactInstallPlan({ ...paths, version: artifact.manifest.version, sha256: artifact.sha256, previousSha256: previousHash })
+          remoteStagePath = installPlan.stagingPath
+          assertCurrent()
+          // From the first submitted mutation onward, losing scope cannot prove
+          // that the original route stayed unchanged or that a write did not land.
+          sent = true
+          const prepared = await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: `mkdir -p ${shellQuote(paths.stagingPath.slice(0, paths.stagingPath.lastIndexOf('/')))} ${shellQuote(paths.backupPath.slice(0, paths.backupPath.lastIndexOf('/')))} && chmod 0700 ${shellQuote(paths.root)}` })
+          if (remoteOperationStatus(prepared) !== 'completed') return { ...prepared, artifact, plan: installPlan, phase: 'prepare' as const }
+          assertCurrent()
+          await sftpUploadFile({ ...auth, remotePath: installPlan.stagingPath, contentB64: base64FromBytes(artifact.bytes) })
+          assertCurrent()
+          const commandResult = await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: installPlan.installCommand })
+          // A completed atomic installer is actual evidence for this command's
+          // original route. Keep it even if the UI changed while it was running;
+          // follow-up reads must separately pass the persistent guard below.
+          return { ...commandResult, artifact, plan: installPlan, phase: 'activate' as const }
+        } catch (error) {
+          assertCurrent()
+          throw error
+        }
       },
       getResult: (result) => {
+        if (result.phase === 'prepare') {
+          const unknown = remoteOperationStatus(result) === 'unknown'
+          return {
+            ...result,
+            ...(unknown ? { errorType: 'unknown' as const } : {}),
+            resultSummary: `phase=prepare; exit=${result.exitCode}; durationMs=${result.durationMs}`,
+            errorCode: unknown ? 'artifact_prepare_unknown' : 'artifact_prepare_failed',
+            errorSummary: unknown ? 'Artifact staging preparation outcome is unknown; verify before retrying.' : 'Artifact staging preparation failed; activation was not sent.',
+          }
+        }
         const rollback = rollbackState(result)
+        const unknown = remoteOperationStatus(result) === 'unknown' || (result.exitCode !== 0 && (rollback === 'failed' || rollback === 'unknown'))
         return {
           ...result,
+          ...(unknown ? { errorType: 'unknown' as const } : {}),
           resultSummary: `exit=${result.exitCode}; durationMs=${result.durationMs}; rollback=${rollback}`,
           ...(result.exitCode !== 0 ? {
             errorCode: rollback === 'failed' || rollback === 'unknown' ? 'artifact_rollback_unknown' : 'artifact_install_failed_rolled_back',
@@ -388,17 +453,20 @@ export async function runShellbeamAgentArtifactOperation(options: {
     })
   } catch (error) {
     const unknown = normalizeShellbeamAgentRecord({ ...initial, status: 'unknown', health: 'unknown', lastErrorCode: 'artifact_operation_unknown', lastError: error instanceof Error ? error.message : String(error), updatedAt: Date.now() }, Date.now())
-    onRecord?.(unknown)
-    await upsertShellbeamAgent(unknown).catch(() => undefined)
+    if (scopeCurrent()) {
+      onRecord?.(unknown)
+      await upsertShellbeamAgent(unknown).catch(() => undefined)
+    }
     throw error
   }
   if (!execution) {
-    const cancelled = normalizeShellbeamAgentRecord({ ...initial, status: action === 'upgrade' ? 'installed' : 'not-installed', health: 'unknown', lastErrorCode: 'confirmation_rejected', lastError: 'Operation was cancelled before artifact upload', updatedAt: Date.now() }, Date.now())
-    onRecord?.(cancelled)
-    await upsertShellbeamAgent(cancelled).catch(() => undefined)
+    const cancelled = previousRecord ?? normalizeShellbeamAgentRecord({ vaultId, hostId: host.id, status: 'not-installed', health: 'unknown', transport: operationTransport(host) })
+    if (scopeCurrent()) onRecord?.(cancelled)
+    // Cancellation changes no lifecycle state or installed version.
     return null
   }
-  const successful = execution.value.exitCode === 0
+  const preparationFailed = execution.value.phase === 'prepare'
+  const successful = execution.value.phase === 'activate' && execution.job.status === 'completed' && execution.value.exitCode === 0
   const installedPlan = execution.value.plan
   const rollbackMarker = execution.value.stdout.match(/__SB_AGENT_ROLLBACK=(verified|removed|failed|not-needed)/)?.[1]
   const auditedJob = rollbackMarker
@@ -410,22 +478,31 @@ export async function runShellbeamAgentArtifactOperation(options: {
     : execution.job
   const artifact = execution.value.artifact
   const rollback = rollbackState(execution.value)
+  const verifiedCurrent = scopeCurrent() && (successful || rollback === 'verified')
+    ? await checkShellbeamAgent(host, resolveAuthSecret, Date.now(), vaultId).catch(() => null)
+    : null
+  const currentRecord = scopeCurrent() ? verifiedCurrent?.record : undefined
+  if (scopeCurrent() && verifiedCurrent?.snapshot && (verifiedCurrent.snapshot.metrics || verifiedCurrent.snapshot.inventory)) await upsertPersistedProbeSnapshot(verifiedCurrent.snapshot, vaultId).catch(() => undefined)
   const record = normalizeShellbeamAgentRecord({
     ...initial,
-    status: successful ? 'installed' as const : execution.job.status === 'unknown' || rollback === 'failed' || rollback === 'unknown' ? 'unknown' as const : 'failed' as const,
-    health: successful ? 'unknown' as const : 'unknown' as const,
+    ...(currentRecord ?? {}),
+    vaultId,
+    status: currentRecord?.status === 'installed' ? 'installed' as const : successful ? 'unknown' as const : execution.job.status === 'unknown' || (!preparationFailed && (rollback === 'failed' || rollback === 'unknown')) ? 'unknown' as const : 'failed' as const,
+    health: currentRecord?.health ?? 'unknown' as const,
     updatedAt: Date.now(),
     installedAt: successful ? Date.now() : null,
     lastCheckedAt: Date.now(),
-    lastErrorCode: successful ? null : rollback === 'failed' || rollback === 'unknown' ? 'artifact_rollback_unknown' : 'artifact_install_failed_rolled_back',
-    lastError: successful ? null : rollback === 'failed' || rollback === 'unknown'
+    lastErrorCode: preparationFailed ? execution.job.status === 'unknown' ? 'artifact_prepare_unknown' : 'artifact_prepare_failed' : successful && currentRecord?.status !== 'installed' ? 'agent_activation_check_unknown' : successful ? null : rollback === 'failed' || rollback === 'unknown' ? 'artifact_rollback_unknown' : 'artifact_install_failed_rolled_back',
+    lastError: preparationFailed ? execution.job.status === 'unknown' ? 'Artifact staging preparation outcome is unknown; verify before retrying.' : 'Artifact staging preparation failed; activation was not sent.' : successful && currentRecord?.status !== 'installed' ? 'Artifact activation completed but follow-up observation is unavailable.' : successful ? null : rollback === 'failed' || rollback === 'unknown'
       ? 'Artifact activation failed and rollback could not be verified; manual recovery is required.'
       : `Verified artifact activation failed; rollback=${rollback}.`,
     installPath: installedPlan.installPath,
-    version: artifact.manifest.version,
+    version: currentRecord?.version ?? (successful ? artifact.manifest.version : previousRecord?.version ?? null),
     transport: operationTransport(host),
   }, Date.now())
-  onRecord?.(record)
-  await upsertShellbeamAgent(record)
+  if (scopeCurrent()) {
+    onRecord?.(record)
+    await upsertShellbeamAgent(record)
+  }
   return { job: auditedJob, record, artifact, plan: installedPlan, remoteStagePath, stdout: execution.value.stdout, stderr: execution.value.stderr, exitCode: execution.value.exitCode, durationMs: execution.value.durationMs }
 }

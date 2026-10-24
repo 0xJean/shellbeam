@@ -1,3 +1,5 @@
+import { notifyHostMetadataChanged } from './host-metadata-sync'
+import type { HostProfile } from './hosts'
 import { invoke } from '@tauri-apps/api/core'
 import type { KomariAlertSummary } from './komari'
 import {
@@ -7,6 +9,8 @@ import {
 } from './komari-alerts'
 import type { ProbeSnapshot } from './probe-provider'
 import type { KomariHostMapping } from './komari-mapping'
+import type { KomariIntegration } from './komari-config'
+import { getProbeProviderRegistry } from './probe-scheduler'
 
 /** A durable ProbeSnapshot row returned by the local Komari cache. */
 export interface KomariSnapshotRecord {
@@ -35,6 +39,37 @@ export interface KomariMappingRecord extends KomariHostMapping {
   integrationId: string
 }
 
+export interface KomariMappingState {
+  mappings: KomariMappingRecord[]
+  revision: number
+}
+export const KOMARI_MAPPING_CHANGED_EVENT = 'shellbeam:komari-mapping-changed'
+
+export function manualKomariMappings(mappings: readonly KomariHostMapping[]): Record<string, string> {
+  return Object.fromEntries(mappings.filter((mapping) => mapping.source === 'manual').map((mapping) => [mapping.hostId, mapping.nodeId]))
+}
+
+export async function getKomariMappingState(vaultId: string, integrationId: string): Promise<KomariMappingState> {
+  return invoke<KomariMappingState>('get_komari_mapping_state', { vaultId: required(vaultId, 'vault id'), integrationId: required(integrationId, 'integration id') })
+}
+
+export async function editKomariMapping(options: { vaultId: string; integrationId: string; nodeId: string; hostId: string | null; expectedRevision: number }): Promise<KomariMappingState> {
+  const saved = await invoke<KomariMappingState>('edit_komari_mapping', { payload: options })
+  getProbeProviderRegistry().invalidateProvider(options.vaultId, options.integrationId)
+  window.dispatchEvent(new CustomEvent(KOMARI_MAPPING_CHANGED_EVENT, { detail: { vaultId: options.vaultId, integrationId: options.integrationId } }))
+  window.dispatchEvent(new Event('shellbeam:host-ops-refresh'))
+  return saved
+}
+
+export async function importMonitoringHost(options: { vaultId: string; integrationId: string; nodeId: string; expectedRevision: number; expectedIntegrationVersion: number; name: string; group: string; tags: string[] }): Promise<HostProfile> {
+  const host = await invoke<HostProfile>('import_monitoring_host', { payload: options })
+  notifyHostMetadataChanged(options.vaultId)
+  getProbeProviderRegistry().invalidateProvider(options.vaultId, options.integrationId)
+  window.dispatchEvent(new CustomEvent(KOMARI_MAPPING_CHANGED_EVENT, { detail: { vaultId: options.vaultId, integrationId: options.integrationId } }))
+  window.dispatchEvent(new Event('shellbeam:host-ops-refresh'))
+  return { ...host, vaultId: options.vaultId }
+}
+
 export interface KomariMappingPayload {
   integrationId: string
   hostId: string
@@ -54,10 +89,19 @@ export interface KomariPersistedState {
 
 export interface KomariSyncState {
   integrationId: string
+  /** Legacy TTL scheduling metadata; older local alert writes could set it. */
   lastSyncedAt: number
+  /** Native provenance: only a committed remote sync may establish this. */
+  lastSuccessfulSyncAt?: number | null
   ttlMs: number
   alertSummary: Record<string, unknown> | null
   updatedAt: number
+}
+
+/** Cache/mapping writes and legacy sync rows cannot prove a remote sync. */
+export function confirmedKomariSyncAt(integration: KomariIntegration, state: KomariSyncState | null | undefined, now = Date.now()): number | null {
+  const stamp = state?.lastSuccessfulSyncAt
+  return state?.integrationId === integration.id && typeof stamp === 'number' && Number.isFinite(stamp) && stamp > 0 && stamp <= now && stamp >= (integration.updatedAt ?? 0) ? stamp : null
 }
 
 export interface KomariSyncStatePayload {
@@ -171,6 +215,7 @@ export function readKomariAlertState(syncState: KomariSyncState | null | undefin
 export async function persistKomariAlertState(options: {
   integrationId: string
   state: Omit<KomariAlertState, 'schemaVersion'> | KomariAlertState
+  /** Legacy scheduling hint only; this is never successful-sync provenance. */
   lastSyncedAt?: number
   ttlMs?: number
   updatedAt?: number
@@ -180,6 +225,8 @@ export async function persistKomariAlertState(options: {
   const now = options.updatedAt ?? Date.now()
   return upsertKomariSyncState({
     integrationId,
+    // Preserve the existing TTL scheduling behavior. Native storage keeps the
+    // independent lastSuccessfulSyncAt untouched by this local-only write.
     lastSyncedAt: options.lastSyncedAt ?? current?.lastSyncedAt ?? now,
     ttlMs: options.ttlMs ?? current?.ttlMs ?? 60_000,
     alertSummary: toKomariAlertStatePayload({ schemaVersion: 1, ...options.state }),
@@ -207,6 +254,8 @@ export async function replaceKomariMappings(
 /** Persist one complete sync in a single SQLite transaction. */
 export async function persistKomariSync(options: {
   integrationId: string
+  vaultId?: string
+  expectedMappingRevision?: number
   snapshots: ProbeSnapshot[]
   mappings: KomariHostMapping[]
   updatedAt?: number
@@ -219,6 +268,8 @@ export async function persistKomariSync(options: {
   return invoke<void>('persist_komari_sync', {
     payload: {
       integrationId,
+      ...(options.vaultId ? { vaultId: options.vaultId } : {}),
+      ...(options.expectedMappingRevision === undefined ? {} : { expectedMappingRevision: options.expectedMappingRevision }),
       lastSyncedAt: updatedAt,
       ttlMs: options.ttlMs ?? 60_000,
       alertSummary: options.alertState

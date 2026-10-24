@@ -206,7 +206,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
               <GateHeader icon={<Lock className="h-6 w-6" />}
                 title={isInitialized ? t('vault.unlock') : t('vault.initialize')}
                 desc={isInitialized ? t('vault.unlockDesc') : t('vault.initializeDesc')} />
-              <form className="space-y-3 px-6 pb-6 pt-2 sm:px-8 sm:pb-8" onSubmit={(e) => {
+              <form data-testid="vault-password-form" data-mode={isOptInMode ? 'biometric-opt-in' : isInitialized ? 'unlock' : 'initialize'} className="space-y-3 px-6 pb-6 pt-2 sm:px-8 sm:pb-8" onSubmit={(e) => {
                 e.preventDefault()
                 if (busy || !password.trim()) return
                 void handlePasswordSubmit(password)
@@ -218,7 +218,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
                   </div>
                 )}
                 <div>
-                  <Input type="password" value={password}
+                  <Input data-testid="vault-master-password" aria-label={isInitialized ? t('vault.enterPassword') : t('vault.setPassword')} type="password" value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder={isInitialized ? t('vault.enterPassword') : t('vault.setPassword')}
                     className="h-11 rounded-lg border border-input bg-background text-foreground text-base placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-primary/50"
@@ -231,7 +231,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
                     </div>
                   )}
                 </div>
-                <Button type="submit" className="h-11 w-full rounded-lg font-medium"
+                <Button data-testid="vault-submit" type="submit" className="h-11 w-full rounded-lg font-medium"
                   disabled={busy || !password.trim()}>
                   {busy
                     ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{isInitialized ? t('vault.unlocking') : t('vault.initializing')}</>
@@ -271,7 +271,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
                     : <><Fingerprint className="h-4 w-4" />{t('vault.biometricOptInEnable', { type: bioLabel })}</>
                   }
                 </Button>
-                <button type="button" onClick={handleSkipBiometric}
+                <button data-testid="vault-biometric-skip" type="button" onClick={handleSkipBiometric}
                   className="text-xs text-muted-foreground transition-colors hover:text-foreground">
                   {t('vault.biometricOptInSkip')}
                 </button>

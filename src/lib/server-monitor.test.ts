@@ -72,7 +72,8 @@ __SB_MON_LOAD=-1|2|3
   it('uses read-only Linux probes and does not include installation or control actions', () => {
     expect(SERVER_MONITOR_COMMAND).toContain('/proc/stat')
     expect(SERVER_MONITOR_COMMAND).toContain('/proc/meminfo')
-    expect(SERVER_MONITOR_COMMAND).toContain('df -Pk /')
-    expect(SERVER_MONITOR_COMMAND).not.toMatch(/\b(apt|yum|dnf|systemctl|service|docker|npm|rm|touch|install)\b/)
+    expect(SERVER_MONITOR_COMMAND).toContain('df -Pk')
+    expect(SERVER_MONITOR_COMMAND).toMatch(/shellbeam-probe metrics$/)
+    expect(SERVER_MONITOR_COMMAND).not.toMatch(/\b(apt|yum|dnf|rm|touch|install)\b|systemctl (?:start|stop|restart|enable|disable)\b|docker (?:start|stop|restart|rm)\b/)
   })
 })

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createKomariProbeProvider } from './komari-probe-provider'
+import { withHostConnections } from './hosts'
 import type { ProbeRequest } from './probe-provider'
 
 const request: ProbeRequest = {
@@ -26,6 +27,23 @@ describe('Komari ProbeProvider', () => {
     expect(snapshot.inventory).toBeNull()
   })
 
+  it('collects a monitoring-only host and keeps its monitoring identity when SSH is added', async () => {
+    const resolveAuthSecret = vi.fn(async () => 'not-used')
+    const provider = createKomariProbeProvider({
+      endpoint: 'https://komari.example',
+      nodeForHost: () => ({ uuid: 'node-1', name: 'prod', hostname: null, ipv4: null, ipv6: null, os: null, kernel: null, version: null, raw: {} }),
+      client: { fetchRecentRecords: async () => [{ time: 1.9, cpu: 25 }] },
+    })
+    const pure = { ...request.host, ...withHostConnections(request.host, [], null) }
+    const snapshot = await provider.probe({ ...request, host: pure, resolveAuthSecret })
+    expect(snapshot).toMatchObject({ host: { hostId: 'host-1', address: '', port: 0, username: '' }, health: 'online' })
+    expect(snapshot.metrics?.data.cpuPercent).toBe(25)
+    const withSsh = await provider.probe({ ...request, resolveAuthSecret })
+    expect(withSsh.host.hostId).toBe(snapshot.host.hostId)
+    expect(withSsh.provider).toEqual(snapshot.provider)
+    expect(resolveAuthSecret).not.toHaveBeenCalled()
+  })
+
   it('reports unmapped and API failures without throwing', async () => {
     const provider = createKomariProbeProvider({
       endpoint: 'https://komari.example',
@@ -44,5 +62,50 @@ describe('Komari ProbeProvider', () => {
     const failure = await failed.probe(request)
     expect(failure.health).toBe('unknown')
     expect(failure.errors[0]).toMatchObject({ code: 'permission', section: 'metrics' })
+  })
+
+  it('excludes even slightly future reports from the latest observation and imported history', async () => {
+    const now = Date.parse('2026-10-17T08:30:00Z')
+    const onHistory = vi.fn()
+    const provider = createKomariProbeProvider({
+      endpoint: 'https://komari.example',
+      nodeForHost: () => ({ uuid: 'node-1', name: 'prod', hostname: null, ipv4: null, ipv6: null, os: null, kernel: null, version: null, raw: {} }),
+      client: { fetchRecentRecords: async () => [{ time: now - 1000, cpu: 25 }, { time: now + 1, cpu: 99 }, { time: now + 240000, cpu: 100 }] },
+      onHistory,
+    })
+    const snapshot = await provider.probe({ ...request, now })
+    expect(snapshot.health).toBe('online')
+    expect(snapshot.metrics?.data.cpuPercent).toBe(25)
+    expect(snapshot.metrics?.freshness.sampledAt).toBe(now - 1000)
+    expect(onHistory.mock.calls[0]?.[0]).toHaveLength(1)
+  })
+
+  it('keeps only future or undated reports unknown without inventing an observation', async () => {
+    const now = Date.parse('2026-10-17T08:30:00Z')
+    const onHistory = vi.fn()
+    const provider = createKomariProbeProvider({
+      endpoint: 'https://komari.example',
+      nodeForHost: () => ({ uuid: 'node-1', name: 'prod', hostname: null, ipv4: null, ipv6: null, os: null, kernel: null, version: null, raw: {} }),
+      client: { fetchRecentRecords: async () => [{ time: now + 1, cpu: 25 }, { cpu: 50 }] },
+      onHistory,
+    })
+    const snapshot = await provider.probe({ ...request, now })
+    expect(snapshot).toMatchObject({ health: 'unknown', metrics: null, errors: [{ section: 'metrics', code: 'invalid-sample-time' }] })
+    expect(onHistory).not.toHaveBeenCalled()
+  })
+
+  it('uses response completion time so a sample generated during a request is valid', async () => {
+    let now = Date.parse('2026-10-17T08:30:00Z')
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const provider = createKomariProbeProvider({
+        endpoint: 'https://komari.example',
+        nodeForHost: () => ({ uuid: 'node-1', name: 'prod', hostname: null, ipv4: null, ipv6: null, os: null, kernel: null, version: null, raw: {} }),
+        client: { fetchRecentRecords: async () => { now += 2000; return [{ time: now, cpu: 25 }] } },
+      })
+      const snapshot = await provider.probe({ ...request, now: undefined })
+      expect(snapshot).toMatchObject({ health: 'online', receivedAt: now })
+      expect(snapshot.metrics?.freshness).toMatchObject({ sampledAt: now, receivedAt: now, expired: false })
+    } finally { clock.mockRestore() }
   })
 })

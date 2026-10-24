@@ -2,7 +2,7 @@ import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type Reac
 import { ArrowLeftRight, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 
-export function HostListScrollArea({ children }: { children: ReactNode }) {
+export function HostListScrollArea({ children, monitoring = true, resources = false }: { children: ReactNode; monitoring?: boolean; resources?: boolean }) {
   const { t } = useT()
   const viewportId = useId()
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -32,7 +32,7 @@ export function HostListScrollArea({ children }: { children: ReactNode }) {
       observer?.disconnect()
       window.removeEventListener('resize', readPosition)
     }
-  }, [])
+  }, [monitoring, resources])
 
   function scrollTo(left: number) {
     const viewport = viewportRef.current
@@ -60,7 +60,7 @@ export function HostListScrollArea({ children }: { children: ReactNode }) {
   return (
     <div className="relative min-w-0">
       {position.max > 1 && (
-        <div data-testid="host-list-scroll-controls" className="sticky top-0 z-10 flex items-center gap-3 border-b border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-950)] px-4 py-2 shadow-sm">
+        <div data-testid="host-list-scroll-controls" className="flex items-center gap-3 border-b border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-950)] px-4 py-2 shadow-sm">
           <div className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[var(--workspace-accent-text)]">
             <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />
             <span className="hidden sm:inline">{t('hosts.horizontalScrollHint')}</span>
@@ -86,7 +86,7 @@ export function HostListScrollArea({ children }: { children: ReactNode }) {
         </div>
       )}
       <div ref={viewportRef} id={viewportId} data-testid="host-list-scroll-viewport" onScroll={readPosition} className="workspace-scrollbar-hidden workspace-horizontal-scroll min-w-0 overflow-x-auto overscroll-x-contain rounded-b-2xl">
-        <div ref={contentRef} className="xl:min-w-[86rem]">{children}</div>
+        <div ref={contentRef} className={monitoring ? 'xl:min-w-[91rem]' : resources ? 'xl:min-w-[74rem]' : 'xl:min-w-[60rem]'}>{children}</div>
       </div>
     </div>
   )

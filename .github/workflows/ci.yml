@@ -27,7 +27,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          # npm ci uses the lockfile directly; npm cache restore can stall on egress limits.
 
       - name: Install dependencies
         run: npm ci
@@ -35,5 +35,136 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Fixed read-only MCP collector guards
+        run: python3 scripts/mcp-readonly-ops.test.py
+
+      - name: Verify bundled monitoring extension and policy runtime
+        run: |
+          node scripts/package-monitoring-extension.mjs --check
+          node --test scripts/monitoring-extension*.test.mjs
+
       - name: Build frontend
         run: npm run build
+
+  native:
+    name: Rust and real SSH (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          # npm ci uses the lockfile directly; npm cache restore can stall on egress limits.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux native dependencies and SSH fixture
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev openssh-server dbus dunst xvfb xauth nginx openssl busybox-static python3-venv
+          sudo mkdir -p /run/sshd
+      - run: npm ci
+      - run: npm run build
+      - name: Native unit, protocol, persistence and SSH route tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib
+      - name: Verify built-in production probe trust and anonymous artifact downloads
+        if: runner.os == 'Linux'
+        env:
+          SHELLBEAM_OFFICIAL_PROBE_RELEASE_LIVE: '1'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib builtin_production_catalog_and_binaries_verify_without_user_configuration -- --ignored
+      - name: Native extension lifecycle against the pinned official server
+        if: runner.os == 'Linux'
+        env:
+          SHELLBEAM_KOMARI_TEST_BINARY: ${{ runner.temp }}/komari-native-extension-contract
+          SHELLBEAM_EXTENSION_LIFECYCLE_REPORT: ${{ runner.temp }}/monitoring-extension-lifecycle.json
+        run: |
+          node --input-type=module <<'JS'
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { downloadPinned } from './scripts/prepare-komari-agent-release.mjs';
+          const { server } = JSON.parse(await readFile('scripts/fixtures/komari-lifecycle-releases.json'));
+          const bytes = await downloadPinned(`https://github.com/komari-monitor/komari/releases/download/${server.version}/komari-linux-amd64`, server.amd64, 64 * 1024 * 1024);
+          await writeFile(process.env.SHELLBEAM_KOMARI_TEST_BINARY, bytes, { mode: 0o700, flag: 'wx' });
+          JS
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib official_service_wire_contract -- --ignored
+      - name: Retain native extension lifecycle evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-extension-native-lifecycle
+          path: ${{ runner.temp }}/monitoring-extension-lifecycle.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: MCP stdio integration
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test mcp_stdio
+      - name: Reject notifications without a real desktop notification daemon
+        if: runner.os == 'Linux'
+        run: dbus-run-session --config-file=src-tauri/tests/fixtures/notifications-session.conf -- env SHELLBEAM_NOTIFICATION_TEST_BUS=1 cargo test --manifest-path src-tauri/Cargo.toml --locked --lib real_dbus_without_daemon_rejects_delivery -- --ignored
+      - name: Receive notifications through a real isolated D-Bus and dunst
+        if: runner.os == 'Linux'
+        run: dbus-run-session --config-file=src-tauri/tests/fixtures/notifications-session.conf -- xvfb-run -a env SHELLBEAM_NOTIFICATION_TEST_BUS=1 cargo test --manifest-path src-tauri/Cargo.toml --locked --lib real_dbus_dunst_acknowledges_delivery -- --ignored
+      - name: Verify disposable Ops runner guards
+        if: runner.os == 'Linux'
+        run: node --test scripts/run-ops-live.test.mjs
+      - name: Build native Ops IPC acceptance bridge without privileges
+        if: runner.os == 'Linux'
+        run: node scripts/run-ops-live.mjs --build "$RUNNER_TEMP/shellbeam-ops-live-bridge-path"
+      - name: Real multi-target Docker, ACME renewal and audited direct/ProxyJump operations
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        env:
+          SHELLBEAM_OPS_LIVE: '1'
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          bridge_path="$(cat "$RUNNER_TEMP/shellbeam-ops-live-bridge-path")"
+          sudo env PATH="$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" RUNNER_TEMP="$RUNNER_TEMP" SHELLBEAM_OPS_LIVE="$SHELLBEAM_OPS_LIVE" SHELLBEAM_OPS_LIVE_REPORT="$RUNNER_TEMP/shellbeam-ops-live-report.json" bash scripts/ci-ops-live.sh "$bridge_path"
+      - name: Save the redacted real Ops acceptance result
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-ops-live-result
+          path: ${{ runner.temp }}/shellbeam-ops-live-report.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+  monitoring-extension:
+    name: Monitoring extension server contract
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          # npm ci uses the lockfile directly; npm cache restore can stall on egress limits.
+      - run: npm ci
+      - name: Verify embedded package and download pinned official server
+        run: |
+          node scripts/package-monitoring-extension.mjs --check
+          node --input-type=module <<'JS'
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { downloadPinned } from './scripts/prepare-komari-agent-release.mjs';
+          const { server } = JSON.parse(await readFile('scripts/fixtures/komari-lifecycle-releases.json'));
+          const bytes = await downloadPinned(`https://github.com/komari-monitor/komari/releases/download/${server.version}/komari-linux-amd64`, server.amd64, 64 * 1024 * 1024);
+          await writeFile(join(process.env.RUNNER_TEMP, 'komari-extension-contract'), bytes, { mode: 0o700, flag: 'wx' });
+          JS
+      - name: Server load, recovery, silence, permissions and restart without replay
+        env:
+          SHELLBEAM_MONITORING_EXTENSION_REPORT: ${{ runner.temp }}/monitoring-extension-report.json
+        run: node scripts/monitoring-extension-live.mjs --binary "$RUNNER_TEMP/komari-extension-contract"
+      - name: Retain redacted contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-extension-contract
+          path: ${{ runner.temp }}/monitoring-extension-report.json
+          if-no-files-found: error
+          retention-days: 14

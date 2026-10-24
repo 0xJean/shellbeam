@@ -1,3 +1,4 @@
+import { sendInteractiveInput } from '@/lib/interactive-session'
 import type { HostProfile } from '@/lib/hosts'
 import { t } from '@/lib/i18n'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
@@ -17,6 +18,12 @@ import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
 import { WorkspaceStatusCards } from './workspace-status-cards'
 import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
+import { DockerOpsPanel } from './docker-ops-panel'
+import { ScheduledTasksPanel } from './scheduled-tasks-panel'
+import { SitesSslPanel } from '../sites-ssl-panel'
+import { NetworkOpsPanel } from './network-ops-panel'
+import { ProviderHistoryDisclosure } from './provider-history-panel'
+import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
 const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
@@ -26,16 +33,21 @@ const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
   { id: 'fileSystem', labelKey: 'workspace.app.fileSystem' },
   { id: 'processes', labelKey: 'workspace.app.processes' },
   { id: 'services', labelKey: 'workspace.app.services' },
+  { id: 'network', labelKey: 'workspace.network.title' },
   { id: 'toolManager', labelKey: 'workspace.app.toolManager' },
   { id: 'logs', labelKey: 'workspace.app.logs' },
   { id: 'browser', labelKey: 'workspace.app.browser' },
   { id: 'terminal', labelKey: 'workspace.app.terminal' },
+  { id: 'docker', labelKey: 'workspace.app.docker' },
+  { id: 'sitesSsl', labelKey: 'workspace.app.sitesSsl' },
+  { id: 'scheduledTasks', labelKey: 'workspace.app.scheduledTasks' },
 ]
 
 const TASKBAR_APPS = APP_LABELS.filter((item) => item.id !== 'overview')
 
 interface WorkspaceDesktopShellProps {
   activeVaultId?: string
+  sessionVaultId?: string
   sessionId: string
   hostName: string
   hostAddress: string
@@ -76,10 +88,14 @@ const DEFAULT_WINDOW_POSITIONS: Record<WorkspaceAppId, { x: number; y: number }>
   fileSystem: { x: 144, y: 40 },
   processes: { x: 160, y: 52 },
   services: { x: 176, y: 44 },
+  network: { x: 144, y: 52 },
   toolManager: { x: 136, y: 36 },
   logs: { x: 152, y: 64 },
   browser: { x: 120, y: 24 },
   terminal: { x: 168, y: 72 },
+  docker: { x: 136, y: 36 },
+  sitesSsl: { x: 152, y: 48 },
+  scheduledTasks: { x: 168, y: 60 },
 }
 
 function getDesktopWindowFrame(app: WorkspaceAppId) {
@@ -131,6 +147,7 @@ function LiveDate() {
 
 export function WorkspaceDesktopShell({
   activeVaultId,
+  sessionVaultId,
   sessionId,
   hostName,
   hostAddress,
@@ -144,6 +161,13 @@ export function WorkspaceDesktopShell({
   onEditHost,
   onBrowserCloseRequest,
 }: WorkspaceDesktopShellProps) {
+  const [diagnosticLogUnit, setDiagnosticLogUnit] = useState('')
+  function openDiagnosticLogs(serviceName: string) { setDiagnosticLogUnit(serviceName); onSelectApp('logs') }
+  function openDiagnosticTerminal(command: string) {
+    onSelectApp('terminal')
+    void sendInteractiveInput(sessionId, command).catch(() => {})
+  }
+
   const isOverview = activeApp === 'overview'
   const [showIntroPanel, setShowIntroPanel] = useState(true)
   const [showWidgets, setShowWidgets] = useState(true)
@@ -151,7 +175,8 @@ export function WorkspaceDesktopShell({
   const desktopSurfaceRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ app: WorkspaceAppId; offsetX: number; offsetY: number } | null>(null)
   const zCounterRef = useRef(3)
-  const activeHost = resolveHostForDisplay(hosts, hostId, hostAddress)
+  const sessionVaultMismatch = sessionVaultId !== undefined && sessionVaultId !== activeVaultId
+  const activeHost = sessionVaultMismatch ? null : resolveHostForDisplay(hosts, hostId, hostAddress)
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
@@ -173,45 +198,68 @@ export function WorkspaceDesktopShell({
   }, [activeApp])
 
   const content = (() => {
+    if (sessionVaultMismatch && activeApp !== 'terminal') return <p role="status" className="p-6 text-sm text-muted-foreground">{t('workspace.sessionVaultMismatch')}</p>
     if (activeApp === 'assetInventory') {
       if (resolveAuthSecret) {
-        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
+        return <WorkspaceAssetInventoryApp activeVaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'fileTransfer') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceFileTransferApp presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFileTransferApp vaultId={activeVaultId} presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'fileSystem') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceFileSystemApp presentation="window" sessionId={sessionId} selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFileSystemApp vaultId={activeVaultId} presentation="window" sessionId={sessionId} selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'processes') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceProcessesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceProcessesApp onOpenTerminal={openDiagnosticTerminal} vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'services') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceServicesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceServicesApp onOpenLogs={openDiagnosticLogs} vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'network') {
+      if (activeHost && resolveAuthSecret) return <NetworkOpsPanel host={activeHost} vaultId={activeVaultId} resolveAuthSecret={resolveAuthSecret} onOpenServices={() => onSelectApp('services')} onOpenLogs={() => openDiagnosticLogs('')} onOpenTerminal={openDiagnosticTerminal} />
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'toolManager') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
+        return <WorkspaceToolManagerApp vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'logs') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceLogsApp key={`${activeVaultId ?? ""}:${hostId ?? hostAddress}:${diagnosticLogUnit}`} initialUnit={diagnosticLogUnit} vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'docker') {
+      if (activeHost && resolveAuthSecret) {
+        return <DockerOpsPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'sitesSsl') {
+      if (activeHost && resolveAuthSecret) {
+        return <SitesSslPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'scheduledTasks') {
+      if (activeHost && resolveAuthSecret) {
+        return <ScheduledTasksPanel activeVaultId={activeVaultId} host={activeHost} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -292,47 +340,70 @@ export function WorkspaceDesktopShell({
   }, [])
 
   function renderWindowContent(app: WorkspaceAppId) {
+    if (sessionVaultMismatch && app !== 'terminal') return <p role="status" className="p-6 text-sm text-muted-foreground">{t('workspace.sessionVaultMismatch')}</p>
     if (app === activeApp) return content
 
     if (app === 'assetInventory') {
       if (resolveAuthSecret) {
-        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
+        return <WorkspaceAssetInventoryApp activeVaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
     if (app === 'fileTransfer') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceFileTransferApp presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFileTransferApp vaultId={activeVaultId} presentation="window" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
     if (app === 'fileSystem') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceFileSystemApp presentation="window" sessionId={sessionId} selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFileSystemApp vaultId={activeVaultId} presentation="window" sessionId={sessionId} selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
     if (app === 'processes') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceProcessesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceProcessesApp onOpenTerminal={openDiagnosticTerminal} vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
     if (app === 'services') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceServicesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceServicesApp onOpenLogs={openDiagnosticLogs} vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
+      return <WorkspaceEmptyApp app={app} />
+    }
+    if (app === 'network') {
+      if (activeHost && resolveAuthSecret) return <NetworkOpsPanel host={activeHost} vaultId={activeVaultId} resolveAuthSecret={resolveAuthSecret} onOpenServices={() => onSelectApp('services')} onOpenLogs={() => openDiagnosticLogs('')} onOpenTerminal={openDiagnosticTerminal} />
       return <WorkspaceEmptyApp app={app} />
     }
     if (app === 'toolManager') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
+        return <WorkspaceToolManagerApp vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
     if (app === 'logs') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceLogsApp key={`${activeVaultId ?? ""}:${hostId ?? hostAddress}:${diagnosticLogUnit}`} initialUnit={diagnosticLogUnit} vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={app} />
+    }
+    if (app === 'docker') {
+      if (activeHost && resolveAuthSecret) {
+        return <DockerOpsPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={app} />
+    }
+    if (app === 'sitesSsl') {
+      if (activeHost && resolveAuthSecret) {
+        return <SitesSslPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={app} />
+    }
+    if (app === 'scheduledTasks') {
+      if (activeHost && resolveAuthSecret) {
+        return <ScheduledTasksPanel activeVaultId={activeVaultId} host={activeHost} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
     }
@@ -401,7 +472,7 @@ export function WorkspaceDesktopShell({
             )}
 
             {showWidgets && (
-              <div className="absolute bottom-8 right-8 z-10 hidden w-[26rem] space-y-4 md:block">
+              <div className="absolute bottom-8 right-8 z-10 hidden max-h-[70vh] w-[26rem] space-y-4 overflow-y-auto md:block">
                 <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-4 py-4 shadow-[var(--workspace-shadow-overlay)] backdrop-blur-md">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-subtle)]">{t('workspace.desktop.widgetStack')}</div>
@@ -414,14 +485,16 @@ export function WorkspaceDesktopShell({
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                <WorkspaceStatusCards
+                {sessionVaultMismatch ? <p role="status" className="text-sm text-muted-foreground">{t('workspace.sessionVaultMismatch')}</p> : <WorkspaceStatusCards
                   activeVaultId={activeVaultId}
                   hostAddress={hostAddress}
                   selectedHostId={hostId}
                   hosts={hosts}
                   resolveAuthSecret={resolveAuthSecret}
-                />
+                />}
+                {activeVaultId && activeHost && <ProviderHistoryDisclosure vaultId={activeVaultId} hostId={activeHost.id} />}
                 </div>
+                <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
                 <div className="rounded-xl border border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] px-4 py-4 shadow-[var(--workspace-shadow-card)]">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-subtle)]">{t('workspace.desktop.quickHint')}</div>
                   <div className="mt-3 text-sm font-medium text-[var(--workspace-text-strong)]">{t('workspace.desktop.doubleClickHint')}</div>
@@ -509,6 +582,7 @@ export function WorkspaceDesktopShell({
                     </div>
                   </div>
                   <div
+                    data-testid="workspace-window-body"
                     className={cn(
                       'min-h-0 flex-1',
                       windowState.app === 'browser'

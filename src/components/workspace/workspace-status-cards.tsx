@@ -1,9 +1,12 @@
 import type { HostProfile } from '@/lib/hosts'
 import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
-import { useServerMonitorStates } from '@/lib/server-monitor-state'
-import type { ServerMonitorSnapshot, ServerMonitorStatus } from '@/lib/server-monitor'
-import { t } from '@/lib/i18n'
+import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
+import { useT } from '@/lib/i18n'
+import type { HostOpsHealthState } from '@/lib/host-ops-view'
+import { useWorkspaceProviderState } from '@/lib/workspace-provider-state'
+import { workspaceOverviewCopy } from '@/lib/locales/workspace-overview'
 import { ShellbeamAgentPanel } from './shellbeam-agent-panel'
+import { WorkspaceProviderSummary } from './workspace-provider-summary'
 
 interface WorkspaceStatusCardsProps {
   activeVaultId?: string
@@ -21,8 +24,8 @@ const STATUS_CARDS = [
   { key: 'network', labelKey: 'workspace.status.network', accent: 'from-[var(--workspace-metric-network-from)] to-[var(--workspace-metric-network-to)]', glow: 'bg-[var(--workspace-metric-network-glow)]' },
 ] as const
 
-function formatBytesPerSecond(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return null
+function formatBytesPerSecond(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return null
   const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
   let next = Math.max(0, value)
   let index = 0
@@ -33,15 +36,10 @@ function formatBytesPerSecond(value: number | null) {
   return `${next >= 10 || index === 0 ? Math.round(next) : next.toFixed(1)} ${units[index]}`
 }
 
-function statusLabel(status: ServerMonitorStatus | undefined) {
-  if (status === 'online') return t('workspace.monitor.status.online')
-  if (status === 'stale') return t('workspace.monitor.status.stale')
-  if (status === 'offline') return t('workspace.monitor.status.offline')
-  if (status === 'paused') return t('workspace.monitor.status.paused')
-  return t('workspace.monitor.status.checking')
-}
-
-function statusTone(status: ServerMonitorStatus | undefined) {
+function statusTone(status: HostOpsHealthState | undefined) {
+  if (status === 'jump-unavailable') return 'offline'
+  if (status === 'unknown') return 'idle'
+  if (status === 'unsupported') return 'idle'
   if (status === 'online') return 'online'
   if (status === 'stale') return 'stale'
   if (status === 'offline') return 'offline'
@@ -51,9 +49,10 @@ function statusTone(status: ServerMonitorStatus | undefined) {
 
 function getCardValue(key: (typeof STATUS_CARDS)[number]['key'], snapshot: ServerMonitorSnapshot | null) {
   if (!snapshot) return { value: null, percent: null }
-  if (key === 'cpu') return { value: snapshot.cpuPercent === null ? null : `${Math.round(snapshot.cpuPercent)}%`, percent: snapshot.cpuPercent }
-  if (key === 'memory') return { value: snapshot.memoryPercent === null ? null : `${Math.round(snapshot.memoryPercent)}%`, percent: snapshot.memoryPercent }
-  if (key === 'disk') return { value: snapshot.diskPercent === null ? null : `${Math.round(snapshot.diskPercent)}%`, percent: snapshot.diskPercent }
+  if (key !== 'network') {
+    const value = snapshot[key === 'cpu' ? 'cpuPercent' : key === 'memory' ? 'memoryPercent' : 'diskPercent']
+    return value == null || !Number.isFinite(value) ? { value: null, percent: null } : { value: `${Math.round(value)}%`, percent: value }
+  }
   const rx = formatBytesPerSecond(snapshot.networkRxBytesPerSec)
   const tx = formatBytesPerSecond(snapshot.networkTxBytesPerSec)
   if (!rx && !tx) return { value: null, percent: null }
@@ -61,33 +60,32 @@ function getCardValue(key: (typeof STATUS_CARDS)[number]['key'], snapshot: Serve
 }
 
 export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
+  const { t, locale } = useT()
   const { hostAddress, selectedHostId = null, hosts = [] } = props
-  const monitorStates = useServerMonitorStates()
-  const host = resolveWorkspaceMetricsHost(hosts, { selectedHostId, hostAddress })
-  const monitor = host ? monitorStates[host.id || `${host.username}@${host.address}:${host.port || 22}`] : undefined
-  const latest = monitor?.latest
-  const snapshot = latest?.snapshot ?? null
-  const status = latest?.status
+  const host = resolveWorkspaceMetricsHost(hosts, { selectedHostId, hostAddress, vaultId: props.activeVaultId })
+  const provider = useWorkspaceProviderState({ host: host ?? null, hosts, vaultId: props.activeVaultId })
+  const snapshot = provider.view?.metrics ?? null
+  const status = provider.view?.health.state
+  const copy = workspaceOverviewCopy[locale]
 
   return (
     <>
-      <div
+      <WorkspaceProviderSummary state={provider} />
+      {snapshot ? <div
         data-testid="workspace-status-grid"
         className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3"
       >
         {STATUS_CARDS.map((card) => {
         const metric = getCardValue(card.key, snapshot)
-        const primaryValue = metric.value
-          ?? (latest ? t('workspace.statusValue.unavailable') : t('workspace.statusValue.notConnected'))
-        const label = latest ? statusLabel(status) : t('workspace.statusValue.notConnected')
-        const tone = latest ? statusTone(status) : 'idle'
-        const sampledAt = snapshot?.sampledAt ?? latest?.lastSuccessAt ?? null
+        const primaryValue = metric.value ?? t('workspace.statusValue.unavailable')
+        const tone = statusTone(status)
 
         return (
           <div
             key={card.labelKey}
             data-testid="workspace-status-card"
             data-status={tone}
+            data-provider={provider.source?.kind ?? 'unknown'}
             className={`min-w-0 overflow-hidden rounded-xl border bg-[var(--workspace-surface-900)] p-4 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-card)] ${
               tone === 'offline'
                 ? 'border-[color:var(--workspace-status-bad-border)]'
@@ -113,10 +111,6 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
               <div className="min-w-0 text-[clamp(1.5rem,3vw,1.875rem)] font-semibold leading-none tracking-tight text-[var(--workspace-text-strong)]">
                 <div className="truncate">{primaryValue}</div>
               </div>
-              <div className="min-w-0 max-w-[42%] text-right text-[11px] text-[var(--workspace-text-muted)]">
-                <div className="truncate">{hostAddress}</div>
-                <div>{label}</div>
-              </div>
             </div>
             <div
               data-testid="workspace-status-meter"
@@ -124,17 +118,16 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
             >
               <div
                 className={`h-full rounded-full bg-gradient-to-r ${card.accent} transition-[width] duration-500`}
-                style={{ width: `${metric.percent ?? (metric.value ? 72 : 18)}%` }}
+                style={{ width: `${metric.percent === null ? 0 : Math.max(0, Math.min(100, metric.percent))}%` }}
               />
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-3 text-xs text-[var(--workspace-text-subtle)]">
-              <span>{latest ? label : t('workspace.statusValue.notConnected')}</span>
-              <span>{sampledAt ? new Date(sampledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}</span>
             </div>
           </div>
         )
         })}
-      </div>
+      </div> : <section data-testid="workspace-resources-empty" aria-label={copy.resources} className="rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-4">
+        <p className="text-sm text-[var(--workspace-text-muted)]">{copy.noMetrics}</p>
+        <p className="mt-1 text-xs text-[var(--workspace-text-subtle)]">{copy.noMetricsHint}</p>
+      </section>}
       <div className="mt-4">
         <ShellbeamAgentPanel host={host ?? null} vaultId={props.activeVaultId} resolveAuthSecret={props.resolveAuthSecret} />
       </div>

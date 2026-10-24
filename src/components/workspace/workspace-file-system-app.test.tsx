@@ -124,7 +124,7 @@ describe('workspace file system app', () => {
 
   it('enters directories on click and shows loading immediately while the next directory loads', async () => {
     const nestedDir = {
-      resolve: (_entries: typeof directoryEntries) => {},
+      resolve: (() => {}) as (entries: typeof directoryEntries) => void,
     }
     listDir.mockImplementation(async (remotePath: string) => {
       if (remotePath === '/root') return directoryEntries
@@ -323,5 +323,22 @@ describe('workspace file system app', () => {
       expect(sessionsContextValue.setSessionWorkspaceApp).toHaveBeenCalledWith('session-1', 'browser')
       expect(sessionsContextValue.setSessionMode).toHaveBeenCalledWith('session-1', 'workspace')
     })
+  })
+
+  it('leaves selection and remote data intact when central file review is cancelled', async () => {
+    deletePath.mockResolvedValueOnce(false as unknown as void)
+    render(<WorkspaceFileSystemApp selectedHostId="host-1" presentation="window" vaultId="team"
+      hosts={[{ id: 'host-1', name: 'Production API', address: '10.0.0.15', port: 22, username: 'root', group: 'Default', authType: 'password', tags: [], createdAt: 0, updatedAt: 0 }]}
+      resolveAuthSecret={async () => 'secret'} />)
+    await screen.findByText('hosts')
+    const before = listDir.mock.calls.length
+    const confirm = vi.spyOn(window, 'confirm')
+    fireEvent.click(screen.getByRole('button', { name: /hosts/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await screen.findByText('File operation cancelled; no remote changes were made.')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(listDir.mock.calls).toHaveLength(before)
+    expect(screen.getByRole('button', { name: /hosts/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete' })).not.toBeDisabled()
   })
 })

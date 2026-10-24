@@ -7,9 +7,11 @@ interface DialogProps {
   onOpenChange: (open: boolean) => void
   children: React.ReactNode
   className?: string
+  labelledBy?: string
+  describedBy?: string
 }
 
-export function Dialog({ open, onOpenChange, children, className }: DialogProps) {
+export function Dialog({ open, onOpenChange, children, className, labelledBy, describedBy }: DialogProps) {
   const ref = React.useRef<HTMLDialogElement>(null)
 
   React.useEffect(() => {
@@ -42,6 +44,8 @@ export function Dialog({ open, onOpenChange, children, className }: DialogProps)
   const dialogEl = (
     <dialog
       ref={ref}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
       onCancel={handleCancel}
       onClick={handleBackdropClick}
       style={{ background: 'transparent', border: 'none', padding: 0, maxWidth: 'none', maxHeight: 'none', width: '100%', height: '100%' }}

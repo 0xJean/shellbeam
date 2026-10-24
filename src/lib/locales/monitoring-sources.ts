@@ -1,0 +1,28 @@
+export const monitoringSourcesCopy = {
+  en: {
+    currentSource: 'Monitoring source',
+    details: 'Data source details',
+    komariSource: 'Monitoring service',
+    remoteAlerts: 'Notification rules (not incidents)',
+    waitingForFirstReport: 'Waiting for first report',
+    expandOperations: 'Operations details',
+    collapseOperations: 'Hide details',
+    operationsOverview: 'Services & activity',
+    operationsAlerts: 'Alerts',
+    operationsSource: 'Monitoring',
+    reviewRequired: 'Review needed',
+  },
+  'zh-CN': {
+    currentSource: '监控来源',
+    details: '数据源详情',
+    komariSource: '监控数据源',
+    remoteAlerts: '通知规则（非故障）',
+    waitingForFirstReport: '等待首次上报',
+    expandOperations: '运维详情',
+    collapseOperations: '收起详情',
+    operationsOverview: '服务与任务',
+    operationsAlerts: '告警',
+    operationsSource: '监控',
+    reviewRequired: '需要检查',
+  },
+} as const

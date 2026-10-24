@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "keyId": "compatible-probe-2026-01",
+  "channel": "stable",
+  "sequence": 1792594908584,
+  "publishedAt": 1792594908584,
+  "expiresAt": 1800370908584,
+  "artifacts": [
+    {
+      "runtime": "komari",
+      "version": "1.5.11",
+      "platform": "linux",
+      "architecture": "amd64",
+      "url": "https://github.com/0xJean/shellbeam/releases/download/monitoring-probe-v1.5.11-r1/komari-agent-linux-amd64",
+      "sha256": "78c28d89e523816baea010c0ed0714f245f508ffdaca0540f5c9f230f7053c8c",
+      "sizeBytes": 12585218,
+      "signature": "WH/48VQ1gsPNzD6jWhO7cnL01GAIGZMpR4hVaBxXvp80VcWO2mCHL0UYk4iA+RQxf0JlWYdnxHF3dJ8TDjmVBw=="
+    },
+    {
+      "runtime": "komari",
+      "version": "1.5.11",
+      "platform": "linux",
+      "architecture": "arm64",
+      "url": "https://github.com/0xJean/shellbeam/releases/download/monitoring-probe-v1.5.11-r1/komari-agent-linux-arm64",
+      "sha256": "ff8e33dc12ef2b5738fa291a58498bd15dcbf8ef51966ab65fd67679a0abc87d",
+      "sizeBytes": 11892529,
+      "signature": "1RpfKiB4WSfOaArKQyRyby59WHh9pIIysrxibMQaMfpinL5wUWe2IGRqqeUo+kCGsoenT6o8joGb+rFP3LKbCA=="
+    }
+  ],
+  "signature": "pn91aX0Ghdj5Vdlk7QMRNkR1ZSDmAbZLROyVdJ4YhrPFllDJfcQFixu20XyYzHednXeFo3ukV4yYGlg8hMXlCg=="
+}

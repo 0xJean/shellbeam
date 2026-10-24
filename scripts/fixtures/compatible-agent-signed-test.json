@@ -1,0 +1,13 @@
+{
+  "manifest": {
+    "runtime": "komari",
+    "version": "1.5.11",
+    "platform": "linux",
+    "architecture": "amd64",
+    "url": "https://fixture.invalid/agent",
+    "sha256": "f78cfadc92f884ba836a58130e4ac7584e3afd0584219a3fcee81c0ba08cb1a9",
+    "sizeBytes": 39,
+    "signature": "IL+PTDFgKOpNPJ2O+Q05K6nqAxEOleN2uHMW8RIJY+HFFeaX1nxr2LdnOs1KAnOPve2NVtuxDf14/tWUOqrRAw=="
+  },
+  "publicKey": "DT2z4Vrq3DYqIbbPVtGUxLsNmb66HV0GLF+itXr32M8="
+}

@@ -25,6 +25,7 @@ interface WorkspaceFileSystemAppProps {
   sessionId?: string
   selectedHostId?: string | null
   selectedHostAddress?: string | null
+  vaultId?: string
   hosts: HostProfile[]
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   presentation?: 'panel' | 'window' | 'mobile'
@@ -105,6 +106,7 @@ export function WorkspaceFileSystemApp({
   sessionId,
   selectedHostId = null,
   selectedHostAddress = null,
+  vaultId,
   hosts,
   resolveAuthSecret,
   presentation = 'panel',
@@ -119,8 +121,8 @@ export function WorkspaceFileSystemApp({
   const activeHost = activeHostId ? hosts.find((host) => host.id === activeHostId) ?? null : null
   const sessions = useSessions()
   const remoteFs = useMemo(
-    () => (activeHost ? createRemoteFsClient(activeHost, resolveAuthSecret) : null),
-    [activeHost, resolveAuthSecret],
+    () => (activeHost ? createRemoteFsClient(activeHost, resolveAuthSecret, { vaultId }) : null),
+    [activeHost, resolveAuthSecret, vaultId],
   )
 
   const [homePath, setHomePath] = useState<string | null>(null)
@@ -133,6 +135,7 @@ export function WorkspaceFileSystemApp({
   const [editorPath, setEditorPath] = useState<string | null>(null)
   const [editorContent, setEditorContent] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [isMutating, setIsMutating] = useState(false)
   const [isOpeningFile, setIsOpeningFile] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [activeSidebarLocationId, setActiveSidebarLocationId] = useState<string | null>(null)
@@ -272,44 +275,64 @@ export function WorkspaceFileSystemApp({
   }
 
   async function handleCreateFile() {
-    if (!remoteFs || !currentPath) return
+    if (!remoteFs || !currentPath || isMutating) return
     const name = window.prompt(t('workspace.fileSystem.prompt.newFile'))
     if (!name?.trim()) return
-    await remoteFs.createFile(joinRemotePath(currentPath, name.trim()))
-    setStatusMessage(t('workspace.fileSystem.status.createdFile', { name: name.trim() }))
-    await refreshCurrentPath()
+    await performMutation(async () => {
+      if (await remoteFs.createFile(joinRemotePath(currentPath, name.trim())) === false) return false
+      setStatusMessage(t('workspace.fileSystem.status.createdFile', { name: name.trim() }))
+      return true
+    })
   }
 
   async function handleCreateDir() {
-    if (!remoteFs || !currentPath) return
+    if (!remoteFs || !currentPath || isMutating) return
     const name = window.prompt(t('workspace.fileSystem.prompt.newFolder'))
     if (!name?.trim()) return
-    await remoteFs.createDir(joinRemotePath(currentPath, name.trim()))
-    setStatusMessage(t('workspace.fileSystem.status.createdFolder', { name: name.trim() }))
-    await refreshCurrentPath()
+    await performMutation(async () => {
+      if (await remoteFs.createDir(joinRemotePath(currentPath, name.trim())) === false) return false
+      setStatusMessage(t('workspace.fileSystem.status.createdFolder', { name: name.trim() }))
+      return true
+    })
   }
 
   async function handleRenameSelected() {
-    if (!remoteFs || !selectedEntry || !currentPath) return
+    if (!remoteFs || !selectedEntry || !currentPath || isMutating) return
     const nextName = window.prompt(t('workspace.fileSystem.prompt.rename'), selectedEntry.fileName)
     if (!nextName?.trim() || nextName.trim() === selectedEntry.fileName) return
-    await remoteFs.renamePath(selectedEntry.path, joinRemotePath(currentPath, nextName.trim()))
-    setStatusMessage(t('workspace.fileSystem.status.renamed', { name: nextName.trim() }))
-    setSelectedPath(null)
-    await refreshCurrentPath()
+    await performMutation(async () => {
+      if (await remoteFs.renamePath(selectedEntry.path, joinRemotePath(currentPath, nextName.trim())) === false) return false
+      setStatusMessage(t('workspace.fileSystem.status.renamed', { name: nextName.trim() }))
+      setSelectedPath(null)
+      return true
+    })
   }
 
   async function handleDeleteSelected() {
-    if (!remoteFs || !selectedEntry) return
-    if (!window.confirm(t('workspace.fileSystem.confirm.delete', { name: selectedEntry.fileName }))) return
-    await remoteFs.deletePath(selectedEntry.path)
-    setStatusMessage(t('workspace.fileSystem.status.deleted', { name: selectedEntry.fileName }))
-    setSelectedPath(null)
-    if (editorPath === selectedEntry.path) {
-      setEditorPath(null)
-      setEditorContent('')
+    if (!remoteFs || !selectedEntry || isMutating) return
+    await performMutation(async () => {
+      if (await remoteFs.deletePath(selectedEntry.path) === false) return false
+      setStatusMessage(t('workspace.fileSystem.status.deleted', { name: selectedEntry.fileName }))
+      setSelectedPath(null)
+      if (editorPath === selectedEntry.path) {
+        setEditorPath(null)
+        setEditorContent('')
+      }
+      return true
+    })
+  }
+
+  async function performMutation(execute: () => Promise<boolean>) {
+    setIsMutating(true)
+    setError(null)
+    try {
+      if (!await execute()) { setStatusMessage(t('files.operation.cancelled')); return }
+      await refreshCurrentPath()
+    } catch (mutationError) {
+      setError(mutationError instanceof Error ? mutationError.message : String(mutationError))
+    } finally {
+      setIsMutating(false)
     }
-    await refreshCurrentPath()
   }
 
   async function handleOpenFile(entry: SftpEntry) {
@@ -327,13 +350,15 @@ export function WorkspaceFileSystemApp({
   }
 
   async function handleSaveFile() {
-    if (!remoteFs || !editorPath) return
+    if (!remoteFs || !editorPath || isMutating) return
     setIsSaving(true)
     setStatusMessage(null)
     try {
-      await remoteFs.writeFile(editorPath, encodeBase64Utf8(editorContent))
-      setStatusMessage(t('workspace.fileSystem.status.saved', { name: editorPath.split('/').pop() ?? editorPath }))
-      await refreshCurrentPath()
+      await performMutation(async () => {
+        if (await remoteFs.writeFile(editorPath, encodeBase64Utf8(editorContent)) === false) return false
+        setStatusMessage(t('workspace.fileSystem.status.saved', { name: editorPath.split('/').pop() ?? editorPath }))
+        return true
+      })
     } finally {
       setIsSaving(false)
     }
@@ -487,7 +512,7 @@ export function WorkspaceFileSystemApp({
             type="button"
             title={t('workspace.fileSystem.action.newFile')}
             aria-label={t('workspace.fileSystem.action.newFile')}
-            disabled={!currentPath}
+            disabled={!currentPath || isMutating}
             onClick={() => void handleCreateFile()}
             className={toolbarBtn}
           >
@@ -497,7 +522,7 @@ export function WorkspaceFileSystemApp({
             type="button"
             title={t('workspace.fileSystem.action.newFolder')}
             aria-label={t('workspace.fileSystem.action.newFolder')}
-            disabled={!currentPath}
+            disabled={!currentPath || isMutating}
             onClick={() => void handleCreateDir()}
             className={toolbarBtn}
           >
@@ -507,7 +532,7 @@ export function WorkspaceFileSystemApp({
             type="button"
             title={t('workspace.fileSystem.action.rename')}
             aria-label={t('workspace.fileSystem.action.rename')}
-            disabled={!selectedEntry}
+            disabled={!selectedEntry || isMutating}
             onClick={() => void handleRenameSelected()}
             className={toolbarBtn}
           >
@@ -517,7 +542,7 @@ export function WorkspaceFileSystemApp({
             type="button"
             title={t('workspace.fileSystem.action.delete')}
             aria-label={t('workspace.fileSystem.action.delete')}
-            disabled={!selectedEntry}
+            disabled={!selectedEntry || isMutating}
             onClick={() => void handleDeleteSelected()}
             className={cn(toolbarBtn, 'hover:!bg-[var(--workspace-status-bad-bg)] hover:!text-[var(--workspace-status-bad-text)]')}
           >
@@ -800,7 +825,7 @@ export function WorkspaceFileSystemApp({
                     'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-input)] text-[var(--workspace-text)] focus:ring-[color:var(--workspace-primary-500)]',
                   )}
                 />
-                <Button size="sm" className="w-full" onClick={() => void handleSaveFile()} disabled={isSaving}>
+                <Button size="sm" className="w-full" onClick={() => void handleSaveFile()} disabled={isSaving || isMutating}>
                   {isSaving ? t('workspace.fileSystem.saving') : t('workspace.fileSystem.saveFile')}
                 </Button>
               </div>

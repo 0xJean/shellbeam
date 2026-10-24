@@ -1,4 +1,10 @@
+import { streamCliCommand } from './ai-cli'
+
 const AI_SETTINGS_KEY = 'shellbeam.aiSettings'
+
+export type AICliBackend = 'claude-code' | 'codex-cli'
+export type AIBackend = 'api' | AICliBackend
+export interface AICliProfile { executable: string; model: string }
 
 export type AIProviderId = 'openai' | 'anthropic' | 'openrouter' | 'ollama' | 'custom'
 
@@ -53,6 +59,8 @@ export const AI_PROVIDERS: AIProvider[] = [
 ]
 
 export interface AISettings {
+  backend?: AIBackend
+  cliProfiles?: Partial<Record<AICliBackend, AICliProfile>>
   provider: AIProviderId
   apiKey: string
   model: string
@@ -96,6 +104,7 @@ export function saveAISettings(settings: AISettings) {
 }
 
 export function isAIConfigured(settings: AISettings): boolean {
+  if (settings.backend === 'claude-code' || settings.backend === 'codex-cli') return true
   if (settings.provider === 'ollama') return !!settings.model
   if (settings.provider === 'custom') return !!settings.customBaseUrl && !!settings.customModel
   return !!settings.apiKey
@@ -138,6 +147,10 @@ export async function streamAICommand(
   callbacks: AIStreamCallbacks,
   signal?: AbortSignal,
 ) {
+  if (settings.backend === 'claude-code' || settings.backend === 'codex-cli') {
+    await streamCliCommand(settings.backend, settings.cliProfiles?.[settings.backend], userPrompt, terminalContext, callbacks, signal)
+    return
+  }
   const { baseUrl, model, apiKey } = getResolvedConfig(settings)
 
   if (!baseUrl) {

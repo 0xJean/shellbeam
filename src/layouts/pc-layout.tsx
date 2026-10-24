@@ -1281,6 +1281,9 @@ export function PcLayout() {
                       ) : browserPageMode ? null : (
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            sessionConnectionKey={sessionInfo?.connectionKey}
+                            sessionVaultId={sessionInfo?.vaultId}
+                            activeVaultId={vault.activeVaultId}
                             sessionId={tab.sessionId}
                             mobile={false}
                             hostName={tab.hostName}
@@ -1427,6 +1430,9 @@ export function PcLayout() {
                       ) : browserPageMode ? null : (
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            sessionConnectionKey={sessionInfo?.connectionKey}
+                            sessionVaultId={sessionInfo?.vaultId}
+                            activeVaultId={vault.activeVaultId}
                             sessionId={tab.sessionId}
                             mobile
                             hostName={tab.hostName}
@@ -1531,6 +1537,10 @@ export function PcLayout() {
                       defaultUsername={hostsCtx.defaultUsername}
                       onSelectHost={hostsCtx.setSelectedHostId}
                       onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
+                      onOpenWorkspace={(hostId, workspaceApp) => {
+                        void sessions.openHostWorkspace(hostId, workspaceApp)
+                        app.setPcSidebarNav('terminal')
+                      }}
                       onCreateHost={hostsCtx.handleCreateHost}
                       onUpdateHost={hostsCtx.handleUpdateHost}
                       onDeleteHost={hostsCtx.handleDeleteHost}
@@ -1553,6 +1563,7 @@ export function PcLayout() {
               {app.pcSidebarNav === 'asset-inventory' && (
                 <div className="h-full min-h-0 p-4 md:p-6">
                   <WorkspaceAssetInventoryApp
+                    activeVaultId={vault.activeVaultId}
                     selectedHostId={hostsCtx.selectedHostId}
                     hosts={hostsCtx.hosts}
                     resolveAuthSecret={resolveWorkspaceAuthSecret}
@@ -1641,6 +1652,7 @@ export function PcLayout() {
                 <Suspense fallback={<DashboardSectionFallback fullHeight />}>
                   <div className="absolute inset-0">
                     <SftpDualPane
+                      vaultId={vault.activeVaultId}
                       hosts={hostsCtx.hosts}
                       selectedHostId={hostsCtx.selectedHostId}
                       resolveAuthSecret={async (host) => {

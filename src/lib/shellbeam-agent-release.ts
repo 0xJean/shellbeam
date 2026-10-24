@@ -112,7 +112,7 @@ const DEFAULT_CHANNELS: ShellbeamAgentReleaseChannel[] = ['stable']
 
 function text(value: unknown, max = 240): string | null {
   if (typeof value !== 'string') return null
-  const clean = value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim()
+  const clean = [...value].map((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 ? ' ' : character).join('').trim()
   return clean ? clean.slice(0, max) : null
 }
 

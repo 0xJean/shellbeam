@@ -12,7 +12,7 @@ vi.mock('@/components/interactive-tour', () => ({ InteractiveTour: (props: unkno
 vi.mock('@/components/backup-restore-panel', () => ({ BackupRestorePanel: () => <div /> }))
 vi.mock('@/components/host-key-confirm-dialog', () => ({ HostKeyConfirmDialog: () => <div /> }))
 vi.mock('@/components/hosts-dashboard', () => ({
-  HostsDashboard: ({ headerExtraAction }: { headerExtraAction?: React.ReactNode }) => <div data-testid="hosts-dashboard">{headerExtraAction}</div>,
+  HostsDashboard: ({ headerExtraAction, onOpenWorkspace }: { headerExtraAction?: React.ReactNode; onOpenWorkspace?: (hostId: string, app: string) => void }) => <div data-testid="hosts-dashboard">{headerExtraAction}<button data-testid="host-logs-shortcut" onClick={() => onOpenWorkspace?.('host-1', 'logs')}>Host logs</button></div>,
 }))
 vi.mock('@/components/keychain-tab', () => ({ KeychainTab: () => <div /> }))
 vi.mock('@/components/known-hosts-panel', () => ({ KnownHostsPanel: () => <div /> }))
@@ -255,6 +255,7 @@ describe('pc layout', () => {
       handleOpenLocalTerminal: vi.fn(),
       setRightPaneSessionId: vi.fn(),
       handleConnectHost: vi.fn(),
+      openHostWorkspace: vi.fn(async () => {}),
       sendRaw: vi.fn(),
       manualReconnect: vi.fn(),
       pendingHostKey: null,
@@ -263,6 +264,16 @@ describe('pc layout', () => {
       retrySessionConnection: vi.fn(),
     }
     useSessions.mockReturnValue(defaultSessionsValue)
+  })
+
+  it('opens host diagnostics from the host dashboard and displays the session surface', async () => {
+    const app = { ...useApp(), pcSidebarNav: 'hosts' }
+    useApp.mockReturnValue(app)
+    useSessions.mockReturnValue({ ...defaultSessionsValue, pcActiveSessionId: null, pcSessionTabs: [], workspaceBySession: {} })
+    render(<PcLayout />)
+    fireEvent.click(await screen.findByTestId('host-logs-shortcut'))
+    expect(defaultSessionsValue.openHostWorkspace).toHaveBeenCalledWith('host-1', 'logs')
+    expect(app.setPcSidebarNav).toHaveBeenCalledWith('terminal')
   })
 
   it('opens the guide from settings', async () => {
@@ -542,7 +553,7 @@ describe('pc layout', () => {
     useVault.mockReturnValue({
       activeVaultId: 'vault-1',
       vaults: [{ id: 'vault-1', name: 'Vault' }],
-      vaultStatusState: { unlocked: false },
+      vaultStatusState: { unlocked: true },
       vaultKeys: ['prod-password'],
       vaultBusy: false,
       vaultAutoLockMinutes: 15,

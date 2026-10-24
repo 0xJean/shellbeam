@@ -5,6 +5,7 @@ import {
   getKomariAlertSummary,
   komariRecordToServerMonitorSnapshot,
   listKomariClients,
+  verifyKomariConnection,
   normalizeKomariEndpoint,
   requestKomari,
 } from './komari'
@@ -64,6 +65,39 @@ describe('Komari API adapter', () => {
       'https://komari.example/api/admin/client/list',
       'https://komari.example/api/nodes',
     ])
+  })
+
+  it.each([[], { data: [] }, { data: { nodes: [] } }])('accepts an explicitly empty client list without a fallback request (%j)', async (body) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response(body))
+    await expect(listKomariClients({ endpoint: 'https://komari.example' }, fetchImpl)).resolves.toEqual([])
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses one public fallback when an unsupported admin route returns the HTML console with HTTP 200', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('<html>console</html>', { status: 200, headers: { 'content-type': 'text/html' } }))
+      .mockResolvedValueOnce(response({ data: [{ uuid: 'node-1', name: 'node' }] }))
+    await expect(listKomariClients({ endpoint: 'https://komari.example' }, fetchImpl)).resolves.toMatchObject([{ uuid: 'node-1' }])
+    expect(fetchImpl.mock.calls.map(([input]) => String(input))).toEqual([
+      'https://komari.example/api/admin/client/list',
+      'https://komari.example/api/nodes',
+    ])
+  })
+
+  it.each([null, {}, { data: { message: 'private upstream content' } }, [{ name: 'no-node-identity' }]])('rejects an unsupported list response instead of reporting zero nodes (%j)', async (body) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => response(body))
+    await expect(listKomariClients({ endpoint: 'https://komari.example', token: 'secret-token' }, fetchImpl))
+      .rejects.toMatchObject({ code: 'endpoint-version', message: 'Komari node list has an unsupported response format' })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a public HTML response after denied admin access without leaking either response body', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ message: 'private admin body' }, { status: 403 }))
+      .mockResolvedValueOnce(new Response('<html>private public body secret-token</html>', { status: 200 }))
+    await expect(listKomariClients({ endpoint: 'https://komari.example', token: 'secret-token' }, fetchImpl))
+      .rejects.toMatchObject({ code: 'endpoint-version', message: 'Komari node list has an unsupported response format' })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
   it('loads recent records using an encoded node id', async () => {
@@ -145,5 +179,30 @@ describe('Komari API adapter', () => {
       .rejects.toBeInstanceOf(KomariApiError)
     await expect(requestKomari({ endpoint: 'https://komari.example' }, { path: '/api/nodes' }, fetchImpl))
       .rejects.toMatchObject({ code: 'endpoint-version' })
+  })
+})
+
+
+describe('authenticated Komari connection verification', () => {
+  it.each([401, 403, 404])('does not accept public discovery after protected API rejection %s', async (status) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(response({ message: 'rejected' }, { status })).mockResolvedValue(response([{ uuid: 'public-node' }]))
+    await expect(verifyKomariConnection({ endpoint: 'https://komari.example', token: 'synthetic-key' }, fetchImpl)).rejects.toBeInstanceOf(KomariApiError)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://komari.example/api/admin/client/list')
+  })
+  it('accepts a protected empty node list and sends only the saved bearer credential', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response({ data: [] }))
+    await expect(verifyKomariConnection({ endpoint: 'https://komari.example/base', token: 'synthetic-key' }, fetchImpl)).resolves.toEqual([])
+    const [url, options] = fetchImpl.mock.calls[0]
+    expect(url).toBe('https://komari.example/base/api/admin/client/list')
+    expect((options?.headers as Headers).get('Authorization')).toBe('Bearer synthetic-key')
+    expect(options).toMatchObject({ credentials: 'omit', redirect: 'error' })
+  })
+  it('rejects a missing key and a console HTML response without trying public discovery', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('<html>console</html>', { status: 200 }))
+    await expect(verifyKomariConnection({ endpoint: 'https://komari.example' }, fetchImpl)).rejects.toMatchObject({ code: 'permission' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+    await expect(verifyKomariConnection({ endpoint: 'https://komari.example', token: 'synthetic-key' }, fetchImpl)).rejects.toMatchObject({ code: 'endpoint-version' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })

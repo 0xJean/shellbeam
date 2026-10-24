@@ -1,7 +1,11 @@
+import { COLLECTION_LIMITS } from './collection-limits'
+import { fetchUnifiedProbe, UnsupportedProbeError, isUnsupportedProbeError } from './unified-probe'
+import { getHostIdentity, type HostIdentity, type JumpHostIdentity } from './host-identity'
 import type { HostProfile } from './hosts'
 import type { KomariAlertSummary } from './komari'
 import {
   fetchServerMonitorSnapshot,
+  isUsableServerMonitorSnapshot,
   type ServerMonitorSnapshot,
 } from './server-monitor'
 import {
@@ -25,20 +29,10 @@ export type ProbeSection = ProbeCapability
 export type ProbeTransport = 'direct' | 'proxy-jump'
 export type ProbeHealthState = 'online' | 'stale' | 'offline' | 'paused' | 'unsupported' | 'unknown'
 export type ProbeConfidence = 'observed' | 'partial' | 'inferred'
+export type ProbeCollectionStatus = 'success' | 'recovered' | 'failed'
 
-export interface ProbeJumpRoute {
-  address: string
-  port: number
-  username: string
-}
-
-export interface ProbeHostIdentity {
-  hostId: string
-  address: string
-  port: number
-  username: string
-  jump?: ProbeJumpRoute
-}
+export type ProbeJumpRoute = JumpHostIdentity
+export type ProbeHostIdentity = HostIdentity
 
 export interface ProbeProviderRef {
   kind: ProbeProviderKind
@@ -54,6 +48,19 @@ export interface ProbeFreshness {
   ttlMs: number
   expiresAt: number
   expired: boolean
+  /** Derived from the original deadline, never from collection failure. */
+  expiryReason: 'ttl-expired' | null
+}
+
+/** Also accepts legacy persisted envelopes which predate expiryReason. Both
+ * derived fields are recomputed so a cached flag/reason cannot outlive its TTL. */
+export function refreshProbeFreshness(
+  freshness: Omit<ProbeFreshness, 'expiryReason'> & Partial<Pick<ProbeFreshness, 'expiryReason'>>,
+  now: number,
+): ProbeFreshness {
+  const expiresAt = Math.min(freshness.expiresAt, freshness.sampledAt + Math.max(0, freshness.ttlMs))
+  const expired = now > expiresAt
+  return { ...freshness, expiresAt, expired, expiryReason: expired ? 'ttl-expired' : null }
 }
 
 export interface ProbeObservation<T> {
@@ -78,6 +85,28 @@ export interface ProbeAgentLifecycle {
   checkedAt?: number | null
 }
 
+/**
+ * Scheduler-owned collection telemetry.  This is deliberately part of the
+ * snapshot envelope so the host list, Workspace and MCP can explain how the
+ * latest observation was obtained after a restart.  It contains no command
+ * output or credentials.
+ */
+export interface ProbeProviderTelemetry {
+  status: ProbeCollectionStatus
+  startedAt: number
+  completedAt: number
+  durationMs: number
+  /** Number of retries after the initial provider attempt. */
+  attempts: number
+  maxRetries: number
+  retryDelayMs: number
+  recovered: boolean
+  exhausted: boolean
+  sections: ProbeSection[]
+  lastError?: string
+  lastErrorCode?: string
+}
+
 export interface ProbeSnapshot {
   schemaVersion: number
   host: ProbeHostIdentity
@@ -88,6 +117,8 @@ export interface ProbeSnapshot {
   metrics: ProbeObservation<ServerMonitorSnapshot> | null
   inventory: ProbeObservation<WorkspaceInventory> | null
   errors: ProbeError[]
+  /** Latest scheduler collection outcome, persisted with the observation. */
+  telemetry?: ProbeProviderTelemetry | null
   /** Optional provider-level alert summary associated with this observation. */
   alerts?: KomariAlertSummary | null
   /** Optional lifecycle metadata; it does not prove SSH reachability. */
@@ -95,6 +126,7 @@ export interface ProbeSnapshot {
 }
 
 export interface ProbeRequest {
+  vaultId?: string
   host: HostProfile
   resolveAuthSecret: (host: HostProfile) => Promise<string>
   sections?: readonly ProbeSection[]
@@ -107,6 +139,7 @@ export interface ProbeProvider {
 }
 
 export interface AgentlessProbeDependencies {
+  collect?: typeof fetchUnifiedProbe
   collectMetrics?: (request: ProbeRequest) => Promise<ServerMonitorSnapshot>
   collectInventory?: (request: ProbeRequest) => Promise<WorkspaceInventory>
 }
@@ -117,41 +150,24 @@ export interface AgentlessProbeOptions {
   dependencies?: AgentlessProbeDependencies
 }
 
-export const DEFAULT_AGENTLESS_METRICS_TTL_MS = 2 * 60 * 1000
-export const DEFAULT_AGENTLESS_INVENTORY_TTL_MS = 10 * 60 * 1000
+export const DEFAULT_AGENTLESS_METRICS_TTL_MS = COLLECTION_LIMITS.cadence.metricsTtlMs
+export const DEFAULT_AGENTLESS_INVENTORY_TTL_MS = COLLECTION_LIMITS.cadence.inventoryTtlMs
 
-export function getProbeHostIdentity(host: HostProfile): ProbeHostIdentity {
-  const jumpHost = host.jumpHost?.trim()
-  const jump = jumpHost
-    ? {
-        address: jumpHost,
-        port: host.jumpPort || 22,
-        username: host.jumpUser?.trim() || host.username || 'root',
-      }
-    : undefined
-
-  return {
-    hostId: host.id || `${host.username}@${host.address}:${host.port || 22}`,
-    address: host.address,
-    port: host.port || 22,
-    username: host.username || 'root',
-    ...(jump ? { jump } : {}),
-  }
-}
+export function getProbeHostIdentity(host: HostProfile, profiles: readonly HostProfile[] = []): ProbeHostIdentity { return getHostIdentity(host, profiles) }
 
 export function getProbeTransport(host: HostProfile): ProbeTransport {
-  return host.jumpHost?.trim() ? 'proxy-jump' : 'direct'
+  return host.jumpHostId || host.jumpHost?.trim() ? 'proxy-jump' : 'direct'
 }
 
 function createFreshness(sampledAt: number, receivedAt: number, ttlMs: number): ProbeFreshness {
   const expiresAt = sampledAt + Math.max(0, ttlMs)
-  return {
+  return refreshProbeFreshness({
     sampledAt,
     receivedAt,
     ttlMs,
     expiresAt,
     expired: receivedAt > expiresAt,
-  }
+  }, receivedAt)
 }
 
 export function createProbeObservation<T>(options: {
@@ -174,6 +190,7 @@ function errorFromUnknown(error: unknown): ProbeError {
   return {
     section: 'provider',
     message: error instanceof Error ? error.message : String(error),
+    ...(isUnsupportedProbeError(error) ? { code: 'unsupported_os' } : {}),
   }
 }
 
@@ -185,9 +202,39 @@ function sectionList(request: ProbeRequest): ProbeSection[] {
 }
 
 function healthFromObservations(observations: Array<ProbeObservation<unknown> | null>): ProbeHealthState {
-  const available = observations.filter((observation): observation is ProbeObservation<unknown> => Boolean(observation))
+  const available = observations.filter((observation): observation is ProbeObservation<unknown> => Boolean(observation && observation.freshness.sampledAt <= observation.freshness.receivedAt))
   if (available.length === 0) return 'unknown'
   return available.some((observation) => !observation.freshness.expired) ? 'online' : 'stale'
+}
+
+/** A persisted/delegated value without its original provider is not an
+ * observation. In particular, never stamp the current provider onto an old
+ * payload and thereby turn an unidentified value into healthy data. */
+export function validateProbeSnapshotSources(snapshot: ProbeSnapshot, now?: number): ProbeSnapshot {
+  const errors: ProbeError[] = []
+  const validate = <T>(observation: ProbeObservation<T> | null, section: 'metrics' | 'inventory') => {
+    if (!observation) return null
+    const source = observation.source
+    const freshness = observation.freshness
+    if (!['ssh-agentless', 'komari', 'shellbeam-agent'].includes(snapshot.provider.kind)
+      || source?.kind !== snapshot.provider.kind || source?.id !== snapshot.provider.id
+      || !source?.id?.trim() || !freshness
+      || ![freshness.sampledAt, freshness.receivedAt, freshness.expiresAt, freshness.ttlMs].every(Number.isFinite)
+      || freshness.sampledAt < 0 || freshness.sampledAt > freshness.receivedAt
+      || (now !== undefined && freshness.sampledAt > now)
+      || freshness.ttlMs < 0 || freshness.expiresAt < freshness.sampledAt) {
+      errors.push({ section, code: 'observation_source_invalid', message: 'Observation source or original freshness is unavailable' })
+      return null
+    }
+    return { ...observation, freshness: refreshProbeFreshness(freshness, now ?? freshness.receivedAt) }
+  }
+  const metrics = validate(snapshot.metrics, 'metrics')
+  const inventory = validate(snapshot.inventory, 'inventory')
+  return {
+    ...snapshot, metrics, inventory,
+    health: !metrics && !inventory && (snapshot.health === 'online' || snapshot.health === 'stale') ? 'unknown' : snapshot.health,
+    errors: [...snapshot.errors, ...errors],
+  }
 }
 
 /**
@@ -211,21 +258,33 @@ export function createAgentlessSshProbeProvider(options: AgentlessProbeOptions =
   return {
     ref,
     async probe(request) {
-      const receivedAt = request.now ?? Date.now()
+      let receivedAt = request.now ?? Date.now()
       const host = getProbeHostIdentity(request.host)
       const transport = getProbeTransport(request.host)
       const sections = sectionList(request)
       const metricsEnabled = sections.includes('metrics')
       const inventoryEnabled = sections.includes('inventory')
+      // The default implementation has one script, one remote command and one
+      // read-only audit job even when both observations are requested.
+      let shared: Awaited<ReturnType<typeof fetchUnifiedProbe>> | undefined
+      let sharedError: unknown
+      const useShared = !options.dependencies?.collectMetrics && !options.dependencies?.collectInventory
+      if (useShared && (metricsEnabled || inventoryEnabled)) {
+        try { shared = await (options.dependencies?.collect ?? fetchUnifiedProbe)({ ...request, section: metricsEnabled && inventoryEnabled ? 'all' : metricsEnabled ? 'metrics' : 'inventory' }) }
+        catch (error) { sharedError = error }
+      }
+      const sharedMetrics = () => shared && isUsableServerMonitorSnapshot(shared.metrics) ? Promise.resolve(shared.metrics) : Promise.reject(sharedError ?? new Error('PROBE_METRICS_UNAVAILABLE'))
+      const sharedInventory = () => shared ? Promise.resolve(shared.inventory) : Promise.reject(sharedError ?? new Error('PROBE_COLLECTION_FAILED'))
       const [metricsResult, inventoryResult] = await Promise.all([
         metricsEnabled
-          ? collectMetrics(request).then((data) => ({ status: 'fulfilled' as const, data })).catch((error: unknown) => ({ status: 'rejected' as const, error }))
+          ? (useShared ? sharedMetrics() : collectMetrics(request)).then((data) => ({ status: 'fulfilled' as const, data })).catch((error: unknown) => ({ status: 'rejected' as const, error }))
           : Promise.resolve({ status: 'disabled' as const }),
         inventoryEnabled
-          ? collectInventory(request).then((data) => ({ status: 'fulfilled' as const, data })).catch((error: unknown) => ({ status: 'rejected' as const, error }))
+          ? (useShared ? sharedInventory() : collectInventory(request)).then((data) => ({ status: 'fulfilled' as const, data })).catch((error: unknown) => ({ status: 'rejected' as const, error }))
           : Promise.resolve({ status: 'disabled' as const }),
       ])
 
+      if (request.now === undefined) receivedAt = Date.now()
       const errors: ProbeError[] = []
       const metrics = metricsResult.status === 'fulfilled'
         ? createProbeObservation({
@@ -234,7 +293,7 @@ export function createAgentlessSshProbeProvider(options: AgentlessProbeOptions =
             sampledAt: metricsResult.data.sampledAt,
             receivedAt,
             ttlMs: metricsTtlMs,
-            confidence: 'observed',
+            confidence: Object.values(metricsResult.data).some((value) => value === null) ? 'partial' : 'observed',
           })
         : null
       if (metricsResult.status === 'rejected') {
@@ -255,12 +314,14 @@ export function createAgentlessSshProbeProvider(options: AgentlessProbeOptions =
         errors.push({ ...errorFromUnknown(inventoryResult.error), section: 'inventory' })
       }
 
+      const unsupportedError = [metricsResult, inventoryResult].flatMap((result) => result.status === 'rejected' && result.error instanceof UnsupportedProbeError ? [result.error] : [])[0]
+      const unsupported = !metrics && !inventory && errors.some((error) => error.code === 'unsupported_os')
       return {
         schemaVersion: PROBE_PROVIDER_SCHEMA_VERSION,
-        host,
+        host: { ...(shared?.hostIdentity ?? unsupportedError?.hostIdentity ?? host), ...((shared?.verifiedHostKeys ?? unsupportedError?.verifiedHostKeys) ? { verifiedHostKeys: shared?.verifiedHostKeys ?? unsupportedError?.verifiedHostKeys } : {}) },
         provider: ref,
         transport,
-        health: healthFromObservations([metrics, inventory]),
+        health: unsupported ? 'unsupported' : healthFromObservations([metrics, inventory]),
         receivedAt,
         metrics,
         inventory,
@@ -285,7 +346,7 @@ export function createDelegatingProbeProvider(options: {
       const receivedAt = request.now ?? Date.now()
       try {
         const result = await options.collect(request)
-        return {
+        return validateProbeSnapshotSources({
           schemaVersion: PROBE_PROVIDER_SCHEMA_VERSION,
           host: getProbeHostIdentity(request.host),
           provider: options.ref,
@@ -295,7 +356,7 @@ export function createDelegatingProbeProvider(options: {
           metrics: result.metrics ?? null,
           inventory: result.inventory ?? null,
           errors: [],
-        }
+        })
       } catch (error) {
         return {
           schemaVersion: PROBE_PROVIDER_SCHEMA_VERSION,

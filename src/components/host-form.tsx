@@ -1,14 +1,15 @@
+import { NativeSelect } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import type { HostProfileDraft } from '@/lib/hosts'
-import { validateHostDraft } from '@/lib/hosts'
+import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
+import { hasSshConnection, validateHostDraft } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import type { AuthType } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
 import { Archive, ChevronDown, Eye, EyeOff, Key, Lock, RefreshCw, Server, User, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 interface HostFormProps {
   initial?: Partial<HostProfileDraft> | null
@@ -22,6 +23,9 @@ interface HostFormProps {
   vaultName?: string
   existingGroups?: string[]
   existingTags?: string[]
+  availableHosts?: HostProfile[]
+  metadataControls?: ReactNode
+  connectionOnly?: boolean
 }
 
 export function HostForm({
@@ -36,7 +40,11 @@ export function HostForm({
   vaultName = 'Vault',
   existingGroups = [],
   existingTags = [],
+  availableHosts = [],
+  metadataControls,
+  connectionOnly = false,
 }: HostFormProps) {
+  const [connectionSecretId] = useState(() => crypto.randomUUID())
   const [address, setAddress] = useState(initial?.address ?? '')
   const [name, setName] = useState(initial?.name ?? '')
   const [group, setGroup] = useState(initial?.group ?? 'Custom')
@@ -46,13 +54,14 @@ export function HostForm({
   const [authType, setAuthType] = useState<AuthType>(initial?.authType ?? 'password')
   const [password, setPassword] = useState('')
   const [privateKey, setPrivateKey] = useState('')
-  const [vaultKeyRef, setVaultKeyRef] = useState(initial?.passwordKeyRef ?? initial?.privateKeyRef ?? '')
-  const [useInlineSecret, setUseInlineSecret] = useState(!initial?.passwordKeyRef && !initial?.privateKeyRef)
+  const [vaultKeyRef, setVaultKeyRef] = useState(initial?.passwordKeyRef ?? initial?.privateKeyRef ?? initial?.secretKeyRef ?? '')
+  const [useInlineSecret, setUseInlineSecret] = useState(!initial?.passwordKeyRef && !initial?.privateKeyRef && !initial?.secretKeyRef)
   const [vaultSaveName, setVaultSaveName] = useState('')
   const [tagDraft, setTagDraft] = useState('')
   const [groupDraft, setGroupDraft] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [jumpHostId, setJumpHostId] = useState(initial?.jumpHostId ?? '')
   const [jumpHost, setJumpHost] = useState(initial?.jumpHost ?? '')
   const [jumpPort, setJumpPort] = useState(String(initial?.jumpPort ?? ''))
   const [jumpUser, setJumpUser] = useState(initial?.jumpUser ?? '')
@@ -67,7 +76,7 @@ export function HostForm({
 
   useEffect(() => {
     if (!initial) return
-    const nextRef = authType === 'password' ? (initial.passwordKeyRef ?? '') : (initial.privateKeyRef ?? '')
+    const nextRef = authType === 'password' ? (initial.passwordKeyRef ?? initial.secretKeyRef ?? '') : (initial.privateKeyRef ?? initial.secretKeyRef ?? '')
     setVaultKeyRef(nextRef)
     setUseInlineSecret(!nextRef)
     setVaultSaveName('')
@@ -81,7 +90,7 @@ export function HostForm({
     if (useInlineSecret) {
       const suffix = authType === 'password' ? 'password' : 'key'
       const existingRef = authType === 'password' ? initial?.passwordKeyRef : initial?.privateKeyRef
-      const saveName = vaultSaveName.trim() || existingRef || `${addrSlug}-${suffix}`
+      const saveName = vaultSaveName.trim() || existingRef || `${addrSlug}-${connectionOnly ? `${username}-${connectionSecretId}-` : ''}${suffix}`
       const secret = authType === 'password' ? password : privateKey
       if (secret) {
         try {
@@ -108,7 +117,8 @@ export function HostForm({
       tags,
       passwordKeyRef: authType === 'password' ? passwordKeyRef : undefined,
       privateKeyRef: authType === 'privateKey' ? privateKeyRef : undefined,
-      secretKeyRef: undefined,
+      secretKeyRef: initial?.secretKeyRef,
+      jumpHostId: jumpHostId || undefined,
       jumpHost: jumpHost.trim() || undefined,
       jumpPort: jumpPort.trim() ? parseInt(jumpPort, 10) || undefined : undefined,
       jumpUser: jumpUser.trim() || undefined,
@@ -131,11 +141,11 @@ export function HostForm({
   }
 
   return (
-    <Card data-tour={!initial ? 'host-form' : undefined} className="w-full max-w-xl md:max-w-xl max-md:max-w-none max-md:border-0 max-md:rounded-none max-md:shadow-none">
+    <Card data-testid="host-form" data-tour={!initial ? 'host-form' : undefined} className="w-full max-w-xl md:max-w-xl max-md:max-w-none max-md:border-0 max-md:rounded-none max-md:shadow-none">
       <CardContent className="space-y-5 p-5">
         {/* Title */}
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold">{initial ? t('hostForm.editHost') : t('hostForm.newHost')}</h2>
+          <h2 className="text-base font-semibold">{connectionOnly ? t('hostDirectory.editConnection') : initial ? t('hostForm.editHost') : t('hostForm.newHost')}</h2>
           <span className="text-xs text-muted-foreground">{vaultName}</span>
         </div>
 
@@ -150,13 +160,13 @@ export function HostForm({
             <div className="relative min-w-0 flex-1">
               <Server className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                value={address} onChange={(e) => setAddress(e.target.value)}
+                data-testid="host-address" aria-label={t('hostForm.address')} value={address} onChange={(e) => setAddress(e.target.value)}
                 placeholder={t('hostForm.addressPlaceholder')} className="pl-9"
               />
             </div>
             <div className="w-20">
               <Input
-                type="number" value={port} onChange={(e) => setPort(e.target.value)}
+                data-testid="host-port" aria-label={t('hostForm.port')} type="number" value={port} onChange={(e) => setPort(e.target.value)}
                 placeholder="22" className="text-center"
               />
             </div>
@@ -170,7 +180,7 @@ export function HostForm({
             <div className="relative">
               <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                value={username} onChange={(e) => setUsername(e.target.value)}
+                data-testid="host-username" aria-label={t('hostForm.username')} value={username} onChange={(e) => setUsername(e.target.value)}
                 placeholder="root" className="pl-9"
               />
             </div>
@@ -178,12 +188,13 @@ export function HostForm({
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">{t('hostForm.label')}</label>
             <Input
-              value={name} onChange={(e) => setName(e.target.value)}
+              data-testid="host-name" aria-label={t('hostForm.label')} value={name} onChange={(e) => setName(e.target.value)}
               placeholder={t('hostForm.labelPlaceholder')}
             />
           </div>
         </div>
 
+        {!connectionOnly && <>
         {/* Group selector */}
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">{t('hostForm.parentGroup')}</label>
@@ -267,6 +278,9 @@ export function HostForm({
           )}
         </div>
 
+        {metadataControls}
+        </>}
+
         {/* Divider */}
         <div className="border-t border-border" />
 
@@ -281,7 +295,7 @@ export function HostForm({
               )}>
               <Lock className="h-3.5 w-3.5" />{t('hostForm.password')}
             </button>
-            <button type="button" onClick={() => setAuthType('privateKey')}
+            <button data-testid="host-auth-private-key" type="button" onClick={() => setAuthType('privateKey')}
               className={cn(
                 'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
                 authType === 'privateKey' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
@@ -306,7 +320,7 @@ export function HostForm({
 
         {/* Advanced: Jump Host (collapsible) */}
         <div className="space-y-3">
-          <button type="button" onClick={() => setShowAdvanced((v) => !v)}
+          <button data-testid="host-jump-toggle" aria-expanded={showAdvanced} type="button" onClick={() => setShowAdvanced((v) => !v)}
             className="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
             <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAdvanced && 'rotate-180')} />
             {t('hostForm.jumpHost')}
@@ -314,20 +328,33 @@ export function HostForm({
           {showAdvanced && (
             <div className="space-y-3 rounded-lg border border-border/50 bg-muted/20 p-3">
               <p className="text-xs text-muted-foreground">{t('hostForm.jumpHostDesc')}</p>
+              <label className="block space-y-1 text-xs text-muted-foreground">
+                <span>{t('hostForm.jumpProfile')}</span>
+                <NativeSelect data-testid="host-jump-profile" aria-label={t('hostForm.jumpProfile')} value={jumpHostId} className="h-8 w-full rounded border bg-background px-2" onChange={(event) => {
+                  const id = event.target.value
+                  setJumpHostId(id)
+                  const profile = availableHosts.find((host) => host.id === id)
+                  if (profile) { setJumpHost(profile.address); setJumpPort(String(profile.port)); setJumpUser(profile.username) }
+                }}>
+                  <option value="">{t('hostForm.jumpProfileLegacy')}</option>
+                  {availableHosts.filter((host) => hasSshConnection(host) && !host.jumpHost?.trim() && !host.jumpHostId).map((host) => <option key={host.id} value={host.id}>{host.name} · {host.username}@{host.address}</option>)}
+                </NativeSelect>
+                <span>{t('hostForm.jumpProfileHelp')}</span>
+              </label>
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">{t('hostForm.jumpAddress')}</label>
-                  <Input value={jumpHost} onChange={(e) => setJumpHost(e.target.value)}
+                  <Input disabled={Boolean(jumpHostId)} value={jumpHost} onChange={(e) => setJumpHost(e.target.value)}
                     placeholder={t('hostForm.jumpAddressPlaceholder')} className="h-8 text-sm" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">{t('hostForm.jumpPort')}</label>
-                  <Input value={jumpPort} onChange={(e) => setJumpPort(e.target.value)}
+                  <Input disabled={Boolean(jumpHostId)} value={jumpPort} onChange={(e) => setJumpPort(e.target.value)}
                     placeholder="22" className="h-8 text-sm" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">{t('hostForm.jumpUser')}</label>
-                  <Input value={jumpUser} onChange={(e) => setJumpUser(e.target.value)}
+                  <Input disabled={Boolean(jumpHostId)} value={jumpUser} onChange={(e) => setJumpUser(e.target.value)}
                     placeholder={t('hostForm.jumpUserPlaceholder')} className="h-8 text-sm" />
                 </div>
               </div>
@@ -338,8 +365,8 @@ export function HostForm({
         {/* Action buttons at bottom */}
         <div data-tour="host-save" className="flex justify-end gap-2 pt-1">
           <Button variant="outline" size="sm" onClick={onCancel}>{t('hostForm.cancel')}</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={submitting}>
-            {submitting ? t('hostForm.saving') : t('hostForm.save')}
+          <Button data-testid="host-save" size="sm" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? t('hostForm.saving') : connectionOnly ? t('hostDirectory.useConnection') : t('hostForm.save')}
           </Button>
         </div>
       </CardContent>
@@ -484,13 +511,13 @@ function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password
               </button>
             </div>
           ) : (
-            <Textarea value={privateKey}
+            <Textarea data-testid="host-private-key" aria-label={t('hostForm.privateKeyLabel')} value={privateKey}
               onChange={(e) => { onPrivateKey(e.target.value); onUseInline(true) }}
               placeholder={t('hostForm.privateKeyPlaceholder')} className="min-h-[80px] font-mono text-sm" />
           )}
           <div className="flex items-center gap-2">
             <Archive className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <Input value={vaultSaveName} onChange={(e) => onVaultSaveName(e.target.value)}
+            <Input data-testid="host-secret-name" aria-label={t('hostForm.saveAsName')} value={vaultSaveName} onChange={(e) => onVaultSaveName(e.target.value)}
               placeholder={defaultVaultSaveName || `${addrSlug}-${isPassword ? 'password' : 'key'}`} className="h-7 text-xs" />
           </div>
           {hasVaultKeys && (

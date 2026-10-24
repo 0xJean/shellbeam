@@ -1,9 +1,15 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { HostProfile } from './hosts'
-import { operationTransport, type OperationJob, runConfirmedOperation } from './operation-job'
+import { getHostIdentity } from './host-identity'
+import { OperationScopeChangedError, operationTransport, type OperationJob, runConfirmedOperation } from './operation-job'
 import type { ProbeCapability, ProbeProvider, ProbeProviderRef, ProbeSnapshot } from './probe-provider'
-import { getProbeTransport } from './probe-provider'
+import { createProbeObservation, getProbeTransport } from './probe-provider'
+import type { ServerMonitorSnapshot } from './server-monitor'
+import type { WorkspaceInventory } from './workspace-inventory'
+import type { CommandRunResult } from './sessions'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
+import { remoteOperationStatus } from './operation-verification'
+import { DEFAULT_VAULT_ID } from './vaults'
 
 export type ShellbeamAgentLifecycleStatus =
   | 'not-installed' | 'installing' | 'installed' | 'upgrading' | 'uninstalling'
@@ -36,8 +42,9 @@ export interface ShellbeamAgentRecord {
 
 export type ShellbeamAgentInput = Partial<ShellbeamAgentRecord> & Pick<ShellbeamAgentRecord, 'hostId' | 'status' | 'transport'>
 
-export interface ShellbeamAgentCommandResult {
+export interface ShellbeamAgentCommandResult extends Pick<CommandRunResult, 'errorType' | 'errorCode' | 'verifiedHostKeys' | 'hostIdentity'> {
   record: ShellbeamAgentRecord
+  snapshot?: ProbeSnapshot
   stdout: string
   stderr: string
   exitCode: number
@@ -62,8 +69,10 @@ export interface ShellbeamAgentPlan {
 export const SHELLBEAM_AGENT_DEFAULT_PATH = '$HOME/.local/bin/shellbeam-agent'
 export const SHELLBEAM_AGENT_HEARTBEAT_TTL_MS = 5 * 60 * 1000
 export const SHELLBEAM_AGENT_CHECK_COMMAND = `
-if command -v shellbeam-agent >/dev/null 2>&1; then
-  shellbeam-agent probe --json 2>/dev/null || true
+if [ -x "$HOME/.local/bin/shellbeam-agent" ]; then
+  "$HOME/.local/bin/shellbeam-agent" probe --json
+elif command -v shellbeam-agent >/dev/null 2>&1; then
+  shellbeam-agent probe --json
 elif [ -f "$HOME/.local/share/shellbeam-agent/status.json" ]; then
   cat "$HOME/.local/share/shellbeam-agent/status.json"
 else
@@ -76,7 +85,7 @@ const MAX_CAPABILITIES = 24
 
 function text(value: unknown, maxLength = MAX_TEXT_LENGTH) {
   if (typeof value !== 'string') return null
-  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim()
+  const normalized = [...value].map((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 ? ' ' : character).join('').trim()
   return normalized ? normalized.slice(0, maxLength) : null
 }
 
@@ -135,23 +144,28 @@ function normalizeCapabilities(value: unknown): string[] {
 }
 
 function normalizeHealth(value: unknown, status: ShellbeamAgentLifecycleStatus): ShellbeamAgentRecord['health'] {
-  const health = text(value, 24)
-  if (health === 'online' || health === 'stale' || health === 'offline' || health === 'unsupported' || health === 'unknown') return health
   if (status === 'unsupported') return 'unsupported'
   if (status === 'offline') return 'offline'
+  if (status !== 'installed') return 'unknown'
+  const health = text(value, 24)
+  if (health === 'online' || health === 'stale' || health === 'offline' || health === 'unsupported' || health === 'unknown') return health
   return 'unknown'
 }
 
 export function deriveShellbeamAgentHealth(record: Pick<ShellbeamAgentRecord, 'status' | 'lastHeartbeatAt' | 'heartbeatTtlMs'>, now = Date.now()) {
   if (record.status === 'unsupported') return 'unsupported' as const
   if (record.status === 'not-installed' || record.status === 'retired') return 'unknown' as const
-  if (!record.lastHeartbeatAt) return record.status === 'installed' ? 'unknown' as const : 'offline' as const
+  if (record.status !== 'installed') return record.status === 'offline' ? 'offline' as const : 'unknown' as const
+  if (!record.lastHeartbeatAt || record.lastHeartbeatAt > now) return 'unknown' as const
   return now - record.lastHeartbeatAt <= record.heartbeatTtlMs ? 'online' as const : 'offline' as const
 }
 
 function refreshPersistedHealth(record: ShellbeamAgentRecord, now: number) {
-  if (record.status === 'unsupported' || record.status === 'offline' || record.status === 'not-installed' || record.status === 'retired') return record
-  return { ...record, health: deriveShellbeamAgentHealth(record, now) }
+  if (record.status !== 'installed' || record.health !== 'online' && record.health !== 'stale') return record
+  // Restoring a cached heartbeat can only reduce confidence. A failed or
+  // unknown daemon observation needs a new successful check to recover.
+  const derived = deriveShellbeamAgentHealth(record, now)
+  return derived === 'online' ? record : { ...record, health: derived }
 }
 
 export function normalizeShellbeamAgentRecord(input: Partial<ShellbeamAgentRecord> & Pick<ShellbeamAgentRecord, 'hostId' | 'status' | 'transport'>, now = Date.now()): ShellbeamAgentRecord {
@@ -180,7 +194,8 @@ export function normalizeShellbeamAgentRecord(input: Partial<ShellbeamAgentRecor
     installMethod: input.installMethod === 'ssh-confirmed' || input.installMethod === 'manual' ? input.installMethod : 'unknown',
   }
   record.health = normalizeHealth(input.health, status)
-  if (record.health === 'unknown') record.health = deriveShellbeamAgentHealth(record, now)
+  if (input.health === undefined) record.health = deriveShellbeamAgentHealth(record, now)
+  if (status === 'installed' && record.lastHeartbeatAt && record.lastHeartbeatAt > now) record.health = 'unknown'
   return record
 }
 
@@ -215,8 +230,8 @@ export function buildShellbeamAgentPlan(action: ShellbeamAgentPlan['action'], op
   const version = text(options.version, 48)
   if (action === 'check') return { action, command: SHELLBEAM_AGENT_CHECK_COMMAND, target: 'shellbeam-agent heartbeat', risk: 'read-only', requiresConfirmation: false, notes: ['Reads only agent probe output or the local status file.', 'A missing agent remains not-installed and does not change SSH health.'] }
   const command = action === 'uninstall'
-    ? `command -v shellbeam-agent >/dev/null 2>&1 && shellbeam-agent uninstall --json --path ${shellPathArg(installPath)} || { printf '%s\\n' '__SB_AGENT_STATUS=unsupported'; exit 127; }`
-    : `command -v shellbeam-agent >/dev/null 2>&1 && shellbeam-agent ${action} --json --path ${shellPathArg(installPath)}${version ? ` --version ${shellQuote(version)}` : ''} || { printf '%s\\n' '__SB_AGENT_STATUS=unsupported'; exit 127; }`
+    ? `${shellPathArg(installPath)} uninstall --json --path ${shellPathArg(installPath)}`
+    : `${shellPathArg(installPath)} ${action} --json --path ${shellPathArg(installPath)}${version ? ` --version ${shellQuote(version)}` : ''}`
   return { action, command, target: `shellbeam-agent ${action}`, risk: 'high', requiresConfirmation: true, notes: ['Requires explicit confirmation and is recorded as an OperationJob.', 'Uses the existing SSH/ProxyJump transport without including Vault credentials.', 'A lost connection is recorded as unknown until a follow-up check confirms the state.'] }
 }
 
@@ -250,8 +265,11 @@ export async function listShellbeamAgents(options: { vaultId?: string; hostId?: 
   return records.map((record) => refreshPersistedHealth(normalizeShellbeamAgentRecord(record, now), now))
 }
 
-export async function upsertShellbeamAgent(payload: ShellbeamAgentInput) {
+export const SHELLBEAM_AGENT_STATE_CHANGED_EVENT = 'shellbeam-agent-state-changed'
+
+export async function upsertShellbeamAgent(payload: ShellbeamAgentInput, options: { notifyChange?: boolean } = {}) {
   const record = await invoke<ShellbeamAgentRecord>('upsert_shellbeam_agent', { input: toInput(payload) })
+  if (options.notifyChange !== false && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(SHELLBEAM_AGENT_STATE_CHANGED_EVENT))
   return normalizeShellbeamAgentRecord(record, Date.now())
 }
 
@@ -264,10 +282,20 @@ export async function clearShellbeamAgents(options: { vaultId?: string; hostId?:
   return invoke<void>('clear_shellbeam_agents', options)
 }
 
-export async function checkShellbeamAgent(host: HostProfile, resolveAuthSecret: (host: HostProfile) => Promise<string>, now = Date.now()): Promise<ShellbeamAgentCommandResult> {
-  const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: SHELLBEAM_AGENT_CHECK_COMMAND })
-  const record = parseShellbeamAgentProbeOutput([result.stdout, result.stderr].filter(Boolean).join('\n'), host, now)
-  return { record, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, durationMs: result.durationMs }
+export async function checkShellbeamAgent(host: HostProfile, resolveAuthSecret: (host: HostProfile) => Promise<string>, now = Date.now(), vaultId?: string): Promise<ShellbeamAgentCommandResult> {
+  const result = await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: SHELLBEAM_AGENT_CHECK_COMMAND })
+  // A daemon sample can be generated while the SSH request is in flight.
+  // Compare it with response receipt, never the request's start timestamp.
+  const receivedAt = Date.now()
+  const completed = remoteOperationStatus(result) === 'completed'
+  const record = completed
+    ? parseShellbeamAgentProbeOutput(result.stdout, host, receivedAt)
+    : normalizeShellbeamAgentRecord({ hostId: host.id, status: 'unknown', health: 'unknown', transport: getProbeTransport(host), lastCheckedAt: now, lastErrorCode: `agent_check_exit_${result.exitCode}`, lastError: 'Agent probe command did not complete successfully' }, receivedAt)
+  const observation = completed ? parseShellbeamAgentObservation(result.stdout, record, host, receivedAt) : shellbeamAgentRecordToProbeSnapshot(record, host, receivedAt)
+  const snapshot = observation ? { ...observation, host: { ...(result.hostIdentity ?? observation.host), ...(result.verifiedHostKeys ? { verifiedHostKeys: result.verifiedHostKeys } : {}) } } : undefined
+  // Preserve the native outcome for callers that put this read in an
+  // OperationJob. Exit code zero alone cannot prove a completed SSH read.
+  return { ...result, record, snapshot }
 }
 
 export async function runShellbeamAgentOperation(options: {
@@ -279,47 +307,74 @@ export async function runShellbeamAgentOperation(options: {
   version?: string
   confirmMessage?: string
   onRecord?: (record: ShellbeamAgentRecord) => void
+  beforeExecute?: () => Promise<void>
+  isCurrent?: () => boolean
 }): Promise<ShellbeamAgentOperationResult | null> {
-  const { host, resolveAuthSecret, action, vaultId = 'local', installPath, version, confirmMessage, onRecord } = options
+  const { host, resolveAuthSecret, action, installPath, version, confirmMessage, onRecord } = options
+  if (options.vaultId !== undefined && host.vaultId && options.vaultId !== host.vaultId) throw new Error('WORKSPACE_VAULT_SCOPE_MISMATCH')
+  const vaultId = options.vaultId ?? host.vaultId ?? DEFAULT_VAULT_ID
+  let scopeCurrent = () => {
+    try { return options.isCurrent?.() !== false } catch { return false }
+  }
+  if (!scopeCurrent()) return null
   const plan = buildShellbeamAgentPlan(action, { installPath, version })
   const initial = normalizeShellbeamAgentRecord({ vaultId, hostId: host.id, status: action === 'install' ? 'installing' : action === 'upgrade' ? 'upgrading' : 'uninstalling', transport: operationTransport(host), installPath, installMethod: 'ssh-confirmed' }, Date.now())
   onRecord?.(initial)
   try {
     const execution = await runConfirmedOperation({
-      host, action: `agent.${action}`, target: plan.target, risk: plan.risk,
+      host, vaultId, isCurrent: options.isCurrent, action: `agent.${action}`, target: plan.target, risk: plan.risk,
       provider: 'shellbeam-agent', transport: operationTransport(host),
       paramsSummary: `path=${initial.installPath ?? SHELLBEAM_AGENT_DEFAULT_PATH}${version ? `; version=${version}` : ''}`,
       confirmMessage: confirmMessage ?? `Confirm ${action} for the ShellBeam Probe on ${host.name}?`,
-      execute: () => runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: plan.command }),
+      execute: async (context) => {
+        scopeCurrent = context.isCurrent
+        const assertCurrent = () => { if (!scopeCurrent()) throw new OperationScopeChangedError(false) }
+        assertCurrent()
+        try { await options.beforeExecute?.() } catch (error) { assertCurrent(); throw error }
+        assertCurrent()
+        try {
+          return await runWorkspaceRemoteCommand({ host, vaultId, resolveAuthSecret, command: plan.command })
+        } catch (error) {
+          if (!scopeCurrent()) throw new OperationScopeChangedError(true)
+          throw error
+        }
+      },
       getResult: (result) => result,
       onJob: () => undefined,
     })
     if (!execution) {
-      const cancelled = normalizeShellbeamAgentRecord({ ...initial, status: action === 'uninstall' ? 'installed' : 'unknown', health: 'unknown', lastErrorCode: 'confirmation_rejected', lastError: 'Operation was cancelled before execution', updatedAt: Date.now() })
-      onRecord?.(cancelled)
-      await upsertShellbeamAgent(cancelled).catch(() => undefined)
+      const cancelled = normalizeShellbeamAgentRecord({ ...initial, status: action === 'uninstall' ? 'installed' : 'unknown', health: 'unknown', lastErrorCode: 'operation_cancelled', lastError: 'Operation was cancelled before execution', updatedAt: Date.now() })
+      // Consent cancellation does not change the actual installed lifecycle.
+      if (scopeCurrent()) onRecord?.(cancelled)
       return null
     }
     const parsed = parseShellbeamAgentProbeOutput([execution.value.stdout, execution.value.stderr].filter(Boolean).join('\n'), host)
-    const lifecycleStatus = parsed.status === 'unsupported' || execution.value.exitCode === 127
+    const lifecycleStatus = execution.job.status === 'unknown'
+      ? 'unknown'
+      : parsed.status === 'unsupported' || execution.value.exitCode === 127
       ? 'unsupported'
       : execution.value.exitCode === 0
         ? action === 'uninstall' ? 'retired' : 'installed'
-        : execution.job.status === 'unknown' ? 'unknown' : 'failed'
-    const record = normalizeShellbeamAgentRecord({ ...parsed, vaultId, hostId: host.id, status: lifecycleStatus, installPath: initial.installPath, transport: operationTransport(host), installMethod: 'ssh-confirmed', lastErrorCode: execution.value.exitCode === 0 ? parsed.lastErrorCode : `exit_${execution.value.exitCode}`, lastError: execution.value.exitCode === 0 ? parsed.lastError : execution.value.stderr || parsed.lastError || 'Agent operation failed', updatedAt: Date.now() })
-    onRecord?.(record)
-    await upsertShellbeamAgent(record)
+        : 'failed'
+    const record = normalizeShellbeamAgentRecord({ ...parsed, vaultId, hostId: host.id, status: lifecycleStatus, installPath: initial.installPath, transport: operationTransport(host), installMethod: 'ssh-confirmed', lastErrorCode: execution.job.status === 'unknown' ? 'remote_state_unknown' : execution.value.exitCode === 0 ? parsed.lastErrorCode : `exit_${execution.value.exitCode}`, lastError: execution.job.status === 'unknown' ? 'Agent operation outcome is unknown; verify before retrying.' : execution.value.exitCode === 0 ? parsed.lastError : execution.value.stderr || parsed.lastError || 'Agent operation failed', updatedAt: Date.now() })
+    if (scopeCurrent()) {
+      onRecord?.(record)
+      await upsertShellbeamAgent(record)
+    }
     return { record, job: execution.job, commandResult: { record, stdout: execution.value.stdout, stderr: execution.value.stderr, exitCode: execution.value.exitCode, durationMs: execution.value.durationMs } }
   } catch (error) {
     const record = normalizeShellbeamAgentRecord({ ...initial, status: 'unknown', health: 'unknown', lastErrorCode: 'agent_operation_unknown', lastError: error instanceof Error ? error.message : String(error), updatedAt: Date.now() })
-    onRecord?.(record)
-    await upsertShellbeamAgent(record).catch(() => undefined)
+    if (scopeCurrent()) {
+      onRecord?.(record)
+      await upsertShellbeamAgent(record).catch(() => undefined)
+    }
     throw error
   }
 }
 
 export function shellbeamAgentRecordToProbeSnapshot(record: ShellbeamAgentRecord, host: HostProfile, now = Date.now()): ProbeSnapshot {
-  const source: ProbeProviderRef = { kind: 'shellbeam-agent', id: record.agentId || record.hostId, capabilities: normalizeCapabilities(record.capabilities) as ProbeCapability[] }
+  record = normalizeShellbeamAgentRecord(record, now)
+  const source: ProbeProviderRef = { kind: 'shellbeam-agent', id: 'shellbeam-agent', nodeId: record.agentId || undefined, capabilities: normalizeCapabilities(record.capabilities) as ProbeCapability[] }
   return {
     schemaVersion: 1, host: getHostIdentity(host), provider: source, transport: getProbeTransport(host), health: record.health,
     receivedAt: record.lastCheckedAt || now, metrics: null, inventory: null,
@@ -328,23 +383,70 @@ export function shellbeamAgentRecordToProbeSnapshot(record: ShellbeamAgentRecord
   }
 }
 
-function getHostIdentity(host: HostProfile) {
-  return { hostId: host.id, address: host.address, port: host.port || 22, username: host.username || 'root', ...(host.jumpHost?.trim() ? { jump: { address: host.jumpHost.trim(), port: host.jumpPort || 22, username: host.jumpUser?.trim() || host.username || 'root' } } : {}) }
-}
-
 export function createShellbeamAgentProbeProvider(options: { check?: (host: HostProfile, resolveAuthSecret: (host: HostProfile) => Promise<string>, now: number) => Promise<ShellbeamAgentCommandResult> } = {}): ProbeProvider {
-  const ref: ProbeProviderRef = { kind: 'shellbeam-agent', id: 'shellbeam-agent', capabilities: ['heartbeat'] }
+  const ref: ProbeProviderRef = { kind: 'shellbeam-agent', id: 'shellbeam-agent', capabilities: ['heartbeat', 'metrics', 'inventory'] }
   return {
     ref,
     async probe(request) {
       const now = request.now ?? Date.now()
       try {
         const checked = await (options.check ?? checkShellbeamAgent)(request.host, request.resolveAuthSecret, now)
-        return shellbeamAgentRecordToProbeSnapshot(checked.record, request.host, now)
+        const receivedAt = request.now ?? Date.now()
+        return checked.snapshot ?? parseShellbeamAgentObservation(checked.stdout, checked.record, request.host, receivedAt)
       } catch (error) {
         const record = normalizeShellbeamAgentRecord({ hostId: request.host.id, status: 'unknown', health: 'unknown', transport: getProbeTransport(request.host), lastCheckedAt: now, lastErrorCode: 'agent_check_failed', lastError: error instanceof Error ? error.message : String(error) }, now)
         return shellbeamAgentRecordToProbeSnapshot(record, request.host, now)
       }
     },
   }
+}
+
+/** Decode only the public observation schema. Command output, environment,
+ * process arguments and unrecognized fields never enter a persisted snapshot. */
+export function parseShellbeamAgentObservation(output: string, record: ShellbeamAgentRecord, host: HostProfile, now = Date.now()): ProbeSnapshot {
+  const snapshot = shellbeamAgentRecordToProbeSnapshot(record, host, now)
+  let payload: Record<string, unknown>
+  try {
+    if (output.length > 1024 * 1024) return snapshot
+    const parsed = JSON.parse(output) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return snapshot
+    payload = parsed as Record<string, unknown>
+  } catch { return snapshot }
+  const sampledAt = parseTimestamp(payload.sampledAt ?? payload.lastHeartbeatAt)
+  if (sampledAt && sampledAt > now) {
+    snapshot.health = 'unknown'
+    snapshot.errors.push({ section: 'provider', code: 'agent_sample_in_future', message: 'Agent sample time is later than response receipt' })
+    return snapshot
+  }
+  if (!sampledAt || payload.schemaVersion !== 1) return snapshot
+  const raw = payload.metrics && typeof payload.metrics === 'object' ? payload.metrics as Record<string, unknown> : null
+  const metricNumber = (key: string, max = Number.MAX_SAFE_INTEGER) => {
+    const value = raw?.[key]
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= max ? value : null
+  }
+  if (raw) {
+    const metrics: ServerMonitorSnapshot = {
+      hostname: text(raw.hostname) ?? '', os: text(raw.os) ?? '', kernel: text(raw.kernel) ?? '',
+      sampledAt, uptimeSeconds: metricNumber('uptimeSeconds'), cpuPercent: metricNumber('cpuPercent', 100),
+      load1: metricNumber('load1'), load5: metricNumber('load5'), load15: metricNumber('load15'),
+      memoryUsedBytes: metricNumber('memoryUsedBytes'), memoryTotalBytes: metricNumber('memoryTotalBytes'), memoryPercent: metricNumber('memoryPercent', 100),
+      diskUsedBytes: metricNumber('diskUsedBytes'), diskTotalBytes: metricNumber('diskTotalBytes'), diskPercent: metricNumber('diskPercent', 100),
+      networkRxBytesPerSec: metricNumber('networkRxBytesPerSec'), networkTxBytesPerSec: metricNumber('networkTxBytesPerSec'), latencyMs: null,
+    }
+    snapshot.metrics = createProbeObservation({ data: metrics, source: snapshot.provider, sampledAt, receivedAt: now, ttlMs: record.heartbeatTtlMs, confidence: Object.values(metrics).some((value) => value === null) ? 'partial' : 'observed' })
+  }
+  const rawInventory = payload.inventory && typeof payload.inventory === 'object' ? payload.inventory as Record<string, unknown> : null
+  if (rawInventory && snapshot.metrics) {
+    const metrics = snapshot.metrics.data
+    const rows = (value: unknown) => Array.isArray(value) ? value.slice(0, 100).filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object' && !Array.isArray(row))) : []
+    const inventory: WorkspaceInventory = {
+      resource: { hostname: metrics.hostname, os: metrics.os, kernel: metrics.kernel, arch: rawInventory.resource && typeof rawInventory.resource === 'object' ? text((rawInventory.resource as Record<string, unknown>).arch, 80) ?? null : null, uptime: metrics.uptimeSeconds === null ? '' : `${Math.floor(metrics.uptimeSeconds)}s`, cpuPercent: metrics.cpuPercent, memoryPercent: metrics.memoryPercent, memoryText: metrics.memoryUsedBytes === null || metrics.memoryTotalBytes === null ? '' : `${metrics.memoryUsedBytes}/${metrics.memoryTotalBytes} B`, diskPercent: metrics.diskPercent, diskText: metrics.diskUsedBytes === null || metrics.diskTotalBytes === null ? '' : `${metrics.diskUsedBytes}/${metrics.diskTotalBytes} B`, network: metrics.networkRxBytesPerSec === null || metrics.networkTxBytesPerSec === null ? '' : `${Math.round(metrics.networkRxBytesPerSec + metrics.networkTxBytesPerSec)} B/s` },
+      tools: rows(rawInventory.tools).map((row) => ({ id: text(row.id, 80) ?? '', name: text(row.name, 80) ?? '', category: text(row.category, 80) ?? '', binary: text(row.binary, 80) ?? '', path: text(row.path) ?? '', version: text(row.version, 80) ?? '' })),
+      services: rows(rawInventory.services).map((row) => ({ name: text(row.name, 120) ?? '', active: text(row.active, 40) ?? 'unknown', enabled: text(row.enabled, 40) ?? 'unknown' })),
+      containers: [], pm2: [], projects: [], scannedAt: sampledAt,
+    }
+    snapshot.inventory = createProbeObservation({ data: inventory, source: snapshot.provider, sampledAt, receivedAt: now, ttlMs: record.heartbeatTtlMs, confidence: 'partial' })
+  }
+  if (snapshot.metrics?.freshness.expired || snapshot.inventory?.freshness.expired) snapshot.health = record.health === 'offline' ? 'offline' : 'stale'
+  return snapshot
 }

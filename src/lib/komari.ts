@@ -133,13 +133,16 @@ function safeMessage(value: unknown, token?: string): string {
 }
 
 async function parseResponse(response: Response): Promise<unknown> {
-  const text = await response.text()
+  const maxBytes = 4 * 1024 * 1024
+  if (Number(response.headers.get('content-length')) > maxBytes) throw new KomariApiError('Komari response exceeds the size limit', { code: 'response-too-large' })
+  let text: string
+  if (response.body) {
+    const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0
+    try { while (true) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.length; if (size > maxBytes) { await reader.cancel(); throw new KomariApiError('Komari response exceeds the size limit', { code: 'response-too-large' }) } chunks.push(chunk.value) } } finally { reader.releaseLock() }
+    const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length } text = new TextDecoder().decode(bytes)
+  } else { text = await response.text(); if (text.length > maxBytes) throw new KomariApiError('Komari response exceeds the size limit', { code: 'response-too-large' }) }
   if (!text.trim()) return null
-  try {
-    return JSON.parse(text) as unknown
-  } catch {
-    return text
-  }
+  try { return JSON.parse(text) as unknown } catch { return text }
 }
 
 export async function requestKomari<T = unknown>(
@@ -152,6 +155,9 @@ export async function requestKomari<T = unknown>(
   const controller = new AbortController()
   const timeoutMs = config.requestTimeoutMs ?? 15_000
   const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs))
+  const onAbort = () => controller.abort()
+  if (options.signal?.aborted) controller.abort()
+  options.signal?.addEventListener('abort', onAbort, { once: true })
   const headers = new Headers({ Accept: 'application/json' })
   if (config.token?.trim()) headers.set('Authorization', `Bearer ${config.token.trim()}`)
   if (options.body !== undefined) headers.set('Content-Type', 'application/json')
@@ -161,7 +167,7 @@ export async function requestKomari<T = unknown>(
       method: options.method ?? 'GET',
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: options.signal ?? controller.signal,
+      signal: controller.signal,
       redirect: 'error',
       credentials: 'omit',
     })
@@ -178,6 +184,7 @@ export async function requestKomari<T = unknown>(
     throw new KomariApiError('Komari endpoint is unavailable', { code: 'unavailable' })
   } finally {
     clearTimeout(timeout)
+    options.signal?.removeEventListener('abort', onAbort)
   }
 }
 
@@ -219,20 +226,45 @@ export function normalizeKomariClients(value: unknown): KomariClient[] {
     .filter((client): client is KomariClient => client !== null)
 }
 
+function readKomariClientList(value: unknown): KomariClient[] {
+  const payload = unwrapPayload(value)
+  // A reverse proxy or an unsupported API route can return the HTML console
+  // with HTTP 200. Do not turn that response into a successful empty discovery.
+  if (!Array.isArray(payload)) {
+    throw new KomariApiError('Komari node list has an unsupported response format', { code: 'endpoint-version' })
+  }
+  const clients = normalizeKomariClients(payload)
+  if (payload.length > 0 && clients.length === 0) {
+    throw new KomariApiError('Komari node list has an unsupported response format', { code: 'endpoint-version' })
+  }
+  return clients
+}
+
+/** Verify authenticated API access. Public discovery is intentionally excluded:
+ * a public node list does not prove that the saved API key is valid. */
+export async function verifyKomariConnection(
+  config: KomariConnectionConfig,
+  fetchImpl?: KomariFetch,
+): Promise<KomariClient[]> {
+  if (!config.token?.trim()) throw new KomariApiError('Komari server API key is required', { code: 'permission' })
+  const payload = await requestKomari<unknown>(config, { path: '/api/admin/client/list' }, fetchImpl)
+  return readKomariClientList(payload)
+}
+
 export async function listKomariClients(
   config: KomariConnectionConfig,
   fetchImpl?: KomariFetch,
 ): Promise<KomariClient[]> {
   try {
     const payload = await requestKomari<unknown>(config, { path: '/api/admin/client/list' }, fetchImpl)
-    return normalizeKomariClients(payload)
+    return readKomariClientList(payload)
   } catch (error) {
     // Some Komari deployments expose public node discovery but restrict the
     // admin client list. Keep discovery read-only and use that endpoint as a
     // compatibility fallback for 401/403/404 responses.
     if (!(error instanceof KomariApiError) || !['permission', 'endpoint-version'].includes(error.code)) throw error
     const payload = await requestKomari<unknown>(config, { path: '/api/nodes' }, fetchImpl)
-    return normalizeKomariClients(payload)
+    return readKomariClientList(payload)
   }
 }
 
@@ -247,11 +279,41 @@ export async function getKomariRecentRecords(
     { path: `/api/recent/${encodeURIComponent(nodeId.trim())}` },
     fetchImpl,
   )
-  const unwrapped = unwrapPayload(payload)
-  if (Array.isArray(unwrapped)) return unwrapped.filter((item): item is KomariMetricRecord => Boolean(asRecord(item)))
-  const record = asRecord(unwrapped)
-  if (record) return [record as KomariMetricRecord]
-  return []
+  return normalizeKomariMetricRecords(payload)
+}
+
+/** HTTP v1.0.3+ and v1.6 RPC-bound HTTP routes use nested data/records
+ * envelopes; report objects may be flat stored records or nested live reports. */
+export function normalizeKomariMetricRecords(payload: unknown, depth = 0): KomariMetricRecord[] {
+  if (depth > 5) return []
+  if (Array.isArray(payload)) return payload.filter((item): item is KomariMetricRecord => Boolean(asRecord(item) && ['cpu', 'ram', 'memory', 'disk', 'network', 'net', 'load'].some((key) => key in (item as object)))).sort((left, right) => (komariRecordSampleTime(right) ?? 0) - (komariRecordSampleTime(left) ?? 0)).slice(0, 10000).sort((left, right) => (komariRecordSampleTime(left) ?? 0) - (komariRecordSampleTime(right) ?? 0))
+  const record = asRecord(payload)
+  if (!record) return []
+  for (const key of ['records', 'reports', 'data', 'result']) if (key in record) return normalizeKomariMetricRecords(record[key], depth + 1)
+  return ['cpu', 'ram', 'memory', 'disk', 'network', 'net', 'load'].some((key) => key in record) ? [record] : []
+}
+
+export async function getKomariHistoryRecords(config: KomariConnectionConfig, nodeId: string, options: { hours?: number } = {}, fetchImpl?: KomariFetch): Promise<KomariMetricRecord[]> {
+  if (!nodeId.trim()) throw new Error('Komari node id is required')
+  const hours = Math.max(1, Math.min(168, Math.floor(options.hours ?? 24)))
+  const readWindow = async (windowHours: number) => {
+    const query = new URLSearchParams({ uuid: nodeId.trim(), load_type: 'all', hours: String(windowHours) })
+    return normalizeKomariMetricRecords(await requestKomari(config, { path: `/api/records/load?${query}` }, fetchImpl))
+  }
+  const records = await readWindow(hours)
+  if (records.length || hours === 1) return records
+  // Komari 1.6 selects a retention tier from the full query window. A new
+  // node's 24h request can read an empty coarse tier while its 1h hot-minute
+  // tier already contains real reports. Make at most one narrower request;
+  // retain its original times and never turn an empty/denied result into data.
+  return readWindow(1)
+}
+
+export async function getKomariServerVersion(config: KomariConnectionConfig, fetchImpl?: KomariFetch): Promise<{ version: string; hash: string; apiKeySupported: boolean | null }> {
+  const value = asRecord(await requestKomari(config, { path: '/api/version' }, fetchImpl))
+  const version = typeof value?.version === 'string' ? value.version.slice(0, 80) : 'unknown'
+  const parsed = version.match(/^v?(\d+)\.(\d+)\.(\d+)/)
+  return { version, hash: typeof value?.hash === 'string' ? value.hash.slice(0, 80) : '', apiKeySupported: parsed ? Number(parsed[1]) > 1 || Number(parsed[1]) === 1 && (Number(parsed[2]) > 0 || Number(parsed[3]) >= 3) : null }
 }
 
 function countKomariNotifications(value: unknown): number | null {
@@ -351,10 +413,10 @@ export function createKomariProbeClient(
 }
 
 function numeric(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value
   if (typeof value === 'string' && value.trim()) {
-    const parsed = Number.parseFloat(value)
-    return Number.isFinite(parsed) ? parsed : null
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
   }
   return null
 }
@@ -408,12 +470,14 @@ export function komariRecordToServerMonitorSnapshot(
   const memoryTotal = objectNumber(ramValue, ['total', 'total_bytes', 'bytes_total'])
     ?? numeric(record.ram_total)
     ?? numeric(record.memory_total)
+    ?? numeric(client?.raw.mem_total)
   const memoryUsed = objectNumber(ramValue, ['used', 'used_bytes', 'bytes_used'])
     ?? numeric(record.ram_used)
     ?? numeric(record.memory_used)
     ?? numeric(record.ram)
   const diskTotal = objectNumber(record.disk, ['total', 'total_bytes', 'bytes_total'])
     ?? numeric(record.disk_total)
+    ?? numeric(client?.raw.disk_total)
   const diskUsed = objectNumber(record.disk, ['used', 'used_bytes', 'bytes_used'])
     ?? numeric(record.disk_used)
     ?? numeric(record.disk)
@@ -441,9 +505,14 @@ export function komariRecordToServerMonitorSnapshot(
     diskUsedBytes: diskUsed,
     diskTotalBytes: diskTotal,
     diskPercent: diskPercent ?? (diskUsed !== null && diskTotal ? clampPercent(diskUsed / diskTotal * 100) : null),
-    networkRxBytesPerSec: nestedNumber(record.net ?? record.network, ['rx', 'in', 'receive', 'download']) ?? numeric(netRecord?.rx) ?? numeric(record.net_in),
-    networkTxBytesPerSec: nestedNumber(record.net ?? record.network, ['tx', 'out', 'send', 'upload']) ?? numeric(netRecord?.tx) ?? numeric(record.net_out),
+    networkRxBytesPerSec: nestedNumber(record.net ?? record.network, ['rx', 'in', 'receive', 'download', 'down']) ?? numeric(netRecord?.rx) ?? numeric(record.net_in),
+    networkTxBytesPerSec: nestedNumber(record.net ?? record.network, ['tx', 'out', 'send', 'upload', 'up']) ?? numeric(netRecord?.tx) ?? numeric(record.net_out),
     latencyMs: null,
-    sampledAt: timestamp(record.time, receivedAt),
+    sampledAt: timestamp(record.time ?? record.updated_at ?? record.updatedAt, receivedAt),
   }
+}
+
+export function komariRecordSampleTime(record: KomariMetricRecord): number | null {
+  const value = timestamp(record.time ?? record.updated_at ?? record.updatedAt, Number.NaN)
+  return Number.isFinite(value) && value > 0 ? value : null
 }

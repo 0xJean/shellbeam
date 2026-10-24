@@ -1,3 +1,4 @@
+import { sendInteractiveInput } from '@/lib/interactive-session'
 import type { HostProfile } from '@/lib/hosts'
 import { t } from '@/lib/i18n'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
@@ -16,6 +17,13 @@ import { WorkspaceLogsApp } from './workspace-logs-app'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 import { WorkspaceServicesApp } from './workspace-services-app'
 import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
+import { DockerOpsPanel } from './docker-ops-panel'
+import { ScheduledTasksPanel } from './scheduled-tasks-panel'
+import { SitesSslPanel } from '../sites-ssl-panel'
+import { NetworkOpsPanel } from './network-ops-panel'
+import { ProviderHistoryDisclosure } from './provider-history-panel'
+import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
+import { WorkspaceStatusCards } from './workspace-status-cards'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 
 function LiveClock() {
@@ -32,6 +40,8 @@ function LiveClock() {
 }
 
 interface WorkspaceMobileShellProps {
+  activeVaultId?: string
+  sessionVaultId?: string
   sessionId: string
   hostName: string
   hostAddress: string
@@ -47,6 +57,8 @@ interface WorkspaceMobileShellProps {
 }
 
 export function WorkspaceMobileShell({
+  activeVaultId,
+  sessionVaultId,
   sessionId,
   hostName,
   hostAddress,
@@ -60,49 +72,80 @@ export function WorkspaceMobileShell({
   onEditHost,
   onBrowserCloseRequest,
 }: WorkspaceMobileShellProps) {
-  const activeHost = resolveHostForDisplay(hosts, hostId, hostAddress)
+  const [diagnosticLogUnit, setDiagnosticLogUnit] = useState('')
+  function openDiagnosticLogs(serviceName: string) { setDiagnosticLogUnit(serviceName); onSelectApp('logs') }
+  function openDiagnosticTerminal(command: string) {
+    onSelectApp('terminal')
+    void sendInteractiveInput(sessionId, command).catch(() => {})
+  }
+
+  const sessionVaultMismatch = sessionVaultId !== undefined && sessionVaultId !== activeVaultId
+  const activeHost = sessionVaultMismatch ? null : resolveHostForDisplay(hosts, hostId, hostAddress)
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
   const content = (() => {
+    if (sessionVaultMismatch && activeApp !== 'terminal') return <p role="status" className="p-6 text-sm text-muted-foreground">{t('workspace.sessionVaultMismatch')}</p>
     if (activeApp === 'assetInventory') {
       if (resolveAuthSecret) {
-        return <WorkspaceAssetInventoryApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} presentation="mobile" onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
+        return <WorkspaceAssetInventoryApp activeVaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} presentation="mobile" onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'fileTransfer') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceFileTransferApp presentation="mobile" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFileTransferApp vaultId={activeVaultId} presentation="mobile" selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'fileSystem') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceFileSystemApp presentation="mobile" sessionId={sessionId} selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceFileSystemApp vaultId={activeVaultId} presentation="mobile" sessionId={sessionId} selectedHostId={hostId} selectedHostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'processes') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceProcessesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceProcessesApp onOpenTerminal={openDiagnosticTerminal} vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'services') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceServicesApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceServicesApp onOpenLogs={openDiagnosticLogs} vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
       }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'network') {
+      if (activeHost && resolveAuthSecret) return <NetworkOpsPanel host={activeHost} vaultId={activeVaultId} resolveAuthSecret={resolveAuthSecret} onOpenServices={() => onSelectApp('services')} onOpenLogs={() => openDiagnosticLogs('')} onOpenTerminal={openDiagnosticTerminal} />
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'toolManager') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceToolManagerApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
+        return <WorkspaceToolManagerApp vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'logs') {
       if ((hostId || hostAddress) && resolveAuthSecret) {
-        return <WorkspaceLogsApp selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+        return <WorkspaceLogsApp key={`${activeVaultId ?? ""}:${hostId ?? hostAddress}:${diagnosticLogUnit}`} initialUnit={diagnosticLogUnit} vaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'docker') {
+      if (activeHost && resolveAuthSecret) {
+        return <DockerOpsPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'sitesSsl') {
+      if (activeHost && resolveAuthSecret) {
+        return <SitesSslPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
+      }
+      return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'scheduledTasks') {
+      if (activeHost && resolveAuthSecret) {
+        return <ScheduledTasksPanel activeVaultId={activeVaultId} host={activeHost} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
@@ -138,7 +181,7 @@ export function WorkspaceMobileShell({
 
       {/* Springboard (Home Screen) */}
       <motion.div 
-        className="relative z-10 flex flex-1 flex-col px-4 pt-6"
+        className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-36 pt-6"
         initial={false}
         animate={{ 
           scale: isOverview ? 1 : 0.95,
@@ -164,6 +207,11 @@ export function WorkspaceMobileShell({
         <div className="min-h-[22rem]">
           <WorkspaceAppGrid activeApp={activeApp} onSelectApp={onSelectApp} variant="ios-grid" />
         </div>
+        {isOverview && <div className="space-y-4">
+          {sessionVaultMismatch ? <p role="status" className="p-4 text-sm">{t('workspace.sessionVaultMismatch')}</p> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
+          <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
+          {activeVaultId && activeHost && <ProviderHistoryDisclosure vaultId={activeVaultId} hostId={activeHost.id} />}
+        </div>}
       </motion.div>
 
       {/* Fixed iOS Dock */}

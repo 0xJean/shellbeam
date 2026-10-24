@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { toInvokeErrorMessage } from '@/lib/invoke-error'
 
+export interface HostKeyAcceptance { host: string; port: number; fingerprint: string }
+
 export interface KnownHostEntry {
   host: string
   port: number

@@ -71,6 +71,7 @@ export function createServerMonitorLatest(
     snapshot?: ServerMonitorSnapshot | null
     lastSuccessAt?: number | null
     error?: string
+    probeTelemetry?: ServerMonitorLatest['probeTelemetry']
   } = {},
 ): ServerMonitorLatest {
   return {
@@ -87,6 +88,9 @@ export function createServerMonitorLatest(
       ? (previous?.lastSuccessAt ?? null)
       : overrides.lastSuccessAt,
     error: overrides.error,
+    probeTelemetry: overrides.probeTelemetry === undefined
+      ? (previous?.probeTelemetry ?? null)
+      : overrides.probeTelemetry,
     updatedAt: now,
   }
 }
@@ -109,5 +113,6 @@ export function getServerMonitorStatusLabel(status: ServerMonitorStatus | undefi
   if (status === 'stale') return 'stale'
   if (status === 'offline') return 'offline'
   if (status === 'paused') return 'paused'
+  if (status === 'unsupported') return 'unsupported'
   return 'checking'
 }

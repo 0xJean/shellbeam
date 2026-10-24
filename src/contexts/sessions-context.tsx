@@ -1,3 +1,4 @@
+import { hasSshConnection, hostConnectionKey } from '@/lib/hosts'
 import { parseHostKeyError, type HostKeyInfo } from '@/components/host-key-confirm-dialog'
 import { appendActivity } from '@/lib/activity-log'
 import { t } from '@/lib/i18n'
@@ -234,11 +235,12 @@ interface SessionsContextValue {
   rightPaneSessionId: string | null
   setRightPaneSessionId: (id: string | null) => void
   handleConnectHost: (hostId: string) => Promise<void>
+  openHostWorkspace: (hostId: string, app: WorkspaceAppId) => Promise<void>
   handleOpenLocalTerminal: () => Promise<void>
   handleCloseSessionTab: (sessionId: string) => void
   sendRaw: (sessionId: string, data: string) => void
   refreshInteractiveSessions: () => Promise<void>
-  initializeInteractiveSessionState: (sessionId: string) => void
+  initializeInteractiveSessionState: (sessionId: string, options?: { hostId?: string | null; connectionKind?: 'host' | 'local' | null }) => void
   cleanupClosedSession: (sessionId: string) => Promise<void>
   interactiveInputBySession: Record<string, string>
   setInteractiveInputBySession: React.Dispatch<React.SetStateAction<Record<string, string>>>
@@ -275,8 +277,12 @@ export function useSessions() {
 }
 
 export function SessionsProvider({ children, setOutput }: { children: ReactNode; setOutput: (msg: string) => void }) {
-  const { resolveAuthSecret } = useVault()
+  const { activeVaultId } = useVault()
+  const activeVaultIdRef = useRef(activeVaultId)
+  activeVaultIdRef.current = activeVaultId
   const { hosts, defaultUsername, keepAliveIntervalSecs, setSelectedHostId } = useHosts()
+  const hostsRef = useRef(hosts)
+  hostsRef.current = hosts
 
   const [interactiveSessions, setInteractiveSessions] = useState<InteractiveSessionInfo[]>([])
   const [interactiveChunksBySession, setInteractiveChunksBySession] = useState<Record<string, InteractiveOutputChunk[]>>({})
@@ -501,44 +507,38 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     setPendingHostKey(null)
   }
 
-  async function connectWithHostKeyPrompt(params: Parameters<typeof createInteractiveSession>[0]): Promise<ReturnType<typeof createInteractiveSession>> {
-    try {
-      return await createInteractiveSession(params)
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
-      const hkInfo = parseHostKeyError(msg)
-      if (hkInfo && hkInfo.code === 'host_key_unknown') {
+  async function connectWithHostKeyPrompt(params: Parameters<typeof createInteractiveSession>[0]): Promise<Awaited<ReturnType<typeof createInteractiveSession>>> {
+    let next = params
+    for (let hop = 0; hop < 3; hop += 1) {
+      try { return await createInteractiveSession(next) } catch (error) {
+        const hkInfo = parseHostKeyError(error instanceof Error ? error.message : String(error))
+        if (!hkInfo || hkInfo.code !== 'host_key_unknown') throw error
         const accepted = await new Promise<boolean>((resolve) => {
           pendingHostKeyResolveRef.current = resolve
           setPendingHostKey(hkInfo)
         })
-        if (accepted) {
-          return await createInteractiveSession({ ...params, acceptHostKey: true })
-        }
-        throw new Error('Connection cancelled: host key not accepted')
+        if (!accepted) throw new Error('Connection cancelled: host key not accepted')
+        next = { ...params, acceptedHostKey: { host: hkInfo.host, port: hkInfo.port, fingerprint: hkInfo.fingerprint } }
       }
-      throw error
     }
+    throw new Error('Host key verification did not settle')
   }
 
   async function prepareBrowserPortForwardWithHostKeyPrompt(params: Parameters<typeof prepareBrowserPortForward>[0]) {
-    try {
-      return await prepareBrowserPortForward(params)
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
-      const hkInfo = parseHostKeyError(msg)
-      if (hkInfo && hkInfo.code === 'host_key_unknown') {
+    let next = params
+    for (let hop = 0; hop < 3; hop += 1) {
+      try { return await prepareBrowserPortForward(next) } catch (error) {
+        const hkInfo = parseHostKeyError(error instanceof Error ? error.message : String(error))
+        if (!hkInfo || hkInfo.code !== 'host_key_unknown') throw error
         const accepted = await new Promise<boolean>((resolve) => {
           pendingHostKeyResolveRef.current = resolve
           setPendingHostKey(hkInfo)
         })
-        if (accepted) {
-          return await prepareBrowserPortForward({ ...params, acceptHostKey: true })
-        }
-        throw new Error('Connection cancelled: host key not accepted')
+        if (!accepted) throw new Error('Connection cancelled: host key not accepted')
+        next = { ...params, acceptedHostKey: { host: hkInfo.host, port: hkInfo.port, fingerprint: hkInfo.fingerprint } }
       }
-      throw error
     }
+    throw new Error('Host key verification did not settle')
   }
 
   function appendPaneEvent(pane: PaneId, level: PaneEvent['level'], message: string, sessionId: string | null = null) {
@@ -551,23 +551,28 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
   async function attemptReconnect(sessionId: string, hostId: string, pane: PaneId, rs: ReconnectSettings) {
     let reconnected = false
+    const sourceVaultId = interactiveSessionsRef.current.find((session) => session.sessionId === sessionId)?.vaultId ?? activeVaultId
     setPcSessionTabs((prev) => prev.map((t) => t.sessionId === sessionId ? { ...t, status: 'reconnecting' } : t))
     for (let attempt = 1; attempt <= rs.maxRetries; attempt++) {
       await new Promise<void>((r) => window.setTimeout(r, rs.intervalMs))
-      const host = hosts.find((h) => h.id === hostId)
-      if (!host) break
+      if (sourceVaultId !== activeVaultIdRef.current) break
+      const host = hostsRef.current.find((h) => h.id === hostId && (!h.vaultId || h.vaultId === sourceVaultId))
+      if (!host || !hasSshConnection(host)) break
+      const original = interactiveSessionsRef.current.find(session => session.sessionId === sessionId)
+      if (original?.connectionKey && original.connectionKey !== hostConnectionKey(host)) break
       try {
         const previousWorkspaceState = workspaceBySessionRef.current[sessionId]
         const previousBrowserState = browserBySessionRef.current[sessionId]
-        const secret = await resolveAuthSecret({ authType: host.authType, explicitSecret: '', hostForRef: host, inputMode: 'vault' })
+        const secret = undefined
         const newSession = await createInteractiveSession({
-          hostId: host.id, host: host.address, port: host.port || 22,
+          expectedConnectionKey: original?.connectionKey ?? hostConnectionKey(host),
+          vaultId: sourceVaultId, hostId: host.id, host: host.address, port: host.port || 22,
           username: host.username || defaultUsername, authType: host.authType,
           password: host.authType === 'password' ? secret : undefined,
           privateKey: host.authType === 'privateKey' ? secret : undefined,
           keepAliveIntervalSecs,
           jumpHost: host.jumpHost, jumpPort: host.jumpPort, jumpUser: host.jumpUser,
-          acceptHostKey: true,
+          acceptHostKey: false,
         })
         setInteractiveSessions((prev) => [...prev, newSession])
         initializeInteractiveSessionState(newSession.sessionId, { hostId, connectionKind: 'host' })
@@ -942,7 +947,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     const effectiveRouteMode = resolveBrowserRouteMode(state.routeMode, hasRemoteSession)
     if (effectiveRouteMode !== 'remote') return
 
-    const host = session?.hostId ? hosts.find((item) => item.id === session.hostId) : undefined
+    const host = session?.hostId ? hosts.find((item) => item.id === session.hostId && (!session.connectionKey || session.connectionKey === hostConnectionKey(item))) : undefined
     setOutput(t('browser.feedback.transportRecovering', {
       host: host?.name ?? host?.address ?? sessionId,
     }))
@@ -1081,14 +1086,16 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       const browserId = getManagedBrowserId(sessionId, state)
       const syncStartedAt = performance.now()
       const session = interactiveSessionsRef.current.find((item) => item.sessionId === sessionId)
-      const host = session?.hostId ? hosts.find((item) => item.id === session.hostId) : undefined
+      const host = session?.hostId ? hosts.find((item) => item.id === session.hostId && (!session.connectionKey || session.connectionKey === hostConnectionKey(item))) : undefined
       const authSecret = workspaceAuthBySession[sessionId]
       const hasRemoteSession = Boolean(session?.hostId)
       const effectiveRouteMode = resolveBrowserRouteMode(state.routeMode, hasRemoteSession)
       const authType = host?.authType
       const canReuseInteractiveTransport = hasRemoteSession && !!host && !!authType
       console.log('[Browser:Sync]', 'start', sessionId, 'presentation=', state.presentation, 'sourceRev=', state.sourceRevision, 'source=', state.source?.kind, 'proxyUrl=', state.proxyUrl)
+      const vaultMismatch = Boolean(session?.vaultId && session.vaultId !== activeVaultId)
       try {
+        if (vaultMismatch) throw new Error(t('workspace.sessionVaultMismatch'))
         let proxyUrl: string | undefined
         const needsProxy = effectiveRouteMode === 'remote' && state.presentation !== 'closed' && state.source?.kind === 'url' && !isLoopbackBrowserUrl(state.source.url)
         console.log('[Browser:Sync]', 'proxy check', sessionId, 'routeMode=', state.routeMode, 'effectiveRoute=', effectiveRouteMode, 'needsProxy=', needsProxy, 'hasSSH=', hasRemoteSession, 'hasHost=', !!host, 'authType=', authType ?? '(none)', 'hasSecret=', !!authSecret, 'reuseInteractive=', canReuseInteractiveTransport)
@@ -1098,12 +1105,14 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         if (needsProxy) {
           if (!browserProxyRef.current[sessionId]) {
             const proxyStartedAt = performance.now()
-            const hasJumpHost = Boolean(host!.jumpHost?.trim())
+            const hasJumpHost = Boolean(host!.jumpHostId || host!.jumpHost?.trim())
             const proxyKind = hasJumpHost ? 'socks' : 'http'
             console.log('[Browser:Sync]', `starting ${proxyKind.toUpperCase()} proxy`, sessionId)
             const proxyPort = hasJumpHost
               ? await startBrowserSocksProxy({
                 sessionId,
+                hostId: host!.id,
+                vaultId: host!.vaultId ?? activeVaultId ?? undefined,
                 host: host!.address,
                 port: host!.port || 22,
                 username: host!.username || defaultUsername,
@@ -1116,6 +1125,8 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
               })
               : await startBrowserHttpProxy({
                 sessionId,
+                hostId: host!.id,
+                vaultId: host!.vaultId ?? activeVaultId ?? undefined,
                 host: host!.address,
                 port: host!.port || 22,
                 username: host!.username || defaultUsername,
@@ -1166,6 +1177,8 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
             const prepared = await prepareBrowserPortForwardWithHostKeyPrompt({
               browserId,
               sessionId,
+              hostId: host.id,
+              vaultId: host.vaultId ?? activeVaultId ?? undefined,
               host: host.address,
               port: host.port || 22,
               username: host.username || defaultUsername,
@@ -1220,12 +1233,11 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         console.log('[Browser:Sync]', 'complete', sessionId, 'elapsedMs=', Math.round(performance.now() - syncStartedAt))
       } catch (error) {
         console.error('[Browser:Sync]', 'ERROR in syncBrowserWindow', sessionId, error)
-        const canAttemptTransportRecovery = effectiveRouteMode === 'remote'
+        const canAttemptTransportRecovery = !vaultMismatch && effectiveRouteMode === 'remote'
           && state.presentation !== 'closed'
           && state.source?.kind === 'url'
         const recoveryAttempts = browserTransportRecoveryAttemptsRef.current[sessionId] ?? 0
         if (canAttemptTransportRecovery && recoveryAttempts < 1) {
-          browserTransportRecoveryAttemptsRef.current[sessionId] = recoveryAttempts + 1
           console.log('[Browser:Sync]', 'attempting transport recovery', sessionId, 'attempt=', recoveryAttempts + 1)
           setOutput(t('browser.feedback.transportRecovering', {
             host: host?.name ?? host?.address ?? sessionId,
@@ -1234,6 +1246,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
           void stopBrowserHttpProxy(sessionId).catch(() => {})
           void stopBrowserSocksProxy(sessionId).catch(() => {})
           clearManagedBrowserRuntime(sessionId)
+          browserTransportRecoveryAttemptsRef.current[sessionId] = recoveryAttempts + 1
           setBrowserBySession((prev) => setSessionBrowserTransportStatusState(
             reloadSessionBrowserState(
               setSessionBrowserTransportState(prev, sessionId, {
@@ -1285,7 +1298,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
       clearManagedBrowserRuntimeEntry(browserId)
     }
-  }, [browserSyncRevision, defaultUsername, hosts, workspaceAuthBySession])
+  }, [activeVaultId, browserSyncRevision, defaultUsername, hosts, workspaceAuthBySession])
 
   async function refreshInteractiveSessions() {
     const sessions = await listInteractiveSessions()
@@ -1366,9 +1379,9 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
   }
 
-  async function openHostConnection(hostId: string, placeholderId?: string) {
+  async function openHostConnection(hostId: string, placeholderId?: string, workspaceApp?: WorkspaceAppId) {
     const host = hosts.find((h) => h.id === hostId)
-    if (!host) return
+    if (!host || !hasSshConnection(host)) return
     setSelectedHostId(hostId)
     const targetSessionId = placeholderId ?? `pending-${Date.now()}`
     const newTab: SessionTab = {
@@ -1380,8 +1393,8 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       hostAddress: host.address,
       status: 'connecting',
       errorMessage: undefined,
-      mode: 'terminal',
-      workspaceApp: 'overview',
+      mode: workspaceApp ? 'workspace' : 'terminal',
+      workspaceApp: workspaceApp ?? 'overview',
     }
     if (placeholderId) {
       setPcSessionTabs((prev) => prev.map((tab) => (
@@ -1392,9 +1405,10 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
     setPcActiveSessionId(targetSessionId)
     try {
-      const resolvedSecret = await resolveAuthSecret({ authType: host.authType, explicitSecret: '', hostForRef: host, inputMode: 'vault' })
+      const resolvedSecret = undefined
       const session = await connectWithHostKeyPrompt({
-        hostId: host.id, host: host.address, port: host.port || 22,
+        expectedConnectionKey: hostConnectionKey(host),
+        vaultId: activeVaultId, hostId: host.id, host: host.address, port: host.port || 22,
         username: host.username || defaultUsername, authType: host.authType,
         password: host.authType === 'password' ? resolvedSecret : undefined,
         privateKey: host.authType === 'privateKey' ? resolvedSecret : undefined,
@@ -1405,6 +1419,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       setLeftPaneSessionId(session.sessionId)
       appendPaneEvent('left', 'info', `Connected: ${host.username || defaultUsername}@${host.address}`, session.sessionId)
       initializeInteractiveSessionState(session.sessionId, { hostId: host.id, connectionKind: 'host' })
+      if (workspaceApp) setWorkspaceBySession((previous) => setSessionWorkspaceAppState(setSessionWorkspaceModeState(previous, session.sessionId, 'workspace'), session.sessionId, workspaceApp))
       setPcSessionTabs((prev) => prev.map((t) => t.sessionId === targetSessionId ? {
         ...t,
         sessionId: session.sessionId,
@@ -1413,8 +1428,8 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         connectionStage: undefined,
         status: 'connected',
         errorMessage: undefined,
-        mode: 'terminal',
-        workspaceApp: 'overview',
+        mode: workspaceApp ? 'workspace' : 'terminal',
+        workspaceApp: workspaceApp ?? 'overview',
       } : t))
       setWorkspaceAuthBySession((prev) => ({ ...prev, [session.sessionId]: resolvedSecret ?? '' }))
       setPcActiveSessionId(session.sessionId)
@@ -1440,6 +1455,29 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
   async function handleConnectHost(hostId: string) {
     await openHostConnection(hostId)
+  }
+
+  async function openHostWorkspace(hostId: string, app: WorkspaceAppId) {
+    const host = hosts.find((profile) => profile.id === hostId)
+    if (!host || !hasSshConnection(host)) return
+    const existing = interactiveSessionsRef.current.find((session) => session.hostId === hostId && session.vaultId === activeVaultId && session.status === 'running' && session.host === host.address && session.username === host.username && (!session.connectionKey || session.connectionKey === hostConnectionKey(host)))
+    if (!existing) { await openHostConnection(hostId, undefined, app); return }
+    setPcSessionTabs((previous) => previous.some((tab) => tab.sessionId === existing.sessionId) ? previous : [...previous, {
+      sessionId: existing.sessionId,
+      hostId,
+      connectionKind: 'host',
+      hostName: host.name,
+      hostAddress: host.address,
+      status: 'connected',
+      mode: 'workspace',
+      workspaceApp: app,
+    }])
+    setSelectedHostId(hostId)
+    setPcActiveSessionId(existing.sessionId)
+    if (rightPaneSessionIdRef.current === existing.sessionId) setRightPaneSessionId(null)
+    setLeftPaneSessionId(existing.sessionId)
+    setSessionMode(existing.sessionId, 'workspace')
+    setSessionWorkspaceApp(existing.sessionId, app)
   }
 
   async function openLocalConnection(placeholderId?: string) {
@@ -1542,7 +1580,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     if (!data || sessionId.startsWith('pending-')) return
 
     sendRawBufferRef.current[sessionId] = (sendRawBufferRef.current[sessionId] ?? '') + data
-    const shouldFlushImmediately = data.length > 1 || /[\r\n\x03\x04\x1b\t]/.test(data)
+    const shouldFlushImmediately = data.length > 1 || [3, 4, 9, 10, 13, 27].includes(data.charCodeAt(0))
 
     if (shouldFlushImmediately) {
       flushRaw(sessionId)
@@ -1567,7 +1605,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       syncSessionBrowserUrl, setSessionBrowserLoading, setSessionBrowserError, setSessionBrowserNavigation, closeSessionBrowser, rebuildSessionBrowserTransport,
       pcChunkEmitterRef, leftPaneSessionId, setLeftPaneSessionId,
       rightPaneSessionId, setRightPaneSessionId,
-      handleConnectHost, handleOpenLocalTerminal, handleCloseSessionTab, sendRaw, refreshInteractiveSessions,
+      handleConnectHost, openHostWorkspace, handleOpenLocalTerminal, handleCloseSessionTab, sendRaw, refreshInteractiveSessions,
       initializeInteractiveSessionState, cleanupClosedSession,
       interactiveInputBySession, setInteractiveInputBySession,
       interactiveHistoryBySession, setInteractiveHistoryBySession,

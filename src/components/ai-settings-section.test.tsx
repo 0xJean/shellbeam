@@ -28,8 +28,8 @@ describe('AI model settings', () => {
     await screen.findByText(/1 model suggestions/)
     expect(screen.getByLabelText('Model')).toHaveValue('my-existing-model')
     expect(loadAISettings().model).toBe('my-existing-model')
-    fireEvent.click(screen.getByRole('button', { name: 'my-existing-model' }))
-    fireEvent.click(screen.getByRole('button', { name: 'gpt-new-example' }))
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('listbox').querySelector('[data-value="gpt-new-example"]')!)
     expect(screen.getByLabelText('Model')).toHaveValue('gpt-new-example')
   })
 

@@ -1,6 +1,8 @@
+import { collectionCommandTimeoutMs } from './collection-limits'
 import type { AuthType } from '@/lib/ssh'
 import { invoke } from '@tauri-apps/api/core'
 import { toInvokeErrorMessage } from '@/lib/invoke-error'
+import type { HostIdentity } from './host-identity'
 
 export type CommandRunStatus = 'success' | 'failed'
 
@@ -13,6 +15,7 @@ export type CommandErrorType =
   | 'unknown'
 
 export interface CommandRunRequest {
+  vaultId?: string
   hostId?: string
   host: string
   port: number
@@ -25,9 +28,21 @@ export interface CommandRunRequest {
   jumpPort?: number
   jumpUser?: string
   command: string
+  /** May shorten the native command deadline; cannot raise its 90s ceiling. */
+  timeoutMs?: number
+}
+
+export interface VerifiedHostKey {
+  stage: 'jump' | 'target'
+  host: string
+  port: number
+  fingerprintSha256: string
+  keyType: string
 }
 
 export interface CommandRunResult {
+  hostIdentity?: HostIdentity
+  verifiedHostKeys?: VerifiedHostKey[]
   stdout: string
   stderr: string
   exitCode: number
@@ -87,7 +102,7 @@ export async function testSshConnection(payload: CommandRunRequest) {
 
 export async function runSshCommand(payload: CommandRunRequest) {
   try {
-    return await invoke<CommandRunResult>('run_ssh_command', { payload })
+    return await invoke<CommandRunResult>('run_ssh_command', { payload: payload.timeoutMs === undefined ? payload : { ...payload, timeoutMs: collectionCommandTimeoutMs(payload.timeoutMs) } })
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))
   }

@@ -32,12 +32,19 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, visible, on
   const streamBuf = useRef('')
 
   useEffect(() => {
-    if (visible) setTimeout(() => inputRef.current?.focus(), 100)
+    if (visible) {
+      const timer = setTimeout(() => inputRef.current?.focus(), 100)
+      return () => clearTimeout(timer)
+    }
+    abortRef.current?.abort()
+    abortRef.current = null
   }, [visible])
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [messages, streamingContent])
+
+  useEffect(() => () => { abortRef.current?.abort(); abortRef.current = null }, [])
 
   const handleSubmit = useCallback(async () => {
     const prompt = input.trim()
@@ -59,14 +66,20 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, visible, on
 
     const ac = createAbortController()
     abortRef.current = ac
+    ac.signal.addEventListener('abort', () => {
+      if (abortRef.current !== ac) return
+      setStreamingContent(''); setIsStreaming(false)
+    }, { once: true })
     const context = getTerminalContext()
 
     await streamAICommand(settings, prompt, context, {
       onToken(token) {
+        if (ac.signal.aborted || abortRef.current !== ac) return
         streamBuf.current += token
         setStreamingContent(streamBuf.current)
       },
       onDone() {
+        if (ac.signal.aborted || abortRef.current !== ac) return
         const content = streamBuf.current.trim()
         if (content) {
           setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: 'ai', content }])
@@ -77,19 +90,19 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, visible, on
         setTimeout(() => inputRef.current?.focus(), 50)
       },
       onError(msg) {
+        if (ac.signal.aborted || abortRef.current !== ac) return
         setError(msg)
         setStreamingContent('')
         setIsStreaming(false)
         abortRef.current = null
       },
     }, ac.signal)
-  }, [input, isStreaming, getTerminalContext])
+  }, [input, isStreaming, getTerminalContext, t])
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort()
     abortRef.current = null
-    const partial = streamBuf.current.trim()
-    if (partial) setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: 'ai', content: partial }])
+    streamBuf.current = ''
     setStreamingContent('')
     setIsStreaming(false)
   }, [])
@@ -201,12 +214,12 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, visible, on
           disabled={isStreaming}
         />
         {isStreaming ? (
-          <button type="button" onClick={handleCancel}
+          <button type="button" onClick={handleCancel} aria-label={t('ai.cancel')}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-white/10">
             <X className="h-4 w-4" />
           </button>
         ) : (
-          <button type="button" onClick={() => void handleSubmit()} disabled={!input.trim()}
+          <button type="button" onClick={() => void handleSubmit()} aria-label={t('ai.send')} disabled={!input.trim()}
             className="flex h-7 items-center gap-1.5 rounded-lg bg-primary/20 px-2.5 text-xs font-medium text-primary transition-colors hover:bg-primary/30 disabled:opacity-30">
             <Send className="h-3.5 w-3.5" />
           </button>
@@ -217,7 +230,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, visible, on
             <RotateCcw className="h-3.5 w-3.5" />
           </button>
         )}
-        <button type="button" onClick={onClose}
+        <button type="button" onClick={() => { handleCancel(); onClose() }} aria-label={t('ai.close')}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-white/10 hover:text-foreground">
           <X className="h-3.5 w-3.5" />
         </button>

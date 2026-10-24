@@ -1,12 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createAgentlessSshProbeProvider,
   createDelegatingProbeProvider,
   createProbeObservation,
   getProbeHostIdentity,
   getProbeTransport,
+  refreshProbeFreshness,
+  validateProbeSnapshotSources,
+  type ProbeSnapshot,
   type ProbeRequest,
 } from './probe-provider'
+import { UnsupportedProbeError } from './unified-probe'
 
 const host = {
   id: 'host-1',
@@ -42,6 +46,22 @@ describe('ProbeProvider contract', () => {
     expect(getProbeTransport(host)).toBe('proxy-jump')
   })
 
+  it('retains a referenced jump route even without cached display metadata', () => {
+    const referenced = { ...host, jumpHostId: 'jump-profile', jumpHost: undefined }
+    expect(getProbeTransport(referenced)).toBe('proxy-jump')
+    expect(getProbeHostIdentity(referenced).jump?.hostId).toBe('jump-profile')
+  })
+
+  it('preserves a definite non-Linux result without invented metrics or offline state', async () => {
+    const identity = { ...getProbeHostIdentity(host), jump: { hostId: 'jump', address: 'edited-bastion', port: 2200, username: 'current' } }
+    const collect = vi.fn(async () => { throw new UnsupportedProbeError('Darwin', identity) })
+    const snapshot = await createAgentlessSshProbeProvider({ dependencies: { collect } }).probe(request)
+    expect(collect).toHaveBeenCalledTimes(1)
+    expect(snapshot).toMatchObject({ health: 'unsupported', metrics: null, inventory: null, host: identity })
+    expect(snapshot.errors).toHaveLength(2)
+    expect(snapshot.errors.every((error) => error.code === 'unsupported_os')).toBe(true)
+  })
+
   it('marks observation freshness from the remote sample timestamp', () => {
     const observation = createProbeObservation({
       data: { value: 1 },
@@ -56,8 +76,22 @@ describe('ProbeProvider contract', () => {
       receivedAt: 1_000,
       ttlMs: 600,
       expiresAt: 1_100,
-      expired: false,
+      expired: false, expiryReason: null,
     })
+  })
+
+  it('derives expiry reason from the sample TTL and removes legacy stale flags at its boundary', () => {
+    const legacy = { sampledAt: 500, receivedAt: 600, ttlMs: 100, expiresAt: 10_000, expired: true }
+    expect(refreshProbeFreshness(legacy, 600)).toMatchObject({ expiresAt: 600, expired: false, expiryReason: null })
+    expect(refreshProbeFreshness(legacy, 601)).toMatchObject({ sampledAt: 500, receivedAt: 600, expiresAt: 600, expired: true, expiryReason: 'ttl-expired' })
+  })
+
+  it('rejects future observations without presenting them as expired data', () => {
+    const source = { kind: 'ssh-agentless' as const, id: 'ssh-agentless', capabilities: ['metrics' as const] }
+    const snapshot = { schemaVersion: 1, host: getProbeHostIdentity(host), provider: source, transport: 'direct', health: 'online', receivedAt: 1000, errors: [], inventory: null,
+      metrics: createProbeObservation({ data: {} as never, source, sampledAt: 900, receivedAt: 1000, ttlMs: 100 }),
+    } as ProbeSnapshot
+    expect(validateProbeSnapshotSources(snapshot, 800)).toMatchObject({ metrics: null, health: 'unknown', errors: [{ section: 'metrics', code: 'observation_source_invalid' }] })
   })
 
   it('collects metrics and inventory together while preserving partial failures', async () => {

@@ -1,3 +1,4 @@
+import type { HostKeyAcceptance } from './known-hosts'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -10,6 +11,8 @@ const INTERACTIVE_STATUS_EVENT = 'shellbeam://interactive-status'
 const INTERACTIVE_PROGRESS_EVENT = 'shellbeam://interactive-progress'
 
 export interface InteractiveSessionCreateRequest {
+  expectedConnectionKey?: string
+  vaultId?: string
   hostId?: string
   host: string
   port: number
@@ -25,9 +28,13 @@ export interface InteractiveSessionCreateRequest {
   jumpPort?: number
   jumpUser?: string
   acceptHostKey?: boolean
+  acceptedHostKey?: HostKeyAcceptance
 }
 
 export interface InteractiveSessionInfo {
+  connectionKey?: string
+  port?: number
+  vaultId?: string
   sessionId: string
   hostId?: string
   host: string

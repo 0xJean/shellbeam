@@ -1,3 +1,4 @@
+use crate::collection_limits::limits;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -5,7 +6,43 @@ use serde_json::Value;
 use crate::storage::data_file_path;
 
 const SERVER_MONITOR_DB: &str = "workspace_inventory.sqlite3";
-const HISTORY_RETENTION_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// Shared renderer/native observation key. Old unscoped rows are not migrated
+/// into a Vault because their original owner cannot be inferred safely.
+pub fn scoped_host_key(vault_id: &str, host_id: &str) -> String {
+    format!(
+        "vault:{}",
+        serde_json::to_string(&[vault_id, host_id]).expect("serialize strings")
+    )
+}
+
+pub fn scoped_host_vault(key: &str, host_id: &str) -> Option<String> {
+    let parts: Vec<String> = serde_json::from_str(key.strip_prefix("vault:")?).ok()?;
+    if parts.len() != 2
+        || parts[0].trim().is_empty()
+        || parts[1].is_empty()
+        || parts[1] != host_id
+        || key != scoped_host_key(&parts[0], host_id)
+    {
+        return None;
+    }
+    Some(parts[0].clone())
+}
+
+pub fn observation_matches_vaults(key: &str, host_id: &str, vault_ids: &[String]) -> bool {
+    scoped_host_vault(key, host_id).is_some_and(|vault| vault_ids.contains(&vault))
+}
+
+fn require_scoped_key(key: &str) -> Result<(), String> {
+    let parts: Vec<String> = key
+        .strip_prefix("vault:")
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .ok_or("OBSERVATION_VAULT_SCOPE_REQUIRED")?;
+    if parts.len() != 2 || scoped_host_vault(key, &parts[1]).is_none() {
+        return Err("OBSERVATION_VAULT_SCOPE_REQUIRED".into());
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,7 +135,12 @@ fn parse_snapshot(raw: Option<String>) -> Result<Option<Value>, String> {
 #[tauri::command]
 pub fn list_server_monitor_latest(
     app: tauri::AppHandle,
+    vault_ids: Option<Vec<String>>,
 ) -> Result<Vec<ServerMonitorLatest>, String> {
+    let vault_ids = vault_ids.unwrap_or_default();
+    if vault_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let conn = open_server_monitor_db(&app)?;
     let mut stmt = conn
         .prepare(
@@ -148,6 +190,9 @@ pub fn list_server_monitor_latest(
             error,
             updated_at,
         ) = row.map_err(|err| format!("Read server monitor latest failed: {err}"))?;
+        if !observation_matches_vaults(&host_key, &host_id, &vault_ids) {
+            continue;
+        }
         latest.push(ServerMonitorLatest {
             host_key,
             host_id,
@@ -172,6 +217,7 @@ pub fn list_server_monitor_history(
     app: tauri::AppHandle,
     query: ServerMonitorHistoryQuery,
 ) -> Result<Vec<ServerMonitorHistoryPoint>, String> {
+    require_scoped_key(&query.host_key)?;
     let conn = open_server_monitor_db(&app)?;
     let from = query.from.unwrap_or(0);
     let to = query.to.unwrap_or(i64::MAX);
@@ -218,6 +264,16 @@ pub fn save_server_monitor_result(
     app: tauri::AppHandle,
     payload: ServerMonitorResultPayload,
 ) -> Result<(), String> {
+    if scoped_host_vault(&payload.latest.host_key, &payload.latest.host_id).is_none() {
+        return Err("OBSERVATION_VAULT_SCOPE_REQUIRED".into());
+    }
+    if payload
+        .history
+        .as_ref()
+        .is_some_and(|history| history.host_key != payload.latest.host_key)
+    {
+        return Err("OBSERVATION_HOST_SCOPE_MISMATCH".into());
+    }
     let mut conn = open_server_monitor_db(&app)?;
     persist_result(&mut conn, payload)
 }
@@ -238,7 +294,9 @@ fn persist_result(
         |row| Ok((row.get(0)?,row.get(1)?)),
     ).optional().map_err(|err| format!("Read previous monitor sample failed: {err}"))?;
     if let Some((snapshot, Some(success_at))) = previous {
-        if success_at > payload.latest.last_success_at.unwrap_or(i64::MIN) {
+        if payload.latest.status != "unsupported"
+            && success_at > payload.latest.last_success_at.unwrap_or(i64::MIN)
+        {
             payload.latest.snapshot = snapshot
                 .map(|raw| serde_json::from_str(&raw))
                 .transpose()
@@ -311,7 +369,7 @@ fn persist_result(
         .map_err(|err| format!("Save server monitor history failed: {err}"))?;
     }
 
-    let cutoff = payload.latest.updated_at - HISTORY_RETENTION_MS;
+    let cutoff = payload.latest.updated_at - limits().history.monitor_retention_ms;
     tx.execute(
         "DELETE FROM server_monitor_history WHERE sampled_at < ?1",
         params![cutoff],
@@ -327,6 +385,85 @@ fn persist_result(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn observation_keys_keep_same_id_vaults_separate_and_ignore_legacy_rows() {
+        let a = scoped_host_key("vault-A", "same-host");
+        let b = scoped_host_key("vault-B", "same-host");
+        assert_ne!(a, b);
+        assert!(observation_matches_vaults(
+            &b,
+            "same-host",
+            &["vault-B".into()]
+        ));
+        for key in [
+            a,
+            "same-host".into(),
+            "vault:[\"vault-B\", \"same-host\"]".to_string(),
+            scoped_host_key("vault-B", "different-host"),
+        ] {
+            assert!(!observation_matches_vaults(
+                &key,
+                "same-host",
+                &["vault-B".into()]
+            ));
+        }
+        assert!(require_scoped_key("same-host").is_err());
+        assert_eq!(
+            scoped_host_key("vault:ops", "host:1\""),
+            "vault:[\"vault:ops\",\"host:1\\\"\"]"
+        );
+    }
+
+    #[test]
+    fn persisted_monitor_latest_and_history_do_not_collide_across_vaults() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE server_monitor_latest (host_key TEXT PRIMARY KEY,host_id TEXT,host_name TEXT,host_address TEXT,username TEXT,port INTEGER,status TEXT,snapshot_json TEXT,last_attempt_at INTEGER,last_success_at INTEGER,error TEXT,updated_at INTEGER); CREATE TABLE server_monitor_history (host_key TEXT,sampled_at INTEGER,snapshot_json TEXT,PRIMARY KEY(host_key,sampled_at));").unwrap();
+        for (vault, cpu) in [("vault-A", 12), ("vault-B", 87)] {
+            let key = scoped_host_key(vault, "same-host");
+            persist_result(
+                &mut conn,
+                ServerMonitorResultPayload {
+                    latest: ServerMonitorLatest {
+                        host_key: key.clone(),
+                        host_id: "same-host".into(),
+                        host_name: "host".into(),
+                        host_address: "same-address".into(),
+                        username: "ops".into(),
+                        port: 22,
+                        status: "online".into(),
+                        snapshot: Some(json!({"cpuPercent":cpu})),
+                        last_attempt_at: 100,
+                        last_success_at: Some(100),
+                        error: None,
+                        updated_at: 100,
+                    },
+                    history: Some(ServerMonitorHistoryPoint {
+                        host_key: key,
+                        sampled_at: 100,
+                        snapshot: json!({"cpuPercent":cpu}),
+                    }),
+                },
+            )
+            .unwrap();
+        }
+        for (vault, cpu) in [("vault-A", 12), ("vault-B", 87)] {
+            let key = scoped_host_key(vault, "same-host");
+            for table in ["server_monitor_latest", "server_monitor_history"] {
+                let raw: String = conn
+                    .query_row(
+                        &format!("SELECT snapshot_json FROM {table} WHERE host_key=?1"),
+                        params![key],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    serde_json::from_str::<Value>(&raw).unwrap()["cpuPercent"],
+                    cpu
+                );
+            }
+        }
+    }
 
     #[test]
     fn late_sampler_cannot_replace_newer_mcp_metrics_and_history_is_idempotent() {
@@ -397,6 +534,21 @@ mod tests {
             serde_json::from_str::<Value>(&raw).unwrap()["cpuPercent"],
             20
         );
+        let mut unsupported = payload(400, 0);
+        unsupported.latest.status = "unsupported".into();
+        unsupported.latest.snapshot = None;
+        unsupported.latest.last_success_at = None;
+        unsupported.history = None;
+        persist_result(&mut conn, unsupported).unwrap();
+        let (status, snapshot): (String, Option<String>) = conn
+            .query_row(
+                "SELECT status,snapshot_json FROM server_monitor_latest",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "unsupported");
+        assert!(snapshot.is_none());
     }
 }
 

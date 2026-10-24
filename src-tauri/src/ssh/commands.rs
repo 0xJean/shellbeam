@@ -1,482 +1,115 @@
-use std::io::Read;
-use std::net::{TcpStream, ToSocketAddrs};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
-use std::{fs, path::PathBuf};
-use uuid::Uuid;
-
-use ssh2::Session;
-
-use super::{
-    failed_result, format_ssh_handshake_error, CommandRunResult, ConnectionTestResult, SshRequest,
-    TCP_CONNECT_TIMEOUT_SECS,
-};
+use super::transport::{self, Connection, Route};
+use super::{failed_result, CommandRunResult, ConnectionTestResult, SshRequest};
+use crate::collection_limits::limits;
 use crate::history::append_history;
+use serde_json::Value;
+use std::io::Read;
+use std::time::{Duration, Instant};
 
-fn has_jump_host(jump_host: Option<&str>) -> bool {
-    jump_host
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
+pub fn remote_output_limit() -> usize {
+    limits().remote.output_bytes
 }
 
-fn write_proxy_jump_key(private_key: &str) -> Result<PathBuf, String> {
-    let key_path =
-        std::env::temp_dir().join(format!("shellbeam-ssh-command-{}.key", Uuid::new_v4()));
-    fs::write(&key_path, private_key)
-        .map_err(|err| format!("Failed to write temporary SSH key: {err}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(err) = fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600)) {
-            let _ = fs::remove_file(&key_path);
-            return Err(format!("Failed to protect temporary SSH key: {err}"));
-        }
-    }
-    Ok(key_path)
+fn command_timeout(requested_ms: Option<u64>) -> Duration {
+    // Workspace probes can shorten their deadline, never extend the desktop
+    // one-shot command ceiling. Explicit MCP tasks have a separate budget.
+    Duration::from_millis(
+        requested_ms
+            .unwrap_or(limits().remote.command_timeout_ms)
+            .clamp(
+                limits().remote.min_command_timeout_ms,
+                limits().remote.command_timeout_ms,
+            ),
+    )
 }
 
-fn run_proxy_jump_command(payload: &SshRequest, started_at: Instant) -> CommandRunResult {
-    if payload.auth_type != "privateKey" {
-        return failed_result(
-            started_at,
-            "SSH commands over a jump host currently require private key authentication"
-                .to_string(),
-            "validation",
-            "validation_error",
-            "client",
-            false,
-        );
-    }
-    let private_key = match payload
-        .private_key
+fn route(app: &tauri::AppHandle, payload: &SshRequest) -> Result<(Route, Value), String> {
+    if let Some(host_id) = payload
+        .host_id
         .as_deref()
-        .filter(|key| !key.trim().is_empty())
+        .filter(|id| !id.trim().is_empty())
     {
-        Some(value) => value,
-        None => {
-            return failed_result(
-                started_at,
-                "Private key is required for jump-host SSH commands".to_string(),
-                "validation",
-                "validation_error",
-                "client",
-                false,
-            )
+        if let Some(vault_id) = payload.vault_id.as_deref() {
+            return transport::resolve_host_route_with_identity(app, vault_id, host_id);
         }
-    };
-    let jump_host = match payload
-        .jump_host
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some(value) => value,
-        None => {
-            return failed_result(
-                started_at,
-                "Jump host is not configured".to_string(),
-                "validation",
-                "validation_error",
-                "client",
-                false,
-            )
-        }
-    };
-    let key_path = match write_proxy_jump_key(private_key) {
-        Ok(path) => path,
-        Err(message) => {
-            return failed_result(
-                started_at,
-                message,
-                "internal",
-                "key_write_failed",
-                "client",
-                true,
-            )
-        }
-    };
-    let jump_user = payload
-        .jump_user
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(&payload.username);
-    let mut command = Command::new("ssh");
-    command
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
-        .arg("ConnectTimeout=10")
-        .arg("-o")
-        .arg("StrictHostKeyChecking=no")
-        .arg("-o")
-        .arg("UserKnownHostsFile=/dev/null")
-        .arg("-p")
-        .arg(payload.port.to_string())
-        .arg("-i")
-        .arg(&key_path)
-        .arg("-J")
-        .arg(format!(
-            "{jump_user}@{jump_host}:{}",
-            payload.jump_port.unwrap_or(22)
-        ))
-        .arg(format!("{}@{}", payload.username, payload.host))
-        .arg(&payload.command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let output = command.output();
-    let _ = fs::remove_file(&key_path);
-    let output = match output {
-        Ok(output) => output,
-        Err(err) => {
-            return failed_result(
-                started_at,
-                format!("Failed to start SSH ProxyJump command: {err}"),
-                "network",
-                "ssh_process_failed",
-                "ssh",
-                true,
-            )
-        }
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    let exit_code = output.status.code().unwrap_or(-1);
-    CommandRunResult {
-        stdout,
-        stderr,
-        exit_code,
-        duration_ms: started_at.elapsed().as_millis(),
-        error_type: if exit_code == 0 {
-            None
-        } else {
-            Some("command".to_string())
-        },
-        error_code: if exit_code == 0 {
-            None
-        } else {
-            Some("remote_command_failed".to_string())
-        },
-        error_source: if exit_code == 0 {
-            None
-        } else {
-            Some("remote".to_string())
-        },
-        retryable: if exit_code == 0 { None } else { Some(false) },
     }
+    let route = transport::legacy_route(
+        &payload.host,
+        payload.port,
+        &payload.username,
+        &payload.auth_type,
+        payload.password.as_deref(),
+        payload.private_key.as_deref(),
+        payload.passphrase.as_deref(),
+        payload.jump_host.as_deref(),
+        payload.jump_port,
+        payload.jump_user.as_deref(),
+    );
+    let id = payload
+        .host_id
+        .clone()
+        .unwrap_or_else(|| format!("{}@{}:{}", payload.username, payload.host, payload.port));
+    let identity = transport::route_identity(&route, &id, None);
+    Ok((route, identity))
 }
 
-fn test_proxy_jump_connection(payload: &SshRequest, started_at: Instant) -> ConnectionTestResult {
-    if payload.auth_type != "privateKey" {
-        return failed_connection_test(
-            started_at,
-            "SSH connections over a jump host currently require private key authentication"
-                .to_string(),
-            "validation",
-            "validation_error",
-            "client",
-            false,
-        );
-    }
-    let private_key = match payload
-        .private_key
-        .as_deref()
-        .filter(|key| !key.trim().is_empty())
+fn connection_failure(start: Instant, error: String) -> CommandRunResult {
+    let data = serde_json::from_str::<Value>(&error).ok();
+    let code = data
+        .as_ref()
+        .and_then(|value| value["code"].as_str())
+        .unwrap_or(&error);
+    let stage = data
+        .as_ref()
+        .and_then(|value| value["source"].as_str())
+        .unwrap_or("ssh");
+    let kind = if code.contains("auth")
+        || code.contains("CREDENTIAL")
+        || code.contains("credential")
     {
-        Some(value) => value,
-        None => {
-            return failed_connection_test(
-                started_at,
-                "Private key is required for jump-host SSH connections".to_string(),
-                "validation",
-                "validation_error",
-                "client",
-                false,
-            )
-        }
-    };
-    let jump_host = match payload
-        .jump_host
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+        "auth"
+    } else if code.contains("host_key") || code.contains("VAULT") || code.contains("HOST_NOT_FOUND")
     {
-        Some(value) => value,
-        None => {
-            return failed_connection_test(
-                started_at,
-                "Jump host is not configured".to_string(),
-                "validation",
-                "validation_error",
-                "client",
-                false,
-            )
-        }
-    };
-    let key_path = match write_proxy_jump_key(private_key) {
-        Ok(path) => path,
-        Err(message) => {
-            return failed_connection_test(
-                started_at,
-                message,
-                "internal",
-                "key_write_failed",
-                "client",
-                true,
-            )
-        }
-    };
-    let jump_user = payload
-        .jump_user
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(&payload.username);
-    let mut command = Command::new("ssh");
-    command
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
-        .arg("ConnectTimeout=10")
-        .arg("-o")
-        .arg("StrictHostKeyChecking=no")
-        .arg("-o")
-        .arg("UserKnownHostsFile=/dev/null")
-        .arg("-p")
-        .arg(payload.port.to_string())
-        .arg("-i")
-        .arg(&key_path)
-        .arg("-J")
-        .arg(format!(
-            "{jump_user}@{jump_host}:{}",
-            payload.jump_port.unwrap_or(22)
-        ))
-        .arg(format!("{}@{}", payload.username, payload.host))
-        .arg("true")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    let output = command.output();
-    let _ = fs::remove_file(&key_path);
-    let output = match output {
-        Ok(output) => output,
-        Err(err) => {
-            return failed_connection_test(
-                started_at,
-                format!("Failed to start SSH ProxyJump connection: {err}"),
-                "network",
-                "ssh_process_failed",
-                "ssh",
-                true,
-            )
-        }
-    };
-    if output.status.success() {
-        ConnectionTestResult {
-            connected: true,
-            duration_ms: started_at.elapsed().as_millis(),
-            error_type: None,
-            message: None,
-            error_code: None,
-            error_source: None,
-            retryable: None,
-        }
+        "validation"
     } else {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        failed_connection_test(
-            started_at,
-            if message.is_empty() {
-                "SSH ProxyJump connection failed".to_string()
-            } else {
-                message
-            },
-            "network",
-            "connection_failed",
-            "ssh",
-            true,
-        )
-    }
-}
-
-fn failed_connection_test(
-    started_at: Instant,
-    message: String,
-    error_type: &str,
-    error_code: &str,
-    error_source: &str,
-    retryable: bool,
-) -> ConnectionTestResult {
-    ConnectionTestResult {
-        connected: false,
-        duration_ms: started_at.elapsed().as_millis(),
-        error_type: Some(error_type.to_string()),
-        message: Some(message),
-        error_code: Some(error_code.to_string()),
-        error_source: Some(error_source.to_string()),
-        retryable: Some(retryable),
-    }
+        "network"
+    };
+    failed_result(start, error.clone(), kind, code, stage, false)
 }
 
 #[tauri::command]
-pub async fn test_ssh_connection(payload: SshRequest) -> Result<ConnectionTestResult, String> {
-    tauri::async_runtime::spawn_blocking(move || test_ssh_connection_sync(payload))
-        .await
-        .map_err(|e| format!("Task panicked: {e}"))
-}
-
-fn test_ssh_connection_sync(payload: SshRequest) -> ConnectionTestResult {
-    let started_at = Instant::now();
-    if has_jump_host(payload.jump_host.as_deref()) {
-        return test_proxy_jump_connection(&payload, started_at);
-    }
-    let address = format!("{}:{}", payload.host, payload.port);
-    let addr = match address.to_socket_addrs().and_then(|mut a| {
-        a.next()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "No addresses"))
-    }) {
-        Ok(a) => a,
-        Err(err) => {
-            return failed_connection_test(
-                started_at,
-                format!("DNS resolve failed: {err}"),
-                "network",
-                "network_error",
-                "ssh",
-                true,
-            )
-        }
-    };
-    let tcp = match TcpStream::connect_timeout(&addr, Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
-    {
-        Ok(tcp) => tcp,
-        Err(err) => {
-            return failed_connection_test(
-                started_at,
-                format!("TCP connect failed: {err}"),
-                "network",
-                "network_error",
-                "ssh",
-                true,
-            );
-        }
-    };
-
-    tcp.set_nodelay(true).ok();
-    tcp.set_read_timeout(Some(Duration::from_secs(15))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(15))).ok();
-
-    let mut session = match Session::new() {
-        Ok(session) => session,
-        Err(err) => {
-            return failed_connection_test(
-                started_at,
-                format!("Create SSH session failed: {err}"),
-                "internal",
-                "session_create_failed",
-                "ssh",
-                true,
-            );
-        }
-    };
-
-    session.set_tcp_stream(tcp);
-    if let Err(err) = session.handshake() {
-        return failed_connection_test(
-            started_at,
-            format_ssh_handshake_error(&err.to_string()),
-            "network",
-            "handshake_failed",
-            "ssh",
-            true,
-        );
-    }
-
-    match payload.auth_type.as_str() {
-        "password" => {
-            let password = payload.password.as_deref().unwrap_or_default();
-            if password.is_empty() {
-                return failed_connection_test(
-                    started_at,
-                    "password is required for password auth".to_string(),
-                    "validation",
-                    "validation_error",
-                    "client",
-                    false,
-                );
-            }
-            if let Err(err) = session.userauth_password(&payload.username, password) {
-                return failed_connection_test(
-                    started_at,
-                    format!("Password auth failed: {err}"),
-                    "auth",
-                    "auth_failed",
-                    "ssh",
-                    false,
-                );
+pub async fn test_ssh_connection(
+    app: tauri::AppHandle,
+    payload: SshRequest,
+) -> Result<ConnectionTestResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let start = Instant::now();
+        match route(&app, &payload).and_then(|(route, _)| transport::connect(&app, &route)) {
+            Ok(_) => ConnectionTestResult {
+                connected: true,
+                duration_ms: start.elapsed().as_millis(),
+                error_type: None,
+                message: None,
+                error_code: None,
+                error_source: None,
+                retryable: None,
+            },
+            Err(error) => {
+                let failed = connection_failure(start, error);
+                ConnectionTestResult {
+                    connected: false,
+                    duration_ms: failed.duration_ms,
+                    error_type: failed.error_type,
+                    message: Some(failed.stderr),
+                    error_code: failed.error_code,
+                    error_source: failed.error_source,
+                    retryable: failed.retryable,
+                }
             }
         }
-        "privateKey" => {
-            let private_key = payload.private_key.as_deref().unwrap_or_default();
-            if private_key.is_empty() {
-                return failed_connection_test(
-                    started_at,
-                    "privateKey is required for private key auth".to_string(),
-                    "validation",
-                    "validation_error",
-                    "client",
-                    false,
-                );
-            }
-            if let Err(err) = session.userauth_pubkey_memory(
-                &payload.username,
-                None,
-                private_key,
-                payload.passphrase.as_deref(),
-            ) {
-                return failed_connection_test(
-                    started_at,
-                    format!("Private key auth failed: {err}"),
-                    "auth",
-                    "auth_failed",
-                    "ssh",
-                    false,
-                );
-            }
-        }
-        _ => {
-            return failed_connection_test(
-                started_at,
-                "Unsupported authType. Use password or privateKey.".to_string(),
-                "validation",
-                "validation_error",
-                "client",
-                false,
-            );
-        }
-    };
-
-    if !session.authenticated() {
-        return failed_connection_test(
-            started_at,
-            "SSH authentication failed".to_string(),
-            "auth",
-            "auth_failed",
-            "ssh",
-            false,
-        );
-    }
-
-    ConnectionTestResult {
-        connected: true,
-        duration_ms: started_at.elapsed().as_millis(),
-        error_type: None,
-        message: None,
-        error_code: None,
-        error_source: None,
-        retryable: None,
-    }
+    })
+    .await
+    .map_err(|error| format!("SSH task failed: {error}"))
 }
 
 #[tauri::command]
@@ -486,292 +119,224 @@ pub async fn run_ssh_command(
 ) -> Result<CommandRunResult, String> {
     tauri::async_runtime::spawn_blocking(move || run_ssh_command_sync(app, payload))
         .await
-        .map_err(|e| format!("Task panicked: {e}"))
+        .map_err(|error| format!("SSH task failed: {error}"))
 }
 
 pub(crate) fn run_ssh_command_sync(app: tauri::AppHandle, payload: SshRequest) -> CommandRunResult {
-    let started_at = Instant::now();
+    let start = Instant::now();
     if payload.command.trim().is_empty() {
-        let result = failed_result(
-            started_at,
-            "command is required".to_string(),
+        return failed_result(
+            start,
+            "command is required".into(),
             "validation",
             "validation_error",
             "client",
             false,
         );
+    }
+    let result = match route(&app, &payload).and_then(|(route, identity)| {
+        transport::connect(&app, &route).map(|connection| (connection, identity))
+    }) {
+        Ok((connection, identity)) => {
+            match transport::ensure_vault_unlocked(&app, payload.vault_id.as_deref()) {
+                Ok(()) => {
+                    let mut result = execute(
+                        connection,
+                        &payload.command,
+                        start,
+                        command_timeout(payload.timeout_ms),
+                    );
+                    if result.verified_host_keys.is_some() {
+                        result.host_identity = Some(identity);
+                    }
+                    result
+                }
+                Err(error) => connection_failure(start, error),
+            }
+        }
+        Err(error) => connection_failure(start, error),
+    };
+    // Saved-host operations have their own bounded OperationJob journal. Do
+    // not persist background commands, provider output or credentials there.
+    if payload.vault_id.is_none() {
         let _ = append_history(&app, &payload, &result);
-        return result;
     }
-    if has_jump_host(payload.jump_host.as_deref()) {
-        let mut result = run_proxy_jump_command(&payload, started_at);
-        if let Err(err) = append_history(&app, &payload, &result) {
-            let append_message = format!("Persist history failed: {err}");
-            if result.stderr.is_empty() {
-                result.stderr = append_message;
-            } else {
-                result.stderr = format!("{}\n{append_message}", result.stderr);
-            }
-            if result.error_type.is_none() {
-                result.error_type = Some("internal".to_string());
-                result.error_code = Some("history_persist_failed".to_string());
-                result.error_source = Some("storage".to_string());
-                result.retryable = Some(true);
-            }
-        }
-        return result;
-    }
-    let mut result = (|| {
-        if payload.command.trim().is_empty() {
-            return failed_result(
-                started_at,
-                "command is required".to_string(),
-                "validation",
-                "validation_error",
-                "client",
-                false,
-            );
-        }
-
-        let address = format!("{}:{}", payload.host, payload.port);
-        let addr = match address.to_socket_addrs().and_then(|mut a| {
-            a.next()
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "No addresses"))
-        }) {
-            Ok(a) => a,
-            Err(err) => {
-                return failed_result(
-                    started_at,
-                    format!("DNS resolve failed: {err}"),
-                    "network",
-                    "network_error",
-                    "ssh",
-                    true,
-                )
-            }
-        };
-        let tcp = match TcpStream::connect_timeout(
-            &addr,
-            Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS),
-        ) {
-            Ok(tcp) => tcp,
-            Err(err) => {
-                return failed_result(
-                    started_at,
-                    format!("TCP connect failed: {err}"),
-                    "network",
-                    "network_error",
-                    "ssh",
-                    true,
-                )
-            }
-        };
-        tcp.set_nodelay(true).ok();
-        tcp.set_read_timeout(Some(Duration::from_secs(15))).ok();
-        tcp.set_write_timeout(Some(Duration::from_secs(15))).ok();
-
-        let mut session = match Session::new() {
-            Ok(session) => session,
-            Err(err) => {
-                return failed_result(
-                    started_at,
-                    format!("Create SSH session failed: {err}"),
-                    "internal",
-                    "session_create_failed",
-                    "ssh",
-                    true,
-                )
-            }
-        };
-        session.set_tcp_stream(tcp);
-        if let Err(err) = session.handshake() {
-            return failed_result(
-                started_at,
-                format_ssh_handshake_error(&err.to_string()),
-                "network",
-                "handshake_failed",
-                "ssh",
-                true,
-            );
-        }
-
-        let auth_error = match payload.auth_type.as_str() {
-            "password" => {
-                let Some(password) = payload.password.as_deref() else {
-                    return failed_result(
-                        started_at,
-                        "password is required for password auth".to_string(),
-                        "validation",
-                        "validation_error",
-                        "client",
-                        false,
-                    );
-                };
-                session
-                    .userauth_password(&payload.username, password)
-                    .err()
-                    .map(|err| format!("Password auth failed: {err}"))
-            }
-            "privateKey" => {
-                let Some(private_key) = payload.private_key.as_deref() else {
-                    return failed_result(
-                        started_at,
-                        "privateKey is required for private key auth".to_string(),
-                        "validation",
-                        "validation_error",
-                        "client",
-                        false,
-                    );
-                };
-                session
-                    .userauth_pubkey_memory(
-                        &payload.username,
-                        None,
-                        private_key,
-                        payload.passphrase.as_deref(),
-                    )
-                    .err()
-                    .map(|err| format!("Private key auth failed: {err}"))
-            }
-            _ => {
-                return failed_result(
-                    started_at,
-                    "Unsupported authType. Use password or privateKey.".to_string(),
-                    "validation",
-                    "validation_error",
-                    "client",
-                    false,
-                )
-            }
-        };
-
-        if let Some(message) = auth_error {
-            return failed_result(started_at, message, "auth", "auth_failed", "ssh", false);
-        }
-
-        if !session.authenticated() {
-            return failed_result(
-                started_at,
-                "SSH authentication failed".to_string(),
-                "auth",
-                "auth_failed",
-                "ssh",
-                false,
-            );
-        }
-
-        let mut channel = match session.channel_session() {
-            Ok(channel) => channel,
-            Err(err) => {
-                return failed_result(
-                    started_at,
-                    format!("Open channel failed: {err}"),
-                    "command",
-                    "open_channel_failed",
-                    "ssh",
-                    true,
-                )
-            }
-        };
-
-        if let Err(err) = channel.exec(&payload.command) {
-            return failed_result(
-                started_at,
-                format!("Execute command failed: {err}"),
-                "command",
-                "execute_failed",
-                "ssh",
-                false,
-            );
-        }
-
-        let mut stdout = String::new();
-        if let Err(err) = channel.read_to_string(&mut stdout) {
-            return failed_result(
-                started_at,
-                format!("Read stdout failed: {err}"),
-                "command",
-                "read_stdout_failed",
-                "ssh",
-                true,
-            );
-        }
-
-        let mut stderr = String::new();
-        if let Err(err) = channel.stderr().read_to_string(&mut stderr) {
-            return failed_result(
-                started_at,
-                format!("Read stderr failed: {err}"),
-                "command",
-                "read_stderr_failed",
-                "ssh",
-                true,
-            );
-        }
-
-        if let Err(err) = channel.wait_close() {
-            return failed_result(
-                started_at,
-                format!("Wait channel close failed: {err}"),
-                "command",
-                "wait_close_failed",
-                "ssh",
-                true,
-            );
-        }
-
-        let exit_code = match channel.exit_status() {
-            Ok(code) => code,
-            Err(err) => {
-                return failed_result(
-                    started_at,
-                    format!("Read exit code failed: {err}"),
-                    "command",
-                    "read_exit_code_failed",
-                    "ssh",
-                    true,
-                )
-            }
-        };
-
-        CommandRunResult {
-            stdout,
-            stderr,
-            exit_code,
-            duration_ms: started_at.elapsed().as_millis(),
-            error_type: if exit_code == 0 {
-                None
-            } else {
-                Some("command".to_string())
-            },
-            error_code: if exit_code == 0 {
-                None
-            } else {
-                Some("remote_command_failed".to_string())
-            },
-            error_source: if exit_code == 0 {
-                None
-            } else {
-                Some("remote".to_string())
-            },
-            retryable: if exit_code == 0 { None } else { Some(false) },
-        }
-    })();
-
-    if let Err(err) = append_history(&app, &payload, &result) {
-        let append_message = format!("Persist history failed: {err}");
-        if result.stderr.is_empty() {
-            result.stderr = append_message;
-        } else {
-            result.stderr = format!("{}\n{append_message}", result.stderr);
-        }
-        if result.error_type.is_none() {
-            result.error_type = Some("internal".to_string());
-            result.error_code = Some("history_persist_failed".to_string());
-            result.error_source = Some("storage".to_string());
-            result.retryable = Some(true);
-        }
-    }
-
     result
+}
+
+pub fn execute(
+    connection: Connection,
+    command: &str,
+    start: Instant,
+    timeout: Duration,
+) -> CommandRunResult {
+    if start.elapsed() >= timeout {
+        return failed_result(
+            start,
+            "Command deadline elapsed before execution; no command was sent".into(),
+            "network",
+            "target_timeout_before_execution",
+            "target",
+            false,
+        );
+    }
+    let session = &connection.session;
+    let mut channel = match session.channel_session() {
+        Ok(channel) => channel,
+        Err(error) => return connection_failure(start, error.to_string()),
+    };
+    if start.elapsed() >= timeout {
+        return failed_result(
+            start,
+            "Command deadline elapsed before execution; no command was sent".into(),
+            "network",
+            "target_timeout_before_execution",
+            "target",
+            false,
+        );
+    }
+    if channel.exec(command).is_err() {
+        return failed_result(
+            start,
+            "Remote command acceptance is unknown; verify before retrying".into(),
+            "unknown",
+            "remote_state_unknown",
+            "target",
+            false,
+        );
+    }
+    session.set_blocking(false);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        if start.elapsed() >= timeout {
+            return failed_result(
+                start,
+                "Remote command outcome is unknown after timeout".into(),
+                "network",
+                "target_timeout",
+                "target",
+                false,
+            );
+        }
+        let mut progress = false;
+        for stream in 0..2 {
+            let read = if stream == 0 {
+                channel.read(&mut buffer)
+            } else {
+                channel.stderr().read(&mut buffer)
+            };
+            match read {
+                Ok(0) => {}
+                Ok(count) => {
+                    if stdout.len() + stderr.len() + count > remote_output_limit() {
+                        return failed_result(
+                            start,
+                            "Remote output limit exceeded; verify the operation before retrying"
+                                .into(),
+                            "unknown",
+                            "output_limit",
+                            "target",
+                            false,
+                        );
+                    }
+                    if stream == 0 {
+                        stdout.extend_from_slice(&buffer[..count]);
+                    } else {
+                        stderr.extend_from_slice(&buffer[..count]);
+                    }
+                    progress = true;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => {
+                    return failed_result(
+                        start,
+                        "Remote command outcome is unknown after disconnect".into(),
+                        "network",
+                        "target_disconnected",
+                        "target",
+                        false,
+                    )
+                }
+            }
+        }
+        if channel.eof() && !progress {
+            break;
+        }
+        if !progress {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    session.set_blocking(true);
+    session.set_timeout(3000);
+    if channel.wait_close().is_err() {
+        return failed_result(
+            start,
+            "Remote command completion is unknown".into(),
+            "unknown",
+            "remote_state_unknown",
+            "target",
+            false,
+        );
+    }
+    match channel.exit_signal() {
+        Ok(signal) if signal.exit_signal.is_none() => {}
+        _ => {
+            return failed_result(
+                start,
+                "Remote command was signaled or its exit state is unknown; verify before retrying"
+                    .into(),
+                "unknown",
+                "remote_state_unknown",
+                "target",
+                false,
+            )
+        }
+    }
+    let exit_code = match channel.exit_status() {
+        Ok(code) => code,
+        Err(_) => {
+            return failed_result(
+                start,
+                "Remote exit status is unknown".into(),
+                "unknown",
+                "remote_state_unknown",
+                "target",
+                false,
+            )
+        }
+    };
+    CommandRunResult {
+        host_identity: None,
+        verified_host_keys: Some(connection.verified_host_keys.clone()),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        exit_code,
+        duration_ms: start.elapsed().as_millis(),
+        error_type: (exit_code != 0).then(|| "command".into()),
+        error_code: (exit_code != 0).then(|| "remote_command_failed".into()),
+        error_source: (exit_code != 0).then(|| "remote".into()),
+        retryable: None,
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn caller_can_shorten_but_never_extend_desktop_command_deadline() {
+        let ordinary = Duration::from_millis(limits().remote.command_timeout_ms);
+        assert_eq!(command_timeout(None), ordinary);
+        assert_eq!(command_timeout(Some(u64::MAX)), ordinary);
+        assert_eq!(
+            command_timeout(Some(0)),
+            Duration::from_millis(limits().remote.min_command_timeout_ms)
+        );
+        assert_eq!(
+            command_timeout(Some(limits().remote.collector_timeout_ms)),
+            Duration::from_millis(limits().remote.collector_timeout_ms)
+        );
+        assert_eq!(remote_output_limit(), limits().remote.output_bytes);
+    }
 }

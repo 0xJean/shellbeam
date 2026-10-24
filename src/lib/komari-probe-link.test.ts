@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HostProfile } from './hosts'
+import type { KomariAlertState } from './komari-alerts'
 import type { ProbeSnapshot } from './probe-provider'
 import type { ShellbeamAgentRecord } from './shellbeam-agent'
 import {
@@ -21,7 +22,7 @@ const snapshot: ProbeSnapshot = {
   metrics: {
     data: { hostname: 'prod', os: 'Linux', kernel: '6.8', uptimeSeconds: 1, cpuPercent: 1, load1: 0, load5: 0, load15: 0, memoryUsedBytes: 1, memoryTotalBytes: 2, memoryPercent: 50, diskUsedBytes: 1, diskTotalBytes: 2, diskPercent: 50, networkRxBytesPerSec: 1, networkTxBytesPerSec: 1, latencyMs: null, sampledAt: 1_000 },
     source: { kind: 'komari', id: 'komari-prod', nodeId: 'node-1', endpoint: 'https://komari.example', capabilities: ['metrics'] },
-    freshness: { sampledAt: 1_000, receivedAt: 1_000, ttlMs: 5_000, expiresAt: 6_000, expired: false }, confidence: 'partial',
+    freshness: { sampledAt: 1_000, receivedAt: 1_000, ttlMs: 5_000, expiresAt: 6_000, expired: false, expiryReason: null }, confidence: 'partial',
   },
   inventory: null, errors: [], alerts: { load: 1, offline: 0, total: 1, active: 1, updatedAt: 1_000 },
 }
@@ -37,10 +38,41 @@ describe('Komari and ShellBeam Probe linkage', () => {
     expect(() => resolveKomariProbeTarget({ integrationId: 'komari-prod', nodeId: 'node-1', mappings: [mapping, { ...mapping, nodeId: 'node-2' }], hosts: [host] })).toThrow('conflicting')
   })
 
+  it('does not recommend a second Agent for an already monitored host', () => {
+    const [link] = buildKomariProbeLinks({ integrationId: 'komari-prod', hosts: [host], mappings: [mapping], snapshots: [snapshot], now: 1_100 })
+    expect(link.komari.state).toBe('online')
+    expect(link.recommendedAction).toBe('none')
+  })
+
   it('joins Komari freshness, alert state and probe lifecycle without conflating health', () => {
     const links = buildKomariProbeLinks({ integrationId: 'komari-prod', hosts: [host], mappings: [mapping], snapshots: [snapshot], shellbeamAgents: [agent], now: 1_100 })
     expect(links).toHaveLength(1)
     expect(links[0]).toMatchObject({ status: 'linked', hostId: 'host-1', komari: { state: 'online', alerts: { active: 1 } }, probe: { state: 'installed', health: 'online', version: '1.2.0' }, recommendedAction: 'none' })
+  })
+
+  it('keeps a confirmed sync separate from metric sampling and mapping/cache writes', () => {
+    const options = { integrationId: 'komari-prod', vaultId: 'vault-1', endpoint: 'https://komari.example/', hosts: [{ ...host, vaultId: 'vault-1' }], mappings: [{ ...mapping, updatedAt: 1250 }], snapshots: [snapshot], now: 1500 }
+    const current = buildKomariProbeLinks({ ...options, lastSyncedAt: 1400 })[0]
+    expect(current.komari).toMatchObject({ sampledAt: 1000, receivedAt: 1000, lastSyncedAt: 1400, state: 'online' })
+    expect(current.komari.snapshot?.metrics?.freshness.expiresAt).toBe(6000)
+    expect(buildKomariProbeLinks(options)[0].komari.lastSyncedAt).toBeNull()
+    expect(buildKomariProbeLinks({ ...options, lastSyncedAt: 1600 })[0].komari.lastSyncedAt).toBeNull()
+  })
+
+  it('scopes sync metadata to the mapped Vault, integration, host and configured endpoint', () => {
+    const options = { integrationId: 'komari-prod', vaultId: 'vault-1', endpoint: 'https://komari.example', hosts: [{ ...host, vaultId: 'vault-2' }, { ...host, vaultId: 'vault-1' }], mappings: [mapping], snapshots: [snapshot], lastSyncedAt: 1400, now: 1500 }
+    expect(buildKomariProbeLinks(options)[0].komari.lastSyncedAt).toBe(1400)
+    const foreign = buildKomariProbeLinks({ ...options, hosts: [{ ...host, vaultId: 'vault-2' }] })[0]
+    expect(foreign).toMatchObject({ status: 'unmapped', hostId: null, komari: { lastSyncedAt: null } })
+    expect(buildKomariProbeLinks({ ...options, endpoint: 'https://other.example' })[0].komari).toMatchObject({ state: 'unknown', sampledAt: null, lastSyncedAt: null })
+    expect(buildKomariProbeLinks({ ...options, mappings: [{ ...mapping, integrationId: 'other-integration' }] })[0].komari.lastSyncedAt).toBeNull()
+    expect(buildKomariProbeLinks({ ...options, snapshots: [{ ...snapshot, host: { ...snapshot.host, hostId: 'other-host' } }] })[0].komari).toMatchObject({ snapshot: null, lastSyncedAt: null })
+  })
+
+  it('carries persisted alert lifecycle context to the mapped Probe action', () => {
+    const alertState = { schemaVersion: 1, alerts: [{ alertId: 'alert-1', integrationId: 'komari-prod', nodeId: 'node-1', hostId: host.id, status: 'active' }], audit: [], summary: {} } as unknown as KomariAlertState
+    const links = buildKomariProbeLinks({ integrationId: 'komari-prod', hosts: [host], mappings: [mapping], snapshots: [snapshot], alertState })
+    expect(links[0]?.alertState).toMatchObject({ alerts: [{ alertId: 'alert-1' }] })
   })
 
   it('does not hide an unmapped or stale Komari node behind a Probe action', () => {

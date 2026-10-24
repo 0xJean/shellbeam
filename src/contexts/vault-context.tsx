@@ -31,6 +31,8 @@ interface VaultContextValue {
   securityEvents: SecurityEvent[]
   /** In-memory only — the master password from the current unlocked session */
   sessionPassword: string
+  /** Capture the current Vault generation before asynchronous work starts. */
+  captureVaultScope: () => (() => boolean)
   refreshVault: () => Promise<void>
   refreshVaults: () => Promise<void>
   handleInitialize: (masterPassword: string) => Promise<void>
@@ -61,7 +63,19 @@ export function useVault() {
 }
 
 export function VaultProvider({ children, setOutput }: { children: ReactNode; setOutput: (msg: string) => void }) {
-  const [activeVaultId, setActiveVaultId] = useState<string>(DEFAULT_VAULT_ID)
+  const [activeVaultId, setActiveVaultIdState] = useState<string>(DEFAULT_VAULT_ID)
+  const activeVaultScope = useRef({ id: DEFAULT_VAULT_ID })
+  const providerAlive = useRef(true)
+  const setActiveVaultId = useCallback((id: string) => {
+    if (activeVaultScope.current.id !== id) activeVaultScope.current = { id }
+    setActiveVaultIdState(id)
+  }, [])
+  const captureVaultScope = useCallback(() => {
+    const scope = activeVaultScope.current
+    // Comparing the object also invalidates A → B → A work. Leaving a page
+    // does not end the scope, but changing Vaults or unmounting the provider does.
+    return () => providerAlive.current && scope.id === activeVaultId && activeVaultScope.current === scope
+  }, [activeVaultId])
   const [vaults, setVaults] = useState<VaultMeta[]>([])
   const [vaultStatusState, setVaultStatusState] = useState<VaultStatus | null>(null)
   const [vaultKeys, setVaultKeys] = useState<string[]>([])
@@ -74,6 +88,14 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
   const [showBiometricOptIn, setShowBiometricOptIn] = useState(false)
   const biometricOptInPasswordRef = useRef('')
   const sessionPasswordRef = useRef('')
+
+  useEffect(() => {
+    providerAlive.current = true
+    return () => {
+      providerAlive.current = false
+      activeVaultScope.current = { id: activeVaultScope.current.id }
+    }
+  }, [])
 
   const gateOpen = !!vaultStatusState && !vaultStatusState.unlocked
 
@@ -93,10 +115,14 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
   }, [appendSecurityEvent])
 
   const refreshVault = useCallback(async () => {
+    const scope = activeVaultScope.current
+    if (scope.id !== activeVaultId) return
     const st = await vaultStatus(activeVaultId)
+    if (activeVaultScope.current !== scope) return
     setVaultStatusState(st)
     if (st.initialized) {
       const keys = await vaultListSecretKeys(activeVaultId)
+      if (activeVaultScope.current !== scope) return
       setVaultKeys(keys)
     } else {
       setVaultKeys([])
@@ -224,7 +250,10 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       await refreshVault()
       touchVaultActivity(`Vault secret saved: ${key}`)
       setOutput(`Saved vault key: ${key}`)
-    } catch (error) { setOutput(String(error)) } finally { setVaultBusy(false) }
+    } catch (error) {
+      setOutput('Failed to save vault key.')
+      throw error
+    } finally { setVaultBusy(false) }
   }, [activeVaultId, refreshVault, setOutput, touchVaultActivity])
 
   const handleLoadSecret = useCallback(async (key: string) => {
@@ -301,7 +330,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     activeVaultId, setActiveVaultId, vaults, vaultStatusState, vaultKeys, vaultBusy,
     vaultAutoLockMinutes, vaultLastActivityAt, securityEvents,
     sessionPassword: sessionPasswordRef.current,
-    refreshVault, refreshVaults,
+    captureVaultScope, refreshVault, refreshVaults,
     handleInitialize, handleUnlock, handleLock,
     handleSaveSecret, handleLoadSecret, handleRevealSecret, handleDeleteSecret,
     handleAutoLockMinutesChange, handleClearSecurityEvents,
@@ -309,6 +338,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
   }), [
     activeVaultId,
     appendSecurityEvent,
+    captureVaultScope,
     handleAutoLockMinutesChange,
     handleClearSecurityEvents,
     handleDeleteSecret,
@@ -322,6 +352,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     refreshVaults,
     resolveAuthSecret,
     securityEvents,
+    setActiveVaultId,
     touchVaultActivity,
     vaultAutoLockMinutes,
     vaultBusy,

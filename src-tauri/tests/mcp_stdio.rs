@@ -32,8 +32,14 @@ fn installed_executable_bridges_stdio_without_opening_a_gui_or_exposing_token() 
                 }
                 Err(error) => panic!("accept: {error}"),
             };
+            // Match the production worker: accepted sockets may inherit the
+            // listener's O_NONBLOCK on macOS, so configure blocking bounded IO.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
             let mut prefix = [0; 4];
             stream.read_exact(&mut prefix).unwrap();
@@ -137,5 +143,7 @@ fn unavailable_application_returns_a_protocol_error_instead_of_launching_gui() {
     assert!(response["error"]["message"]
         .as_str()
         .unwrap()
-        .contains("SHELLBEAM_UNAVAILABLE"));
+        .contains("SHELLBEAM_NOT_RUNNING"));
+    assert_eq!(response["error"]["data"]["reason"], "shellbeam_unavailable");
+    assert_eq!(response["error"]["data"]["retryable"], true);
 }

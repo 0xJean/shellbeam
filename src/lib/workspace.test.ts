@@ -20,6 +20,7 @@ describe('workspace helpers', () => {
 
   it('validates known workspace apps', () => {
     expect(isWorkspaceApp('logs')).toBe(true)
+    expect(isWorkspaceApp('network')).toBe(true)
     expect(isWorkspaceApp('fileTransfer')).toBe(true)
     expect(isWorkspaceApp('fileSystem')).toBe(true)
     expect(isWorkspaceApp('assetInventory')).toBe(true)
@@ -31,6 +32,7 @@ describe('workspace helpers', () => {
     expect(normalizeWorkspaceApp('files')).toBe('fileTransfer')
     expect(normalizeWorkspaceApp('fileTransfer')).toBe('fileTransfer')
     expect(normalizeWorkspaceApp('fileSystem')).toBe('fileSystem')
+    expect(normalizeWorkspaceApp('network')).toBe('network')
     expect(normalizeWorkspaceApp('assetInventory')).toBe('assetInventory')
     expect(normalizeWorkspaceApp('toolManager')).toBe('toolManager')
     expect(normalizeWorkspaceApp('bogus')).toBe('overview')

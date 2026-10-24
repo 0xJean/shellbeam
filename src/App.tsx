@@ -4,8 +4,12 @@ import { AppProvider, useApp } from '@/contexts/app-context'
 import { HostsProvider, useHosts } from '@/contexts/hosts-context'
 import { SessionsProvider } from '@/contexts/sessions-context'
 import { VaultProvider } from '@/contexts/vault-context'
+import { ScheduledOpsRuntime } from '@/components/scheduled-ops-runtime'
+import { LocalOpsRuntime } from '@/components/local-ops-runtime'
 import { ServerMonitorRuntime } from '@/components/server-monitor-runtime'
+import { ProbeAlertRuntime } from '@/components/probe-alert-runtime'
 import { ShellbeamAgentRuntime } from '@/components/shellbeam-agent-runtime'
+import { UserConfirmationRuntime } from '@/components/user-confirmation-dialog'
 import { PcLayout } from '@/layouts/pc-layout'
 import { listCommandHistory } from '@/lib/history'
 import { I18nProvider } from '@/lib/i18n'
@@ -73,7 +77,11 @@ function AppInnerWithVault() {
   return (
     <VaultProvider setOutput={setOutput}>
       <HostsProvider>
+        <UserConfirmationRuntime />
+        <ProbeAlertRuntime />
         <ServerMonitorRuntime />
+        <LocalOpsRuntime />
+        <ScheduledOpsRuntime />
         <ShellbeamAgentRuntime />
         <SessionsProvider setOutput={setOutput}>
           <AppInner />

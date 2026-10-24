@@ -98,7 +98,7 @@ export function WelcomePage({ onDismiss, onOpenGuide }: { onDismiss: () => void;
             {t('guide.start')}
             <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
           </button>
-          <button type="button" onClick={onDismiss} className="text-xs text-white/60 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">{t('guide.skip')}</button>
+          <button data-testid="welcome-enter" type="button" onClick={onDismiss} className="text-xs text-white/60 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">{t('guide.skip')}</button>
           <div className="flex items-center gap-1 text-[11px] text-white/25">
             <ChevronRight className="h-3 w-3" />
             <span>{t('guide.reopenHint')}</span>

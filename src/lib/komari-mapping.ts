@@ -1,4 +1,4 @@
-import type { HostProfile } from './hosts'
+import { hostConnections, type HostProfile } from './hosts'
 import type { KomariClient } from './komari'
 
 export interface KomariHostMapping {
@@ -20,6 +20,7 @@ export interface KomariMappingResult {
   unmappedHosts: string[]
   unmappedNodes: string[]
   conflicts: KomariMappingConflict[]
+  suggestions?: KomariHostMapping[]
 }
 
 function normalized(value: string | null | undefined): string {
@@ -32,7 +33,7 @@ function nodeAddresses(node: KomariClient): string[] {
 
 /**
  * Resolve Komari nodes without changing HostProfile. Explicit mappings always
- * win; address matching is only used when it identifies one host uniquely.
+ * win. Address/name matches are suggestions only and never authorize collection.
  */
 export function mapKomariNodesToHosts(options: {
   hosts: HostProfile[]
@@ -42,14 +43,16 @@ export function mapKomariNodesToHosts(options: {
 }): KomariMappingResult {
   const now = options.now ?? Date.now()
   const hostById = new Map(options.hosts.map((host) => [host.id, host]))
-  const nodeById = new Map(options.nodes.map((node) => [node.uuid, node]))
   const usedHosts = new Set<string>()
   const usedNodes = new Set<string>()
   const mappings: KomariHostMapping[] = []
   const conflicts: KomariMappingConflict[] = []
+  const suggestions: KomariHostMapping[] = []
 
   for (const [hostId, nodeId] of Object.entries(options.explicit ?? {})) {
-    if (!hostById.has(hostId) || !nodeById.has(nodeId)) continue
+    // A temporarily missing node must not release a user's explicit binding
+    // and let an unrelated address match claim that host on the next sync.
+    if (!hostById.has(hostId)) continue
     if (usedHosts.has(hostId) || usedNodes.has(nodeId)) {
       conflicts.push({ nodeId, hostIds: [hostId], reason: 'node-already-mapped' })
       continue
@@ -64,7 +67,7 @@ export function mapKomariNodesToHosts(options: {
     const addresses = new Set(nodeAddresses(node))
     const candidates = options.hosts.filter((host) => {
       if (usedHosts.has(host.id)) return false
-      return addresses.has(normalized(host.address)) || addresses.has(normalized(host.name))
+      return hostConnections(host).some(c => addresses.has(normalized(c.address))) || addresses.has(normalized(host.name))
     })
     if (candidates.length !== 1) {
       if (candidates.length > 1) {
@@ -73,13 +76,12 @@ export function mapKomariNodesToHosts(options: {
       continue
     }
     const host = candidates[0]
-    usedHosts.add(host.id)
-    usedNodes.add(node.uuid)
-    mappings.push({ hostId: host.id, nodeId: node.uuid, source: 'address', confidence: 'matched', updatedAt: now })
+    suggestions.push({ hostId: host.id, nodeId: node.uuid, source: 'address', confidence: 'matched', updatedAt: now })
   }
 
   return {
     mappings,
+    suggestions,
     unmappedHosts: options.hosts.filter((host) => !usedHosts.has(host.id)).map((host) => host.id),
     unmappedNodes: options.nodes.filter((node) => !usedNodes.has(node.uuid)).map((node) => node.uuid),
     conflicts,

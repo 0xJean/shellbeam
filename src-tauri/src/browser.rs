@@ -1,12 +1,6 @@
 use crate::ssh::interactive::InteractiveSessionState;
-use crate::ssh::SshSessionPool;
-use crate::storage::data_file_path;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs;
-use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(not(mobile))]
@@ -16,7 +10,6 @@ use tauri::{AppHandle, Manager, Runtime};
 use tauri::{
     Emitter, LogicalPosition, LogicalSize, Webview, WebviewUrl, WebviewWindow, WindowEvent,
 };
-use uuid::Uuid;
 
 #[cfg(target_os = "macos")]
 use objc::runtime::Object;
@@ -26,12 +19,6 @@ use objc::{msg_send, sel, sel_impl};
 /// A live in-process tunnel: a shutdown sender.
 struct TunnelHandle {
     shutdown: std::sync::mpsc::Sender<()>,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum BrowserTransportSource {
-    Interactive,
-    Pool,
 }
 
 lazy_static::lazy_static! {
@@ -203,6 +190,9 @@ fn blank_browser_html() -> String {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserPortForwardRequest {
+    pub vault_id: Option<String>,
+    pub host_id: Option<String>,
+    pub accepted_host_key: Option<crate::ssh::transport::HostKeyAcceptance>,
     pub browser_id: String,
     pub session_id: String,
     pub host: String,
@@ -216,12 +206,14 @@ pub struct BrowserPortForwardRequest {
     pub jump_user: Option<String>,
     pub remote_host: String,
     pub remote_port: u16,
-    pub accept_host_key: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserHttpProxyRequest {
+    pub vault_id: Option<String>,
+    pub host_id: Option<String>,
+    pub accepted_host_key: Option<crate::ssh::transport::HostKeyAcceptance>,
     pub session_id: String,
     pub host: String,
     pub port: u16,
@@ -232,7 +224,6 @@ pub struct BrowserHttpProxyRequest {
     pub jump_host: Option<String>,
     pub jump_port: Option<u16>,
     pub jump_user: Option<String>,
-    pub accept_host_key: Option<bool>,
 }
 
 #[cfg(not(mobile))]
@@ -795,8 +786,8 @@ fn build_browser_window<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::{
-        blank_browser_html, browser_window_label, parse_proxy_authority,
-        should_suppress_page_load_marker, BrowserPageLoadMarker,
+        blank_browser_html, browser_window_label, should_suppress_page_load_marker,
+        BrowserPageLoadMarker,
     };
     use std::net::TcpListener;
 
@@ -825,22 +816,6 @@ mod tests {
         let port = listener.local_addr().expect("listener addr").port();
         std::net::TcpStream::connect(format!("127.0.0.1:{port}"))
             .expect("port should be reachable");
-    }
-
-    #[test]
-    fn parse_proxy_authority_supports_default_port_and_ipv6() {
-        assert_eq!(
-            parse_proxy_authority("example.com", 443).expect("default port"),
-            ("example.com".to_string(), 443)
-        );
-        assert_eq!(
-            parse_proxy_authority("example.com:8443", 443).expect("explicit port"),
-            ("example.com".to_string(), 8443)
-        );
-        assert_eq!(
-            parse_proxy_authority("[::1]:8080", 80).expect("ipv6 authority"),
-            ("::1".to_string(), 8080)
-        );
     }
 
     #[test]
@@ -1338,160 +1313,6 @@ pub async fn go_forward_browser_window<R: Runtime>(
     Ok(())
 }
 
-fn browser_checkout_pooled_session(
-    app: &AppHandle,
-    host: &str,
-    port: u16,
-    username: &str,
-    auth_type: &str,
-    password: Option<&str>,
-    private_key: Option<&str>,
-) -> Result<ssh2::Session, String> {
-    let pool = app.state::<SshSessionPool>();
-    pool.checkout(host, port, username, auth_type, password, private_key, None)
-        .map_err(|e| format!("SSH connect failed: {e}"))
-}
-
-fn browser_clone_interactive_transport(app: &AppHandle, session_id: &str) -> Option<ssh2::Session> {
-    let state = app.state::<InteractiveSessionState>();
-    state.clone_reusable_transport(session_id)
-}
-
-fn browser_checkout_transport_session(
-    app: &AppHandle,
-    session_id: &str,
-    host: &str,
-    port: u16,
-    username: &str,
-    auth_type: &str,
-    password: Option<&str>,
-    private_key: Option<&str>,
-) -> Result<(ssh2::Session, BrowserTransportSource), String> {
-    if let Some(session) = browser_clone_interactive_transport(app, session_id) {
-        log::info!(
-            "[Browser] transport checkout: session_id={}, source=interactive, target={}@{}:{}",
-            session_id,
-            username,
-            host,
-            port
-        );
-        return Ok((session, BrowserTransportSource::Interactive));
-    }
-    browser_checkout_pooled_session(app, host, port, username, auth_type, password, private_key)
-        .map(|session| {
-            log::info!(
-                "[Browser] transport checkout: session_id={}, source=pool, target={}@{}:{}",
-                session_id,
-                username,
-                host,
-                port
-            );
-            (session, BrowserTransportSource::Pool)
-        })
-}
-
-fn browser_checkin_pooled_session(
-    app: &AppHandle,
-    host: &str,
-    port: u16,
-    username: &str,
-    session: ssh2::Session,
-) {
-    let pool = app.state::<SshSessionPool>();
-    pool.checkin(host, port, username, session);
-}
-
-fn open_direct_tcpip_channel(
-    session: &ssh2::Session,
-    target_host: &str,
-    target_port: u16,
-) -> Result<ssh2::Channel, String> {
-    loop {
-        match session.channel_direct_tcpip(target_host, target_port, None) {
-            Ok(channel) => return Ok(channel),
-            Err(error) => {
-                let io_error: std::io::Error = error.into();
-                if io_error.kind() == ErrorKind::WouldBlock {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                    continue;
-                }
-                return Err(io_error.to_string());
-            }
-        }
-    }
-}
-
-/// Relay data between a local TCP stream and an ssh2 channel until one side closes.
-///
-/// Both directions are driven from the calling thread sequentially using
-/// blocking I/O on the local side and non-blocking polling on the channel,
-/// while a companion thread pumps local→channel writes so neither direction
-/// starves the other.
-fn relay_tcp_and_channel(mut local: TcpStream, channel: ssh2::Channel) {
-    // Wrap in Arc<Mutex> so both threads can share the channel safely.
-    let channel = Arc::new(Mutex::new(channel));
-
-    let local_clone = match local.try_clone() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    // Thread: local → channel
-    let ch_write = Arc::clone(&channel);
-    let write_thread = std::thread::spawn(move || {
-        let mut local_r = local_clone;
-        let mut buf = [0u8; 16 * 1024];
-        loop {
-            match local_r.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    let mut offset = 0;
-                    while offset < n {
-                        if let Ok(mut ch) = ch_write.lock() {
-                            match ch.write(&buf[offset..n]) {
-                                Ok(0) => break,
-                                Ok(written) => {
-                                    offset += written;
-                                }
-                                Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                                    drop(ch);
-                                    std::thread::sleep(std::time::Duration::from_millis(1));
-                                }
-                                Err(_) => break,
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        if let Ok(mut ch) = ch_write.lock() {
-            let _ = ch.send_eof();
-        }
-    });
-
-    // Main: channel → local  (poll with short sleep on WouldBlock)
-    let mut buf = [0u8; 16 * 1024];
-    loop {
-        let result = channel.lock().map(|mut ch| ch.read(&mut buf));
-        match result {
-            Ok(Ok(0)) | Err(_) => break,
-            Ok(Ok(n)) => {
-                if local.write_all(&buf[..n]).is_err() {
-                    break;
-                }
-            }
-            Ok(Err(ref e)) if e.kind() == ErrorKind::WouldBlock => {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            Ok(Err(_)) => break,
-        }
-    }
-
-    let _ = write_thread.join();
-}
-
 fn stop_browser_port_forward_inner(browser_id: &str) {
     if let Ok(mut map) = BROWSER_PORT_FORWARDS.lock() {
         if let Some(handle) = map.remove(browser_id) {
@@ -1500,215 +1321,104 @@ fn stop_browser_port_forward_inner(browser_id: &str) {
     }
 }
 
+fn verified_browser_connection(
+    app: &AppHandle,
+    session_id: &str,
+    host_id: Option<&str>,
+    vault_id: Option<&str>,
+    host: &str,
+    port: u16,
+    username: &str,
+    auth_type: &str,
+    password: Option<&str>,
+    private_key: Option<&str>,
+    jump_host: Option<&str>,
+    jump_port: Option<u16>,
+    jump_user: Option<&str>,
+    accepted: Option<&crate::ssh::transport::HostKeyAcceptance>,
+) -> Result<crate::ssh::transport::Connection, String> {
+    crate::ssh::transport::ensure_vault_unlocked(app, vault_id)?;
+    // Saved hosts always resolve the selected vault's current route. Manual
+    // terminal sessions may reuse their verified transport without credentials.
+    if host_id.is_none() && vault_id.is_none() {
+        if let Some(connection) = app
+            .state::<InteractiveSessionState>()
+            .clone_verified_connection(app, session_id)?
+        {
+            return Ok(connection);
+        }
+    }
+    let route = if let (Some(host_id), Some(vault_id)) = (host_id, vault_id) {
+        crate::ssh::transport::resolve_host_route(app, vault_id, host_id)?
+    } else {
+        crate::ssh::transport::legacy_route(
+            host,
+            port,
+            username,
+            auth_type,
+            password,
+            private_key,
+            None,
+            jump_host,
+            jump_port,
+            jump_user,
+        )
+    };
+    let connection = crate::ssh::transport::connect_accepting_fingerprint(app, &route, accepted)?;
+    crate::ssh::transport::ensure_vault_unlocked(app, vault_id)?;
+    Ok(connection)
+}
+
+fn retain_browser_forward(lease: crate::ssh::forward::ForwardLease) -> TunnelHandle {
+    let (shutdown, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _lease = lease;
+        let _ = receiver.recv();
+    });
+    TunnelHandle { shutdown }
+}
+
 #[tauri::command]
 pub async fn start_browser_port_forward(
     app: AppHandle,
     request: BrowserPortForwardRequest,
 ) -> Result<u16, String> {
-    // Stop any existing forward for this browser instance first
     stop_browser_port_forward_inner(&request.browser_id);
-
-    if has_jump_host(request.jump_host.as_deref()) {
-        if request.auth_type != "privateKey" {
-            return Err(
-                "Remote browser over a jump host currently requires private key authentication"
-                    .to_string(),
-            );
-        }
-        let started_at = std::time::Instant::now();
-        let private_key = request.private_key.clone().ok_or_else(|| {
-            "Private key is required for jump-host browser forwarding".to_string()
-        })?;
-        let local_port = reserve_local_port()?;
-        let bind_spec = format!(
-            "127.0.0.1:{local_port}:{}:{}",
-            request.remote_host, request.remote_port
-        );
-        let browser_id_for_tunnel = request.browser_id.clone();
-        let session_id_for_log = request.session_id.clone();
-        spawn_ssh_process_tunnel(
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = verified_browser_connection(
             &app,
-            request.session_id.clone(),
-            request.host.clone(),
+            &request.session_id,
+            request.host_id.as_deref(),
+            request.vault_id.as_deref(),
+            &request.host,
             request.port,
-            request.username.clone(),
-            private_key,
-            request.jump_host.clone(),
+            &request.username,
+            &request.auth_type,
+            request.password.as_deref(),
+            request.private_key.as_deref(),
+            request.jump_host.as_deref(),
             request.jump_port,
-            request.jump_user.clone(),
-            vec!["-L".to_string(), bind_spec],
-            move |handle| {
-                if let Ok(mut map) = BROWSER_PORT_FORWARDS.lock() {
-                    map.insert(browser_id_for_tunnel.clone(), handle);
-                }
+            request.jump_user.as_deref(),
+            request.accepted_host_key.as_ref(),
+        )?;
+        let lease = crate::ssh::forward::start(
+            connection,
+            "127.0.0.1",
+            0,
+            crate::ssh::forward::ForwardKind::Local {
+                host: request.remote_host,
+                port: request.remote_port,
             },
         )?;
-        log::info!(
-            "[Browser PF] tunnel ready: session_id={}, source=jump-system, local_port={}, target={}:{} elapsed_ms={}",
-            session_id_for_log,
-            local_port,
-            request.remote_host,
-            request.remote_port,
-            started_at.elapsed().as_millis()
-        );
-        return Ok(local_port);
-    }
-
-    // Bind the local listener before spawning to return the port immediately
-    let listener =
-        TcpListener::bind("127.0.0.1:0").map_err(|e| format!("Failed to bind local port: {e}"))?;
-    let local_port = listener
-        .local_addr()
-        .map_err(|e| format!("Failed to get local addr: {e}"))?
-        .port();
-
-    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
-
-    // Clone everything needed for the background thread
-    let host = request.host.clone();
-    let ssh_port = request.port;
-    let username = request.username.clone();
-    let auth_type = request.auth_type.clone();
-    let password = request.password.clone();
-    let private_key = request.private_key.clone();
-    let _accept_host_key = request.accept_host_key.unwrap_or(false);
-    let remote_host = request.remote_host.clone();
-    let remote_port = request.remote_port;
-    let session_id_bg = request.session_id.clone();
-    let browser_id_bg = request.browser_id.clone();
-    let browser_id_for_map = request.browser_id.clone();
-    let app_handle = app.clone();
-
-    // Validate the SSH connection on this thread so we can surface errors
-    // before returning the port to the caller.
-    let setup_started_at = std::time::Instant::now();
-    let (probe_session, probe_source) = tauri::async_runtime::spawn_blocking({
-        let host = host.clone();
-        let username = username.clone();
-        let auth_type = auth_type.clone();
-        let password = password.clone();
-        let private_key = private_key.clone();
-        let session_id = request.session_id.clone();
-        let app2 = app.clone();
-        move || {
-            browser_checkout_transport_session(
-                &app2,
-                &session_id,
-                &host,
-                ssh_port,
-                &username,
-                &auth_type,
-                password.as_deref(),
-                private_key.as_deref(),
-            )
-        }
+        let port = lease.port;
+        BROWSER_PORT_FORWARDS
+            .lock()
+            .map_err(|_| "Browser forwarding registry unavailable")?
+            .insert(request.browser_id, retain_browser_forward(lease));
+        Ok(port)
     })
     .await
-    .map_err(|e| format!("Task panicked: {e}"))??;
-
-    probe_session.set_blocking(false);
-    if matches!(probe_source, BrowserTransportSource::Pool) {
-        browser_checkin_pooled_session(&app, &host, ssh_port, &username, probe_session);
-    }
-    log::info!(
-        "[Browser PF] probe ready: session_id={}, source={:?}, target={}@{}:{}, elapsed_ms={}",
-        request.session_id,
-        probe_source,
-        username,
-        host,
-        ssh_port,
-        setup_started_at.elapsed().as_millis()
-    );
-
-    std::thread::spawn(move || {
-        // Set a short accept timeout so we can check the shutdown signal.
-        listener
-            .set_nonblocking(true)
-            .expect("set_nonblocking failed");
-
-        loop {
-            if shutdown_rx.try_recv().is_ok() {
-                break;
-            }
-
-            match listener.accept() {
-                Ok((local_stream, _)) => {
-                    let h = host.clone();
-                    let u = username.clone();
-                    let auth = auth_type.clone();
-                    let pw = password.clone();
-                    let pk = private_key.clone();
-                    let rh = remote_host.clone();
-                    let session_id = session_id_bg.clone();
-                    let app3 = app_handle.clone();
-                    std::thread::spawn(move || {
-                        let (session, source) = match browser_checkout_transport_session(
-                            &app3,
-                            &session_id,
-                            &h,
-                            ssh_port,
-                            &u,
-                            &auth,
-                            pw.as_deref(),
-                            pk.as_deref(),
-                        ) {
-                            Ok(result) => result,
-                            Err(e) => {
-                                log::warn!("[Browser PF] SSH connect failed: {e}");
-                                return;
-                            }
-                        };
-                        session.set_blocking(false);
-                        log::info!(
-                            "[Browser PF] channel open: session_id={}, source={:?}, target={}:{}",
-                            session_id,
-                            source,
-                            rh,
-                            remote_port
-                        );
-                        let channel = match open_direct_tcpip_channel(&session, &rh, remote_port) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                log::warn!("[Browser PF] direct-tcpip failed: {e}");
-                                return;
-                            }
-                        };
-                        // Set blocking on the local side
-                        let _ = local_stream.set_nonblocking(false);
-                        relay_tcp_and_channel(local_stream, channel);
-                        if matches!(source, BrowserTransportSource::Pool) && session.authenticated()
-                        {
-                            browser_checkin_pooled_session(&app3, &h, ssh_port, &u, session);
-                        }
-                    });
-                }
-                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-                Err(_) => break,
-            }
-
-            // Clean up map entry if we've been stopped
-            if shutdown_rx.try_recv().is_ok() {
-                break;
-            }
-        }
-
-        if let Ok(mut map) = BROWSER_PORT_FORWARDS.lock() {
-            map.remove(&browser_id_bg);
-        }
-    });
-
-    if let Ok(mut map) = BROWSER_PORT_FORWARDS.lock() {
-        map.insert(
-            browser_id_for_map,
-            TunnelHandle {
-                shutdown: shutdown_tx,
-            },
-        );
-    }
-
-    Ok(local_port)
+    .map_err(|_| "Browser forwarding task failed")?
 }
 
 #[tauri::command]
@@ -1722,231 +1432,39 @@ pub async fn start_browser_http_proxy(
     app: AppHandle,
     request: BrowserHttpProxyRequest,
 ) -> Result<u16, String> {
-    let _ = (
-        &request.jump_port,
-        &request.jump_user,
-        &request.accept_host_key,
-    );
     stop_browser_http_proxy_inner(&request.session_id);
-
-    if has_jump_host(request.jump_host.as_deref()) {
-        return Err(
-            "Remote HTTP proxy over a jump host is not supported yet; use SOCKS fallback"
-                .to_string(),
-        );
-    }
-
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("Failed to bind local HTTP proxy port: {e}"))?;
-    let local_port = listener
-        .local_addr()
-        .map_err(|e| format!("Failed to get local HTTP proxy addr: {e}"))?
-        .port();
-
-    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
-
-    let host = request.host.clone();
-    let ssh_port = request.port;
-    let username = request.username.clone();
-    let auth_type = request.auth_type.clone();
-    let password = request.password.clone();
-    let private_key = request.private_key.clone();
-    let session_id_bg = request.session_id.clone();
-    let session_id_for_map = request.session_id.clone();
-    let app_handle = app.clone();
-
-    let setup_started_at = std::time::Instant::now();
-    let (probe, probe_source) = tauri::async_runtime::spawn_blocking({
-        let host = host.clone();
-        let username = username.clone();
-        let auth_type = auth_type.clone();
-        let password = password.clone();
-        let private_key = private_key.clone();
-        let session_id = request.session_id.clone();
-        let app2 = app.clone();
-        move || {
-            browser_checkout_transport_session(
-                &app2,
-                &session_id,
-                &host,
-                ssh_port,
-                &username,
-                &auth_type,
-                password.as_deref(),
-                private_key.as_deref(),
-            )
-        }
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = verified_browser_connection(
+            &app,
+            &request.session_id,
+            request.host_id.as_deref(),
+            request.vault_id.as_deref(),
+            &request.host,
+            request.port,
+            &request.username,
+            &request.auth_type,
+            request.password.as_deref(),
+            request.private_key.as_deref(),
+            request.jump_host.as_deref(),
+            request.jump_port,
+            request.jump_user.as_deref(),
+            request.accepted_host_key.as_ref(),
+        )?;
+        let lease = crate::ssh::forward::start(
+            connection,
+            "127.0.0.1",
+            0,
+            crate::ssh::forward::ForwardKind::Http,
+        )?;
+        let port = lease.port;
+        BROWSER_HTTP_PROXIES
+            .lock()
+            .map_err(|_| "Browser forwarding registry unavailable")?
+            .insert(request.session_id, retain_browser_forward(lease));
+        Ok(port)
     })
     .await
-    .map_err(|e| format!("Task panicked: {e}"))??;
-    probe.set_blocking(false);
-    if matches!(probe_source, BrowserTransportSource::Pool) {
-        browser_checkin_pooled_session(&app, &host, ssh_port, &username, probe);
-    }
-    log::info!(
-        "[Browser HTTP Proxy] probe ready: session_id={}, source={:?}, target={}@{}:{}, elapsed_ms={}",
-        request.session_id,
-        probe_source,
-        username,
-        host,
-        ssh_port,
-        setup_started_at.elapsed().as_millis()
-    );
-
-    std::thread::spawn(move || {
-        listener.set_nonblocking(true).expect("set_nonblocking");
-
-        loop {
-            if shutdown_rx.try_recv().is_ok() {
-                break;
-            }
-
-            match listener.accept() {
-                Ok((mut local_stream, _)) => {
-                    let h = host.clone();
-                    let u = username.clone();
-                    let auth = auth_type.clone();
-                    let pw = password.clone();
-                    let pk = private_key.clone();
-                    let session_id = session_id_bg.clone();
-                    let app3 = app_handle.clone();
-                    std::thread::spawn(move || {
-                        local_stream.set_nonblocking(false).ok();
-                        local_stream
-                            .set_read_timeout(Some(std::time::Duration::from_secs(15)))
-                            .ok();
-
-                        let proxy_request = match parse_http_proxy_request(&mut local_stream) {
-                            Ok(value) => value,
-                            Err(error) => {
-                                log::warn!("[Browser HTTP Proxy] parse failed: {error}");
-                                write_http_proxy_error(
-                                    &mut local_stream,
-                                    "400 Bad Request",
-                                    &error,
-                                );
-                                return;
-                            }
-                        };
-
-                        let (target_host, target_port) = match &proxy_request {
-                            BrowserHttpProxyRequestLine::Connect {
-                                target_host,
-                                target_port,
-                            } => (target_host.clone(), *target_port),
-                            BrowserHttpProxyRequestLine::Forward {
-                                target_host,
-                                target_port,
-                                ..
-                            } => (target_host.clone(), *target_port),
-                        };
-
-                        let (session, source) = match browser_checkout_transport_session(
-                            &app3,
-                            &session_id,
-                            &h,
-                            ssh_port,
-                            &u,
-                            &auth,
-                            pw.as_deref(),
-                            pk.as_deref(),
-                        ) {
-                            Ok(result) => result,
-                            Err(error) => {
-                                log::warn!("[Browser HTTP Proxy] SSH connect failed: {error}");
-                                write_http_proxy_error(
-                                    &mut local_stream,
-                                    "502 Bad Gateway",
-                                    &error,
-                                );
-                                return;
-                            }
-                        };
-                        session.set_blocking(false);
-                        log::info!(
-                            "[Browser HTTP Proxy] channel open: session_id={}, source={:?}, target={}:{}",
-                            session_id,
-                            source,
-                            target_host,
-                            target_port
-                        );
-
-                        let mut channel = match open_direct_tcpip_channel(
-                            &session,
-                            &target_host,
-                            target_port,
-                        ) {
-                            Ok(channel) => channel,
-                            Err(error) => {
-                                log::warn!(
-                                        "[Browser HTTP Proxy] direct-tcpip to {target_host}:{target_port} failed: {error}"
-                                    );
-                                write_http_proxy_error(
-                                    &mut local_stream,
-                                    "502 Bad Gateway",
-                                    &error,
-                                );
-                                return;
-                            }
-                        };
-
-                        match proxy_request {
-                            BrowserHttpProxyRequestLine::Connect { .. } => {
-                                if local_stream
-                                    .write_all(
-                                        b"HTTP/1.1 200 Connection Established\r\nConnection: keep-alive\r\n\r\n",
-                                    )
-                                    .is_err()
-                                {
-                                    return;
-                                }
-                            }
-                            BrowserHttpProxyRequestLine::Forward { initial_bytes, .. } => {
-                                if channel.write_all(&initial_bytes).is_err() {
-                                    write_http_proxy_error(
-                                        &mut local_stream,
-                                        "502 Bad Gateway",
-                                        "Failed to forward proxied request to SSH channel",
-                                    );
-                                    return;
-                                }
-                            }
-                        }
-
-                        local_stream.set_read_timeout(None).ok();
-                        relay_tcp_and_channel(local_stream, channel);
-                        if matches!(source, BrowserTransportSource::Pool) && session.authenticated()
-                        {
-                            browser_checkin_pooled_session(&app3, &h, ssh_port, &u, session);
-                        }
-                    });
-                }
-                Err(ref error) if error.kind() == ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-                Err(_) => break,
-            }
-
-            if shutdown_rx.try_recv().is_ok() {
-                break;
-            }
-        }
-
-        if let Ok(mut map) = BROWSER_HTTP_PROXIES.lock() {
-            map.remove(&session_id_bg);
-        }
-    });
-
-    if let Ok(mut map) = BROWSER_HTTP_PROXIES.lock() {
-        map.insert(
-            session_id_for_map,
-            TunnelHandle {
-                shutdown: shutdown_tx,
-            },
-        );
-    }
-
-    Ok(local_port)
+    .map_err(|_| "Browser forwarding task failed")?
 }
 
 #[tauri::command]
@@ -1962,6 +1480,9 @@ pub async fn stop_browser_http_proxy(session_id: String) -> Result<(), String> {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserSocksProxyRequest {
+    pub vault_id: Option<String>,
+    pub host_id: Option<String>,
+    pub accepted_host_key: Option<crate::ssh::transport::HostKeyAcceptance>,
     pub session_id: String,
     pub host: String,
     pub port: u16,
@@ -1972,144 +1493,6 @@ pub struct BrowserSocksProxyRequest {
     pub jump_host: Option<String>,
     pub jump_port: Option<u16>,
     pub jump_user: Option<String>,
-    pub accept_host_key: Option<bool>,
-}
-
-fn write_temp_private_key(
-    app: &tauri::AppHandle,
-    private_key: &str,
-) -> Result<std::path::PathBuf, String> {
-    let key_path = data_file_path(app, &format!("browser_{}.key", Uuid::new_v4()))?;
-    fs::write(&key_path, private_key).map_err(|e| format!("Write temp key failed: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let permissions = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&key_path, permissions)
-            .map_err(|e| format!("Set key permissions failed: {e}"))?;
-    }
-    Ok(key_path)
-}
-
-fn has_jump_host(jump_host: Option<&str>) -> bool {
-    jump_host
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
-}
-
-fn reserve_local_port() -> Result<u16, String> {
-    let listener =
-        TcpListener::bind("127.0.0.1:0").map_err(|e| format!("Failed to bind local port: {e}"))?;
-    listener
-        .local_addr()
-        .map_err(|e| format!("Failed to get local addr: {e}"))
-        .map(|addr| addr.port())
-}
-
-fn spawn_ssh_process_tunnel(
-    app: &AppHandle,
-    session_id: String,
-    host: String,
-    ssh_port: u16,
-    username: String,
-    private_key: String,
-    jump_host: Option<String>,
-    jump_port: Option<u16>,
-    jump_user: Option<String>,
-    tunnel_args: Vec<String>,
-    register: impl FnOnce(TunnelHandle) + Send + 'static,
-) -> Result<(), String> {
-    let key_path = write_temp_private_key(app, &private_key)?;
-
-    let mut cmd = Command::new("ssh");
-    cmd.arg("-N");
-    for arg in tunnel_args {
-        cmd.arg(arg);
-    }
-    cmd.arg("-p")
-        .arg(ssh_port.to_string())
-        .arg("-i")
-        .arg(&key_path)
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
-        .arg("ExitOnForwardFailure=yes")
-        .arg("-o")
-        .arg("StrictHostKeyChecking=no")
-        .arg("-o")
-        .arg("UserKnownHostsFile=/dev/null");
-
-    if let Some(jh) = jump_host
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        let jump_username = jump_user.as_deref().unwrap_or(&username);
-        cmd.arg("-J")
-            .arg(format!("{jump_username}@{jh}:{}", jump_port.unwrap_or(22)));
-    }
-
-    cmd.arg(format!("{username}@{host}"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|e| {
-        let _ = fs::remove_file(&key_path);
-        format!("Spawn SSH tunnel failed: {e}")
-    })?;
-
-    for _ in 0..20 {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|e| format!("Wait SSH tunnel failed: {e}"))?;
-                let _ = fs::remove_file(&key_path);
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                let message = if stderr.is_empty() {
-                    format!("SSH tunnel exited early with status {status}")
-                } else {
-                    stderr
-                };
-                return Err(message);
-            }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
-            Err(e) => {
-                let _ = fs::remove_file(&key_path);
-                return Err(format!("Check SSH tunnel status failed: {e}"));
-            }
-        }
-    }
-
-    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
-    register(TunnelHandle {
-        shutdown: shutdown_tx,
-    });
-
-    std::thread::spawn(move || {
-        let mut child: Child = child;
-        loop {
-            if shutdown_rx.try_recv().is_ok() {
-                let _ = child.kill();
-                let _ = child.wait();
-                break;
-            }
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-                Err(_) => break,
-            }
-        }
-        let _ = fs::remove_file(&key_path);
-        if let Ok(mut map) = BROWSER_PORT_FORWARDS.lock() {
-            map.remove(&session_id);
-        }
-        if let Ok(mut map) = BROWSER_SOCKS_PROXIES.lock() {
-            map.remove(&session_id);
-        }
-    });
-
-    Ok(())
 }
 
 fn stop_browser_socks_proxy_inner(session_id: &str) {
@@ -2128,427 +1511,44 @@ fn stop_browser_http_proxy_inner(session_id: &str) {
     }
 }
 
-enum BrowserHttpProxyRequestLine {
-    Connect {
-        target_host: String,
-        target_port: u16,
-    },
-    Forward {
-        target_host: String,
-        target_port: u16,
-        initial_bytes: Vec<u8>,
-    },
-}
-
-fn parse_proxy_authority(value: &str, default_port: u16) -> Result<(String, u16), String> {
-    if let Some(rest) = value.strip_prefix('[') {
-        let closing = rest
-            .find(']')
-            .ok_or_else(|| format!("Invalid proxy authority: {value}"))?;
-        let host = rest[..closing].to_string();
-        let port = rest[closing + 1..]
-            .strip_prefix(':')
-            .map(|v| v.parse::<u16>().map_err(|e| e.to_string()))
-            .transpose()?
-            .unwrap_or(default_port);
-        return Ok((host, port));
-    }
-
-    if let Some((host, port)) = value.rsplit_once(':') {
-        if !host.contains(':') {
-            return Ok((
-                host.to_string(),
-                port.parse::<u16>().map_err(|e| e.to_string())?,
-            ));
-        }
-    }
-
-    Ok((value.to_string(), default_port))
-}
-
-fn parse_http_proxy_request(stream: &mut TcpStream) -> Result<BrowserHttpProxyRequestLine, String> {
-    let mut buffer = Vec::with_capacity(4096);
-    let mut chunk = [0u8; 4096];
-    let header_end = loop {
-        let n = stream.read(&mut chunk).map_err(|e| e.to_string())?;
-        if n == 0 {
-            return Err("Proxy client closed before sending request".to_string());
-        }
-        buffer.extend_from_slice(&chunk[..n]);
-        if let Some(index) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-            break index;
-        }
-        if buffer.len() > 64 * 1024 {
-            return Err("Proxy request headers too large".to_string());
-        }
-    };
-
-    let header_text =
-        String::from_utf8(buffer[..header_end].to_vec()).map_err(|e| e.to_string())?;
-    let mut lines = header_text.split("\r\n");
-    let request_line = lines
-        .next()
-        .ok_or_else(|| "Missing proxy request line".to_string())?;
-    let mut parts = request_line.split_whitespace();
-    let method = parts
-        .next()
-        .ok_or_else(|| "Missing HTTP proxy method".to_string())?;
-    let target = parts
-        .next()
-        .ok_or_else(|| "Missing HTTP proxy target".to_string())?;
-    let version = parts.next().unwrap_or("HTTP/1.1");
-
-    if method.eq_ignore_ascii_case("CONNECT") {
-        let (target_host, target_port) = parse_proxy_authority(target, 443)?;
-        return Ok(BrowserHttpProxyRequestLine::Connect {
-            target_host,
-            target_port,
-        });
-    }
-
-    let target_url = if target.starts_with("http://") || target.starts_with("https://") {
-        url::Url::parse(target).map_err(|e| e.to_string())?
-    } else {
-        let host_header = lines
-            .clone()
-            .find_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                if name.eq_ignore_ascii_case("host") {
-                    Some(value.trim().to_string())
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| "Missing Host header for proxied HTTP request".to_string())?;
-        url::Url::parse(&format!("http://{host_header}{target}")).map_err(|e| e.to_string())?
-    };
-
-    let target_host = target_url
-        .host_str()
-        .ok_or_else(|| "Missing target host in proxied HTTP request".to_string())?
-        .to_string();
-    let target_port = target_url
-        .port_or_known_default()
-        .ok_or_else(|| "Missing target port in proxied HTTP request".to_string())?;
-
-    let mut origin_form = target_url.path().to_string();
-    if origin_form.is_empty() {
-        origin_form.push('/');
-    }
-    if let Some(query) = target_url.query() {
-        origin_form.push('?');
-        origin_form.push_str(query);
-    }
-
-    let mut initial_bytes = format!("{method} {origin_form} {version}\r\n").into_bytes();
-    for line in lines {
-        if line.is_empty() {
-            continue;
-        }
-        initial_bytes.extend_from_slice(line.as_bytes());
-        initial_bytes.extend_from_slice(b"\r\n");
-    }
-    initial_bytes.extend_from_slice(b"\r\n");
-    initial_bytes.extend_from_slice(&buffer[header_end + 4..]);
-
-    Ok(BrowserHttpProxyRequestLine::Forward {
-        target_host,
-        target_port,
-        initial_bytes,
-    })
-}
-
-fn write_http_proxy_error(stream: &mut TcpStream, status: &str, message: &str) {
-    let body = format!("{status}\n{message}\n");
-    let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    let _ = stream.write_all(response.as_bytes());
-}
-
-/// Perform a SOCKS5 handshake on `stream` and return the target host and port.
-fn socks5_handshake(stream: &mut TcpStream) -> Result<(String, u16), String> {
-    // Greeting: VER NMETHODS METHODS...
-    let mut buf = [0u8; 2];
-    stream.read_exact(&mut buf).map_err(|e| e.to_string())?;
-    if buf[0] != 5 {
-        return Err("Not a SOCKS5 client".to_string());
-    }
-    let nmethods = buf[1] as usize;
-    let mut methods = vec![0u8; nmethods];
-    stream.read_exact(&mut methods).map_err(|e| e.to_string())?;
-
-    // We only support no-auth (method 0x00)
-    stream.write_all(&[5, 0]).map_err(|e| e.to_string())?;
-
-    // Request: VER CMD RSV ATYP DST.ADDR DST.PORT
-    let mut hdr = [0u8; 4];
-    stream.read_exact(&mut hdr).map_err(|e| e.to_string())?;
-    if hdr[0] != 5 || hdr[1] != 1 {
-        // Only CONNECT (0x01) supported
-        stream
-            .write_all(&[5, 7, 0, 1, 0, 0, 0, 0, 0, 0])
-            .map_err(|e| e.to_string())?;
-        return Err("Only SOCKS5 CONNECT supported".to_string());
-    }
-
-    let target_host = match hdr[3] {
-        1 => {
-            // IPv4
-            let mut ip = [0u8; 4];
-            stream.read_exact(&mut ip).map_err(|e| e.to_string())?;
-            format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
-        }
-        3 => {
-            // Domain
-            let mut len = [0u8; 1];
-            stream.read_exact(&mut len).map_err(|e| e.to_string())?;
-            let mut domain = vec![0u8; len[0] as usize];
-            stream.read_exact(&mut domain).map_err(|e| e.to_string())?;
-            String::from_utf8(domain).map_err(|e| e.to_string())?
-        }
-        4 => {
-            // IPv6
-            let mut ip = [0u8; 16];
-            stream.read_exact(&mut ip).map_err(|e| e.to_string())?;
-            let addr = std::net::Ipv6Addr::from(ip);
-            format!("{addr}")
-        }
-        _ => {
-            stream
-                .write_all(&[5, 8, 0, 1, 0, 0, 0, 0, 0, 0])
-                .map_err(|e| e.to_string())?;
-            return Err("Unsupported SOCKS5 address type".to_string());
-        }
-    };
-
-    let mut port_buf = [0u8; 2];
-    stream
-        .read_exact(&mut port_buf)
-        .map_err(|e| e.to_string())?;
-    let target_port = u16::from_be_bytes(port_buf);
-
-    // Reply: success
-    stream
-        .write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0])
-        .map_err(|e| e.to_string())?;
-
-    Ok((target_host, target_port))
-}
-
 #[tauri::command]
 pub async fn start_browser_socks_proxy(
     app: AppHandle,
     request: BrowserSocksProxyRequest,
 ) -> Result<u16, String> {
     stop_browser_socks_proxy_inner(&request.session_id);
-
-    if has_jump_host(request.jump_host.as_deref()) {
-        if request.auth_type != "privateKey" {
-            return Err(
-                "Remote browser over a jump host currently requires private key authentication"
-                    .to_string(),
-            );
-        }
-        let started_at = std::time::Instant::now();
-        let private_key = request
-            .private_key
-            .clone()
-            .ok_or_else(|| "Private key is required for jump-host browser proxying".to_string())?;
-        let local_port = reserve_local_port()?;
-        let bind_spec = format!("127.0.0.1:{local_port}");
-        let session_id_for_tunnel = request.session_id.clone();
-        let session_id_for_log = request.session_id.clone();
-        spawn_ssh_process_tunnel(
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = verified_browser_connection(
             &app,
-            request.session_id.clone(),
-            request.host.clone(),
+            &request.session_id,
+            request.host_id.as_deref(),
+            request.vault_id.as_deref(),
+            &request.host,
             request.port,
-            request.username.clone(),
-            private_key,
-            request.jump_host.clone(),
+            &request.username,
+            &request.auth_type,
+            request.password.as_deref(),
+            request.private_key.as_deref(),
+            request.jump_host.as_deref(),
             request.jump_port,
-            request.jump_user.clone(),
-            vec!["-D".to_string(), bind_spec],
-            move |handle| {
-                if let Ok(mut map) = BROWSER_SOCKS_PROXIES.lock() {
-                    map.insert(session_id_for_tunnel.clone(), handle);
-                }
-            },
+            request.jump_user.as_deref(),
+            request.accepted_host_key.as_ref(),
         )?;
-        log::info!(
-            "[Browser SOCKS] tunnel ready: session_id={}, source=jump-system, local_port={}, elapsed_ms={}",
-            session_id_for_log,
-            local_port,
-            started_at.elapsed().as_millis()
-        );
-        return Ok(local_port);
-    }
-
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("Failed to bind local SOCKS port: {e}"))?;
-    let local_port = listener
-        .local_addr()
-        .map_err(|e| format!("Failed to get local addr: {e}"))?
-        .port();
-
-    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
-
-    let host = request.host.clone();
-    let ssh_port = request.port;
-    let username = request.username.clone();
-    let auth_type = request.auth_type.clone();
-    let password = request.password.clone();
-    let private_key = request.private_key.clone();
-    let _accept_host_key = request.accept_host_key.unwrap_or(false);
-    let session_id_bg = request.session_id.clone();
-    let session_id_for_map = request.session_id.clone();
-    let app_handle = app.clone();
-
-    // Probe connection to validate credentials before returning the port
-    let setup_started_at = std::time::Instant::now();
-    let (probe, probe_source) = tauri::async_runtime::spawn_blocking({
-        let host = host.clone();
-        let username = username.clone();
-        let auth_type = auth_type.clone();
-        let password = password.clone();
-        let private_key = private_key.clone();
-        let session_id = request.session_id.clone();
-        let app2 = app.clone();
-        move || {
-            browser_checkout_transport_session(
-                &app2,
-                &session_id,
-                &host,
-                ssh_port,
-                &username,
-                &auth_type,
-                password.as_deref(),
-                private_key.as_deref(),
-            )
-        }
+        let lease = crate::ssh::forward::start(
+            connection,
+            "127.0.0.1",
+            0,
+            crate::ssh::forward::ForwardKind::Socks,
+        )?;
+        let port = lease.port;
+        BROWSER_SOCKS_PROXIES
+            .lock()
+            .map_err(|_| "Browser forwarding registry unavailable")?
+            .insert(request.session_id, retain_browser_forward(lease));
+        Ok(port)
     })
     .await
-    .map_err(|e| format!("Task panicked: {e}"))??;
-    probe.set_blocking(false);
-    if matches!(probe_source, BrowserTransportSource::Pool) {
-        browser_checkin_pooled_session(&app, &host, ssh_port, &username, probe);
-    }
-    log::info!(
-        "[Browser SOCKS] probe ready: session_id={}, source={:?}, target={}@{}:{}, elapsed_ms={}",
-        request.session_id,
-        probe_source,
-        username,
-        host,
-        ssh_port,
-        setup_started_at.elapsed().as_millis()
-    );
-
-    std::thread::spawn(move || {
-        listener.set_nonblocking(true).expect("set_nonblocking");
-
-        loop {
-            if shutdown_rx.try_recv().is_ok() {
-                break;
-            }
-
-            match listener.accept() {
-                Ok((mut local_stream, _)) => {
-                    let h = host.clone();
-                    let u = username.clone();
-                    let auth = auth_type.clone();
-                    let pw = password.clone();
-                    let pk = private_key.clone();
-                    let session_id = session_id_bg.clone();
-                    let app3 = app_handle.clone();
-                    std::thread::spawn(move || {
-                        local_stream.set_nonblocking(false).ok();
-                        local_stream
-                            .set_read_timeout(Some(std::time::Duration::from_secs(15)))
-                            .ok();
-
-                        let (target_host, target_port) = match socks5_handshake(&mut local_stream) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                log::warn!("[Browser SOCKS] handshake failed: {e}");
-                                return;
-                            }
-                        };
-
-                        let (session, source) = match browser_checkout_transport_session(
-                            &app3,
-                            &session_id,
-                            &h,
-                            ssh_port,
-                            &u,
-                            &auth,
-                            pw.as_deref(),
-                            pk.as_deref(),
-                        ) {
-                            Ok(result) => result,
-                            Err(e) => {
-                                log::warn!("[Browser SOCKS] SSH connect failed: {e}");
-                                return;
-                            }
-                        };
-                        session.set_blocking(false);
-                        log::info!(
-                            "[Browser SOCKS] channel open: session_id={}, source={:?}, target={}:{}",
-                            session_id,
-                            source,
-                            target_host,
-                            target_port
-                        );
-
-                        let channel = match open_direct_tcpip_channel(
-                            &session,
-                            &target_host,
-                            target_port,
-                        ) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                log::warn!("[Browser SOCKS] direct-tcpip to {target_host}:{target_port} failed: {e}");
-                                return;
-                            }
-                        };
-
-                        // Clear the read timeout before relaying
-                        local_stream.set_read_timeout(None).ok();
-                        relay_tcp_and_channel(local_stream, channel);
-                        if matches!(source, BrowserTransportSource::Pool) && session.authenticated()
-                        {
-                            browser_checkin_pooled_session(&app3, &h, ssh_port, &u, session);
-                        }
-                    });
-                }
-                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-                Err(_) => break,
-            }
-
-            if shutdown_rx.try_recv().is_ok() {
-                break;
-            }
-        }
-
-        if let Ok(mut map) = BROWSER_SOCKS_PROXIES.lock() {
-            map.remove(&session_id_bg);
-        }
-    });
-
-    if let Ok(mut map) = BROWSER_SOCKS_PROXIES.lock() {
-        map.insert(
-            session_id_for_map,
-            TunnelHandle {
-                shutdown: shutdown_tx,
-            },
-        );
-    }
-
-    Ok(local_port)
+    .map_err(|_| "Browser forwarding task failed")?
 }
 
 #[tauri::command]

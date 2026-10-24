@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { CommandRunResult } from './sessions'
 import type { HostProfile } from './hosts'
+import { remoteOperationStatus } from './operation-verification'
+import { requestUserDecision, type UserConfirmationDecision } from './user-confirmation'
+import { hostOperationReview } from './operation-review'
 
 export type OperationJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'unknown' | 'cancelled'
 export type OperationRisk = 'read-only' | 'low' | 'high'
@@ -43,6 +46,7 @@ export interface OperationAuditEntry {
   auditId: string
   jobId: string
   hostId?: string | null
+  vaultId?: string | null
   hostName?: string | null
   hostAddress?: string | null
   source: OperationSource
@@ -94,18 +98,30 @@ export interface UpdateOperationJobRequest {
 /** Filters shared by the host list and activity/audit views. Keep these
  * aligned with the optional fields accepted by the Tauri command so callers
  * can request a host-scoped slice without loading the entire local journal. */
+/** Stable keyset boundary in the journal's descending time/id order. */
+export interface OperationHistoryCursor {
+  timestamp: number
+  id: string
+}
+
 export interface OperationJobListQuery {
   hostId?: string
+  vaultId?: string
   status?: OperationJobStatus
   action?: string
   source?: OperationSource
   limit?: number
+  before?: OperationHistoryCursor
 }
 
 export interface OperationAuditListQuery {
   jobId?: string
   hostId?: string
+  vaultId?: string
+  source?: OperationSource
+  status?: OperationJobStatus
   limit?: number
+  before?: OperationHistoryCursor
 }
 
 export async function createOperationJob(payload: CreateOperationJobRequest) {
@@ -133,7 +149,7 @@ export async function listOperationAudit(query: OperationAuditListQuery | number
 }
 
 export function operationTransport(host: HostProfile): 'direct' | 'proxy-jump' {
-  return host.jumpHost?.trim() ? 'proxy-jump' : 'direct'
+  return host.jumpHostId || host.jumpHost?.trim() ? 'proxy-jump' : 'direct'
 }
 
 export function summarizeRemoteResult(result: Pick<CommandRunResult, 'exitCode' | 'durationMs'>) {
@@ -156,23 +172,46 @@ export function safeOperationTarget(target: string, maxLength = 160) {
     .slice(0, maxLength)
 }
 
+export interface OperationExecutionContext {
+  /** Includes the caller's scope and the confirmation presenter's persistent guard. */
+  isCurrent: () => boolean
+}
+
+/** A staged operation must report whether a remote mutation may already have been sent. */
+export class OperationScopeChangedError extends Error {
+  readonly sent: boolean
+
+  constructor(sent: boolean = true) {
+    super('The initiating operation scope changed')
+    this.name = 'OperationScopeChangedError'
+    this.sent = sent !== false
+  }
+}
+
 export interface RunConfirmedOperationOptions<T> {
+  /** Recheck the initiating UI scope before consent and before execution. */
+  isCurrent?: () => boolean
   host: HostProfile
+  /** Optional vault scope for host ids that can exist in more than one vault. */
+  vaultId?: string
+  actor?: string
   action: string
   target: string
   risk: OperationRisk
   paramsSummary?: string
   confirmMessage: string
-  execute: () => Promise<T>
+  execute: (context: OperationExecutionContext) => Promise<T>
   getResult?: (value: T) => Pick<CommandRunResult, 'exitCode' | 'durationMs'> & {
     resultSummary?: string
     errorCode?: string
     errorSummary?: string
+    errorType?: CommandRunResult['errorType']
   }
   onJob?: (job: OperationJob) => void
   provider?: string
   transport?: string
   source?: OperationSource
+  requestId?: string
 }
 
 /**
@@ -182,6 +221,8 @@ export interface RunConfirmedOperationOptions<T> {
  */
 export async function runConfirmedOperation<T>({
   host,
+  vaultId,
+  actor,
   action,
   target,
   risk,
@@ -193,67 +234,110 @@ export async function runConfirmedOperation<T>({
   provider,
   transport,
   source,
+  requestId,
+  isCurrent,
 }: RunConfirmedOperationOptions<T>): Promise<{ value: T; job: OperationJob } | null> {
+  if (isCurrent?.() === false) return null
   const job = await createOperationJob({
     hostId: host.id,
+    vaultId: vaultId ?? host.vaultId,
     hostName: host.name,
     hostAddress: host.address,
     username: host.username,
     source: source ?? 'workspace',
-    actor: 'local-user',
+    actor: actor ?? 'local-user',
     action,
     target: safeOperationTarget(target),
     risk,
     provider: provider ?? 'ssh-agentless',
     transport: transport ?? operationTransport(host),
     paramsSummary: paramsSummary ? safeOperationTarget(paramsSummary) : undefined,
-    confirmationRequired: true,
+    confirmationRequired: risk !== 'read-only',
+    requestId,
   })
   onJob?.(job)
 
-  if (!window.confirm(confirmMessage)) {
+  const cancelChangedScope = async (current: OperationJob, consentGiven = false) => {
     const cancelled = await updateOperationJob({
-      jobId: job.jobId,
+      jobId: current.jobId,
       status: 'cancelled',
-      confirmationStatus: 'rejected',
-      errorCode: 'confirmation_rejected',
-      errorSummary: 'Operation was cancelled before execution',
+      confirmationStatus: consentGiven ? (risk === 'read-only' ? 'not_required' : 'confirmed') : current.confirmationStatus,
+      ...(consentGiven && risk !== 'read-only' ? { confirmedBy: actor ?? 'local-user' } : {}),
+      errorCode: 'operation_scope_changed',
+      errorSummary: 'The initiating host or Vault changed before a remote mutation was sent',
+      actor: actor ?? 'local-user',
     })
     onJob?.(cancelled)
     return null
   }
+  if (isCurrent?.() === false) return cancelChangedScope(job)
 
+  const decision: UserConfirmationDecision = risk === 'read-only' ? { accepted: true, reason: 'accepted' } : await requestUserDecision({
+    message: `${confirmMessage}\n\n${hostOperationReview(host, paramsSummary ?? `${action} ${target}`)}`,
+    vaultId: vaultId ?? host.vaultId,
+    host,
+    risk,
+    isCurrent,
+  })
+  const scopeCurrent = () => {
+    try { return isCurrent?.() !== false && decision.isCurrent?.() !== false } catch { return false }
+  }
+  if (!scopeCurrent() || decision.reason === 'scope-changed') return cancelChangedScope(job, decision.accepted)
+  if (!decision.accepted) {
+    const rejected = decision.reason === 'rejected'
+    const cancelled = await updateOperationJob({
+      jobId: job.jobId,
+      status: 'cancelled',
+      confirmationStatus: rejected ? 'rejected' : job.confirmationStatus,
+      errorCode: rejected ? 'confirmation_rejected' : `confirmation_${decision.reason}`,
+      errorSummary: rejected ? 'Operation was cancelled before execution' : 'Operation confirmation was unavailable; no action was sent',
+      actor: actor ?? 'local-user',
+    })
+    onJob?.(cancelled)
+    return null
+  }
   const running = await updateOperationJob({
     jobId: job.jobId,
     status: 'running',
-    confirmationStatus: 'confirmed',
-    confirmedBy: 'local-user',
+    confirmationStatus: risk === 'read-only' ? 'not_required' : 'confirmed',
+    confirmedBy: actor ?? 'local-user',
+    actor: actor ?? 'local-user',
   })
   onJob?.(running)
+  if (!scopeCurrent()) return cancelChangedScope(running, true)
 
   try {
-    const value = await execute()
+    const value = await execute({ isCurrent: scopeCurrent })
     const result = getResult?.(value)
+    const status = result ? remoteOperationStatus(result) : 'completed'
     const completed = await updateOperationJob({
       jobId: job.jobId,
-      status: result && result.exitCode !== 0 ? 'failed' : 'completed',
+      status,
+      actor: actor ?? 'local-user',
       resultSummary: result?.resultSummary ?? (result ? summarizeRemoteResult(result) : 'completed'),
-      ...(result && result.exitCode !== 0 ? {
-        errorCode: result.errorCode ?? `exit_${result.exitCode}`,
-        errorSummary: result.errorSummary ?? 'Remote command exited with a non-zero status',
+      ...(result && status !== 'completed' ? {
+        errorCode: result.errorCode ?? (status === 'unknown' ? 'remote_state_unknown' : `exit_${result.exitCode}`),
+        errorSummary: result.errorSummary ?? (status === 'unknown' ? 'Remote operation outcome is unknown; verify before retrying' : 'Remote command exited with a non-zero status'),
       } : {}),
     })
     onJob?.(completed)
     return { value, job: completed }
   } catch (error) {
-    const unknown = isUnknownOperationError(error)
+    const scopeChanged = error instanceof OperationScopeChangedError
+    if (scopeChanged && error.sent === false) return cancelChangedScope(running, true)
+    const unknown = scopeChanged || isUnknownOperationError(error)
     const failed = await updateOperationJob({
       jobId: job.jobId,
       status: unknown ? 'unknown' : 'failed',
-      errorCode: unknown ? 'remote_state_unknown' : 'operation_failed',
-      errorSummary: safeOperationTarget(error instanceof Error ? error.message : String(error), 240),
+      ...(scopeChanged ? {
+        confirmationStatus: risk === 'read-only' ? 'not_required' : 'confirmed',
+        ...(risk !== 'read-only' ? { confirmedBy: actor ?? 'local-user' } : {}),
+      } : {}),
+      errorCode: scopeChanged ? 'operation_scope_changed' : unknown ? 'remote_state_unknown' : 'operation_failed',
+      errorSummary: scopeChanged ? 'The initiating host or Vault changed after a remote action was sent; remote state is unknown and must be verified before retrying' : safeOperationTarget(error instanceof Error ? error.message : String(error), 240),
+      actor: actor ?? 'local-user',
     })
     onJob?.(failed)
-    throw error
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { operationJob: failed })
   }
 }
