@@ -75,7 +75,7 @@ describe('host operations filter workflow', () => {
     fireEvent.click(within(hostCard).getByTestId('host-ops-details-toggle'))
     const incidentDetails = within(hostCard).getByTestId('host-ops-details-alert-summary')
     expect(incidentDetails).toBeVisible()
-    expect(incidentDetails).toHaveTextContent(/Alerts\s*1\s*·\s*1 active/)
+    expect(incidentDetails).toHaveTextContent(/Monitoring events\s*1\s*·\s*1 active/)
     const source = screen.getByTestId('komari-remote-alert-summary')
     expect(source).not.toBeVisible()
     fireEvent.click(within(hostCard).getByTestId('host-data-source-details').querySelector('summary')!)

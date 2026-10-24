@@ -257,42 +257,81 @@
   }
 
   .host-list-scroll-range {
-    height: 12px;
+    /* Reset the input itself as well as its thumb: WKWebView otherwise keeps
+       drawing the macOS track and white knob over the application styles. */
+    -webkit-appearance: none;
+    appearance: none;
+    height: 28px;
     min-width: 8rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    box-shadow: none;
     cursor: ew-resize;
-    accent-color: var(--workspace-primary-300);
+  }
+
+  .host-list-scroll-range:focus-visible {
+    outline: 2px solid var(--workspace-primary-400);
+    outline-offset: 2px;
   }
 
   .host-list-scroll-range::-webkit-slider-runnable-track {
-    height: 8px;
+    height: 4px;
+    border: 0;
     border-radius: 9999px;
-    background: var(--workspace-surface-700);
+    background: var(--workspace-meter-track);
   }
 
   .host-list-scroll-range::-webkit-slider-thumb {
-    width: 36px;
-    height: 18px;
-    margin-top: -5px;
-    border: 2px solid var(--workspace-surface-950);
-    border-radius: 9999px;
-    background: var(--workspace-primary-300);
-    cursor: ew-resize;
     -webkit-appearance: none;
+    appearance: none;
+    width: 40px;
+    height: 8px;
+    margin-top: -2px;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--workspace-text-muted);
+    box-shadow: none;
+    cursor: ew-resize;
+    transition: background-color 150ms;
+  }
+
+  .host-list-scroll-range:hover::-webkit-slider-thumb,
+  .host-list-scroll-range:focus-visible::-webkit-slider-thumb {
+    background: var(--workspace-primary-400);
+  }
+
+  .host-list-scroll-range:active::-webkit-slider-thumb {
+    background: var(--workspace-primary-300);
   }
 
   .host-list-scroll-range::-moz-range-track {
-    height: 8px;
+    height: 4px;
+    border: 0;
     border-radius: 9999px;
-    background: var(--workspace-surface-700);
+    background: var(--workspace-meter-track);
   }
 
   .host-list-scroll-range::-moz-range-thumb {
-    width: 36px;
-    height: 18px;
-    border: 2px solid var(--workspace-surface-950);
+    width: 40px;
+    height: 8px;
+    border: 0;
     border-radius: 9999px;
-    background: var(--workspace-primary-300);
+    background: var(--workspace-text-muted);
+    box-shadow: none;
     cursor: ew-resize;
+    transition: background-color 150ms;
+  }
+
+  .host-list-scroll-range:hover::-moz-range-thumb,
+  .host-list-scroll-range:focus-visible::-moz-range-thumb {
+    background: var(--workspace-primary-400);
+  }
+
+  .host-list-scroll-range:active::-moz-range-thumb {
+    background: var(--workspace-primary-300);
   }
 
   .ios-blur {
