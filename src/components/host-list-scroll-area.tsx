@@ -60,12 +60,12 @@ export function HostListScrollArea({ children, monitoring = true, resources = fa
   return (
     <div className="relative min-w-0">
       {position.max > 1 && (
-        <div data-testid="host-list-scroll-controls" className="flex items-center gap-3 border-b border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-950)] px-4 py-2 shadow-sm">
-          <div className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[var(--workspace-accent-text)]">
+        <div data-testid="host-list-scroll-controls" className="flex items-center gap-3 border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-4 py-1.5">
+          <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-[var(--workspace-text-muted)]">
             <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />
             <span className="hidden sm:inline">{t('hosts.horizontalScrollHint')}</span>
           </div>
-          <button type="button" aria-label={t('hosts.scrollLeft')} aria-controls={viewportId} disabled={position.left <= 0} onClick={() => scrollTo(position.left - 240)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)] disabled:opacity-40">
+          <button type="button" aria-label={t('hosts.scrollLeft')} aria-controls={viewportId} disabled={position.left <= 0} onClick={() => scrollTo(position.left - 240)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)] transition-colors enabled:hover:bg-[var(--workspace-surface-700)] enabled:hover:text-[var(--workspace-text-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--workspace-primary-400)] disabled:opacity-40">
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </button>
           <input
@@ -80,7 +80,7 @@ export function HostListScrollArea({ children, monitoring = true, resources = fa
             onChange={(event) => scrollTo(Number(event.target.value))}
             onKeyDown={handleKeyDown}
           />
-          <button type="button" aria-label={t('hosts.scrollRight')} aria-controls={viewportId} disabled={position.left >= position.max - 1} onClick={() => scrollTo(position.left + 240)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)] disabled:opacity-40">
+          <button type="button" aria-label={t('hosts.scrollRight')} aria-controls={viewportId} disabled={position.left >= position.max - 1} onClick={() => scrollTo(position.left + 240)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)] transition-colors enabled:hover:bg-[var(--workspace-surface-700)] enabled:hover:text-[var(--workspace-text-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--workspace-primary-400)] disabled:opacity-40">
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>

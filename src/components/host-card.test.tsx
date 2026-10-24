@@ -39,6 +39,32 @@ function openOperations() {
 }
 
 describe('host list item', () => {
+  it('keeps unverified results visible while separating past failures and preserving the audit identity on demand', () => {
+    const onConnect = vi.fn(), onSelect = vi.fn()
+    const operations: HostOperationalSummary = {
+      serviceTotal: 4, serviceActive: 3, serviceFailed: 1, processTotal: 2, processRunning: 2,
+      auditCount: 84, auditFailed: 60, transport: 'direct', vaultId: 'vault-a',
+      latestAudit: { action: 'probe.collect', target: 'host metrics', status: 'unknown', createdAt: 2, transport: 'direct', provider: 'ssh-agentless', auditId: 'retained-audit', jobId: 'retained-job', source: 'workspace' },
+    }
+    const props = { index: 1, host: { ...host, vaultId: 'vault-a' }, operations, isSelected: false, onConnect, onSelect, onEdit: vi.fn(), onDelete: vi.fn() }
+    const view = render(<HostListItem {...props} />)
+    openOperations()
+    const tasks = within(screen.getByTestId('host-services-panel'))
+    expect(tasks.getByText('Collect resource metrics')).toBeVisible()
+    expect(tasks.getByText(/Check the remote state/)).toBeVisible()
+    expect(tasks.getByText(/Past failures: 60/)).not.toBeVisible()
+    expect(tasks.getByText(/retained-audit/)).not.toBeVisible()
+    fireEvent.click(screen.getByTestId('host-audit-details').querySelector('summary')!)
+    expect(tasks.getByText(/Past failures: 60/)).toBeVisible()
+    expect(tasks.getByText(/retained-audit/)).toHaveTextContent('job=retained-job')
+    expect(onConnect).not.toHaveBeenCalled()
+    expect(onSelect).not.toHaveBeenCalled()
+    view.rerender(<HostListItem {...props} host={{ ...props.host, vaultId: 'vault-b' }} operations={{ ...operations, vaultId: 'vault-b', latestAudit: { ...operations.latestAudit!, auditId: 'second-audit' } }} />)
+    openOperations()
+    expect(screen.getByText(/second-audit/)).not.toBeVisible()
+    expect(screen.queryByText(/retained-audit/)).not.toBeInTheDocument()
+  })
+
   it.each((['grid', 'list'] as const).flatMap(mode => (['en', 'zh-CN'] as const).flatMap(locale =>
     (['offline', 'stale'] as const).map(status => ({ mode, locale, status })),
   )))('labels Komari $status as monitoring data in the $locale $mode view without blocking SSH', ({ mode, locale, status }) => {
@@ -82,6 +108,8 @@ describe('host list item', () => {
     expect(screen.getByText(/audit-visible-on-demand/)).not.toBeVisible()
     openOperations()
     expect(screen.getByTestId('host-local-alert')).toBeVisible()
+    expect(screen.getByText(/audit-visible-on-demand/)).not.toBeVisible()
+    fireEvent.click(screen.getByTestId('host-audit-details').querySelector('summary')!)
     expect(screen.getByText(/audit-visible-on-demand/)).toBeVisible()
     fireEvent.click(screen.getByTestId('local-host-alert-ack-cpu-hot'))
     expect(onLocalAlertAction).toHaveBeenCalledExactlyOnceWith(operations.localAlerts![0], 'acknowledge')
@@ -686,6 +714,9 @@ describe('host list item', () => {
     expect(screen.getByTestId('host-ops-summary')).toBeVisible()
     expect(details.getByText('3/4')).toBeInTheDocument()
     expect(details.getByText('2/2')).toBeVisible()
+    expect(details.getByText(/Restart service/)).toBeVisible()
+    expect(details.getByText(/service\.restart/)).not.toBeVisible()
+    fireEvent.click(screen.getByTestId('host-audit-details').querySelector('summary')!)
     expect(details.getByText(/service\.restart/)).toBeVisible()
     expect(details.getByText(/audit-1/)).toBeVisible()
     expect(details.getByText(/Unknown: 2/)).toBeVisible()

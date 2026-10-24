@@ -1039,6 +1039,33 @@ This is helper evidence (`appCoordinator:false`), not a substitute for the
 next installed-App run. Product code and every fresh-sample/history/audit/
 visibility/no-replay assertion are unchanged.
 
+## Host layout hierarchy and themed horizontal scrolling (2026-10-24)
+
+The host list now emphasizes the host name and Connect action, uses thin resource
+meters, and keeps location, connection details and stale monitoring status visible.
+Expanded details separate alerts, services/tasks and monitoring. Historical failure
+counts and raw job/audit identifiers remain available under a disclosure; unknown
+operation outcomes stay visible before opening it. The disclosure resets when the
+host or Vault scope changes. Grid cards stack their detail sections.
+
+The horizontal range control retains dragging, arrow buttons and keyboard navigation
+with a 28 px interaction area, a 4 px themed track and a compact thumb. Both the
+input and WebKit thumb explicitly suppress platform appearance.
+
+Validation: 1642 frontend tests passed, with 17 platform-gated tests skipped on
+macOS; the 150 related host/alert regressions, changed-file ESLint, production build
+and diff checks passed. Twenty-seven isolated production-component layouts covered
+list/grid, Chinese/English, light/dark, long text, active/empty details and widths
+360–1440 px, including callbacks and scope changes. These synthetic layouts are not
+remote-operation E2E evidence.
+
+The installed macOS acceptance App (`861f6a9 + host-layout`, local patch before
+commit) was also inspected after user unlock: the existing WEB host, region and
+metrics were visible, all three detail sections rendered, and audit details stayed
+collapsed. Only the application bundle was replaced, with the same identifier and
+an old-bundle backup. No Vault data, credentials, remote deployments or audit records
+were modified by the layout work or installer. Fresh PR CI remains a separate gate.
+
 ## Second owned probe release preparation (2026-10-24)
 
 ShellBeam Monitoring Agent 1.5.13 source `a7154f8151222c2eff3146e2acb7b3c8c1b6276c`
