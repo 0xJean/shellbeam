@@ -1166,3 +1166,51 @@ byte counts/hashes/dimensions plus visual review. Merge
 `0c3bae21c1054a4d0effe7c75d1bc5863f52da35` contains that product head. This isolated
 legacy-to-owned journey is distinct from the owned-to-owned WEB cycle above.
 The later documentation-only commit does not replace that CI head identity.
+
+### MCP native authorization UX: staged selection and review (2026-10-24)
+
+The MCP settings page now separates host selection, capability selection, and
+review/configuration. Search covers names, addresses, accounts and tags; group
+filters and a selected-only view preserve hidden selections. Bulk selection
+applies only to the current results and never silently exceeds 100 hosts. Only
+stored default connections are preselected; individual accounts remain explicit,
+including a single connection without a default. Monitoring-only hosts stay
+cache-only. Existing permissions, identity pinning, credentials and audit storage
+are unchanged. No remote installation is involved.
+
+Generated configuration replaces the draft. Discarding it starts a fresh
+read-only draft without revoking the created client. Vault changes invalidate the
+old draft and late results; duplicate submission is blocked. Details and protocol
+help are folded, but command privileges, cloud sharing and exact authorization
+scope remain visible before granting. MCP-off configuration preparation is
+explicit and does not enable the listener automatically.
+
+Validation: 41 targeted frontend tests (settings, picker, protocol formatting,
+and tour compatibility), production build, scoped ESLint and diff checks passed.
+Eight isolated browser combinations (Chinese/English, dark/light, 640/1280) passed
+four-stage geometry and flow checks, with 32 screenshots. The fixture verifies
+exact account selection, one explicit grant, format switching without another
+grant, draft reset and preservation of the existing synthetic client. These are
+production React components with synthetic IPC, not packaged native/client/SSH
+E2E evidence. No real MCP grants, Vault credentials, monitoring modes or remote
+agents were changed, and the running user application was not replaced.
+
+### MCP filtered select-all checkbox (2026-10-25, Asia/Shanghai)
+
+The host picker now has a prominent ShellBeam checkbox with unchecked, mixed and
+checked states. It selects or clears only the current search/group/selected-only
+results. Hidden selections and already edited account choices survive bulk additions;
+clearing results removes only those hosts' connection references. The total selected
+count remains visible independently of the result count. Empty/loading/disabled
+states and the 100-host limit remain guarded. Selection is draft-only until the
+existing final authorization action; no backend permissions or stored grants changed.
+
+Validation: 33 targeted host-picker, MCP settings/library and settings-panel tests;
+modified-file ESLint and diff check; eight isolated production-component combinations
+(Chinese/English, dark/light, 640/1280) covering search plus group selection, keyboard
+Space, mixed state, hidden selections, bulk clearing and empty results. Sixteen
+screenshots were captured; Chinese dark narrow mixed state and English light wide
+filtered selection were visually inspected. Synthetic IPC recorded only host/status
+and audit reads, with no grant, revoke or listener mutation. This browser evidence is
+not a real-client MCP end-to-end test. Local native packaging and launch are recorded
+separately in /tmp/shellbeam-mcp-select-all-local-receipt.json.

@@ -10,13 +10,23 @@ environment installation, automatic rollback, or a remote agent/daemon.
 1. Open the installed desktop application and go to Settings > Agent Access (MCP).
 2. Enable local MCP. It is disabled by default and requires the desktop process
    to remain running. No public or LAN listener is created.
-3. In the intended vault, choose a client name and individual servers. Cached
-   information is the default; separately opt into refresh, command execution,
-   file browsing/reading, file writing, structured diagnostics, snippet reading/execution,
-   local alert management and deployment metadata. Choose allowed SSH connections
-   and review shared snippet content. New hosts, accounts and snippets are never included automatically.
-4. Choose Codex (TOML), Claude Desktop (JSON), or another stdio client (JSON).
-   Generate the configuration and merge only its ShellBeam entry into
+3. Follow the native three-step form in the intended vault:
+   - **Choose hosts:** name the client and choose its configuration format. Search
+     host names, addresses, accounts or tags, filter by group, or show selected
+     hosts only. The **Select all** checkbox selects or clears the current search
+     and group results, preserving selections outside those results. A dash means
+     some results are selected; the count always shows the total selected hosts.
+     It refuses selections exceeding 100 hosts instead of silently truncating.
+     Only a stored default SSH account is checked initially. Other accounts are
+     explicit choices; a monitoring-only host has no invented SSH connection.
+   - **Set permissions:** cached information is included. All remote capabilities
+     remain off by default. Select reads, exact snippet versions, or operations
+     individually. A remote grant needs at least one checked SSH account; hosts
+     without one retain cached access only. Review snippet contents before sharing.
+   - **Review & connect:** inspect the exact hosts, accounts and extra permissions,
+     then explicitly authorize. Moving between steps does not create a grant.
+4. Copy the generated Codex TOML or Claude / generic stdio JSON, and merge only
+   its ShellBeam entry into
    your local MCP client's configuration. Keep the token secret. It is shown
    once; only its SHA-256 hash is stored by ShellBeam. Revoke and recreate the
    client if the configuration is lost or the application moves.
@@ -46,6 +56,17 @@ Each desktop client should receive a separate authorization so it can be audited
 and revoked independently. Changing the format tab only reformats the current
 one-time configuration; it does not issue a token or change permissions.
 ShellBeam never edits external client configuration files automatically.
+
+The generated configuration replaces the editable form. Finishing discards the
+one-time token and resets the next draft to no hosts and no optional permissions;
+it does not revoke the client just created. Switching vaults also discards the
+draft and ignores late configuration or snippet results. New hosts, accounts and
+snippets are never authorized automatically. Existing grants and audits remain
+available in **Authorized clients** and **Activity & audit**. A configuration can
+be prepared while MCP is off; connection checking remains disabled until enabled.
+Detailed setup and protocol instructions are expandable after configuration
+generation, while relevant command privileges and cloud data sharing are visible
+before authorization.
 
 ### Verification and troubleshooting
 
