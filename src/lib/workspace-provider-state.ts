@@ -121,10 +121,10 @@ export function buildWorkspaceProviderState(options: WorkspaceProviderStateOptio
   // rebuilding every other host on each freshness tick.
   const hosts = jump && jump.id !== host.id ? [host, jump] : [host]
   const key = getServerMonitorHostKey(host)
-  const komari = data.komari.filter((entry) => entry.integration.vaultId === vaultId && entry.integration.enabled)
+  const komari = data.komari.filter((entry) => host.monitoringMode !== 'ssh' && entry.integration.vaultId === vaultId && entry.integration.enabled)
   const integrationById = new Map(komari.map((entry) => [entry.integration.id, entry]))
   const allowed = (snapshot: ProbeSnapshot) => {
-    if (snapshot.host.hostId !== host.id || !sameEndpoint(snapshot, host, hosts)) return false
+    if (snapshot.host.hostId !== host.id || !sameEndpoint(snapshot, host, hosts) || host.monitoringMode === 'ssh' && snapshot.provider.kind !== 'ssh-agentless') return false
     if (snapshot.provider.kind !== 'komari') return true
     return isCurrentKomariSnapshot(snapshot, host, komari)
   }

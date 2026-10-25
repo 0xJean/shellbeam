@@ -497,6 +497,7 @@ fn prepare_transfer(app: &tauri::AppHandle, input: Input) -> Result<TransferPrev
         &input.target_host_id,
         input.target_connection_id.as_deref(),
     )?;
+    super::super::host_monitoring::require_server(&h)?;
     let scope_generation = app.state::<VaultState>().session_generation();
     let guard = || {
         check(app, &source_plan)?;

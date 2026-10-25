@@ -345,7 +345,7 @@ describe('host list item', () => {
     openOperations()
     const row = screen.getByTestId('host-local-alert')
     expect(row).toBeVisible()
-    expect(row).toHaveTextContent('ProbeProvider collection')
+    expect(row).toHaveTextContent('Monitoring collection')
     expect(row).toHaveTextContent('shellbeam-agent')
     expect(row).toHaveTextContent('ProxyJump')
     expect(row).toHaveTextContent('job=probe-job')
@@ -899,4 +899,22 @@ describe('host list item', () => {
     expect(onKomariAlertAction).toHaveBeenCalledWith('close', expect.objectContaining({ alertId: metrics.alertId }))
     expect(operations.komariAlerts).toEqual([unknown, retry, metrics])
   })
+})
+
+// Collection health is not installation status, including when SSH is a fallback.
+it.each(['en', 'zh-CN'] as const)('explains SSH collection without inventing probe installation status in %s', (locale) => {
+  localStorage.setItem('shellbeam.locale', locale)
+  const operations: HostOperationalSummary = { serviceTotal: null, serviceActive: null, serviceFailed: null, processTotal: null, processRunning: null, auditCount: 0, transport: 'direct', provider: 'ssh-agentless', probeProviderId: 'ssh-agentless', probeState: 'fresh' }
+  const props = { host, isSelected: false, onSelect: vi.fn(), onConnect: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() }
+  const view = render(<I18nProvider><HostListItem {...props} index={1} operations={operations} /></I18nProvider>)
+  openOperations()
+  expect(screen.getByTestId('host-current-source')).toHaveTextContent(locale === 'zh-CN' ? 'SSH 无探针扫描' : 'SSH agentless scanning')
+  expect(screen.getByTestId('host-agentless-explanation')).toHaveTextContent(locale === 'zh-CN' ? '此扫描不会安装常驻探针' : 'This scan does not install a resident probe')
+  fireEvent.click(screen.getByTestId('host-data-source-details').querySelector('summary')!)
+  expect(screen.getByText(locale === 'zh-CN' ? '采集状态' : 'Collection state')).toBeVisible()
+  expect(screen.queryByText(locale === 'zh-CN' ? '探针状态' : 'Probe state')).not.toBeInTheDocument()
+  expect(screen.queryByText(locale === 'zh-CN' ? '已安装' : 'Installed', { exact: true })).not.toBeInTheDocument()
+  view.rerender(<I18nProvider><HostListItem {...props} index={1} operations={{ ...operations, agentStatus: 'installed', agentVersion: '1.2.3' }} /></I18nProvider>)
+  expect(screen.getByText(locale === 'zh-CN' ? '已安装' : 'Installed', { exact: true })).toBeVisible()
+  expect(screen.getByTestId('host-agentless-explanation')).not.toHaveTextContent(locale === 'zh-CN' ? '未安装' : 'not installed')
 })

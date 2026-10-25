@@ -5,6 +5,7 @@ import { useT } from '@/lib/i18n'
 import { hasSshConnection, type HostProfile } from '@/lib/hosts'
 import { requestUserDecision } from '@/lib/user-confirmation'
 import { cancelCompatibleAgent, compatibleAgentPolicy, operateCompatibleAgent, prepareCompatibleAgent, readCompatibleAgent, type CompatibleAgentAction, type CompatibleAgentPolicy, type CompatibleAgentRecord } from '@/lib/compatible-agent'
+import { monitoringModeCopy } from '@/lib/locales/monitoring-mode'
 import { compatibleAgentCopy } from '@/lib/locales/compatible-agent'
 import { probeReleaseDisplay, probeReleaseIdentity } from '@/lib/probe-release-identity'
 import { Button } from './ui/button'
@@ -88,7 +89,9 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
   const released = record?.observation.status === 'released'
   const installed = !!record?.current && !['retired', 'absent'].includes(record.observation.status)
   const origin = probeReleaseIdentity(record?.current?.manifest)
+  const sshOnly = host.monitoringMode === 'ssh'
   return <div data-testid="compatible-agent-panel" data-status={record?.status} data-deployment={record?.deployment} data-job-id={record?.jobId} data-version={record?.current?.manifest.version} data-previous-version={record?.previous?.manifest.version} data-product={origin?.product ?? 'compatible'} className="min-w-0 space-y-3 py-3 text-xs" onClick={e => e.stopPropagation()}>
+    {sshOnly && <p role="status">{monitoringModeCopy[locale].chooseFirst} {monitoringModeCopy[locale].retained}</p>}
     <p>{c.description}</p><p className="text-muted-foreground">{c.officialHint}</p><p className="text-muted-foreground">{c.requirements}</p>
     <div role="status" className="break-words">{busy ? c.working : status}</div>
     {record && <dl data-testid="compatible-agent-identity" className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
@@ -98,13 +101,13 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
       <dt>{c.job}</dt><dd className="break-all font-mono" title={record.jobId}>{record.jobId}</dd>
     </dl>}
     <label className="block">{c.endpoint}<Input data-testid="compatible-agent-endpoint" aria-label={c.endpoint} value={endpoint} disabled={busy || !!record?.current} onChange={e => setEndpoint(e.target.value)} className="mt-1 min-w-0" /><span className="mt-1 block text-muted-foreground">{c.endpointHint}</span></label>
-    <div className="flex flex-wrap gap-2">{(['inspect', 'install', 'upgrade', 'rollback', 'uninstall'] as const).map(action => <Button key={action} data-testid={`compatible-agent-${action}`} size="sm" variant="outline" disabled={busy || transferPending || record?.status === 'migrated' || (released && action !== 'inspect') || (action !== 'inspect' && action !== 'uninstall' && unsettled) || (action === 'install' && installed) || (action === 'upgrade' && !installed) || (action === 'rollback' && (!installed || !record?.previous)) || (action === 'uninstall' && !record?.current && !record?.requested)} onClick={() => void act(action)}>{c[action]}</Button>)}</div>
+    <div className="flex flex-wrap gap-2">{(['inspect', 'install', 'upgrade', 'rollback', 'uninstall'] as const).map(action => <Button key={action} data-testid={`compatible-agent-${action}`} size="sm" variant="outline" disabled={busy || (sshOnly && (action === 'install' || action === 'upgrade')) || transferPending || record?.status === 'migrated' || (released && action !== 'inspect') || (action !== 'inspect' && action !== 'uninstall' && unsettled) || (action === 'install' && installed) || (action === 'upgrade' && !installed) || (action === 'rollback' && (!installed || !record?.previous)) || (action === 'uninstall' && !record?.current && !record?.requested)} onClick={() => void act(action)}>{c[action]}</Button>)}</div>
     <p className="text-muted-foreground">{c.preserved}</p>
     <details data-testid="compatible-agent-handoff" className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.handoff}</summary>
       <p className="my-2 text-muted-foreground">{c.handoffHint}</p>
-      {!installed && record?.observation.status !== 'retired' && <div className="space-y-2"><label className="block">{c.legacyUnit}<Input aria-label={c.legacyUnit} value={legacyUnit} disabled={busy} onChange={e => setLegacyUnit(e.target.value)} /></label><Button data-testid="compatible-agent-adopt" size="sm" variant="outline" disabled={busy || unsettled || !legacyUnit.trim()} onClick={() => void act('adopt')}>{c.adopt}</Button></div>}
+      {!installed && record?.observation.status !== 'retired' && <div className="space-y-2"><label className="block">{c.legacyUnit}<Input aria-label={c.legacyUnit} value={legacyUnit} disabled={busy} onChange={e => setLegacyUnit(e.target.value)} /></label><Button data-testid="compatible-agent-adopt" size="sm" variant="outline" disabled={busy || sshOnly || unsettled || !legacyUnit.trim()} onClick={() => void act('adopt')}>{c.adopt}</Button></div>}
       {installed && <div className="space-y-2"><label className="block">{c.migrationEndpoint}<Input aria-label={c.migrationEndpoint} value={migrationEndpoint} disabled={busy} onChange={e => setMigrationEndpoint(e.target.value)} /></label>
-        <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy || unsettled || !migrationEndpoint.trim()} onClick={() => void act('migrate')}>{c.migrate}</Button>
+        <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy || sshOnly || unsettled || !migrationEndpoint.trim()} onClick={() => void act('migrate')}>{c.migrate}</Button>
           {record?.previousConfiguration && <Button size="sm" variant="outline" disabled={busy || transferPending || record?.status === 'migrated'} onClick={() => void act('restore-config')}>{c['restore-config']}</Button>}
         </div></div>}
       {record?.observation.legacy && record.observation.status !== 'released' && <Button className="mt-2" size="sm" variant="outline" disabled={busy || transferPending || record?.status === 'migrated'} onClick={() => void act('restore-legacy')}>{c['restore-legacy']}</Button>}

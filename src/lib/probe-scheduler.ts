@@ -412,10 +412,11 @@ export class ProbeProviderRegistry {
     // host edit must neither join this work nor reuse its recovery candidate.
     const configuration = { ...request.host, vaultId }
     const configurationKey = probeCollectionConfigurationKey(configuration)
-    if (vaultId) await this.hydrate(vaultId)
-    const sections = requestSections(request)
     const provider = this.get(request.providerId ?? 'ssh-agentless')
     if (!provider) throw new Error(`probe_provider_unavailable:${request.providerId ?? 'ssh-agentless'}`)
+    if (request.host.monitoringMode === 'ssh' && provider.ref.kind !== 'ssh-agentless') throw new Error('HOST_MONITORING_SERVER_REQUIRED')
+    if (vaultId) await this.hydrate(vaultId)
+    const sections = requestSections(request)
     if (provider.ref.kind === 'ssh-agentless' && !hasSshConnection(request.host)) throw new Error('HOST_CONNECTION_REQUIRED')
     const now = request.now ?? Date.now()
     const key = cacheKey(provider, request.host, sections, vaultId)

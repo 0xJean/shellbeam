@@ -230,7 +230,7 @@ export async function readOpsUiProbeAlert(driver, state, role, expectedStatus, {
   if (await driver.attr(row, 'data-alert-status') !== expectedStatus) return null
   const text = await driver.text(row)
   const hostLabel = state.hostNames[role].replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 48)
-  check(text.includes(`${hostLabel} · ${NAME}`) && text.includes('ProbeProvider collection'), 'unexpected_alert_label')
+  check(text.includes(`${hostLabel} · ${NAME}`) && text.includes('Monitoring collection'), 'unexpected_alert_label')
   const jobId = await driver.attr(row, 'data-job-id')
   check(jobId === null || jobId === '' || validId(jobId), 'invalid_linked_job')
   return { jobId: jobId || null, updatedAt: sample(await driver.attr(row, 'data-updated-at')), resolvedAt: sample(await driver.attr(row, 'data-resolved-at')) }

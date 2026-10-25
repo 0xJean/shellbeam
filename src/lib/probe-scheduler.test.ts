@@ -68,6 +68,14 @@ function provider(id: string, probe: ProbeProvider['probe']): ProbeProvider {
 }
 
 describe('ProbeProviderRegistry', () => {
+  it('refuses a server provider for an explicitly SSH-only host before reading cached data or collecting', async () => {
+    const provider: ProbeProvider = { ref: { kind: 'komari', id: 'server-choice', capabilities: ['metrics'] }, probe: vi.fn() }
+    const store = { list: vi.fn(async () => []), save: vi.fn(async () => {}), remove: vi.fn(async () => {}) }
+    const registry = new ProbeProviderRegistry(1, store).register(provider)
+    await expect(registry.probe({ host: { ...host('h'), monitoringMode: 'ssh' }, providerId: provider.ref.id, resolveAuthSecret: async () => '', now: 500 })).rejects.toThrow('HOST_MONITORING_SERVER_REQUIRED')
+    expect(provider.probe).not.toHaveBeenCalled(); expect(store.save).not.toHaveBeenCalled(); expect(store.remove).not.toHaveBeenCalled()
+  })
+
   it('keeps valid inventory TTL when the row originally indexed an invalid metric observation', async () => {
     const item: ProbeProvider = { ref: { kind: 'komari', id: 'source-a', capabilities: ['metrics', 'inventory'] }, probe: vi.fn() }
     const old = snapshot(item, host('one'), 100)

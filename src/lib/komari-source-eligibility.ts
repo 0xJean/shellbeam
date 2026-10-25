@@ -47,7 +47,7 @@ function mapped(entry: CurrentKomariSource, hostId: string, nodeId: string) {
 
 /** Current presentation only. This never rewrites snapshots or audit history. */
 export function isCurrentKomariSnapshot(snapshot: ProbeSnapshot, host: HostProfile, sources: readonly CurrentKomariSource[]): boolean {
-  if (snapshot.provider.kind !== 'komari' || snapshot.host.hostId !== host.id) return false
+  if (host.monitoringMode === 'ssh' || snapshot.provider.kind !== 'komari' || snapshot.host.hostId !== host.id) return false
   const entry = sourceFor(host, snapshot.provider.id, sources)
   const nodeId = snapshot.provider.nodeId?.trim()
   if (!entry || !nodeId) return false
@@ -63,7 +63,7 @@ export function isCurrentKomariSnapshot(snapshot: ProbeSnapshot, host: HostProfi
 }
 
 export function isCurrentKomariAlert(alert: KomariAlertRecord, host: HostProfile, sources: readonly CurrentKomariSource[], snapshots: readonly ProbeSnapshot[]): boolean {
-  if (isUnverifiedKomariRuleAlert(alert)) return false
+  if (host.monitoringMode === 'ssh' || isUnverifiedKomariRuleAlert(alert)) return false
   const entry = sourceFor(host, alert.integrationId, sources)
   if (!entry || (alert.hostId && alert.hostId !== host.id)) return false
   if (alert.kind === 'server-load') {

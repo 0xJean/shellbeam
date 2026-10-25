@@ -32,7 +32,11 @@ pub(crate) fn initialize(db: &Connection) -> Result<(), String> {
         .map_err(|_| "HOST_DIRECTORY_STORE_FAILED")?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| "HOST_DIRECTORY_STORE_FAILED")?;
-    for column in ["connections_json", "default_connection_id"] {
+    for column in [
+        "connections_json",
+        "default_connection_id",
+        "monitoring_mode",
+    ] {
         if !columns.iter().any(|c| c == column) {
             tx.execute(
                 &format!("ALTER TABLE workspace_hosts ADD COLUMN {column} TEXT"),

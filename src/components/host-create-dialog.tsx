@@ -9,6 +9,7 @@ interface HostCreateDialogProps {
   vaultUnlocked?: boolean
   onSaveToVault?: (key: string, value: string) => Promise<void>
   onLoadVaultSecret?: (key: string) => Promise<string | null>
+  vaultId?: string
   vaultName?: string
   existingGroups?: string[]
   existingTags?: string[]
@@ -25,6 +26,7 @@ export function HostCreateDialog({
   onSaveToVault,
   onLoadVaultSecret,
   vaultName,
+  vaultId,
   existingGroups,
   existingTags,
   availableHosts,
@@ -34,13 +36,14 @@ export function HostCreateDialog({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel() }}>
       <DialogContent>
-        <HostForm
+        <HostForm key={vaultId}
           defaultUsername={defaultUsername}
           vaultKeys={vaultKeys}
           vaultUnlocked={vaultUnlocked}
           onSaveToVault={onSaveToVault}
           onLoadVaultSecret={onLoadVaultSecret}
           vaultName={vaultName}
+          vaultId={vaultId}
           existingGroups={existingGroups}
           existingTags={existingTags}
           availableHosts={availableHosts}

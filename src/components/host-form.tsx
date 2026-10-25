@@ -1,4 +1,5 @@
 import { NativeSelect } from '@/components/ui/select'
+import { MonitoringModeField } from './monitoring-mode-field'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -20,6 +21,7 @@ interface HostFormProps {
   onLoadVaultSecret?: (key: string) => Promise<string | null>
   onSubmit: (draft: HostProfileDraft) => Promise<void>
   onCancel: () => void
+  vaultId?: string
   vaultName?: string
   existingGroups?: string[]
   existingTags?: string[]
@@ -38,6 +40,7 @@ export function HostForm({
   onSubmit,
   onCancel,
   vaultName = 'Vault',
+  vaultId,
   existingGroups = [],
   existingTags = [],
   availableHosts = [],
@@ -45,6 +48,7 @@ export function HostForm({
   connectionOnly = false,
 }: HostFormProps) {
   const [connectionSecretId] = useState(() => crypto.randomUUID())
+  const [monitoringMode, setMonitoringMode] = useState(initial?.monitoringMode ?? 'ssh')
   const [address, setAddress] = useState(initial?.address ?? '')
   const [name, setName] = useState(initial?.name ?? '')
   const [group, setGroup] = useState(initial?.group ?? 'Custom')
@@ -108,6 +112,7 @@ export function HostForm({
     }
 
     const draft: HostProfileDraft = {
+      ...(!connectionOnly ? { monitoringMode } : {}),
       name: name.trim() || address.trim() || t('hostForm.unnamed'),
       address: address.trim(),
       port: parseInt(port, 10) || 22,
@@ -195,6 +200,7 @@ export function HostForm({
         </div>
 
         {!connectionOnly && <>
+        <MonitoringModeField value={monitoringMode} onChange={setMonitoringMode} disabled={submitting || !vaultUnlocked} scopeKey={`${vaultId}:${connectionSecretId}`} vaultId={vaultId} />
         {/* Group selector */}
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">{t('hostForm.parentGroup')}</label>

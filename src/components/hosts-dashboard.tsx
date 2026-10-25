@@ -975,7 +975,7 @@ export function HostsDashboard({
   const operationalSummaryByHost = useMemo(() => {
     const summaries = new Map<string, HostOperationalSummary | undefined>()
     hosts.forEach((host) => {
-      const link = komariProbeLinks.find((candidate) => candidate.hostId === host.id)
+      const link = host.monitoringMode === 'ssh' ? undefined : komariProbeLinks.find((candidate) => candidate.hostId === host.id)
       const busy = link ? komariProbeActionKey === `${link.integrationId}:${link.nodeId}:${link.recommendedAction}` : false
       const alertBusy = komariAlertActionKey
         ? komariAlertActionKey.slice(komariAlertActionKey.indexOf(':') + 1)
@@ -1375,7 +1375,7 @@ export function HostsDashboard({
               }} />
             </DialogContent>
           </Dialog>
-          <HostCreateDialog availableHosts={hosts}
+          <HostCreateDialog vaultId={activeVaultId} availableHosts={hosts}
             open={showAddForm}
             defaultUsername={defaultUsername}
             vaultKeys={vaultKeys}

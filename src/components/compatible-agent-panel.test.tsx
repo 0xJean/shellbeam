@@ -42,6 +42,19 @@ describe('compatible monitoring probe lifecycle', () => {
     }
     expect(operateCompatibleAgent).not.toHaveBeenCalled()
   })
+  it('blocks install and upgrade in SSH mode while retaining inspect, rollback and uninstall for existing deployments', async () => {
+    vi.mocked(readCompatibleAgent).mockResolvedValue(row())
+    render(<I18nProvider><CompatibleAgentPanel host={{ ...host, monitoringMode: 'ssh' }} integrationId="source" /></I18nProvider>)
+    await screen.findByText('durable-job')
+    expect(screen.getByRole('button', { name: c.install })).toBeDisabled()
+    expect(screen.getByRole('button', { name: c.upgrade })).toBeDisabled()
+    expect(screen.getByRole('button', { name: c.inspect })).toBeEnabled()
+    expect(screen.getByRole('button', { name: c.rollback })).toBeEnabled()
+    expect(screen.getByRole('button', { name: c.uninstall })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: c.upgrade }))
+    expect(prepareCompatibleAgent).not.toHaveBeenCalled()
+    expect(operateCompatibleAgent).not.toHaveBeenCalled()
+  })
   it('keeps unconfigured hosts unchanged and never contacts the server on mount', async () => {
     const view = render(<I18nProvider><CompatibleAgentTools host={host} /></I18nProvider>)
     await act(async () => {})

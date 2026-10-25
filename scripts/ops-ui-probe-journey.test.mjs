@@ -33,7 +33,7 @@ function disclosedHostUnit() {
     <button data-testid="host-ops-details-toggle" aria-expanded="false" aria-controls=":host-details:">Operations details</button>
     <section data-testid="host-ops-details" id=":host-details:" hidden>
       ${evaluation(state, 'direct', now)}
-      <div data-testid="host-local-alert" data-rule-id="${rule}" data-host-id="${hostId}" data-vault-id="${state.vaultId}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="direct" data-alert-status="active" data-updated-at="${now}">${state.hostNames.direct} · ${name} · ProbeProvider collection</div>
+      <div data-testid="host-local-alert" data-rule-id="${rule}" data-host-id="${hostId}" data-vault-id="${state.vaultId}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="direct" data-alert-status="active" data-updated-at="${now}">${state.hostNames.direct} · ${name} · Monitoring collection</div>
     </section>
   </article>`)
   const card = unit.document.querySelector('[data-testid="host-card"]')
@@ -214,7 +214,7 @@ test('a healthy host or cached/future/unknown evaluation cannot satisfy the requ
 
 test('builtin alert evidence refuses a wrong section/source/route even when its name looks like the expected target', async () => {
   const state = scope()
-  const { dom, document, driver } = domDriver(`<div data-testid="host-card" data-host-id="${state.hostIds.via}"><div data-testid="host-local-alert" data-rule-id="${rule}" data-host-id="${state.hostIds.via}" data-vault-id="${state.vaultId}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="proxy-jump" data-alert-status="active" data-updated-at="1">${state.hostNames.via} · ${name} · ProbeProvider collection</div></div>`)
+  const { dom, document, driver } = domDriver(`<div data-testid="host-card" data-host-id="${state.hostIds.via}"><div data-testid="host-local-alert" data-rule-id="${rule}" data-host-id="${state.hostIds.via}" data-vault-id="${state.vaultId}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="proxy-jump" data-alert-status="active" data-updated-at="1">${state.hostNames.via} · ${name} · Monitoring collection</div></div>`)
   const row = document.querySelector('[data-testid="host-local-alert"]')
   try {
     assert.deepEqual(await readOpsUiProbeAlert(driver, state, 'via', 'active'), { jobId: null, updatedAt: 1, resolvedAt: null })
@@ -258,7 +258,7 @@ function unitJourney(t, { disclosures = false } = {}) {
     let row = alert(role)
     if (!row) { row = document.createElement('div'); (hostCard(role).querySelector('[data-testid="host-ops-details"]') ?? hostCard(role)).append(row) }
     Object.assign(row.dataset, { testid: 'host-local-alert', ruleId: rule, hostId: state.hostIds[role], vaultId: state.vaultId, metric: 'probe-provider', source: 'ssh-agentless', transport: role === 'via' ? 'proxy-jump' : 'direct', alertStatus: status, updatedAt: String(clock), ...(status === 'resolved' ? { resolvedAt: String(clock) } : {}), ...(jobId ? { jobId } : {}) })
-    row.textContent = `${state.hostNames[role].slice(0, 48)} · ${name} · ProbeProvider collection`
+    row.textContent = `${state.hostNames[role].slice(0, 48)} · ${name} · Monitoring collection`
     if (status === 'active') row.insertAdjacentHTML('beforeend', `<button data-testid="local-host-alert-ack-${rule}">Acknowledge</button>`)
     if (status !== 'closed') row.insertAdjacentHTML('beforeend', `<button data-testid="local-host-alert-close-${rule}">Close</button>`)
   }

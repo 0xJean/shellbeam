@@ -4,7 +4,9 @@ import { KomariMappingsPanel } from './komari-mappings-panel'
 import { listKomariIntegrations } from '@/lib/komari-config'
 import { KomariApiError, listKomariClients, type KomariClient } from '@/lib/komari'
 import { importMonitoringHost, editKomariMapping, getKomariMappingState, type KomariMappingState } from '@/lib/komari-persistence'
+import { requestUserDecision } from '@/lib/user-confirmation'
 import type { HostProfile } from '@/lib/hosts'
+vi.mock('@/lib/user-confirmation', () => ({ requestUserDecision: vi.fn(async () => ({ accepted: true, reason: 'accepted' })) }))
 vi.mock('@/lib/komari-config', () => ({ listKomariIntegrations: vi.fn() }))
 vi.mock('@/lib/komari', async (original) => ({ ...(await original<typeof import('@/lib/komari')>()), listKomariClients: vi.fn() }))
 vi.mock('@/lib/komari-persistence', async (original) => ({ ...(await original<typeof import('@/lib/komari-persistence')>()), importMonitoringHost: vi.fn(), editKomariMapping: vi.fn(), getKomariMappingState: vi.fn() }))
@@ -51,6 +53,27 @@ describe('Komari manual mapping workflow', () => {
     expect(screen.queryByRole('button', { name: 'Add monitoring-only host' })).not.toBeInTheDocument()
   })
 
+  it('does not import a monitoring-only host after a cancelled choice', async () => {
+    vi.mocked(requestUserDecision).mockResolvedValueOnce({ accepted: false, reason: 'rejected' })
+    render(panel())
+    await openPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Add monitoring-only host' }))
+    await waitFor(() => expect(requestUserDecision).toHaveBeenCalledOnce())
+    expect(importMonitoringHost).not.toHaveBeenCalled()
+    expect(editKomariMapping).not.toHaveBeenCalled()
+  })
+
+  it('preserves SSH host identity and blocks a new monitoring binding', async () => {
+    render(panel('a', hosts.map(host => ({ ...host, monitoringMode: 'ssh' as const }))))
+    await openPanel()
+    fireEvent.change(screen.getByLabelText('Host: Server a / node-1'), { target: { value: 'second' } })
+    const save = screen.getByRole('button', { name: 'Save binding' })
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(editKomariMapping).not.toHaveBeenCalled()
+    expect(durable.mappings).toEqual([])
+  })
+
   it('does not display a late import result after switching Vaults', async () => {
     let finish!: (host: HostProfile) => void
     vi.mocked(importMonitoringHost).mockImplementation(() => new Promise(resolve => { finish = resolve }))
@@ -58,6 +81,7 @@ describe('Komari manual mapping workflow', () => {
     const view = render(<KomariMappingsPanel activeVaultId="a" hosts={[]} vaultUnlocked onLoadVaultSecret={secret} onHostImported={onHostImported} />)
     await openPanel()
     fireEvent.click(await screen.findByRole('button', { name: 'Add monitoring-only host' }))
+    await waitFor(() => expect(importMonitoringHost).toHaveBeenCalledTimes(1))
     view.rerender(<KomariMappingsPanel activeVaultId="b" hosts={[]} vaultUnlocked onLoadVaultSecret={secret} onHostImported={onHostImported} />)
     await act(async () => finish({ ...hosts[0], id: 'old-vault-import', connections: [], address: '', username: '', port: 0 }))
     expect(onHostImported).not.toHaveBeenCalled()

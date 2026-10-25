@@ -38,7 +38,7 @@ export interface KomariSyncResult {
   historyErrors?: string[]
   historyImportedCount?: number
   skipped?: boolean
-  skipReason?: 'ttl'
+  skipReason?: 'ttl' | 'monitoring-mode'
 }
 
 export const DEFAULT_KOMARI_SYNC_TTL_MS = 60 * 1000
@@ -171,6 +171,11 @@ export async function syncKomariIntegration(options: {
 }): Promise<KomariSyncResult> {
   const syncedAt = options.now ?? Date.now()
   const ttlMs = options.ttlMs ?? DEFAULT_KOMARI_SYNC_TTL_MS
+  const boundHosts = Object.keys(options.explicitMappings ?? {}).map(id => options.hosts.find(host => host.id === id))
+  if (!options.force && boundHosts.length > 0 && boundHosts.every(host => host?.monitoringMode === 'ssh')) {
+    return { integrationId: options.integrationId, syncedAt: options.lastSyncedAt ?? 0, clients: [], mapping: emptyMapping(), snapshots: [], alerts: null, alertState: options.alertState ?? null, alertAudit: [], skipped: true, skipReason: 'monitoring-mode' }
+  }
+
   if (!options.force && isKomariSyncFresh(options.lastSyncedAt, syncedAt, ttlMs)) {
     return {
       integrationId: options.integrationId,
@@ -241,7 +246,7 @@ export async function syncKomariIntegration(options: {
     list: async () => [], save: async () => undefined, remove: async () => undefined,
   }).register(provider)
   const snapshots = await mapWithConcurrency(
-    mapping.mappings,
+    mapping.mappings.filter(item => options.hosts.find(host => host.id === item.hostId)?.monitoringMode !== 'ssh'),
     options.maxConcurrency ?? DEFAULT_KOMARI_SYNC_CONCURRENCY,
     async (item) => {
       const host = options.hosts.find((candidate) => candidate.id === item.hostId)
@@ -308,7 +313,7 @@ export async function syncKomariIntegration(options: {
   }
   if (options.includeAlerts !== false && alertState) {
     const projected = await reconcileMonitoringLoad({ integrationId: options.integrationId, endpoint: options.config.endpoint,
-      hosts: options.hosts, clients, mappings: mapping.mappings, state: alertState, read: loadRead, now: options.now ?? Date.now() })
+      hosts: options.hosts.filter(host => host.monitoringMode !== 'ssh'), clients, mappings: mapping.mappings.filter(item => options.hosts.find(host => host.id === item.hostId)?.monitoringMode !== 'ssh'), state: alertState, read: loadRead, now: options.now ?? Date.now() })
     alertState = projected.state
     alertAudit.push(...projected.audit)
   }

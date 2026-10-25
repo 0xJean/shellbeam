@@ -534,8 +534,11 @@ export function buildHostOpsViews({
     return snapshot.health === 'online' && refreshed.metrics && !refreshed.metrics.freshness.expired
       ? { ...refreshed, health: 'online' as const } : refreshed
   }
-  const current = (snapshot: ProbeSnapshot) => snapshot.provider.kind !== 'komari' || !komariSources
-    || hosts.some((host) => isCurrentKomariSnapshot(snapshot, host, komariSources))
+  const current = (snapshot: ProbeSnapshot) => {
+    const host = hosts.find(row => row.id === snapshot.host.hostId)
+    if (host?.monitoringMode === 'ssh' && snapshot.provider.kind !== 'ssh-agentless') return false
+    return snapshot.provider.kind !== 'komari' || !komariSources || !!host && isCurrentKomariSnapshot(snapshot, host, komariSources)
+  }
   const refreshedKomariSnapshots = komariSnapshots.filter(current).map(refresh)
   const refreshedProbeSnapshots = probeSnapshots.filter(current).map(refresh)
   const monitorByKey = new Map(monitorLatest.map((entry) => [entry.hostKey, entry]))

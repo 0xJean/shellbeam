@@ -49,7 +49,7 @@ export function HostEditorDialog({
             existingGroups={existingGroups}
             existingTags={existingTags}
             availableHosts={availableHosts}
-            metadataControls={<><HostMetadataSyncPanel host={host} unlocked={!!vaultUnlocked} /><HostNotificationRulesPanel host={host} unlocked={!!vaultUnlocked} /></>}
+            metadataControls={host.monitoringMode !== 'ssh' ? <><HostMetadataSyncPanel host={host} unlocked={!!vaultUnlocked} /><HostNotificationRulesPanel host={host} unlocked={!!vaultUnlocked} /></> : undefined}
             onSubmit={(draft) => onSubmit(host, draft)}
             onCancel={onCancel}
           />

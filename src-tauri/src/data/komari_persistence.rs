@@ -129,6 +129,7 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
         .map_err(|err| format!("Open Komari persistence db failed: {err}"))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|err| format!("Configure Komari persistence db failed: {err}"))?;
+    super::hosts::initialize_host_schema(&conn)?;
     initialize(&conn)?;
     Ok(conn)
 }
@@ -502,6 +503,7 @@ fn edit_mapping(
         if !found {
             return Err("KOMARI_MAPPING_HOST_UNAVAILABLE".into());
         }
+        super::host_monitoring::require_server_row(&tx, &vault, host)?;
         if current.mappings.iter().any(|mapping| {
             mapping.source == "manual" && mapping.host_id == *host && mapping.node_id != node
         }) {
@@ -594,6 +596,7 @@ fn import_monitoring_host_on(
     }
     let now = now_unix_ms();
     let host = super::hosts::HostProfile {
+        monitoring_mode: Some("server".into()),
         id: uuid::Uuid::new_v4().to_string(),
         name: p.name.trim().into(),
         group: p.group.clone(),
@@ -894,6 +897,9 @@ fn persist_sync(conn: &mut Connection, payload: &KomariPersistencePayload) -> Re
         payload.expected_mapping_revision,
     )?;
     for snapshot in &payload.snapshots {
+        if let Some(vault) = payload.vault_id.as_deref() {
+            super::host_monitoring::require_server_row(&tx, vault, &snapshot.host_id)?;
+        }
         if snapshot.integration_id.trim() != integration_id {
             return Err("Komari snapshot integration does not match the sync".into());
         }
@@ -1035,7 +1041,7 @@ mod tests {
 
     fn prepare_mapping_db(conn: &rusqlite::Connection) {
         super::initialize(conn).unwrap();
-        conn.execute_batch("CREATE TABLE IF NOT EXISTS komari_integrations(id TEXT PRIMARY KEY,vault_id TEXT,endpoint TEXT,updated_at INTEGER); CREATE TABLE IF NOT EXISTS workspace_hosts(vault_id TEXT,id TEXT,PRIMARY KEY(vault_id,id)); INSERT OR IGNORE INTO komari_integrations VALUES('server','vault-a','https://monitor.test',1); INSERT OR IGNORE INTO workspace_hosts VALUES('vault-a','one'),('vault-a','two'),('vault-b','foreign'); INSERT OR IGNORE INTO komari_mappings VALUES('server','one','node','address','matched',1);").unwrap();
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS komari_integrations(id TEXT PRIMARY KEY,vault_id TEXT,endpoint TEXT,updated_at INTEGER); CREATE TABLE IF NOT EXISTS workspace_hosts(vault_id TEXT,id TEXT,monitoring_mode TEXT,PRIMARY KEY(vault_id,id)); INSERT OR IGNORE INTO komari_integrations VALUES('server','vault-a','https://monitor.test',1); INSERT OR IGNORE INTO workspace_hosts(vault_id,id,monitoring_mode) VALUES('vault-a','one','server'),('vault-a','two','server'),('vault-b','foreign','server'); INSERT OR IGNORE INTO komari_mappings VALUES('server','one','node','address','matched',1);").unwrap();
     }
 
     fn edit(node: &str, host: Option<&str>, revision: i64) -> super::KomariMappingEdit {
@@ -1406,6 +1412,30 @@ mod tests {
             })
             .unwrap();
         assert_eq!(sampled, 200);
+    }
+    #[test]
+    fn ssh_choice_refuses_new_binding_and_late_sync_without_deleting_saved_state() {
+        let mut db = mapping_db();
+        let saved = super::edit_mapping(&mut db, &edit("node", Some("one"), 0)).unwrap();
+        db.execute("UPDATE workspace_hosts SET monitoring_mode='ssh' WHERE vault_id='vault-a' AND id='one'", []).unwrap();
+        assert_eq!(
+            super::edit_mapping(&mut db, &edit("new-node", Some("one"), saved.revision))
+                .unwrap_err(),
+            "HOST_MONITORING_SERVER_REQUIRED"
+        );
+        assert_eq!(
+            super::mapping_state(&db, "server").unwrap().mappings[0].node_id,
+            "node"
+        );
+        super::super::host_monitoring::invalidate_sync(&db, "vault-a", "one").unwrap();
+        assert_eq!(
+            super::persist_sync(&mut db, &sync(saved.revision, "one", "manual")).unwrap_err(),
+            "KOMARI_MAPPING_CONFLICT"
+        );
+        assert_eq!(
+            super::mapping_state(&db, "server").unwrap().mappings[0].host_id,
+            "one"
+        );
     }
 }
 
