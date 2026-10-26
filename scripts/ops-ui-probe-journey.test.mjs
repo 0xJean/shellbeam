@@ -3,7 +3,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
-import { ensureOpsUiHostDetails, isOpsUiHostDetailsVisible } from './ops-ui-host-details.mjs'
+import { ensureOpsUiHostDetails, isOpsUiHostDetailsVisible, waitForOpsUiHostOperations } from './ops-ui-host-details.mjs'
 import {
   OPS_UI_PROBE_RULE_IDS, readOpsUiProbeAlert, readOpsUiProbeEvaluation,
   resumeOpsUiProbeJourney, runOpsUiProbeJourney, validateOpsUiProbeScope,
@@ -33,7 +33,7 @@ function disclosedHostUnit() {
     <button data-testid="host-ops-details-toggle" aria-expanded="false" aria-controls=":host-details:">Operations details</button>
     <section data-testid="host-ops-details" id=":host-details:" hidden>
       ${evaluation(state, 'direct', now)}
-      <div data-testid="host-local-alert" data-rule-id="${rule}" data-host-id="${hostId}" data-vault-id="${state.vaultId}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="direct" data-alert-status="active" data-updated-at="${now}">${state.hostNames.direct} · ${name} · ProbeProvider collection</div>
+      <div data-testid="host-local-alert" data-rule-id="${rule}" data-host-id="${hostId}" data-vault-id="${state.vaultId}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="direct" data-alert-status="active" data-updated-at="${now}">${state.hostNames.direct} · ${name} · Monitoring collection</div>
     </section>
   </article>`)
   const card = unit.document.querySelector('[data-testid="host-card"]')
@@ -57,6 +57,91 @@ function disclosedHostUnit() {
   }
   return { ...unit, state, now, card, toggle, region, clicks }
 }
+
+test('active host navigation waits for the async scoped summary before strict disclosure checks', async () => {
+  const unit = disclosedHostUnit()
+  const scope = { hostId: unit.state.hostIds.direct, vaultId: unit.state.vaultId }
+  const summary = unit.card.querySelector('[data-testid="host-ops-summary"]')
+  summary.remove(); unit.toggle.remove(); unit.region.remove()
+  const findAll = unit.driver.findAll
+  let summaryReads = 0
+  unit.driver.findAll = async selector => {
+    const result = await findAll(selector)
+    if (selector.includes('host-ops-summary') && ++summaryReads === 1) {
+      // React commits all operational children after a read saw the earlier,
+      // already visible connection card. Do not accept that empty result.
+      unit.card.append(summary, unit.toggle, unit.region)
+    }
+    return result
+  }
+  try {
+    assert.equal(await waitForOpsUiHostOperations(unit.driver, scope), summary)
+    assert.equal(summaryReads, 2)
+    assert.equal(unit.clicks.length, 0)
+    await ensureOpsUiHostDetails(unit.driver, scope)
+    assert.equal(unit.clicks.length, 1)
+    assert.equal(await isOpsUiHostDetailsVisible(unit.driver, scope), true)
+  } finally { unit.dom.window.close() }
+})
+
+test('a split mount still fails strict readers; navigation must complete before reading details', async () => {
+  const unit = disclosedHostUnit()
+  const scope = { hostId: unit.state.hostIds.direct, vaultId: unit.state.vaultId }
+  unit.toggle.remove(); unit.region.remove()
+  const findAll = unit.driver.findAll
+  unit.driver.findAll = async selector => {
+    const result = await findAll(selector)
+    if (selector.includes('host-ops-details-toggle')) unit.card.append(unit.toggle, unit.region)
+    return result
+  }
+  try {
+    await assert.rejects(isOpsUiHostDetailsVisible(unit.driver, scope), /scope_or_controls_mismatch/)
+    assert.equal(unit.clicks.length, 0)
+  } finally { unit.dom.window.close() }
+})
+
+test('host readiness refuses foreign or ambiguous cards and summaries without any UI writes', async () => {
+  for (const problem of ['foreign-vault', 'missing-vault', 'duplicate-host', 'duplicate-summary', 'foreign-summary-vault', 'foreign-summary-host']) {
+    const unit = disclosedHostUnit()
+    const summary = unit.card.querySelector('[data-testid="host-ops-summary"]')
+    try {
+      if (problem === 'foreign-vault') unit.card.dataset.vaultId = 'foreign'
+      if (problem === 'missing-vault') unit.card.removeAttribute('data-vault-id')
+      if (problem === 'duplicate-host') unit.card.after(unit.card.cloneNode(true))
+      if (problem === 'duplicate-summary') summary.after(summary.cloneNode(true))
+      if (problem === 'foreign-summary-vault') summary.dataset.vaultId = 'foreign'
+      if (problem === 'foreign-summary-host') summary.dataset.hostId = 'foreign'
+      await assert.rejects(waitForOpsUiHostOperations(unit.driver, { hostId: unit.state.hostIds.direct, vaultId: unit.state.vaultId }), /ops_ui_host_details_/)
+      assert.equal(unit.clicks.length, 0)
+    } finally { unit.dom.window.close() }
+  }
+})
+
+test('host readiness does not accept another host, missing or hidden operations, or mask read failures', async () => {
+  for (const problem of ['other-host', 'missing', 'hidden', 'read-failed']) {
+    const unit = disclosedHostUnit()
+    const summary = unit.card.querySelector('[data-testid="host-ops-summary"]')
+    try {
+      if (problem === 'other-host') unit.card.dataset.hostId = 'other-host'
+      if (problem === 'missing') summary.remove()
+      if (problem === 'hidden') summary.hidden = true
+      if (problem === 'read-failed') unit.driver.findAll = async () => { throw new Error('read refused') }
+      await assert.rejects(waitForOpsUiHostOperations(unit.driver, { hostId: unit.state.hostIds.direct, vaultId: unit.state.vaultId }), problem === 'read-failed' ? /read refused/ : /unit timeout/)
+      assert.equal(unit.clicks.length, 0)
+    } finally { unit.dom.window.close() }
+  }
+})
+
+test('ready operations do not exempt downstream disclosure ownership checks', async () => {
+  const unit = disclosedHostUnit()
+  const scope = { hostId: unit.state.hostIds.direct, vaultId: unit.state.vaultId }
+  try {
+    await waitForOpsUiHostOperations(unit.driver, scope)
+    unit.region.remove()
+    await assert.rejects(ensureOpsUiHostDetails(unit.driver, scope), /scope_or_controls_mismatch/)
+    assert.equal(unit.clicks.length, 0)
+  } finally { unit.dom.window.close() }
+})
 
 test('Probe readers genuinely expand the matching host once and preserve original evidence checks', async () => {
   const unit = disclosedHostUnit()
@@ -214,7 +299,7 @@ test('a healthy host or cached/future/unknown evaluation cannot satisfy the requ
 
 test('builtin alert evidence refuses a wrong section/source/route even when its name looks like the expected target', async () => {
   const state = scope()
-  const { dom, document, driver } = domDriver(`<div data-testid="host-card" data-host-id="${state.hostIds.via}"><div data-testid="host-local-alert" data-rule-id="${rule}" data-host-id="${state.hostIds.via}" data-vault-id="${state.vaultId}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="proxy-jump" data-alert-status="active" data-updated-at="1">${state.hostNames.via} · ${name} · ProbeProvider collection</div></div>`)
+  const { dom, document, driver } = domDriver(`<div data-testid="host-card" data-host-id="${state.hostIds.via}"><div data-testid="host-local-alert" data-rule-id="${rule}" data-host-id="${state.hostIds.via}" data-vault-id="${state.vaultId}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="proxy-jump" data-alert-status="active" data-updated-at="1">${state.hostNames.via} · ${name} · Monitoring collection</div></div>`)
   const row = document.querySelector('[data-testid="host-local-alert"]')
   try {
     assert.deepEqual(await readOpsUiProbeAlert(driver, state, 'via', 'active'), { jobId: null, updatedAt: 1, resolvedAt: null })
@@ -252,13 +337,18 @@ function unitJourney(t, { disclosures = false } = {}) {
       card.insertAdjacentHTML('afterbegin', `<button data-testid="host-ops-details-toggle" aria-expanded="false" aria-controls="${region.id}">Operations details</button>`)
     }
   }
+  for (const role of roles) {
+    const card = hostCard(role)
+    card.dataset.vaultId = state.vaultId
+    card.insertAdjacentHTML('afterbegin', `<div data-testid="host-ops-summary" data-host-id="${state.hostIds[role]}" data-vault-id="${state.vaultId}"></div>`)
+  }
   const probe = role => hostCard(role).querySelector('[data-testid="host-probe-evaluation"]')
   const alert = role => hostCard(role).querySelector('[data-testid="host-local-alert"]')
   const setAlert = (role, status, jobId) => {
     let row = alert(role)
     if (!row) { row = document.createElement('div'); (hostCard(role).querySelector('[data-testid="host-ops-details"]') ?? hostCard(role)).append(row) }
     Object.assign(row.dataset, { testid: 'host-local-alert', ruleId: rule, hostId: state.hostIds[role], vaultId: state.vaultId, metric: 'probe-provider', source: 'ssh-agentless', transport: role === 'via' ? 'proxy-jump' : 'direct', alertStatus: status, updatedAt: String(clock), ...(status === 'resolved' ? { resolvedAt: String(clock) } : {}), ...(jobId ? { jobId } : {}) })
-    row.textContent = `${state.hostNames[role].slice(0, 48)} · ${name} · ProbeProvider collection`
+    row.textContent = `${state.hostNames[role].slice(0, 48)} · ${name} · Monitoring collection`
     if (status === 'active') row.insertAdjacentHTML('beforeend', `<button data-testid="local-host-alert-ack-${rule}">Acknowledge</button>`)
     if (status !== 'closed') row.insertAdjacentHTML('beforeend', `<button data-testid="local-host-alert-close-${rule}">Close</button>`)
   }
@@ -327,6 +417,34 @@ function unitJourney(t, { disclosures = false } = {}) {
   }
   return { driver, fixture: hostFixture, resumeState: state, checkpoint, record: async (name, details) => events.push({ name, ...details }), events, checkpoints, alert, probe, hostCard, close: () => dom.window.close() }
 }
+
+test('journey waits for scoped operations on every return from Activity before a disclosure or alert action', async t => {
+  const unit = unitJourney(t, { disclosures: true })
+  const click = unit.driver.click, findAll = unit.driver.findAll
+  let activity = false, pending = false, reads = 0, returns = 0
+  unit.driver.click = async selector => {
+    if (selector === '[data-testid="pc-nav-activity"]') activity = true
+    if (selector === '[data-testid="pc-nav-hosts"]' && activity) {
+      activity = false; pending = true; reads = 0; returns++
+      for (const role of roles) unit.hostCard(role).querySelector('[data-testid="host-ops-summary"]').hidden = true
+    }
+    if (selector.includes('host-ops-details-toggle') || selector.includes('local-host-alert-')) assert.equal(pending, false)
+    return click(selector)
+  }
+  unit.driver.findAll = async selector => {
+    if (pending && selector.includes('host-ops-summary') && ++reads === 2) {
+      pending = false
+      for (const role of roles) unit.hostCard(role).querySelector('[data-testid="host-ops-summary"]').hidden = false
+    }
+    return findAll(selector)
+  }
+  try {
+    const state = await runOpsUiProbeJourney(unit)
+    assert.equal(returns, 5)
+    assert.equal(state.hosts.direct.closed, unit.alert('direct').dataset.jobId)
+    assert.equal(state.hosts.via.closed, unit.alert('via').dataset.jobId)
+  } finally { unit.close() }
+})
 
 test('journey prepares every affected host before failure and recovery and keeps each notification window free of UI writes', async t => {
   const unit = unitJourney(t, { disclosures: true }), windows = [], prepared = []
@@ -520,7 +638,7 @@ async function inventoryUnit(t, { sampleMode = 'fresh', alertStatus, badField } 
     const card = document.querySelector(`article[data-host-id="${unit.resumeState.hostIds[role]}"]`)
     card.dataset.hostName = unit.fixture.hosts[role].name
     viewport.append(card)
-    card.insertAdjacentHTML('beforeend', `<div data-testid="host-ops-summary" data-vault-id="${unit.resumeState.vaultId}" data-host-id="${unit.resumeState.hostIds[role]}"></div><select data-testid="host-ops-open"><option value="refresh">Refresh</option></select>${evaluation(unit.resumeState, role, Date.now() - 60_000).replace(rule, OPS_UI_PROBE_RULE_IDS.inventory)}`)
+    card.insertAdjacentHTML('beforeend', `<select data-testid="host-ops-open"><option value="refresh">Refresh</option></select>${evaluation(unit.resumeState, role, Date.now() - 60_000).replace(rule, OPS_UI_PROBE_RULE_IDS.inventory)}`)
     const status = role === 'jump' ? alertStatus : role === 'direct' ? 'resolved' : 'closed'
     if (status) card.insertAdjacentHTML('beforeend', `<div data-testid="host-local-alert" data-rule-id="${OPS_UI_PROBE_RULE_IDS.inventory}" data-vault-id="${unit.resumeState.vaultId}" data-host-id="${unit.resumeState.hostIds[role]}" data-metric="probe-provider" data-source="ssh-agentless" data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}" data-alert-status="${status}">Inventory collection unavailable</div>`)
   }

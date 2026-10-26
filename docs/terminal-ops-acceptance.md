@@ -9,6 +9,61 @@
 下表是完整 0.5 要求；仅分批实现记录明确列出的范围已取得本地证据，其余仍待实现或平台验收。
 
 
+### 2026-10-26：PR #6 返回主机页时等待运维摘要就绪
+
+- `53eb8e3` 的 Ops GUI `40303661839` 通过了全部主机创建/跳板选择、服务告警和 direct 资源采集失败通知；在确认取消操作的审计后，返回主机页时失败：`probe-failure-and-recovery / ops_ui_host_details_scope_or_controls_mismatch`，最后交互为 `pc-nav-hosts`。这不是前一轮下拉选择超时，不能用旧根因解释；该超时本轮未复发，也不宣称其原因已确认。
+- artifact `12641144990` 已独立下载至 `/tmp/shellbeam-ci-53eb8e3-gui-audit`；`productionIpc/realVault=true`、cleanup passed、applicationStopped true。merge `60c9c8163e5cb3df4eab8c7ecc81e5d3f4fd9a46` 父含该 head；123 条事件及现有 18 PNG 的文件字节/hash/尺寸已核对。direct opened 通知第一帧独立标题/正文 OCR 通过且已目视；后续完整 Probe 恢复尚未执行。其他绿色报告尚未全部独立下载，Linux 原生检查当时仍运行，不宣称完整验收。
+- 生产主机卡片先挂载，异步 `loadHostOpsViews` 随后提交摘要和详情控件；旧导航只等待任一 `host-card`。两次 W3C 查询跨过该提交时可能读到 toggle=0、region=1。普通隔离 GTK WebKit 2.50.4/Wry scrollbar 的 25 个延迟组合未触发该窗口；在合成生产 HostListItem 中加入 **100ms 数据到达 / 150ms 查询返回间隔**，实际旧 helper 读到 0/1 并报同一错误，新导航同场景通过。该间隔只用于忽略目录中的故障注入夹具，没有加入生产脚本；CI 原失败未记录控件计数，故不将受控复现等同于已经证明 CI 的唯一根因。证据 `/tmp/shellbeam-pr6-host-details-delayed-response-{baseline,fixed}.json`、baseline-100/fixed PNG；新路径另 7 个自然异步延迟组合通过。
+- 本批在主动返回主机页时，使用原默认等待预算核对 **目标主机、Vault、唯一且可见的运维摘要** 后再执行原详情读取；缺失暂等，错作用域/重复立即拒绝。资产刷新已有自己的就绪检查，保持该流程不变。详情的 host/Vault/aria-controls/展开/可见性断言原样保留；不增加点击、固定 sleep、失败重试或时限。通知触发后的 reader/guard 未改动，也不调用新的导航准备。
+- 新增 6 项协议回归：异步摘要、跨提交读取仍严格拒绝、错/重复身份、永久缺失/隐藏/读取失败、摘要就绪后仍校验详情、每次 Activity 返回均等待。**291/291 全量 Node 协议、修改脚本 ESLint/diff 通过**。临时原生容器清理，用户 App/Vault/授权/凭据未操作；12 个未跟踪图标保留。最新提交仍须完整 CI 和独立报告验收。
+
+### 2026-10-26：PR #6 下拉选择超时的只读阶段诊断
+
+- `a2c17b8` 最新检查 10/11 成功，Ops GUI `40300730660` 失败；四个 GUI 的依赖安装分别在 36–53 秒内完成，上一轮下载超时未复发。迁移、自有探针与扩展 GUI 工作流成功，但本轮未独立下载全部绿色报告，不宣称整体验收完成。
+- Ops artifact `12641030391` 已独立下载至 `/tmp/shellbeam-ci-a2c17b8-gui-audit`。完成 jump/direct 主机保存、指纹信任及连接后，在 via 的 `select / host-jump-profile` 等待超时；`clickGeometry=null`，现有证据不足以区分菜单打开、键盘活动选项或最终选择等步骤。清理和应用退出成功；`productionIpc/realVault` 的全旅程标记尚未完成，后续运维验收未执行。merge `dc7000980c521e706944eccd5e3a88e423b94cc1` 父提交含该 head。
+- 隔离 GTK WebKit 2.50.4/Wry scrollbar 配置的生产 HostForm，增加与 CI 相同数量的选项及同长度名称，原导航仍通过，未复现新超时。证据 `/tmp/shellbeam-pr6-jump-timeout-three-options.json/png`；补诊断后同一流程也通过，证据 `/tmp/shellbeam-pr6-jump-timeout-diagnostics.json/png`。仅合成数据，不替代打包 App 验收；临时容器已清理。
+- 本批只增加阶段、布尔状态、活动选项序号和失败后的 W3C 只读几何/焦点诊断，并保留原错误。四份 GUI 失败报告均接入；不记录选择值、标签、字段、控件 ID 或凭据，不截取主机凭据表单。成功路径无新增 W3C 请求，原单次动作、等待条件和时限不变，通知触发后的 reader/guard 不变。
+- 新增 4 项协议回归覆盖未打开、活动项不匹配、焦点丢失及诊断端点失败；确认不重放动作、不提交选项、不泄漏原始错误或字段值。全量 285 项 Node 协议、修改脚本 ESLint/diff 通过。此提交是诊断补全，尚未确认或修复产品根因，须继续核对最新 head 的完整 CI。
+
+### 2026-10-26：PR #6 GUI 运行器的依赖下载源
+
+- `bb26ce3` 最终 9/11 检查成功；Ops GUI `40293693771` 与迁移 GUI `40293693631` 被取消。两项 GitHub check annotations 均明确为超过原有 **35 分钟 job 上限**，不是用户取消或已完成的验收。安装依赖日志中 Azure Ubuntu 镜像分别以 38.3/40.7 kB/s 下载，耗时 22分45秒/26分50秒；同批自有探针 GUI 下载相同依赖仅用 3 秒。两项真正开始安装包 UI 时，分别仅剩约 9/3 分钟预算。
+- Ops 没有最终报告或 artifact；迁移 artifact `12639057852` 独立下载后仅含 3 张中间截图，没有最终报告。不能确认完整审计、异常恢复或应用清理退出通过。merge `1873d95b035dc8f69b6ac258ae59ecfc75c02297` 父提交包含 `bb26ce3`；其余绿色报告尚未全部独立下载，不宣称此 head 完整验收。
+- 四个共用相同依赖列表的 GUI 工作流，在一次性 GitHub-hosted Linux runner 上，将既有 `https://archive.ubuntu.com/ubuntu/` 提升至第一优先级，保留原 Azure/security 备用源及 APT 签名校验。没有更换包列表、禁用依赖、增加下载重试、扩大 job/步骤时限或放宽任何产品断言。配置非预期时在写入前拒绝；不修改开发者机器或用户 App。
+- 本地 4 项配置/拒绝路径测试、281 项 Node 协议测试与 5 个修改工作流 YAML 解析通过。隔离 Ubuntu 22.04 容器运行同一配置器，真实 APT 读取官方 HTTPS 签名索引并下载本轮相同版本的 amd64 `webkit2gtk-driver 2.50.4-0ubuntu0.22.04.1`；包 SHA-256 为 `c8411fe633da9fc499d93aebbd33125a6cc6ede54e418bfcc01072ee2449d256`。日志 `/tmp/shellbeam-pr6-mirror-live.log`，临时容器已退出清理；该验证证明来源选择和包版本可用，不证明 GitHub runner 网络性能已恢复。
+- 新 head 完整 CI 及独立报告仍待核验，本轮不是已完成的安装包验收。通知触发后的 reader/guard、真实样本、身份/作用域、审计与无重放保持原约束；用户 App、Vault、凭据、现有授权和 12 个未跟踪图标保持不变。优先级行为依据 [APT mirror transport](https://manpages.debian.org/trixie/apt/apt-transport-mirror.1.en.html)，保留运行器原本的镜像列表。
+
+### 2026-10-26：PR #6 ProxyJump 展开后的菜单导航
+
+- `73c93ca` 的原生三平台、前端、双架构生命周期、扩展契约及扩展 GUI 通过；Ops GUI `40290949391` 和迁移 GUI `40290949314` 失败，自有探针 GUI `40290952965` 当时仍在依赖安装阶段。新报告证明私钥完整输入/保存已通过：Ops 完成 jump/direct 两台真实 SSH 连接，迁移完成 source 主机创建和指纹核对，随后均在展开 `host-jump-profile` 后的触发器点击失败，尚非完整远端验收。独立下载 artifact `12636710893` / `12636502727` 至 `/tmp/shellbeam-ci-73c93ca-{gui,transfer}-audit`；均清理成功并退出应用。merge `4989b0d159faed72f1748a99cd9eb18352c0781f` 父提交包含该 head。
+- 隔离 GTK WebKit 2.50.4/Wry scrollbar 配置及生产 HostForm：短行输入夹具未失败；改用会自动换行的多行合成文本，并加入已有凭据引用后，精确复现 CI 的容器高 720 / 内容高 1163 / scrollTop 237、ProxyJump 区域 y695，选择器 `displayed/enabled` 为真而单次点击失败。无真实凭据或用户数据。
+- 共用上一批 `focusNextFrom` 焦点校验，两个 onboarding 旅程从已展开的按钮按一次 Tab 到菜单，检查菜单确实关闭后按一次 Enter 打开，再走既有 Home/ArrowDown、完整可见性、唯一一次选项点击及菜单消失检查。焦点不符、菜单已开、禁用目标或打开失败立即停止；不重试、不注入 JS、不延长原 timeout。原有其他菜单及通知触发后的 reader/guard 不变，身份/原始样本/同帧/OCR/审计/无重放断言保持。
+- 全量 Node 协议 281 项通过（本批新增 7 项），修改脚本 ESLint/diff 通过。生产表单修后在 1280×800 完成默认 SSH 与 Server 确认保存，在 1280×900 完成 Server 确认保存，均含多行值回读与指定跳板值核对。证据 `/tmp/shellbeam-pr6-jump-wrapped-{baseline,fixed}-*-verified.json` 和对应合成截图；已目视 800 高度修前裁剪与修后可见跳板选择。此为隔离原生组件验证，不能代替新 head 完整安装包/Vault/SSH E2E。
+- 仅验收脚本/测试/文档修改；未改产品监控或授权行为，未操作真实 App/Vault/凭据，未跟踪图标保持原样。新 head 仍需完整 CI 与独立证据核验。
+
+### 2026-10-26：PR #6 安装包主机表单的键盘输入
+
+- `3fa7ab5` 的 11 项检查中 8 项通过。Ops GUI `40287608317`、自有探针 GUI `40287608258`、迁移 GUI `40287608255` 均在新建主机的 `host-private-key` 输入处报 `element not interactable`，尚未进入远端操作；三个报告的清理和应用退出均成功。独立下载 artifact `12635371101` / `12634808446` / `12635137324`，merge `9c8a5db374979a5361290268d7791535c9d187cc` 的父提交含本 head。其他绿色检查尚未全部独立下载，不作为完整验收结论。
+- 隔离 Linux GTK WebKit 2.50.4，沿用 Wry 的 scrollbar 配置及生产 HostForm/Dialog/确认组件，在 1280×800 复现同一失败：监控方式新增后，表单内容高度 931，容器可视高度 720，私钥框仅部分露出；`displayed/enabled` 为真，但原 W3C clear 失败。单纯增加 pointer click 或 Tab 后继续 clear 也失败。真实 Tab 聚焦、Ctrl+A/Backspace 和多行键盘输入成功，完整值回读一致。
+- 两个共用的 onboarding 旅程改为显式 `tabFrom`：核对焦点仍是刚点击的私钥按钮，只按一次 Tab，再核对活动元素确实是目标字段，随后使用真实键盘事件清空与输入。焦点不符或动作失败立即停止，不重试、注入 JS、扩大超时或读取诊断中的字段值。未改通知触发后的只读 reader/guard，以及同帧截图、OCR、原始样本、身份作用域、审计和无重放断言。
+- 本地 Node 协议全量 274 项通过（新增 5 项覆盖正常焦点、起点/终点错误、Tab 失败和输入失败；失败不清空其他控件、不重放输入）；修改脚本 ESLint、diff 检查通过。隔离生产表单修前失败、修后 1280×800 的 SSH 默认保存及 Server 明确确认后保存、1280×900 的 Server 确认保存通过。证据 `/tmp/shellbeam-pr6-input-{baseline,fixed}-*-verified.json` 与对应合成截图；仅使用合成数据，不替代新 head 的完整安装包/Vault/SSH E2E。
+- 本批仅修改验收脚本/测试/文档。用户 App 未重启或替换，真实 Vault、授权、凭据及历史审计未访问；12 个未跟踪图标保留。新提交仍需完整 CI 和独立报告核验。
+
+### 2026-10-24：明确的主机监控方式
+
+- 新建默认 SSH 无探针；新建/编辑共用双语原生选择和可取消确认。选择只修改草稿，保存后才生效；跨 Vault 或主机版本变化使迟到确认失效。Server 绑定、探针安装和升级同时有界面与原生准入检查，既有检查/回滚/卸载/恢复保留。仅监控主机导入也需确认。
+- SQLite 增量可空字段兼容旧资料；既有绑定/托管部署延续 Server 模式，无绑定默认 SSH。旧客户端保存不清除已有方式；方式变更与目录审计同事务、同步版本失效。原始绑定、快照、凭据引用和审计不删除。SSH 模式过滤主机/Workspace 的 Server 当前数据，后台跳过该主机指标与全部已绑定主机均退出后的常规服务同步。
+- 本地全量前端 1649 通过、17 Linux 限定跳过；随后新增取消导入、SSH 绑定限制和探针按钮限制，最终相关面板 44 项通过。Rust 全量 281 通过、4 opt-in 忽略；语义审计调整后最终监控持久化 3 项通过。Node 协议 269 项通过；生产 build、Rust fmt、diff 检查通过。修改范围 ESLint 除 `pc-layout.tsx` 既有 14 error/9 warning 外通过；该文件与 HEAD 的诊断逐项相同，本次仅传入 Vault 标识。
+- 生产编辑器与确认组件的隔离浏览器检查：中英文 × 深浅色 × 640/1280 共 8 组，SSH 默认、取消保留、确认才选择及无横向溢出通过；9 张截图，已目视中文窄窗、英文宽窗与确认页。证据 `/tmp/shellbeam-monitoring-mode-ui-evidence`。只使用合成主机，无真实 Vault、凭据或远端部署。
+- 安装包探针/迁移旅程增加真实选中 Server 和 App 确认步骤，仍保留后续服务关联、安装和恢复的原有确认。此轮只通过其协议测试，未运行修改后的完整安装包 E2E 或新提交 CI，不用历史报告替代。本轮未打包、安装或重启用户 App。
+
+### 2026-10-24：SSH 采集与探针安装文案分离
+
+- 用户截图的当前来源为 `ssh-agentless`，任务为 `probe.collect / host metrics`。代码核对其调用临时 `sh -c` 采集脚本，不走常驻探针安装路径；未读取真实 Vault 或逐台连接截图中的服务器，不据此宣称远端完全没有其他探针。
+- 当前来源改显“SSH 无探针扫描”；“探针状态”改为“采集状态”，“ProbeProvider 采集”改为“监控采集”，增加扫描不安装常驻探针的说明。SSH 回退采集与真实已有部署可同时显示，不伪造“未安装”。原始审计、provider ID、告警身份及通知去重不变。
+- 124 项前端定向通过、1 Linux 限定跳过；47 项安装包采集/通知协议回归通过。协议仅更新确切显示文案，身份、状态、同帧及 OCR 检查不放宽。生产 build、修改范围 ESLint/diff 通过。旧“已有监控不推荐重复 Agent”用例缺少成功同步时间戳导致走非预期刷新，补全固定缓存及成功同步时间后通过，未更改产品 TTL 或超时。
+- 仍为源码修正，未更新用户安装包，没有远端安装/卸载操作。
+
 ### 2026-10-23：服务端扩展升级、卸载与异常恢复
 
 - 固定包 0.2.0 与不可变 0.1.0；按实际代码字节识别，保留完整状态、实例身份、评估、事件、回执和未知投递标记。备份/阶段与 OperationJob 同事务写入，恢复数据只在 sealed Edit，不经界面或日志返回。
@@ -1151,3 +1206,51 @@ byte counts/hashes/dimensions plus visual review. Merge
 `0c3bae21c1054a4d0effe7c75d1bc5863f52da35` contains that product head. This isolated
 legacy-to-owned journey is distinct from the owned-to-owned WEB cycle above.
 The later documentation-only commit does not replace that CI head identity.
+
+### MCP native authorization UX: staged selection and review (2026-10-24)
+
+The MCP settings page now separates host selection, capability selection, and
+review/configuration. Search covers names, addresses, accounts and tags; group
+filters and a selected-only view preserve hidden selections. Bulk selection
+applies only to the current results and never silently exceeds 100 hosts. Only
+stored default connections are preselected; individual accounts remain explicit,
+including a single connection without a default. Monitoring-only hosts stay
+cache-only. Existing permissions, identity pinning, credentials and audit storage
+are unchanged. No remote installation is involved.
+
+Generated configuration replaces the draft. Discarding it starts a fresh
+read-only draft without revoking the created client. Vault changes invalidate the
+old draft and late results; duplicate submission is blocked. Details and protocol
+help are folded, but command privileges, cloud sharing and exact authorization
+scope remain visible before granting. MCP-off configuration preparation is
+explicit and does not enable the listener automatically.
+
+Validation: 41 targeted frontend tests (settings, picker, protocol formatting,
+and tour compatibility), production build, scoped ESLint and diff checks passed.
+Eight isolated browser combinations (Chinese/English, dark/light, 640/1280) passed
+four-stage geometry and flow checks, with 32 screenshots. The fixture verifies
+exact account selection, one explicit grant, format switching without another
+grant, draft reset and preservation of the existing synthetic client. These are
+production React components with synthetic IPC, not packaged native/client/SSH
+E2E evidence. No real MCP grants, Vault credentials, monitoring modes or remote
+agents were changed, and the running user application was not replaced.
+
+### MCP filtered select-all checkbox (2026-10-25, Asia/Shanghai)
+
+The host picker now has a prominent ShellBeam checkbox with unchecked, mixed and
+checked states. It selects or clears only the current search/group/selected-only
+results. Hidden selections and already edited account choices survive bulk additions;
+clearing results removes only those hosts' connection references. The total selected
+count remains visible independently of the result count. Empty/loading/disabled
+states and the 100-host limit remain guarded. Selection is draft-only until the
+existing final authorization action; no backend permissions or stored grants changed.
+
+Validation: 33 targeted host-picker, MCP settings/library and settings-panel tests;
+modified-file ESLint and diff check; eight isolated production-component combinations
+(Chinese/English, dark/light, 640/1280) covering search plus group selection, keyboard
+Space, mixed state, hidden selections, bulk clearing and empty results. Sixteen
+screenshots were captured; Chinese dark narrow mixed state and English light wide
+filtered selection were visually inspected. Synthetic IPC recorded only host/status
+and audit reads, with no grant, revoke or listener mutation. This browser evidence is
+not a real-client MCP end-to-end test. Local native packaging and launch are recorded
+separately in /tmp/shellbeam-mcp-select-all-local-receipt.json.

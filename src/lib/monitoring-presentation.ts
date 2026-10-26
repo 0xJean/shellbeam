@@ -7,7 +7,7 @@ import type { KomariAlertRecord } from './komari-alerts'
 export function monitoringProviderLabel(provider: string, locale: Locale): string {
   if (provider === 'komari') return locale === 'zh-CN' ? '监控服务' : 'Monitoring service'
   if (provider === 'komari-local') return locale === 'zh-CN' ? '监控告警（本地处置）' : 'Monitoring alerts (local handling)'
-  if (provider === 'ssh-agentless') return 'SSH'
+  if (provider === 'ssh-agentless') return locale === 'zh-CN' ? 'SSH 无探针扫描' : 'SSH agentless scanning'
   return provider
 }
 

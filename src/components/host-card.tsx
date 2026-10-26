@@ -8,6 +8,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { monitoringModeCopy } from '@/lib/locales/monitoring-mode'
 import { monitoringSourcesCopy } from '@/lib/locales/monitoring-sources'
 import { hostPresentationCopy } from '@/lib/locales/host-presentation'
 import { getResourceUsageFillClassName, getResourceUsageTextClassName } from '@/lib/resource-usage'
@@ -752,6 +753,7 @@ function HostOperationalMeta({ host, summary, t, expanded = false, stacked = fal
       </div>
       <div data-testid="host-monitoring-panel" className="order-3 min-w-0 space-y-3 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-3.5 md:col-span-2 xl:col-span-1">
       {expanded && <h4 className="flex items-center gap-2 font-semibold text-[var(--workspace-text-strong)]"><Activity className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" aria-hidden="true" />{sourceCopy.operationsSource}</h4>}
+      {expanded && host.monitoringMode && <p data-testid="host-monitoring-mode" className="text-xs font-medium">{monitoringModeCopy[locale].title} · {monitoringModeCopy[locale][host.monitoringMode]}</p>}
       <div className="flex min-w-0 flex-wrap items-center gap-2 text-[var(--workspace-text-subtle)]" data-testid="host-current-source">
         <span className="inline-flex min-w-0 items-center gap-1 truncate" title={summary.provider ? monitoringProviderLabel(summary.provider, locale) : t('hosts.opsNoProvider')}>
           <ShieldCheck className="h-3 w-3 shrink-0" />
@@ -760,6 +762,7 @@ function HostOperationalMeta({ host, summary, t, expanded = false, stacked = fal
         <span className="min-w-0 break-words">{transportLabel}{summary.jumpHostName ? ` · ${summary.jumpHostName}` : ''}</span>
         <span className="ml-auto shrink-0">{formatSummaryAge(summary.sampledAt, t)}</span>
       </div>
+      {expanded && summary.provider === 'ssh-agentless' && <p data-testid="host-agentless-explanation" className="text-xs leading-relaxed text-[var(--workspace-text-subtle)]">{sourceCopy.agentlessHint}</p>}
       {!expanded && komariAttention && <div data-testid="host-monitoring-source-attention" data-source="komari" data-state={komariAttention.komari.waitingForFirstReport ? 'waiting' : komariAttention.komari.state} className={cn('flex items-center gap-1.5', komariAttention.komari.waitingForFirstReport ? 'text-[var(--workspace-text-subtle)]' : 'text-[color:var(--workspace-status-warn-text)]')}>
         <Activity className="h-3 w-3 shrink-0" aria-hidden="true" />
         <span>{sourceCopy.komariSource} · {komariAttention.komari.waitingForFirstReport

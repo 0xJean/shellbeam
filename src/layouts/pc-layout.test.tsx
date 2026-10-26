@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PcLayout } from './pc-layout'
 
 vi.mock('@/lib/i18n', () => ({
-  useT: () => ({ t: (key: string) => key }),
+  useT: () => ({ locale: 'en', t: (key: string) => key }),
 }))
 
 vi.mock('@/components/activity-log-panel', () => ({ ActivityLogPanel: () => <div /> }))

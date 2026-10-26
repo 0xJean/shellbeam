@@ -4,6 +4,7 @@ import { useT } from '@/lib/i18n'
 import { HostForm } from './host-form'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { MonitoringModeField } from './monitoring-mode-field'
 
 type Props = Omit<ComponentProps<typeof HostForm>, 'initial'> & { host: HostProfile }
 
@@ -12,6 +13,7 @@ type Props = Omit<ComponentProps<typeof HostForm>, 'initial'> & { host: HostProf
 export function HostDirectoryEditor({ host, onSubmit, onCancel, metadataControls, ...form }: Props) {
   const { t } = useT()
   const [name, setName] = useState(host.name)
+  const [monitoringMode, setMonitoringMode] = useState(host.monitoringMode)
   const [group, setGroup] = useState(host.group)
   const [tags, setTags] = useState(host.tags.join(', '))
   const [connections, setConnections] = useState(() => hostConnections(host))
@@ -37,7 +39,7 @@ export function HostDirectoryEditor({ host, onSubmit, onCancel, metadataControls
   async function save() {
     if (form.vaultUnlocked === false || saving) return
     setError('')
-    const draft = withHostConnections({ ...host, name: name.trim(), group: group.trim(), tags: tags.split(/[,，]/).map(v => v.trim()).filter(Boolean) }, connections, defaultId)
+    const draft = withHostConnections({ ...host, monitoringMode, name: name.trim(), group: group.trim(), tags: tags.split(/[,，]/).map(v => v.trim()).filter(Boolean) }, connections, defaultId)
     const validation = validateHostDraft(draft)
     if (!validation.isValid) { setError(validation.errors[0]); return }
     setSaving(true)
@@ -49,6 +51,7 @@ export function HostDirectoryEditor({ host, onSubmit, onCancel, metadataControls
     <label className="block space-y-1 text-sm">{t('hostForm.label')}<Input aria-label={t('hostForm.label')} value={name} onChange={e => setName(e.target.value)} /></label>
     <label className="block space-y-1 text-sm">{t('hostForm.parentGroup')}<Input aria-label={t('hostForm.parentGroup')} value={group} onChange={e => setGroup(e.target.value)} /></label>
     <label className="block space-y-1 text-sm">{t('hostForm.tags')}<Input aria-label={t('hostForm.tags')} value={tags} onChange={e => setTags(e.target.value)} /></label>
+    <MonitoringModeField retainedServer={host.monitoringMode === 'server'} value={monitoringMode ?? 'ssh'} onChange={setMonitoringMode} disabled={saving || form.vaultUnlocked === false} scopeKey={`${host.vaultId}:${host.id}:${host.createdAt}:${host.updatedAt}`} vaultId={host.vaultId} />
     {metadataControls}
     <section className="space-y-3 border-t pt-3" aria-label={t('hostDirectory.connections')}>
       <h3 className="text-sm font-medium">{t('hostDirectory.connections')}</h3>

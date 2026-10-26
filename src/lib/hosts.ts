@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 export type HostGroup = string
 export const DEFAULT_GROUPS = ['Production', 'Development', 'Staging', 'Custom'] as const
+export type MonitoringMode = 'ssh' | 'server'
 
 export interface ConnectionProfile {
   id: string
@@ -22,6 +23,8 @@ export interface ConnectionProfile {
 }
 
 export interface HostProfile {
+  /** Missing on legacy records; native reads preserve existing monitoring bindings. */
+  monitoringMode?: MonitoringMode | null
   /** Absent means a legacy single connection; [] explicitly means no SSH. */
   connections?: ConnectionProfile[] | null
   defaultConnectionId?: string | null
@@ -47,6 +50,7 @@ export interface HostProfile {
 }
 
 export interface HostProfileDraft {
+  monitoringMode?: MonitoringMode | null
   connections?: ConnectionProfile[] | null
   defaultConnectionId?: string | null
   name: string

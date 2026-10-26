@@ -802,6 +802,7 @@ export function PcLayout() {
         onCancel={() => setAssetEditingHost(null)}
       />
       <HostCreateDialog
+        vaultId={vault.activeVaultId}
         open={assetCreateHostOpen}
         defaultUsername={hostsCtx.defaultUsername}
         vaultKeys={vault.vaultKeys}

@@ -290,7 +290,7 @@ describe('host operations filter workflow', () => {
       })
       expect(screen.queryByRole('button', { name: 'Check probe' })).not.toBeInTheDocument()
       expect(screen.getAllByTestId('host-ops-summary')).toHaveLength(1)
-      expect(within(screen.getByTestId('host-ops-summary')).getByTitle('SSH')).toHaveTextContent('SSH')
+      expect(within(screen.getByTestId('host-ops-summary')).getByTitle('SSH agentless scanning')).toHaveTextContent('SSH')
       await waitFor(() => expect(sync).toHaveBeenCalledTimes(1))
       await act(async () => { finishOldCheck({ revision: 1, mappings: [mapping('host-1')] }) })
       expect(operation).not.toHaveBeenCalled()
@@ -300,11 +300,12 @@ describe('host operations filter workflow', () => {
   })
 
   it.each([true, false])('does not recommend a duplicate Agent for existing monitoring (Workspace available: %s)', async (available) => {
+    const cachedAt = Date.now() - 1000
     const manual = { integrationId: 'komari-a', hostId: 'host-0', nodeId: 'node-1', source: 'manual', confidence: 'explicit', updatedAt: 1 }
     vi.mocked(invoke).mockImplementation(async (command) => {
-      if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true }]
-      if (command === 'get_komari_sync_state') return { integrationId: 'komari-a', lastSyncedAt: Date.now(), ttlMs: 60_000, alertSummary: null }
-      if (command === 'list_komari_snapshots') return [{ updatedAt: Date.now(), snapshot: komariSnapshot(Date.now()) }]
+      if (command === 'list_komari_integrations') return [{ id: 'komari-a', vaultId: 'vault', name: 'Komari', endpoint: 'https://komari.test', credentialRef: 'komari.token', enabled: true, createdAt: 1, updatedAt: 1 }]
+      if (command === 'get_komari_sync_state') return { integrationId: 'komari-a', lastSyncedAt: cachedAt, lastSuccessfulSyncAt: cachedAt, ttlMs: 60_000, alertSummary: null }
+      if (command === 'list_komari_snapshots') return [{ updatedAt: cachedAt, snapshot: komariSnapshot(cachedAt) }]
       if (command === 'list_komari_mappings') return [manual]
       if (command === 'get_komari_mapping_state') return { revision: 1, mappings: [manual] }
       return command === 'mcp_list_project_deployments' ? { projects: [], total: 0, observedAt: 0 } : []

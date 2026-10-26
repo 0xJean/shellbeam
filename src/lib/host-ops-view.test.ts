@@ -534,3 +534,16 @@ it('does not treat an inventory-only failed collection as a new metric failure',
   expect(view.metrics?.sampledAt).toBe(1000)
   expect(view.health.error).toBeUndefined()
 })
+
+it('an explicit SSH choice ignores fresher server metrics while retaining operation audit', () => {
+  const source = { kind: 'komari' as const, id: 'server', capabilities: ['metrics' as const] }
+  const remote: ProbeSnapshot = { schemaVersion: 1, host: { hostId: host.id, address: host.address, port: host.port, username: host.username }, provider: source, transport: 'direct', health: 'online', receivedAt: 1100, metrics: createProbeObservation({ data: { ...monitor.snapshot!, cpuPercent: 99, sampledAt: 1100 }, source, sampledAt: 1100, receivedAt: 1100, ttlMs: 5000 }), inventory: null, errors: [] }
+  const options = { monitorLatest: [monitor], komariSnapshots: [remote], audits: [audit], now: 1200 }
+  const ssh = buildHostOpsViews({ ...options, hosts: [{ ...host, monitoringMode: 'ssh' }] })[host.id]
+  expect(ssh.health.provider).toBe('ssh-agentless')
+  expect(ssh.metrics?.cpuPercent).toBe(10)
+  expect(ssh.audits).toEqual([audit])
+  const server = buildHostOpsViews({ ...options, hosts: [{ ...host, monitoringMode: 'server' }] })[host.id]
+  expect(server.health.provider).toBe('komari')
+  expect(remote.metrics?.data.cpuPercent).toBe(99)
+})

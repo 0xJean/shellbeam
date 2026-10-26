@@ -1,6 +1,7 @@
 export const monitoringSourcesCopy = {
   en: {
     currentSource: 'Monitoring source',
+    agentlessHint: 'These metrics are collected by a temporary SSH command. This scan does not install a resident probe.',
     details: 'Data source details',
     komariSource: 'Monitoring service',
     remoteAlerts: 'Notification rules (not incidents)',
@@ -14,6 +15,7 @@ export const monitoringSourcesCopy = {
   },
   'zh-CN': {
     currentSource: '监控来源',
+    agentlessHint: '当前指标由 SSH 临时命令采集，此扫描不会安装常驻探针。',
     details: '数据源详情',
     komariSource: '监控数据源',
     remoteAlerts: '通知规则（非故障）',

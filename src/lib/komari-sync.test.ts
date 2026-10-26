@@ -359,3 +359,19 @@ it('refreshes mapped load facts in the ordinary sync and preserves them across c
   expect(failed.alertState?.alerts.find(a => a.kind === 'server-load')).toMatchObject({ count: 1, status: 'active', loadEvidence: { state: 'unavailable', sampledAt: 1900 } })
   expect(failed.alertAudit.filter(a => a.event === 'resolved')).toHaveLength(0)
 })
+
+it('retains an SSH host binding without collecting its server metrics', async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify([{ uuid: 'node-1', name: 'prod', ipv4: host.address }]), { status: 200 }))
+  const result = await syncKomariIntegration({ integrationId: 'ssh-choice', force: true, config: { endpoint: 'https://fixture.invalid', token: 'synthetic' }, hosts: [{ ...host, monitoringMode: 'ssh' }], explicitMappings: { [host.id]: 'node-1' }, includeAlerts: false, now: 2000, fetchImpl })
+  expect(result.mapping.mappings).toHaveLength(1)
+  expect(result.snapshots).toEqual([])
+  expect(fetchImpl).toHaveBeenCalledTimes(1)
+  expect(String(fetchImpl.mock.calls[0][0])).toContain('/api/admin/client/list')
+})
+
+it('does not contact a saved service in background when all bound hosts choose SSH', async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+  const result = await syncKomariIntegration({ integrationId: 'ssh-paused', config: { endpoint: 'https://fixture.invalid', token: 'synthetic' }, hosts: [{ ...host, monitoringMode: 'ssh' }], explicitMappings: { [host.id]: 'node-1' }, now: 2000, fetchImpl })
+  expect(result).toMatchObject({ skipped: true, skipReason: 'monitoring-mode', syncedAt: 0, snapshots: [] })
+  expect(fetchImpl).not.toHaveBeenCalled()
+})

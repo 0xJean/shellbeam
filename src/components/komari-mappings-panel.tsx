@@ -7,6 +7,8 @@ import { mapKomariNodesToHosts } from '@/lib/komari-mapping'
 import { importMonitoringHost, editKomariMapping, getKomariMappingState, manualKomariMappings, type KomariMappingState } from '@/lib/komari-persistence'
 import { komariMappingCopy } from '@/lib/locales/komari-mappings'
 import { useT } from '@/lib/i18n'
+import { monitoringModeCopy } from '@/lib/locales/monitoring-mode'
+import { requestUserDecision } from '@/lib/user-confirmation'
 import { Button } from './ui/button'
 
 interface Entry {
@@ -128,6 +130,7 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
     const current = () => scope.current.sequence === sequence && scope.current.vaultId === activeVaultId && scope.current.unlocked
     setBusyState({ sequence, key: `${entry.integration.id}:${nodeId}` }); setError(null)
     try {
+      if (hostId && scopedHosts.find(host => host.id === hostId)?.monitoringMode === 'ssh') { setError(monitoringModeCopy[locale].chooseFirst); return }
       const state = await editKomariMapping({ vaultId: activeVaultId, integrationId: entry.integration.id, nodeId, hostId, expectedRevision: entry.state.revision })
       if (!current()) return
       setScopedEntries((previous) => previous.vaultId !== activeVaultId ? previous : { ...previous, rows: previous.rows.map((row) => row.integration.id === entry.integration.id ? { ...row, state } : row) })
@@ -143,6 +146,8 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
     const current = () => scope.current.sequence === sequence && scope.current.vaultId === activeVaultId && scope.current.unlocked
     setBusyState({ sequence, key: `${entry.integration.id}:${node.uuid}` }); setError(null)
     try {
+      const answer = await requestUserDecision({ vaultId: activeVaultId, risk: 'low', message: monitoringModeCopy[locale].importConfirm, isCurrent: current })
+      if (!answer.accepted || answer.isCurrent?.() === false || !current()) return
       const imported = await importMonitoringHost({ vaultId: activeVaultId, integrationId: entry.integration.id, nodeId: node.uuid,
         expectedRevision: entry.state.revision, expectedIntegrationVersion: entry.integration.updatedAt,
         name: node.name || node.hostname || node.uuid, group: typeof node.raw.group === 'string' ? node.raw.group : 'Custom',
@@ -162,6 +167,7 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
     <summary className="cursor-pointer text-xs font-medium">{copy.title}</summary>
     {open && <div className="mt-3 space-y-3">
       <p className="text-xs text-muted-foreground">{copy.description}</p>
+      <p className="text-xs text-muted-foreground">{monitoringModeCopy[locale].chooseFirst}</p>
       {!vaultUnlocked && <p role="status" className="text-xs text-amber-600">{copy.locked}</p>}
       <Button size="sm" variant="outline" disabled={!vaultUnlocked || busy !== null} onClick={() => void load()}>{busy === 'load' ? copy.loading : copy.refresh}</Button>
       {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
@@ -192,10 +198,10 @@ export function KomariMappingsPanel({ activeVaultId, hosts, vaultUnlocked, onLoa
                   {saved && !scopedHosts.some((host) => host.id === saved.hostId) && <option value={saved.hostId} disabled>{copy.hostMissing}</option>}
                   {scopedHosts.map((host) => {
                     const occupied = entry.state.mappings.some((item) => item.source === 'manual' && item.hostId === host.id && item.nodeId !== nodeId)
-                    return <option key={host.id} value={host.id} disabled={occupied}>{host.name} · {host.address}{occupied ? ` (${copy.occupied})` : ''}</option>
+                    return <option key={host.id} value={host.id} disabled={occupied || host.monitoringMode === 'ssh'}>{host.name} · {host.address}{occupied ? ` (${copy.occupied})` : host.monitoringMode === 'ssh' ? ` (${monitoringModeCopy[locale].ssh})` : ''}</option>
                   })}
                 </NativeSelect>
-                <Button size="sm" disabled={!vaultUnlocked || busy !== null || !selection || !scopedHosts.some((host) => host.id === selection) || (saved?.source === 'manual' && saved.hostId === selection)} onClick={() => void save(entry, nodeId, selection)}>{busy === key ? copy.saving : copy.apply}</Button>
+                <Button size="sm" disabled={!vaultUnlocked || busy !== null || !selection || !scopedHosts.some((host) => host.id === selection && host.monitoringMode !== 'ssh') || (saved?.source === 'manual' && saved.hostId === selection)} onClick={() => void save(entry, nodeId, selection)}>{busy === key ? copy.saving : copy.apply}</Button>
                 {node && !entry.state.mappings.some(item => item.nodeId === nodeId) && <Button size="sm" variant="outline" disabled={!vaultUnlocked || busy !== null} onClick={() => void importNode(entry, node)}>{copy.importHost}</Button>}
                 {saved && <Button size="sm" variant="outline" disabled={!vaultUnlocked || busy !== null} onClick={() => void save(entry, nodeId, null)}>{copy.reset}</Button>}
               </div>

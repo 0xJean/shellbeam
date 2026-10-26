@@ -65,7 +65,7 @@ export async function main(env=process.env) {
     report.journey=await runExtensionUiJourney({driver,fixture,state,record,restart,checkpoint,observeAudit:()=>observeExtensionAudit(directory)});report.success=report.journey.passed===true
   }catch(e){
     report.failureLocation=String(e?.stack??'').match(/(?:extension-ui-journey|extension-ui-fixture|extension-ui-observer)\.mjs:[0-9:]+/)?.[0]
-    report.failedStage=stage;report.failureCode=/^(extension_ui_[a-z_]+|webdriver: [a-z ]+)$/.test(e.message)?e.message:'extension_ui_assertion_failed';report.lastInteraction=driver?.lastInteraction;report.clickGeometry=driver?.lastClickDiagnostics;report.hostNavigation=driver?.lastHostNavigation;process.exitCode=1
+    report.failedStage=stage;report.failureCode=/^(extension_ui_[a-z_]+|webdriver: [a-z ]+)$/.test(e.message)?e.message:'extension_ui_assertion_failed';report.lastInteraction=driver?.lastInteraction;report.clickGeometry=driver?.lastClickDiagnostics;report.hostNavigation=driver?.lastHostNavigation;report.selectNavigation=safeDetails(driver?.lastSelectionDiagnostics);process.exitCode=1
     // Read only fixed UI flags and product error codes. Never retain form
     // values, DOM dumps, server responses or arbitrary alert text.
     if(driver?.sessionId)try{

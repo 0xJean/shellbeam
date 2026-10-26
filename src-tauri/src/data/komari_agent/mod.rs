@@ -598,6 +598,12 @@ fn prepare(app: &tauri::AppHandle, input: Prepare) -> Result<Preview, String> {
         &input.host_id,
         connection_id.as_deref(),
     )?;
+    if matches!(
+        input.action.as_str(),
+        "install" | "upgrade" | "adopt" | "migrate"
+    ) {
+        super::host_monitoring::require_server(&h)?;
+    }
     if baseline.as_ref().is_some_and(|r| {
         r.host_created_at != h.created_at || r.integration_id != input.integration_id
     }) {

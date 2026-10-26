@@ -25,3 +25,5 @@ pub mod shellbeam_agent;
 pub mod snippets;
 pub mod ssh_config;
 pub mod workspace_inventory;
+
+pub(crate) mod host_monitoring;

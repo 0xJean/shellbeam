@@ -2296,6 +2296,7 @@ mod tests {
 
     fn host_with_jump(auth_type: &str) -> HostProfile {
         HostProfile {
+            monitoring_mode: None,
             connections: None,
             default_connection_id: None,
             id: "host".into(),

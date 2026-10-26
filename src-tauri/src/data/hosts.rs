@@ -10,6 +10,8 @@ const SHELLBEAM_DATA_DB: &str = "workspace_inventory.sqlite3";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostProfile {
+    #[serde(default)]
+    pub monitoring_mode: Option<String>,
     /// None is a legacy single connection; Some([]) is a monitoring-only host.
     #[serde(default)]
     pub connections: Option<Vec<super::host_connections::ConnectionProfile>>,
@@ -41,6 +43,8 @@ pub struct HostProfile {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostProfileDraft {
+    #[serde(default)]
+    monitoring_mode: Option<String>,
     #[serde(default)]
     connections: Option<Vec<super::host_connections::ConnectionProfile>>,
     #[serde(default)]
@@ -226,6 +230,7 @@ pub(crate) fn insert_host_row(
     vault_id: &str,
     host: &HostProfile,
 ) -> Result<(), String> {
+    super::host_monitoring::validate(host.monitoring_mode.as_deref())?;
     let tags_json = serde_json::to_string(&host.tags)
         .map_err(|err| format!("Serialize host tags failed: {err}"))?;
     conn.execute(
@@ -233,8 +238,8 @@ pub(crate) fn insert_host_row(
         INSERT INTO workspace_hosts
           (vault_id, id, name, address, port, username, host_group, auth_type,
            secret_key_ref, password_key_ref, private_key_ref, tags_json,
-           jump_host, jump_port, jump_user, created_at, updated_at, jump_host_id, connections_json, default_connection_id)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+           jump_host, jump_port, jump_user, created_at, updated_at, jump_host_id, connections_json, default_connection_id, monitoring_mode)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
         ON CONFLICT(vault_id, id) DO UPDATE SET
           name = excluded.name,
           address = excluded.address,
@@ -253,7 +258,8 @@ pub(crate) fn insert_host_row(
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
           connections_json = excluded.connections_json,
-          default_connection_id = excluded.default_connection_id
+          default_connection_id = excluded.default_connection_id,
+          monitoring_mode = COALESCE(excluded.monitoring_mode, workspace_hosts.monitoring_mode)
         "#,
         params![
             vault_id,
@@ -276,6 +282,7 @@ pub(crate) fn insert_host_row(
             host.jump_host_id,
             host.connections.as_ref().map(serde_json::to_string).transpose().map_err(|_| "HOST_CONNECTION_INVALID")?,
             host.default_connection_id,
+            host.monitoring_mode,
         ],
     )
     .map_err(|err| format!("Save host profile failed: {err}"))?;
@@ -364,6 +371,7 @@ fn host_from_row(row: &rusqlite::Row<'_>) -> Result<HostProfile, rusqlite::Error
     let tags = serde_json::from_str::<Vec<String>>(&tags_json).unwrap_or_default();
 
     Ok(HostProfile {
+        monitoring_mode: row.get(19)?,
         connections: row
             .get::<_, Option<String>>(17)?
             .map(|v| serde_json::from_str(&v))
@@ -409,7 +417,7 @@ pub fn load_hosts(
             r#"
             SELECT id, name, address, port, username, host_group, auth_type,
                    secret_key_ref, password_key_ref, private_key_ref, tags_json,
-                   jump_host, jump_port, jump_user, created_at, updated_at, jump_host_id, connections_json, default_connection_id
+                   jump_host, jump_port, jump_user, created_at, updated_at, jump_host_id, connections_json, default_connection_id, monitoring_mode
             FROM workspace_hosts
             WHERE vault_id = ?1
             ORDER BY created_at ASC, updated_at ASC
@@ -422,6 +430,16 @@ pub fn load_hosts(
     let mut hosts = Vec::new();
     for row in rows {
         hosts.push(row.map_err(|err| format!("Read host profile failed: {err}"))?);
+    }
+    for host in &mut hosts {
+        super::host_monitoring::validate(host.monitoring_mode.as_deref())?;
+        if host.monitoring_mode.is_none() {
+            host.monitoring_mode = Some(super::host_monitoring::legacy_mode(
+                &conn,
+                &normalized_vault_id,
+                &host.id,
+            )?);
+        }
     }
     Ok(hosts)
 }
@@ -438,12 +456,19 @@ pub fn save_hosts(
         .map_err(|err| format!("Start hosts save failed: {err}"))?;
     super::host_metadata::begin_host_write(&tx, &normalized_vault_id)?;
     super::host_connections::validate_registry_import(&tx, &normalized_vault_id, hosts)?;
+    let mut retained_hosts = hosts.to_vec();
+    for host in &mut retained_hosts {
+        if host.monitoring_mode.is_none() {
+            use rusqlite::OptionalExtension;
+            host.monitoring_mode = tx.query_row("SELECT monitoring_mode FROM workspace_hosts WHERE vault_id=?1 AND id=?2 AND created_at=?3", params![normalized_vault_id,host.id,host.created_at], |r| r.get::<_, Option<String>>(0)).optional().map_err(|_| "HOST_SAVE_FAILED")?.flatten();
+        }
+    }
     tx.execute(
         "DELETE FROM workspace_hosts WHERE vault_id = ?1",
         params![normalized_vault_id],
     )
     .map_err(|err| format!("Clear host profiles failed: {err}"))?;
-    for host in hosts {
+    for host in &retained_hosts {
         insert_host_row(&tx, &normalized_vault_id, host)?;
     }
     super::host_metadata::hosts_changed(&tx, &normalized_vault_id)?;
@@ -470,6 +495,7 @@ pub fn create_host(
     let vid = vault_id.as_deref();
     let now = now_unix_ms();
     let mut host = HostProfile {
+        monitoring_mode: Some(payload.monitoring_mode.unwrap_or_else(|| "ssh".into())),
         connections: payload.connections,
         default_connection_id: payload.default_connection_id,
         id: Uuid::new_v4().to_string(),
@@ -568,7 +594,17 @@ pub fn update_host(
         if old_connections.is_some() && payload.connections.is_none() {
             return Err("HOST_DIRECTORY_CLIENT_UPGRADE_REQUIRED".into());
         }
+        let previous_mode: Option<String> = tx
+            .query_row(
+                "SELECT monitoring_mode FROM workspace_hosts WHERE vault_id=?1 AND id=?2",
+                params![vid, payload.id],
+                |r| r.get(0),
+            )
+            .map_err(|_| "HOST_SAVE_FAILED")?;
         let mut updated = payload;
+        if updated.monitoring_mode.is_none() {
+            updated.monitoring_mode = previous_mode.clone();
+        }
         super::host_connections::normalize(&mut updated)?;
         updated.created_at = created_at;
         updated.name = updated.name.trim().to_string();
@@ -591,6 +627,24 @@ pub fn update_host(
         super::host_metadata::begin_host_write(&tx, &vid)?;
         insert_host_row(&tx, &vid, &updated)?;
         super::host_metadata::record_directory_edit(&tx, &vid, &updated.id, "host.directory.edit")?;
+        let previous_effective = match previous_mode.as_deref() {
+            Some(mode) => mode.to_string(),
+            None => super::host_monitoring::legacy_mode(&tx, &vid, &updated.id)?,
+        };
+        if updated
+            .monitoring_mode
+            .as_deref()
+            .unwrap_or(&previous_effective)
+            != previous_effective
+        {
+            super::host_monitoring::invalidate_sync(&tx, &vid, &updated.id)?;
+            let action = if updated.monitoring_mode.as_deref() == Some("server") {
+                "host.directory.monitoring.server"
+            } else {
+                "host.directory.monitoring.ssh"
+            };
+            super::host_metadata::record_directory_edit(&tx, &vid, &updated.id, action)?;
+        }
         super::host_metadata::hosts_changed(&tx, &vid)?;
         super::host_metadata::end_host_write(&tx, &vid)?;
         tx.commit().map_err(|_| "HOST_SAVE_FAILED")?;
@@ -611,7 +665,7 @@ pub fn delete_host(
         let mut conn = open_hosts_db(&app)?;
         migrate_legacy_hosts(&app, &mut conn, &vault, vid)?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|_| "HOST_SAVE_FAILED")?;
-        let host = tx.query_row("SELECT id,name,address,port,username,host_group,auth_type,secret_key_ref,password_key_ref,private_key_ref,tags_json,jump_host,jump_port,jump_user,created_at,updated_at,jump_host_id,connections_json,default_connection_id FROM workspace_hosts WHERE vault_id=?1 AND id=?2", params![vault,id], host_from_row).map_err(|_| "Host not found")?;
+        let host = tx.query_row("SELECT id,name,address,port,username,host_group,auth_type,secret_key_ref,password_key_ref,private_key_ref,tags_json,jump_host,jump_port,jump_user,created_at,updated_at,jump_host_id,connections_json,default_connection_id,monitoring_mode FROM workspace_hosts WHERE vault_id=?1 AND id=?2", params![vault,id], host_from_row).map_err(|_| "Host not found")?;
         super::host_metadata::begin_host_write(&tx, &vault)?;
         tx.execute("DELETE FROM workspace_hosts WHERE vault_id=?1 AND id=?2", params![vault,id]).map_err(|_| "HOST_SAVE_FAILED")?;
         super::host_metadata::hosts_changed(&tx, &vault)?;
