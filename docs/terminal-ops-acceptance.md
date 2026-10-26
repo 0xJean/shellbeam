@@ -9,6 +9,14 @@
 下表是完整 0.5 要求；仅分批实现记录明确列出的范围已取得本地证据，其余仍待实现或平台验收。
 
 
+### 2026-10-26：PR #6 返回主机页时等待运维摘要就绪
+
+- `53eb8e3` 的 Ops GUI `40303661839` 通过了全部主机创建/跳板选择、服务告警和 direct 资源采集失败通知；在确认取消操作的审计后，返回主机页时失败：`probe-failure-and-recovery / ops_ui_host_details_scope_or_controls_mismatch`，最后交互为 `pc-nav-hosts`。这不是前一轮下拉选择超时，不能用旧根因解释；该超时本轮未复发，也不宣称其原因已确认。
+- artifact `12641144990` 已独立下载至 `/tmp/shellbeam-ci-53eb8e3-gui-audit`；`productionIpc/realVault=true`、cleanup passed、applicationStopped true。merge `60c9c8163e5cb3df4eab8c7ecc81e5d3f4fd9a46` 父含该 head；123 条事件及现有 18 PNG 的文件字节/hash/尺寸已核对。direct opened 通知第一帧独立标题/正文 OCR 通过且已目视；后续完整 Probe 恢复尚未执行。其他绿色报告尚未全部独立下载，Linux 原生检查当时仍运行，不宣称完整验收。
+- 生产主机卡片先挂载，异步 `loadHostOpsViews` 随后提交摘要和详情控件；旧导航只等待任一 `host-card`。两次 W3C 查询跨过该提交时可能读到 toggle=0、region=1。普通隔离 GTK WebKit 2.50.4/Wry scrollbar 的 25 个延迟组合未触发该窗口；在合成生产 HostListItem 中加入 **100ms 数据到达 / 150ms 查询返回间隔**，实际旧 helper 读到 0/1 并报同一错误，新导航同场景通过。该间隔只用于忽略目录中的故障注入夹具，没有加入生产脚本；CI 原失败未记录控件计数，故不将受控复现等同于已经证明 CI 的唯一根因。证据 `/tmp/shellbeam-pr6-host-details-delayed-response-{baseline,fixed}.json`、baseline-100/fixed PNG；新路径另 7 个自然异步延迟组合通过。
+- 本批在主动返回主机页时，使用原默认等待预算核对 **目标主机、Vault、唯一且可见的运维摘要** 后再执行原详情读取；缺失暂等，错作用域/重复立即拒绝。资产刷新已有自己的就绪检查，保持该流程不变。详情的 host/Vault/aria-controls/展开/可见性断言原样保留；不增加点击、固定 sleep、失败重试或时限。通知触发后的 reader/guard 未改动，也不调用新的导航准备。
+- 新增 6 项协议回归：异步摘要、跨提交读取仍严格拒绝、错/重复身份、永久缺失/隐藏/读取失败、摘要就绪后仍校验详情、每次 Activity 返回均等待。**291/291 全量 Node 协议、修改脚本 ESLint/diff 通过**。临时原生容器清理，用户 App/Vault/授权/凭据未操作；12 个未跟踪图标保留。最新提交仍须完整 CI 和独立报告验收。
+
 ### 2026-10-26：PR #6 下拉选择超时的只读阶段诊断
 
 - `a2c17b8` 最新检查 10/11 成功，Ops GUI `40300730660` 失败；四个 GUI 的依赖安装分别在 36–53 秒内完成，上一轮下载超时未复发。迁移、自有探针与扩展 GUI 工作流成功，但本轮未独立下载全部绿色报告，不宣称整体验收完成。

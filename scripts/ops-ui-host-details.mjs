@@ -4,6 +4,27 @@ const q = value => `"${String(value).replaceAll('\\', '\\\\').replaceAll('"', '\
 const validId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(value)
 function check(value, code) { if (!value) throw new Error(`ops_ui_host_details_${code}`) }
 
+// Active navigation only: a host card mounts before its async operational
+// summary. Wait for the target summary, rather than passing that partial
+// mount into the strict disclosure reader. Notification readers never call
+// this preparation step and keep their existing scope/visibility assertions.
+export async function waitForOpsUiHostOperations(driver, { hostId, vaultId }) {
+  check(validId(hostId) && validId(vaultId), 'invalid_scope')
+  const card = `[data-testid="host-card"][data-host-id=${q(hostId)}]`
+  return driver.until(async () => {
+    const cards = await driver.findAll(card)
+    check(cards.length <= 1, 'ambiguous_host')
+    if (!cards.length || !await driver.isDisplayed(cards[0])) return false
+    check(await driver.attr(cards[0], 'data-vault-id') === vaultId, 'vault_mismatch')
+    const summaries = await driver.findAll(`${card} [data-testid="host-ops-summary"]`)
+    check(summaries.length <= 1, 'ambiguous_summary')
+    if (!summaries.length) return false
+    check(await driver.attr(summaries[0], 'data-vault-id') === vaultId
+      && await driver.attr(summaries[0], 'data-host-id') === hostId, 'summary_scope_mismatch')
+    return await driver.isDisplayed(summaries[0]) ? summaries[0] : false
+  })
+}
+
 async function readSurface(driver, { hostId, vaultId }) {
   check(validId(hostId) && validId(vaultId), 'invalid_scope')
   const card = `[data-testid="host-card"][data-host-id=${q(hostId)}]`

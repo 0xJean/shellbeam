@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto'
 import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { findOpsUiAuditRow, respondOpsUiConfirmation, revealOpsUiHostActions, validateOpsUiServiceRect, waitForOpsUiConfirmation } from './ops-ui-journey.mjs'
-import { ensureOpsUiHostDetails, isOpsUiHostDetailsVisible } from './ops-ui-host-details.mjs'
+import { ensureOpsUiHostDetails, isOpsUiHostDetailsVisible, waitForOpsUiHostOperations } from './ops-ui-host-details.mjs'
 
 const ROLES = Object.freeze(['direct', 'via'])
 const route = (role) => role === 'via' ? 'proxy-jump' : 'direct'
@@ -33,11 +33,13 @@ export function validateOpsUiProbeScope(fixture, state) {
   check(new Set(['jump', ...ROLES].map((role) => fixture.hosts[role].name)).size === 3, 'fixture_names_not_independent')
 }
 
-async function openPage(driver, page) {
+async function openPage(driver, page, state, role) {
   await driver.waitFor(tid('pc-dashboard'))
   await driver.click(tid('pc-dashboard'))
   await driver.click(tid(page === 'activity' ? 'pc-nav-activity' : 'pc-nav-hosts'))
-  await driver.waitFor(tid(page === 'activity' ? 'operations-audit-center' : 'host-card'))
+  if (page === 'activity') await driver.waitFor(tid('operations-audit-center'))
+  else if (state) await waitForOpsUiHostOperations(driver, { hostId: state.hostIds[role], vaultId: state.vaultId })
+  else await driver.waitFor(tid('host-card'))
 }
 const evaluationSelector = (state, role, section) => `${card(state, role)} ${tid('host-probe-evaluation')}[data-rule-id=${q(OPS_UI_PROBE_RULE_IDS[section])}][data-host-id=${q(state.hostIds[role])}][data-vault-id=${q(state.vaultId)}]`
 const alertSelector = (state, role) => `${card(state, role)} ${tid('host-local-alert')}[data-rule-id=${q(RULE)}][data-host-id=${q(state.hostIds[role])}]`
@@ -304,7 +306,7 @@ export async function runOpsUiProbeJourney({ driver, fixture, resumeState, recor
   const baselineBoundary = Date.now()
   for (const role of ROLES) {
     assertScope()
-    await openPage(driver, 'hosts')
+    await openPage(driver, 'hosts', state, role)
     await prepareDetails(role, 'before-stop')
     const baseline = await waitForOpsUiProbeEvaluation(driver, state, role, { status: 'healthy', boundary: baselineBoundary, ...readOnly })
     const jumpBaseline = role === 'via' ? await waitForOpsUiProbeEvaluation(driver, state, 'jump', { status: 'healthy', boundary: baselineBoundary, ...readOnly }) : null
@@ -327,13 +329,13 @@ export async function runOpsUiProbeJourney({ driver, fixture, resumeState, recor
       check(cancelledState.jobId === active.jobId, 'cancel_changed_lifecycle')
       const cancelled = await verifyOpsUiProbeAudit(driver, state, role, { action: 'acknowledge', status: 'cancelled' })
       await record(`ops-ui-probe-${role}-cancelled`, { passed: true, lifecycleUnchanged: true, jobId: cancelled })
-      await openPage(driver, 'hosts')
+      await openPage(driver, 'hosts', state, role)
       await waitForAlert(driver, state, role, 'active')
       await respond(driver, fixture, state, role, 'acknowledge', true)
       const acknowledged = await waitForAlert(driver, state, role, 'acknowledged')
       check(acknowledged.jobId && acknowledged.jobId !== active.jobId && acknowledged.jobId !== cancelled, 'ack_job_not_linked')
       await verifyOpsUiProbeAudit(driver, state, role, { action: 'acknowledge', status: 'completed', jobId: acknowledged.jobId })
-      await openPage(driver, 'hosts')
+      await openPage(driver, 'hosts', state, role)
       await prepareDetails(role, 'before-restore')
       const restoreAt = Date.now()
       const restored = await checkpoint('probe-restore', { role })
@@ -382,13 +384,13 @@ export async function resumeOpsUiProbeJourney({ driver, fixture, resumeState, pr
     await verifyOpsUiProbeAudit(driver, probeState, role, { action: 'acknowledge', status: 'cancelled', jobId: jobs.cancelled })
     await verifyOpsUiProbeAudit(driver, probeState, role, { action: 'acknowledge', status: 'completed', jobId: jobs.acknowledged })
     await verifyOpsUiProbeAudit(driver, probeState, role, { action: 'close', status: 'completed', jobId: jobs.closed })
-    await openPage(driver, 'hosts')
+    await openPage(driver, 'hosts', probeState, role)
     const observation = await waitForOpsUiProbeEvaluation(driver, probeState, role, { status: 'healthy', boundary: restartedAfter, after: jobs.recoverySampleAt })
     const closed = await waitForAlert(driver, probeState, role, 'closed')
     check(closed.jobId === jobs.closed, 'restored_close_job_changed')
     await record(`ops-ui-probe-${role}-restored`, { passed: true, auditJobs: 3, freshObservation: true, originalSampleAt: observation.sampledAt, alertClosed: true })
   }
-  await openPage(driver, 'hosts')
+  await openPage(driver, 'hosts', probeState, 'jump')
   const jump = probeState.hosts.jump
   await waitForOpsUiProbeEvaluation(driver, probeState, 'jump', { status: 'healthy', boundary: restartedAfter, after: jump.recoverySampleAt })
   const resolved = await waitForAlert(driver, probeState, 'jump', 'resolved')
