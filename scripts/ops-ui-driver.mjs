@@ -150,7 +150,7 @@ export class OpsUiDriver {
     for (const [index, ancestor] of (ancestors ?? []).reverse().slice(0, 8).entries()) result.ancestors.push(await geometry(ancestor, `ancestor-${index}`))
     return result
   }
-  async fill(locator, value, { keyboardClear = false } = {}) {
+  async fill(locator, value, { keyboardClear = false, tabFrom } = {}) {
     this.noteInteraction('fill', locator)
     const element = await this.interactable(locator)
     const tag = await this.request('GET', await this.elementRoute(element, '/name'))
@@ -159,10 +159,23 @@ export class OpsUiDriver {
     // token so the real editor emits a line break and a genuine input event.
     const text = String(value)
     const keys = tag === 'textarea' ? text.replaceAll('\r\n', '\n').replaceAll('\n', '\uE007') : text
-    if (keyboardClear) {
+    if (tabFrom !== undefined) {
+      // The next field can be clipped by a scrollable dialog. WebKit's clear
+      // and pointer click may reject it even though keyboard input is usable.
+      // Follow the actual tab order once, from the caller's focused control.
+      // Verify both ends before any input; never guess, retry or inject JS.
+      const previous = await this.find(tabFrom)
+      const activeId = async () => (await this.request('GET', this.route('/element/active')))?.[elementKey]
+      if (await activeId() !== previous.id) throw new WebDriverError('element not interactable')
+      await this.request('POST', this.route('/actions'), { actions: [{ type: 'key', id: 'field-keyboard', actions: [
+        { type: 'keyDown', value: '\uE004' }, { type: 'keyUp', value: '\uE004' },
+      ] }] })
+      if (await activeId() !== element.id) throw new WebDriverError('element not interactable')
+    }
+    if (keyboardClear || tabFrom !== undefined) {
       // Explicit Linux key actions produce genuine input events for React
       // controlled fields; modifier characters inside /value do not.
-      await this.clickElement(element)
+      if (tabFrom === undefined) await this.clickElement(element)
       await this.request('POST', this.route('/actions'), { actions: [{ type: 'key', id: 'field-keyboard', actions: [
         { type: 'keyDown', value: '\uE009' }, { type: 'keyDown', value: 'a' }, { type: 'keyUp', value: 'a' }, { type: 'keyUp', value: '\uE009' },
         { type: 'keyDown', value: '\uE003' }, { type: 'keyUp', value: '\uE003' },

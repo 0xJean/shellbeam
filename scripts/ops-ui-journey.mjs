@@ -152,7 +152,7 @@ async function createHost(driver, fixture, role, state, record) {
   // not screenshot, dump a DOM, report a value or serialize this scope.
   const privateKey = await readFile(host.privateKeyPath, 'utf8')
   check(privateKey.length > 100 && privateKey.length <= 65536 && /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(privateKey), 'invalid_fixture_key')
-  await driver.fill(testId('host-private-key'), privateKey)
+  await driver.fill(testId('host-private-key'), privateKey, { tabFrom: testId('host-auth-private-key') })
   check(String(await driver.attr(testId('host-private-key'), 'value')).replaceAll('\r\n', '\n') === privateKey.replaceAll('\r\n', '\n'), 'private_key_ui_roundtrip_failed')
   await driver.fill(testId('host-secret-name'), `ops-ui-${role}-private-key`)
   check(await driver.attr(testId('host-secret-name'), 'value') === `ops-ui-${role}-private-key`, 'secret_reference_not_explicit')

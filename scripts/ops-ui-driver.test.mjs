@@ -195,6 +195,52 @@ test('multiline input uses real W3C Enter keys and never writes through JavaScri
   assert.equal(calls.some(call => call.path.includes('/execute/')), false)
 })
 
+for (const mode of ['focused', 'wrong-source', 'wrong-target', 'tab-error', 'typing-error']) test(`tab-directed input ${mode}: verify focus before clearing or typing, without retry`, async t => {
+  const calls = []
+  let active = mode === 'wrong-source' ? 'unrelated' : 'previous'
+  const element = id => ({ 'element-6066-11e4-a52e-4f735466cecf': id })
+  const server = createServer(async (request, response) => {
+    const chunks = []; for await (const chunk of request) chunks.push(chunk)
+    const raw = Buffer.concat(chunks).toString(), body = raw ? JSON.parse(raw) : null
+    calls.push({ path: request.url, body })
+    let value = null, status = 200
+    if (request.url.endsWith('/element')) value = element(body.value.includes('host-auth-private-key') ? 'previous' : 'target')
+    else if (request.url.endsWith('/displayed') || request.url.endsWith('/enabled')) value = true
+    else if (request.url.endsWith('/name')) value = 'textarea'
+    else if (request.url.endsWith('/element/active')) value = element(active)
+    else if (request.url.endsWith('/actions') && body.actions[0].actions[0].value === '\uE004') {
+      assert.deepEqual(body.actions, [{ type: 'key', id: 'field-keyboard', actions: [
+        { type: 'keyDown', value: '\uE004' }, { type: 'keyUp', value: '\uE004' },
+      ] }])
+      active = mode === 'wrong-target' ? 'unrelated' : 'target'
+      if (mode === 'tab-error') { status = 500; value = { error: 'element not interactable', message: 'SYNTHETIC_PRIVATE_OUTPUT' } }
+    } else if (request.url.endsWith('/value') && mode === 'typing-error') {
+      status = 500; value = { error: 'element not interactable', message: 'SYNTHETIC_PRIVATE_OUTPUT' }
+    }
+    response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ value }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => { server.closeAllConnections(); server.close() })
+  const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`); driver.sessionId = 's'
+  const fill = driver.fill('[data-testid="host-private-key"]', 'SYNTHETIC\r\nPRIVATE\n', { tabFrom: '[data-testid="host-auth-private-key"]' })
+  if (mode === 'focused') await fill
+  else await assert.rejects(fill, error => error.code === 'element not interactable' && !JSON.stringify(error).includes('SYNTHETIC'))
+  const writes = calls.filter(call => call.path.endsWith('/actions') || call.path.endsWith('/value'))
+  const canType = mode === 'focused' || mode === 'typing-error'
+  assert.deepEqual(writes.map(call => call.path), mode === 'wrong-source' ? [] : canType
+    ? ['/session/s/actions', '/session/s/actions', '/session/s/element/target/value'] : ['/session/s/actions'])
+  if (canType) {
+    assert.deepEqual(writes[1].body.actions[0].actions, [
+      { type: 'keyDown', value: '\uE009' }, { type: 'keyDown', value: 'a' }, { type: 'keyUp', value: 'a' }, { type: 'keyUp', value: '\uE009' },
+      { type: 'keyDown', value: '\uE003' }, { type: 'keyUp', value: '\uE003' },
+    ])
+    assert.deepEqual(writes[2].body, { text: 'SYNTHETIC\uE007PRIVATE\uE007', value: [...'SYNTHETIC\uE007PRIVATE\uE007'] })
+  }
+  assert.equal(calls.some(call => /\/(click|clear|execute)\b/.test(call.path)), false)
+  assert.deepEqual(driver.lastInteraction, { kind: 'fill', control: 'host-private-key' })
+  assert.equal(driver.lastClickDiagnostics, null)
+})
+
 test('controlled field replacement uses explicit keyboard actions and releases modifiers before typing', async t => {
   const calls=[]
   const server=createServer(async(request,response)=>{
