@@ -38,7 +38,7 @@ export async function setupTransferUi({driver:d,fixture:f,record}) {
     await d.click(id('host-auth-private-key'));const key=await readFile(h.privateKeyPath,'utf8');await d.fill(id('host-private-key'),key,{tabFrom:id('host-auth-private-key')})
     assert(String(await d.attr(id('host-private-key'),'value')).replaceAll('\r\n','\n')===key.replaceAll('\r\n','\n'),'transfer_ui_private_key_roundtrip_failed')
     await d.fill(id('host-secret-name'),`transfer-${h.role}-key`);assert(await d.attr(id('host-secret-name'),'value')===`transfer-${h.role}-key`,'transfer_ui_secret_reference_not_explicit')
-    if(h.jump){await d.click(id('host-jump-toggle'));await d.select(id('host-jump-profile'),f.hosts[h.jump].id)}
+    if(h.jump){await d.click(id('host-jump-toggle'));await d.select(id('host-jump-profile'),f.hosts[h.jump].id,{tabFrom:id('host-jump-toggle')})}
     await chooseServerMonitoring(d)
     record('transfer-host-form-ready',{role:h.role,fieldsMatched:true,privateKeyMatched:true,explicitReference:true})
     await d.click(id('host-save'));await closed(d,`dialog[open] ${id('host-form')}`)

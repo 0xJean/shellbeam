@@ -159,7 +159,7 @@ async function createHost(driver, fixture, role, state, record) {
   if (role === 'via') {
     await driver.click(testId('host-jump-toggle'))
     await driver.waitFor(testId('host-jump-profile'))
-    await driver.select(testId('host-jump-profile'), state.hostIds.jump)
+    await driver.select(testId('host-jump-profile'), state.hostIds.jump, { tabFrom: testId('host-jump-toggle') })
     check(await driver.attr(testId('host-jump-profile'), 'value') === state.hostIds.jump, 'jump_reference_not_saved')
   }
   await waitEnabled(driver, testId('host-save'))

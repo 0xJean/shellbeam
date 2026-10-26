@@ -159,19 +159,7 @@ export class OpsUiDriver {
     // token so the real editor emits a line break and a genuine input event.
     const text = String(value)
     const keys = tag === 'textarea' ? text.replaceAll('\r\n', '\n').replaceAll('\n', '\uE007') : text
-    if (tabFrom !== undefined) {
-      // The next field can be clipped by a scrollable dialog. WebKit's clear
-      // and pointer click may reject it even though keyboard input is usable.
-      // Follow the actual tab order once, from the caller's focused control.
-      // Verify both ends before any input; never guess, retry or inject JS.
-      const previous = await this.find(tabFrom)
-      const activeId = async () => (await this.request('GET', this.route('/element/active')))?.[elementKey]
-      if (await activeId() !== previous.id) throw new WebDriverError('element not interactable')
-      await this.request('POST', this.route('/actions'), { actions: [{ type: 'key', id: 'field-keyboard', actions: [
-        { type: 'keyDown', value: '\uE004' }, { type: 'keyUp', value: '\uE004' },
-      ] }] })
-      if (await activeId() !== element.id) throw new WebDriverError('element not interactable')
-    }
+    if (tabFrom !== undefined) await this.focusNextFrom(element, tabFrom)
     if (keyboardClear || tabFrom !== undefined) {
       // Explicit Linux key actions produce genuine input events for React
       // controlled fields; modifier characters inside /value do not.
@@ -182,6 +170,18 @@ export class OpsUiDriver {
       ] }] })
     } else await this.request('POST', await this.elementRoute(element, '/clear'), {})
     await this.request('POST', await this.elementRoute(element, '/value'), { text: keys, value: [...keys] })
+  }
+  async focusNextFrom(element, tabFrom) {
+    // A field can be clipped by a scrollable dialog. Follow the actual tab
+    // order once, from the caller's focused control, and verify both ends.
+    // Never guess, retry, inject JS or change a value to obtain focus.
+    const previous = await this.find(tabFrom)
+    const activeId = async () => (await this.request('GET', this.route('/element/active')))?.[elementKey]
+    if (await activeId() !== previous.id) throw new WebDriverError('element not interactable')
+    await this.request('POST', this.route('/actions'), { actions: [{ type: 'key', id: 'field-keyboard', actions: [
+      { type: 'keyDown', value: '\uE004' }, { type: 'keyUp', value: '\uE004' },
+    ] }] })
+    if (await activeId() !== element.id) throw new WebDriverError('element not interactable')
   }
   async text(locator) { return this.request('GET', await this.elementRoute(locator, '/text')) }
   async attr(locator, name) {
@@ -206,7 +206,7 @@ export class OpsUiDriver {
       return await this.isDisplayed(element) && await this.isEnabled(element) ? element : false
     }, options)
   }
-  async select(locator, value) {
+  async select(locator, value, { tabFrom } = {}) {
     this.noteInteraction('select', locator)
     const element = await this.interactable(locator)
     const options = await element.findAll('option')
@@ -214,7 +214,16 @@ export class OpsUiDriver {
       if (await option.getAttribute('value') === value) {
         if (!await this.isEnabled(option)) throw new WebDriverError('element not interactable')
         if (await this.attr(element, 'data-app-select') === 'true') {
-          await this.clickElement(element)
+          if (tabFrom !== undefined) {
+            await this.focusNextFrom(element, tabFrom)
+            // Enter must only open a closed application menu, never commit an
+            // already-open menu's active value before the requested choice.
+            if (await this.attr(element, 'aria-expanded') !== 'false') throw new WebDriverError('element not interactable')
+            await this.request('POST', this.route('/actions'), { actions: [{ type: 'key', id: 'menu-keyboard', actions: [
+              { type: 'keyDown', value: '\uE007' }, { type: 'keyUp', value: '\uE007' },
+            ] }] })
+            await this.until(async () => await this.attr(element, 'aria-expanded') === 'true')
+          } else await this.clickElement(element)
           const menuId = await this.attr(element, 'aria-controls')
           if (!menuId || !/^[A-Za-z0-9_:.-]+$/.test(menuId)) throw new WebDriverError('no such element')
           const choices = await this.findAll(`[id=${JSON.stringify(menuId)}][role="listbox"] [role="option"]`)
@@ -273,6 +282,7 @@ export class OpsUiDriver {
           }
           throw new WebDriverError('no such element')
         }
+        if (tabFrom !== undefined) throw new WebDriverError('unsupported operation')
         // W3C's native option click selects and emits the genuine input/change
         // events. The select is visible; its closed popup need not be opened.
         await this.clickElement(option)

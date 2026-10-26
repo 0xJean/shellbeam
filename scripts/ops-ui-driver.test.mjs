@@ -261,32 +261,42 @@ test('controlled field replacement uses explicit keyboard actions and releases m
   assert.equal(writes[2].body.text,'32787');assert.equal(calls.some(c=>c.path.includes('/execute/')),false)
 })
 
-for (const mode of ['visible', 'settling', 'outside-window']) test(`application dropdown ${mode}: keyboard navigation never clicks an option outside the window`, async t => {
-  const longMenu = mode !== 'visible', outsideWindow = mode === 'outside-window'
+for (const mode of ['visible', 'settling', 'outside-window', 'keyboard', 'keyboard-outside-window', 'keyboard-wrong-source', 'keyboard-wrong-target', 'keyboard-open', 'keyboard-open-error', 'keyboard-disabled']) test(`application dropdown ${mode}: keyboard navigation never clicks an option outside the window`, async t => {
+  const longMenu = mode !== 'visible', outsideWindow = mode.endsWith('outside-window'), keyboard = mode.startsWith('keyboard')
   const calls = [], element = id => ({ 'element-6066-11e4-a52e-4f735466cecf': id })
   const count = longMenu ? 9 : 1, target = count - 1
   const disabled = new Set(longMenu ? [0, 4] : [])
   const enabled = Array.from({ length: count }, (_, i) => i).filter(i => !disabled.has(i))
   let menuReads = 0, active = target, scrollReads = 0, boundsReads = 0
+  let focused = mode === 'keyboard-wrong-source' ? 'unrelated' : 'previous', menuOpen = mode === 'keyboard-open'
   const server = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk)
     const raw = Buffer.concat(chunks).toString(); const body = raw ? JSON.parse(raw) : null
-    calls.push({ path: request.url, body })
-    let value = null
+    calls.push({ method: request.method, path: request.url, body })
+    let value = null, status = 200
     const option = /\/element\/choice-(\d+)\//.exec(request.url)?.[1]
     if (request.url.endsWith('/actions')) {
       const keys = body.actions[0].actions
-      assert.equal(body.actions[0].id, 'menu-keyboard')
       assert.deepEqual(keys.map(k => k.type), ['keyDown', 'keyUp'])
       assert.equal(keys[0].value, keys[1].value)
-      if (keys[0].value === '\uE011') active = enabled[0]
-      else { assert.equal(keys[0].value, '\uE015'); active = enabled[enabled.indexOf(active) + 1] }
+      if (keys[0].value === '\uE004') {
+        assert(keyboard); assert.equal(body.actions[0].id, 'field-keyboard')
+        focused = mode === 'keyboard-wrong-target' ? 'unrelated' : 'select'
+      } else {
+        assert.equal(body.actions[0].id, 'menu-keyboard')
+        if (keys[0].value === '\uE007') {
+          assert(keyboard); assert.equal(focused, 'select'); assert.equal(menuOpen, false); menuOpen = true
+          if (mode === 'keyboard-open-error') { status = 500; value = { error: 'element not interactable', message: 'SYNTHETIC_PRIVATE_OUTPUT' } }
+        } else if (keys[0].value === '\uE011') active = enabled[0]
+        else { assert.equal(keys[0].value, '\uE015'); active = enabled[enabled.indexOf(active) + 1] }
+      }
     }
     else if (request.url.endsWith('/elements')) value = body.value === 'option' ? [element('native-option')]
       : body.value.endsWith('[role="option"]') ? Array.from({ length: count }, (_, i) => element(`choice-${i}`))
       : ++menuReads === 1 ? [element('closing-menu')] : []
-    else if (request.url.endsWith('/element')) value = element(body.value === 'html' ? 'viewport' : body.value.includes('[role="listbox"]') ? 'menu' : 'select')
-    else if (request.url.endsWith('/displayed') || request.url.endsWith('/enabled')) value = true
+    else if (request.url.endsWith('/element')) value = element(body.value.includes('host-jump-toggle') ? 'previous' : body.value === 'html' ? 'viewport' : body.value.includes('[role="listbox"]') ? 'menu' : 'select')
+    else if (request.url.endsWith('/element/active')) value = element(focused)
+    else if (request.url.endsWith('/displayed') || request.url.endsWith('/enabled')) value = !(mode === 'keyboard-disabled' && request.url.endsWith('/native-option/enabled'))
     else if (request.url.endsWith('/property/value')) value = 'logs'
     else if (request.url.endsWith('/attribute/data-value')) value = Number(option) === target ? 'logs' : `other-${option}`
     else if (request.url.endsWith('/attribute/aria-disabled')) value = disabled.has(Number(option)) ? 'true' : null
@@ -299,6 +309,7 @@ for (const mode of ['visible', 'settling', 'outside-window']) test(`application 
     else if (request.url.endsWith('/rect')) value = { x: 182, y: longMenu && (++boundsReads < 3 || outsideWindow) ? 2770 : 519, width: 245, height: 240 }
     else if (request.url.endsWith('/property/scrollTop')) value = ++scrollReads > 1 && longMenu ? 90 : 0
     else if (request.url.endsWith('/attribute/data-app-select')) value = 'true'
+    else if (request.url.endsWith('/attribute/aria-expanded')) value = String(menuOpen)
     else if (request.url.endsWith('/attribute/aria-controls')) value = '_r_1_'
     else if (request.url.includes('/choice-') && request.url.endsWith('/click')) {
       assert.equal(Number(option), target)
@@ -308,24 +319,33 @@ for (const mode of ['visible', 'settling', 'outside-window']) test(`application 
         assert(boundsReads >= 3, 'an option inside a menu outside the viewport is still not clickable')
       }
     }
-    response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ value }))
+    response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ value }))
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => { server.closeAllConnections(); server.close() })
   const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`); driver.sessionId = 's'
+  const choose = () => driver.select('[data-testid="host-jump-profile"]', 'logs', keyboard ? { tabFrom: '[data-testid="host-jump-toggle"]' } : {})
+  if (['keyboard-wrong-source', 'keyboard-wrong-target', 'keyboard-open', 'keyboard-open-error', 'keyboard-disabled'].includes(mode)) {
+    await assert.rejects(choose(), error => error.code === 'element not interactable' && !JSON.stringify(error).includes('SYNTHETIC'))
+    const actions = calls.filter(call => call.path.endsWith('/actions'))
+    assert.deepEqual(actions.map(call => call.body.actions[0].actions[0].value), ['keyboard-wrong-source', 'keyboard-disabled'].includes(mode) ? [] : mode === 'keyboard-open-error' ? ['\uE004', '\uE007'] : ['\uE004'])
+    assert.equal(calls.some(call => call.method === 'POST' && /\/(click|clear|value|execute)\b/.test(call.path)), false)
+    assert.deepEqual(driver.lastInteraction, { kind: 'select', control: 'host-jump-profile' })
+    return
+  }
   if (outsideWindow) {
     // Bound this synthetic permanently-clipped fixture, not product timeouts.
     const until = driver.until.bind(driver)
     driver.until = fn => until(fn, { timeoutMs: 500 })
-    await assert.rejects(driver.select('[data-testid="host-ops-open"]', 'logs'), /timeout/)
-    assert.deepEqual(calls.filter(call => call.path.endsWith('/click')).map(call => call.path), ['/session/s/element/select/click'])
+    await assert.rejects(choose(), /timeout/)
+    assert.deepEqual(calls.filter(call => call.path.endsWith('/click')).map(call => call.path), keyboard ? [] : ['/session/s/element/select/click'])
     assert.equal(driver.lastClickDiagnostics.available, true)
     assert.equal(driver.lastClickDiagnostics.target.y, 2770)
     assert.equal(calls.some(call => call.path.includes('/execute/')), false)
     return
   }
-  await driver.select('[data-testid="host-ops-open"]', 'logs')
-  assert.deepEqual(calls.filter(call => call.path.endsWith('/click')).map(call => call.path), ['/session/s/element/select/click', `/session/s/element/choice-${target}/click`])
-  assert.equal(calls.filter(call => call.path.endsWith('/actions')).length, enabled.length)
+  await choose()
+  assert.deepEqual(calls.filter(call => call.path.endsWith('/click')).map(call => call.path), [...(keyboard ? [] : ['/session/s/element/select/click']), `/session/s/element/choice-${target}/click`])
+  assert.equal(calls.filter(call => call.path.endsWith('/actions')).length, enabled.length + (keyboard ? 2 : 0))
   assert(calls.some(call => call.body?.value === '[id="_r_1_"][role="listbox"] [role="option"]'))
   assert.equal(menuReads, 2, 'selection waits until the closing portal is no longer displayed')
   assert.equal(calls.some(call => call.path.includes('/execute/')), false)
