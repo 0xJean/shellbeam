@@ -42,6 +42,7 @@ jobs:
           cache-on-failure: true
       - name: Install real native UI and observation dependencies
         run: |
+          sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" python3 scripts/ci-ubuntu-mirror.py
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev webkit2gtk-driver libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev openssh-server dbus xvfb xauth x11-utils imagemagick tesseract-ocr tesseract-ocr-eng fonts-dejavu-core build-essential pkg-config curl ca-certificates libnotify-dev libx11-dev libxinerama-dev libxrandr-dev libxss-dev libxext-dev libpango1.0-dev libgdk-pixbuf-2.0-dev
           sudo install -d /run/sshd

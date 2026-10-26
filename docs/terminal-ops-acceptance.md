@@ -9,6 +9,14 @@
 下表是完整 0.5 要求；仅分批实现记录明确列出的范围已取得本地证据，其余仍待实现或平台验收。
 
 
+### 2026-10-26：PR #6 GUI 运行器的依赖下载源
+
+- `bb26ce3` 最终 9/11 检查成功；Ops GUI `40293693771` 与迁移 GUI `40293693631` 被取消。两项 GitHub check annotations 均明确为超过原有 **35 分钟 job 上限**，不是用户取消或已完成的验收。安装依赖日志中 Azure Ubuntu 镜像分别以 38.3/40.7 kB/s 下载，耗时 22分45秒/26分50秒；同批自有探针 GUI 下载相同依赖仅用 3 秒。两项真正开始安装包 UI 时，分别仅剩约 9/3 分钟预算。
+- Ops 没有最终报告或 artifact；迁移 artifact `12639057852` 独立下载后仅含 3 张中间截图，没有最终报告。不能确认完整审计、异常恢复或应用清理退出通过。merge `1873d95b035dc8f69b6ac258ae59ecfc75c02297` 父提交包含 `bb26ce3`；其余绿色报告尚未全部独立下载，不宣称此 head 完整验收。
+- 四个共用相同依赖列表的 GUI 工作流，在一次性 GitHub-hosted Linux runner 上，将既有 `https://archive.ubuntu.com/ubuntu/` 提升至第一优先级，保留原 Azure/security 备用源及 APT 签名校验。没有更换包列表、禁用依赖、增加下载重试、扩大 job/步骤时限或放宽任何产品断言。配置非预期时在写入前拒绝；不修改开发者机器或用户 App。
+- 本地 4 项配置/拒绝路径测试、281 项 Node 协议测试与 5 个修改工作流 YAML 解析通过。隔离 Ubuntu 22.04 容器运行同一配置器，真实 APT 读取官方 HTTPS 签名索引并下载本轮相同版本的 amd64 `webkit2gtk-driver 2.50.4-0ubuntu0.22.04.1`；包 SHA-256 为 `c8411fe633da9fc499d93aebbd33125a6cc6ede54e418bfcc01072ee2449d256`。日志 `/tmp/shellbeam-pr6-mirror-live.log`，临时容器已退出清理；该验证证明来源选择和包版本可用，不证明 GitHub runner 网络性能已恢复。
+- 新 head 完整 CI 及独立报告仍待核验，本轮不是已完成的安装包验收。通知触发后的 reader/guard、真实样本、身份/作用域、审计与无重放保持原约束；用户 App、Vault、凭据、现有授权和 12 个未跟踪图标保持不变。优先级行为依据 [APT mirror transport](https://manpages.debian.org/trixie/apt/apt-transport-mirror.1.en.html)，保留运行器原本的镜像列表。
+
 ### 2026-10-26：PR #6 ProxyJump 展开后的菜单导航
 
 - `73c93ca` 的原生三平台、前端、双架构生命周期、扩展契约及扩展 GUI 通过；Ops GUI `40290949391` 和迁移 GUI `40290949314` 失败，自有探针 GUI `40290952965` 当时仍在依赖安装阶段。新报告证明私钥完整输入/保存已通过：Ops 完成 jump/direct 两台真实 SSH 连接，迁移完成 source 主机创建和指纹核对，随后均在展开 `host-jump-profile` 后的触发器点击失败，尚非完整远端验收。独立下载 artifact `12636710893` / `12636502727` 至 `/tmp/shellbeam-ci-73c93ca-{gui,transfer}-audit`；均清理成功并退出应用。merge `4989b0d159faed72f1748a99cd9eb18352c0781f` 父提交包含该 head。

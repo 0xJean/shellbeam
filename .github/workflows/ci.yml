@@ -38,6 +38,9 @@ jobs:
       - name: Fixed read-only MCP collector guards
         run: python3 scripts/mcp-readonly-ops.test.py
 
+      - name: Disposable runner mirror configuration guards
+        run: python3 scripts/ci-ubuntu-mirror.test.py
+
       - name: Verify bundled monitoring extension and policy runtime
         run: |
           node scripts/package-monitoring-extension.mjs --check
