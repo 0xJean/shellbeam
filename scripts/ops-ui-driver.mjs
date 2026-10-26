@@ -33,6 +33,7 @@ export class OpsUiDriver {
     this.sessionId = null
     this.lastInteraction = null
     this.lastClickDiagnostics = null
+    this.lastSelectionDiagnostics = null
   }
   async request(method, path, body) {
     let response
@@ -208,22 +209,54 @@ export class OpsUiDriver {
   }
   async select(locator, value, { tabFrom } = {}) {
     this.noteInteraction('select', locator)
+    const diagnostic = { stage: 'interactable', keyboard: tabFrom !== undefined, expanded: null, expectedIndex: null, activeIndex: null, activeMatched: null }
+    this.lastSelectionDiagnostics = diagnostic
+    try {
+      await this.selectOption(locator, value, tabFrom, diagnostic)
+      diagnostic.stage = 'complete'
+    } catch (error) {
+      // A timeout can happen before the final option's visibility check. Keep
+      // the original failure and observe only fixed geometry/ARIA/focus, never
+      // labels, IDs, field values, a screenshot of the form or another action.
+      try {
+        const element = await this.find(locator)
+        diagnostic.triggerGeometry = await this.readClickGeometry(element)
+        diagnostic.triggerFocused = (await this.request('GET', this.route('/element/active')))?.[elementKey] === element.id
+        const expanded = await this.attr(element, 'aria-expanded')
+        diagnostic.expanded = expanded === 'true' ? true : expanded === 'false' ? false : null
+        const menuId = await this.attr(element, 'aria-controls')
+        if (typeof menuId === 'string' && /^[A-Za-z0-9_:.-]+$/.test(menuId)) {
+          const menu = await this.find(`[id=${JSON.stringify(menuId)}][role="listbox"]`)
+          diagnostic.menuGeometry = await this.readClickGeometry(menu)
+        }
+      } catch { diagnostic.observationIncomplete = true }
+      throw error
+    }
+  }
+  async selectOption(locator, value, tabFrom, diagnostic) {
     const element = await this.interactable(locator)
+    diagnostic.stage = 'find-option'
     const options = await element.findAll('option')
     for (const option of options) {
       if (await option.getAttribute('value') === value) {
         if (!await this.isEnabled(option)) throw new WebDriverError('element not interactable')
         if (await this.attr(element, 'data-app-select') === 'true') {
           if (tabFrom !== undefined) {
+            diagnostic.stage = 'focus-trigger'
             await this.focusNextFrom(element, tabFrom)
             // Enter must only open a closed application menu, never commit an
             // already-open menu's active value before the requested choice.
             if (await this.attr(element, 'aria-expanded') !== 'false') throw new WebDriverError('element not interactable')
+            diagnostic.stage = 'open-menu'
             await this.request('POST', this.route('/actions'), { actions: [{ type: 'key', id: 'menu-keyboard', actions: [
               { type: 'keyDown', value: '\uE007' }, { type: 'keyUp', value: '\uE007' },
             ] }] })
-            await this.until(async () => await this.attr(element, 'aria-expanded') === 'true')
-          } else await this.clickElement(element)
+            await this.until(async () => { diagnostic.expanded = await this.attr(element, 'aria-expanded') === 'true'; return diagnostic.expanded })
+          } else {
+            diagnostic.stage = 'click-trigger'
+            await this.clickElement(element)
+          }
+          diagnostic.stage = 'find-menu'
           const menuId = await this.attr(element, 'aria-controls')
           if (!menuId || !/^[A-Za-z0-9_:.-]+$/.test(menuId)) throw new WebDriverError('no such element')
           const choices = await this.findAll(`[id=${JSON.stringify(menuId)}][role="listbox"] [role="option"]`)
@@ -241,14 +274,23 @@ export class OpsUiDriver {
               if (!optionId || !optionId.startsWith(`${menuId}-`)) throw new WebDriverError('no such element')
               const key = firstEnabled ? '\uE011' : '\uE015'
               firstEnabled = false
+              diagnostic.stage = 'navigate-option'
+              diagnostic.expectedIndex = choices.indexOf(candidate)
               await this.request('POST', this.route('/actions'), { actions: [{ type: 'key', id: 'menu-keyboard', actions: [
                 { type: 'keyDown', value: key }, { type: 'keyUp', value: key },
               ] }] })
-              await this.until(async () => await this.attr(element, 'aria-activedescendant') === optionId)
+              await this.until(async () => {
+                const activeId = await this.attr(element, 'aria-activedescendant')
+                const ordinal = typeof activeId === 'string' && activeId.startsWith(`${menuId}-`) ? activeId.slice(menuId.length + 1) : ''
+                diagnostic.activeIndex = /^[0-9]{1,5}$/.test(ordinal) ? Number(ordinal) : null
+                diagnostic.activeMatched = activeId === optionId
+                return diagnostic.activeMatched
+              })
               if (candidate.id === choice.id) break
             }
             const menu = await this.find(`[id=${JSON.stringify(menuId)}][role="listbox"]`)
             const viewport = await this.find('html')
+            diagnostic.stage = 'option-visible'
             await this.until(async () => {
               const read = async (target, field) => this.request('GET', await this.elementRoute(target, `/property/${field}`))
               const top = await read(choice, 'offsetTop'), height = await read(choice, 'offsetHeight')
@@ -268,10 +310,12 @@ export class OpsUiDriver {
               this.lastClickDiagnostics = await this.readClickGeometry(choice).catch(() => ({ available: false }))
               throw error
             })
+            diagnostic.stage = 'click-option'
             await this.clickElement(choice)
             // The real change event can commit before the portal is removed.
             // Wait for dismissal before clicking the next form control; an
             // enabled button alone does not prove the menu stopped covering it.
+            diagnostic.stage = 'menu-dismissed'
             await this.until(async () => {
               for (const menu of await this.findAll(`[id=${JSON.stringify(menuId)}][role="listbox"]`)) {
                 if (await this.isDisplayed(menu)) return false
@@ -285,6 +329,7 @@ export class OpsUiDriver {
         if (tabFrom !== undefined) throw new WebDriverError('unsupported operation')
         // W3C's native option click selects and emits the genuine input/change
         // events. The select is visible; its closed popup need not be opened.
+        diagnostic.stage = 'native-option'
         await this.clickElement(option)
         return
       }

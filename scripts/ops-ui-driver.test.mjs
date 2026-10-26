@@ -261,8 +261,9 @@ test('controlled field replacement uses explicit keyboard actions and releases m
   assert.equal(writes[2].body.text,'32787');assert.equal(calls.some(c=>c.path.includes('/execute/')),false)
 })
 
-for (const mode of ['visible', 'settling', 'outside-window', 'keyboard', 'keyboard-outside-window', 'keyboard-wrong-source', 'keyboard-wrong-target', 'keyboard-open', 'keyboard-open-error', 'keyboard-disabled']) test(`application dropdown ${mode}: keyboard navigation never clicks an option outside the window`, async t => {
+for (const mode of ['visible', 'settling', 'outside-window', 'keyboard', 'keyboard-outside-window', 'keyboard-wrong-source', 'keyboard-wrong-target', 'keyboard-open', 'keyboard-open-error', 'keyboard-disabled', 'keyboard-not-open', 'keyboard-active-mismatch', 'keyboard-focus-loss', 'keyboard-diagnostic-error']) test(`application dropdown ${mode}: keyboard navigation never clicks an option outside the window`, async t => {
   const longMenu = mode !== 'visible', outsideWindow = mode.endsWith('outside-window'), keyboard = mode.startsWith('keyboard')
+  const activeMismatch = ['keyboard-active-mismatch', 'keyboard-focus-loss', 'keyboard-diagnostic-error'].includes(mode)
   const calls = [], element = id => ({ 'element-6066-11e4-a52e-4f735466cecf': id })
   const count = longMenu ? 9 : 1, target = count - 1
   const disabled = new Set(longMenu ? [0, 4] : [])
@@ -285,9 +286,9 @@ for (const mode of ['visible', 'settling', 'outside-window', 'keyboard', 'keyboa
       } else {
         assert.equal(body.actions[0].id, 'menu-keyboard')
         if (keys[0].value === '\uE007') {
-          assert(keyboard); assert.equal(focused, 'select'); assert.equal(menuOpen, false); menuOpen = true
+          assert(keyboard); assert.equal(focused, 'select'); assert.equal(menuOpen, false); menuOpen = mode !== 'keyboard-not-open'
           if (mode === 'keyboard-open-error') { status = 500; value = { error: 'element not interactable', message: 'SYNTHETIC_PRIVATE_OUTPUT' } }
-        } else if (keys[0].value === '\uE011') active = enabled[0]
+        } else if (keys[0].value === '\uE011') { active = enabled[0]; if (mode === 'keyboard-focus-loss') focused = 'unrelated' }
         else { assert.equal(keys[0].value, '\uE015'); active = enabled[enabled.indexOf(active) + 1] }
       }
     }
@@ -301,12 +302,15 @@ for (const mode of ['visible', 'settling', 'outside-window', 'keyboard', 'keyboa
     else if (request.url.endsWith('/attribute/data-value')) value = Number(option) === target ? 'logs' : `other-${option}`
     else if (request.url.endsWith('/attribute/aria-disabled')) value = disabled.has(Number(option)) ? 'true' : null
     else if (request.url.endsWith('/attribute/id')) value = `_r_1_-${option}`
-    else if (request.url.endsWith('/attribute/aria-activedescendant')) value = `_r_1_-${active}`
+    else if (request.url.endsWith('/attribute/aria-activedescendant')) value = `_r_1_-${activeMismatch ? target : active}`
     else if (request.url.endsWith('/property/offsetTop')) value = target * 36 + 4
     else if (request.url.endsWith('/property/offsetHeight')) value = 36
     else if (request.url.endsWith('/property/clientHeight')) value = request.url.includes('/viewport/') ? 800 : 238
     else if (request.url.endsWith('/property/clientWidth')) value = 1280
-    else if (request.url.endsWith('/rect')) value = { x: 182, y: longMenu && (++boundsReads < 3 || outsideWindow) ? 2770 : 519, width: 245, height: 240 }
+    else if (request.url.endsWith('/rect')) {
+      value = { x: 182, y: longMenu && (++boundsReads < 3 || outsideWindow) ? 2770 : 519, width: 245, height: 240 }
+      if (mode === 'keyboard-diagnostic-error') { status = 500; value = { error: 'unsupported operation', message: 'SYNTHETIC_PRIVATE_OUTPUT' } }
+    }
     else if (request.url.endsWith('/property/scrollTop')) value = ++scrollReads > 1 && longMenu ? 90 : 0
     else if (request.url.endsWith('/attribute/data-app-select')) value = 'true'
     else if (request.url.endsWith('/attribute/aria-expanded')) value = String(menuOpen)
@@ -324,6 +328,23 @@ for (const mode of ['visible', 'settling', 'outside-window', 'keyboard', 'keyboa
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => { server.closeAllConnections(); server.close() })
   const driver = new OpsUiDriver(`http://127.0.0.1:${server.address().port}`); driver.sessionId = 's'
   const choose = () => driver.select('[data-testid="host-jump-profile"]', 'logs', keyboard ? { tabFrom: '[data-testid="host-jump-toggle"]' } : {})
+  if (mode === 'keyboard-not-open' || activeMismatch) {
+    const until = driver.until.bind(driver)
+    driver.until = fn => until(fn, { timeoutMs: 500 })
+    await assert.rejects(choose(), error => error.code === 'timeout')
+    const diagnostic = driver.lastSelectionDiagnostics
+    assert.equal(diagnostic.stage, activeMismatch ? 'navigate-option' : 'open-menu')
+    assert.equal(diagnostic.expanded, activeMismatch)
+    assert.equal(diagnostic.expectedIndex, activeMismatch ? enabled[0] : null)
+    assert.equal(diagnostic.activeIndex, activeMismatch ? target : null)
+    assert.equal(diagnostic.activeMatched, activeMismatch ? false : null)
+    assert.equal(diagnostic.triggerFocused, mode !== 'keyboard-focus-loss')
+    if (mode === 'keyboard-diagnostic-error') assert.equal(diagnostic.triggerGeometry.errors[0].code, 'unsupported-operation')
+    assert(!/SYNTHETIC|logs|_r_1_/.test(JSON.stringify(diagnostic)))
+    assert.deepEqual(calls.filter(call => call.path.endsWith('/actions')).map(call => call.body.actions[0].actions[0].value), ['\uE004', '\uE007', ...(activeMismatch ? ['\uE011'] : [])])
+    assert.equal(calls.some(call => call.method === 'POST' && /\/(click|clear|value|execute)\b/.test(call.path)), false)
+    return
+  }
   if (['keyboard-wrong-source', 'keyboard-wrong-target', 'keyboard-open', 'keyboard-open-error', 'keyboard-disabled'].includes(mode)) {
     await assert.rejects(choose(), error => error.code === 'element not interactable' && !JSON.stringify(error).includes('SYNTHETIC'))
     const actions = calls.filter(call => call.path.endsWith('/actions'))

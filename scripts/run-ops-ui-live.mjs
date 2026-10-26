@@ -316,6 +316,7 @@ export async function main(env = process.env) {
     report.lastInteraction = safeDetails(driver?.lastInteraction)
     report.clickGeometry = safeDetails(driver?.lastClickDiagnostics)
     report.hostNavigation = safeDetails(driver?.lastHostNavigation)
+    report.selectNavigation = safeDetails(driver?.lastSelectionDiagnostics)
     console.error(`ShellBeam UI: ${stage} failed`)
   } finally {
     if (probeNotifications) {
