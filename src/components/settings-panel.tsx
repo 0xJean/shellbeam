@@ -33,6 +33,7 @@ import { LOCALE_OPTIONS, useT } from '@/lib/i18n'
 import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
 import type { TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
+import { consumeSettingsCategoryRequest, SETTINGS_CATEGORY_REQUEST_EVENT, type SettingsCategory } from '@/lib/settings-request'
 import { AlertTriangle, BookOpen, Eye, EyeOff, Fingerprint, Monitor, Moon, Settings, Sparkles, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -75,7 +76,12 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
   const { t, locale, setLocale } = useT()
   const copy = settingsNavigationCopy[locale]
-  const [category, setCategory] = useState<'general' | 'connection' | 'monitoring' | 'integrations' | 'advanced'>('general')
+  const [category, setCategory] = useState<SettingsCategory>(() => consumeSettingsCategoryRequest() ?? 'general')
+  useEffect(() => {
+    const onRequest = () => { const next = consumeSettingsCategoryRequest(); if (next) setCategory(next) }
+    window.addEventListener(SETTINGS_CATEGORY_REQUEST_EVENT, onRequest)
+    return () => window.removeEventListener(SETTINGS_CATEGORY_REQUEST_EVENT, onRequest)
+  }, [])
   return (
     <div className="flex w-full flex-col">
       <div className="px-6 pb-4 pt-6">

@@ -1,4 +1,5 @@
 import { monitoringAlertTitle, monitoringDiagnostic, monitoringOperationTarget, monitoringProviderLabel } from '@/lib/monitoring-presentation'
+import { ProbeInstallEntry } from '@/components/probe-install-entry'
 import { NativeSelect } from '@/components/ui/select'
 import { hasSshConnection, hostConnections } from '@/lib/hosts'
 import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
@@ -341,6 +342,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
             <Button data-testid="host-connect" size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => hasSshConnection(host) ? onConnect(host.id) : onEdit(host.id)}>
               <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}
             </Button>
+            <ProbeInstallEntry host={host} enabled={monitoring} onOpenDetails={operations ? () => setDisclosure({ owner, expanded: true }) : undefined} />
             {host.updatedAt > 0 && (
               <span className="shrink-0 flex items-center gap-1 text-[10px] text-[var(--workspace-text-subtle)]" title={new Date(host.updatedAt).toLocaleString()}>
                 <Clock className="h-3 w-3" />{formatRelativeTime(host.updatedAt, t)}
