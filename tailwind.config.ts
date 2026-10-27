@@ -6,7 +6,10 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        primary: '#2563eb',
+        primary: {
+          DEFAULT: 'hsl(var(--primary) / <alpha-value>)',
+          foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
+        },
         'background-light': 'var(--workspace-bg-950)',
         'background-dark': '#070b10',
         workspace: {

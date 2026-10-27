@@ -7,6 +7,7 @@ import { ShellbeamAgentReleaseSettingsSection } from '@/components/shellbeam-age
 import { NotificationSettingsSection } from '@/components/notification-settings-section'
 import { ProbeRetrySettingsSection } from '@/components/probe-retry-settings-section'
 import { AIModelPicker } from '@/components/ai-model-picker'
+import { AppearancePicker } from '@/components/appearance-picker'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -125,6 +126,11 @@ export function SettingsPanel({
               {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               {theme === 'dark' ? t('settings.light') : t('settings.dark')}
             </Button>
+          </div>
+          <div className="mt-4 border-t pt-4">
+            <span className="text-sm text-muted-foreground">{t('settings.palettes')}</span>
+            <p className="mb-3 text-xs text-muted-foreground">{t('settings.palettesDesc')}</p>
+            <AppearancePicker family={theme === 'dark' ? 'dark' : 'light'} />
           </div>
         </section>
 

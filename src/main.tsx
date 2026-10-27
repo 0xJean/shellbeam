@@ -3,7 +3,9 @@ import { createRoot } from 'react-dom/client'
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import './index.css'
+import './styles/theme-palettes.css'
 import App from './App.tsx'
+import { initAppearance } from '@/lib/appearance'
 import {
   DEFAULT_MAIN_WINDOW_STATE,
   getMainWindowStateStorageKey,
@@ -115,6 +117,7 @@ async function setupMainWindowState() {
 }
 
 async function bootstrap() {
+  initAppearance()
   await setupMainWindowState()
 
   createRoot(document.getElementById('root')!).render(
