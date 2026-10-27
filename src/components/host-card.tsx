@@ -12,7 +12,7 @@ import { useT } from '@/lib/i18n'
 import { monitoringModeCopy } from '@/lib/locales/monitoring-mode'
 import { monitoringSourcesCopy } from '@/lib/locales/monitoring-sources'
 import { hostPresentationCopy } from '@/lib/locales/host-presentation'
-import { getResourceUsageFillClassName, getResourceUsageTextClassName } from '@/lib/resource-usage'
+import { getResourceUsageTextClassName, getResourceUsageTone } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import type { OperationAuditEntry } from '@/lib/operation-job'
@@ -24,7 +24,7 @@ import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import { hostProbeEvaluations, validHostOpsSampleTime, type HostOpsCapability, type HostOpsProbeEvaluation } from '@/lib/host-ops-view'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
 import { AlertTriangle, Activity, Bot, Check, ChevronDown, Clock, Cpu, HardDrive, KeyRound, Laptop, LockKeyhole, MemoryStick, Network, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
-import { useId, useState, type ComponentType } from 'react'
+import { useId, useState, type ComponentType, type CSSProperties } from 'react'
 import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { KomariProbeOpsView } from './komari-probe-ops-view'
@@ -125,6 +125,16 @@ export interface HostOperationalSummary {
   komariProbeBusy?: boolean
 }
 
+// Brand tint for the OS badge; unknown systems fall back to the accent colour.
+const OS_BRAND: Array<[RegExp, string]> = [
+  [/ubuntu/i, '#E95420'], [/debian/i, '#D70A53'], [/alpine/i, '#0D9AD8'], [/rocky/i, '#10B981'], [/alma/i, '#0F4266'],
+  [/centos/i, '#932279'], [/fedora/i, '#51A2DA'], [/red ?hat|rhel/i, '#EE0000'], [/arch/i, '#1793D1'], [/opensuse|suse/i, '#73BA25'],
+  [/synology|dsm/i, '#8E8E93'], [/freebsd/i, '#AB2B28'], [/mac|darwin/i, '#8E8E93'], [/windows/i, '#0078D4'],
+]
+function osBrandColor(os: string) {
+  return OS_BRAND.find(([pattern]) => pattern.test(os))?.[1] ?? 'var(--workspace-primary-500)'
+}
+
 function groupIconConfig(group: string) {
   switch (group) {
     case 'Production':
@@ -221,12 +231,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
     <>
       <div
         data-testid="host-card" data-host-id={host.id} data-host-name={host.name} data-host-health={status ?? 'unknown'} data-vault-id={host.vaultId ?? operations?.vaultId}
-        className={cn(
-          'group relative flex flex-col rounded-xl border transition-all',
-          isSelected
-            ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-900)] shadow-[var(--workspace-shadow-card)]'
-            : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] hover:border-[color:var(--workspace-border-strong)] hover:shadow-[var(--workspace-shadow-card-hover)]'
-        )}
+        className={cn('sb-card sb-host-card group relative flex flex-col', isSelected && 'outline outline-2 outline-offset-0 outline-primary/50')}
       >
         <div
           className="absolute right-2.5 top-2.5 flex gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
@@ -251,7 +256,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
 
         <div className="flex items-center gap-3 px-4 pt-4 pb-3">
           {batchSelection && <input type="checkbox" aria-label={`${hostPresentationCopy[locale].selectHost} · ${host.name}`} checked={batchSelection.selected} disabled={batchSelection.disabled} onChange={batchSelection.onChange} />}
-          <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-lg shadow-[var(--workspace-shadow-card)]', resource?.os ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]' : bg)}>
+          <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-lg', resource?.os ? 'sb-os-badge' : bg)} style={resource?.os ? { '--os': osBrandColor(resource.os) } as CSSProperties : undefined}>
             {resource?.os ? <WorkspaceOsIcon os={resource.os} className="h-5 w-5" /> : icon}
           </div>
           <div className="min-w-0 flex-1">
@@ -342,7 +347,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
             <Button data-testid="host-connect" size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => hasSshConnection(host) ? onConnect(host.id) : onEdit(host.id)}>
               <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}
             </Button>
-            <ProbeInstallEntry host={host} enabled={monitoring} onOpenDetails={operations ? () => setDisclosure({ owner, expanded: true }) : undefined} />
+            <ProbeInstallEntry host={host} os={resource?.os} enabled={monitoring} onOpenDetails={operations ? () => setDisclosure({ owner, expanded: true }) : undefined} />
             {host.updatedAt > 0 && (
               <span className="shrink-0 flex items-center gap-1 text-[10px] text-[var(--workspace-text-subtle)]" title={new Date(host.updatedAt).toLocaleString()}>
                 <Clock className="h-3 w-3" />{formatRelativeTime(host.updatedAt, t)}
@@ -414,6 +419,13 @@ function clampPercent(value: number | null | undefined) {
   return Math.min(100, Math.max(0, Math.round(value)))
 }
 
+// Normal-range colour per resource; warn / bad tones override it (src/lib/resource-usage.ts).
+const RESOURCE_METER_COLOR = {
+  cpu: 'var(--chart-4, var(--workspace-primary-500))',
+  memory: 'var(--chart-6, var(--workspace-primary-500))',
+  disk: 'var(--chart-2, var(--workspace-primary-500))',
+} as const
+
 function HostResourceMetric({
   icon: Icon,
   iconKey,
@@ -432,7 +444,9 @@ function HostResourceMetric({
   const percent = clampPercent(value)
   const displayValue = formatPercent(value, t)
   const title = detail ? `${label} ${displayValue} - ${detail}` : `${label} ${displayValue}`
-  const fillWidth = value == null ? 0 : percent
+  const tone = getResourceUsageTone(value)
+  const color = tone === 'bad' ? 'var(--workspace-status-bad)' : tone === 'warn' ? 'var(--workspace-status-warn)' : RESOURCE_METER_COLOR[iconKey]
+  const lit = value == null ? 0 : Math.round(percent / 10)
 
   return (
     <div
@@ -442,22 +456,26 @@ function HostResourceMetric({
       aria-valuemax={100}
       aria-valuenow={value == null ? undefined : percent}
       title={title}
-      className="flex min-w-0 items-center gap-1.5"
+      data-tone={tone ?? 'unknown'}
+      className="min-w-0"
     >
-      <span className="flex w-14 shrink-0 items-center gap-1.5">
-        <span
-          data-resource-metric-icon={iconKey}
-          className={cn('flex h-4 w-4 shrink-0 items-center justify-center', getResourceUsageTextClassName(value))}
-          aria-hidden="true"
-        >
+      <span className="flex items-center gap-1 text-[10px] font-medium text-[var(--workspace-text-muted)]">
+        <span data-resource-metric-icon={iconKey} className={cn('flex h-3 w-3 shrink-0 items-center justify-center', getResourceUsageTextClassName(value))} aria-hidden="true">
           <Icon className="h-3 w-3" />
         </span>
-        <span className="truncate whitespace-nowrap text-[10px] font-semibold uppercase tracking-normal text-[var(--workspace-text-muted)]">{label}</span>
+        <span className="truncate">{label}</span>
       </span>
-      <span className="h-1 min-w-8 flex-1 overflow-hidden rounded-full bg-[var(--workspace-meter-track)]" aria-hidden="true">
-        <span className={cn('block h-full rounded-full', getResourceUsageFillClassName(value))} style={{ width: `${fillWidth}%` }} />
+      <span className={cn('mt-0.5 block font-mono text-[17px] font-semibold leading-tight tabular-nums', tone === 'bad' ? 'text-[color:var(--workspace-status-bad-text)]' : tone === 'warn' ? 'text-[color:var(--workspace-status-warn-text)]' : 'text-[var(--workspace-text-strong)]')}>
+        {value == null ? displayValue : <>{percent}<small className="ml-px text-[10px] font-medium text-[var(--workspace-text-muted)]">%</small></>}
       </span>
-      <span className="w-8 shrink-0 text-right font-mono text-xs tabular-nums text-[var(--workspace-text-strong)]">{displayValue}</span>
+      <span className="mt-1.5 grid h-1.5 grid-cols-10 gap-0.5" aria-hidden="true">
+        {Array.from({ length: 10 }, (_, index) => (
+          <span key={index} className="rounded-[2px]"
+            style={index < lit
+              ? { background: color, opacity: tone ? 1 : 0.5 + index * 0.05, boxShadow: tone === 'warn' || tone === 'bad' ? `0 0 6px -1px ${color}` : undefined }
+              : { background: 'var(--workspace-meter-track)' }} />
+        ))}
+      </span>
     </div>
   )
 }
@@ -486,11 +504,13 @@ function HostResourceSummary({ resource, metrics, t }: { resource?: WorkspaceInv
   // possibly older inventory value from a different source.
   const uptime = metrics ? formatUptime(metrics.uptimeSeconds, t) : resource?.uptime?.trim() || t('hosts.opsFilters.unknown')
   return (
-    <div data-testid="host-resource-summary" className="min-w-0 space-y-2">
+    <div data-testid="host-resource-summary" className="min-w-0 space-y-2.5">
+      <div className="grid grid-cols-3 gap-3">
       <HostResourceMetric icon={Cpu} iconKey="cpu" label={t('workspace.common.cpu')} value={metrics ? metrics.cpuPercent : resource?.cpuPercent} t={t} />
       <HostResourceMetric icon={MemoryStick} iconKey="memory" label={t('workspace.common.memoryShort')} value={metrics ? metrics.memoryPercent : resource?.memoryPercent} detail={metrics ? undefined : resource?.memoryText} t={t} />
       <HostResourceMetric icon={HardDrive} iconKey="disk" label={t('workspace.common.diskShort')} value={metrics ? metrics.diskPercent : resource?.diskPercent} detail={metrics ? undefined : resource?.diskText} t={t} />
-      <dl className="space-y-1.5 pt-1 text-[10px] text-[var(--workspace-text-muted)]">
+      </div>
+      <dl className="space-y-1.5 text-[10px] text-[var(--workspace-text-muted)]">
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
           <dt className="inline-flex shrink-0 items-center gap-1.5"><Network className="h-3 w-3" aria-hidden="true" /><span className="sr-only">{t('workspace.monitor.network')}</span></dt>
           <dd data-testid="host-resource-throughput" className="min-w-0 break-words font-mono text-[var(--workspace-text-muted)]">{metrics ? <>

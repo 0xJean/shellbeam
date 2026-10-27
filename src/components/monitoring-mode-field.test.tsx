@@ -25,6 +25,23 @@ describe('explicit monitoring choice', () => {
     expect(requestUserDecision).toHaveBeenLastCalledWith(expect.objectContaining({ vaultId: 'v', message: expect.stringContaining('installation requires separate confirmation') }))
     expect(save).not.toHaveBeenCalled()
   })
+  it('offers to open the probe installer after saving once server monitoring is chosen', async () => {
+    const save = vi.fn(async () => {})
+    render(<HostForm vaultId="v" vaultUnlocked onSubmit={save} onCancel={() => {}} initial={{ monitoringMode: 'server', authType: 'privateKey', privateKeyRef: 'keep' }} />)
+    const option = screen.getByTestId('host-form-install-probe')
+    expect(option.querySelector('input')).toBeChecked()
+    fireEvent.change(screen.getByTestId('host-address'), { target: { value: 'new.test' } })
+    fireEvent.change(screen.getByTestId('host-username'), { target: { value: 'root' } })
+    fireEvent.click(screen.getByTestId('host-save'))
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ monitoringMode: 'server' }), { installProbe: true }))
+    fireEvent.click(option.querySelector('input')!)
+    fireEvent.click(screen.getByTestId('host-save'))
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.anything(), { installProbe: false }))
+  })
+  it('never offers the installer while the host stays on SSH sampling', () => {
+    render(<HostForm vaultId="v" vaultUnlocked onSubmit={vi.fn()} onCancel={() => {}} />)
+    expect(screen.queryByTestId('host-form-install-probe')).not.toBeInTheDocument()
+  })
   it('ignores consent from another scope or an invalidated confirmation', async () => {
     let finish!: (value: Awaited<ReturnType<typeof requestUserDecision>>) => void
     vi.mocked(requestUserDecision).mockImplementation(() => new Promise(resolve => { finish = resolve }))

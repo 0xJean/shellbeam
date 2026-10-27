@@ -14,7 +14,7 @@ interface HostCreateDialogProps {
   existingGroups?: string[]
   existingTags?: string[]
   availableHosts?: HostProfile[]
-  onSubmit: (draft: HostProfileDraft) => Promise<void>
+  onSubmit: (draft: HostProfileDraft, options?: { installProbe: boolean }) => Promise<void>
   onCancel: () => void
 }
 

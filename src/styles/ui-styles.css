@@ -1,0 +1,71 @@
+/* Interface styles (data-dark-style / data-light-style on <html>, see src/lib/appearance.ts).
+   A style changes geometry and depth only — corner radii, borders and small shadows —
+   so it combines freely with any colour palette. Tailwind's radius and small shadow
+   utilities read these variables (tailwind.config.ts). Shadows use `0 0 #0000` rather than
+   `none` because they are composed into comma-separated box-shadow lists. */
+
+:root {
+  --sb-r-sm: 0.25rem; --sb-r: 0.25rem; --sb-r-md: 0.375rem; --sb-r-lg: 0.5rem; --sb-r-xl: 0.75rem; --sb-r-2xl: 1rem;
+  --sb-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --sb-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --sb-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --sb-card-border: 1px solid var(--workspace-border-soft);
+  --sb-card-shadow: 0 0 #0000;
+  --sb-card-shadow-hover: var(--workspace-shadow-card-hover);
+}
+
+/* 描边 Outline — crisp 1px edges, no ambient shadow (default for dark). */
+html.dark[data-dark-style="outline"], html:not(.dark)[data-light-style="outline"] {
+  --sb-r-sm: 5px; --sb-r: 6px; --sb-r-md: 7px; --sb-r-lg: 9px; --sb-r-xl: 12px; --sb-r-2xl: 16px;
+  --sb-shadow-sm: 0 0 #0000; --sb-shadow: 0 0 #0000;
+  --sb-card-border: 1px solid var(--workspace-border-soft);
+  --sb-card-shadow: 0 0 #0000;
+  --sb-card-shadow-hover: 0 0 0 1px var(--workspace-border-strong);
+}
+
+/* 浮起 Elevated — soft layered shadows, quieter edges, rounder corners (default for light). */
+html.dark[data-dark-style="elevated"], html:not(.dark)[data-light-style="elevated"] {
+  --sb-r-sm: 6px; --sb-r: 7px; --sb-r-md: 8px; --sb-r-lg: 11px; --sb-r-xl: 14px; --sb-r-2xl: 20px;
+  --sb-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
+  --sb-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 2px 8px -2px rgb(0 0 0 / 0.08);
+  --sb-shadow-md: 0 2px 4px rgb(0 0 0 / 0.05), 0 8px 20px -6px rgb(0 0 0 / 0.14);
+  --sb-card-border: 1px solid color-mix(in srgb, var(--workspace-border-soft) 55%, transparent);
+  --sb-card-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 14px -4px rgb(0 0 0 / 0.1);
+  --sb-card-shadow-hover: 0 2px 4px rgb(0 0 0 / 0.05), 0 12px 28px -8px rgb(0 0 0 / 0.18);
+}
+html.dark[data-dark-style="elevated"] {
+  --sb-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --sb-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 12px -4px rgb(0 0 0 / 0.45);
+  --sb-card-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 18px -6px rgb(0 0 0 / 0.5);
+  --sb-card-shadow-hover: 0 2px 4px rgb(0 0 0 / 0.35), 0 16px 32px -10px rgb(0 0 0 / 0.6);
+}
+
+/* 方正 Sharp — small corners and firm edges for a dense, tool-like look. */
+html.dark[data-dark-style="sharp"], html:not(.dark)[data-light-style="sharp"] {
+  --sb-r-sm: 2px; --sb-r: 3px; --sb-r-md: 3px; --sb-r-lg: 4px; --sb-r-xl: 5px; --sb-r-2xl: 7px;
+  --sb-shadow-sm: 0 0 #0000; --sb-shadow: 0 0 #0000;
+  --sb-card-border: 1px solid var(--workspace-border-strong);
+  --sb-card-shadow: 0 0 #0000;
+  --sb-card-shadow-hover: inset 0 0 0 1px var(--workspace-border-strong);
+}
+
+/* Shared card surface used by redesigned components. */
+.sb-card {
+  border: var(--sb-card-border);
+  background: var(--workspace-surface-900);
+  box-shadow: var(--sb-card-shadow);
+  border-radius: var(--sb-r-xl);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.sb-card:hover { box-shadow: var(--sb-card-shadow-hover); }
+
+/* Host cards: a status edge for hosts that need attention, brand-tinted OS badges. */
+.sb-host-card[data-host-health="stale"] { box-shadow: inset 3px 0 0 var(--workspace-status-warn), var(--sb-card-shadow); }
+.sb-host-card[data-host-health="offline"], .sb-host-card[data-host-health="jump-unavailable"] { box-shadow: inset 3px 0 0 var(--workspace-status-bad), var(--sb-card-shadow); }
+.sb-host-card[data-host-health="stale"]:hover { box-shadow: inset 3px 0 0 var(--workspace-status-warn), var(--sb-card-shadow-hover); }
+.sb-host-card[data-host-health="offline"]:hover, .sb-host-card[data-host-health="jump-unavailable"]:hover { box-shadow: inset 3px 0 0 var(--workspace-status-bad), var(--sb-card-shadow-hover); }
+.sb-os-badge {
+  color: var(--os);
+  background: color-mix(in srgb, var(--os) 14%, var(--workspace-surface-900));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--os) 28%, transparent);
+}

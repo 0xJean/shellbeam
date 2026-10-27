@@ -8,12 +8,12 @@ import { probeInstallCopy } from '@/lib/locales/probe-install'
 import { offersProbeInstall } from '@/lib/probe-install'
 
 /** Host card entry: shown only while the host can still get a managed probe. */
-export function ProbeInstallEntry({ host, enabled = true, onOpenDetails }: { host: HostProfile; enabled?: boolean; onOpenDetails?: () => void }) {
+export function ProbeInstallEntry({ host, os, enabled = true, onOpenDetails }: { host: HostProfile; os?: string | null; enabled?: boolean; onOpenDetails?: () => void }) {
   const { locale } = useT()
   const c = probeInstallCopy[locale]
   const { readiness } = useProbeInstallReadiness(host, enabled)
   const [open, setOpen] = useState(false)
-  if (!enabled || !readiness || (!offersProbeInstall(readiness) && !open)) return null
+  if (!enabled || !readiness || (!offersProbeInstall(readiness, os) && !open)) return null
   return (
     <>
       <button type="button" data-testid="probe-install-entry" data-stage={readiness.stage} title={c.entryHint}

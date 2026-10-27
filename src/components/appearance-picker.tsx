@@ -1,5 +1,5 @@
 import { Check } from 'lucide-react'
-import { ACCENTS, PALETTES, resolveAccent, useAppearance, type Accent, type Palette, type ThemeFamily } from '@/lib/appearance'
+import { ACCENTS, PALETTES, resolveAccent, UI_STYLES, useAppearance, type Accent, type Palette, type ThemeFamily, type UiStyle } from '@/lib/appearance'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
@@ -41,8 +41,37 @@ export function AppearancePicker({ family }: { family: ThemeFamily }) {
     )
   }
 
+  // Miniature cards drawn with each style's own geometry, independent of the active style.
+  const STYLE_PREVIEW: Record<Exclude<UiStyle, 'auto'>, { radius: number; border: string; shadow: string }> = {
+    outline: { radius: 7, border: '1px solid hsl(var(--border))', shadow: 'none' },
+    elevated: { radius: 10, border: '1px solid transparent', shadow: '0 1px 2px rgb(0 0 0 / .06), 0 4px 10px -3px rgb(0 0 0 / .18)' },
+    sharp: { radius: 2, border: '1px solid hsl(var(--foreground) / .25)', shadow: 'none' },
+  }
+  const styleOption = (style: UiStyle) => {
+    const on = prefs.uiStyle === style
+    const preview = style === 'auto' ? null : STYLE_PREVIEW[style]
+    return (
+      <button key={style} type="button" role="radio" aria-checked={on} data-testid={`ui-style-${style}`} onClick={() => setAppearance({ uiStyle: style })}
+        className={cn('rounded-lg border p-2 text-left transition-shadow', on ? 'border-primary ring-2 ring-primary/30' : 'border-border hover:border-foreground/30')}>
+        <span className="flex h-10 items-center justify-center gap-1.5 rounded-md bg-muted/60 px-2">
+          {preview ? <>
+            <span className="h-6 flex-1 bg-card" style={{ borderRadius: preview.radius, border: preview.border, boxShadow: preview.shadow }} />
+            <span className="h-6 flex-1 bg-card" style={{ borderRadius: preview.radius, border: preview.border, boxShadow: preview.shadow }} />
+          </> : <span className="text-[10px] text-muted-foreground">{t('settings.uiStyleAutoHint')}</span>}
+        </span>
+        <span className="mt-1.5 flex items-center justify-between text-[11px] font-medium">{t(`settings.uiStyle.${style}`)}{on && <Check className="h-3 w-3 text-primary" />}</span>
+      </button>
+    )
+  }
+
   return (
     <div className="space-y-4">
+      <div className="space-y-2">
+        <div className="text-xs font-medium text-muted-foreground">{t('settings.uiStyleTitle')}</div>
+        <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label={t('settings.uiStyleTitle')}>
+          {(['auto', ...UI_STYLES] as UiStyle[]).map(styleOption)}
+        </div>
+      </div>
       {row('dark')}
       {row('light')}
       <div className="space-y-2">

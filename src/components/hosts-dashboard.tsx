@@ -54,6 +54,7 @@ import { SshImportDialog } from './ssh-import-dialog'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
 import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS, HOST_RESOURCE_COLUMNS } from './host-list-layout'
 import { ProbeBatchInstallBar } from './probe-batch-install'
+import { ProbeInstallDialog } from './probe-install-dialog'
 import MultiHostOperationsPanel, { type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
@@ -245,7 +246,7 @@ interface HostsDashboardProps {
   onSelectHost: (hostId: string) => void
   onConnectHost?: (hostId: string) => void
   onOpenWorkspace?: (hostId: string, app: WorkspaceAppId) => void
-  onCreateHost: (draft: HostProfileDraft) => Promise<void>
+  onCreateHost: (draft: HostProfileDraft) => Promise<HostProfile | void>
   onUpdateHost: (host: HostProfile, draft: HostProfileDraft) => Promise<void>
   onDeleteHost: (hostId: string) => Promise<void>
   openAddForm?: boolean
@@ -396,6 +397,7 @@ export function HostsDashboard({
   }
   const currentPresentation = presentation.owner === presentationOwner ? presentation : { owner: presentationOwner, monitoring: readMonitoringPreference(), alerts: false, batch: false, selected: [] as string[] }
   const [batchBusy, setBatchBusy] = useState(false)
+  const [probeInstallHost, setProbeInstallHost] = useState<HostProfile | null>(null)
   const sharedStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
   const [agentDeployments, setAgentDeployments] = useState<McpDeploymentRecord[]>([])
@@ -1367,6 +1369,7 @@ export function HostsDashboard({
             initialSelectedHostIds={selectedBatchIds} selectionFromList
             onRunOperation={async request => { setBatchBusy(true); try { return await handleMultiHostOperation(request) } finally { setBatchBusy(false) } }}
           />}
+          {probeInstallHost && <ProbeInstallDialog host={hosts.find(host => host.id === probeInstallHost.id) ?? probeInstallHost} open onOpenChange={open => { if (!open) setProbeInstallHost(null) }} />}
           <KomariAlertsDashboardPanel headless onAdditionalIncidents={receiveIntegrationIncidents} activeVaultId={activeVaultId} vaultUnlocked={vaultUnlocked} hosts={hosts} />
           <Dialog labelledBy="host-alerts-title" open={currentPresentation.alerts && vaultUnlocked} onOpenChange={alerts => setPresentation(current => ({ ...current, alerts }))}>
             <DialogContent className="w-full max-w-3xl p-5 md:w-full md:max-w-3xl">
@@ -1387,7 +1390,7 @@ export function HostsDashboard({
             vaultName={vaultName}
             existingGroups={allExistingGroups}
             existingTags={allExistingTags}
-            onSubmit={async (draft) => { await onCreateHost(draft); setShowAddForm(false); onAddFormClose?.() }}
+            onSubmit={async (draft, options) => { const created = await onCreateHost(draft); setShowAddForm(false); onAddFormClose?.(); if (options?.installProbe && created) setProbeInstallHost(created) }}
             onCancel={() => { setShowAddForm(false); onAddFormClose?.() }}
           />
 

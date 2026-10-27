@@ -46,9 +46,17 @@ export function probeInstallReadiness(host: HostProfile, sources: readonly Curre
   return { stage: 'ready', integrationId: mappedEntry.integration.id, nodeId }
 }
 
+// The managed probe needs Linux with systemd; these systems are known not to qualify.
+const UNSUPPORTED_OS = /alpine|synology|\bdsm\b|freebsd|openbsd|netbsd|darwin|mac ?os|windows|openwrt|busybox/i
+
+/** Unknown systems stay eligible; the read-only preflight decides for them. */
+export function isProbeSupportedOs(os: string | null | undefined): boolean {
+  return !os || !UNSUPPORTED_OS.test(os)
+}
+
 /** Whether the host card should offer the one-click install entry. */
-export function offersProbeInstall(readiness: ProbeInstallReadiness): boolean {
-  return readiness.stage !== 'installed' && readiness.stage !== 'no-ssh' && readiness.stage !== 'unsettled'
+export function offersProbeInstall(readiness: ProbeInstallReadiness, os?: string | null): boolean {
+  return readiness.stage !== 'installed' && readiness.stage !== 'no-ssh' && readiness.stage !== 'unsettled' && isProbeSupportedOs(os)
 }
 
 /** Preflight rows shown by the installer; errors from prepare map onto one of them. */

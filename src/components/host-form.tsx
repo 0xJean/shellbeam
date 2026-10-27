@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { hasSshConnection, validateHostDraft } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { probeInstallCopy } from '@/lib/locales/probe-install'
 import type { AuthType } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
 import { Archive, ChevronDown, Eye, EyeOff, Key, Lock, RefreshCw, Server, User, X } from 'lucide-react'
@@ -19,7 +20,8 @@ interface HostFormProps {
   vaultUnlocked?: boolean
   onSaveToVault?: (key: string, value: string) => Promise<void>
   onLoadVaultSecret?: (key: string) => Promise<string | null>
-  onSubmit: (draft: HostProfileDraft) => Promise<void>
+  /** `installProbe` asks the caller to open the probe installer for the saved host. */
+  onSubmit: (draft: HostProfileDraft, options?: { installProbe: boolean }) => Promise<void>
   onCancel: () => void
   vaultId?: string
   vaultName?: string
@@ -49,6 +51,7 @@ export function HostForm({
 }: HostFormProps) {
   const [connectionSecretId] = useState(() => crypto.randomUUID())
   const [monitoringMode, setMonitoringMode] = useState(initial?.monitoringMode ?? 'ssh')
+  const [installProbe, setInstallProbe] = useState(true)
   const [address, setAddress] = useState(initial?.address ?? '')
   const [name, setName] = useState(initial?.name ?? '')
   const [group, setGroup] = useState(initial?.group ?? 'Custom')
@@ -71,7 +74,8 @@ export function HostForm({
   const [jumpUser, setJumpUser] = useState(initial?.jumpUser ?? '')
   const [showAdvanced, setShowAdvanced] = useState(!!initial?.jumpHost)
 
-  const { t } = useT()
+  const { t, locale } = useT()
+  const probeCopy = probeInstallCopy[locale]
 
   const tags = tagsInput.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean)
   const addrSlug = (address || 'host').replace(/[^a-zA-Z0-9.-]/g, '-')
@@ -137,7 +141,7 @@ export function HostForm({
 
     setSubmitting(true)
     try {
-      await onSubmit(draft)
+      await onSubmit(draft, { installProbe: monitoringMode === 'server' && installProbe })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -201,6 +205,12 @@ export function HostForm({
 
         {!connectionOnly && <>
         <MonitoringModeField value={monitoringMode} onChange={setMonitoringMode} disabled={submitting || !vaultUnlocked} scopeKey={`${vaultId}:${connectionSecretId}`} vaultId={vaultId} />
+        {monitoringMode === 'server' && (
+          <label data-testid="host-form-install-probe" className={cn('flex cursor-pointer items-start gap-2.5 rounded-lg border p-3', installProbe ? 'border-primary/40 bg-primary/5' : 'border-border')}>
+            <input type="checkbox" className="mt-0.5 accent-[hsl(var(--primary))]" checked={installProbe} disabled={submitting} onChange={(e) => setInstallProbe(e.target.checked)} />
+            <span className="min-w-0"><span className="block text-sm font-medium">{probeCopy.newHostInstall}</span><span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{probeCopy.newHostInstallHint}</span></span>
+          </label>
+        )}
         {/* Group selector */}
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">{t('hostForm.parentGroup')}</label>

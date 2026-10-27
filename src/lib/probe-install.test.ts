@@ -62,6 +62,15 @@ describe('probeInstallReadiness', () => {
   })
 })
 
+describe('isProbeSupportedOs', () => {
+  it('rules out systems without systemd and keeps unknown systems eligible', () => {
+    expect(offersProbeInstall({ stage: 'no-server' }, 'Alpine Linux 3.20')).toBe(false)
+    expect(offersProbeInstall({ stage: 'ready' }, 'Synology DSM 7.2')).toBe(false)
+    expect(offersProbeInstall({ stage: 'ready' }, 'Ubuntu 24.04 LTS')).toBe(true)
+    expect(offersProbeInstall({ stage: 'ready' }, undefined)).toBe(true)
+  })
+})
+
 describe('probePreflightFailure', () => {
   it('maps backend error codes onto preflight rows', () => {
     expect(probePreflightFailure(new Error('KOMARI_AGENT_SSH_CONNECTION'))).toEqual({ check: 'ssh', code: 'KOMARI_AGENT_SSH_CONNECTION' })

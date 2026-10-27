@@ -22,7 +22,7 @@ interface HostsContextValue {
   pcTopBarSearch: string
   setPcTopBarSearch: (v: string) => void
   refreshHosts: () => Promise<void>
-  handleCreateHost: (payload: Parameters<typeof createHost>[0]) => Promise<void>
+  handleCreateHost: (payload: Parameters<typeof createHost>[0]) => Promise<HostProfile>
   handleUpdateHost: (host: HostProfile, draft: HostProfileDraft) => Promise<void>
   handleDeleteHost: (hostId: string) => Promise<void>
   handleSaveToVault: (key: string, value: string) => Promise<void>
@@ -130,8 +130,9 @@ export function HostsProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const handleCreateHost = useCallback(async (payload: Parameters<typeof createHost>[0]) => {
-    await createHost(payload, activeVaultId)
+    const created = await createHost(payload, activeVaultId)
     await refreshHosts()
+    return created
   }, [activeVaultId, refreshHosts])
 
   const handleUpdateHost = useCallback(async (host: HostProfile, draft: HostProfileDraft) => {

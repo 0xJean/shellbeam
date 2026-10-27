@@ -11,6 +11,9 @@ export type DarkPalette = 'midnight' | 'nord' | 'dracula' | 'graphite' | 'ocean'
 export type LightPalette = 'aqua' | 'paper' | 'solarized' | 'mist' | 'lavender'
 export type Palette = DarkPalette | LightPalette
 export type Accent = 'violet' | 'blue' | 'cyan' | 'teal' | 'green' | 'amber' | 'orange' | 'pink'
+/** Geometry and depth (radius, borders, shadows); 'auto' pairs outline with dark and elevated with light. */
+export type UiStyle = 'auto' | 'outline' | 'elevated' | 'sharp'
+export const UI_STYLES: readonly Exclude<UiStyle, 'auto'>[] = ['outline', 'elevated', 'sharp']
 
 export interface AppearancePrefs {
   darkPalette: DarkPalette
@@ -18,6 +21,7 @@ export interface AppearancePrefs {
   /** null follows the palette's own default accent. */
   darkAccent: Accent | null
   lightAccent: Accent | null
+  uiStyle: UiStyle
 }
 
 export const PALETTES: Record<Palette, { family: ThemeFamily; label: string; accent: Accent; swatch: [string, string, string] }> = {
@@ -37,7 +41,7 @@ export const ACCENTS: Record<Accent, string> = {
   violet: '#7c6cf2', blue: '#3b8bff', cyan: '#22b8d6', teal: '#2bb5a0', green: '#2fbf7d', amber: '#e3a43c', orange: '#f2853a', pink: '#ec5fa8',
 }
 
-export const DEFAULT_APPEARANCE: AppearancePrefs = { darkPalette: 'midnight', lightPalette: 'aqua', darkAccent: null, lightAccent: null }
+export const DEFAULT_APPEARANCE: AppearancePrefs = { darkPalette: 'midnight', lightPalette: 'aqua', darkAccent: null, lightAccent: null, uiStyle: 'auto' }
 
 const STORAGE_KEY = 'shellbeam.appearance'
 
@@ -58,6 +62,7 @@ export function loadAppearance(): AppearancePrefs {
       lightPalette: isPalette(raw.lightPalette, 'light') ? (raw.lightPalette as LightPalette) : DEFAULT_APPEARANCE.lightPalette,
       darkAccent: isAccent(raw.darkAccent) ? raw.darkAccent : null,
       lightAccent: isAccent(raw.lightAccent) ? raw.lightAccent : null,
+      uiStyle: raw.uiStyle === 'auto' || UI_STYLES.includes(raw.uiStyle as never) ? (raw.uiStyle as UiStyle) : 'auto',
     }
   } catch {
     return DEFAULT_APPEARANCE
@@ -68,11 +73,18 @@ export function resolveAccent(prefs: AppearancePrefs, family: ThemeFamily): Acce
   return family === 'dark' ? prefs.darkAccent ?? PALETTES[prefs.darkPalette].accent : prefs.lightAccent ?? PALETTES[prefs.lightPalette].accent
 }
 
+export function resolveUiStyle(prefs: AppearancePrefs, family: ThemeFamily): Exclude<UiStyle, 'auto'> {
+  if (prefs.uiStyle !== 'auto') return prefs.uiStyle
+  return family === 'dark' ? 'outline' : 'elevated'
+}
+
 export function applyAppearance(prefs: AppearancePrefs, root: HTMLElement = document.documentElement) {
   root.dataset.darkPalette = prefs.darkPalette
   root.dataset.lightPalette = prefs.lightPalette
   root.dataset.darkAccent = resolveAccent(prefs, 'dark')
   root.dataset.lightAccent = resolveAccent(prefs, 'light')
+  root.dataset.darkStyle = resolveUiStyle(prefs, 'dark')
+  root.dataset.lightStyle = resolveUiStyle(prefs, 'light')
 }
 
 let current: AppearancePrefs | null = null
