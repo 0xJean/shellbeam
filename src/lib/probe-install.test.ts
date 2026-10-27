@@ -29,8 +29,12 @@ describe('probeInstallReadiness', () => {
     expect(probeInstallReadiness(host(), [source('s1', [], { error: true })], null).stage).toBe('no-server')
   })
 
-  it('asks for a node when the host is not mapped', () => {
+  it('asks for a node when a server-monitored host is not mapped', () => {
     expect(probeInstallReadiness(host(), [source('s1', [{ hostId: 'other', nodeId: 'n9' }])], null)).toEqual({ stage: 'no-node', integrationId: 's1' })
+  })
+
+  it('switches the mode before linking a node, since linking requires server monitoring', () => {
+    expect(probeInstallReadiness(host({ monitoringMode: 'ssh' }), [source('s1')], null)).toEqual({ stage: 'ssh-mode', integrationId: 's1' })
   })
 
   it('asks to switch the monitoring mode when the host still uses SSH sampling', () => {

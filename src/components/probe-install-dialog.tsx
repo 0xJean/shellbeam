@@ -7,7 +7,9 @@ import { useApp } from '@/contexts/app-context'
 import { useHosts } from '@/contexts/hosts-context'
 import { useVault } from '@/contexts/vault-context'
 import { PROBE_DEPLOYMENT_CHANGED_EVENT, useProbeInstallReadiness } from '@/hooks/use-probe-install-readiness'
-import { cancelCompatibleAgent, operateCompatibleAgent, prepareCompatibleAgent, type CompatibleAgentPreview, type CompatibleAgentRecord } from '@/lib/compatible-agent'
+import { cancelCompatibleAgent, enableProbeLinger, operateCompatibleAgent, prepareCompatibleAgent, type CompatibleAgentPreview, type CompatibleAgentRecord } from '@/lib/compatible-agent'
+import { listKomariIntegrations } from '@/lib/komari-config'
+import { createKomariNodeForHost } from '@/lib/komari-persistence'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { compatibleAgentCopy } from '@/lib/locales/compatible-agent'
@@ -53,7 +55,8 @@ export function ProbeInstallDialog({ host, open, onOpenChange, onOpenDetails }: 
   useEffect(() => { if (!open) { dropPlan(); setCheck({ state: 'idle' }); setOutcome(null) } }, [open, dropPlan])
 
   const stage = readiness?.stage
-  const step: Step = outcome ? 4 : stage === 'no-server' ? 1 : stage === 'no-node' ? 2 : stage === 'installed' ? 4 : 3
+  const step: Step = outcome ? 4 : stage === 'no-server' ? 1 : stage === 'ssh-mode' || stage === 'no-node' ? 2 : stage === 'installed' ? 4 : 3
+  const [notice, setNotice] = useState('')
   const vaultId = host.vaultId ?? activeVaultId
 
   const runCheck = async () => {
@@ -104,6 +107,40 @@ export function ProbeInstallDialog({ host, open, onOpenChange, onOpenDetails }: 
     } finally { if (live.current) setBusy(false) }
   }
 
+  const createNode = async () => {
+    if (busy || !readiness?.integrationId || !vaultId) return
+    const valid = captureVaultScope()
+    const current = () => live.current && valid()
+    const server = (await listKomariIntegrations(vaultId).catch(() => [])).find((item) => item.id === readiness.integrationId)
+    const answer = await requestUserDecision({ vaultId, risk: 'low', isCurrent: current, message: fill(c.nodeConfirm, { host: host.name, server: server?.name || server?.endpoint || 'ShellBeam Server' }) })
+    if (!answer.accepted || answer.isCurrent?.() === false || !current()) return
+    setBusy(true); setNotice('')
+    try {
+      await createKomariNodeForHost({ vaultId, integrationId: readiness.integrationId, hostId: host.id })
+      reload()
+    } catch (cause) {
+      if (current()) setNotice(`${c.nodeFailed} · ${c.code} ${probePreflightFailure(cause).code}`)
+    } finally { if (live.current) setBusy(false) }
+  }
+
+  const fixLinger = async () => {
+    if (busy || !vaultId) return
+    const valid = captureVaultScope()
+    const current = () => live.current && valid()
+    const answer = await requestUserDecision({ vaultId, risk: 'high', isCurrent: current, message: fill(c.lingerConfirm, { host: host.name, user: host.username }) })
+    if (!answer.accepted || answer.isCurrent?.() === false || !current()) return
+    setBusy(true); setNotice('')
+    try {
+      await enableProbeLinger({ vaultId, hostId: host.id })
+    } catch (cause) {
+      if (current()) setNotice(/LINGER_SUDO_REQUIRED/.test(String(cause)) ? c.lingerDenied : `${c.code} ${probePreflightFailure(cause).code}`)
+      if (live.current) setBusy(false)
+      return
+    }
+    if (live.current) setBusy(false)
+    await runCheck()
+  }
+
   const openSettings = () => {
     requestSettingsCategory('monitoring')
     app.setPcSidebarNav('settings')
@@ -148,12 +185,19 @@ export function ProbeInstallDialog({ host, open, onOpenChange, onOpenDetails }: 
   if (readiness && step === 1) {
     body = <section className="space-y-3 p-5"><h3 className="text-sm font-semibold">{c.serverTitle}</h3><p className="text-xs leading-relaxed text-muted-foreground">{c.serverBody}</p></section>
     foot = <><Button variant="outline" size="sm" onClick={reload}>{c.serverRecheck}</Button><Button size="sm" onClick={openSettings}>{c.openSettings}</Button></>
-  } else if (readiness && step === 2) {
-    body = <section className="space-y-3 overflow-y-auto p-5"><h3 className="text-sm font-semibold">{fill(c.nodeTitle, { host: host.name })}</h3><p className="text-xs leading-relaxed text-muted-foreground">{c.nodeBody}</p>
-      <KomariMappingsPanel activeVaultId={vaultId} hosts={hosts} vaultUnlocked={!!vaultStatusState?.unlocked} onLoadVaultSecret={handleRevealSecret} integrationId={readiness.integrationId} initiallyOpen /></section>
-  } else if (readiness && step === 3 && stage === 'ssh-mode') {
+  } else if (readiness && step === 2 && stage === 'ssh-mode') {
     body = <section className="space-y-3 p-5"><h3 className="text-sm font-semibold">{fill(c.modeTitle, { host: host.name })}</h3><p className="text-xs leading-relaxed text-muted-foreground">{c.modeBody}</p></section>
     foot = <Button size="sm" disabled={busy} onClick={() => void switchMode()}>{c.switchMode}</Button>
+  } else if (readiness && step === 2) {
+    body = <section className="space-y-3 overflow-y-auto p-5"><h3 className="text-sm font-semibold">{fill(c.nodeTitle, { host: host.name })}</h3><p className="text-xs leading-relaxed text-muted-foreground">{c.nodeBody}</p>
+      <div className="flex items-start gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+        <Radar className="mt-0.5 h-4 w-4 shrink-0 text-[var(--workspace-accent-text)]" />
+        <div className="min-w-0 flex-1"><b className="block text-xs font-semibold">{fill(c.nodeAuto, { host: host.name })}</b><span className="block text-[11px] text-muted-foreground">{c.nodeAutoHint}</span></div>
+        <Button size="sm" data-testid="probe-create-node" disabled={busy} onClick={() => void createNode()}>{busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{fill(c.nodeAuto, { host: host.name })}</Button>
+      </div>
+      {notice && <p role="alert" className="text-xs text-[var(--workspace-status-bad-text)]">{notice}</p>}
+      <details className="text-xs"><summary className="cursor-pointer font-medium text-muted-foreground">{c.nodeOr}</summary>
+        <div className="pt-2"><KomariMappingsPanel activeVaultId={vaultId} hosts={hosts} vaultUnlocked={!!vaultStatusState?.unlocked} onLoadVaultSecret={handleRevealSecret} integrationId={readiness.integrationId} initiallyOpen /></div></details></section>
   } else if (readiness && step === 3) {
     const failed = check.failure?.check
     const failedIndex = failed ? PROBE_PREFLIGHT_CHECKS.indexOf(failed) : -1
@@ -170,6 +214,8 @@ export function ProbeInstallDialog({ host, open, onOpenChange, onOpenDetails }: 
     body = <section className="space-y-3 overflow-y-auto p-5">
       <div><h3 className="text-sm font-semibold">{fill(c.checkTitle, { host: host.name })}</h3><p className="text-xs text-muted-foreground">{host.username}@{host.address} · {c.checkBody}</p></div>
       <div className="grid gap-0.5">{rows}</div>
+      {failed === 'account' && <div className="flex flex-wrap items-center gap-2 pl-8"><Button size="sm" variant="outline" data-testid="probe-fix-linger" disabled={busy} onClick={() => void fixLinger()}>{c.lingerFix}</Button><span className="font-mono text-[11px] text-muted-foreground">loginctl enable-linger {host.username}</span></div>}
+      {notice && <p role="alert" className="text-xs text-[var(--workspace-status-bad-text)]">{notice}</p>}
       {failed === 'node' && <div className="pt-1"><KomariMappingsPanel activeVaultId={vaultId} hosts={hosts} vaultUnlocked={!!vaultStatusState?.unlocked} onLoadVaultSecret={handleRevealSecret} integrationId={readiness.integrationId} initiallyOpen /></div>}
       {p && <div className="rounded-lg bg-muted/50 p-3 text-xs">
         <b className="mb-1.5 block font-semibold">{c.planTitle}</b>

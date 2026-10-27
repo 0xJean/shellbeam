@@ -136,6 +136,8 @@ pub fn run() {
             data::komari::list_komari_integrations,
             data::komari_agent::komari_agent_record,
             data::komari_agent::komari_agent_prepare,
+            data::komari_agent::node::komari_agent_create_node,
+            data::komari_agent::linger::komari_agent_enable_linger,
             data::komari_agent::transfer::komari_agent_transfer_destinations,
             data::komari_agent::transfer::komari_agent_transfer_prepare,
             data::komari_agent::transfer::komari_agent_transfer_record,

@@ -11,13 +11,17 @@ const prepare = vi.fn()
 const operate = vi.fn()
 const decide = vi.fn(async () => ({ accepted: true, reason: 'accepted' }))
 const requestCategory = vi.fn()
+const createNode = vi.fn()
+const enableLinger = vi.fn()
 
 vi.mock('@/contexts/app-context', () => ({ useApp: () => ({ setPcSidebarNav }) }))
 vi.mock('@/contexts/hosts-context', () => ({ useHosts: () => ({ hosts: [], handleUpdateHost }) }))
 vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'v1', vaultStatusState: { unlocked: true }, handleRevealSecret: vi.fn(), captureVaultScope: () => () => true }) }))
 vi.mock('@/hooks/use-probe-install-readiness', () => ({ PROBE_DEPLOYMENT_CHANGED_EVENT: 'shellbeam:probe-deployment-changed', useProbeInstallReadiness: () => ({ readiness: state.readiness, record: null, reload }) }))
 vi.mock('@/components/komari-mappings-panel', () => ({ KomariMappingsPanel: () => <div data-testid="mapping-panel" /> }))
-vi.mock('@/lib/compatible-agent', () => ({ prepareCompatibleAgent: (...args: unknown[]) => prepare(...args), operateCompatibleAgent: (...args: unknown[]) => operate(...args), cancelCompatibleAgent: vi.fn(async () => {}) }))
+vi.mock('@/lib/compatible-agent', () => ({ prepareCompatibleAgent: (...args: unknown[]) => prepare(...args), operateCompatibleAgent: (...args: unknown[]) => operate(...args), enableProbeLinger: (...args: unknown[]) => enableLinger(...args), cancelCompatibleAgent: vi.fn(async () => {}) }))
+vi.mock('@/lib/komari-persistence', () => ({ createKomariNodeForHost: (...args: unknown[]) => createNode(...args) }))
+vi.mock('@/lib/komari-config', () => ({ listKomariIntegrations: vi.fn(async () => [{ id: 's1', name: 'Home Server', endpoint: 'https://monitor.example' }]) }))
 vi.mock('@/lib/user-confirmation', () => ({ requestUserDecision: (...args: unknown[]) => decide(...(args as [])) }))
 vi.mock('@/lib/settings-request', () => ({ requestSettingsCategory: (...args: unknown[]) => requestCategory(...args) }))
 
@@ -43,15 +47,55 @@ describe('ProbeInstallDialog', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  it('embeds node mapping when no node is linked', () => {
+  it('creates and links a node automatically, keeping manual mapping available', async () => {
     state.readiness = { stage: 'no-node', integrationId: 's1' }
+    createNode.mockResolvedValue({ mappings: [], revision: 2 })
     render(<ProbeInstallDialog host={host} open onOpenChange={vi.fn()} />)
     expect(screen.getByTestId('probe-install-dialog')).toHaveAttribute('data-step', '2')
     expect(screen.getByTestId('mapping-panel')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('probe-create-node'))
+    await waitFor(() => expect(createNode).toHaveBeenCalledWith({ vaultId: 'v1', integrationId: 's1', hostId: 'h1' }))
+    expect(decide).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('Home Server') }))
+    expect(reload).toHaveBeenCalled()
+  })
+
+  it('does not create a node when the confirmation is declined', async () => {
+    state.readiness = { stage: 'no-node', integrationId: 's1' }
+    decide.mockResolvedValueOnce({ accepted: false, reason: 'rejected' })
+    render(<ProbeInstallDialog host={host} open onOpenChange={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('probe-create-node'))
+    await waitFor(() => expect(decide).toHaveBeenCalled())
+    expect(createNode).not.toHaveBeenCalled()
+  })
+
+  it('enables linger after a high-risk confirmation and re-runs the check', async () => {
+    state.readiness = { stage: 'ready', integrationId: 's1', nodeId: 'n1' }
+    prepare.mockRejectedValueOnce(new Error('KOMARI_AGENT_LINGER_REQUIRED')).mockResolvedValueOnce(preview)
+    enableLinger.mockResolvedValue(undefined)
+    render(<ProbeInstallDialog host={host} open onOpenChange={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('probe-install-check'))
+    await waitFor(() => expect(screen.getByTestId('probe-fix-linger')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('probe-fix-linger'))
+    await waitFor(() => expect(enableLinger).toHaveBeenCalledWith({ vaultId: 'v1', hostId: 'h1' }))
+    expect(decide).toHaveBeenCalledWith(expect.objectContaining({ risk: 'high' }))
+    await waitFor(() => expect(screen.getByTestId('probe-install-confirm')).toBeInTheDocument())
+    expect(prepare).toHaveBeenCalledTimes(2)
+  })
+
+  it('explains when linger needs a password', async () => {
+    state.readiness = { stage: 'ready', integrationId: 's1', nodeId: 'n1' }
+    prepare.mockRejectedValue(new Error('KOMARI_AGENT_LINGER_REQUIRED'))
+    enableLinger.mockRejectedValue(new Error('KOMARI_AGENT_LINGER_SUDO_REQUIRED'))
+    render(<ProbeInstallDialog host={host} open onOpenChange={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('probe-install-check'))
+    await waitFor(() => expect(screen.getByTestId('probe-fix-linger')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('probe-fix-linger'))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/password|密码/))
+    expect(prepare).toHaveBeenCalledTimes(1)
   })
 
   it('switches the monitoring mode only after confirmation', async () => {
-    state.readiness = { stage: 'ssh-mode', integrationId: 's1', nodeId: 'n1' }
+    state.readiness = { stage: 'ssh-mode', integrationId: 's1' }
     render(<ProbeInstallDialog host={{ ...host, monitoringMode: 'ssh' }} open onOpenChange={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: /monitoring mode|切换监控方式/ }))
     await waitFor(() => expect(handleUpdateHost).toHaveBeenCalledWith(expect.objectContaining({ id: 'h1' }), expect.objectContaining({ monitoringMode: 'server' })))

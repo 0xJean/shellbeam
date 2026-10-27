@@ -1,5 +1,4 @@
 import { monitoringAlertTitle } from '@/lib/monitoring-presentation'
-import { NativeSelect } from '@/components/ui/select'
 import { hasSshConnection } from '@/lib/hosts'
 import { HostMetadataSyncNotice } from './host-metadata-sync-panel'
 import { matchesHostSearch } from '@/lib/host-search'
@@ -48,12 +47,13 @@ import { loadNotificationPolicy } from '@/lib/notification-policy'
 import { MAX_BATCH_HOSTS, runBatchDockerOperation, runBatchOperation, runBatchServiceOperation, type BatchOperationResult } from '@/lib/multi-host-operations'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, reconcileKomariProbeAlerts, syncKomariIntegration } from '@/lib/komari-sync'
-import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
+import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
 import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS, HOST_RESOURCE_COLUMNS } from './host-list-layout'
 import { ProbeBatchInstallBar } from './probe-batch-install'
+import { HostKpiRow, HostStatusSegments, ProbeCoverageBanner } from './hosts-overview'
 import { ProbeInstallDialog } from './probe-install-dialog'
 import MultiHostOperationsPanel, { type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
@@ -63,8 +63,6 @@ type HostStatusFilter = 'all' | 'online' | 'stale' | 'checking' | 'offline' | 'p
 type HostHealthStatus = Exclude<HostStatusFilter, 'all'>
 export type HostOpsRefreshStatus = 'idle' | 'refreshing' | 'fresh' | 'recovered' | 'error'
 const SORT_KEY = 'shellbeam.hostSortMode'
-const SHOW_HOST_SUMMARY_STRIP = false
-
 function formatHostOpsRefreshTime(timestamp: number | null): string {
   if (!timestamp) return ''
   return new Date(timestamp).toLocaleTimeString(undefined, {
@@ -80,118 +78,6 @@ function getHostHealthStatus(view: HostOpsView | undefined, fallback: HostHealth
   if (view?.health.state === 'jump-unavailable') return 'jump-unavailable'
   if (view?.health.state === 'online' || view?.health.state === 'stale' || view?.health.state === 'offline' || view?.health.state === 'checking' || view?.health.state === 'unknown') return view.health.state
   return loading && fallback === 'unknown' ? 'checking' : fallback
-}
-
-function HostSummaryStrip({
-  totalHosts,
-  onlineCount,
-  checkingCount,
-  offlineCount,
-  groups,
-}: {
-  totalHosts: number
-  onlineCount: number
-  checkingCount: number
-  offlineCount: number
-  groups: WorkspaceResourceGroup[]
-}) {
-  const { t } = useT()
-
-  if (totalHosts === 0) return null
-
-  const cards = [
-    {
-      key: 'total',
-      label: t('hosts.totalHosts'),
-      value: totalHosts,
-      icon: Server,
-      shellClassName: 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]',
-      fillClassName: 'bg-[color:var(--workspace-primary-500)]',
-    },
-    {
-      key: 'online',
-      label: t('hosts.statusOnline'),
-      value: onlineCount,
-      icon: CheckCircle2,
-      shellClassName: 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]',
-      fillClassName: 'bg-[color:var(--workspace-status-good)]',
-    },
-    {
-      key: 'checking',
-      label: t('hosts.statusChecking'),
-      value: checkingCount,
-      icon: RefreshCw,
-      shellClassName: 'bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]',
-      fillClassName: 'bg-[color:var(--workspace-status-warn)]',
-    },
-    {
-      key: 'offline',
-      label: t('hosts.statusOffline'),
-      value: offlineCount,
-      icon: X,
-      shellClassName: 'bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]',
-      fillClassName: 'bg-[color:var(--workspace-status-bad)]',
-    },
-  ]
-
-  return (
-    <div className="mb-4 space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map((card) => {
-          const Icon = card.icon
-          const ratio = totalHosts === 0 ? 0 : Math.max(0, Math.min(100, (card.value / totalHosts) * 100))
-
-          return (
-            <div
-              key={card.key}
-              className="min-w-0 rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4 shadow-[var(--workspace-shadow-card)]"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--workspace-text-subtle)]">
-                    {card.label}
-                  </div>
-                  <div className="mt-2 text-3xl font-semibold leading-none tracking-tight text-[var(--workspace-text-strong)]">
-                    {card.value}
-                  </div>
-                </div>
-                <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[color:var(--workspace-border-soft)]', card.shellClassName)}>
-                  <Icon className="h-4 w-4" />
-                </span>
-              </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--workspace-meter-track)]">
-                <div className={cn('h-full rounded-full', card.fillClassName)} style={{ width: `${ratio}%` }} />
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {groups.length > 0 && (
-        <div className="rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-4 py-3 shadow-[var(--workspace-shadow-card)]">
-          <div className="flex h-2 overflow-hidden rounded-full bg-[var(--workspace-meter-track)]">
-            {groups.map((group) => (
-              <div
-                key={group.key}
-                className={cn('h-full', group.colorClassName)}
-                style={{ width: `${totalHosts === 0 ? 0 : (group.count / totalHosts) * 100}%` }}
-                title={`${group.label} ${group.count}`}
-              />
-            ))}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-            {groups.map((group) => (
-              <div key={group.key} className="flex items-center gap-1.5">
-                <span className={cn('h-2 w-2 rounded-full', group.colorClassName)} />
-                <span className="text-xs text-[var(--workspace-text-muted)]">{group.label}</span>
-                <span className="text-xs font-semibold text-[var(--workspace-text-strong)]">{group.count}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }
 
 export function HostOpsRefreshIndicator({
@@ -1176,15 +1062,10 @@ export function HostsDashboard({
   return (
     <div className="flex min-w-0 w-full flex-col text-[var(--workspace-text)]">
       <HostMetadataSyncNotice vaultId={activeVaultId} unlocked={!!vaultUnlocked} hosts={hosts} onEdit={setEditingHost} />
-      {SHOW_HOST_SUMMARY_STRIP && (
-        <HostSummaryStrip
-          totalHosts={hosts.length}
-          onlineCount={statusCounts.online}
-          checkingCount={statusCounts.checking}
-          offlineCount={statusCounts.offline}
-          groups={resourceGroups}
-        />
-      )}
+      <HostKpiRow total={hosts.length} online={statusCounts.online} offline={statusCounts.offline + statusCounts['jump-unavailable']} stale={statusCounts.stale} openAlerts={openIncidents}
+        readings={hosts.map(host => { const view = hostOpsViews[host.id]; const resource = view?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource; return { host, cpu: view?.metrics ? view.metrics.cpuPercent : resource?.cpuPercent, disk: view?.metrics ? view.metrics.diskPercent : resource?.diskPercent } })}
+        onOpenAlerts={vaultUnlocked ? () => setPresentation(current => ({ ...current, alerts: true })) : undefined} />
+      {vaultUnlocked && showMonitoring && <ProbeCoverageBanner hosts={hosts.filter(host => !host.vaultId || host.vaultId === activeVaultId)} osOf={host => (hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource)?.os} />}
       <WorkspaceResourceOverviewHeader
         title={t('hosts.title')}
         description={t('hosts.subtitle')}
@@ -1217,16 +1098,7 @@ export function HostsDashboard({
                 <HostOpsAdvancedFilters value={advancedFilters} onChange={setAdvancedFilters} osOptions={osOptions} providerOptions={providerOptions} />
               </div>
             </details>}
-            {(hasOperations || statusFilter !== 'all') && <NativeSelect
-              aria-label={t('hosts.statusFilter')}
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as HostStatusFilter)}
-              className="h-8 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 text-xs font-medium text-[var(--workspace-text-muted)] outline-none transition-colors hover:text-[var(--workspace-text-strong)] focus:border-[color:var(--workspace-border-glow)]"
-            >
-              {(Object.keys(statusFilterLabels) as HostStatusFilter[]).map((status) => (
-                <option key={status} value={status}>{statusFilterLabels[status]}</option>
-              ))}
-            </NativeSelect>}
+            {(hasOperations || statusFilter !== 'all') && <HostStatusSegments value={statusFilter} counts={statusCounts} labels={statusFilterLabels} label={t('hosts.statusFilter')} onChange={setStatusFilter} />}
             <div className="relative">
               <button type="button" onClick={() => { setTagFilterOpen((v) => !v); setSortOpen(false) }}
                 className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',

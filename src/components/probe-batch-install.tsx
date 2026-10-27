@@ -6,6 +6,7 @@ import { useHosts } from '@/contexts/hosts-context'
 import { useVault } from '@/contexts/vault-context'
 import { invalidateProbeInstallSources, PROBE_DEPLOYMENT_CHANGED_EVENT } from '@/hooks/use-probe-install-readiness'
 import { cancelCompatibleAgent, operateCompatibleAgent, prepareCompatibleAgent, readCompatibleAgent } from '@/lib/compatible-agent'
+import { createKomariNodeForHost } from '@/lib/komari-persistence'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { loadCurrentKomariSources } from '@/lib/komari-source-eligibility'
@@ -19,10 +20,10 @@ const CONCURRENCY = 3
 type RowState =
   | { kind: 'checking' }
   | { kind: 'ready'; planId: string; version: string | null }
-  | { kind: 'switch' }
-  | { kind: 'blocked'; reason: 'no-ssh' | 'no-server' | 'no-node' | 'unsettled' | 'check'; detail?: string }
+  | { kind: 'switch'; mode: boolean; node: boolean }
+  | { kind: 'blocked'; reason: 'no-ssh' | 'no-server' | 'unsettled' | 'check'; detail?: string }
   | { kind: 'installed' }
-  | { kind: 'queued' | 'switching' | 'preparing' | 'installing' }
+  | { kind: 'queued' | 'switching' | 'linking' | 'preparing' | 'installing' }
   | { kind: 'done' | 'pending' }
   | { kind: 'failed'; code: string }
   | { kind: 'skipped' }
@@ -84,9 +85,9 @@ export function ProbeBatchInstallDialog({ hosts, open, onOpenChange }: { hosts: 
       setRows(assessed.map(({ host, readiness }) => ({
         host, readiness,
         state: readiness.stage === 'installed' ? { kind: 'installed' }
-          : readiness.stage === 'ssh-mode' ? { kind: 'switch' }
+          : readiness.stage === 'ssh-mode' || readiness.stage === 'no-node' ? { kind: 'switch', mode: readiness.stage === 'ssh-mode', node: !readiness.nodeId }
             : readiness.stage === 'ready' ? { kind: 'checking' }
-              : { kind: 'blocked', reason: readiness.stage as 'no-ssh' | 'no-server' | 'no-node' | 'unsettled' },
+              : { kind: 'blocked', reason: readiness.stage as 'no-ssh' | 'no-server' | 'unsettled' },
       })))
       await runProbeInstallPool(assessed.filter(({ readiness }) => readiness.stage === 'ready'), CONCURRENCY, async ({ host, readiness }) => {
         try {
@@ -110,10 +111,11 @@ export function ProbeBatchInstallDialog({ hosts, open, onOpenChange }: { hosts: 
     if (targets.length === 0) return
     const valid = captureVaultScope()
     const current = () => live.current && valid()
-    const switching = targets.some((row) => row.state.kind === 'switch')
+    const switching = targets.some((row) => row.state.kind === 'switch' && row.state.mode)
+    const linking = targets.some((row) => row.state.kind === 'switch' && row.state.node)
     const answer = await requestUserDecision({
       vaultId: activeVaultId, risk: 'high', isCurrent: current,
-      message: fill(c.batchConfirmMessage, { count: targets.length, hosts: targets.map((row) => `· ${row.host.name} (${row.host.username}@${row.host.address})`).join('\n'), switch: switching ? c.batchSwitchNote : '' }),
+      message: fill(c.batchConfirmMessage, { count: targets.length, hosts: targets.map((row) => `· ${row.host.name} (${row.host.username}@${row.host.address})`).join('\n'), switch: (switching ? c.batchSwitchNote : '') + (linking ? c.batchNodeNote : '') }),
     })
     if (!answer.accepted || answer.isCurrent?.() === false || !current()) return
     setPhase('running')
@@ -122,14 +124,27 @@ export function ProbeBatchInstallDialog({ hosts, open, onOpenChange }: { hosts: 
     for (const row of rows) if (!installable(row.state) && row.state.kind !== 'installed') update(row.host.id, { kind: 'skipped' })
     for (const row of targets) update(row.host.id, { kind: 'queued' })
     const touched: Record<string, string[]> = {}
+    // Node links share one mapping revision per Server, so create them one at a time.
+    let nodeQueue: Promise<unknown> = Promise.resolve()
+    const createNodeInTurn = (host: HostProfile, integrationId: string) => {
+      const next = nodeQueue.then(() => createKomariNodeForHost({ vaultId: host.vaultId!, integrationId, hostId: host.id }))
+      nodeQueue = next.catch(() => {})
+      return next
+    }
     await runProbeInstallPool(targets, CONCURRENCY, async (row) => {
       const host = row.host
       let planId = row.state.kind === 'ready' ? row.state.planId : null
       try {
         if (!valid()) return update(host.id, { kind: 'skipped' })
         if (row.state.kind === 'switch') {
-          update(host.id, { kind: 'switching' })
-          await handleUpdateHost(host, { ...host, monitoringMode: 'server' })
+          if (row.state.mode) {
+            update(host.id, { kind: 'switching' })
+            await handleUpdateHost(host, { ...host, monitoringMode: 'server' })
+          }
+          if (row.state.node) {
+            update(host.id, { kind: 'linking' })
+            await createNodeInTurn(host, row.readiness!.integrationId!)
+          }
           update(host.id, { kind: 'preparing' })
           const preview = await prepareCompatibleAgent({ vaultId: host.vaultId!, hostId: host.id, integrationId: row.readiness!.integrationId!, action: 'install' })
           planId = preview.planId
@@ -162,11 +177,12 @@ export function ProbeBatchInstallDialog({ hosts, open, onOpenChange }: { hosts: 
     switch (state.kind) {
       case 'checking': return { tone: 'run', text: c.batchChecking }
       case 'ready': return { tone: 'ok', text: c.batchReady, detail: state.version ? `ShellBeam ${state.version}` : undefined }
-      case 'switch': return { tone: 'ok', text: c.batchReady, detail: c.batchSwitch }
+      case 'switch': return { tone: 'ok', text: c.batchReady, detail: [state.mode && c.batchSwitch, state.node && c.batchNode].filter(Boolean).join(' · ') }
       case 'blocked': return { tone: state.reason === 'check' ? 'bad' : 'warn', text: state.reason === 'check' ? c.batchFailed : c.batchNeeds[state.reason], detail: state.detail }
       case 'installed': return { tone: 'idle', text: c.batchInstalled }
       case 'queued': return { tone: 'idle', text: c.batchQueued }
       case 'switching': return { tone: 'run', text: c.batchSwitching }
+      case 'linking': return { tone: 'run', text: c.batchLinking }
       case 'preparing': return { tone: 'run', text: c.batchPreparing }
       case 'installing': return { tone: 'run', text: c.batchInstalling }
       case 'done': return { tone: 'ok', text: c.batchDone }

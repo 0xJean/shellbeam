@@ -5,15 +5,15 @@ import type { CurrentKomariSource } from './komari-source-eligibility'
 /**
  * Quick-install readiness for the ShellBeam monitoring probe. The guided
  * installer walks the same prerequisites the backend enforces in
- * `komari_agent_prepare` (source → node mapping → server monitoring mode) and
+ * `komari_agent_prepare` (source → server monitoring mode → node mapping) and
  * starts at the first one that is not yet satisfied. This module only reads
  * state; every change still goes through the existing confirmed commands.
  */
 export type ProbeInstallStage =
   | 'no-ssh' // no usable SSH connection, nothing can be installed
   | 'no-server' // no enabled ShellBeam Server source in this vault
-  | 'no-node' // a source exists but no node is mapped to this host
-  | 'ssh-mode' // mapped, but the host still uses SSH sampling
+  | 'ssh-mode' // a source exists, but the host still uses SSH sampling
+  | 'no-node' // server monitoring, but no node is mapped to this host
   | 'ready' // all prerequisites met; next step is the read-only preflight
   | 'unsettled' // a previous operation must be read back first
   | 'installed'
@@ -40,10 +40,12 @@ export function probeInstallReadiness(host: HostProfile, sources: readonly Curre
   // Prefer the source a previous record used, then any source that already maps this host.
   const preferred = owned ? usable.find((entry) => entry.integration.id === owned.integrationId) : undefined
   const mappedEntry = (preferred ? [preferred] : usable).find((entry) => entry.state!.mappings.some((m) => m.hostId === host.id && m.integrationId === entry.integration.id))
-  if (!mappedEntry) return { stage: 'no-node', integrationId: (preferred ?? usable[0]).integration.id }
-  const nodeId = mappedEntry.state!.mappings.find((m) => m.hostId === host.id && m.integrationId === mappedEntry.integration.id)!.nodeId
-  if (host.monitoringMode !== 'server') return { stage: 'ssh-mode', integrationId: mappedEntry.integration.id, nodeId }
-  return { stage: 'ready', integrationId: mappedEntry.integration.id, nodeId }
+  const integrationId = (mappedEntry ?? preferred ?? usable[0]).integration.id
+  const nodeId = mappedEntry?.state!.mappings.find((m) => m.hostId === host.id && m.integrationId === mappedEntry.integration.id)!.nodeId
+  // Linking a node requires server monitoring (edit_komari_mapping enforces it), so the mode comes first.
+  if (host.monitoringMode !== 'server') return { stage: 'ssh-mode', integrationId, ...(nodeId ? { nodeId } : {}) }
+  if (!nodeId) return { stage: 'no-node', integrationId }
+  return { stage: 'ready', integrationId, nodeId }
 }
 
 // The managed probe needs Linux with systemd; these systems are known not to qualify.

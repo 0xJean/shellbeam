@@ -7,6 +7,7 @@ const prepare = vi.fn()
 const operate = vi.fn()
 const decide = vi.fn(async () => ({ accepted: true, reason: 'accepted' }))
 const sources = vi.fn()
+const createNode = vi.fn(async () => ({ mappings: [], revision: 2 }))
 
 vi.mock('@/contexts/hosts-context', () => ({ useHosts: () => ({ handleUpdateHost }) }))
 vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'v1', captureVaultScope: () => () => true }) }))
@@ -17,6 +18,7 @@ vi.mock('@/lib/compatible-agent', () => ({
   operateCompatibleAgent: (...args: unknown[]) => operate(...args),
   cancelCompatibleAgent: vi.fn(async () => {}),
 }))
+vi.mock('@/lib/komari-persistence', () => ({ createKomariNodeForHost: (...args: unknown[]) => createNode(...(args as [])) }))
 vi.mock('@/lib/user-confirmation', () => ({ requestUserDecision: (...args: unknown[]) => decide(...(args as [])) }))
 
 import { ProbeBatchInstallDialog } from './probe-batch-install'
@@ -48,10 +50,10 @@ describe('ProbeBatchInstallDialog', () => {
     expect(rowState('ready')).toBe('ready')
     expect(rowState('mode')).toBe('switch')
     expect(rowState('broken')).toBe('blocked')
-    expect(rowState('nonode')).toBe('blocked')
+    expect(rowState('nonode')).toBe('switch')
     // ssh-mode hosts are not prepared until their mode is switched.
     expect(prepare).toHaveBeenCalledTimes(2)
-    expect(screen.getByTestId('probe-batch-confirm')).toHaveTextContent('2')
+    expect(screen.getByTestId('probe-batch-confirm')).toHaveTextContent('3')
   })
 
   it('installs after one confirmation, switching the mode first where needed', async () => {
@@ -64,7 +66,12 @@ describe('ProbeBatchInstallDialog', () => {
     expect(handleUpdateHost).toHaveBeenCalledWith(expect.objectContaining({ id: 'mode' }), expect.objectContaining({ monitoringMode: 'server' }))
     expect(operate).toHaveBeenCalledWith('plan-ready', true)
     expect(operate).toHaveBeenCalledWith('plan-mode', true)
-    expect(operate).toHaveBeenCalledTimes(2)
+    expect(operate).toHaveBeenCalledWith('plan-nonode', true)
+    expect(operate).toHaveBeenCalledTimes(3)
+    // Only the unmapped host gets a node; the mapped ssh-mode host only switches mode.
+    expect(createNode).toHaveBeenCalledTimes(1)
+    expect(createNode).toHaveBeenCalledWith({ vaultId: 'v1', integrationId: 's1', hostId: 'nonode' })
+    expect(handleUpdateHost).toHaveBeenCalledTimes(1)
     expect(rowState('ready')).toBe('done')
     expect(rowState('mode')).toBe('done')
     expect(rowState('broken')).toBe('skipped')
@@ -78,6 +85,7 @@ describe('ProbeBatchInstallDialog', () => {
     await waitFor(() => expect(decide).toHaveBeenCalled())
     expect(operate).not.toHaveBeenCalled()
     expect(handleUpdateHost).not.toHaveBeenCalled()
+    expect(createNode).not.toHaveBeenCalled()
   })
 
   it('reports a per-host failure without stopping the others', async () => {

@@ -6,25 +6,39 @@ import { loadCurrentKomariSources, type CurrentKomariSource } from '@/lib/komari
 import { probeInstallReadiness, type ProbeInstallReadiness } from '@/lib/probe-install'
 
 export const PROBE_DEPLOYMENT_CHANGED_EVENT = 'shellbeam:probe-deployment-changed'
-const SOURCES_TTL_MS = 30_000
+const CACHE_TTL_MS = 30_000
 
-// Every host card asks for the same vault's sources; share one read per vault.
+// Host cards and the host page banner ask for the same data; share one read
+// per vault (sources) and per host (probe record) within the TTL.
 const sourceCache = new Map<string, { at: number; value: Promise<CurrentKomariSource[]> }>()
+const recordCache = new Map<string, { at: number; value: Promise<CompatibleAgentRecord | null> }>()
 
-function vaultSources(vaultId: string): Promise<CurrentKomariSource[]> {
-  const hit = sourceCache.get(vaultId)
-  if (hit && Date.now() - hit.at < SOURCES_TTL_MS) return hit.value
-  const value = loadCurrentKomariSources([vaultId]).catch(() => [])
-  sourceCache.set(vaultId, { at: Date.now(), value })
+function cached<T>(cache: Map<string, { at: number; value: Promise<T> }>, key: string, load: () => Promise<T>, fallback: T): Promise<T> {
+  const hit = cache.get(key)
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value
+  // Promise.resolve guards against loaders that return a non-promise (e.g. a mocked invoke).
+  const value = Promise.resolve().then(load).then((result) => result ?? fallback, () => fallback)
+  cache.set(key, { at: Date.now(), value })
   return value
 }
 
 export function invalidateProbeInstallSources(vaultId?: string) {
-  if (vaultId) sourceCache.delete(vaultId)
-  else sourceCache.clear()
+  if (!vaultId) { sourceCache.clear(); recordCache.clear(); return }
+  sourceCache.delete(vaultId)
+  for (const key of recordCache.keys()) if (key.startsWith(`${vaultId}:`)) recordCache.delete(key)
 }
 
 /** Reads (never changes) what the quick installer needs for one host. */
+export async function loadProbeInstallReadiness(host: HostProfile): Promise<{ readiness: ProbeInstallReadiness; record: CompatibleAgentRecord | null }> {
+  const vaultId = host.vaultId
+  if (!vaultId) return { readiness: probeInstallReadiness(host, [], null), record: null }
+  const [sources, record] = await Promise.all([
+    cached(sourceCache, vaultId, () => loadCurrentKomariSources([vaultId]), [] as CurrentKomariSource[]),
+    cached(recordCache, `${vaultId}:${host.id}`, () => readCompatibleAgent(vaultId, host.id), null),
+  ])
+  return { readiness: probeInstallReadiness(host, sources, record), record }
+}
+
 export function useProbeInstallReadiness(host: HostProfile, enabled = true) {
   const [state, setState] = useState<{ key: string; readiness: ProbeInstallReadiness; record: CompatibleAgentRecord | null } | null>(null)
   const [epoch, setEpoch] = useState(0)
@@ -38,10 +52,7 @@ export function useProbeInstallReadiness(host: HostProfile, enabled = true) {
   useEffect(() => {
     if (!enabled || !host.vaultId) return
     let live = true
-    const vaultId = host.vaultId
-    void Promise.all([vaultSources(vaultId), readCompatibleAgent(vaultId, host.id).catch(() => null)]).then(([sources, record]) => {
-      if (live) setState({ key, readiness: probeInstallReadiness(host, sources, record), record })
-    })
+    void loadProbeInstallReadiness(host).then(({ readiness, record }) => { if (live) setState({ key, readiness, record }) })
     return () => { live = false }
   }, [enabled, host, key, epoch])
 
@@ -51,7 +62,7 @@ export function useProbeInstallReadiness(host: HostProfile, enabled = true) {
     const onDeployment = (event: Event) => { const detail = (event as CustomEvent<{ vaultId: string; hostIds: string[] }>).detail; if (detail?.vaultId === host.vaultId && detail.hostIds.includes(host.id)) reload() }
     window.addEventListener(KOMARI_MAPPING_CHANGED_EVENT, onMapping)
     window.addEventListener(PROBE_DEPLOYMENT_CHANGED_EVENT, onDeployment)
-    // Focus only re-reads; the shared TTL decides whether sources are fetched again.
+    // Focus only re-reads; the shared TTL decides whether data is fetched again.
     const onFocus = () => setEpoch((value) => value + 1)
     window.addEventListener('focus', onFocus)
     return () => {
