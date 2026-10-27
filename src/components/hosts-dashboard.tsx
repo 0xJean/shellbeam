@@ -53,6 +53,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { SshImportDialog } from './ssh-import-dialog'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
 import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS, HOST_RESOURCE_COLUMNS } from './host-list-layout'
+import { ProbeBatchInstallBar } from './probe-batch-install'
 import MultiHostOperationsPanel, { type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
 import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
@@ -1360,6 +1361,7 @@ export function HostsDashboard({
           </>
         }
       >
+          {currentPresentation.batch && selectedBatchIds.length > 0 && <ProbeBatchInstallBar key={`probe:${presentationOwner}:${selectedBatchIds.join(',')}`} hosts={filteredHosts.filter(host => selectedBatchIds.includes(host.id))} />}
           {currentPresentation.batch && selectedBatchIds.length > 0 && <MultiHostOperationsPanel
             key={`${presentationOwner}:${selectedBatchIds.join(',')}`} hosts={filteredHosts.filter(host => selectedBatchIds.includes(host.id))}
             initialSelectedHostIds={selectedBatchIds} selectionFromList

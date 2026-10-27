@@ -66,3 +66,15 @@ export function probePreflightFailure(error: unknown): { check: ProbePreflightCh
               : 'server'
   return { check, code }
 }
+
+/** Runs `worker` over `items` with at most `limit` in flight; stops picking new items once `stopped()` is true. */
+export async function runProbeInstallPool<T>(items: readonly T[], limit: number, worker: (item: T) => Promise<void>, stopped: () => boolean = () => false) {
+  let next = 0
+  const lane = async () => {
+    while (next < items.length && !stopped()) {
+      const item = items[next++]
+      await worker(item)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane))
+}

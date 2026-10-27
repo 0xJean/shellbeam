@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { CompatibleAgentRecord } from './compatible-agent'
 import type { HostProfile } from './hosts'
 import type { CurrentKomariSource } from './komari-source-eligibility'
-import { offersProbeInstall, probeInstallReadiness, probePreflightFailure } from './probe-install'
+import { offersProbeInstall, probeInstallReadiness, probePreflightFailure, runProbeInstallPool } from './probe-install'
 
 const host = (patch: Partial<HostProfile> = {}): HostProfile => ({
   id: 'h1', vaultId: 'v1', name: 'redis-cache', address: '10.0.3.20', port: 22, username: 'root',
@@ -71,5 +71,23 @@ describe('probePreflightFailure', () => {
     expect(probePreflightFailure('KOMARI_AGENT_MAPPING_REQUIRED').check).toBe('node')
     expect(probePreflightFailure('KOMARI_AGENT_CATALOG_EXPIRED').check).toBe('release')
     expect(probePreflightFailure('boom')).toEqual({ check: 'server', code: 'KOMARI_AGENT_OPERATION_FAILED' })
+  })
+})
+
+describe('runProbeInstallPool', () => {
+  it('never runs more than the limit at once and stops picking new items when asked', async () => {
+    let active = 0
+    let peak = 0
+    const seen: number[] = []
+    await runProbeInstallPool([1, 2, 3, 4, 5, 6], 3, async (n) => {
+      active++; peak = Math.max(peak, active); seen.push(n)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      active--
+    })
+    expect(peak).toBe(3)
+    expect(seen.sort()).toEqual([1, 2, 3, 4, 5, 6])
+    const started: number[] = []
+    await runProbeInstallPool([1, 2, 3, 4], 1, async (n) => { started.push(n) }, () => started.length >= 2)
+    expect(started).toEqual([1, 2])
   })
 })

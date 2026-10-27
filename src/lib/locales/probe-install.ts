@@ -16,6 +16,13 @@ export const probeInstallCopy = {
     risk: 'High risk: writes files on the host and registers a service', install: 'Confirm and install', installing: 'Installing…',
     doneTitle: 'Probe is online on {host}', doneBody: 'History and offline alerts are recorded from now on.', failedTitle: 'Installation did not finish', pendingTitle: 'Result pending verification',
     details: 'Operations details', close: 'Close', cancel: 'Cancel', back: 'Back', code: 'Code',
+    batchEntry: 'Install probe on {count}', batchTitle: 'Install monitoring probe on several hosts', batchSubtitle: '{count} selected · read-only check first; only hosts that pass are installed',
+    batchChecking: 'Checking…', batchReady: 'Ready to install', batchSwitch: 'Switches to server monitoring, then installs', batchInstalled: 'Already installed · skipped', batchSkipped: 'Skipped',
+    batchNeeds: { 'no-ssh': 'No SSH connection', 'no-server': 'Connect a ShellBeam Server first', 'no-node': 'Link a monitoring node first', unsettled: 'A previous operation needs verification' },
+    batchQueued: 'Queued', batchSwitching: 'Switching monitoring mode…', batchPreparing: 'Checking…', batchInstalling: 'Installing…', batchDone: 'Online', batchPending: 'Pending verification', batchFailed: 'Failed',
+    batchSummary: '{ready} can install · {blocked} need attention · {skipped} skipped', batchConcurrency: 'At most 3 hosts at a time. Each host runs and is audited on its own; one failure does not affect the others.',
+    batchConfirm: 'Install on {count}', batchConfirmMessage: 'Install the ShellBeam Monitoring Agent on {count} hosts:\n{hosts}\n{switch}Each host downloads the signed release, registers a service and reports to its linked node.', batchSwitchNote: 'Hosts on SSH sampling switch to “ShellBeam Server + own probe”.\n',
+    batchRunning: 'Installing · you can close this window', batchStop: 'Stop remaining', batchDoneSummary: '{done} online · {failed} failed · {skipped} skipped',
   },
   'zh-CN': {
     entry: '安装探针', entryHint: '当前为 SSH 无探针扫描。安装 ShellBeam 监控探针后可持续记录历史，主机离线也会告警。',
@@ -34,6 +41,13 @@ export const probeInstallCopy = {
     risk: '高风险操作：会在远端写入文件并注册系统服务', install: '确认并安装', installing: '正在安装…',
     doneTitle: '{host} 的探针已上线', doneBody: '历史曲线和离线告警从现在开始记录。', failedTitle: '安装没有完成', pendingTitle: '执行结果待核验',
     details: '运维详情', close: '关闭', cancel: '取消', back: '返回', code: '错误码',
+    batchEntry: '为 {count} 台安装探针', batchTitle: '批量安装监控探针', batchSubtitle: '已选 {count} 台 · 先做只读检查，只安装通过检查的主机',
+    batchChecking: '检查中…', batchReady: '可安装', batchSwitch: '先切换为 Server 监控，再安装', batchInstalled: '已安装 · 跳过', batchSkipped: '已跳过',
+    batchNeeds: { 'no-ssh': '没有 SSH 连接', 'no-server': '需要先连接 ShellBeam Server', 'no-node': '需要先关联监控节点', unsettled: '上一次操作待核验' },
+    batchQueued: '排队中', batchSwitching: '正在切换监控方式…', batchPreparing: '检查中…', batchInstalling: '安装中…', batchDone: '已上线', batchPending: '待核验', batchFailed: '失败',
+    batchSummary: '{ready} 台可安装 · {blocked} 台需处理 · {skipped} 台跳过', batchConcurrency: '最多同时安装 3 台。每台独立执行、独立写入审计；一台失败不会影响其他主机。',
+    batchConfirm: '确认并安装 {count} 台', batchConfirmMessage: '将为 {count} 台主机安装 ShellBeam 监控探针：\n{hosts}\n{switch}每台主机会下载签名版本、注册服务，并向已关联的节点上报。', batchSwitchNote: '使用 SSH 无探针扫描的主机会切换为「ShellBeam Server + 自有探针」。\n',
+    batchRunning: '正在安装 · 可以关闭窗口', batchStop: '停止剩余', batchDoneSummary: '{done} 台已上线 · {failed} 台失败 · {skipped} 台跳过',
   },
 } as const
 
