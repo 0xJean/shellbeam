@@ -240,6 +240,7 @@ interface SessionsContextValue {
   openHostWorkspace: (hostId: string, app: WorkspaceAppId) => Promise<void>
   handleOpenLocalTerminal: () => Promise<void>
   handleCloseSessionTab: (sessionId: string) => void
+  cancelSessionConnection: (sessionId: string) => void
   sendRaw: (sessionId: string, data: string) => void
   refreshInteractiveSessions: () => Promise<void>
   initializeInteractiveSessionState: (sessionId: string, options?: { hostId?: string | null; connectionKind?: 'host' | 'local' | null }) => void
@@ -312,6 +313,8 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
   const sessionStatusCacheRef = useRef<Record<string, string>>({})
   const pcChunkEmitterRef = useRef<Record<string, (chunks: InteractiveOutputChunk[]) => void>>({})
   const pcSessionTabsRef = useRef<SessionTab[]>([])
+  // Pending tabs the user cancelled while their SSH connection was still being established.
+  const cancelledConnectionsRef = useRef(new Set<string>())
   const leftPaneSessionIdRef = useRef<string | null>(null)
   const rightPaneSessionIdRef = useRef<string | null>(null)
   const reconnectingRef = useRef<Set<string>>(new Set())
@@ -1417,6 +1420,11 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         keepAliveIntervalSecs,
         jumpHost: host.jumpHost, jumpPort: host.jumpPort, jumpUser: host.jumpUser,
       })
+      if (cancelledConnectionsRef.current.delete(targetSessionId)) {
+        // The tab is gone; close the session that finished connecting after the cancel.
+        void closeInteractiveSession(session.sessionId).catch(() => {})
+        return undefined
+      }
       setInteractiveSessions((prev) => [...prev, session])
       setLeftPaneSessionId(session.sessionId)
       appendPaneEvent('left', 'info', `Connected: ${host.username || defaultUsername}@${host.address}`, session.sessionId)
@@ -1442,6 +1450,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       })
       return session.sessionId
     } catch (error) {
+      if (cancelledConnectionsRef.current.delete(targetSessionId)) return undefined
       const msg = String(error instanceof Error ? error.message : error)
       setPcSessionTabs((prev) => prev.map((t) => t.sessionId === targetSessionId ? { ...t, status: 'error', errorMessage: msg, connectionStage: undefined } : t))
       const emitter = pcChunkEmitterRef.current[targetSessionId]
@@ -1546,6 +1555,13 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
   }
 
+  /** Closes a tab that is still connecting; a session that connects afterwards is closed again. */
+  function cancelSessionConnection(sessionId: string) {
+    const tab = pcSessionTabsRef.current.find((t) => t.sessionId === sessionId)
+    if (tab?.status === 'connecting') cancelledConnectionsRef.current.add(sessionId)
+    handleCloseSessionTab(sessionId)
+  }
+
   function handleCloseSessionTab(sessionId: string) {
     flushRaw(sessionId)
     const wasActive = pcActiveSessionId === sessionId
@@ -1609,7 +1625,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       syncSessionBrowserUrl, setSessionBrowserLoading, setSessionBrowserError, setSessionBrowserNavigation, closeSessionBrowser, rebuildSessionBrowserTransport,
       pcChunkEmitterRef, leftPaneSessionId, setLeftPaneSessionId,
       rightPaneSessionId, setRightPaneSessionId,
-      handleConnectHost, openHostWorkspace, handleOpenLocalTerminal, handleCloseSessionTab, sendRaw, refreshInteractiveSessions,
+      handleConnectHost, openHostWorkspace, handleOpenLocalTerminal, handleCloseSessionTab, cancelSessionConnection, sendRaw, refreshInteractiveSessions,
       initializeInteractiveSessionState, cleanupClosedSession,
       interactiveInputBySession, setInteractiveInputBySession,
       interactiveHistoryBySession, setInteractiveHistoryBySession,

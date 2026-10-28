@@ -1976,6 +1976,8 @@ const zhCN: Record<string, string> = {
 
   // History
   'history.title': '命令历史',
+  'rightSidebar.historyTyped': '已输入命令',
+  'rightSidebar.historyRuns': '执行记录',
   'history.all': '全部',
   'history.success': '成功',
   'history.failed': '失败',

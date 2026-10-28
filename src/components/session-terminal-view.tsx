@@ -1,3 +1,5 @@
+import { getInteractiveHistory, subscribeInteractiveHistory } from '@/lib/interactive-history'
+import { announceTerminalSearchState, TERMINAL_SEARCH_TOGGLE_EVENT } from '@/lib/terminal-events'
 import { normalizeBrowserUrl } from '@/contexts/session-browser-state'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import { useT } from '@/lib/i18n'
@@ -78,6 +80,19 @@ export function SessionTerminalView({
   const onSendRawRef = useRef(onSendRaw)
   const [showAI, setShowAI] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
+  // Commands typed on this host feed the history half of the suggestion bar.
+  const [historyEntries, setHistoryEntries] = useState<string[]>(() => getInteractiveHistory(hostAddress).map((entry) => entry.command).reverse())
+  useEffect(() => {
+    const load = () => setHistoryEntries(getInteractiveHistory(hostAddress).map((entry) => entry.command).reverse())
+    load()
+    return subscribeInteractiveHistory((host) => { if (host === hostAddress) load() })
+  }, [hostAddress])
+  useEffect(() => {
+    const onToggle = (event: Event) => { if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setShowSearch((open) => !open) }
+    window.addEventListener(TERMINAL_SEARCH_TOGGLE_EVENT, onToggle)
+    return () => window.removeEventListener(TERMINAL_SEARCH_TOGGLE_EVENT, onToggle)
+  }, [sessionId])
+  useEffect(() => { announceTerminalSearchState(sessionId, showSearch) }, [sessionId, showSearch])
   const [currentInputLine, setCurrentInputLine] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [detectedLinks, setDetectedLinks] = useState<string[]>([])
@@ -498,7 +513,7 @@ export function SessionTerminalView({
             key={sessionId}
             visible={showSuggestions && isConnected && visible}
             inputLine={currentInputLine}
-            historyEntries={[]}
+            historyEntries={historyEntries}
             terminalContext={showSuggestions ? getTerminalContext() : ''}
             onAccept={(cmd) => {
               const remaining = cmd.slice(currentInputLine.length)

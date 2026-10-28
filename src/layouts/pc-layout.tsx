@@ -1,3 +1,4 @@
+import { requestTerminalSearchToggle, TERMINAL_SEARCH_STATE_EVENT } from '@/lib/terminal-events'
 import { OPEN_SFTP_REQUEST_EVENT, OPEN_TERMINAL_REQUEST_EVENT, type HostDirectoryRequest } from '@/lib/navigation-request'
 import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
 import { InteractiveTour } from '@/components/interactive-tour'
@@ -265,6 +266,16 @@ export function PcLayout() {
     app.setPcSidebarNav('terminal')
     void sessions.handleConnectHost(host.id)
   }
+
+  const [terminalSearchOpen, setTerminalSearchOpen] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    const onState = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId: string; open: boolean }>).detail
+      if (detail) setTerminalSearchOpen((current) => current[detail.sessionId] === detail.open ? current : { ...current, [detail.sessionId]: detail.open })
+    }
+    window.addEventListener(TERMINAL_SEARCH_STATE_EVENT, onState)
+    return () => window.removeEventListener(TERMINAL_SEARCH_STATE_EVENT, onState)
+  }, [])
 
   // Deep panels (deployment directories) ask for a terminal or SFTP at a path.
   useEffect(() => {
@@ -1256,6 +1267,7 @@ export function PcLayout() {
                           network={displayNetwork}
                           resource={displayResource}
                           onRetry={tab.status === 'error' ? () => sessions.retrySessionConnection(tab.sessionId) : undefined}
+                          onCancel={tab.status === 'error' ? undefined : () => sessions.cancelSessionConnection(tab.sessionId)}
                         />
                       </div>
                     ) : (
@@ -1352,8 +1364,8 @@ export function PcLayout() {
                 }}
                 terminalPrefs={app.terminalPrefs}
                 onTerminalPrefsChange={app.updateTerminalPrefs}
-                onSearchToggle={() => {}}
-                searchVisible={false}
+                onSearchToggle={() => { if (sessions.pcActiveSessionId) requestTerminalSearchToggle(sessions.pcActiveSessionId) }}
+                searchVisible={!!sessions.pcActiveSessionId && terminalSearchOpen[sessions.pcActiveSessionId] === true}
               />
             )}
           </div>
@@ -1405,6 +1417,7 @@ export function PcLayout() {
                           network={displayNetwork}
                           resource={displayResource}
                           onRetry={tab.status === 'error' ? () => sessions.retrySessionConnection(tab.sessionId) : undefined}
+                          onCancel={tab.status === 'error' ? undefined : () => sessions.cancelSessionConnection(tab.sessionId)}
                         />
                       </div>
                     ) : (
@@ -1499,8 +1512,8 @@ export function PcLayout() {
                   }}
                   terminalPrefs={app.terminalPrefs}
                   onTerminalPrefsChange={app.updateTerminalPrefs}
-                  onSearchToggle={() => {}}
-                  searchVisible={false}
+                  onSearchToggle={() => { if (sessions.pcActiveSessionId) requestTerminalSearchToggle(sessions.pcActiveSessionId) }}
+                  searchVisible={!!sessions.pcActiveSessionId && terminalSearchOpen[sessions.pcActiveSessionId] === true}
                 />
               )}
             </div>

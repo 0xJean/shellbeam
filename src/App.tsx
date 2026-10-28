@@ -3,7 +3,7 @@ import { WelcomePage } from '@/components/welcome-page'
 import { useWelcomePage } from '@/hooks/use-welcome-page'
 import { AppProvider, useApp } from '@/contexts/app-context'
 import { HostsProvider, useHosts } from '@/contexts/hosts-context'
-import { SessionsProvider } from '@/contexts/sessions-context'
+import { SessionsProvider, useSessions } from '@/contexts/sessions-context'
 import { VaultProvider } from '@/contexts/vault-context'
 import { ScheduledOpsRuntime } from '@/components/scheduled-ops-runtime'
 import { LocalOpsRuntime } from '@/components/local-ops-runtime'
@@ -13,6 +13,7 @@ import { ShellbeamAgentRuntime } from '@/components/shellbeam-agent-runtime'
 import { UserConfirmationRuntime } from '@/components/user-confirmation-dialog'
 import { PcLayout } from '@/layouts/pc-layout'
 import { listCommandHistory } from '@/lib/history'
+import { hasSshConnection } from '@/lib/hosts'
 import { I18nProvider } from '@/lib/i18n'
 import { Suspense, lazy, useEffect, useState } from 'react'
 
@@ -24,6 +25,7 @@ const CommandPalette = lazy(async () => {
 function AppInner() {
   const app = useApp()
   const hostsCtx = useHosts()
+  const sessions = useSessions()
   const welcome = useWelcomePage()
   const [historyEntries, setHistoryEntries] = useState<Array<Awaited<ReturnType<typeof listCommandHistory>>[number]>>([])
 
@@ -54,7 +56,12 @@ function AppInner() {
             hosts={hostsCtx.hosts}
             historyEntries={historyEntries}
             selectedHostId={hostsCtx.selectedHostId}
-            onSelectHost={hostsCtx.setSelectedHostId}
+            onSelectHost={(hostId) => {
+              hostsCtx.setSelectedHostId(hostId)
+              // Choosing a host in the palette connects to it, as the palette's hint says.
+              const host = hostsCtx.hosts.find((item) => item.id === hostId)
+              if (host && hasSshConnection(host)) { app.setPcSidebarNav('terminal'); void sessions.handleConnectHost(hostId) }
+            }}
             onAction={app.handleCommandPaletteAction}
           />
         </Suspense>

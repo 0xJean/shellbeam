@@ -517,6 +517,30 @@ describe('sessions context integration', () => {
     })
   })
 
+  it('closes a session that finishes connecting after its tab was cancelled', async () => {
+    let finish!: (session: InteractiveSessionInfo) => void
+    createInteractiveSessionMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    listInteractiveSessionsMock.mockResolvedValue([])
+    renderSessionsProvider()
+    await waitFor(() => expect(listenToInteractiveStatusEventsMock).toHaveBeenCalled())
+
+    let connecting!: Promise<void>
+    act(() => { connecting = (sessionsApi as ReturnType<typeof useSessions>).handleConnectHost('host-1') })
+    await waitFor(() => expect((sessionsApi as ReturnType<typeof useSessions>).pcSessionTabs[0]?.status).toBe('connecting'))
+    const pendingId = (sessionsApi as ReturnType<typeof useSessions>).pcSessionTabs[0].sessionId
+
+    act(() => { (sessionsApi as ReturnType<typeof useSessions>).cancelSessionConnection(pendingId) })
+    await waitFor(() => expect((sessionsApi as ReturnType<typeof useSessions>).pcSessionTabs).toHaveLength(0))
+
+    await act(async () => {
+      finish({ sessionId: 'late-session', hostId: 'host-1', host: '10.0.0.8', username: 'root', createdAt: 1, lastActiveAt: 1, status: 'running' })
+      await connecting
+    })
+    expect(closeInteractiveSessionMock).toHaveBeenCalledWith('late-session')
+    expect((sessionsApi as ReturnType<typeof useSessions>).pcSessionTabs).toHaveLength(0)
+    expect((sessionsApi as ReturnType<typeof useSessions>).interactiveSessions.some((session) => session.sessionId === 'late-session')).toBe(false)
+  })
+
   it('reopens standalone browser windows per active tab and closes stale windows on tab switch', async () => {
     renderSessionsProvider()
 

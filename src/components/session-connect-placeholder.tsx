@@ -150,14 +150,14 @@ export function SessionConnectPlaceholder({
 
         {/* ── Header ── */}
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#1e3a5f] bg-[#0d1b2a]/80 text-[#3b82f6]">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[color:var(--workspace-border-strong)] bg-[color-mix(in_srgb,var(--workspace-surface-800)_80%,transparent)] text-[color:var(--workspace-primary-500)]">
             <TerminalSquare className="h-5 w-5" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-white" style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
             {(hostName || hostAddress).toUpperCase()}
           </h1>
         </div>
-        <div className="mt-2 text-[11px] font-medium uppercase tracking-[0.22em] text-[#64748b]">
+        <div className="mt-2 text-[11px] font-medium uppercase tracking-[0.22em] text-[color:var(--workspace-text-muted)]">
           {isLocal ? 'LOCAL SESSION' : `CONNECTING TO: ${hostAddress}`}
         </div>
         {!isLocal && (
@@ -165,7 +165,7 @@ export function SessionConnectPlaceholder({
             network={network}
             resource={resource}
             regionLabel={hostAddress}
-            className="mt-3 justify-center text-xs text-[#64748b]"
+            className="mt-3 justify-center text-xs text-[color:var(--workspace-text-muted)]"
             itemClassName="max-w-[10rem]"
             iconClassName="h-3.5 w-3.5"
           />
@@ -174,14 +174,14 @@ export function SessionConnectPlaceholder({
         {/* ── 3D Encryption Card ── */}
         <div className="relative mt-10 flex flex-col items-center">
           {/* RSA label */}
-          <div className="mb-3 rounded border border-[#1e3a5f] bg-[#0d1b2a] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#3b82f6]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+          <div className="mb-3 rounded border border-[color:var(--workspace-border-strong)] bg-[color:var(--workspace-surface-800)] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[color:var(--workspace-primary-500)]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
             RSA_4096
           </div>
 
           {/* Perspective container */}
           <div className="relative" style={{ perspective: '800px' }}>
             <div
-              className="relative h-[260px] w-[320px] overflow-hidden rounded-xl border border-[#1e3a5f]/80 bg-[#0a1628]"
+              className="relative h-[260px] w-[320px] overflow-hidden rounded-xl border border-[color-mix(in_srgb,var(--workspace-border-strong)_80%,transparent)] bg-[color:var(--workspace-surface-950)]"
               style={{ transform: 'rotateX(4deg) rotateY(-2deg)', transformStyle: 'preserve-3d' }}
             >
               {/* Animated glow border */}
@@ -191,21 +191,21 @@ export function SessionConnectPlaceholder({
               }} />
 
               {/* Corner accents */}
-              <div className="absolute left-0 top-0 h-16 w-[1px] bg-gradient-to-b from-[#3b82f6]/60 to-transparent" />
-              <div className="absolute left-0 top-0 h-[1px] w-16 bg-gradient-to-r from-[#3b82f6]/60 to-transparent" />
-              <div className="absolute bottom-0 right-0 h-16 w-[1px] bg-gradient-to-t from-[#3b82f6]/30 to-transparent" />
-              <div className="absolute bottom-0 right-0 h-[1px] w-16 bg-gradient-to-l from-[#3b82f6]/30 to-transparent" />
+              <div className="absolute left-0 top-0 h-16 w-[1px] bg-gradient-to-b from-[color-mix(in_srgb,var(--workspace-primary-500)_60%,transparent)] to-transparent" />
+              <div className="absolute left-0 top-0 h-[1px] w-16 bg-gradient-to-r from-[color-mix(in_srgb,var(--workspace-primary-500)_60%,transparent)] to-transparent" />
+              <div className="absolute bottom-0 right-0 h-16 w-[1px] bg-gradient-to-t from-[color-mix(in_srgb,var(--workspace-primary-500)_30%,transparent)] to-transparent" />
+              <div className="absolute bottom-0 right-0 h-[1px] w-16 bg-gradient-to-l from-[color-mix(in_srgb,var(--workspace-primary-500)_30%,transparent)] to-transparent" />
 
               {/* Inner card */}
-              <div className="absolute inset-6 flex flex-col items-center justify-center rounded-lg border border-[#1e3a5f]/50 bg-[#111b2e]">
+              <div className="absolute inset-6 flex flex-col items-center justify-center rounded-lg border border-[color-mix(in_srgb,var(--workspace-border-strong)_50%,transparent)] bg-[color:var(--workspace-surface-900)]">
                 {/* Scanning line */}
-                <div className="pointer-events-none absolute left-0 h-[1px] w-full bg-[#3b82f6]/20" style={{ animation: 'scp-scan-line 2.5s ease-in-out infinite' }} />
+                <div className="pointer-events-none absolute left-0 h-[1px] w-full bg-[color-mix(in_srgb,var(--workspace-primary-500)_20%,transparent)]" style={{ animation: 'scp-scan-line 2.5s ease-in-out infinite' }} />
 
                 {/* Terminal icon */}
-                <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-[#1e3a5f] bg-[#0d1b2a] text-[#3b82f6]">
+                <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-[color:var(--workspace-border-strong)] bg-[color:var(--workspace-surface-800)] text-[color:var(--workspace-primary-500)]">
                   <TerminalSquare className="h-8 w-8" />
                 </div>
-                <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.3em] text-[#3b82f6]/70" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.3em] text-[color-mix(in_srgb,var(--workspace-primary-500)_70%,transparent)]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                   ENCRYPTING
                 </div>
               </div>
@@ -215,8 +215,8 @@ export function SessionConnectPlaceholder({
                 <svg className="h-full w-full" viewBox="0 0 320 260">
                   <defs>
                     <linearGradient id="scp-arc-grad" x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.8" />
-                      <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+                      <stop offset="0%" stopColor="var(--workspace-primary-500)" stopOpacity="0.8" />
+                      <stop offset="100%" stopColor="var(--workspace-primary-500)" stopOpacity="0" />
                     </linearGradient>
                   </defs>
                   <rect x="2" y="2" width="316" height="256" rx="12" fill="none" stroke="url(#scp-arc-grad)" strokeWidth="1.5" strokeDasharray="120 500" style={{ animation: 'scp-border-spin 4s linear infinite', transformOrigin: 'center' }} />
@@ -226,23 +226,23 @@ export function SessionConnectPlaceholder({
           </div>
 
           {/* AES label */}
-          <div className="mt-3 rounded border border-[#1e3a5f]/60 bg-[#0d1b2a] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#64748b]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+          <div className="mt-3 rounded border border-[color-mix(in_srgb,var(--workspace-border-strong)_60%,transparent)] bg-[color:var(--workspace-surface-800)] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[color:var(--workspace-text-muted)]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
             AES_256_GCM
           </div>
         </div>
 
         {/* ── Connection Protocol Panel ── */}
-        <div className="mt-10 w-full max-w-[480px] rounded-xl border border-[#1e3a5f]/50 bg-[#0d1b2a]/60 px-5 py-5 backdrop-blur-sm">
+        <div className="mt-10 w-full max-w-[480px] rounded-xl border border-[color-mix(in_srgb,var(--workspace-border-strong)_50%,transparent)] bg-[color-mix(in_srgb,var(--workspace-surface-800)_60%,transparent)] px-5 py-5 backdrop-blur-sm">
           <div className="flex items-center justify-between">
-            <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-[#64748b]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+            <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-[color:var(--workspace-text-muted)]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
               CONNECTION PROTOCOL
             </div>
             <div className="flex items-center gap-2">
               <span className="relative flex h-2 w-2">
-                <span className="absolute inset-0 animate-ping rounded-full bg-[#3b82f6] opacity-60" />
-                <span className="relative h-2 w-2 rounded-full bg-[#3b82f6]" />
+                <span className="absolute inset-0 animate-ping rounded-full bg-[color:var(--workspace-primary-500)] opacity-60" />
+                <span className="relative h-2 w-2 rounded-full bg-[color:var(--workspace-primary-500)]" />
               </span>
-              <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#3b82f6]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+              <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[color:var(--workspace-primary-500)]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                 HANDSHAKE_ACTIVE
               </span>
             </div>
@@ -258,7 +258,7 @@ export function SessionConnectPlaceholder({
                   {/* Step number */}
                   <span className={cn(
                     'w-6 text-right text-[12px] font-bold tabular-nums',
-                    current ? 'text-[#3b82f6]' : done ? 'text-[#3b82f6]/60' : 'text-[#1e3a5f]',
+                    current ? 'text-[color:var(--workspace-primary-500)]' : done ? 'text-[color-mix(in_srgb,var(--workspace-primary-500)_60%,transparent)]' : 'text-[color:var(--workspace-border-strong)]',
                   )} style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                     {String(index + 1).padStart(2, '0')}
                   </span>
@@ -268,16 +268,16 @@ export function SessionConnectPlaceholder({
                     {done ? (
                       <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     ) : current ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-[#3b82f6]" />
+                      <Loader2 className="h-4 w-4 animate-spin text-[color:var(--workspace-primary-500)]" />
                     ) : (
-                      <div className="h-3 w-3 rounded-full border border-[#1e3a5f]/60" />
+                      <div className="h-3 w-3 rounded-full border border-[color-mix(in_srgb,var(--workspace-border-strong)_60%,transparent)]" />
                     )}
                   </div>
 
                   {/* Label */}
                   <span className={cn(
                     'text-sm',
-                    current ? 'font-semibold text-white' : done ? 'text-[#94a3b8]' : 'text-[#334155]',
+                    current ? 'font-semibold text-white' : done ? 'text-[color:var(--workspace-text)]' : 'text-[color:var(--workspace-border-strong)]',
                   )} style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                     {item.label}{current ? '...' : ''}
                   </span>
@@ -292,7 +292,7 @@ export function SessionConnectPlaceholder({
           <button
             type="button"
             onClick={onCancel}
-            className="mt-8 inline-flex items-center gap-2 rounded-lg border border-[#1e3a5f]/50 bg-[#0d1b2a]/60 px-6 py-2.5 text-[11px] font-bold uppercase tracking-[0.22em] text-[#64748b] transition-colors hover:border-[#1e3a5f] hover:text-[#94a3b8]"
+            className="mt-8 inline-flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--workspace-border-strong)_50%,transparent)] bg-[color-mix(in_srgb,var(--workspace-surface-800)_60%,transparent)] px-6 py-2.5 text-[11px] font-bold uppercase tracking-[0.22em] text-[color:var(--workspace-text-muted)] transition-colors hover:border-[color:var(--workspace-border-strong)] hover:text-[color:var(--workspace-text)]"
             style={{ fontFamily: "'JetBrains Mono', monospace" }}
           >
             <X className="h-3.5 w-3.5" />
@@ -302,24 +302,24 @@ export function SessionConnectPlaceholder({
       </div>
 
       {/* ── Bottom status bar (fixed) ── */}
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between border-t border-[#1e3a5f]/30 bg-[#060d1b]/90 px-6 py-3 backdrop-blur-sm">
+      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between border-t border-[color-mix(in_srgb,var(--workspace-border-strong)_30%,transparent)] bg-[color-mix(in_srgb,var(--workspace-bg-950)_90%,transparent)] px-6 py-3 backdrop-blur-sm">
         <div className="flex items-center gap-6">
           <div>
-            <div className="text-[9px] font-semibold uppercase tracking-[0.2em] text-[#475569]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>SESSION ID</div>
-            <div className="mt-0.5 text-[11px] font-medium text-[#94a3b8]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{sessionId}</div>
+            <div className="text-[9px] font-semibold uppercase tracking-[0.2em] text-[color:var(--workspace-text-subtle)]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>SESSION ID</div>
+            <div className="mt-0.5 text-[11px] font-medium text-[color:var(--workspace-text)]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{sessionId}</div>
           </div>
-          <div className="h-6 w-[1px] bg-[#1e3a5f]/40" />
+          <div className="h-6 w-[1px] bg-[color-mix(in_srgb,var(--workspace-border-strong)_40%,transparent)]" />
           <div>
-            <div className="text-[9px] font-semibold uppercase tracking-[0.2em] text-[#475569]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>LATENCY</div>
+            <div className="text-[9px] font-semibold uppercase tracking-[0.2em] text-[color:var(--workspace-text-subtle)]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>LATENCY</div>
             <div className="mt-0.5 text-[11px] font-bold text-emerald-500" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{latency}ms</div>
           </div>
         </div>
-        <div className="flex items-center gap-2 rounded-lg border border-[#1e3a5f]/40 bg-[#0d1b2a]/60 px-3 py-1.5">
-          <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-[#64748b]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>SYSTEM HEALTH</span>
+        <div className="flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--workspace-border-strong)_40%,transparent)] bg-[color-mix(in_srgb,var(--workspace-surface-800)_60%,transparent)] px-3 py-1.5">
+          <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-[color:var(--workspace-text-muted)]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>SYSTEM HEALTH</span>
           <div className="flex items-end gap-[3px]">
-            <div className="h-3 w-[3px] rounded-sm bg-[#3b82f6]" />
-            <div className="h-4 w-[3px] rounded-sm bg-[#3b82f6]" />
-            <div className="h-2.5 w-[3px] rounded-sm bg-[#3b82f6]" />
+            <div className="h-3 w-[3px] rounded-sm bg-[color:var(--workspace-primary-500)]" />
+            <div className="h-4 w-[3px] rounded-sm bg-[color:var(--workspace-primary-500)]" />
+            <div className="h-2.5 w-[3px] rounded-sm bg-[color:var(--workspace-primary-500)]" />
           </div>
         </div>
       </div>

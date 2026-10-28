@@ -10,7 +10,9 @@ import type { SnippetEntry } from '@/lib/snippets'
 import type { TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
 import { Clock, Code2, Copy, Palette, Play, Rocket, Search } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { HistoryEntryRow } from '@/components/history-panel'
+import { useCommandHistory } from '@/hooks/use-command-history'
 
 type TabId = 'terminal' | 'snippets' | 'history' | 'appearance'
 
@@ -152,6 +154,37 @@ function TerminalTab({ onSearchToggle, searchVisible }: {
 }
 
 function HistoryTab({ hostAddress, onRunCommand }: {
+  hostAddress: string
+  onRunCommand: (cmd: string) => void
+}) {
+  const { t } = useT()
+  const [view, setView] = useState<'typed' | 'runs'>('typed')
+  return (
+    <div className="flex min-h-0 flex-col">
+      <div role="radiogroup" aria-label={t('history.title')} className="m-2 inline-flex w-fit gap-0.5 rounded-md bg-muted/60 p-0.5">
+        {(['typed', 'runs'] as const).map((key) => (
+          <button key={key} type="button" role="radio" aria-checked={view === key} data-testid={`history-view-${key}`} onClick={() => setView(key)}
+            className={cn('h-6 rounded px-2.5 text-[11px] font-medium', view === key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+            {t(key === 'typed' ? 'rightSidebar.historyTyped' : 'rightSidebar.historyRuns')}
+          </button>
+        ))}
+      </div>
+      {view === 'typed' ? <TypedHistory hostAddress={hostAddress} onRunCommand={onRunCommand} /> : <RunHistory hostAddress={hostAddress} />}
+    </div>
+  )
+}
+
+/** Commands run through ShellBeam's command mode, with status and output. */
+function RunHistory({ hostAddress }: { hostAddress: string }) {
+  const { t } = useT()
+  const filter = useMemo(() => (hostAddress ? { host: hostAddress } : undefined), [hostAddress])
+  const { entries, loading } = useCommandHistory(filter)
+  if (loading) return <p className="px-3 py-8 text-center text-xs text-muted-foreground">{t('history.loading')}</p>
+  if (entries.length === 0) return <p className="px-3 py-12 text-center text-xs text-muted-foreground">{t('history.empty')}</p>
+  return <div className="min-h-0 overflow-auto">{entries.map((entry) => <HistoryEntryRow key={entry.id} entry={entry} compact />)}</div>
+}
+
+function TypedHistory({ hostAddress, onRunCommand }: {
   hostAddress: string
   onRunCommand: (cmd: string) => void
 }) {

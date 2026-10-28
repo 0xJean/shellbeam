@@ -1976,6 +1976,8 @@ const en: Record<string, string> = {
 
   // History
   'history.title': 'Command History',
+  'rightSidebar.historyTyped': 'Typed',
+  'rightSidebar.historyRuns': 'Runs',
   'history.all': 'All',
   'history.success': 'Success',
   'history.failed': 'Failed',
