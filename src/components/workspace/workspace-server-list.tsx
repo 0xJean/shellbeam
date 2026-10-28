@@ -182,13 +182,16 @@ function CompactResourceMetric({
   )
 }
 
-function CompactBars({ metrics, t }: { metrics: WorkspaceServerResourceMetrics; t: ReturnType<typeof useT>['t'] }) {
+/** Grid cell for the C/M/D bars: second line under the name when narrow, own column when wide. */
+const COMPACT_BARS_CELL = 'col-span-2 col-start-2 row-start-2 [@container(min-width:26rem)]:col-span-1 [@container(min-width:26rem)]:col-start-3 [@container(min-width:26rem)]:row-start-1'
+
+function CompactBars({ metrics, t, className }: { metrics: WorkspaceServerResourceMetrics; t: ReturnType<typeof useT>['t']; className?: string }) {
   const rows: Array<[MeterKind, string, number | null | undefined, ReactNode]> = [
     ['cpu', 'C', metrics.cpuPercent, metrics.cpuDetail],
     ['memory', 'M', metrics.memoryPercent, metrics.memoryDetail],
     ['disk', 'D', metrics.diskPercent, metrics.diskDetail],
   ]
-  return <div className="grid w-[8.5rem] shrink-0 gap-1">
+  return <div className={cn('grid min-w-0 gap-1', className)}>
     {rows.map(([kind, letter, value, detail]) => {
       const label = { cpu: t('workspace.common.cpu'), memory: t('workspace.common.memoryShort'), disk: t('workspace.common.diskShort') }[kind as 'cpu' | 'memory' | 'disk']
       return <div key={kind} role="img" aria-label={`${label} ${formatPercent(value, t)}`} title={detail ? `${label} ${formatPercent(value, t)} · ${detail}` : undefined} className="grid grid-cols-[0.7rem_minmax(0,1fr)_1.6rem] items-center gap-1.5">
@@ -297,7 +300,7 @@ export function WorkspaceServerList({
           />
         </div>
       </div>}
-      <div className={cn(variant === 'compact' ? (isMobile ? 'pb-2' : 'min-h-0 flex-1 overflow-auto') : isMobile ? 'p-3 pb-4' : 'min-h-0 flex-1 overflow-auto p-3 pb-4')}>
+      <div className={cn(variant === 'compact' ? cn('[container-type:inline-size]', isMobile ? 'pb-2' : 'min-h-0 flex-1 overflow-auto') : isMobile ? 'p-3 pb-4' : 'min-h-0 flex-1 overflow-auto p-3 pb-4')}>
         {allOption && !normalizedQuery && (
           <button
             type="button"
@@ -335,11 +338,12 @@ export function WorkspaceServerList({
                 aria-current={selectedKey === key ? 'true' : undefined}
                 onClick={() => onSelect(key, host)}
                 onDoubleClick={() => onRowDoubleClick?.(host)}
-                className={cn('flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition-colors',
+                // Narrow lists (<26rem) drop the C/M/D bars under the name so the name keeps room to read.
+                className={cn('grid w-full min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-3 text-left transition-colors [@container(min-width:26rem)]:grid-cols-[2rem_minmax(0,1fr)_8.5rem_4rem]',
                   selectedKey === key ? 'bg-[var(--workspace-surface-row-selected)] shadow-[inset_3px_0_0_hsl(var(--primary))]' : 'hover:bg-[var(--workspace-surface-800)]')}
               >
-                {renderLeading?.(host) ?? renderStatusIcon?.(host)}
-                <div className="min-w-0 flex-1">
+                <span className="col-start-1 row-start-1 flex justify-center">{renderLeading?.(host) ?? renderStatusIcon?.(host)}</span>
+                <div className="col-start-2 row-start-1 min-w-0">
                   <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]" title={systemLabel ? `${host.name} (${systemLabel})` : host.name}>{host.name}</div>
                   <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--workspace-text-muted)]">
                     {renderRegionLine?.(host)}
@@ -347,9 +351,9 @@ export function WorkspaceServerList({
                   </div>
                 </div>
                 {isInaccessible || !metrics
-                  ? <span className="w-[8.5rem] shrink-0 text-[11px] text-[var(--workspace-text-subtle)]">{isInaccessible ? t('workspace.serverIndex.offlineNoData') : statusBadge?.label}</span>
-                  : <CompactBars metrics={metrics} t={t} />}
-                <span className="w-16 shrink-0 whitespace-nowrap text-right">{(isInaccessible ? visibleStatusBadge : primaryBadge) && <Badge tone={(isInaccessible ? visibleStatusBadge : primaryBadge)!.tone}>{(isInaccessible ? visibleStatusBadge : primaryBadge)!.label}</Badge>}</span>
+                  ? <span className={cn('truncate text-[11px] text-[var(--workspace-text-subtle)]', COMPACT_BARS_CELL)}>{isInaccessible ? t('workspace.serverIndex.offlineNoData') : statusBadge?.label}</span>
+                  : <CompactBars metrics={metrics} t={t} className={COMPACT_BARS_CELL} />}
+                <span className="col-start-3 row-start-1 whitespace-nowrap text-right [@container(min-width:26rem)]:col-start-4">{(isInaccessible ? visibleStatusBadge : primaryBadge) && <Badge tone={(isInaccessible ? visibleStatusBadge : primaryBadge)!.tone}>{(isInaccessible ? visibleStatusBadge : primaryBadge)!.label}</Badge>}</span>
               </button>
             )
             return (
