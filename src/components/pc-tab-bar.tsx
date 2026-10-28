@@ -4,7 +4,7 @@ import { useT } from '@/lib/i18n'
 import type { SessionTab } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
-import { Columns2, LayoutDashboard, Plus, RefreshCw, SquareTerminal, X } from 'lucide-react'
+import { Columns2, LayoutDashboard, Moon, Plus, RefreshCw, Sparkles, SquareTerminal, Sun, X } from 'lucide-react'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from './host-display-meta'
 
 export type { SessionTab }
@@ -37,6 +37,10 @@ interface PcSessionTabBarProps {
   onNewConnection?: () => void
   onToggleSplit?: () => void
   hosts?: HostProfile[]
+  /** Right-hand actions: AI assistant for the active terminal, theme toggle. */
+  onToggleAi?: () => void
+  theme?: string
+  onToggleTheme?: () => void
 }
 
 export function PcSessionTabBar({
@@ -51,22 +55,20 @@ export function PcSessionTabBar({
   onNewConnection,
   onToggleSplit,
   hosts = [],
+  onToggleAi,
+  theme,
+  onToggleTheme,
 }: PcSessionTabBarProps) {
   const { t } = useT()
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   return (
-    <div className="sticky top-0 z-50 hidden h-12 shrink-0 items-end gap-0 overflow-x-auto border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-1 shadow-[var(--workspace-shadow-card)] backdrop-blur-sm scrollbar-none md:flex md:h-10">
+    <div data-testid="pc-tab-bar" className="sticky top-0 z-50 hidden h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-nav-translucent)] px-2 backdrop-blur-sm scrollbar-none md:flex">
       <button
         type="button"
         data-testid="pc-dashboard" onClick={onGoToDashboard}
-          className={cn(
-            'flex h-10 shrink-0 items-center gap-1.5 rounded-t-md px-3 text-xs font-medium transition-colors md:h-8',
-            isDashboard
-            ? 'bg-[var(--workspace-nav-active-bg)] text-workspace-nav-active'
-            : 'bg-transparent text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]'
-        )}
+          className={cn(TAB, isDashboard ? TAB_ACTIVE : TAB_IDLE)}
         title={t('tab.dashboard')}
       >
         <LayoutDashboard className="h-3.5 w-3.5" />
@@ -77,7 +79,7 @@ export function PcSessionTabBar({
         <button
           type="button"
           onClick={onOpenLocalTerminal}
-          className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-t-md px-2.5 text-workspace-nav transition-colors hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)] md:h-8"
+          className={ICON_BUTTON}
           title={t('tab.localTerminal')}
         >
           <SquareTerminal className="h-4 w-4" />
@@ -94,12 +96,7 @@ export function PcSessionTabBar({
             data-host-id={session.hostId}
             data-status={session.status}
             data-connection-stage={session.connectionStage}
-            className={cn(
-              'group flex h-10 shrink-0 items-center gap-1.5 rounded-t-md pl-3 pr-1 text-xs font-medium transition-colors md:h-8',
-              isActive
-                ? 'bg-[var(--workspace-surface-950)] text-[var(--workspace-text-strong)]'
-                : 'bg-transparent text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]'
-            )}
+            className={cn(TAB, 'group pl-2.5 pr-1', isActive ? TAB_ACTIVE : TAB_IDLE)}
           >
             <button
               type="button"
@@ -129,7 +126,7 @@ export function PcSessionTabBar({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onCloseSession(session.sessionId) }}
-              className="flex h-6 w-6 items-center justify-center rounded opacity-100 transition-all hover:bg-[var(--workspace-surface-700)] sm:opacity-0 sm:group-hover:opacity-100"
+              className="flex h-5 w-5 items-center justify-center rounded opacity-100 transition-all hover:bg-[var(--workspace-surface-700)] sm:opacity-0 sm:group-hover:opacity-100"
               style={isActive ? { opacity: 1 } : undefined}
               title={t('tab.close')}
             >
@@ -139,12 +136,12 @@ export function PcSessionTabBar({
         )
       })}
 
-      <div className="ml-1 flex items-end gap-0.5 border-l border-[color:var(--workspace-border-soft)] pl-1">
+      <div className="ml-1 flex items-center gap-0.5">
         {onNewConnection && (
           <button
           type="button"
           onClick={onNewConnection}
-            className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-t-md px-2.5 text-workspace-nav transition-colors hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)] md:h-8"
+            className={ICON_BUTTON}
             title={t('tab.newSsh')}
           >
             <Plus className="h-4 w-4" />
@@ -155,16 +152,33 @@ export function PcSessionTabBar({
           <button
             type="button"
             onClick={onToggleSplit}
-            className={cn(
-              'flex h-10 shrink-0 items-center justify-center rounded-t-md px-2.5 transition-colors md:h-8',
-              isSplit ? 'text-workspace-nav-active' : 'text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]',
-            )}
+            className={cn(ICON_BUTTON, isSplit && 'bg-[var(--workspace-nav-active-bg)] text-workspace-nav-active')}
             title={isSplit ? t('tab.exitSplit') : t('tab.splitTerminal')}
           >
             <Columns2 className="h-4 w-4" />
           </button>
         )}
       </div>
+
+      <div className="ml-auto flex shrink-0 items-center gap-1 pl-2">
+        {onToggleAi && !isDashboard && activeSessionId && (
+          <button type="button" data-testid="pc-tab-ai" onClick={onToggleAi} title={t('tab.aiAssistant')}
+            className="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-workspace-nav transition-colors hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]">
+            <Sparkles className="h-3.5 w-3.5 text-[var(--workspace-accent-text)]" />{t('tab.aiAssistant')}
+            <kbd className="rounded border border-[color:var(--workspace-border-soft)] px-1 font-sans text-[10px] text-[var(--workspace-text-subtle)]">⌘I</kbd>
+          </button>
+        )}
+        {onToggleTheme && (
+          <button type="button" data-testid="pc-tab-theme" onClick={onToggleTheme} className={ICON_BUTTON} title={t(theme === 'dark' ? 'settings.light' : 'settings.dark')}>
+            {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+        )}
+      </div>
     </div>
   )
 }
+
+const TAB = 'flex h-7 shrink-0 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors'
+const TAB_ACTIVE = 'bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-sm ring-1 ring-[color:var(--workspace-border-soft)]'
+const TAB_IDLE = 'text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]'
+const ICON_BUTTON = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-workspace-nav transition-colors hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]'

@@ -1,5 +1,5 @@
 import { getInteractiveHistory, subscribeInteractiveHistory } from '@/lib/interactive-history'
-import { announceTerminalSearchState, TERMINAL_SEARCH_TOGGLE_EVENT } from '@/lib/terminal-events'
+import { announceTerminalSearchState, TERMINAL_AI_TOGGLE_EVENT, TERMINAL_SEARCH_TOGGLE_EVENT } from '@/lib/terminal-events'
 import { normalizeBrowserUrl } from '@/contexts/session-browser-state'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import { useT } from '@/lib/i18n'
@@ -93,6 +93,11 @@ export function SessionTerminalView({
     return () => window.removeEventListener(TERMINAL_SEARCH_TOGGLE_EVENT, onToggle)
   }, [sessionId])
   useEffect(() => { announceTerminalSearchState(sessionId, showSearch) }, [sessionId, showSearch])
+  useEffect(() => {
+    const onToggle = (event: Event) => { if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setShowAI((open) => !open) }
+    window.addEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
+    return () => window.removeEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
+  }, [sessionId])
   const [currentInputLine, setCurrentInputLine] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [detectedLinks, setDetectedLinks] = useState<string[]>([])

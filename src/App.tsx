@@ -14,6 +14,7 @@ import { UserConfirmationRuntime } from '@/components/user-confirmation-dialog'
 import { PcLayout } from '@/layouts/pc-layout'
 import { listCommandHistory } from '@/lib/history'
 import { hasSshConnection } from '@/lib/hosts'
+import { requestHostSftp } from '@/lib/navigation-request'
 import { I18nProvider } from '@/lib/i18n'
 import { Suspense, lazy, useEffect, useState } from 'react'
 
@@ -63,6 +64,14 @@ function AppInner() {
               if (host && hasSshConnection(host)) { app.setPcSidebarNav('terminal'); void sessions.handleConnectHost(hostId) }
             }}
             onAction={app.handleCommandPaletteAction}
+            onToggleTheme={app.toggleTheme}
+            onHostAction={(hostId, action) => {
+              hostsCtx.setSelectedHostId(hostId)
+              // The PC layout handles the SFTP request: selects the host and opens SFTP in its home directory.
+              if (action === 'sftp') requestHostSftp({ vaultId: hostsCtx.hosts.find((host) => host.id === hostId)?.vaultId, hostId, path: '' })
+              else if (action === 'forward') app.setPcSidebarNav('port-forwarding')
+              else { app.setPcSidebarNav('terminal'); void sessions.openHostWorkspace(hostId, 'overview') }
+            }}
           />
         </Suspense>
       )}

@@ -13,3 +13,9 @@ export function requestTerminalSearchToggle(sessionId: string) {
 export function announceTerminalSearchState(sessionId: string, open: boolean) {
   window.dispatchEvent(new CustomEvent<{ sessionId: string; open: boolean }>(TERMINAL_SEARCH_STATE_EVENT, { detail: { sessionId, open } }))
 }
+
+export const TERMINAL_AI_TOGGLE_EVENT = 'shellbeam:terminal-ai-toggle'
+
+export function requestTerminalAiToggle(sessionId: string) {
+  window.dispatchEvent(new CustomEvent<{ sessionId: string }>(TERMINAL_AI_TOGGLE_EVENT, { detail: { sessionId } }))
+}

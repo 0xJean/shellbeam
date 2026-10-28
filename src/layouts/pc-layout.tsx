@@ -1,6 +1,8 @@
+import { usePortForwardSummary } from '@/hooks/use-port-forward-summary'
+import { requestSettingsCategory } from '@/lib/settings-request'
 import { MobileToolsPage } from '@/components/mobile-tools-page'
 import { isToolPage } from '@/lib/mobile-navigation'
-import { requestTerminalSearchToggle, TERMINAL_SEARCH_STATE_EVENT } from '@/lib/terminal-events'
+import { requestTerminalAiToggle, requestTerminalSearchToggle, TERMINAL_SEARCH_STATE_EVENT } from '@/lib/terminal-events'
 import { OPEN_SFTP_REQUEST_EVENT, OPEN_TERMINAL_REQUEST_EVENT, type HostDirectoryRequest } from '@/lib/navigation-request'
 import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
 import { InteractiveTour } from '@/components/interactive-tour'
@@ -187,6 +189,7 @@ export function PcLayout() {
     return resolvers
   }, [resolveWorkspaceAuthSecret, sessions.pcSessionTabs, sessions.workspaceAuthBySession])
   const snippets = useSnippets(vault.activeVaultId, app.setOutput)
+  const forwardSummary = usePortForwardSummary(vault.activeVaultId, !!vault.vaultStatusState?.unlocked)
   const sync = useSync(app.setOutput, () => {
     void hostsCtx.refreshHosts()
     void snippets.refresh()
@@ -1224,6 +1227,9 @@ export function PcLayout() {
           onNewConnection={handlePcNewConnection}
           onToggleSplit={canToggleSplit ? handleToggleSplit : undefined}
           hosts={hostsCtx.hosts}
+          onToggleAi={() => { if (sessions.pcActiveSessionId) requestTerminalAiToggle(sessions.pcActiveSessionId) }}
+          theme={app.theme}
+          onToggleTheme={app.toggleTheme}
         />
       </div>
       <div className="relative min-h-0 flex-1">
@@ -1540,7 +1546,19 @@ export function PcLayout() {
             'flex h-full',
             app.pcSidebarNav === 'terminal' && 'hidden',
           )}>
-            <PcNavSidebar activeNav={app.pcSidebarNav} onNavChange={(nav) => { app.setPcSidebarNav(nav); setShowQuickConnect(false) }} />
+            <PcNavSidebar activeNav={app.pcSidebarNav} onNavChange={(nav) => { app.setPcSidebarNav(nav); setShowQuickConnect(false) }}
+              onOpenSearch={() => app.setCommandPaletteOpen(true)}
+              counts={{ hosts: hostsCtx.hosts.filter((host) => !host.vaultId || host.vaultId === vault.activeVaultId).length, snippets: snippets.snippets.length, forwardsRunning: forwardSummary.running.size }}
+              vault={{
+                name: vault.vaults.find((entry) => entry.id === vault.activeVaultId)?.name ?? '',
+                vaults: vault.vaults,
+                activeVaultId: vault.activeVaultId,
+                unlocked: !!vault.vaultStatusState?.unlocked,
+                autoLockMinutes: vault.vaultAutoLockMinutes,
+                onSwitch: vault.setActiveVaultId,
+                onManage: () => { requestSettingsCategory('security'); app.setPcSidebarNav('settings'); setShowQuickConnect(false) },
+                onLock: () => void vault.handleLock(),
+              }} />
             <div className="mobile-safe-pb relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-workspace-content" style={{ WebkitOverflowScrolling: 'touch' }}>
               {showQuickConnect ? (
                 <Suspense fallback={<DashboardSectionFallback />}>
