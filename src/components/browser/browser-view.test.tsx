@@ -38,7 +38,7 @@ vi.mock('@/contexts/sessions-context', () => ({
 }))
 
 vi.mock('@/lib/i18n', () => ({
-  useT: () => ({ t: (key: string) => key }),
+  useT: () => ({ locale: 'en', t: (key: string) => key }),
 }))
 
 vi.mock('@/components/ui/button', () => ({

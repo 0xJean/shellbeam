@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Globe, Laptop, LoaderCircle, RefreshCw, TriangleAlert, Unplug } from 'lucide-react'
 import { BrowserChrome } from './browser-chrome'
+import { BrowserStatusBar } from './browser-status-bar'
 import { EmbeddedBrowserWebview } from './embedded-browser-webview'
 import { getBrowserRouteIndicator, getBrowserTabRouteIndicator, shouldWaitForRemoteBrowserTransport } from './browser-view-state'
 import { useSessions } from '@/contexts/sessions-context'
 import { getSessionBrowserTabs, resolveBrowserRouteMode } from '@/contexts/session-browser-state'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/lib/i18n'
+import { browserV3Copy } from '@/lib/locales/browser-v3'
 import {
   goBackBrowserWindow,
   goForwardBrowserWindow,
@@ -22,7 +25,9 @@ interface BrowserViewProps {
 
 export function BrowserView({ sessionId, visible = true, onCloseRequest }: BrowserViewProps) {
   const sessions = useSessions()
-  const { t } = useT()
+  const { t, locale } = useT()
+  const copy = browserV3Copy[locale]
+  const [chromeOverlayOpen, setChromeOverlayOpen] = useState(false)
   const { setSessionBrowserLoading } = sessions
   const state = sessions.browserBySession[sessionId]
   const sessionInfo = sessions.interactiveSessions.find((item) => item.sessionId === sessionId)
@@ -118,6 +123,15 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
   const missingRemoteTransport = canRebuildTransport && !state.resolvedUrl && !state.proxyUrl
   const activeBrowserId = `${sessionId}::${state.activeTabId ?? 'tab'}`
   const transportInstanceKey = `${activeBrowserId}:${state.proxyUrl ?? state.resolvedUrl ?? effectiveRouteMode}`
+  const routeTarget = (() => {
+    const url = state.currentUrl || (state.source?.kind === 'url' ? state.source.url : '')
+    try {
+      return url ? new URL(url).host : ''
+    } catch {
+      return ''
+    }
+  })()
+  const routeLine = [t('browser.status.activeRoute', { detail: localizedRouteIndicator.detail }), routeTarget].filter(Boolean).join(' · ')
 
   useEffect(() => {
     if (!visible || state.presentation === 'closed') return
@@ -182,7 +196,7 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
     <div
       data-testid="browser-view"
       data-visible={String(visible)}
-      className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)]"
+      className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]"
     >
       <BrowserChrome
         state={state}
@@ -230,15 +244,16 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
           }
           sessions.closeSessionBrowser(sessionId)
         }}
+        onOverlayOpenChange={setChromeOverlayOpen}
       />
-      <div className="min-h-0 flex-1 bg-[var(--workspace-surface-950)]">
+      <div className="relative min-h-0 flex-1 bg-[var(--workspace-surface-950)]">
         {browserSource ? (
           <>
             <EmbeddedBrowserWebview
               key={transportInstanceKey}
               browserId={activeBrowserId}
               sessionId={sessionId}
-              visible={visible && !state.error}
+              visible={visible && !state.error && !chromeOverlayOpen}
               source={browserSource}
               sourceRevision={state.sourceRevision}
               proxyUrl={state.proxyUrl}
@@ -248,9 +263,12 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
             />
             {state.error && (
               <div className="absolute inset-0 flex items-center justify-center bg-[var(--workspace-surface-950)] px-6 py-8">
-                <div className="max-w-xl rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                  <div>{state.error}</div>
-                  <div className="mt-2 text-xs text-red-200/75">
+                <div className="flex max-w-[460px] flex-col items-center gap-2.5 text-center">
+                  <div className="flex h-[52px] w-[52px] items-center justify-center rounded-[14px] bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]">
+                    <TriangleAlert className="h-5 w-5" />
+                  </div>
+                  <div className="break-words text-sm text-[var(--workspace-text-strong)]">{state.error}</div>
+                  <div className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">
                     {t('browser.status.activeRoute', { detail: localizedRouteIndicator.detail })}
                   </div>
                 </div>
@@ -259,51 +277,78 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
           </>
         ) : showTransportRecovering || waitingForRemoteTransport ? (
           <div className="flex h-full items-center justify-center px-6 py-10">
-            <div className="max-w-sm rounded-2xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-5 py-4 text-center">
-              <div className="text-sm font-medium text-[var(--workspace-text)]">
+            <div className="flex max-w-[420px] flex-col items-center gap-2.5 text-center">
+              <div className="flex h-[52px] w-[52px] items-center justify-center rounded-[14px] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
+                <LoaderCircle className="h-5 w-5 animate-spin" />
+              </div>
+              <div className="text-base font-semibold text-[var(--workspace-text-strong)]">
                 {showTransportRecovering
                   ? t('browser.transport.recoveringTitle')
                   : t('browser.transport.preparingTitle')}
               </div>
-              <div className="mt-2 text-xs text-[var(--workspace-text-muted)]">
-                {localizedRouteIndicator.detail}
+              <div className="text-[12.5px] leading-relaxed text-[var(--workspace-text-muted)]">
+                {localizedRouteIndicator.detail} · {copy.preparingHint}
               </div>
             </div>
           </div>
         ) : showErrorPanel ? (
-          <div className="flex h-full items-center justify-center px-6 py-10">
-            <div className="max-w-md rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-center text-red-100">
-              <div className="text-sm font-semibold">
+          <div className="flex h-full items-center justify-center overflow-y-auto px-6 py-10">
+            <div className="flex max-w-[460px] flex-col items-center gap-2.5 text-center">
+              <div className="flex h-[52px] w-[52px] items-center justify-center rounded-[14px] bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]">
+                {showTransportFailure ? <Unplug className="h-5 w-5" /> : <TriangleAlert className="h-5 w-5" />}
+              </div>
+              <div className="text-base font-semibold text-[var(--workspace-text-strong)]">
                 {showTransportFailure
                   ? t('browser.transport.failedTitle')
                   : t('browser.transport.errorTitle')}
               </div>
-              <div className="mt-2 text-sm text-red-100/90">
+              {showTransportFailure && (
+                <p className="text-[12.5px] leading-relaxed text-[var(--workspace-text-muted)]">{copy.failedDescription}</p>
+              )}
+              <div className="max-w-full break-words rounded-lg bg-[var(--workspace-status-bad-bg)] px-3 py-1.5 font-mono text-[11.5px] text-[color:var(--workspace-status-bad-text)]">
                 {state.error ?? localizedRouteIndicator.detail}
               </div>
-              <div className="mt-2 text-xs text-red-100/70">
-                {localizedRouteIndicator.detail}
-              </div>
               {canRebuildTransport && (
-                <div className="mt-4">
+                <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8 gap-1.5 text-xs"
+                    onClick={() => sessions.rebuildSessionBrowserTransport(sessionId)}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    {t('browser.transport.rebuild')}
+                  </Button>
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
-                    onClick={() => sessions.rebuildSessionBrowserTransport(sessionId)}
+                    className="h-8 gap-1.5 text-xs"
+                    onClick={() => sessions.setSessionBrowserRouteMode(sessionId, 'local')}
                   >
-                    {t('browser.transport.rebuild')}
+                    <Laptop className="h-3.5 w-3.5" />
+                    {copy.useLocalRoute}
                   </Button>
                 </div>
               )}
+              <div className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">{routeLine}</div>
             </div>
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center px-6 py-10 text-center text-sm text-[var(--workspace-text-muted)]">
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-10 text-center text-sm text-[var(--workspace-text-muted)]">
+            <div className="flex h-[52px] w-[52px] items-center justify-center rounded-[14px] bg-[var(--workspace-surface-800)] text-[var(--workspace-text-subtle)]">
+              <Globe className="h-5 w-5" />
+            </div>
             <span>{t('browser.empty')}</span>
           </div>
         )}
       </div>
+      <BrowserStatusBar
+        state={state}
+        routeIndicator={localizedRouteIndicator}
+        transportFailed={showTransportFailure}
+        transportRecovering={showTransportRecovering}
+      />
     </div>
   )
 }

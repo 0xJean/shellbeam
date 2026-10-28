@@ -1,26 +1,44 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import {
-  AlertCircle,
   ArrowLeft,
   ArrowRight,
+  ArrowRightToLine,
+  CopyPlus,
+  Ellipsis,
   FileCode2,
   Globe,
+  History,
+  LayoutGrid,
+  Link,
   LoaderCircle,
+  Lock,
   MoreHorizontal,
   Pin,
+  PinOff,
   Plus,
   RefreshCw,
+  RotateCw,
   Search,
-  Server,
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useT } from '@/lib/i18n'
+import { browserV3Copy } from '@/lib/locales/browser-v3'
 import { cn } from '@/lib/utils'
 import type { BrowserRouteMode, SessionBrowserState } from '@/contexts/session-browser-state'
 import type { BrowserTabRouteIndicator, LocalizedBrowserRouteIndicator } from './browser-view-state'
-import { filterBrowserTabs, getBrowserTabDensity, getBrowserTabMonogram, useBrowserTabFavicons } from './browser-tab-visuals'
+import { BrowserKbd } from './browser-kbd'
+import {
+  browserModKey,
+  filterBrowserTabs,
+  getBrowserRouteChipClass,
+  getBrowserRouteDotClass,
+  getBrowserRouteTone,
+  getBrowserTabDensity,
+  getBrowserTabMonogram,
+  useBrowserTabFavicons,
+} from './browser-tab-visuals'
 
 interface BrowserChromeProps {
   state: SessionBrowserState
@@ -47,7 +65,11 @@ interface BrowserChromeProps {
   onBack: () => void
   onForward: () => void
   onClose?: () => void
+  onOverlayOpenChange?: (open: boolean) => void
 }
+
+const iconButtonClass = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)] disabled:pointer-events-none disabled:opacity-40'
+const menuItemClass = 'flex h-[30px] w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[12.5px] text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-text-strong)] disabled:pointer-events-none disabled:opacity-40'
 
 export function BrowserChrome({
   state,
@@ -74,10 +96,12 @@ export function BrowserChrome({
   onBack,
   onForward,
   onClose,
+  onOverlayOpenChange,
 }: BrowserChromeProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const copy = browserV3Copy[locale]
   const [value, setValue] = useState(state.addressInput)
-  const [openTabMenuId, setOpenTabMenuId] = useState<string | null>(null)
+  const [tabMenu, setTabMenu] = useState<{ tabId: string; top: number; left: number } | null>(null)
   const [tabSwitcherOpen, setTabSwitcherOpen] = useState(false)
   const [tabSwitcherQuery, setTabSwitcherQuery] = useState('')
   const [highlightedTabId, setHighlightedTabId] = useState<string | null>(null)
@@ -89,6 +113,7 @@ export function BrowserChrome({
   const inputRef = useRef<HTMLInputElement | null>(null)
   const tabSwitcherInputRef = useRef<HTMLInputElement | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const overlayOpen = tabMenu !== null || tabSwitcherOpen
 
   useEffect(() => {
     setValue(state.addressInput)
@@ -97,13 +122,26 @@ export function BrowserChrome({
   useEffect(() => {
     const handler = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
-        setOpenTabMenuId(null)
+        setTabMenu(null)
         setTabSwitcherOpen(false)
       }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
+
+  useEffect(() => {
+    onOverlayOpenChange?.(overlayOpen)
+  }, [onOverlayOpenChange, overlayOpen])
+
+  useEffect(() => {
+    if (!tabMenu) return
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setTabMenu(null)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [tabMenu])
 
   const canGoBack = state.canGoBack
   const canGoForward = state.canGoForward
@@ -119,11 +157,6 @@ export function BrowserChrome({
       : null,
   })), [tabs, t])
   const filteredTabs = useMemo(() => filterBrowserTabs(searchableTabs, tabSwitcherQuery), [searchableTabs, tabSwitcherQuery])
-  const localizedRouteIndicator = useMemo(() => ({
-    ...routeIndicator,
-    label: routeIndicator.label,
-    detail: routeIndicator.detail,
-  }), [routeIndicator])
   const tabDensity = useMemo(() => getBrowserTabDensity(tabs.length), [tabs.length])
   const lastPinnedTabId = useMemo(() => {
     for (let index = tabs.length - 1; index >= 0; index -= 1) {
@@ -131,24 +164,9 @@ export function BrowserChrome({
     }
     return null
   }, [tabs])
-  const routeBadgeClassName = localizedRouteIndicator.scope === 'local'
-    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
-    : localizedRouteIndicator.scope === 'pending'
-      ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
-      : 'border-sky-500/25 bg-sky-500/10 text-sky-200'
-  const transportBadge = state.transportStatus === 'recovering'
-    ? {
-        className: 'border-amber-500/25 bg-amber-500/10 text-amber-200',
-        icon: <LoaderCircle className="h-3.5 w-3.5 animate-spin" />,
-        label: t('browser.transport.recovering'),
-      }
-    : state.transportStatus === 'failed'
-      ? {
-          className: 'border-red-500/25 bg-red-500/10 text-red-200',
-          icon: <AlertCircle className="h-3.5 w-3.5" />,
-          label: t('browser.transport.failed'),
-        }
-      : null
+  const activeTab = tabs.find((tab) => tab.active) ?? null
+  const menuTab = tabMenu ? tabs.find((tab) => tab.id === tabMenu.tabId) ?? null : null
+  const isSecureAddress = /^https:\/\//i.test(value.trim())
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -156,39 +174,59 @@ export function BrowserChrome({
     onSubmitAddress()
   }
 
+  function getRouteChipLabel(tab: BrowserChromeProps['tabs'][number]) {
+    if (tab.sourceKind === 'markdown') return t('browser.status.markdownPreview')
+    if (tab.sourceKind === 'html') return t('browser.status.htmlPreview')
+    return tab.routeIndicator ? t(tab.routeIndicator.labelKey) : null
+  }
+
   function getTabBadge(tab: BrowserChromeProps['tabs'][number]) {
     if (tab.isLoading) {
-      return { icon: <LoaderCircle className="h-3.5 w-3.5 animate-spin" />, className: 'bg-sky-500/15 text-sky-200' }
+      return { icon: <LoaderCircle className="h-3 w-3 animate-spin" />, className: 'text-[var(--workspace-accent-text)]' }
     }
     const faviconUrl = faviconByTabId[tab.id]
     if (faviconUrl) {
       return {
         icon: <img src={faviconUrl} alt="" className="h-4 w-4 rounded-[4px] object-cover" />,
-        className: 'bg-[var(--workspace-surface-950)] text-[var(--workspace-text-strong)]',
+        className: '',
       }
     }
     if (tab.sourceKind === 'url' && tab.url) {
       return {
-        icon: <span className="text-[10px] font-semibold uppercase">{getBrowserTabMonogram(tab)}</span>,
-        className: 'bg-emerald-500/15 text-emerald-200',
+        icon: <span className="text-[9px] font-bold uppercase">{getBrowserTabMonogram(tab)}</span>,
+        className: 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]',
       }
     }
     if (tab.sourceKind) {
       return {
         icon: tab.sourceKind === 'html' || tab.sourceKind === 'markdown'
-          ? <span className="text-[10px] font-semibold uppercase">{getBrowserTabMonogram(tab)}</span>
-          : <FileCode2 className="h-3.5 w-3.5" />,
-        className: 'bg-amber-500/15 text-amber-200',
+          ? <span className="text-[9px] font-bold uppercase">{getBrowserTabMonogram(tab)}</span>
+          : <FileCode2 className="h-3 w-3" />,
+        className: 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-strong)]',
       }
     }
-    return { icon: <Plus className="h-3.5 w-3.5" />, className: 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-subtle)]' }
+    return { icon: <Plus className="h-3 w-3" />, className: 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-subtle)]' }
+  }
+
+  function toggleTabMenu(tabId: string, event: ReactMouseEvent<HTMLButtonElement>) {
+    if (tabMenu?.tabId === tabId) {
+      setTabMenu(null)
+      return
+    }
+    const rootRect = rootRef.current?.getBoundingClientRect()
+    const anchorRect = event.currentTarget.getBoundingClientRect()
+    const rootLeft = rootRect?.left ?? 0
+    const rootWidth = rootRect?.width ?? 0
+    const left = Math.max(8, Math.min(anchorRect.right - rootLeft - 210, rootWidth - 218))
+    setTabSwitcherOpen(false)
+    setTabMenu({ tabId, top: anchorRect.bottom - (rootRect?.top ?? 0) + 4, left })
   }
 
   async function handleCopyTabLink(url: string) {
     if (!url) return
     try {
       await navigator.clipboard.writeText(url)
-      setOpenTabMenuId(null)
+      setTabMenu(null)
     } catch {
       // ignore clipboard failures in constrained runtimes
     }
@@ -199,38 +237,14 @@ export function BrowserChrome({
     return event.clientX <= rect.left + rect.width / 2 ? 'before' : 'after'
   }
 
-  function getTabDensityClasses() {
-    if (tabDensity === 'dense') {
-      return {
-        tab: 'min-w-[92px] max-w-[148px] gap-1 px-1.5 py-1',
-        title: 'text-[11px]',
-        route: 'px-1 py-0.5 text-[8px]',
-        action: 'p-0.5',
-        dot: 'h-1 w-1',
-      }
-    }
-    if (tabDensity === 'compact') {
-      return {
-        tab: 'min-w-[112px] max-w-[182px] gap-1 px-2 py-1.5',
-        title: 'text-[11px]',
-        route: 'px-1.5 py-0.5 text-[8px]',
-        action: 'p-0.5',
-        dot: 'h-1.5 w-1.5',
-      }
-    }
-    return {
-      tab: 'min-w-[140px] max-w-[220px] gap-1.5 px-2 py-1.5',
-      title: 'text-xs',
-      route: 'px-1.5 py-0.5 text-[9px]',
-      action: 'p-1',
-      dot: 'h-1.5 w-1.5',
-    }
-  }
-
-  const densityClasses = getTabDensityClasses()
+  const densityClasses = tabDensity === 'dense'
+    ? { tab: 'min-w-[84px] max-w-[140px] gap-1.5 pl-2 pr-1', title: 'text-[11px]', chip: 'hidden' }
+    : tabDensity === 'compact'
+      ? { tab: 'min-w-[100px] max-w-[176px] gap-1.5 pl-2 pr-1', title: 'text-[11.5px]', chip: 'hidden xl:inline-flex' }
+      : { tab: 'min-w-[120px] max-w-[220px] gap-[7px] pl-2.5 pr-1.5', title: 'text-xs', chip: 'inline-flex' }
 
   function openTabSwitcher() {
-    setOpenTabMenuId(null)
+    setTabMenu(null)
     setTabSwitcherOpen(true)
     setHighlightedTabId((current) => current ?? tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? null)
   }
@@ -261,29 +275,32 @@ export function BrowserChrome({
   }, [tabs])
 
   return (
-    <div ref={rootRef} className="relative flex shrink-0 flex-col gap-2 border-b border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] px-3 py-3">
-      <div className="flex items-center gap-2">
-        <div className={cn('flex min-w-0 flex-1 items-center overflow-x-auto pb-1', tabDensity === 'dense' ? 'gap-1' : 'gap-2')}>
+    <div ref={rootRef} className="relative flex shrink-0 flex-col">
+      <div className="flex items-end gap-1 border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 pt-2">
+        <div className={cn('flex min-w-0 items-end overflow-x-auto [scrollbar-width:none]', tabDensity === 'dense' ? 'gap-0.5' : 'gap-1')}>
           {tabs.flatMap((tab) => {
             const showPinnedDivider = lastPinnedTabId === tab.id && tabs.some((item) => !item.pinned)
+            const badge = getTabBadge(tab)
+            const chipLabel = getRouteChipLabel(tab)
             return [
               (
             <div
               key={tab.id}
               draggable
+              title={copy.dragHint}
               className={cn(
-                'group relative flex items-center rounded-xl border transition-[border-color,background-color,box-shadow,transform] duration-150',
+                'group relative -mb-px flex h-8 shrink-0 items-center rounded-t-lg transition-colors duration-150',
                 densityClasses.tab,
                 tab.active
-                  ? 'border-[var(--workspace-accent-solid)]/55 bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-[var(--workspace-shadow-card-hover)]'
-                  : 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/60 text-[var(--workspace-text-muted)] hover:border-[var(--workspace-border-strong)] hover:bg-[var(--workspace-surface-900)]/80',
-                dragState?.targetTabId === tab.id && dragState.position === 'before' && 'before:absolute before:inset-y-1 before:left-[-5px] before:w-0.5 before:rounded-full before:bg-[var(--workspace-accent-solid)]',
-                dragState?.targetTabId === tab.id && dragState.position === 'after' && 'after:absolute after:inset-y-1 after:right-[-5px] after:w-0.5 after:rounded-full after:bg-[var(--workspace-accent-solid)]',
+                  ? 'bg-[var(--workspace-surface-950)] text-[var(--workspace-text-strong)] shadow-[0_0_0_1px_var(--workspace-border-soft)] [clip-path:inset(-1px_-1px_0_-1px)]'
+                  : 'text-[var(--workspace-text-subtle)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text)]',
+                dragState?.targetTabId === tab.id && dragState.position === 'before' && 'before:absolute before:inset-y-1.5 before:left-[-3px] before:w-0.5 before:rounded-full before:bg-[hsl(var(--primary))]',
+                dragState?.targetTabId === tab.id && dragState.position === 'after' && 'after:absolute after:inset-y-1.5 after:right-[-3px] after:w-0.5 after:rounded-full after:bg-[hsl(var(--primary))]',
               )}
               onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = 'move'
                 event.dataTransfer.setData('text/plain', tab.id)
-                setOpenTabMenuId(null)
+                setTabMenu(null)
                 setDragState({ tabId: tab.id, targetTabId: null, position: 'after' })
               }}
               onDragOver={(event) => {
@@ -320,24 +337,14 @@ export function BrowserChrome({
               }}
               onDragEnd={() => setDragState(null)}
             >
-              <span className={cn(
-                'inline-flex shrink-0 items-center justify-center rounded-md overflow-hidden',
-                tabDensity === 'dense' ? 'h-4.5 w-4.5' : 'h-5 w-5',
-                getTabBadge(tab).className,
-              )}>
-                {getTabBadge(tab).icon}
-              </span>
               {tab.pinned && (
-                <span
-                  className={cn(
-                    'inline-flex shrink-0 items-center justify-center rounded-md bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]',
-                    tabDensity === 'dense' ? 'h-4.5 w-4.5' : 'h-5 w-5',
-                  )}
-                  title={t('browser.tab.pinnedTitle')}
-                >
-                  <Pin className={tabDensity === 'dense' ? 'h-2.5 w-2.5' : 'h-3 w-3'} />
+                <span className="inline-flex shrink-0 text-[var(--workspace-accent-text)]" title={t('browser.tab.pinnedTitle')}>
+                  <Pin className="h-[13px] w-[13px]" />
                 </span>
               )}
+              <span className={cn('inline-flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-[4px]', badge.className)}>
+                {badge.icon}
+              </span>
               <button
                 type="button"
                 className={cn('min-w-0 flex-1 truncate text-left font-medium', densityClasses.title)}
@@ -347,144 +354,241 @@ export function BrowserChrome({
               >
                 {tab.title}
               </button>
-              {!tab.active && (
-                <span
-                  className={cn(
-                    'shrink-0 rounded-full',
-                    densityClasses.dot,
-                    tab.isLoading ? 'bg-sky-300' : 'bg-[var(--workspace-border-strong)]',
-                  )}
-                  aria-hidden="true"
-                />
+              {chipLabel && (
+                <span className={cn(
+                  'h-[17px] shrink-0 items-center rounded px-[5px] text-[10px] font-medium',
+                  densityClasses.chip,
+                  getBrowserRouteChipClass(getBrowserRouteTone(tab.routeIndicator?.scope, tab.sourceKind)),
+                )}>
+                  {chipLabel}
+                </span>
               )}
               <button
                 type="button"
                 className={cn(
-                  'rounded-md text-[var(--workspace-text-subtle)] transition-[opacity,color,background-color] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text)]',
-                  densityClasses.action,
-                  tab.active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+                  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--workspace-text-subtle)] transition-[opacity,color,background-color] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] focus-visible:opacity-100',
+                  tab.active && !tab.pinned ? 'opacity-70' : 'opacity-0 group-hover:opacity-70',
                 )}
                 onClick={() => onCloseTab(tab.id)}
                 aria-label={t('browser.tab.close', { title: tab.title })}
               >
-                <X className={tabDensity === 'dense' ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
+                <X className="h-3 w-3" />
               </button>
-              <div className="relative">
-                <button
-                  type="button"
-                  className={cn(
-                    'rounded-md text-[var(--workspace-text-subtle)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text)]',
-                    densityClasses.action,
-                  )}
-                  onClick={() => setOpenTabMenuId((current) => current === tab.id ? null : tab.id)}
-                  aria-label={t('browser.tab.moreActions', { title: tab.title })}
-                >
-                  <MoreHorizontal className={tabDensity === 'dense' ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
-                </button>
-                {openTabMenuId === tab.id && (
-                  <div className="absolute right-0 top-[calc(100%+6px)] z-20 min-w-[168px] rounded-xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] p-1.5 shadow-2xl">
-                    <button
-                      type="button"
-                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]"
-                      onClick={() => {
-                        onTogglePinTab(tab.id)
-                        setOpenTabMenuId(null)
-                      }}
-                    >
-                      {tab.pinned ? t('browser.tab.unpin') : t('browser.tab.pin')}
-                    </button>
-                    <button
-                      type="button"
-                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]"
-                      onClick={() => {
-                        onDuplicateTab(tab.id)
-                        setOpenTabMenuId(null)
-                      }}
-                    >
-                      {t('browser.tab.duplicate')}
-                    </button>
-                    <button
-                      type="button"
-                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]"
-                      onClick={() => void handleCopyTabLink(tab.url)}
-                      disabled={!tab.url}
-                    >
-                      {t('browser.tab.copyLink')}
-                    </button>
-                    <button
-                      type="button"
-                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]"
-                      onClick={() => {
-                        onCloseOtherTabs(tab.id)
-                        setOpenTabMenuId(null)
-                      }}
-                      disabled={tabs.length <= 1}
-                    >
-                      {t('browser.tab.closeOthers')}
-                    </button>
-                    <button
-                      type="button"
-                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]"
-                      onClick={() => {
-                        onCloseTabsToRight(tab.id)
-                        setOpenTabMenuId(null)
-                      }}
-                    >
-                      {t('browser.tab.closeRight')}
-                    </button>
-                  </div>
+              <button
+                type="button"
+                className={cn(
+                  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--workspace-text-subtle)] transition-[opacity,color,background-color] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] focus-visible:opacity-100',
+                  tabMenu?.tabId === tab.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-70',
                 )}
-              </div>
+                onClick={(event) => toggleTabMenu(tab.id, event)}
+                aria-label={t('browser.tab.moreActions', { title: tab.title })}
+                aria-expanded={tabMenu?.tabId === tab.id}
+              >
+                <MoreHorizontal className="h-3 w-3" />
+              </button>
             </div>
               ),
               ...(showPinnedDivider ? [(
                 <div
                   key={`${tab.id}-pinned-divider`}
-                  className={cn(
-                    'mx-1 flex shrink-0 items-center gap-2 self-stretch px-1',
-                    tabDensity === 'dense' ? 'text-[8px]' : 'text-[9px]',
-                  )}
+                  className="mx-0.5 mb-2 h-4 w-px shrink-0 self-end bg-[var(--workspace-border-strong)]"
+                  title={t('browser.tab.pinned')}
                   aria-hidden="true"
-                >
-                  <div className="h-px w-3 bg-[var(--workspace-border-strong)]" />
-                  <span className="font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)]">{t('browser.tab.pinned')}</span>
-                  <div className="h-px w-3 bg-[var(--workspace-border-strong)]" />
-                </div>
+                />
               )] : []),
             ]
           })}
         </div>
-        <Button type="button" size="icon" variant="outline" className="h-8 w-8 shrink-0" onClick={onCreateTab} aria-label={t('browser.tab.new')}>
+        <button type="button" className={cn(iconButtonClass, 'mb-0.5 h-7 w-7')} onClick={onCreateTab} aria-label={t('browser.tab.new')} title={`${t('browser.tab.new')} ${browserModKey}T`}>
           <Plus className="h-4 w-4" />
-        </Button>
-        <Button
+        </button>
+        <span className="min-w-2 flex-1" />
+        <button
           type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 shrink-0 gap-1.5 px-3 text-xs"
-          onClick={openTabSwitcher}
-        >
-          <Search className="h-3.5 w-3.5" />
-          {t('browser.tab.tabs')}
-          <span className="rounded-md bg-[var(--workspace-surface-700)] px-1.5 py-0.5 text-[10px]">{tabs.length}</span>
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 shrink-0 px-3 text-xs"
+          className={cn(iconButtonClass, 'mb-0.5 h-7 w-7')}
           onClick={onRestoreClosedTab}
           disabled={!hasClosedTabs}
+          aria-label={t('browser.tab.reopenClosed')}
+          title={`${t('browser.tab.reopenClosed')} ⇧${browserModKey}T`}
         >
-          {t('browser.tab.reopenClosed')}
-        </Button>
+          <History className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          className="mb-0.5 inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"
+          onClick={openTabSwitcher}
+          aria-label={t('browser.tab.tabs')}
+          title={`${t('browser.tab.tabs')} ⇧${browserModKey}O`}
+        >
+          <LayoutGrid className="h-4 w-4" />
+          <span className="min-w-4 rounded bg-[var(--workspace-surface-700)] px-1 text-[10.5px] font-medium tabular-nums text-[var(--workspace-text)]">{tabs.length}</span>
+        </button>
       </div>
+
+      <div className="flex items-center gap-1.5 border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-2.5 py-2">
+        {onClose && (
+          <button type="button" className={iconButtonClass} onClick={onClose} aria-label={t('browser.action.close')} title={t('browser.action.close')}>
+            <X className="h-4 w-4" />
+          </button>
+        )}
+        <button type="button" className={iconButtonClass} disabled={!canGoBack} onClick={onBack} aria-label={t('browser.action.back')}>
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <button type="button" className={iconButtonClass} disabled={!canGoForward} onClick={onForward} aria-label={t('browser.action.forward')}>
+          <ArrowRight className="h-4 w-4" />
+        </button>
+        <button type="button" className={iconButtonClass} onClick={onReload} aria-label={t('browser.action.reload')}>
+          <RotateCw className={cn('h-4 w-4', state.isLoading && 'animate-spin')} />
+        </button>
+
+        <form className="flex min-w-0 flex-1 items-center gap-1.5" onSubmit={handleSubmit}>
+          <div className="relative min-w-0 flex-1">
+            <span
+              className={cn('pointer-events-none absolute left-3 top-1/2 -translate-y-1/2', isSecureAddress ? 'text-[color:var(--workspace-status-good-text)]' : 'text-[var(--workspace-text-subtle)]')}
+              title={isSecureAddress ? copy.secure : routeIndicator.detail}
+            >
+              {isSecureAddress ? <Lock className="h-3.5 w-3.5" /> : <Globe className="h-3.5 w-3.5" />}
+            </span>
+            <Input
+              ref={inputRef}
+              value={value}
+              onChange={(event) => {
+                const nextValue = event.target.value
+                setValue(nextValue)
+                onAddressInputChange(nextValue)
+              }}
+              placeholder={t('browser.address.placeholder')}
+              className="h-8 min-w-0 rounded-full border-transparent bg-[var(--workspace-surface-800)] pl-8 pr-3 font-mono text-xs text-[var(--workspace-text-strong)] placeholder:font-sans placeholder:text-[var(--workspace-text-subtle)] focus-visible:border-[color:var(--workspace-border-strong)]"
+              aria-label={t('browser.address.label')}
+            />
+          </div>
+          <Button type="submit" size="sm" variant="secondary" className="h-8 shrink-0 px-3 text-xs">
+            {t('browser.action.go')}
+          </Button>
+        </form>
+
+        {canToggleRouteMode && (
+          <div className="inline-flex h-8 shrink-0 items-center rounded-lg bg-[var(--workspace-surface-800)] p-0.5">
+            {(['local', 'remote'] as const).map((mode) => {
+              const active = routeMode === mode
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  className={cn(
+                    'h-7 rounded-md px-3 text-xs font-medium transition-colors',
+                    active
+                      ? 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-strong)] shadow-sm'
+                      : 'text-[var(--workspace-text-subtle)] hover:text-[var(--workspace-text)]',
+                  )}
+                  onClick={() => onRouteModeChange(mode)}
+                  aria-pressed={active}
+                >
+                  {mode === 'local' ? t('browser.route.local') : t('browser.route.server')}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {canRebuildTransport && onRebuildTransport && (
+          <button
+            type="button"
+            className={iconButtonClass}
+            onClick={onRebuildTransport}
+            aria-label={t('browser.transport.rebuild')}
+            title={t('browser.transport.rebuild')}
+          >
+            <RefreshCw className={cn('h-4 w-4', state.transportStatus === 'recovering' && 'animate-spin')} />
+          </button>
+        )}
+        {activeTab && (
+          <button
+            type="button"
+            className={cn(iconButtonClass, tabMenu?.tabId === activeTab.id && 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-strong)]')}
+            onClick={(event) => toggleTabMenu(activeTab.id, event)}
+            aria-label={copy.tabMenu}
+            title={copy.tabMenu}
+          >
+            <Ellipsis className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {tabMenu && menuTab && (
+        <div
+          className="absolute z-30 w-[210px] rounded-[10px] border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-[5px] shadow-[var(--workspace-shadow-overlay)]"
+          style={{ top: tabMenu.top, left: tabMenu.left }}
+        >
+          <button
+            type="button"
+            className={menuItemClass}
+            onClick={() => {
+              onTogglePinTab(menuTab.id)
+              setTabMenu(null)
+            }}
+          >
+            {menuTab.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+            {menuTab.pinned ? t('browser.tab.unpin') : t('browser.tab.pin')}
+          </button>
+          <button
+            type="button"
+            className={menuItemClass}
+            onClick={() => {
+              onDuplicateTab(menuTab.id)
+              setTabMenu(null)
+            }}
+          >
+            <CopyPlus className="h-3.5 w-3.5" />
+            {t('browser.tab.duplicate')}
+          </button>
+          <button
+            type="button"
+            className={menuItemClass}
+            onClick={() => void handleCopyTabLink(menuTab.url)}
+            disabled={!menuTab.url}
+          >
+            <Link className="h-3.5 w-3.5" />
+            {t('browser.tab.copyLink')}
+          </button>
+          <div className="mx-0.5 my-1 h-px bg-[var(--workspace-border-soft)]" />
+          <button
+            type="button"
+            className={menuItemClass}
+            onClick={() => {
+              onCloseOtherTabs(menuTab.id)
+              setTabMenu(null)
+            }}
+            disabled={tabs.length <= 1}
+          >
+            <X className="h-3.5 w-3.5" />
+            {t('browser.tab.closeOthers')}
+          </button>
+          <button
+            type="button"
+            className={menuItemClass}
+            onClick={() => {
+              onCloseTabsToRight(menuTab.id)
+              setTabMenu(null)
+            }}
+          >
+            <ArrowRightToLine className="h-3.5 w-3.5" />
+            {t('browser.tab.closeRight')}
+          </button>
+        </div>
+      )}
+
       {tabSwitcherOpen && (
-        <div className="absolute right-3 top-12 z-30 w-[360px] rounded-2xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] p-3 shadow-[var(--workspace-shadow-overlay)]">
-          <div className="flex items-center gap-2">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
-              <Input
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/45 px-4 pt-[18vh] backdrop-blur-[2px]"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setTabSwitcherOpen(false)
+          }}
+        >
+          <div className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] shadow-[var(--workspace-shadow-overlay)]">
+            <div className="flex h-[54px] items-center gap-2.5 border-b border-[color:var(--workspace-border-soft)] px-4">
+              <Search className="h-[18px] w-[18px] shrink-0 text-[var(--workspace-text-subtle)]" />
+              <input
                 ref={tabSwitcherInputRef}
                 value={tabSwitcherQuery}
                 onChange={(event) => setTabSwitcherQuery(event.target.value)}
@@ -519,27 +623,27 @@ export function BrowserChrome({
                   }
                 }}
                 placeholder={t('browser.tab.searchPlaceholder')}
-                className="h-9 pl-9 text-sm"
+                className="min-w-0 flex-1 border-none bg-transparent text-[15px] text-[var(--workspace-text-strong)] outline-none placeholder:text-[var(--workspace-text-subtle)]"
               />
+              <button type="button" className="shrink-0" onClick={() => setTabSwitcherOpen(false)} aria-label={t('browser.tab.closeOverview')}>
+                <BrowserKbd>esc</BrowserKbd>
+              </button>
             </div>
-            <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => setTabSwitcherOpen(false)} aria-label={t('browser.tab.closeOverview')}>
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="mt-3 max-h-[320px] overflow-y-auto">
-            {filteredTabs.length > 0 ? (
-              <div className="space-y-1">
-                {filteredTabs.map((tab) => {
+            <div className="max-h-[340px] overflow-y-auto px-1.5 pb-2 pt-1">
+              {filteredTabs.length > 0 ? (
+                filteredTabs.map((tab) => {
                   const isHighlighted = tab.id === highlightedTabId
+                  const tone = getBrowserRouteTone(tab.routeIndicator?.scope, tab.sourceKind)
+                  const sideLabel = tab.routeIndicator?.scope === 'pending'
+                    ? tab.routeIndicator.detail
+                    : getRouteChipLabel(tab)
                   return (
                     <button
                       key={tab.id}
                       type="button"
                       className={cn(
-                        'flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left transition-colors',
-                        isHighlighted || tab.active
-                          ? 'border-[var(--workspace-accent-solid)]/45 bg-[var(--workspace-surface-800)] text-[var(--workspace-text-strong)]'
-                          : 'border-transparent text-[var(--workspace-text-muted)] hover:border-[var(--workspace-border-soft)] hover:bg-[var(--workspace-surface-800)]/80',
+                        'grid w-full grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] transition-colors',
+                        isHighlighted ? 'bg-[var(--workspace-accent-subtle)]' : 'hover:bg-[var(--workspace-surface-800)]',
                       )}
                       onMouseEnter={() => setHighlightedTabId(tab.id)}
                       onClick={() => {
@@ -547,183 +651,40 @@ export function BrowserChrome({
                         setTabSwitcherOpen(false)
                       }}
                     >
-                      <span className={cn(
-                        'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md overflow-hidden',
-                        getTabBadge(tab).className,
-                      )}>
-                        {getTabBadge(tab).icon}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium">{tab.title}</span>
-                          {tab.pinned && (
-                            <Pin className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-accent-text)]" />
+                      <span className={cn('h-2 w-2 rounded-full', tone === 'preview' ? 'bg-[var(--workspace-text-subtle)]' : getBrowserRouteDotClass(tab.routeIndicator?.scope))} />
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-1.5">
+                          <span className="truncate font-medium text-[var(--workspace-text-strong)]">{tab.title}</span>
+                          {tab.pinned && <Pin className="h-3 w-3 shrink-0 text-[var(--workspace-accent-text)]" />}
+                          {tab.active && (
+                            <span className="shrink-0 rounded bg-[var(--workspace-accent-subtle)] px-1.5 text-[10px] font-medium leading-[17px] text-[var(--workspace-accent-text)]">
+                              {t('browser.tab.active')}
+                            </span>
                           )}
-                        </div>
-                        {tab.url && (
-                          <div className="truncate text-[11px] text-[var(--workspace-text-subtle)]">{tab.url}</div>
-                        )}
-                      </div>
-                      {tab.active && (
-                        <span className="shrink-0 rounded-full bg-[var(--workspace-accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-accent-text)]">
-                          {t('browser.tab.active')}
                         </span>
-                      )}
+                        {tab.url && (
+                          <span className="mt-px block truncate font-mono text-[11px] text-[var(--workspace-text-subtle)]">{tab.url}</span>
+                        )}
+                      </span>
+                      {sideLabel ? (
+                        <span className="max-w-[180px] truncate rounded bg-[var(--workspace-surface-800)] px-1.5 text-[11px] leading-5 text-[var(--workspace-text-muted)]">{sideLabel}</span>
+                      ) : <span />}
                     </button>
                   )
-                })}
-              </div>
-            ) : (
-              <div className="rounded-xl border border-dashed border-[var(--workspace-border-soft)] px-4 py-8 text-center text-sm text-[var(--workspace-text-muted)]">
-                {t('browser.tab.noMatches')}
-              </div>
-            )}
+                })
+              ) : (
+                <div className="px-4 py-8 text-center text-sm text-[var(--workspace-text-subtle)]">
+                  {t('browser.tab.noMatches')}
+                </div>
+              )}
+            </div>
+            <div className="flex h-[38px] items-center gap-4 border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3.5 text-[11px] text-[var(--workspace-text-subtle)]">
+              <span className="flex items-center gap-1"><BrowserKbd>↑</BrowserKbd><BrowserKbd>↓</BrowserKbd><span className="ml-0.5">{copy.select}</span></span>
+              <span className="flex items-center gap-1"><BrowserKbd>↵</BrowserKbd><span className="ml-0.5">{copy.switchTo}</span></span>
+              <span className="flex-1" />
+              <span>⇧{browserModKey}O</span>
+            </div>
           </div>
-        </div>
-      )}
-      <div className="flex items-center gap-3 px-1 text-[10px] uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
-        <span>{t('browser.shortcut.newTab')}</span>
-        <span>{t('browser.shortcut.overview')}</span>
-        <span>{t('browser.shortcut.reopen')}</span>
-        <span>{t('browser.shortcut.close')}</span>
-        <span>{t('browser.shortcut.switch')}</span>
-        <span>{t('browser.shortcut.drag')}</span>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <div
-          className={cn(
-            'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]',
-            routeBadgeClassName,
-          )}
-          title={localizedRouteIndicator.detail}
-        >
-          {localizedRouteIndicator.scope === 'pending' ? (
-            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Server className="h-3.5 w-3.5" />
-          )}
-          <span>{localizedRouteIndicator.label}</span>
-        </div>
-        {transportBadge && (
-          <div
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]',
-              transportBadge.className,
-            )}
-          >
-            {transportBadge.icon}
-            <span>{transportBadge.label}</span>
-          </div>
-        )}
-        {state.title && (
-          <div className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--workspace-text-strong)]">
-            {state.title}
-          </div>
-        )}
-        {onClose && (
-          <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={onClose} aria-label={t('browser.action.close')}>
-            <X className="h-4 w-4" />
-          </Button>
-        )}
-      </div>
-
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1">
-          <Button type="button" size="icon" variant="outline" className="h-8 w-8" disabled={!canGoBack} onClick={onBack} aria-label={t('browser.action.back')}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <Button type="button" size="icon" variant="outline" className="h-8 w-8" disabled={!canGoForward} onClick={onForward} aria-label={t('browser.action.forward')}>
-            <ArrowRight className="h-4 w-4" />
-          </Button>
-          <Button type="button" size="icon" variant="outline" className="h-8 w-8" onClick={onReload} aria-label={t('browser.action.reload')}>
-            <RefreshCw className={cn('h-4 w-4', state.isLoading && 'animate-spin')} />
-          </Button>
-          {canRebuildTransport && onRebuildTransport && (
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              className="h-8 w-8"
-              onClick={onRebuildTransport}
-              aria-label={t('browser.transport.rebuild')}
-              title={t('browser.transport.rebuild')}
-            >
-              <Server className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-
-        {canToggleRouteMode && (
-          <div className="inline-flex h-9 shrink-0 items-center rounded-xl border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-1">
-            {(['local', 'remote'] as const).map((mode) => {
-              const active = routeMode === mode
-              return (
-                <button
-                  key={mode}
-                  type="button"
-                  className={cn(
-                    'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-                    active
-                      ? 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-strong)]'
-                      : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text)]',
-                  )}
-                  onClick={() => onRouteModeChange(mode)}
-                  aria-pressed={active}
-                >
-                  {mode === 'local' ? t('browser.route.local') : t('browser.route.server')}
-                </button>
-              )
-            })}
-          </div>
-        )}
-
-        <form className="flex min-w-0 flex-1 items-center gap-2" onSubmit={handleSubmit}>
-          <Input
-            ref={inputRef}
-            value={value}
-            onChange={(event) => {
-              const nextValue = event.target.value
-              setValue(nextValue)
-              onAddressInputChange(nextValue)
-            }}
-            placeholder={t('browser.address.placeholder')}
-            className="h-9 min-w-0 border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text)]"
-            aria-label={t('browser.address.label')}
-          />
-          <Button type="submit" size="sm" className="h-9 shrink-0 gap-1.5">
-            <Globe className="h-3.5 w-3.5" />
-            {t('browser.action.go')}
-          </Button>
-        </form>
-      </div>
-
-      {(state.isLoading || state.error || state.currentUrl || state.source) && (
-        <div className="flex items-center gap-2 text-xs text-[var(--workspace-text-muted)]">
-          {state.isLoading && (
-            <span className="inline-flex items-center gap-1.5">
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-              {t('browser.status.loading')}
-            </span>
-          )}
-          {!state.isLoading && state.error && (
-            <span className="inline-flex items-center gap-1.5 text-red-300">
-              <AlertCircle className="h-3.5 w-3.5" />
-              {state.error}
-            </span>
-          )}
-          {!state.isLoading && !state.error && state.currentUrl && (
-            <span className="truncate">{state.currentUrl}</span>
-          )}
-          {!state.isLoading && !state.error && !state.currentUrl && state.source && (
-            <span className="truncate text-[var(--workspace-text-subtle)]">
-              {state.source.kind === 'markdown'
-                ? t('browser.status.markdownPreview')
-                : state.source.kind === 'html'
-                  ? t('browser.status.htmlPreview')
-                  : state.title || t('browser.status.ready')}
-            </span>
-          )}
         </div>
       )}
     </div>

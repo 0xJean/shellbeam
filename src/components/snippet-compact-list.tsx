@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Code2, Copy, Play, Search, X } from 'lucide-react'
 
+import { SnippetCommandText } from '@/components/snippet-variable-fill'
+import { useSnippetVariableFill } from '@/hooks/use-snippet-variable-fill'
 import { useT } from '@/lib/i18n'
 import type { SnippetEntry } from '@/lib/snippets'
 
@@ -13,6 +15,7 @@ interface SnippetCompactListProps {
 export function SnippetCompactList({ snippets, onApply, onRun }: SnippetCompactListProps) {
   const { t } = useT()
   const [search, setSearch] = useState('')
+  const variableFill = useSnippetVariableFill()
 
   const filtered = useMemo(() => {
     if (!search.trim()) return snippets
@@ -24,17 +27,18 @@ export function SnippetCompactList({ snippets, onApply, onRun }: SnippetCompactL
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2">
-        <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      {variableFill.dialog}
+      <div className="flex items-center gap-2 border-b border-[color:var(--workspace-border-soft)] px-3 py-2">
+        <Search className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-subtle)]" />
         <input
           type="text"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder={t('snippets.search')}
-          className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
+          className="min-w-0 flex-1 bg-transparent text-xs text-[var(--workspace-text-strong)] outline-none placeholder:text-[var(--workspace-text-subtle)]"
         />
         {search && (
-          <button type="button" onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground">
+          <button type="button" onClick={() => setSearch('')} className="text-[var(--workspace-text-subtle)] hover:text-[var(--workspace-text)]">
             <X className="h-3 w-3" />
           </button>
         )}
@@ -42,8 +46,8 @@ export function SnippetCompactList({ snippets, onApply, onRun }: SnippetCompactL
       <div className="min-h-0 flex-1 overflow-auto">
         {filtered.length === 0 ? (
           <div className="px-3 py-8 text-center">
-            <Code2 className="mx-auto h-8 w-8 text-muted-foreground/30" />
-            <p className="mt-2 text-xs text-muted-foreground">
+            <Code2 className="mx-auto h-8 w-8 text-[var(--workspace-text-subtle)] opacity-50" />
+            <p className="mt-2 text-xs text-[var(--workspace-text-muted)]">
               {snippets.length === 0 ? t('snippets.noSnippets') : t('snippets.noMatches')}
             </p>
           </div>
@@ -51,25 +55,25 @@ export function SnippetCompactList({ snippets, onApply, onRun }: SnippetCompactL
           filtered.map((snippet) => (
             <div
               key={snippet.id}
-              className="group flex items-start gap-2 border-b border-border/30 px-3 py-2.5 transition-colors hover:bg-muted/30"
+              className="group flex items-start gap-2 border-b border-[color:var(--workspace-border-soft)] px-3 py-2.5 transition-colors hover:bg-[var(--workspace-surface-800)]"
             >
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium">{snippet.name}</p>
-                <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{snippet.command}</p>
+                <p className="truncate text-xs font-medium text-[var(--workspace-text-strong)]">{snippet.name}</p>
+                <SnippetCommandText command={snippet.command} className="mt-0.5 block truncate font-mono text-[11px] text-[var(--workspace-text-muted)]" />
               </div>
-              <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+              <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
                 <button
                   type="button"
-                  onClick={() => onApply(snippet.command)}
-                  className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  onClick={() => variableFill.request(snippet.command, onApply, snippet.name)}
+                  className="rounded p-1 text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text)]"
                   title={t('snippets.paste')}
                 >
                   <Copy className="h-3 w-3" />
                 </button>
                 <button
                   type="button"
-                  onClick={() => onRun(snippet.command)}
-                  className="rounded p-1 text-muted-foreground hover:bg-primary/20 hover:text-primary"
+                  onClick={() => variableFill.request(snippet.command, onRun, snippet.name)}
+                  className="rounded p-1 text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[color:var(--workspace-accent-text)]"
                   title={t('rightSidebar.runSnippet')}
                 >
                   <Play className="h-3 w-3" />

@@ -24,6 +24,7 @@ import { useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 import { isToolPage } from '@/lib/mobile-navigation'
+import { syncBackupCopy } from '@/lib/locales/sync-backup-v3'
 import logoSrc from '@/assets/logo.png'
 
 export type SidebarNavId =
@@ -101,11 +102,11 @@ interface PcNavSidebarProps {
 
 const WORKSPACE_IDS: SidebarNavId[] = ['dashboard', 'hosts', 'asset-inventory', 'sftp', 'port-forwarding']
 const LIBRARY_IDS: SidebarNavId[] = ['keychain', 'snippets', 'known-hosts', 'activity']
-const FOOTER_IDS: SidebarNavId[] = ['sync', 'backup', 'guide', 'settings']
+const FOOTER_IDS: SidebarNavId[] = ['sync', 'guide', 'settings']
 const itemById = (id: SidebarNavId) => [...NAV_ITEMS, ...SYSTEM_ITEMS].find((item) => item.id === id)!
 
 export function PcNavSidebar({ activeNav, onNavChange, vault, counts, onOpenSearch }: PcNavSidebarProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
   const [vaultMenuOpen, setVaultMenuOpen] = useState(false)
   const meta = (id: SidebarNavId): ReactNode => {
     if (id === 'hosts' && counts?.hosts) return <span className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">{counts.hosts}</span>
@@ -115,12 +116,13 @@ export function PcNavSidebar({ activeNav, onNavChange, vault, counts, onOpenSear
   }
   const item = (id: SidebarNavId) => {
     const nav = itemById(id)
+    const active = activeNav === id || (id === 'sync' && activeNav === 'backup')
     return (
-      <button key={id} data-testid={`pc-nav-${id}`} type="button" aria-current={activeNav === id ? 'page' : undefined} onClick={() => onNavChange(id)}
+      <button key={id} data-testid={`pc-nav-${id}`} type="button" aria-current={active ? 'page' : undefined} onClick={() => onNavChange(id)}
         className={cn('flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-left text-[13px] transition-colors',
-          activeNav === id ? 'bg-[var(--workspace-nav-active-bg)] font-medium text-workspace-nav-active shadow-[inset_0_0_0_1px_var(--workspace-border-soft)]' : 'text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]')}>
+          active ? 'bg-[var(--workspace-nav-active-bg)] font-medium text-workspace-nav-active shadow-[inset_0_0_0_1px_var(--workspace-border-soft)]' : 'text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]')}>
         <span className="shrink-0 [&_svg]:h-4 [&_svg]:w-4">{nav.icon}</span>
-        <span className="min-w-0 flex-1 truncate">{t(nav.labelKey)}</span>
+        <span className="min-w-0 flex-1 truncate">{id === 'sync' ? (syncBackupCopy[locale] ?? syncBackupCopy['zh-CN']).navLabel : t(nav.labelKey)}</span>
         {meta(id)}
       </button>
     )

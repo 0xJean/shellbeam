@@ -1,25 +1,35 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Shield, Trash2, RefreshCw, Fingerprint, ShieldAlert, ShieldCheck, Search } from 'lucide-react'
+import { Trash2, RefreshCw, Fingerprint, ShieldAlert, Search, Copy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { SegmentedTabs } from '@/components/charts/chart-primitives'
 import {
   listKnownHosts,
   removeKnownHost,
   type KnownHostEntry,
 } from '@/lib/known-hosts'
+import type { HostProfile } from '@/lib/hosts'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
+import { knownHostsV3Copy } from '@/lib/locales/known-history-v3'
+import { fill } from '@/lib/locales/probe-install'
+
+type KnownHostFilter = 'all' | 'associated' | 'unassociated'
 
 interface KnownHostsPanelProps {
   onOutput?: (message: string) => void
   onError?: (message: string) => void
+  /** Saved hosts; when given, records are matched by address and port to show the host name. */
+  hosts?: HostProfile[]
 }
 
-export function KnownHostsPanel({ onOutput, onError }: KnownHostsPanelProps) {
-  const { t } = useT()
+export function KnownHostsPanel({ onOutput, onError, hosts }: KnownHostsPanelProps) {
+  const { t, locale } = useT()
+  const c = knownHostsV3Copy[locale]
   const [entries, setEntries] = useState<KnownHostEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<KnownHostFilter>('all')
 
   async function refresh() {
     setLoading(true)
@@ -35,15 +45,27 @@ export function KnownHostsPanel({ onOutput, onError }: KnownHostsPanelProps) {
 
   useEffect(() => { void refresh() }, [])
 
+  const hostNameByEndpoint = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const host of hosts ?? []) map.set(`${host.address.toLowerCase()}:${host.port}`, host.name)
+    return map
+  }, [hosts])
+  const hostNameOf = (entry: KnownHostEntry) => hostNameByEndpoint.get(`${entry.host.toLowerCase()}:${entry.port}`)
+  const associatedCount = hosts ? entries.filter((entry) => hostNameOf(entry)).length : entries.length
+
   const filteredEntries = useMemo(() => {
-    if (!search.trim()) return entries
-    const q = search.toLowerCase()
-    return entries.filter((e) =>
-      e.host.toLowerCase().includes(q) ||
-      e.keyType.toLowerCase().includes(q) ||
-      e.fingerprintSha256.toLowerCase().includes(q),
-    )
-  }, [entries, search])
+    const q = search.trim().toLowerCase()
+    return entries.filter((e) => {
+      const name = hostNameByEndpoint.get(`${e.host.toLowerCase()}:${e.port}`)
+      if (hosts && filter === 'associated' && !name) return false
+      if (hosts && filter === 'unassociated' && name) return false
+      if (!q) return true
+      return e.host.toLowerCase().includes(q) ||
+        e.keyType.toLowerCase().includes(q) ||
+        e.fingerprintSha256.toLowerCase().includes(q) ||
+        Boolean(name?.toLowerCase().includes(q))
+    })
+  }, [entries, search, filter, hosts, hostNameByEndpoint])
 
   async function handleRemove(entry: KnownHostEntry) {
     try {
@@ -55,114 +77,160 @@ export function KnownHostsPanel({ onOutput, onError }: KnownHostsPanelProps) {
     }
   }
 
+  async function handleCopy(entry: KnownHostEntry) {
+    try {
+      await navigator.clipboard.writeText(entry.fingerprintSha256)
+      onOutput?.(c.copied)
+    } catch (e) {
+      onError?.(String(e))
+    }
+  }
+
   const formatDate = (ms: number) =>
-    new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    new Date(ms).toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' })
+  const formatDateTime = (ms: number) =>
+    new Date(ms).toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+  const th = 'px-4 py-2.5 text-xs font-medium text-[var(--workspace-text-subtle)]'
 
   return (
-    <div className="flex w-full flex-col">
-      {/* Title section */}
-      <div className="shrink-0 px-6 py-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Shield className="h-5 w-5" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold">{t('knownHosts.title')}</h2>
-              <p className="text-sm text-muted-foreground">{t('knownHosts.desc')}</p>
-            </div>
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading} className="gap-1.5">
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-            {loading ? '' : t('knownHosts.refresh')}
-          </Button>
+    <div className="flex w-full flex-col gap-4 px-6 py-6 text-[var(--workspace-text)]">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('knownHosts.title')}</h2>
+          <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">
+            {entries.length > 0 ? fill(c.summary, { n: entries.length }) : t('knownHosts.desc')}
+          </p>
         </div>
-      </div>
+        <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading} className="gap-1.5">
+          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+          {loading ? '' : t('knownHosts.refresh')}
+        </Button>
+      </header>
 
-      {/* Toolbar */}
-      <div className="min-h-0 flex-1">
-        <div className="flex min-h-[200px] min-w-0 flex-1 flex-col px-6">
-          {entries.length > 0 && (
-            <div className="mb-4 flex flex-wrap items-center gap-2">
-              <div className="relative flex-1 max-w-xs">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('hosts.search')} className="h-9 pl-9 text-sm" />
-              </div>
-              <div className="flex-1" />
-              <p className="text-xs text-muted-foreground">
-                {t('knownHosts.verified', { n: entries.length })}
-              </p>
-            </div>
+      {entries.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative w-full max-w-xs">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={c.search} className="h-9 pl-9 text-sm" />
+          </div>
+          {hosts && (
+            <SegmentedTabs<KnownHostFilter>
+              label={c.filterLabel}
+              size="md"
+              value={filter}
+              onChange={setFilter}
+              options={([
+                ['all', c.all, entries.length],
+                ['associated', c.associated, associatedCount],
+                ['unassociated', c.unassociated, entries.length - associatedCount],
+              ] as const).map(([value, label, n]) => ({
+                value,
+                label: <>{label} <span className="ml-0.5 font-mono text-[10px] text-[var(--workspace-text-subtle)]">{n}</span></>,
+              }))}
+            />
           )}
+        </div>
+      )}
 
-          {/* Host list */}
-          <div className="pb-6">
-            {filteredEntries.length === 0 ? (
-              <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-border py-16">
-                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                  <Fingerprint className="h-7 w-7" />
-                </div>
-                <div className="text-center">
-                  <p className="font-medium">
-                    {entries.length === 0 ? t('knownHosts.empty') : t('hosts.noMatch')}
-                  </p>
-                  <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-                    {entries.length === 0 ? t('knownHosts.emptyHint') : t('hosts.noMatchHint')}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {filteredEntries.map((entry) => (
-                  <div
+      {filteredEntries.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[color:var(--workspace-border-soft)] py-16">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--workspace-surface-800)] text-[var(--workspace-text-subtle)]">
+            <Fingerprint className="h-7 w-7" />
+          </div>
+          <div className="text-center">
+            <p className="font-medium text-[var(--workspace-text-strong)]">
+              {entries.length === 0 ? t('knownHosts.empty') : t('hosts.noMatch')}
+            </p>
+            <p className="mt-1 max-w-xs text-sm text-[var(--workspace-text-muted)]">
+              {entries.length === 0 ? t('knownHosts.emptyHint') : t('hosts.noMatchHint')}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="sb-card overflow-x-auto p-0">
+          <table className="w-full min-w-[720px] text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-[color:var(--workspace-border-soft)]">
+                <th className={th}>{c.colHost}</th>
+                <th className={th}>{c.colKeyType}</th>
+                <th className={th}>{c.colFingerprint}</th>
+                <th className={th}>{c.colAdded}</th>
+                <th className={th}>{c.colStatus}</th>
+                <th className={th} />
+              </tr>
+            </thead>
+            <tbody>
+              {filteredEntries.map((entry) => {
+                const name = hostNameOf(entry)
+                const unassociated = Boolean(hosts) && !name
+                return (
+                  <tr
                     key={`${entry.host}:${entry.port}`}
-                    className="group flex items-start gap-3 rounded-xl border p-4 transition-colors hover:bg-muted/30"
+                    className="group border-b border-[color:var(--workspace-border-soft)] transition-colors last:border-0 hover:bg-[var(--workspace-surface-800)]"
                   >
-                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
-                      <ShieldCheck className="h-4.5 w-4.5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                        <p className="min-w-0 truncate text-sm font-medium">{entry.host}</p>
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                          :{entry.port}
-                        </span>
-                        <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                          {entry.keyType}
-                        </span>
-                      </div>
-                      <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground" title={entry.fingerprintSha256}>
+                    <td className="px-4 py-2.5">
+                      <p className={cn('truncate font-medium', unassociated ? 'text-[var(--workspace-text-muted)]' : 'text-[var(--workspace-text-strong)]')}>
+                        {name ?? (unassociated ? c.unassociatedName : entry.host)}
+                      </p>
+                      <p className="truncate font-mono text-[11px] text-[var(--workspace-text-subtle)]">{entry.host}:{entry.port}</p>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className="rounded border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--workspace-text)]">
+                        {entry.keyType}
+                      </span>
+                    </td>
+                    <td className="max-w-[16rem] px-4 py-2.5">
+                      <p className="truncate font-mono text-[11px] text-[var(--workspace-text-muted)]" title={entry.fingerprintSha256}>
                         {entry.fingerprintSha256}
                       </p>
-                      <p className="mt-1 text-[11px] text-muted-foreground/70">
-                        {t('knownHosts.recorded', { date: formatDate(entry.addedAt) })}
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => void handleRemove(entry)}
-                      title={t('knownHosts.remove')}
-                      className="shrink-0 text-muted-foreground opacity-100 transition-opacity hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {entries.length > 0 && (
-              <div className="mt-6 flex items-start gap-2 rounded-lg bg-muted/40 px-4 py-3">
-                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  {t('knownHosts.mitmWarning')}
-                </p>
-              </div>
-            )}
-          </div>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-[var(--workspace-text-muted)]" title={t('knownHosts.recorded', { date: formatDateTime(entry.addedAt) })}>
+                      {formatDate(entry.addedAt)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2.5">
+                      <span className={cn('inline-flex items-center gap-1.5 text-xs font-medium', unassociated ? 'text-[var(--workspace-text-subtle)]' : 'text-[var(--workspace-status-good-text)]')}>
+                        <span className={cn('h-1.5 w-1.5 rounded-full', unassociated ? 'bg-[var(--workspace-text-subtle)]' : 'bg-[var(--workspace-status-good)]')} />
+                        {unassociated ? c.unassociatedHost : c.verified}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2.5 text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void handleCopy(entry)}
+                        title={c.copy}
+                        aria-label={c.copy}
+                        className="h-7 w-7 p-0 text-[var(--workspace-text-subtle)] hover:text-[var(--workspace-text-strong)]"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void handleRemove(entry)}
+                        title={t('knownHosts.remove')}
+                        className="h-7 w-7 p-0 text-[var(--workspace-text-subtle)] hover:text-[var(--workspace-status-bad-text)]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
-      </div>
+      )}
+
+      {entries.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-4 py-3">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-[var(--workspace-status-warn)]" />
+          <p className="text-xs leading-relaxed text-[var(--workspace-text-muted)]">
+            {t('knownHosts.mitmWarning')}
+          </p>
+        </div>
+      )}
     </div>
   )
 }

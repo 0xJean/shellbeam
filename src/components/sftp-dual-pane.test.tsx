@@ -9,6 +9,7 @@ const sftpListDir = vi.fn()
 const sftpHomeDir = vi.fn()
 const fetchAndAddKnownHost = vi.fn()
 const sftpDeletePath = vi.fn()
+const sftpUploadFile = vi.fn()
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 
@@ -23,7 +24,7 @@ vi.mock('@/lib/sftp', () => ({
   sftpHomeDir: (payload: unknown) => sftpHomeDir(payload),
   sftpListDir: (payload: unknown) => sftpListDir(payload),
   sftpDownloadFile: vi.fn(),
-  sftpUploadFile: vi.fn(),
+  sftpUploadFile: (payload: unknown) => sftpUploadFile(payload),
   sftpDeletePath: (payload: unknown) => sftpDeletePath(payload),
   sftpRenamePath: vi.fn(),
   sftpCreateDir: vi.fn(),
@@ -45,6 +46,7 @@ describe('sftp dual pane', () => {
     sftpHomeDir.mockReset().mockResolvedValue('/root')
     fetchAndAddKnownHost.mockReset()
     sftpDeletePath.mockReset()
+    sftpUploadFile.mockReset()
     invoke.mockReset()
     vi.stubGlobal('crypto', webcrypto)
     let jobCount = 0
@@ -162,5 +164,23 @@ describe('sftp dual pane', () => {
     expect(invoke.mock.calls.filter(([command, payload]) => command === 'operation_job_create' && payload.request.action === 'file.delete')).toHaveLength(2)
     expect(sftpDeletePath).toHaveBeenCalledWith(expect.objectContaining({ hostId: 'host-1', vaultId: 'team' }))
     expect(fetchAndAddKnownHost).not.toHaveBeenCalled()
+  })
+
+  it('queues dropped uploads with their native transfer id and reports a failed post-state check', async () => {
+    sftpListDir.mockResolvedValue([{ path: '/root/a', fileName: 'a', isDir: false }])
+    vi.spyOn(window, 'prompt').mockReturnValue('OVERWRITE')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<SftpDualPane hosts={[{
+      id: 'host-1', name: 'Production API', address: '10.0.0.15', port: 22, username: 'root', group: 'Default',
+      authType: 'password', tags: [], createdAt: 0, updatedAt: 0,
+    }]} selectedHostId="host-1" resolveAuthSecret={async () => 'secret'} />)
+    fireEvent.click(screen.getByRole('button', { name: 'sftp.remoteTab' }))
+    const row = await screen.findByText('a')
+    const file = { name: 'drop.txt', size: 5, arrayBuffer: async () => new TextEncoder().encode('hello').buffer }
+    fireEvent.drop(row, { dataTransfer: { files: [file], items: [file] } })
+    await waitFor(() => expect(sftpUploadFile).toHaveBeenCalledWith(expect.objectContaining({ remotePath: '/root/drop.txt', transferId: expect.stringMatching(/^upload-/) })))
+    const item = await screen.findByTestId('sftp-transfer-item')
+    expect(item).toHaveTextContent('drop.txt')
+    await waitFor(() => expect(item).toHaveAttribute('data-state', 'failed'))
   })
 })

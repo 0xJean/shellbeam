@@ -67,7 +67,7 @@ export function MobileToolsPage({ vaultId, onNavigate }: { vaultId?: string | nu
             <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--workspace-status-good)]" />
             <span className="min-w-0 flex-1">
               <b className="block truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{rule.name}</b>
-              <small className="block truncate font-mono text-xs text-[var(--workspace-text-muted)]">{rule.bindHost}:{rule.bindPort} → {rule.targetHost}:{rule.targetPort}</small>
+              <small className="block truncate font-mono text-xs text-[var(--workspace-text-muted)]">{rule.bindHost}:{rule.bindPort} → {rule.type === 'dynamic' ? 'SOCKS' : `${rule.targetHost}:${rule.targetPort}`}</small>
             </span>
           </div>
         ))}

@@ -8,12 +8,13 @@ import { CLOSE_SESSION_REQUEST_EVENT, OPEN_KNOWN_HOSTS_REQUEST_EVENT, OPEN_SFTP_
 import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
 import { InteractiveTour } from '@/components/interactive-tour'
 import { getBrowserTabRouteIndicator } from '@/components/browser/browser-view-state'
+import { BrowserOverviewDialog } from '@/components/browser/browser-overview-dialog'
+import { BrowserSwitcherDialog } from '@/components/browser/browser-switcher-dialog'
 import { MobileSessionHeader } from '@/components/mobile-session-header'
 import { MobileBottomNav, PcNavSidebar } from '@/components/pc-nav-sidebar'
 import { PcSessionTabBar, type SessionBrowserTabMeta } from '@/components/pc-tab-bar'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { SessionConnectPlaceholder } from '@/components/session-connect-placeholder'
 import { SessionTerminalView } from '@/components/session-terminal-view'
 import { TerminalRightSidebar } from '@/components/terminal-right-sidebar'
@@ -36,7 +37,7 @@ import { useT } from '@/lib/i18n'
 import { TOUR_ROUTES, type InteractiveTourId, type TourOutcome } from '@/lib/interactive-tour'
 import { cn } from '@/lib/utils'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
-import { ChevronLeft, Globe, MoveRight, PanelTopOpen, Search, Trash2, X } from 'lucide-react'
+import { ChevronLeft, PanelTopOpen, X } from 'lucide-react'
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
 type BrowserOverviewScope = 'all' | 'remote' | 'local' | 'pending'
@@ -719,7 +720,6 @@ export function PcLayout() {
       window.removeEventListener(OPEN_KNOWN_HOSTS_REQUEST_EVENT, onKnownHosts)
     }
   }, [app, requestCloseSession])
-  const activeBrowserSwitcherEntry = filteredBrowserSwitcherEntries[browserSwitcherActiveIndex] ?? filteredBrowserSwitcherEntries[0] ?? null
   const browserOverviewEntry = resumableBrowserSessions.length > 0 ? (
     <button
       type="button"
@@ -912,320 +912,33 @@ export function PcLayout() {
           </div>
         </DialogContent>
       </Dialog>
-      <Dialog open={browserSwitcherOpen} onOpenChange={setBrowserSwitcherOpen}>
-        <DialogContent className="md:max-w-2xl">
-          <div
-            className="space-y-4"
-            onKeyDown={(event) => {
-              if (!browserSwitcherOpen) return
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                setBrowserSwitcherOpen(false)
-                return
-              }
-              if (event.key === 'ArrowDown') {
-                event.preventDefault()
-                setBrowserSwitcherActiveIndex((current) => (
-                  filteredBrowserSwitcherEntries.length === 0
-                    ? 0
-                    : (current + 1) % filteredBrowserSwitcherEntries.length
-                ))
-                return
-              }
-              if (event.key === 'ArrowUp') {
-                event.preventDefault()
-                setBrowserSwitcherActiveIndex((current) => (
-                  filteredBrowserSwitcherEntries.length === 0
-                    ? 0
-                    : (current - 1 + filteredBrowserSwitcherEntries.length) % filteredBrowserSwitcherEntries.length
-                ))
-                return
-              }
-              if (event.key === 'Enter' && activeBrowserSwitcherEntry) {
-                event.preventDefault()
-                handleCommitBrowserSwitcherEntry(activeBrowserSwitcherEntry)
-              }
-            }}
-          >
-            <div className="space-y-1">
-              <div className="text-lg font-semibold text-foreground">{t('browser.switcher.title')}</div>
-              <div className="text-sm text-muted-foreground">
-                {t('browser.switcher.description')}
-              </div>
-            </div>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
-              <Input
-                ref={browserSwitcherInputRef}
-                value={browserSwitcherQuery}
-                onChange={(event) => setBrowserSwitcherQuery(event.target.value)}
-                placeholder={t('browser.switcher.searchPlaceholder')}
-                aria-label={t('browser.switcher.searchLabel')}
-                className="h-11 rounded-2xl border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] pl-10 text-[var(--workspace-text)] placeholder:text-[var(--workspace-text-subtle)]"
-              />
-            </div>
-            <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
-              {filteredBrowserSwitcherEntries.length > 0 ? (
-                filteredBrowserSwitcherEntries.map((entry, index) => (
-                  <div
-                    key={entry.id}
-                    className={cn(
-                      'flex items-start gap-2 rounded-2xl border px-3 py-3 transition-[border-color,background-color]',
-                      index === browserSwitcherActiveIndex
-                        ? 'border-[var(--workspace-accent-solid)]/45 bg-[var(--workspace-surface-900)]'
-                        : 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/72 hover:border-[var(--workspace-border-strong)] hover:bg-[var(--workspace-surface-900)]',
-                    )}
-                    onMouseEnter={() => setBrowserSwitcherActiveIndex(index)}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleCommitBrowserSwitcherEntry(entry)}
-                      className="flex min-w-0 flex-1 items-start gap-3 text-left"
-                      aria-label={t('browser.switcher.switchToTab', { title: entry.title, host: entry.hostName })}
-                    >
-                      <div className={cn(
-                        'mt-1 h-2.5 w-2.5 shrink-0 rounded-full',
-                        entry.routeScope === 'remote'
-                          ? 'bg-sky-300'
-                          : entry.routeScope === 'pending'
-                            ? 'bg-amber-300'
-                            : 'bg-emerald-300',
-                      )} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <div className="truncate text-sm font-semibold text-[var(--workspace-text)]">{entry.title}</div>
-                          {entry.isActive && (
-                            <span className="shrink-0 rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
-                              {t('browser.tab.active')}
-                            </span>
-                          )}
-                          <span className={cn(
-                            'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]',
-                            entry.routeScope === 'remote'
-                              ? 'border-sky-500/25 bg-sky-500/10 text-sky-200'
-                              : entry.routeScope === 'pending'
-                                ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
-                                : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
-                          )}>
-                            {entry.routeLabel}
-                          </span>
-                        </div>
-                        <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">
-                          {entry.hostName} · {entry.hostAddress}
-                        </div>
-                        {entry.url && (
-                          <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{entry.url}</div>
-                        )}
-                      </div>
-                      <MoveRight className="mt-1 h-4 w-4 shrink-0 text-[var(--workspace-text-subtle)]" />
-                    </button>
-                    <div className="flex shrink-0 items-center gap-1 self-center">
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          handleCloseBrowserSwitcherTab(entry)
-                        }}
-                        className="flex h-8 w-8 items-center justify-center rounded-xl text-[var(--workspace-text-subtle)] transition-colors hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text)]"
-                        aria-label={t('browser.switcher.closeTab', { title: entry.title, host: entry.hostName })}
-                        title={t('browser.switcher.closeTabShort')}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          handleClearBrowserSwitcherSession(entry.sessionId)
-                        }}
-                        className="flex h-8 w-8 items-center justify-center rounded-xl text-[var(--workspace-text-subtle)] transition-colors hover:bg-red-500/12 hover:text-red-200"
-                        aria-label={t('browser.switcher.clearSession', { host: entry.hostName })}
-                        title={t('browser.switcher.clearSessionShort')}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="rounded-2xl border border-dashed border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/66 px-4 py-6 text-center">
-                  <div className="text-sm font-medium text-[var(--workspace-text)]">{t('browser.switcher.noMatches')}</div>
-                  <div className="mt-1 text-xs text-[var(--workspace-text-subtle)]">{t('browser.switcher.noMatchesHint')}</div>
-                </div>
-              )}
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={browserOverviewOpen} onOpenChange={setBrowserOverviewOpen}>
-        <DialogContent className="max-md:w-full md:max-w-5xl">
-          <section className="max-h-[90vh] overflow-y-auto bg-[var(--workspace-surface-950)] p-4 text-[var(--workspace-text)] md:max-h-[86vh] md:rounded-2xl md:p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-semibold text-[var(--workspace-text-strong)]">
-                  <PanelTopOpen className="h-4 w-4 text-[var(--workspace-accent-text)]" />
-                  {t('browser.overview.title')}
-                </div>
-                <div className="mt-1 text-sm text-[var(--workspace-text-muted)]">{t('browser.overview.description')}</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setBrowserOverviewOpen(false)}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[var(--workspace-text-subtle)] transition-colors hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text)]"
-                aria-label={t('common.close')}
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex flex-wrap gap-2">
-                {([
-                  'all',
-                  'remote',
-                  'local',
-                  'pending',
-                ] as const).map((scope) => {
-                  const label = getBrowserScopeLabel(scope)
-                  return (
-                    <button
-                      key={scope}
-                      type="button"
-                      onClick={() => setBrowserOverviewScope(scope)}
-                      className={cn(
-                        'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
-                        browserOverviewScope === scope
-                          ? 'border-[var(--workspace-accent-solid)]/45 bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]'
-                          : 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-subtle)] hover:border-[var(--workspace-border-strong)] hover:text-[var(--workspace-text)]',
-                      )}
-                      aria-label={t('browser.overview.filterScope', { label })}
-                    >
-                      {label} {browserOverviewCounts[scope].tabs}
-                    </button>
-                  )
-                })}
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 py-1 text-[11px] font-semibold text-[var(--workspace-text-subtle)]">
-                  {t('browser.overview.counts', {
-                    sessions: filteredResumableBrowserSessions.length,
-                    tabs: filteredBrowserOverviewTabCount,
-                  })}
-                </div>
-                <div className="relative w-full sm:w-72">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
-                  <Input
-                    value={browserOverviewQuery}
-                    onChange={(event) => setBrowserOverviewQuery(event.target.value)}
-                    placeholder={t('browser.overview.searchPlaceholder')}
-                    aria-label={t('browser.overview.searchLabel')}
-                    className="h-10 rounded-2xl border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 text-[var(--workspace-text)] placeholder:text-[var(--workspace-text-subtle)]"
-                  />
-                </div>
-              </div>
-            </div>
-            {filteredResumableBrowserSessions.length > 0 ? (
-              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {filteredResumableBrowserSessions.map((item) => (
-                  <section
-                    key={item.sessionId}
-                    className="rounded-2xl border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]/82 p-3 shadow-[var(--workspace-shadow-card)]"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleResumeBrowserSession(item.sessionId)}
-                      className="group flex w-full items-start gap-3 rounded-2xl px-1 py-1 text-left transition-[background-color,transform] hover:bg-[var(--workspace-surface-800)]"
-                      aria-label={t('browser.overview.resumeSession', { host: item.hostName })}
-                    >
-                      <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
-                        <Globe className="h-4.5 w-4.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{item.hostName}</div>
-                          <span className="shrink-0 rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
-                            {item.visibleTabs.length === item.browserTabs
-                              ? t('browser.overview.tabCount', { count: item.browserTabs })
-                              : t('browser.overview.visibleTabCount', { visible: item.visibleTabs.length, total: item.browserTabs })}
-                          </span>
-                        </div>
-                        <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{item.hostAddress}</div>
-                        <div className="mt-3 truncate text-sm font-medium text-[var(--workspace-text)]">{item.previewTitle}</div>
-                        {item.activeUrl && (
-                          <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{item.activeUrl}</div>
-                        )}
-                      </div>
-                      <MoveRight className="mt-1 h-4 w-4 shrink-0 text-[var(--workspace-text-subtle)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--workspace-text)]" />
-                    </button>
-                    {item.visibleTabs.length > 0 && (
-                      <div className="mt-3 space-y-2 border-t border-[var(--workspace-border-soft)] pt-3">
-                        <div className="flex items-center justify-between gap-2 px-1">
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-subtle)]">{t('browser.overview.openTabs')}</div>
-                          <div className="text-[11px] text-[var(--workspace-text-subtle)]">{t('browser.overview.openTabsHint')}</div>
-                        </div>
-                        {item.visibleTabs.slice(0, 4).map((tab) => (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            onClick={() => handleResumeBrowserTab(item.sessionId, tab.id)}
-                            className="flex w-full items-start gap-3 rounded-2xl border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]/72 px-3 py-2 text-left transition-[border-color,background-color] hover:border-[var(--workspace-accent-solid)]/40 hover:bg-[var(--workspace-surface-800)]"
-                            aria-label={t('browser.overview.resumeTab', { title: tab.title, host: item.hostName })}
-                          >
-                            <div className={cn(
-                              'mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full',
-                              tab.routeIndicator?.scope === 'remote'
-                                ? 'bg-[color:var(--workspace-status-info)]'
-                                : tab.routeIndicator?.scope === 'pending'
-                                  ? 'bg-[color:var(--workspace-status-warn)]'
-                                  : 'bg-[color:var(--workspace-status-good)]',
-                            )} />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <div className="truncate text-sm font-medium text-[var(--workspace-text)]">{tab.title}</div>
-                                {tab.isActive && (
-                                  <span className="shrink-0 rounded-full border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-subtle)]">
-                                    {t('browser.tab.active')}
-                                  </span>
-                                )}
-                                {tab.routeIndicator && (
-                                  <span className={cn(
-                                    'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]',
-                                    tab.routeIndicator.scope === 'remote'
-                                      ? 'border-[color:var(--workspace-status-info-border)] bg-[var(--workspace-status-info-bg)] text-[color:var(--workspace-status-info-text)]'
-                                      : tab.routeIndicator.scope === 'pending'
-                                        ? 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]'
-                                        : 'border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]',
-                                  )}>
-                                    {tab.routeIndicator.label}
-                                  </span>
-                                )}
-                              </div>
-                              {tab.url && (
-                                <div className="mt-1 truncate text-xs text-[var(--workspace-text-subtle)]">{tab.url}</div>
-                              )}
-                            </div>
-                          </button>
-                        ))}
-                        {item.visibleTabs.length > 4 && (
-                          <div className="px-1 text-xs text-[var(--workspace-text-subtle)]">
-                            {t('browser.overview.moreTabs', { count: item.visibleTabs.length - 4 })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </section>
-                ))}
-              </div>
-            ) : (
-              <div className="mt-4 rounded-2xl border border-dashed border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]/66 px-4 py-6 text-center">
-                <div className="text-sm font-medium text-[var(--workspace-text)]">{t('browser.overview.noMatches')}</div>
-                <div className="mt-1 text-xs text-[var(--workspace-text-subtle)]">
-                  {t('browser.overview.noMatchesHint')}
-                </div>
-              </div>
-            )}
-          </section>
-        </DialogContent>
-      </Dialog>
+      <BrowserSwitcherDialog
+        open={browserSwitcherOpen}
+        onOpenChange={setBrowserSwitcherOpen}
+        inputRef={browserSwitcherInputRef}
+        query={browserSwitcherQuery}
+        onQueryChange={setBrowserSwitcherQuery}
+        entries={filteredBrowserSwitcherEntries}
+        activeIndex={browserSwitcherActiveIndex}
+        onActiveIndexChange={setBrowserSwitcherActiveIndex}
+        onCommit={handleCommitBrowserSwitcherEntry}
+        onCloseTab={handleCloseBrowserSwitcherTab}
+        onClearSession={handleClearBrowserSwitcherSession}
+      />
+      <BrowserOverviewDialog
+        open={browserOverviewOpen}
+        onOpenChange={setBrowserOverviewOpen}
+        scope={browserOverviewScope}
+        onScopeChange={setBrowserOverviewScope}
+        getScopeLabel={getBrowserScopeLabel}
+        scopeCounts={browserOverviewCounts}
+        query={browserOverviewQuery}
+        onQueryChange={setBrowserOverviewQuery}
+        sessions={filteredResumableBrowserSessions}
+        visibleTabCount={filteredBrowserOverviewTabCount}
+        onResumeSession={handleResumeBrowserSession}
+        onResumeTab={handleResumeBrowserTab}
+      />
       <div className="hidden shrink-0 md:block">
         <PcSessionTabBar
           sessionTabs={sessions.pcSessionTabs}
@@ -1733,7 +1446,7 @@ export function PcLayout() {
               )}
               {app.pcSidebarNav === 'known-hosts' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
-                  <KnownHostsPanel onOutput={app.setOutput} onError={app.setOutput} />
+                  <KnownHostsPanel hosts={hostsCtx.hosts} onOutput={app.setOutput} onError={app.setOutput} />
                 </Suspense>
               )}
               {app.pcSidebarNav === 'sftp' && (
@@ -1753,10 +1466,24 @@ export function PcLayout() {
                   </div>
                 </Suspense>
               )}
-              {app.pcSidebarNav === 'sync' && (
+              {(app.pcSidebarNav === 'sync' || app.pcSidebarNav === 'backup') && (
                 <Suspense fallback={<DashboardSectionFallback />}>
                   <div className="p-6">
                     <SyncCenterPanel
+                      focusSection={app.pcSidebarNav === 'backup' ? 'backup' : 'sync'}
+                      backupPanel={
+                        <BackupRestorePanel
+                          vaultId={vault.activeVaultId}
+                          onSuccess={app.setOutput}
+                          onError={app.setOutput}
+                          onRestoreComplete={() => {
+                            void hostsCtx.refreshHosts()
+                            void snippets.refresh()
+                            void vault.refreshVault()
+                            void sync.refresh()
+                          }}
+                        />
+                      }
                       localDevice={sync.localDevice}
                       changes={sync.changes}
                       cursors={sync.cursors}
@@ -1777,23 +1504,6 @@ export function PcLayout() {
               {app.pcSidebarNav === 'activity' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
                   <ActivityLogPanel hosts={hostsCtx.hosts} />
-                </Suspense>
-              )}
-              {app.pcSidebarNav === 'backup' && (
-                <Suspense fallback={<DashboardSectionFallback />}>
-                  <div className="p-6">
-                    <BackupRestorePanel
-                      vaultId={vault.activeVaultId}
-                      onSuccess={app.setOutput}
-                      onError={app.setOutput}
-                      onRestoreComplete={() => {
-                        void hostsCtx.refreshHosts()
-                        void snippets.refresh()
-                        void vault.refreshVault()
-                        void sync.refresh()
-                      }}
-                    />
-                  </div>
                 </Suspense>
               )}
               {app.pcSidebarNav === 'settings' && (

@@ -1,4 +1,5 @@
 import { SnippetCompactList } from '@/components/snippet-compact-list'
+import { useSnippetVariableFill } from '@/hooks/use-snippet-variable-fill'
 import { FontSizeControl, TerminalThemeGrid } from '@/components/terminal-widgets'
 import { useT } from '@/lib/i18n'
 import {
@@ -129,6 +130,7 @@ function StatusTab({ hosts, vaultId, hostAddress, snippets, onRunSnippet, onShow
 }) {
   const { t, locale } = useT()
   const c = terminalSidebarCopy[locale]
+  const variableFill = useSnippetVariableFill()
   const host = resolveWorkspaceMetricsHost(hosts, { hostAddress, vaultId }) ?? null
   const provider = useWorkspaceProviderState({ host, hosts, vaultId })
   const snapshot = provider.view?.metrics ?? null
@@ -146,6 +148,7 @@ function StatusTab({ hosts, vaultId, hostAddress, snippets, onRunSnippet, onShow
   ]
   return (
     <div data-testid="terminal-sidebar-status" className="space-y-5 p-4">
+      {variableFill.dialog}
       <section>
         <div className="mb-2 flex items-center justify-between text-xs"><h3 className="font-semibold text-foreground">{c.live}</h3>
           {snapshot?.sampledAt ? <span className="text-[11px] text-muted-foreground">{new Date(snapshot.sampledAt).toLocaleTimeString(locale)}</span> : null}</div>
@@ -169,7 +172,7 @@ function StatusTab({ hosts, vaultId, hostAddress, snippets, onRunSnippet, onShow
           <button type="button" onClick={onShowSnippets} className="text-muted-foreground hover:text-foreground" aria-label={t('rightSidebar.snippets')}><ArrowUpRight className="h-3.5 w-3.5" /></button></div>
         <ul className="space-y-1">
           {snippets.slice(0, 4).map((snippet) => <li key={snippet.id}>
-            <button type="button" onClick={() => onRunSnippet(snippet.command)} title={snippet.command} className="flex w-full items-center gap-2 rounded-md border border-border/50 px-2.5 py-2 text-left text-xs hover:bg-muted/50">
+            <button type="button" onClick={() => variableFill.request(snippet.command, onRunSnippet, snippet.name)} title={snippet.command} className="flex w-full items-center gap-2 rounded-md border border-border/50 px-2.5 py-2 text-left text-xs hover:bg-muted/50">
               <Code2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /><span className="min-w-0 flex-1 truncate">{snippet.name}</span><Play className="h-3 w-3 shrink-0 text-muted-foreground" />
             </button>
           </li>)}
