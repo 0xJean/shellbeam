@@ -1119,7 +1119,7 @@ export function WorkspaceAssetInventoryApp({
       data-tour="monitor-page"
       className={cn(
         'flex min-w-0 flex-col text-[var(--workspace-text)]',
-        isMobile ? 'min-h-0 gap-4 overflow-visible' : 'h-full min-h-[34rem] overflow-hidden',
+        isMobile ? 'min-h-0 gap-4 overflow-visible' : 'h-full min-h-[34rem] overflow-y-auto xl:overflow-hidden',
       )}
     >
       <AssetInventoryHeader
@@ -1143,7 +1143,8 @@ export function WorkspaceAssetInventoryApp({
 
       <div className={cn(
         'grid min-w-0 gap-4',
-        isMobile ? 'pt-0' : 'min-h-0 flex-1 pt-4 xl:grid-cols-[minmax(20rem,0.68fr)_minmax(0,1.42fr)]',
+        // Below xl the columns stack and the page scrolls as a whole; the list keeps its own scroll, capped.
+        isMobile ? 'pt-0' : 'shrink-0 grid-rows-[minmax(0,26rem)_auto] pt-4 xl:min-h-0 xl:flex-1 xl:shrink xl:grid-cols-[minmax(20rem,0.68fr)_minmax(0,1.42fr)] xl:grid-rows-[minmax(0,1fr)]',
       )}>
         <WorkspaceServerList
           variant="compact"
@@ -1235,7 +1236,7 @@ export function WorkspaceAssetInventoryApp({
         <div
           className={cn(
             'min-w-0',
-            isMobile ? 'overflow-visible' : 'min-h-0 overflow-auto',
+            isMobile ? 'overflow-visible' : 'xl:min-h-0 xl:overflow-auto',
             view === 'assets' && !isMobile && 'rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-4 shadow-[var(--workspace-shadow-card)]',
           )}
         >
