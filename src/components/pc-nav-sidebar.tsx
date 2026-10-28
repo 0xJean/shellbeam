@@ -8,15 +8,15 @@ import {
   RefreshCw,
   Archive,
   Settings,
-  Ellipsis,
+  LayoutGrid,
   Clock,
   Network,
   SquareTerminal,
   BookOpen,
 } from 'lucide-react'
-import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
+import { isToolPage } from '@/lib/mobile-navigation'
 import logoSrc from '@/assets/logo.png'
 
 export type SidebarNavId =
@@ -33,6 +33,8 @@ export type SidebarNavId =
   | 'settings'
   | 'terminal'
   | 'guide'
+  /** Mobile-only hub that replaces the old "More" menu. */
+  | 'tools'
 
 interface NavItem {
   id: SidebarNavId
@@ -58,15 +60,15 @@ const SYSTEM_ITEMS: NavItem[] = [
   { id: 'settings', labelKey: 'nav.settings', icon: <Settings className="h-4 w-4" /> },
 ]
 
-const ALL_ITEMS = [...NAV_ITEMS, ...SYSTEM_ITEMS]
 
-const MOBILE_PRIMARY: SidebarNavId[] = ['hosts', 'terminal', 'sftp', 'settings']
-
-const MOBILE_TERMINAL_ITEM: NavItem = {
-  id: 'terminal',
-  labelKey: 'nav.terminal',
-  icon: <SquareTerminal className="h-4 w-4" />,
-}
+// Five fixed tabs, no "More": everything else is reached from Tools.
+const MOBILE_TABS: NavItem[] = [
+  { id: 'hosts', labelKey: 'nav.hosts', icon: <Server className="h-5 w-5" /> },
+  { id: 'terminal', labelKey: 'nav.sessions', icon: <SquareTerminal className="h-5 w-5" /> },
+  { id: 'sftp', labelKey: 'nav.files', icon: <FolderOpen className="h-5 w-5" /> },
+  { id: 'tools', labelKey: 'nav.tools', icon: <LayoutGrid className="h-5 w-5" /> },
+  { id: 'settings', labelKey: 'nav.settings', icon: <Settings className="h-5 w-5" /> },
+]
 
 interface PcNavSidebarProps {
   activeNav: SidebarNavId
@@ -134,75 +136,23 @@ interface MobileBottomNavProps {
 
 export function MobileBottomNav({ activeNav, onNavChange, sessionCount = 0 }: MobileBottomNavProps) {
   const { t } = useT()
-  const [moreOpen, setMoreOpen] = useState(false)
-
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] backdrop-blur supports-[backdrop-filter]:bg-[var(--workspace-nav-translucent)] md:hidden">
-      <div className="mx-auto flex items-center justify-around px-1" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-        {MOBILE_PRIMARY.map((id) => {
-          const item = id === 'terminal' ? MOBILE_TERMINAL_ITEM : ALL_ITEMS.find((i) => i.id === id)!
-          const isActive = activeNav === id
+    <nav data-testid="mobile-bottom-nav" className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] backdrop-blur-xl supports-[backdrop-filter]:bg-[var(--workspace-nav-translucent)] md:hidden">
+      <div className="mx-auto grid max-w-xl grid-cols-5 px-1" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        {MOBILE_TABS.map((item) => {
+          const isActive = item.id === 'tools' ? isToolPage(activeNav) : activeNav === item.id
           return (
-            <button
-              key={id}
-              type="button"
-              onClick={() => { onNavChange(id); setMoreOpen(false) }}
-              className={cn(
-                'relative flex flex-col items-center gap-0.5 px-3 py-2.5 text-[10px] transition-colors',
-                isActive ? 'text-workspace-nav-active' : 'text-workspace-nav',
-              )}
-            >
-              {item.icon}
+            <button key={item.id} type="button" aria-current={isActive ? 'page' : undefined} onClick={() => onNavChange(item.id)}
+              className={cn('relative flex flex-col items-center gap-1 pb-1.5 pt-2 text-[10px] font-medium transition-colors', isActive ? 'text-workspace-nav-active' : 'text-workspace-nav')}>
+              <span className={cn('flex h-7 w-12 items-center justify-center rounded-full transition-colors', isActive && 'bg-[var(--workspace-nav-active-bg)]')}>{item.icon}</span>
               <span>{t(item.labelKey)}</span>
-              {id === 'terminal' && sessionCount > 0 && (
-                <span className="absolute -top-0.5 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[color:var(--workspace-primary-500)] px-1 text-[9px] font-bold text-[color:var(--workspace-primary-foreground)]">
-                  {sessionCount}
-                </span>
+              {item.id === 'terminal' && sessionCount > 0 && (
+                <span className="absolute right-[calc(50%-1.4rem)] top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[color:var(--workspace-status-bad)] px-1 text-[9px] font-bold text-white">{sessionCount}</span>
               )}
             </button>
           )
         })}
-        <button
-          type="button"
-          onClick={() => setMoreOpen((o) => !o)}
-          className={cn(
-            'flex flex-col items-center gap-0.5 px-3 py-2.5 text-[10px] transition-colors',
-            moreOpen || !MOBILE_PRIMARY.includes(activeNav)
-              ? 'text-workspace-nav-active'
-              : 'text-[var(--workspace-text-muted)]',
-          )}
-        >
-          <Ellipsis className="h-4 w-4" />
-          <span>{t('nav.more')}</span>
-        </button>
       </div>
-
-      {/* More panel */}
-      {moreOpen && (
-        <>
-          <div className="fixed inset-0 z-[-1]" onClick={() => setMoreOpen(false)} />
-          <div className="absolute inset-x-0 bottom-full border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-2 shadow-[var(--workspace-shadow-overlay)]">
-            <div className="mx-auto grid max-w-md grid-cols-4 gap-1">
-              {ALL_ITEMS.filter((i) => !MOBILE_PRIMARY.includes(i.id) && i.id !== 'terminal').map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => { onNavChange(item.id); setMoreOpen(false) }}
-                  className={cn(
-                      'flex flex-col items-center gap-1 rounded-lg px-2 py-3 text-[11px] transition-colors',
-                      activeNav === item.id
-                      ? 'bg-[var(--workspace-nav-active-bg)] text-workspace-nav-active'
-                      : 'text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]',
-                  )}
-                >
-                  {item.icon}
-                  <span className="truncate">{t(item.labelKey)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
     </nav>
   )
 }

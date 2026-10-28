@@ -95,6 +95,9 @@ const zhCN: Record<string, string> = {
   'nav.backup': '备份',
   'nav.settings': '设置',
   'nav.terminal': '终端',
+  'nav.sessions': '会话',
+  'nav.files': '文件',
+  'nav.tools': '工具',
   'nav.more': '更多',
 
   // Phase 3D release channels, Komari/Probe operations and alert lifecycle

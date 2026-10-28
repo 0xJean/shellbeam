@@ -1,3 +1,5 @@
+import { MobileToolsPage } from '@/components/mobile-tools-page'
+import { isToolPage } from '@/lib/mobile-navigation'
 import { requestTerminalSearchToggle, TERMINAL_SEARCH_STATE_EVENT } from '@/lib/terminal-events'
 import { OPEN_SFTP_REQUEST_EVENT, OPEN_TERMINAL_REQUEST_EVENT, type HostDirectoryRequest } from '@/lib/navigation-request'
 import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
@@ -31,7 +33,7 @@ import { useT } from '@/lib/i18n'
 import { TOUR_ROUTES, type InteractiveTourId, type TourOutcome } from '@/lib/interactive-tour'
 import { cn } from '@/lib/utils'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
-import { Globe, MoveRight, PanelTopOpen, Search, Trash2, X } from 'lucide-react'
+import { ChevronLeft, Globe, MoveRight, PanelTopOpen, Search, Trash2, X } from 'lucide-react'
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
 type BrowserOverviewScope = 'all' | 'remote' | 'local' | 'pending'
@@ -1550,6 +1552,13 @@ export function PcLayout() {
                 </Suspense>
               ) : (
               <>
+              {app.pcSidebarNav !== 'tools' && isToolPage(app.pcSidebarNav) && (
+                <button type="button" data-testid="mobile-tools-back" onClick={() => app.setPcSidebarNav('tools')}
+                  className="flex items-center gap-1 px-3 pt-3 text-[15px] text-[var(--workspace-accent-text)] md:hidden">
+                  <ChevronLeft className="h-5 w-5" />{t('nav.tools')}
+                </button>
+              )}
+              {app.pcSidebarNav === 'tools' && <MobileToolsPage vaultId={vault.activeVaultId} onNavigate={app.setPcSidebarNav} />}
               {app.pcSidebarNav === 'guide' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
                   <UserGuide onStartTour={(id) => {

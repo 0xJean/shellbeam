@@ -95,6 +95,9 @@ const en: Record<string, string> = {
   'nav.backup': 'Backup',
   'nav.settings': 'Settings',
   'nav.terminal': 'Terminal',
+  'nav.sessions': 'Sessions',
+  'nav.files': 'Files',
+  'nav.tools': 'Tools',
   'nav.more': 'More',
 
   // Phase 3D release channels, Komari/Probe operations and alert lifecycle
