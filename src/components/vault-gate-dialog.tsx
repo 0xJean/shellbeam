@@ -195,7 +195,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn, h
   const quietBtn = 'text-xs text-[color:var(--workspace-text-muted)] transition-colors hover:text-[color:var(--workspace-text-strong)]'
 
   return (
-    <Dialog open={open && !deferToWelcome} onOpenChange={() => {}} className={holding ? '[&::backdrop]:bg-[var(--workspace-surface-950)]' : undefined}>
+    <Dialog open={open && !deferToWelcome} onOpenChange={() => {}} className={holding ? '[&::backdrop]:bg-background' : undefined}>
       <DialogContent className="flex h-auto max-h-dvh items-center justify-center border-0 bg-transparent p-4 md:max-w-sm md:p-0 max-md:min-h-dvh max-md:bg-[var(--workspace-surface-950)] max-md:px-0 max-md:pb-[env(safe-area-inset-bottom)] max-md:pt-[env(safe-area-inset-top)]">
         <div data-testid="vault-gate-card" className="sb-card w-full max-w-sm overflow-hidden px-8 pb-6 pt-8 shadow-2xl max-md:!border-0 max-md:!bg-transparent max-md:!shadow-none max-md:px-6">
 
