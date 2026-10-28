@@ -22,7 +22,7 @@ import { offerVaultSetup, useWelcomeOwnsVaultSetup } from '@/lib/vault-setup-han
 import { CornerDownLeft, Fingerprint, Loader2, Lock, ShieldAlert } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-type Phase = 'biometric' | 'password' | 'biometric-opt-in'
+type Phase = 'locked' | 'biometric' | 'password' | 'biometric-opt-in'
 
 interface BiometricOptInProps {
   password: string
@@ -34,9 +34,11 @@ interface VaultGateDialogProps {
   vaultStatus: VaultStatus | null
   onSubmit: (password: string) => Promise<void>
   biometricOptIn?: BiometricOptInProps
+  /** Locked during this session (auto-lock or Lock now): cover the app and wait for an explicit unlock. */
+  held?: boolean
 }
 
-export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }: VaultGateDialogProps) {
+export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn, held = false }: VaultGateDialogProps) {
   const { t, locale } = useT()
   const c = welcomeLockCopy[locale]
   const { vaults, activeVaultId, vaultAutoLockMinutes } = useVault()
@@ -51,6 +53,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
 
   const isOptInMode = !!biometricOptIn
   const isInitialized = vaultStatus?.initialized ?? false
+  const holding = held && !isOptInMode && isInitialized
   const canUseBiometric = isInitialized && bioStatus?.available && isBiometricEnabled()
   const bioLabel = biometryLabel(bioStatus?.type ?? 'none')
   // The first-run welcome creates the vault itself, through this gate's own submit handler.
@@ -67,9 +70,9 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
       setBioError('')
       bioTriggeredRef.current = false
       // If this is the opt-in dialog, go straight to opt-in phase
-      setPhase(isOptInMode ? 'biometric-opt-in' : 'password')
+      setPhase(isOptInMode ? 'biometric-opt-in' : holding ? 'locked' : 'password')
     }
-  }, [open, isOptInMode])
+  }, [open, isOptInMode, holding])
 
   // Check biometric availability
   useEffect(() => {
@@ -78,7 +81,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
       setBioStatus(status)
       // If vault is initialized and biometric is enabled, start with biometric phase
       // But not if we're in opt-in mode
-      if (!isOptInMode && vaultStatus?.initialized && status.available && isBiometricEnabled()) {
+      if (!isOptInMode && !holding && vaultStatus?.initialized && status.available && isBiometricEnabled()) {
         setPhase('biometric')
       }
       // If opt-in mode but biometric not available, close immediately
@@ -86,7 +89,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
         biometricOptIn?.onDone()
       }
     })
-  }, [open, vaultStatus?.initialized, isOptInMode]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, vaultStatus?.initialized, isOptInMode, holding]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-trigger biometric when entering biometric phase
   useEffect(() => {
@@ -192,9 +195,22 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
   const quietBtn = 'text-xs text-[color:var(--workspace-text-muted)] transition-colors hover:text-[color:var(--workspace-text-strong)]'
 
   return (
-    <Dialog open={open && !deferToWelcome} onOpenChange={() => {}}>
+    <Dialog open={open && !deferToWelcome} onOpenChange={() => {}} className={holding ? '[&::backdrop]:bg-[var(--workspace-surface-950)]' : undefined}>
       <DialogContent className="flex h-auto max-h-dvh items-center justify-center border-0 bg-transparent p-4 md:max-w-sm md:p-0 max-md:min-h-dvh max-md:bg-[var(--workspace-surface-950)] max-md:px-0 max-md:pb-[env(safe-area-inset-bottom)] max-md:pt-[env(safe-area-inset-top)]">
         <div data-testid="vault-gate-card" className="sb-card w-full max-w-sm overflow-hidden px-8 pb-6 pt-8 shadow-2xl max-md:!border-0 max-md:!bg-transparent max-md:!shadow-none max-md:px-6">
+
+          {/* ── Phase: Locked during the session, waiting for the user ── */}
+          {phase === 'locked' && (
+            <>
+              <GateHeader title={c.locked} desc={vaultInfo || t('vault.unlockDesc')} />
+              <Button data-testid="vault-held-unlock" type="button" autoFocus
+                onClick={() => setPhase(canUseBiometric ? 'biometric' : 'password')}
+                className="h-10 w-full gap-2 rounded-lg bg-[color:var(--workspace-primary-500)] font-semibold text-white hover:opacity-90 max-md:h-12 max-md:rounded-xl max-md:text-[15px]">
+                {canUseBiometric ? <Fingerprint className="h-4 w-4" /> : <Lock className="h-4 w-4" />}{t('vault.unlockBtn')}
+              </Button>
+              <p className="pt-3 text-center text-xs text-[color:var(--workspace-text-subtle)]">{fill(c.autoLock, { minutes: vaultAutoLockMinutes })}</p>
+            </>
+          )}
 
           {/* ── Phase: Biometric auto-unlock ── */}
           {phase === 'biometric' && (
