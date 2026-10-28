@@ -34,6 +34,7 @@ import { LOCALE_OPTIONS, useT } from '@/lib/i18n'
 import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
 import type { TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
+import { useThemePreference, type ThemePreference } from '@/hooks/use-theme'
 import { consumeSettingsCategoryRequest, SETTINGS_CATEGORY_REQUEST_EVENT, type SettingsCategory } from '@/lib/settings-request'
 import { Activity, AlertTriangle, BookOpen, Eye, EyeOff, Fingerprint, Monitor, Moon, Plug, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Sun, TerminalSquare, Wrench } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -72,7 +73,6 @@ export function SettingsPanel({
   defaultUsername,
   keepAliveIntervalSecs,
   theme,
-  onToggleTheme,
   terminalPrefs,
   onTerminalPrefsChange,
   onVaultAutoLockMinutesChange,
@@ -135,10 +135,7 @@ export function SettingsPanel({
               <span className="text-sm text-muted-foreground">{t('settings.theme')}</span>
               <p className="text-xs text-muted-foreground">{t('settings.themeToggle')}</p>
             </div>
-            <Button variant="outline" size="sm" className="gap-2" onClick={onToggleTheme}>
-              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              {theme === 'dark' ? t('settings.light') : t('settings.dark')}
-            </Button>
+            <ThemePreferenceControl />
           </div>
           <div className="mt-4 border-t pt-4">
             <span className="text-sm text-muted-foreground">{t('settings.palettes')}</span>
@@ -557,4 +554,16 @@ function ClearDataSection() {
       </Dialog>
     </section>
   )
+}
+
+function ThemePreferenceControl() {
+  const { t } = useT()
+  const [preference, setPreference] = useThemePreference()
+  const options: Array<[ThemePreference, string, typeof Sun]> = [['light', t('settings.light'), Sun], ['dark', t('settings.dark'), Moon], ['system', t('settings.themeSystem'), Monitor]]
+  return <div role="radiogroup" aria-label={t('settings.theme')} data-testid="settings-theme-preference" className="inline-flex rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] p-0.5">
+    {options.map(([value, label, Icon]) => <button key={value} type="button" role="radio" aria-checked={preference === value} onClick={() => setPreference(value)}
+      className={cn('inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors', preference === value ? 'bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-sm ring-1 ring-[color:var(--workspace-border-soft)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
+      <Icon className="h-3.5 w-3.5" />{label}
+    </button>)}
+  </div>
 }

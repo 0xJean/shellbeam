@@ -26,6 +26,7 @@ import { ProviderHistoryDisclosure } from './provider-history-panel'
 import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
 import { WorkspaceStatusCards } from './workspace-status-cards'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
+import { SessionVaultMismatchCard } from './session-state-card'
 
 function LiveClock() {
   const [time, setTime] = useState(() =>
@@ -85,7 +86,7 @@ export function WorkspaceMobileShell({
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
   const content = (() => {
-    if (sessionVaultMismatch && activeApp !== 'terminal') return <p role="status" className="p-6 text-sm text-muted-foreground">{t('workspace.sessionVaultMismatch')}</p>
+    if (sessionVaultMismatch && activeApp !== 'terminal') return <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} />
     if (activeApp === 'assetInventory') {
       if (resolveAuthSecret) {
         return <WorkspaceAssetInventoryApp activeVaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} presentation="mobile" onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
@@ -212,7 +213,7 @@ export function WorkspaceMobileShell({
           <WorkspaceAppGrid activeApp={activeApp} onSelectApp={onSelectApp} variant="ios-grid" />
         </div>
         {isOverview && <div className="space-y-4">
-          {sessionVaultMismatch ? <p role="status" className="p-4 text-sm">{t('workspace.sessionVaultMismatch')}</p> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
+          {sessionVaultMismatch ? <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} className="p-0" /> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
           <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
           {activeVaultId && activeHost && <ProviderHistoryDisclosure vaultId={activeVaultId} hostId={activeHost.id} />}
         </div>}

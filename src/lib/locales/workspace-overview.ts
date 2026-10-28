@@ -1,6 +1,7 @@
 export const workspaceOverviewCopy = {
   en: {
     resources: 'Resources',
+    load: 'Load',
     noMetrics: 'No resource sample yet.',
     noMetricsHint: 'Terminal, files and SSH operations remain available.',
     source: 'Source',
@@ -18,6 +19,7 @@ export const workspaceOverviewCopy = {
   },
   'zh-CN': {
     resources: '资源',
+    load: '负载',
     noMetrics: '暂无资源采样。',
     noMetricsHint: '仍可使用终端、文件和 SSH 运维功能。',
     source: '来源',

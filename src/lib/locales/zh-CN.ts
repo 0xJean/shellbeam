@@ -706,7 +706,8 @@ const zhCN: Record<string, string> = {
   'settings.desc': '应用偏好和行为',
   'settings.appearance': '外观',
   'settings.theme': '主题',
-  'settings.themeToggle': '在浅色和深色模式之间切换',
+  'settings.themeToggle': '浅色、深色，或跟随系统外观自动切换',
+  'settings.themeSystem': '跟随系统',
   'settings.light': '浅色',
   'settings.dark': '深色',
   'settings.palettes': '配色方案',
@@ -2285,6 +2286,7 @@ const zhCN: Record<string, string> = {
 
 
   // Right Sidebar
+  'rightSidebar.status': '实时状态',
   'rightSidebar.terminal': '终端',
   'rightSidebar.snippets': '片段',
   'rightSidebar.history': '历史',

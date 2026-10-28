@@ -706,7 +706,8 @@ const en: Record<string, string> = {
   'settings.desc': 'App preferences and behavior',
   'settings.appearance': 'Appearance',
   'settings.theme': 'Theme',
-  'settings.themeToggle': 'Toggle between light and dark mode',
+  'settings.themeToggle': 'Light, dark, or follow the system appearance',
+  'settings.themeSystem': 'System',
   'settings.light': 'Light',
   'settings.dark': 'Dark',
   'settings.palettes': 'Color palette',
@@ -2285,6 +2286,7 @@ const en: Record<string, string> = {
 
 
   // Right Sidebar
+  'rightSidebar.status': 'Live status',
   'rightSidebar.terminal': 'Terminal',
   'rightSidebar.snippets': 'Snippets',
   'rightSidebar.history': 'History',

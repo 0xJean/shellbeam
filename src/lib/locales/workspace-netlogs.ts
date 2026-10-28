@@ -1,0 +1,26 @@
+export const workspaceNetLogsCopy = {
+  en: {
+    netSubtitle: 'Read-only network snapshot · up to 200 rows per section',
+    netTabs: 'Network views', tabPorts: 'Ports & connections', tabIface: 'Interfaces & routes', tabHealth: 'Health checks & alerts',
+    direct: 'Direct', proxyJump: 'ProxyJump', sampled: 'Sampled {time}',
+    terminalNote: 'Inspect buttons send the command to the terminal',
+    shownRows: '{shown} of {total} shown',
+    logsSubtitle: 'Reads up to 200 recent lines · output capped at 256 KB',
+    following: 'Following · {remaining} left · refresh in {next}s', followingRefreshing: 'Following · {remaining} left · refreshing',
+    matched: '{matched} / {total} lines match', lines: '{total} lines',
+    filterNote: 'Filters apply on refresh · units can be passed in from Services or Network',
+    noMatches: 'No retained lines match the search.',
+  },
+  'zh-CN': {
+    netSubtitle: '只读网络快照 · 每类最多 200 行',
+    netTabs: '网络视图', tabPorts: '端口与连接', tabIface: '接口与路由', tabHealth: '健康检查与告警',
+    direct: '直连', proxyJump: 'ProxyJump', sampled: '采样于 {time}',
+    terminalNote: '检查按钮会把命令发送到终端执行',
+    shownRows: '{total} 条 · 显示 {shown} 条',
+    logsSubtitle: '读取最近最多 200 行 · 输出上限 256 KB',
+    following: '跟随中 · 剩余 {remaining} · {next} 秒后刷新', followingRefreshing: '跟随中 · 剩余 {remaining} · 正在刷新',
+    matched: '{matched} / {total} 行匹配', lines: '共 {total} 行',
+    filterNote: '过滤条件在刷新后生效 · 服务单元可从「服务」「网络」带入',
+    noMatches: '当前保留的日志中没有匹配的行。',
+  },
+} as const

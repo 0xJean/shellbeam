@@ -14,11 +14,12 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { Eraser, PanelRightClose, PanelRightOpen, RefreshCw, Sparkles, WifiOff, ExternalLink, Globe } from 'lucide-react'
+import { Eraser, PanelRightClose, PanelRightOpen, Sparkles, ExternalLink, Globe } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { AICommandBar } from './ai-command-bar'
 import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
 import { SuggestBar } from './suggest-bar'
+import { SessionConnectionLostOverlay } from './session-connection-lost-overlay'
 import { TerminalSearchBar } from './terminal-search-bar'
 import { HostMetadataLine } from './host-display-meta'
 import { WorkspaceModeToggle } from './workspace/workspace-mode-toggle'
@@ -532,30 +533,8 @@ export function SessionTerminalView({
               scheduleInputUiSync()
             }}
           />
-          {isDisconnected && !isReconnecting && onReconnect && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: `${bg}cc` }}>
-              <div className="flex flex-col items-center gap-4 rounded-xl border border-red-500/20 bg-black/60 px-8 py-6 shadow-lg backdrop-blur-sm">
-                <WifiOff className="h-8 w-8 text-red-400" />
-                <p className="text-sm font-medium text-red-300">{t('terminal.connectionLost')}</p>
-                <button
-                  type="button"
-                  onClick={onReconnect}
-                  className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-[var(--workspace-primary-foreground)] transition-colors hover:bg-primary/80"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  {t('terminal.reconnect')}
-                </button>
-              </div>
-            </div>
-          )}
-          {isReconnecting && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: `${bg}99` }}>
-              <div className="flex flex-col items-center gap-3 rounded-xl border border-amber-500/20 bg-black/60 px-8 py-6 shadow-lg backdrop-blur-sm">
-                <RefreshCw className="h-7 w-7 animate-spin text-amber-400" />
-                <p className="text-sm font-medium text-amber-300">{t('terminal.reconnecting')}</p>
-              </div>
-            </div>
-          )}
+          <SessionConnectionLostOverlay sessionId={sessionId} hostName={hostName || hostAddress} backdrop={bg} isDisconnected={isDisconnected} isReconnecting={isReconnecting} onReconnect={onReconnect} />
+
           {isConnected && (
             <MobileTerminalToolbar onSend={onSendRaw} />
           )}

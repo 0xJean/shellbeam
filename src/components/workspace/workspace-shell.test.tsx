@@ -52,11 +52,11 @@ describe('workspace shell', () => {
     const changed = { ...host, address: 'new.test' }
     const { rerender } = render(<WorkspaceShell {...props} hosts={[changed]} />)
     expect(screen.queryByTestId('workspace-desktop-shell')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Connect with new details' }))
     expect(onOpenTerminal).toHaveBeenCalledWith(changed)
     const pure = { ...host, connections: [], address: '', username: '', port: 0 }
     rerender(<WorkspaceShell {...props} hosts={[pure]} />)
-    expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Connect with new details' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Configure SSH' }))
     expect(onEditHost).toHaveBeenCalledWith(pure)
   })
@@ -376,7 +376,7 @@ describe('workspace shell', () => {
       />,
     )
 
-    expect(screen.getByText('Log Sources')).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Log Sources' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /run journalctl/i })).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByText('nginx started')).toBeInTheDocument()

@@ -31,3 +31,15 @@ export function consumeSftpRequest(hostId: string | null | undefined): string | 
 export function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
+
+/** Connection dialogs and overlays ask the app shell to open Known Hosts or close a session tab. */
+export const OPEN_KNOWN_HOSTS_REQUEST_EVENT = 'shellbeam:open-known-hosts-request'
+export const CLOSE_SESSION_REQUEST_EVENT = 'shellbeam:close-session-request'
+
+export function requestKnownHosts() {
+  window.dispatchEvent(new CustomEvent(OPEN_KNOWN_HOSTS_REQUEST_EVENT))
+}
+
+export function requestCloseSession(sessionId: string) {
+  window.dispatchEvent(new CustomEvent<{ sessionId: string }>(CLOSE_SESSION_REQUEST_EVENT, { detail: { sessionId } }))
+}

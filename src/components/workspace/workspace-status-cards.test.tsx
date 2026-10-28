@@ -260,7 +260,7 @@ describe('workspace status cards', () => {
     mergeServerMonitorStates({ [key]: { history: [], latest: { hostKey: key, hostId: host.id, hostName: host.name, hostAddress: host.address, port: host.port, username: host.username, status: 'online', snapshot, lastAttemptAt: snapshot.sampledAt, lastSuccessAt: snapshot.sampledAt, updatedAt: snapshot.sampledAt } } })
     render(<WorkspaceStatusCards hostAddress={host.address} selectedHostId={host.id} hosts={[host]} />)
 
-    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveClass('bg-[var(--workspace-surface-900)]')
+    expect(screen.getAllByTestId('workspace-status-card')[0]).toHaveClass('sb-card')
     expect(screen.getAllByTestId('workspace-status-meter')[0]).toHaveClass('bg-[var(--workspace-surface-950)]')
   })
 })

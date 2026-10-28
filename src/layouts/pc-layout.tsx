@@ -4,7 +4,7 @@ import { requestSettingsCategory } from '@/lib/settings-request'
 import { MobileToolsPage } from '@/components/mobile-tools-page'
 import { isToolPage } from '@/lib/mobile-navigation'
 import { requestTerminalAiToggle, requestTerminalSearchToggle, TERMINAL_SEARCH_STATE_EVENT } from '@/lib/terminal-events'
-import { OPEN_SFTP_REQUEST_EVENT, OPEN_TERMINAL_REQUEST_EVENT, type HostDirectoryRequest } from '@/lib/navigation-request'
+import { CLOSE_SESSION_REQUEST_EVENT, OPEN_KNOWN_HOSTS_REQUEST_EVENT, OPEN_SFTP_REQUEST_EVENT, OPEN_TERMINAL_REQUEST_EVENT, type HostDirectoryRequest } from '@/lib/navigation-request'
 import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
 import { InteractiveTour } from '@/components/interactive-tour'
 import { getBrowserTabRouteIndicator } from '@/components/browser/browser-view-state'
@@ -708,6 +708,17 @@ export function PcLayout() {
     }
     closeSessionWithGuards(sessionId)
   }, [browserMetaBySession, closeSessionWithGuards])
+  // Connection overlays and host key dialogs ask to close a tab or open Known Hosts.
+  useEffect(() => {
+    const onClose = (event: Event) => { const id = (event as CustomEvent<{ sessionId: string }>).detail?.sessionId; if (id) requestCloseSession(id) }
+    const onKnownHosts = () => { app.setPcSidebarNav('known-hosts'); setShowQuickConnect(false) }
+    window.addEventListener(CLOSE_SESSION_REQUEST_EVENT, onClose)
+    window.addEventListener(OPEN_KNOWN_HOSTS_REQUEST_EVENT, onKnownHosts)
+    return () => {
+      window.removeEventListener(CLOSE_SESSION_REQUEST_EVENT, onClose)
+      window.removeEventListener(OPEN_KNOWN_HOSTS_REQUEST_EVENT, onKnownHosts)
+    }
+  }, [app, requestCloseSession])
   const activeBrowserSwitcherEntry = filteredBrowserSwitcherEntries[browserSwitcherActiveIndex] ?? filteredBrowserSwitcherEntries[0] ?? null
   const browserOverviewEntry = resumableBrowserSessions.length > 0 ? (
     <button
@@ -1375,6 +1386,8 @@ export function PcLayout() {
                 onTerminalPrefsChange={app.updateTerminalPrefs}
                 onSearchToggle={() => { if (sessions.pcActiveSessionId) requestTerminalSearchToggle(sessions.pcActiveSessionId) }}
                 searchVisible={!!sessions.pcActiveSessionId && terminalSearchOpen[sessions.pcActiveSessionId] === true}
+                hosts={hostsCtx.hosts}
+                vaultId={vault.activeVaultId}
               />
             )}
           </div>
@@ -1523,6 +1536,8 @@ export function PcLayout() {
                   onTerminalPrefsChange={app.updateTerminalPrefs}
                   onSearchToggle={() => { if (sessions.pcActiveSessionId) requestTerminalSearchToggle(sessions.pcActiveSessionId) }}
                   searchVisible={!!sessions.pcActiveSessionId && terminalSearchOpen[sessions.pcActiveSessionId] === true}
+                  hosts={hostsCtx.hosts}
+                  vaultId={vault.activeVaultId}
                 />
               )}
             </div>

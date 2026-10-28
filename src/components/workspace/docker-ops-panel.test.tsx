@@ -58,4 +58,15 @@ describe('DockerOpsPanel', () => {
     expect(runWorkspaceRemoteCommand).toHaveBeenCalledTimes(1)
     expect(runDockerContainerAction).toHaveBeenCalledTimes(1)
   })
+
+  it('shows published ports in the container table and per-row actions', async () => {
+    vi.mocked(runWorkspaceRemoteCommand).mockResolvedValue({ stdout: '__SB_DOCKER=abc123|api|acme/api|Up 1 minute|0.0.0.0:3000->3000/tcp\n__SB_DOCKER=def456|db|postgres:16|Exited (0) 2 hours ago|', stderr: '', exitCode: 0, durationMs: 1 })
+    render(<DockerOpsPanel host={{ id: 'h1', name: 'Host', address: '127.0.0.1', port: 22, username: 'root', group: 'Custom', authType: 'password', tags: [], createdAt: 0, updatedAt: 0 }} resolveAuthSecret={vi.fn()} />)
+    expect(await screen.findByText('0.0.0.0:3000→3000/tcp')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Ports' })).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Logs' })[1])
+    await screen.findByTestId('docker-ops-output')
+    expect(runWorkspaceRemoteCommand).toHaveBeenLastCalledWith(expect.objectContaining({ command: "docker logs --tail 100 --timestamps 'def456'", audit: { action: 'docker.logs', target: 'db' } }))
+    expect(screen.getByText('db · logs')).toBeInTheDocument()
+  })
 })

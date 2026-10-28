@@ -28,6 +28,7 @@ import { NetworkOpsPanel } from './network-ops-panel'
 import { ProviderHistoryDisclosure } from './provider-history-panel'
 import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
+import { SessionVaultMismatchCard } from './session-state-card'
 
 const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
   { id: 'overview', labelKey: 'workspace.app.overview' },
@@ -204,7 +205,7 @@ export function WorkspaceDesktopShell({
   }, [activeApp])
 
   const content = (() => {
-    if (sessionVaultMismatch && activeApp !== 'terminal') return <p role="status" className="p-6 text-sm text-muted-foreground">{t('workspace.sessionVaultMismatch')}</p>
+    if (sessionVaultMismatch && activeApp !== 'terminal') return <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} />
     if (activeApp === 'assetInventory') {
       if (resolveAuthSecret) {
         return <WorkspaceAssetInventoryApp activeVaultId={activeVaultId} selectedHostId={hostId} hostAddress={hostAddress} hosts={hosts} resolveAuthSecret={resolveAuthSecret} onOpenTerminal={onOpenTerminal} onOpenProviderConsole={onOpenProviderConsole} onEditHost={onEditHost} />
@@ -349,7 +350,7 @@ export function WorkspaceDesktopShell({
   }, [])
 
   function renderWindowContent(app: WorkspaceAppId) {
-    if (sessionVaultMismatch && app !== 'terminal') return <p role="status" className="p-6 text-sm text-muted-foreground">{t('workspace.sessionVaultMismatch')}</p>
+    if (sessionVaultMismatch && app !== 'terminal') return <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} />
     if (app === activeApp) return content
 
     if (app === 'assetInventory') {
@@ -460,7 +461,7 @@ export function WorkspaceDesktopShell({
           <div className="min-h-0 flex-1 overflow-auto p-5">
             {isOverview ? (
               <div className="mx-auto grid max-w-6xl gap-4">
-                {sessionVaultMismatch ? <p role="status" className="text-sm text-muted-foreground">{t('workspace.sessionVaultMismatch')}</p> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
+                {sessionVaultMismatch ? <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} className="p-0" /> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
                 {activeVaultId && activeHost && <ProviderHistoryDisclosure vaultId={activeVaultId} hostId={activeHost.id} />}
                 <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
               </div>
@@ -532,7 +533,7 @@ export function WorkspaceDesktopShell({
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                {sessionVaultMismatch ? <p role="status" className="text-sm text-muted-foreground">{t('workspace.sessionVaultMismatch')}</p> : <WorkspaceStatusCards
+                {sessionVaultMismatch ? <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} className="p-0" /> : <WorkspaceStatusCards
                   activeVaultId={activeVaultId}
                   hostAddress={hostAddress}
                   selectedHostId={hostId}

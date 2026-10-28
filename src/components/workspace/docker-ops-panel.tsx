@@ -1,11 +1,13 @@
 import { getHostIdentity } from '@/lib/host-identity'
 import { remoteOperationStatus } from '@/lib/operation-verification'
-import { Button } from '@/components/ui/button'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { buildDockerCommand, DOCKER_LIST_COMMAND, parseDockerContainers, runDockerContainerAction, type DockerContainer } from '@/lib/docker-ops'
-import { Box, CircleAlert, FileText, Play, RefreshCw, RotateCcw, Square } from 'lucide-react'
+import { fill } from '@/lib/locales/probe-install'
+import { workspaceOpsPanelsCopy } from '@/lib/locales/workspace-ops-panels'
+import { cn } from '@/lib/utils'
+import { CircleAlert, Play, RefreshCw, RotateCcw, ScrollText, Square } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 interface DockerOpsPanelProps {
@@ -14,17 +16,38 @@ interface DockerOpsPanelProps {
 }
 
 function statusClass(running: boolean) {
-  return running ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' : 'border-amber-500/30 bg-amber-500/10 text-amber-700'
+  return running ? 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' : 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]'
+}
+
+const LOG_TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z?)(\s?)(.*)$/
+const LOG_LEVEL = /\b(error|fatal|panic|warn(?:ing)?)\b/i
+
+function highlightLine(line: string, index: number) {
+  if (/^verification=verified\b/.test(line)) return <span key={index} className="text-[color:var(--workspace-status-good-text)]">{line}</span>
+  if (/^verification=unknown\b/.test(line)) return <span key={index} className="text-[color:var(--workspace-status-warn-text)]">{line}</span>
+  const stamped = LOG_TIMESTAMP.exec(line)
+  const body = stamped ? stamped[3] : line
+  const level = LOG_LEVEL.exec(body)
+  const rest = level
+    ? <>{body.slice(0, level.index)}<span className={/^(error|fatal|panic)$/i.test(level[1]) ? 'text-[color:var(--workspace-status-bad-text)]' : 'text-[color:var(--workspace-status-warn-text)]'}>{level[1]}</span>{body.slice(level.index + level[1].length)}</>
+    : body
+  return <span key={index}>{stamped && <span className="text-[var(--workspace-text-subtle)]">{stamped[1]}{stamped[2]}</span>}{rest}</span>
+}
+
+function highlightOutput(output: string) {
+  return output.split('\n').flatMap((line, index) => index === 0 ? [highlightLine(line, index)] : ['\n', highlightLine(line, index)])
 }
 
 export function DockerOpsPanel({ host, resolveAuthSecret }: DockerOpsPanelProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const c = workspaceOpsPanelsCopy[locale].docker
   const [rows, setRows] = useState<DockerContainer[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [unsupported, setUnsupported] = useState(false)
   const [selectedName, setSelectedName] = useState<string | null>(null)
   const [output, setOutput] = useState('')
+  const [outputSource, setOutputSource] = useState<{ name: string; logs: boolean } | null>(null)
   const [action, setAction] = useState<'start' | 'stop' | 'restart' | 'logs' | null>(null)
   const scope = JSON.stringify([host.vaultId, getHostIdentity(host)])
   const currentScope = useRef(scope)
@@ -66,16 +89,17 @@ export function DockerOpsPanel({ host, resolveAuthSecret }: DockerOpsPanelProps)
     }
   }, [host, resolveAuthSecret, scope, loadErrorMessage])
 
-  async function execute(actionName: 'start' | 'stop' | 'restart' | 'logs') {
-    if (!selected) return
+  async function execute(actionName: 'start' | 'stop' | 'restart' | 'logs', container: DockerContainer) {
     const actionScope = scope
+    setSelectedName(container.name)
     setAction(actionName)
     setError('')
     try {
       if (actionName === 'logs') {
-        const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: buildDockerCommand('logs', selected.id), audit: { action: 'docker.logs', target: selected.name } })
+        const result = await runWorkspaceRemoteCommand({ host, resolveAuthSecret, command: buildDockerCommand('logs', container.id), audit: { action: 'docker.logs', target: container.name } })
         if (actionScope !== currentScope.current) return
         if (remoteOperationStatus(result) !== 'completed') setError(t('workspace.docker.observationUnavailable'))
+        setOutputSource({ name: container.name, logs: true })
         setOutput([result.stdout, result.stderr].filter(Boolean).join('\n') || (remoteOperationStatus(result) === 'completed' ? t('workspace.docker.actionCompleted') : t('workspace.docker.observationUnavailable')))
         return
       }
@@ -83,10 +107,11 @@ export function DockerOpsPanel({ host, resolveAuthSecret }: DockerOpsPanelProps)
         host,
         resolveAuthSecret,
         action: actionName,
-        container: selected,
-        confirmMessage: t('workspace.docker.confirm', { action: t(`workspace.docker.action.${actionName}`), target: selected.name }),
+        container,
+        confirmMessage: t('workspace.docker.confirm', { action: t(`workspace.docker.action.${actionName}`), target: container.name }),
       })
       if (actionScope !== currentScope.current) return
+      setOutputSource({ name: container.name, logs: false })
       if (!execution) {
         setOutput(t('workspace.operation.cancelled'))
         return
@@ -104,41 +129,80 @@ export function DockerOpsPanel({ host, resolveAuthSecret }: DockerOpsPanelProps)
 
   useEffect(() => {
     const generations = loadGeneration
-    setRows([]); setSelectedName(null); setOutput(''); setAction(null)
+    setRows([]); setSelectedName(null); setOutput(''); setOutputSource(null); setAction(null)
     void loadContainers()
     return () => { generations.current++ }
   }, [loadContainers])
 
+  const quietButton = 'inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] disabled:pointer-events-none disabled:opacity-40'
+  const outputTitle = outputSource ? fill(outputSource.logs ? c.logsTitle : c.outputTitle, { name: outputSource.name }) : null
+
   return (
-    <section data-testid="docker-ops-panel" className="space-y-3 rounded-xl border border-border/60 bg-card px-4 py-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 text-sm font-semibold"><Box className="h-4 w-4" />{t('workspace.docker.title')}</h2>
-          <p className="mt-1 text-xs text-muted-foreground">{t('workspace.docker.description')}</p>
+    <section data-testid="docker-ops-panel" className="flex min-h-0 flex-col gap-4 p-4 text-[var(--workspace-text)] md:p-5">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl font-bold tracking-tight text-[var(--workspace-text-strong)]">{c.title}</h2>
+          <p className="mt-1 text-xs text-[var(--workspace-text-muted)]">{fill(c.summary, { count: rows.length })}</p>
         </div>
-        <Button type="button" size="sm" variant="outline" onClick={() => void loadContainers()} disabled={loading}>
-          <RefreshCw className={loading ? 'mr-1.5 h-3.5 w-3.5 animate-spin' : 'mr-1.5 h-3.5 w-3.5'} />{loading ? t('workspace.docker.loading') : t('workspace.docker.reload')}
-        </Button>
-      </div>
-      {unsupported ? <div className="rounded-lg border border-dashed px-3 py-4 text-xs text-muted-foreground">{t('workspace.docker.unsupported')}</div> : error ? <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-600">{error}</div> : (
-        <div className="space-y-2">
-          {loading && rows.length === 0 ? <div className="px-2 py-4 text-xs text-muted-foreground">{t('workspace.docker.loadingContainers')}</div> : rows.length === 0 ? <div className="px-2 py-4 text-xs text-muted-foreground">{t('workspace.docker.empty')}</div> : rows.map((row) => (
-            <button key={row.id} type="button" onClick={() => setSelectedName(row.name)} className={`grid w-full grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border px-3 py-2 text-left text-xs ${selected?.name === row.name ? 'border-primary/40 bg-primary/5' : 'border-border/50 hover:bg-muted/40'}`}>
-              <div className="min-w-0"><div className="truncate font-medium">{row.name}</div><div className="truncate text-[11px] text-muted-foreground">{row.image}</div></div>
-              <div className="truncate text-muted-foreground">{row.status}</div>
-              <span className={`rounded-full border px-2 py-1 text-[10px] ${statusClass(row.running)}`}>{row.running ? t('workspace.docker.status.running') : t('workspace.docker.status.stopped')}</span>
-            </button>
-          ))}
-          {selected && <div className="flex flex-wrap gap-2 pt-1">
-            <Button type="button" size="sm" variant="outline" onClick={() => void execute('start')} disabled={action !== null || selected.running}><Play className="mr-1 h-3.5 w-3.5" />{t('workspace.docker.action.start')}</Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => void execute('stop')} disabled={action !== null || !selected.running}><Square className="mr-1 h-3.5 w-3.5" />{t('workspace.docker.action.stop')}</Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => void execute('restart')} disabled={action !== null}><RotateCcw className="mr-1 h-3.5 w-3.5" />{t('workspace.docker.action.restart')}</Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => void execute('logs')} disabled={action !== null}><FileText className="mr-1 h-3.5 w-3.5" />{t('workspace.docker.action.logs')}</Button>
-          </div>}
+        <button type="button" onClick={() => void loadContainers()} disabled={loading} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[color:var(--workspace-primary-500)] px-3 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60">
+          <RefreshCw className={loading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />{loading ? t('workspace.docker.loading') : t('workspace.docker.reload')}
+        </button>
+      </header>
+      {unsupported ? <div className="sb-card px-4 py-6 text-center text-xs text-[var(--workspace-text-muted)]">{t('workspace.docker.unsupported')}</div> : error ? <div role="alert" className="rounded-lg border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[color:var(--workspace-status-bad-text)]">{error}</div> : (
+        <div className="sb-card overflow-hidden">
+          {loading && rows.length === 0 ? <div className="px-4 py-6 text-xs text-[var(--workspace-text-muted)]">{t('workspace.docker.loadingContainers')}</div> : rows.length === 0 ? <div className="px-4 py-6 text-xs text-[var(--workspace-text-muted)]">{t('workspace.docker.empty')}</div> : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] border-collapse text-[13px]">
+                <thead>
+                  <tr className="border-b border-[color:var(--workspace-border-soft)] text-left text-xs font-medium text-[var(--workspace-text-subtle)]">
+                    <th className="px-4 py-2.5 font-medium">{c.container}</th>
+                    <th className="px-3 py-2.5 font-medium">{c.image}</th>
+                    <th className="px-3 py-2.5 font-medium">{c.status}</th>
+                    <th className="px-3 py-2.5 font-medium">{c.ports}</th>
+                    <th className="px-3 py-2.5 font-medium"><span className="sr-only">{c.actions}</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => {
+                    const isSelected = selected?.name === row.name
+                    return (
+                      <tr key={row.id} data-selected={isSelected || undefined} onClick={() => setSelectedName(row.name)} className={cn('cursor-pointer border-b border-[color:var(--workspace-border-soft)] last:border-b-0', isSelected ? 'bg-[var(--workspace-surface-row-selected)] shadow-[inset_3px_0_0_hsl(var(--primary))]' : 'hover:bg-[var(--workspace-surface-800)]')}>
+                        <td className="max-w-[200px] truncate px-4 py-3 font-semibold text-[var(--workspace-text-strong)]">{row.name}</td>
+                        <td className="max-w-[260px] truncate px-3 py-3 font-mono text-xs text-[var(--workspace-text-muted)]" title={row.image}>{row.image}</td>
+                        <td className="px-3 py-3">
+                          <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                            <span className={cn('rounded px-1.5 py-0.5 text-[11px] font-medium', statusClass(row.running))}>{row.running ? t('workspace.docker.status.running') : t('workspace.docker.status.stopped')}</span>
+                            <span className="text-xs text-[var(--workspace-text-muted)]">{row.status}</span>
+                          </span>
+                        </td>
+                        <td className="max-w-[220px] truncate px-3 py-3 font-mono text-xs text-[var(--workspace-text-muted)]" title={row.ports || undefined}>{row.ports ? row.ports.replace(/->/g, '→') : '—'}</td>
+                        <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-0.5">
+                            <button type="button" className={quietButton} onClick={() => void execute('start', row)} disabled={action !== null || row.running}><Play className="h-3.5 w-3.5" />{t('workspace.docker.action.start')}</button>
+                            <button type="button" className={quietButton} onClick={() => void execute('stop', row)} disabled={action !== null || !row.running}><Square className="h-3.5 w-3.5" />{t('workspace.docker.action.stop')}</button>
+                            <button type="button" className={quietButton} onClick={() => void execute('restart', row)} disabled={action !== null}><RotateCcw className="h-3.5 w-3.5" />{t('workspace.docker.action.restart')}</button>
+                            <button type="button" className={quietButton} onClick={() => void execute('logs', row)} disabled={action !== null}><ScrollText className="h-3.5 w-3.5" />{t('workspace.docker.action.logs')}</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
-      {output && <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-border/50 bg-muted/20 p-3 text-[11px]" data-testid="docker-ops-output">{output}</pre>}
-      {!unsupported && !error && rows.length > 0 && <p className="flex items-center gap-1 text-[11px] text-muted-foreground"><CircleAlert className="h-3 w-3" />{t('workspace.docker.auditNote')}</p>}
+      {output && (
+        <div className="sb-card flex min-h-0 flex-col overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--workspace-border-soft)] px-4 py-2.5">
+            <h3 className="text-[13px] font-semibold text-[var(--workspace-text-strong)]">{outputTitle ?? c.title}</h3>
+            {outputSource?.logs && <span className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">{c.readOnly}</span>}
+          </div>
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap bg-[var(--workspace-surface-950)] px-4 py-3 font-mono text-[11px] leading-5 text-[var(--workspace-text)]" data-testid="docker-ops-output">{highlightOutput(output)}</pre>
+        </div>
+      )}
+      {!unsupported && !error && rows.length > 0 && <p className="flex items-center gap-1.5 text-[11px] text-[var(--workspace-text-subtle)]"><CircleAlert className="h-3 w-3" />{t('workspace.docker.auditNote')}</p>}
     </section>
   )
 }

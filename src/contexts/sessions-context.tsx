@@ -266,11 +266,21 @@ interface SessionsContextValue {
   acceptPendingHostKey: () => void
   rejectPendingHostKey: () => void
   reconnectingSessionIds: Set<string>
+  /** Live auto-reconnect attempt per session; `failedAt` is set once every attempt failed. */
+  reconnectProgress: Record<string, ReconnectProgress>
   manualReconnect: (sessionId: string) => void
   retrySessionConnection: (sessionId: string) => void
 }
 
+export interface ReconnectProgress { attempt: number; maxRetries: number; intervalMs: number; failedAt?: number }
+
 const SessionsContext = createContext<SessionsContextValue | null>(null)
+
+/** For leaf UI that may render outside the provider (e.g. in isolated tests). */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useOptionalSessions() {
+  return useContext(SessionsContext)
+}
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useSessions() {
@@ -304,6 +314,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
   const [reconnectSettings, setReconnectSettings] = useState<ReconnectSettings>({ enabled: true, maxRetries: 5, intervalMs: 3000 })
   const [reconnectingSessionIds, setReconnectingSessionIds] = useState<Set<string>>(new Set())
+  const [reconnectProgress, setReconnectProgress] = useState<Record<string, ReconnectProgress>>({})
   const [paneEvents, setPaneEvents] = useState<Record<PaneId, PaneEvent[]>>({ left: [], right: [] })
   const [pendingHostKey, setPendingHostKey] = useState<HostKeyInfo | null>(null)
   const pendingHostKeyResolveRef = useRef<((accept: boolean) => void) | null>(null)
@@ -558,13 +569,16 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     let reconnected = false
     const sourceVaultId = interactiveSessionsRef.current.find((session) => session.sessionId === sessionId)?.vaultId ?? activeVaultId
     setPcSessionTabs((prev) => prev.map((t) => t.sessionId === sessionId ? { ...t, status: 'reconnecting' } : t))
+    let attempted = 0
     for (let attempt = 1; attempt <= rs.maxRetries; attempt++) {
+      setReconnectProgress((prev) => ({ ...prev, [sessionId]: { attempt, maxRetries: rs.maxRetries, intervalMs: rs.intervalMs } }))
       await new Promise<void>((r) => window.setTimeout(r, rs.intervalMs))
       if (sourceVaultId !== activeVaultIdRef.current) break
       const host = hostsRef.current.find((h) => h.id === hostId && (!h.vaultId || h.vaultId === sourceVaultId))
       if (!host || !hasSshConnection(host)) break
       const original = interactiveSessionsRef.current.find(session => session.sessionId === sessionId)
       if (original?.connectionKey && original.connectionKey !== hostConnectionKey(host)) break
+      attempted = attempt
       try {
         const previousWorkspaceState = workspaceBySessionRef.current[sessionId]
         const previousBrowserState = browserBySessionRef.current[sessionId]
@@ -645,6 +659,12 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
     reconnectingRef.current.delete(sessionId)
     setReconnectingSessionIds((prev) => { const n = new Set(prev); n.delete(sessionId); return n })
+    setReconnectProgress((prev) => {
+      const next = { ...prev }
+      if (reconnected) delete next[sessionId]
+      else next[sessionId] = { attempt: attempted, maxRetries: rs.maxRetries, intervalMs: rs.intervalMs, failedAt: Date.now() }
+      return next
+    })
     if (!reconnected) {
       appendPaneEvent(pane, 'error', `Auto-reconnect failed after ${rs.maxRetries} attempt(s). Click "Reconnect" to try again.`, sessionId)
       setPcSessionTabs((prev) => prev.map((t) => t.sessionId === sessionId ? { ...t, status: 'closed' } : t))
@@ -1634,7 +1654,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       reconnectSettings, setReconnectSettings, paneEvents, setPaneEvents, appendPaneEvent,
       leftPaneSessionIdRef, rightPaneSessionIdRef, closedSessionCleanupRef,
       pendingHostKey, acceptPendingHostKey, rejectPendingHostKey,
-      reconnectingSessionIds, manualReconnect, retrySessionConnection,
+      reconnectingSessionIds, reconnectProgress, manualReconnect, retrySessionConnection,
     }}>
       {children}
     </SessionsContext.Provider>
