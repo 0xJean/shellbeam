@@ -1,9 +1,10 @@
-import { useMemo, useState, type ComponentType, type ReactNode } from 'react'
+import { SegmentedMeter, type MeterKind } from '@/components/ui/segmented-meter'
+import { useMemo, useState, type ReactNode } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { getResourceUsageTextClassName } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
-import { Clock, Cpu, HardDrive, KeyRound, LockKeyhole, MemoryStick, Route, Search, Tags } from 'lucide-react'
+import { Clock, KeyRound, LockKeyhole, Route, Search, Tags } from 'lucide-react'
 
 type ServerBadgeTone = 'default' | 'good' | 'warn' | 'bad' | 'info'
 type ServerSearchValue = string | number | null | undefined | false
@@ -150,67 +151,38 @@ function formatPercent(value: number | null | undefined, t: ReturnType<typeof us
 }
 
 function CompactResourceMetric({
-  icon: Icon,
+  kind,
   label,
   value,
   detail,
   t,
 }: {
-  icon: ComponentType<{ className?: string }>
+  kind: MeterKind
   label: string
   value?: number | null
   detail?: ReactNode
   t: ReturnType<typeof useT>['t']
 }) {
   const percent = value == null ? null : Math.min(100, Math.max(0, Math.round(value)))
-  const radius = 13
-  const circumference = 2 * Math.PI * radius
-  const offset = circumference - (circumference * (percent ?? 0)) / 100
   const title = detail ? `${label} ${formatPercent(value, t)} · ${detail}` : `${label} ${formatPercent(value, t)}`
 
   return (
-    <div
-      role="img"
-      aria-label={title}
-      title={title}
-      className="flex min-w-0 items-center gap-1.5"
-    >
-      <span className={cn('relative h-8 w-8 shrink-0', getResourceUsageTextClassName(value))}>
-        <svg viewBox="0 0 32 32" className="h-8 w-8 -rotate-90" aria-hidden="true">
-          <circle cx="16" cy="16" r={radius} fill="none" stroke="var(--workspace-meter-track)" strokeWidth="3.5" />
-          <circle
-            cx="16"
-            cy="16"
-            r={radius}
-            fill="none"
-            stroke="currentColor"
-            strokeLinecap="round"
-            strokeWidth="3.5"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-          />
-        </svg>
-        <span className="absolute inset-0 flex items-center justify-center font-mono text-[9px] font-semibold text-[var(--workspace-text-strong)]">
-          {percent ?? '--'}
-        </span>
+    <div role="img" aria-label={title} title={title} className="min-w-0">
+      <span className="flex items-center justify-between gap-1 text-[10px] font-medium text-[var(--workspace-text-muted)]">
+        <span className="truncate">{label}</span>
+        <span className={cn('font-mono tabular-nums', getResourceUsageTextClassName(value), percent == null && 'text-[var(--workspace-text-subtle)]')}>{percent == null ? '--' : `${percent}%`}</span>
       </span>
-      <span className="min-w-0">
-        <span className="flex items-center gap-1 truncate text-[10px] font-semibold uppercase text-[var(--workspace-text-muted)]">
-          <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
-          <span className="truncate">{label}</span>
-        </span>
-        <span className="block truncate font-mono text-[10px] text-[var(--workspace-text-strong)]">{formatPercent(value, t)}</span>
-      </span>
+      <SegmentedMeter kind={kind} value={value} segments={8} className="mt-1" />
     </div>
   )
 }
 
 function ServerResourceMetrics({ metrics, t }: { metrics: WorkspaceServerResourceMetrics; t: ReturnType<typeof useT>['t'] }) {
   return (
-    <div className="mt-3 grid min-w-0 grid-cols-3 gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-2">
-      <CompactResourceMetric icon={Cpu} label={t('workspace.common.cpu')} value={metrics.cpuPercent} detail={metrics.cpuDetail} t={t} />
-      <CompactResourceMetric icon={MemoryStick} label={t('workspace.common.memoryShort')} value={metrics.memoryPercent} detail={metrics.memoryDetail} t={t} />
-      <CompactResourceMetric icon={HardDrive} label={t('workspace.common.diskShort')} value={metrics.diskPercent} detail={metrics.diskDetail} t={t} />
+    <div className="mt-3 grid min-w-0 grid-cols-3 gap-3 rounded-lg bg-[var(--workspace-surface-800)] px-2.5 py-2">
+      <CompactResourceMetric kind="cpu" label={t('workspace.common.cpu')} value={metrics.cpuPercent} detail={metrics.cpuDetail} t={t} />
+      <CompactResourceMetric kind="memory" label={t('workspace.common.memoryShort')} value={metrics.memoryPercent} detail={metrics.memoryDetail} t={t} />
+      <CompactResourceMetric kind="disk" label={t('workspace.common.diskShort')} value={metrics.diskPercent} detail={metrics.diskDetail} t={t} />
     </div>
   )
 }
@@ -282,7 +254,7 @@ export function WorkspaceServerList({
       data-testid="workspace-server-list"
       data-tour="monitor-servers"
       className={cn(
-      'flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]',
+      'sb-card flex min-w-0 flex-col overflow-hidden',
       !isMobile && 'h-full min-h-0',
       )}
     >
@@ -337,10 +309,10 @@ export function WorkspaceServerList({
                 onClick={() => onSelect(key, host)}
                 onDoubleClick={() => onRowDoubleClick?.(host)}
                 className={cn(
-                  'w-full rounded-2xl border px-3.5 py-3.5 text-left transition-[background-color,border-color,box-shadow]',
+                  'w-full rounded-xl px-3.5 py-3 text-left transition-[background-color,box-shadow]',
                   selectedKey === key
-                    ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-row-selected)] shadow-[inset_3px_0_0_var(--workspace-primary-500),var(--workspace-shadow-card)]'
-                    : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] hover:border-[color:var(--workspace-border-strong)] hover:bg-[var(--workspace-surface-950)] hover:shadow-[var(--workspace-shadow-card)]',
+                    ? 'bg-primary/10 shadow-[inset_3px_0_0_hsl(var(--primary))]'
+                    : 'hover:bg-[var(--workspace-surface-800)]',
                 )}
               >
                 <div className="flex min-w-0 items-start justify-between gap-3">

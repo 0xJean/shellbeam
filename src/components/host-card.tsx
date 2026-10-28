@@ -1,5 +1,6 @@
 import { monitoringAlertTitle, monitoringDiagnostic, monitoringOperationTarget, monitoringProviderLabel } from '@/lib/monitoring-presentation'
 import { ProbeInstallEntry } from '@/components/probe-install-entry'
+import { SegmentedMeter } from '@/components/ui/segmented-meter'
 import { NativeSelect } from '@/components/ui/select'
 import { hasSshConnection, hostConnections } from '@/lib/hosts'
 import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
@@ -419,13 +420,6 @@ function clampPercent(value: number | null | undefined) {
   return Math.min(100, Math.max(0, Math.round(value)))
 }
 
-// Normal-range colour per resource; warn / bad tones override it (src/lib/resource-usage.ts).
-const RESOURCE_METER_COLOR = {
-  cpu: 'var(--chart-4, var(--workspace-primary-500))',
-  memory: 'var(--chart-6, var(--workspace-primary-500))',
-  disk: 'var(--chart-2, var(--workspace-primary-500))',
-} as const
-
 function HostResourceMetric({
   icon: Icon,
   iconKey,
@@ -445,8 +439,6 @@ function HostResourceMetric({
   const displayValue = formatPercent(value, t)
   const title = detail ? `${label} ${displayValue} - ${detail}` : `${label} ${displayValue}`
   const tone = getResourceUsageTone(value)
-  const color = tone === 'bad' ? 'var(--workspace-status-bad)' : tone === 'warn' ? 'var(--workspace-status-warn)' : RESOURCE_METER_COLOR[iconKey]
-  const lit = value == null ? 0 : Math.round(percent / 10)
 
   return (
     <div
@@ -468,14 +460,7 @@ function HostResourceMetric({
       <span className={cn('mt-0.5 block font-mono text-[17px] font-semibold leading-tight tabular-nums', tone === 'bad' ? 'text-[color:var(--workspace-status-bad-text)]' : tone === 'warn' ? 'text-[color:var(--workspace-status-warn-text)]' : 'text-[var(--workspace-text-strong)]')}>
         {value == null ? displayValue : <>{percent}<small className="ml-px text-[10px] font-medium text-[var(--workspace-text-muted)]">%</small></>}
       </span>
-      <span className="mt-1.5 grid h-1.5 grid-cols-10 gap-0.5" aria-hidden="true">
-        {Array.from({ length: 10 }, (_, index) => (
-          <span key={index} className="rounded-[2px]"
-            style={index < lit
-              ? { background: color, opacity: tone ? 1 : 0.5 + index * 0.05, boxShadow: tone === 'warn' || tone === 'bad' ? `0 0 6px -1px ${color}` : undefined }
-              : { background: 'var(--workspace-meter-track)' }} />
-        ))}
-      </span>
+      <SegmentedMeter kind={iconKey} value={value} className="mt-1.5" />
     </div>
   )
 }

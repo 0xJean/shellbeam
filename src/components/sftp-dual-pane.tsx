@@ -24,6 +24,7 @@ import {
   localWriteFileB64,
 } from '@/lib/sftp'
 import { createRemoteFsClient } from '@/lib/remote-fs'
+import { consumeSftpRequest, OPEN_SFTP_REQUEST_EVENT } from '@/lib/navigation-request'
 import { FilePane, type UnifiedEntry } from './sftp-file-pane'
 import { SftpConnectPlaceholder } from './sftp-connect-placeholder'
 import { getHostInventoryResource, HostMetadataLine } from './host-display-meta'
@@ -180,8 +181,19 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
     if (autoConnectHostRef.current === selectedRemoteHostId) return
 
     autoConnectHostRef.current = selectedRemoteHostId
-    void loadRemoteDir('')
+    // A pending "open in SFTP" request for this host starts in its directory instead of home.
+    void loadRemoteDir(consumeSftpRequest(selectedRemoteHostId) ?? '')
   }, [selectedRemoteHostId, remoteHost, remoteConnected, remoteLoading, loadRemoteDir])
+
+  useEffect(() => {
+    const onRequest = () => {
+      if (!remoteConnected || !remoteHost) return
+      const path = consumeSftpRequest(remoteHost.id)
+      if (path) void loadRemoteDir(path)
+    }
+    window.addEventListener(OPEN_SFTP_REQUEST_EVENT, onRequest)
+    return () => window.removeEventListener(OPEN_SFTP_REQUEST_EVENT, onRequest)
+  }, [remoteConnected, remoteHost, loadRemoteDir])
 
   function handleConnectRemote() {
     if (!remoteHost) return

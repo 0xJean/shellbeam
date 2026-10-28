@@ -13,7 +13,8 @@ import {
   type WorkspaceInventoryProject,
 } from '@/lib/workspace-inventory'
 import { getServerConsoleLink } from '@/lib/server-console'
-import { getResourceUsageFillClassName, RESOURCE_USAGE_BAD_THRESHOLD, RESOURCE_USAGE_WARN_THRESHOLD } from '@/lib/resource-usage'
+import { RESOURCE_USAGE_BAD_THRESHOLD, RESOURCE_USAGE_WARN_THRESHOLD } from '@/lib/resource-usage'
+import { SegmentedMeter, type MeterKind } from '@/components/ui/segmented-meter'
 import {
   createReadyWorkspaceInventoryStates,
   mergeWorkspaceInventoryStates,
@@ -125,20 +126,21 @@ function getRiskLabel(value: number | null, t: TFunction) {
 
 function ResourceMeter({
   icon: Icon,
+  kind,
   label,
   value,
   detail,
 }: {
   icon: ComponentType<{ className?: string }>
+  kind: MeterKind
   label: string
   value: number | null
   detail?: string
 }) {
   const { t } = useT()
-  const width = value === null ? 0 : Math.min(100, Math.max(0, value))
 
   return (
-    <div className="min-w-0 rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-4 py-3 shadow-[var(--workspace-shadow-card)]">
+    <div className="sb-card min-w-0 px-4 py-3">
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
@@ -148,9 +150,7 @@ function ResourceMeter({
         </div>
         <span className="font-mono text-xs font-semibold text-[var(--workspace-text-strong)]">{formatPercent(value, t)}</span>
       </div>
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--workspace-meter-track)]">
-        <div className={cn('h-full rounded-full transition-[width] duration-300', getResourceUsageFillClassName(value))} style={{ width: `${width}%` }} />
-      </div>
+      <SegmentedMeter kind={kind} value={value} segments={20} className="mt-3 h-2" />
       <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-[var(--workspace-text-muted)]">
         <span>{getRiskLabel(value, t)}</span>
         {detail && <span className="truncate text-right">{detail}</span>}
@@ -190,7 +190,7 @@ function AssetDetailSection({
   children: ReactNode
 }) {
   return (
-    <section className="rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4 shadow-[var(--workspace-shadow-card)]">
+    <section className="sb-card p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
@@ -1373,9 +1373,9 @@ export function WorkspaceAssetInventoryApp({
               {selectedInventory || selectedMonitor?.latest ? (
                 <>
                   <div data-tour="monitor-resources" className={cn('grid gap-3', isMobile ? 'grid-cols-1' : 'md:grid-cols-3')}>
-                    <ResourceMeter icon={Cpu} label={t('workspace.common.cpu')} value={selectedDisplayMetrics.cpuPercent} detail={selectedDisplayMetrics.cpuDetail} />
-                    <ResourceMeter icon={MemoryStick} label={t('workspace.common.memory')} value={selectedDisplayMetrics.memoryPercent} detail={selectedDisplayMetrics.memoryDetail} />
-                    <ResourceMeter icon={HardDrive} label={t('workspace.common.disk')} value={selectedDisplayMetrics.diskPercent} detail={selectedDisplayMetrics.diskDetail} />
+                    <ResourceMeter icon={Cpu} kind="cpu" label={t('workspace.common.cpu')} value={selectedDisplayMetrics.cpuPercent} detail={selectedDisplayMetrics.cpuDetail} />
+                    <ResourceMeter icon={MemoryStick} kind="memory" label={t('workspace.common.memory')} value={selectedDisplayMetrics.memoryPercent} detail={selectedDisplayMetrics.memoryDetail} />
+                    <ResourceMeter icon={HardDrive} kind="disk" label={t('workspace.common.disk')} value={selectedDisplayMetrics.diskPercent} detail={selectedDisplayMetrics.diskDetail} />
                   </div>
 
                   <div data-tour="monitor-source" className="flex flex-wrap items-center gap-2 text-xs text-[var(--workspace-text-muted)]">

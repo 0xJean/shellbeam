@@ -1,3 +1,4 @@
+import { shellQuote } from '@/lib/navigation-request'
 import { hasSshConnection, hostConnectionKey } from '@/lib/hosts'
 import { parseHostKeyError, type HostKeyInfo } from '@/components/host-key-confirm-dialog'
 import { appendActivity } from '@/lib/activity-log'
@@ -234,7 +235,8 @@ interface SessionsContextValue {
   setLeftPaneSessionId: (id: string | null) => void
   rightPaneSessionId: string | null
   setRightPaneSessionId: (id: string | null) => void
-  handleConnectHost: (hostId: string) => Promise<void>
+  /** `cwd` changes into that directory once the shell is connected. */
+  handleConnectHost: (hostId: string, options?: { cwd?: string }) => Promise<void>
   openHostWorkspace: (hostId: string, app: WorkspaceAppId) => Promise<void>
   handleOpenLocalTerminal: () => Promise<void>
   handleCloseSessionTab: (sessionId: string) => void
@@ -1379,9 +1381,9 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
   }
 
-  async function openHostConnection(hostId: string, placeholderId?: string, workspaceApp?: WorkspaceAppId) {
+  async function openHostConnection(hostId: string, placeholderId?: string, workspaceApp?: WorkspaceAppId): Promise<string | undefined> {
     const host = hosts.find((h) => h.id === hostId)
-    if (!host || !hasSshConnection(host)) return
+    if (!host || !hasSshConnection(host)) return undefined
     setSelectedHostId(hostId)
     const targetSessionId = placeholderId ?? `pending-${Date.now()}`
     const newTab: SessionTab = {
@@ -1438,6 +1440,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         event: 'connect', hostId: host.id, hostName: host.name, hostAddress: host.address,
         username: host.username || defaultUsername, authType: host.authType,
       })
+      return session.sessionId
     } catch (error) {
       const msg = String(error instanceof Error ? error.message : error)
       setPcSessionTabs((prev) => prev.map((t) => t.sessionId === targetSessionId ? { ...t, status: 'error', errorMessage: msg, connectionStage: undefined } : t))
@@ -1453,8 +1456,9 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
   }
 
-  async function handleConnectHost(hostId: string) {
-    await openHostConnection(hostId)
+  async function handleConnectHost(hostId: string, options?: { cwd?: string }) {
+    const sessionId = await openHostConnection(hostId)
+    if (sessionId && options?.cwd) await sendInteractiveInput(sessionId, `cd -- ${shellQuote(options.cwd)}\n`).catch(() => {})
   }
 
   async function openHostWorkspace(hostId: string, app: WorkspaceAppId) {

@@ -1,3 +1,4 @@
+import { OPEN_SFTP_REQUEST_EVENT, OPEN_TERMINAL_REQUEST_EVENT, type HostDirectoryRequest } from '@/lib/navigation-request'
 import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
 import { InteractiveTour } from '@/components/interactive-tour'
 import { getBrowserTabRouteIndicator } from '@/components/browser/browser-view-state'
@@ -264,6 +265,29 @@ export function PcLayout() {
     app.setPcSidebarNav('terminal')
     void sessions.handleConnectHost(host.id)
   }
+
+  // Deep panels (deployment directories) ask for a terminal or SFTP at a path.
+  useEffect(() => {
+    const scoped = (detail: HostDirectoryRequest | undefined) => !!detail && (!detail.vaultId || detail.vaultId === vault.activeVaultId)
+    const onTerminal = (event: Event) => {
+      const detail = (event as CustomEvent<HostDirectoryRequest>).detail
+      if (!scoped(detail)) return
+      app.setPcSidebarNav('terminal')
+      void sessions.handleConnectHost(detail.hostId, { cwd: detail.path })
+    }
+    const onSftp = (event: Event) => {
+      const detail = (event as CustomEvent<HostDirectoryRequest>).detail
+      if (!scoped(detail)) return
+      hostsCtx.setSelectedHostId(detail.hostId)
+      app.setPcSidebarNav('sftp')
+    }
+    window.addEventListener(OPEN_TERMINAL_REQUEST_EVENT, onTerminal)
+    window.addEventListener(OPEN_SFTP_REQUEST_EVENT, onSftp)
+    return () => {
+      window.removeEventListener(OPEN_TERMINAL_REQUEST_EVENT, onTerminal)
+      window.removeEventListener(OPEN_SFTP_REQUEST_EVENT, onSftp)
+    }
+  }, [app, hostsCtx, sessions, vault.activeVaultId])
 
   const handleOpenProviderConsole = (url: string, host: HostProfile, sessionId?: string) => {
     if (sessionId) {
