@@ -1118,7 +1118,8 @@ export function WorkspaceAssetInventoryApp({
       data-testid="workspace-asset-inventory-app"
       data-tour="monitor-page"
       className={cn(
-        'flex min-w-0 flex-col text-[var(--workspace-text)]',
+        // relative: absolute/sr-only descendants must stay inside this page's scroll boxes, not stretch the layout's scroller.
+        'relative flex min-w-0 flex-col text-[var(--workspace-text)]',
         isMobile ? 'min-h-0 gap-4 overflow-visible' : 'h-full min-h-[34rem] overflow-y-auto xl:overflow-hidden',
       )}
     >
@@ -1235,7 +1236,7 @@ export function WorkspaceAssetInventoryApp({
 
         <div
           className={cn(
-            'min-w-0',
+            'relative min-w-0',
             isMobile ? 'overflow-visible' : 'xl:min-h-0 xl:overflow-auto',
             view === 'assets' && !isMobile && 'rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-4 shadow-[var(--workspace-shadow-card)]',
           )}
