@@ -1267,53 +1267,57 @@ export function WorkspaceAssetInventoryApp({
             <WorkspaceEmptyState title={t('workspace.asset.noSelectedTitle')} description={t('workspace.asset.noSelectedDescription')} />
           ) : (
             <div className={cn('space-y-5', isMobile && 'pb-2')}>
-              <div data-tour="monitor-status" className={cn('flex flex-col gap-3', !isMobile && 'lg:flex-row lg:items-start lg:justify-between')}>
-                <div className="flex min-w-0 items-start gap-3">
-                  <span className={cn('mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', (selectedMonitorSnapshot?.os || selectedInventory?.resource.os) ? 'sb-os-badge' : 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]')}
-                    style={(selectedMonitorSnapshot?.os || selectedInventory?.resource.os) ? { '--os': osBrandColor(selectedMonitorSnapshot?.os || selectedInventory?.resource.os || '') } as CSSProperties : undefined}>
-                    <WorkspaceOsIcon os={selectedMonitorSnapshot?.os || selectedInventory?.resource.os} className="h-5 w-5" />
-                  </span>
-                  <div className="min-w-0">
+              {/* Actions share the name row so the meta line below gets the panel's full width. */}
+              <div data-tour="monitor-status" className="flex min-w-0 items-start gap-3">
+                <span className={cn('mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', (selectedMonitorSnapshot?.os || selectedInventory?.resource.os) ? 'sb-os-badge' : 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]')}
+                  style={(selectedMonitorSnapshot?.os || selectedInventory?.resource.os) ? { '--os': osBrandColor(selectedMonitorSnapshot?.os || selectedInventory?.resource.os || '') } as CSSProperties : undefined}>
+                  <WorkspaceOsIcon os={selectedMonitorSnapshot?.os || selectedInventory?.resource.os} className="h-5 w-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <HostStatusDot state={selectedState ?? { status: 'idle' }} />
                       <span className="truncate text-xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">{selectedHost.name}</span>
                       <Badge>{groupLabel(selectedHost.group || 'Custom', t)}</Badge>
                       {selectedMonitor?.latest && <Badge tone={monitorStatusTone(selectedMonitor.latest.status)}>{monitorStatusLabel(selectedMonitor.latest.status, t)}</Badge>}
                     </div>
-                    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-[var(--workspace-text-muted)]">
-                      <span className="font-mono">{selectedHost.username}@{selectedHost.address}:{selectedHost.port}</span>
-                      {selectedNetwork && <span className="inline-flex items-center gap-1">· <HostRegionMeta network={selectedNetwork} /></span>}
-                      <span>· {selectedMonitorSnapshot?.os || <HostSystemMeta resource={selectedInventory?.resource} fallbackKey="workspace.asset.versionPending" />}</span>
-                      {(selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel) && <span className="font-mono">· {selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel}</span>}
-                      {selectedState?.updatedAt ? <span>· {t('workspace.asset.scannedAgo', { minutes: Math.max(0, Math.round((Date.now() - selectedState.updatedAt) / 60_000)) })}</span> : null}
-                    </div>
-                    {(selectedHost.tags ?? []).length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{(selectedHost.tags ?? []).map((tag) => <Badge key={tag}>{tag}</Badge>)}</div>}
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <button type="button" onClick={() => void scanHosts([selectedHost], { force: true })} disabled={selectedState?.status === 'scanning'}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:cursor-not-allowed disabled:opacity-60">
+                        {selectedState?.status === 'scanning' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="h-3.5 w-3.5" />}{t('workspace.asset.scanThisVps')}
+                      </button>
+                      {selectedConsoleLink && onOpenProviderConsole && (
+                        <button type="button" onClick={() => onOpenProviderConsole(selectedConsoleLink.url, selectedHost)}
+                          aria-label={t('workspace.asset.openConsole', { label: selectedConsoleLink.label })} title={t('workspace.asset.openConsole', { label: selectedConsoleLink.label })}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] px-2.5 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)]">
+                          <ExternalLink className="h-3.5 w-3.5" /><span>{t('workspace.asset.console', { label: selectedConsoleLink.label })}</span>
+                        </button>
+                      )}
+                      {onEditHost && (
+                        <button type="button" onClick={() => onEditHost(selectedHost)} title={t('workspace.asset.edit')}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)]">
+                          <Pencil className="h-3.5 w-3.5" />{t('workspace.asset.edit')}
+                        </button>
+                      )}
+                      {onOpenTerminal && (
+                        <button type="button" disabled={!hasSshConnection(selectedHost)} onClick={() => onOpenTerminal(selectedHost)}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[var(--workspace-accent-subtle)] px-3 text-xs font-semibold text-[var(--workspace-accent-text)] transition-colors hover:bg-[color:var(--workspace-primary-500)] hover:text-[var(--workspace-primary-foreground)] disabled:opacity-50">
+                          <SquareTerminal className="h-3.5 w-3.5" />{t('workspace.asset.terminal')}
+                        </button>
+                      )}
                   </div>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
-                  <button type="button" onClick={() => void scanHosts([selectedHost], { force: true })} disabled={selectedState?.status === 'scanning'}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:cursor-not-allowed disabled:opacity-60">
-                    {selectedState?.status === 'scanning' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="h-3.5 w-3.5" />}{t('workspace.asset.scanThisVps')}
-                  </button>
-                  {selectedConsoleLink && onOpenProviderConsole && (
-                    <button type="button" onClick={() => onOpenProviderConsole(selectedConsoleLink.url, selectedHost)}
-                      aria-label={t('workspace.asset.openConsole', { label: selectedConsoleLink.label })} title={t('workspace.asset.openConsole', { label: selectedConsoleLink.label })}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] px-2.5 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)]">
-                      <ExternalLink className="h-3.5 w-3.5" /><span>{t('workspace.asset.console', { label: selectedConsoleLink.label })}</span>
-                    </button>
-                  )}
-                  {onEditHost && (
-                    <button type="button" onClick={() => onEditHost(selectedHost)} title={t('workspace.asset.edit')}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)]">
-                      <Pencil className="h-3.5 w-3.5" />{t('workspace.asset.edit')}
-                    </button>
-                  )}
-                  {onOpenTerminal && (
-                    <button type="button" disabled={!hasSshConnection(selectedHost)} onClick={() => onOpenTerminal(selectedHost)}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[var(--workspace-accent-subtle)] px-3 text-xs font-semibold text-[var(--workspace-accent-text)] transition-colors hover:bg-[color:var(--workspace-primary-500)] hover:text-[var(--workspace-primary-foreground)] disabled:opacity-50">
-                      <SquareTerminal className="h-3.5 w-3.5" />{t('workspace.asset.terminal')}
-                    </button>
-                  )}
+                  </div>
+                  {/* Separator dots are ::before; -ml-3 inside overflow-hidden clips the one that would start each wrapped line. */}
+                  <div className="mt-1.5 overflow-hidden text-xs text-[var(--workspace-text-muted)]">
+                    <div className="-ml-3 flex flex-wrap items-center gap-y-0.5 [&>*]:relative [&>*]:min-w-0 [&>*]:pl-3 [&>*]:before:absolute [&>*]:before:left-[0.3rem] [&>*]:before:text-[var(--workspace-text-subtle)] [&>*]:before:content-['·']">
+                      <span className="font-mono">{selectedHost.username}@{selectedHost.address}:{selectedHost.port}</span>
+                      {selectedNetwork && <span className="inline-flex items-center"><HostRegionMeta network={selectedNetwork} /></span>}
+                      <span>{selectedMonitorSnapshot?.os || <HostSystemMeta resource={selectedInventory?.resource} fallbackKey="workspace.asset.versionPending" />}</span>
+                      {(selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel) && <span className="font-mono">{selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel}</span>}
+                      {selectedState?.updatedAt ? <span>{t('workspace.asset.scannedAgo', { minutes: Math.max(0, Math.round((Date.now() - selectedState.updatedAt) / 60_000)) })}</span> : null}
+                    </div>
+                  </div>
+                  {(selectedHost.tags ?? []).length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{(selectedHost.tags ?? []).map((tag) => <Badge key={tag}>{tag}</Badge>)}</div>}
                 </div>
               </div>
 
