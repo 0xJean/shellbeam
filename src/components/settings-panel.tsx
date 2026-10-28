@@ -23,7 +23,7 @@ import {
 } from '@/lib/biometric'
 import { LOCALE_OPTIONS, useT } from '@/lib/i18n'
 import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
-import { DEFAULT_TERMINAL_PREFS, type TerminalPrefs } from '@/lib/terminal-themes'
+import type { TerminalPrefs } from '@/lib/terminal-themes'
 import { settingsV3Copy } from '@/lib/locales/settings-v3'
 import { fill } from '@/lib/locales/probe-install'
 import { cn } from '@/lib/utils'
@@ -240,7 +240,7 @@ export function SettingsPanel({
             <SettingsNote>{v3.sharedNote}</SettingsNote>
           </div>
         </div>
-        <SettingsGroup title={t('settings.colorTheme')} extra={<small className="text-xs font-normal text-[var(--workspace-text-subtle)]">{fill(v3.defaultTheme, { name: DEFAULT_TERMINAL_PREFS.themeId })}</small>}>
+        <SettingsGroup title={t('settings.colorTheme')} extra={<small className="text-xs font-normal text-[var(--workspace-text-subtle)]">{fill(v3.defaultTheme, { name: t('terminal.themeFollowApp') })}</small>}>
           <div className="p-4">
             <TerminalThemeGrid variant="preview" currentThemeId={terminalPrefs.themeId} onSelect={(id) => onTerminalPrefsChange({ themeId: id })} />
           </div>

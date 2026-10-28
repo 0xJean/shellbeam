@@ -1,4 +1,4 @@
-import { TERMINAL_THEMES } from '@/lib/terminal-themes'
+import { useTerminalThemes } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
 
 export function FontSizeControl({ value, onChange }: {
@@ -28,9 +28,10 @@ export function TerminalThemeGrid({ currentThemeId, onSelect, columns, variant =
   columns?: string
   variant?: 'list' | 'preview'
 }) {
+  const themes = useTerminalThemes()
   if (variant === 'preview') return (
     <div className={columns ?? 'grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:grid-cols-7'}>
-      {TERMINAL_THEMES.map((thm) => (
+      {themes.map((thm) => (
         <button key={thm.id} type="button" aria-pressed={currentThemeId === thm.id} onClick={() => onSelect(thm.id)}
           className="group flex min-w-0 flex-col items-center gap-1.5 text-xs text-[var(--workspace-text-muted)] aria-pressed:font-semibold aria-pressed:text-[var(--workspace-text-strong)]">
           <span aria-hidden="true"
@@ -46,7 +47,7 @@ export function TerminalThemeGrid({ currentThemeId, onSelect, columns, variant =
   )
   return (
     <div className={columns ?? 'space-y-1.5'}>
-      {TERMINAL_THEMES.map((thm) => (
+      {themes.map((thm) => (
         <button
           key={thm.id}
           type="button"

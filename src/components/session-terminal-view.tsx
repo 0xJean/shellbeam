@@ -8,7 +8,7 @@ import { recordInteractiveCommand } from '@/lib/interactive-history'
 import type { InteractiveOutputChunk, InteractiveSessionInfo } from '@/lib/interactive-session'
 import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { resizeInteractiveTerminal } from '@/lib/interactive-session'
-import { DEFAULT_TERMINAL_PREFS, getThemeById, type TerminalPrefs } from '@/lib/terminal-themes'
+import { DEFAULT_TERMINAL_PREFS, useResolvedTerminalTheme, type TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import { FitAddon } from '@xterm/addon-fit'
@@ -81,6 +81,7 @@ export function SessionTerminalView({
   const fitRef = useRef<FitAddon | null>(null)
   const onSendRawRef = useRef(onSendRaw)
   const [showAI, setShowAI] = useState(false)
+  const terminalTheme = useResolvedTerminalTheme(terminalPrefs?.themeId)
   const [showSearch, setShowSearch] = useState(false)
   // Commands typed on this host feed the history half of the suggestion bar.
   // Typed history is per vault: the session's own vault, else the active one.
@@ -191,7 +192,6 @@ export function SessionTerminalView({
     if (chromeOnly) return
     if (!containerRef.current) return
 
-    const activeTheme = getThemeById(terminalPrefs?.themeId ?? DEFAULT_TERMINAL_PREFS.themeId)
     const term = new Terminal({
       cursorBlink: terminalPrefs?.cursorBlink ?? DEFAULT_TERMINAL_PREFS.cursorBlink,
       cursorStyle: terminalPrefs?.cursorStyle ?? DEFAULT_TERMINAL_PREFS.cursorStyle,
@@ -206,7 +206,7 @@ export function SessionTerminalView({
       fastScrollSensitivity: 10,
       smoothScrollDuration: 0,
       rescaleOverlappingGlyphs: true,
-      theme: activeTheme.theme,
+      theme: terminalTheme,
     })
 
     const fit = new FitAddon()
@@ -330,14 +330,13 @@ export function SessionTerminalView({
     if (chromeOnly) return
     const term = termRef.current
     if (!term || !terminalPrefs) return
-    const themeDef = getThemeById(terminalPrefs.themeId ?? DEFAULT_TERMINAL_PREFS.themeId)
-    term.options.theme = themeDef.theme
+    term.options.theme = terminalTheme
     term.options.fontSize = terminalPrefs.fontSize ?? DEFAULT_TERMINAL_PREFS.fontSize
     term.options.fontFamily = terminalPrefs.fontFamily ?? DEFAULT_TERMINAL_PREFS.fontFamily
     term.options.cursorStyle = terminalPrefs.cursorStyle ?? DEFAULT_TERMINAL_PREFS.cursorStyle
     term.options.cursorBlink = terminalPrefs.cursorBlink ?? DEFAULT_TERMINAL_PREFS.cursorBlink
     try { fitRef.current?.fit() } catch { /* teardown */ }
-  }, [terminalPrefs?.themeId, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, terminalPrefs?.cursorStyle, terminalPrefs?.cursorBlink, chromeOnly])
+  }, [terminalTheme, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, terminalPrefs?.cursorStyle, terminalPrefs?.cursorBlink, chromeOnly])
 
   const prevVisibleRef = useRef(visible)
   useEffect(() => {
@@ -360,9 +359,8 @@ export function SessionTerminalView({
     termRef.current?.focus()
   }, [])
 
-  const activeThemeDef = getThemeById(terminalPrefs?.themeId ?? DEFAULT_TERMINAL_PREFS.themeId)
-  const bg = activeThemeDef.theme.background ?? '#000000'
-  const fg = activeThemeDef.theme.foreground ?? '#00ff41'
+  const bg = terminalTheme.background ?? '#000000'
+  const fg = terminalTheme.foreground ?? '#00ff41'
   const showBrowserShortcuts = !onWorkspaceModeChange
 
   return (

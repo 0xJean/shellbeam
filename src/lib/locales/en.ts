@@ -1102,6 +1102,7 @@ const en: Record<string, string> = {
   'terminal.connectionLost': 'Connection lost',
   'terminal.reconnect': 'Reconnect',
   'terminal.clearScrollback': 'Clear terminal scrollback',
+  'terminal.themeFollowApp': 'Follow theme',
   'terminal.outputThrottled': 'Output was too fast; some buffered text was omitted to keep the terminal responsive.',
   'terminal.snippetPasted': 'Snippet pasted to terminal',
   'terminal.snippetCopied': 'No active terminal session - snippet copied to command input',

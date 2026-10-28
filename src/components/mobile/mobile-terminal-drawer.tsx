@@ -5,7 +5,7 @@ import { getInteractiveHistory, isInteractiveHistoryEvent, subscribeInteractiveH
 import { fill } from '@/lib/locales/probe-install'
 import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
 import type { SnippetEntry } from '@/lib/snippets'
-import { TERMINAL_THEMES, type TerminalPrefs } from '@/lib/terminal-themes'
+import { useTerminalThemes, type TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
 import { ClipboardPaste, CodeXml, Copy, History, Minus, Palette, Play, Plus, Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -156,6 +156,7 @@ function HistoryTab({ vaultId, hostAddress, hostName, onRun }: { vaultId?: strin
 function AppearanceTab({ prefs, onChange }: { prefs: TerminalPrefs; onChange: (prefs: Partial<TerminalPrefs>) => void }) {
   const { locale } = useT()
   const copy = mobileTerminalV3Copy[locale]
+  const themes = useTerminalThemes()
   const size = prefs.fontSize ?? 13
   return (
     <div>
@@ -169,7 +170,7 @@ function AppearanceTab({ prefs, onChange }: { prefs: TerminalPrefs; onChange: (p
       </div>
       <h3 className="mb-2 mt-5 text-xs text-[var(--workspace-text-subtle)]">{copy.colorScheme}</h3>
       <div className="grid grid-cols-3 gap-2.5">
-        {TERMINAL_THEMES.map((theme) => {
+        {themes.map((theme) => {
           const selected = prefs.themeId === theme.id
           return (
             <button key={theme.id} type="button" aria-pressed={selected} onClick={() => onChange({ themeId: theme.id })}

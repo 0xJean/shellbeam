@@ -15,12 +15,7 @@ vi.mock('@/lib/terminal-themes', () => ({
     fontFamily: "'JetBrains Mono', ui-monospace, monospace",
     themeId: 'hacker-green',
   },
-  getThemeById: () => ({
-    theme: {
-      background: '#000000',
-      foreground: '#00ff41',
-    },
-  }),
+  useResolvedTerminalTheme: () => ({ background: '#000000', foreground: '#00ff41' }),
 }))
 
 vi.mock('./ai-command-bar', () => ({
