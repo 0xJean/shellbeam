@@ -1,27 +1,37 @@
 .driver-popover.shellbeam-tour-popover {
   --driver-popover-font-family: inherit;
   min-width: 0;
-  width: min(340px, calc(100vw - 24px));
+  width: min(344px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   max-height: calc(100dvh - 100px);
   overflow-y: auto;
-  border: 1px solid var(--workspace-border-soft);
-  border-radius: 14px;
+  border: 1px solid var(--workspace-border-strong);
+  border-radius: 12px;
   background: var(--workspace-surface-900);
   color: var(--workspace-text-strong);
   box-shadow: var(--workspace-shadow-overlay);
-  padding: 20px;
+  padding: 18px 18px 16px;
   font-family: inherit;
 }
-.shellbeam-tour-popover .driver-popover-title { padding-right: 18px; font-size: 15px; line-height: 1.5; }
-.shellbeam-tour-popover .driver-popover-description { margin-top: 8px; color: var(--workspace-text-muted); font-size: 13px; line-height: 1.7; }
-.shellbeam-tour-popover .driver-popover-footer { gap: 8px; flex-wrap: wrap; }
+.shellbeam-tour-popover .shellbeam-tour-eyebrow { display: block; margin-bottom: 6px; color: var(--workspace-accent-text); font-size: 11.5px; font-weight: 600; line-height: 1.4; }
+.shellbeam-tour-popover .driver-popover-title { font-size: 15px; font-weight: 600; line-height: 1.5; color: var(--workspace-text-strong); }
+.shellbeam-tour-popover .driver-popover-description { margin-top: 6px; color: var(--workspace-text); font-size: 12.5px; line-height: 1.7; }
+.shellbeam-tour-popover .driver-popover-footer { align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
 .shellbeam-tour-popover .driver-popover-progress-text { color: var(--workspace-text-muted); font-size: 12px; }
-.shellbeam-tour-popover .driver-popover-footer-btn { border-color: var(--workspace-border-soft); border-radius: 8px; padding: 8px 10px; color: var(--workspace-text-strong); background: var(--workspace-surface-800); text-shadow: none; }
-.shellbeam-tour-popover .driver-popover-next-btn { background: var(--workspace-primary-500); color: var(--workspace-primary-foreground); }
-.shellbeam-tour-popover .driver-popover-close-btn { top: 8px; right: 8px; color: var(--workspace-text-muted); }
+.shellbeam-tour-popover .driver-popover-navigation-btns { flex: 1; justify-content: flex-end; gap: 6px; }
+.shellbeam-tour-popover .shellbeam-tour-dots { display: inline-flex; align-items: center; gap: 4px; }
+.shellbeam-tour-popover .shellbeam-tour-dots i { width: 6px; height: 6px; border-radius: 999px; background: var(--workspace-border-strong); }
+.shellbeam-tour-popover .shellbeam-tour-dots i.is-active { width: 14px; background: var(--workspace-primary-500); }
+.shellbeam-tour-popover .driver-popover-footer-btn { margin: 0; border: 1px solid transparent; border-radius: 7px; padding: 5px 10px; font-size: 12.5px; font-weight: 500; line-height: 1.4; color: var(--workspace-text-strong); background: transparent; text-shadow: none; }
+.shellbeam-tour-popover .driver-popover-footer-btn:hover { background: var(--workspace-surface-800); color: var(--workspace-text-strong); }
+.shellbeam-tour-popover .driver-popover-prev-btn.driver-popover-btn-disabled { display: none !important; }
+.shellbeam-tour-popover .driver-popover-next-btn, .shellbeam-tour-popover .driver-popover-next-btn:hover { background: var(--workspace-primary-500); color: var(--workspace-primary-foreground); }
+.shellbeam-tour-popover .driver-popover-next-btn:hover { opacity: 0.9; }
+.shellbeam-tour-popover .driver-popover-close-btn:not(.driver-popover-footer-btn) { top: 8px; right: 8px; color: var(--workspace-text-muted); }
+.shellbeam-tour-popover .driver-popover-close-btn.driver-popover-footer-btn { position: static; width: auto; height: auto; }
+.shellbeam-tour-popover .shellbeam-tour-hint { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--workspace-border-soft); color: var(--workspace-text-subtle); font-size: 11px; line-height: 1.6; }
 .shellbeam-tour-popover button:focus-visible { outline: 2px solid var(--workspace-primary-500); outline-offset: 2px; }
-.shellbeam-tour-popover .driver-popover-footer-btn:hover { background: var(--workspace-nav-hover-bg); color: var(--workspace-text-strong); }
 .shellbeam-tour-popover .driver-popover-arrow { display: none; }
+.shellbeam-tour-active .driver-active-element { outline: 2px solid var(--workspace-primary-500); outline-offset: 4px; }
 .shellbeam-tour-active .driver-overlay { z-index: 10000; }
 .driver-active .shellbeam-tour-loading, .driver-active .shellbeam-tour-loading * { pointer-events: auto; }

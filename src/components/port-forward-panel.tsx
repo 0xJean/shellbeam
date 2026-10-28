@@ -20,6 +20,8 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
+import { usePortForwardTraffic } from '@/hooks/use-port-forward-traffic'
+import { formatBytes } from '@/lib/metric-series'
 import type { HostProfile } from '@/lib/hosts'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
@@ -30,6 +32,7 @@ import { getHostInventoryResource, HostMetadataLine } from './host-display-meta'
 import {
   addPortForwardRule,
   deletePortForwardRule,
+  formatTunnelDuration,
   listPortForwardRules,
   portForwardTunnelStatus,
   startPortForwardTunnel,
@@ -78,6 +81,16 @@ export function PortForwardPanel({
   const [draft, setDraft] = useState<PortForwardForm>(EMPTY_DRAFT)
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
+  const traffic = usePortForwardTraffic()
+  /** Traffic is only shown for tunnels that are running right now; stopped rules show nothing. */
+  const trafficFor = (ruleId: string) => (runningIds.has(ruleId) ? traffic.byRule[ruleId] : undefined)
+  const totals = rules.reduce(
+    (sum, rule) => {
+      const stats = trafficFor(rule.id)
+      return stats ? { in: sum.in + stats.bytesIn, out: sum.out + stats.bytesOut, any: true } : sum
+    },
+    { in: 0, out: 0, any: false }
+  )
 
   async function refresh() {
     setLoading(true)
@@ -88,6 +101,7 @@ export function PortForwardPanel({
         items.map(async (r) => ({ id: r.id, running: await portForwardTunnelStatus(r.id) }))
       )
       setRunningIds(new Set(statuses.filter((s) => s.running).map((s) => s.id)))
+      traffic.reload()
     } catch (e) {
       onError?.(String(e))
     } finally {
@@ -140,6 +154,7 @@ export function PortForwardPanel({
     try {
       await startPortForwardTunnel(rule.id, undefined, vaultId)
       setRunningIds((prev) => new Set([...prev, rule.id]))
+      traffic.reload()
       setFailures((prev) => {
         const next = { ...prev }
         delete next[rule.id]
@@ -160,6 +175,7 @@ export function PortForwardPanel({
         next.delete(ruleId)
         return next
       })
+      traffic.reload()
       onOutput?.('Tunnel stopped')
     } catch (e) {
       onError?.(String(e))
@@ -344,7 +360,14 @@ export function PortForwardPanel({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 className="text-2xl font-semibold text-[var(--workspace-text-strong)]">{t('portForward.title')}</h2>
-            <p className="mt-1 text-sm text-[var(--workspace-text-muted)]">{fill(c.summary, { running: runningIds.size, total: rules.length })}</p>
+            <p className="mt-1 text-sm text-[var(--workspace-text-muted)]">
+              {fill(c.summary, { running: runningIds.size, total: rules.length })}
+              {totals.any && (
+                <span className="font-mono text-xs" data-testid="port-forward-traffic-total">
+                  {' · '}{fill(c.summaryTraffic, { in: formatBytes(totals.in), out: formatBytes(totals.out) })}
+                </span>
+              )}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={loading} className="h-9 gap-1.5 text-xs text-[var(--workspace-text-muted)]">
@@ -394,7 +417,7 @@ export function PortForwardPanel({
               </div>
             ) : (
               <div className="sb-card overflow-x-auto p-0">
-                <table className="w-full min-w-[760px] text-sm" data-testid="port-forward-rules">
+                <table className="w-full min-w-[880px] text-sm" data-testid="port-forward-rules">
                   <thead>
                     <tr className="border-b border-[color:var(--workspace-border-soft)] text-left text-xs font-medium text-[var(--workspace-text-subtle)]">
                       <th className="w-14 px-4 py-2.5 font-medium"><span className="sr-only">{c.colStatus}</span></th>
@@ -402,6 +425,7 @@ export function PortForwardPanel({
                       <th className="px-3 py-2.5 font-medium">{c.colType}</th>
                       <th className="px-3 py-2.5 font-medium">{c.colMapping}</th>
                       <th className="px-3 py-2.5 font-medium">{c.colStatus}</th>
+                      <th className="px-3 py-2.5 font-medium">{c.colTraffic}</th>
                       <th className="px-4 py-2.5"><span className="sr-only">{c.colActions}</span></th>
                     </tr>
                   </thead>
@@ -411,6 +435,10 @@ export function PortForwardPanel({
                       const jump = host?.jumpHostId ? getHost(host.jumpHostId)?.name : undefined
                       const running = runningIds.has(rule.id)
                       const failure = running ? undefined : failures[rule.id]
+                      const stats = trafficFor(rule.id)
+                      const uptime = stats?.startedAt != null && traffic.now > 0
+                        ? formatTunnelDuration(traffic.now - stats.startedAt, c.duration)
+                        : undefined
                       return (
                         <tr key={rule.id} data-testid={`port-forward-rule-${rule.id}`} className="group border-b border-[color:var(--workspace-border-soft)] last:border-b-0 hover:bg-[var(--workspace-surface-900)]">
                           <td className="px-4 py-3">
@@ -455,8 +483,19 @@ export function PortForwardPanel({
                               title={failure}
                             >
                               <span className={cn('h-1.5 w-1.5 rounded-full', running ? 'bg-[var(--workspace-status-good)]' : failure ? 'bg-[var(--workspace-status-bad)]' : 'bg-[var(--workspace-text-subtle)]')} />
-                              {running ? c.running : failure ? c.failed : c.stopped}
+                              {running ? (uptime ? fill(c.runningFor, { duration: uptime }) : c.running) : failure ? c.failed : c.stopped}
                             </span>
+                          </td>
+                          <td className="px-3 py-3">
+                            {stats && (
+                              <span
+                                className="whitespace-nowrap font-mono text-[11px] text-[var(--workspace-text-muted)]"
+                                data-testid="port-forward-traffic"
+                                title={fill(c.trafficTitle, { in: formatBytes(stats.bytesIn), out: formatBytes(stats.bytesOut) })}
+                              >
+                                {fill(c.traffic, { in: formatBytes(stats.bytesIn), out: formatBytes(stats.bytesOut) })}
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-end gap-1">

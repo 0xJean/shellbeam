@@ -264,6 +264,7 @@ pub fn run() {
             net::port_forward::start_port_forward_tunnel,
             net::port_forward::stop_port_forward_tunnel,
             net::port_forward::port_forward_tunnel_status,
+            net::port_forward::port_forward_tunnel_stats,
             storage::clear_app_data,
             biometric_store::biometric_store_password,
             biometric_store::biometric_retrieve_password,

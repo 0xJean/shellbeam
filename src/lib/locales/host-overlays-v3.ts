@@ -1,0 +1,28 @@
+export const hostOverlaysCopy = {
+  en: {
+    alertsTitle: 'Alerts · {count} open', alertsSub: 'From the monitoring service, SSH local rules and ShellBeam',
+    alertsExplain: 'Acknowledge records that someone is handling it; Archive keeps the handling record. Neither proves recovery nor silences notifications.',
+    alertsEmptyHint: 'Adjust the host or source filter, or tick “Include history”.', allHosts: 'All hosts', allSources: 'All sources', sample: 'Sample',
+    filtersHint: 'Hosts without the metric never match a threshold. Filters reset when you switch vaults.', atLeast: 'at least', olderThan: 'older than', minutes: 'min',
+    batchSelected: 'Selected {selected} / {max}', batchMax: 'Up to {max} hosts', targetHint: 'Only a service or container name — no shell special characters.',
+    preview: 'Command and route preview', previewNote: 'You confirm once more before anything runs', direct: 'Direct',
+    resultSummary: '{status} · {done} / {total} succeeded', resultTransport: 'Each host keeps its own direct or ProxyJump transport',
+    colHost: 'Host', colStatus: 'Status', colJob: 'Job / audit', colSummary: 'Summary', back: 'Back',
+    importSub: 'Read {count} hosts from ~/.ssh/config', password: 'Password',
+    importHint: 'Hosts with an IdentityFile use key authentication, otherwise password. No credentials are imported; entries that fail (for example already existing) are skipped.',
+    importDoneSub: '{skipped} not imported (existing or failed) · added to the “Custom” group with tag ssh-import', importDoneSubAll: 'Added to the “Custom” group with tag ssh-import',
+  },
+  'zh-CN': {
+    alertsTitle: '告警 · {count} 待处理', alertsSub: '来自监控服务、SSH 本地规则和 ShellBeam 的告警',
+    alertsExplain: '确认表示已接手处理，归档会保留处理记录。两者都不代表故障已恢复，也不会停止通知。',
+    alertsEmptyHint: '调整主机或来源筛选，或勾选「包含历史记录」', allHosts: '全部主机', allSources: '全部来源', sample: '采样于',
+    filtersHint: '缺少指标的主机不会被阈值条件匹配。切换保管库后筛选自动重置。', atLeast: '不低于', olderThan: '超过', minutes: '分钟',
+    batchSelected: '已选择 {selected} / {max} 台', batchMax: '最多 {max} 台', targetHint: '只允许服务名或容器名，不能包含 Shell 特殊字符',
+    preview: '命令与路由预览', previewNote: '执行前还会确认一次', direct: '直连',
+    resultSummary: '{status} · {done} / {total} 台成功', resultTransport: '每台主机保留各自的直连或 ProxyJump 传输方式',
+    colHost: '主机', colStatus: '状态', colJob: '任务 / 审计', colSummary: '摘要', back: '返回',
+    importSub: '从 ~/.ssh/config 读取到 {count} 台主机', password: '密码',
+    importHint: '有 IdentityFile 的主机使用密钥认证，否则为密码认证。不会导入任何凭据；导入失败的条目（如已存在）会被跳过。',
+    importDoneSub: '{skipped} 台未导入（已存在或出错） · 已加入分组「自定义」并打上标签 ssh-import', importDoneSubAll: '已加入分组「自定义」并打上标签 ssh-import',
+  },
+} as const

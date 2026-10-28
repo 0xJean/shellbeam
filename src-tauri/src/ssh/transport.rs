@@ -4,7 +4,7 @@
 use ssh2::{Channel, Session};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -439,10 +439,47 @@ pub(crate) fn bridge(session: Session, channel: Channel, socket: TcpStream, stop
 
 pub(crate) fn bridge_with_prefix(
     session: Session,
+    channel: Channel,
+    socket: TcpStream,
+    stop: Arc<AtomicBool>,
+    prefix: Vec<u8>,
+) {
+    bridge_counted(session, channel, socket, stop, prefix, None);
+}
+
+/// Per-tunnel traffic totals shared by every bridge worker of one forward.
+/// Only relaxed atomic adds happen on the copy path; readers take snapshots.
+#[derive(Debug, Default)]
+pub struct TrafficCounters {
+    /// Bytes delivered from the SSH channel to the local socket.
+    bytes_in: AtomicU64,
+    /// Bytes delivered from the local socket (plus any prefix) into the SSH channel.
+    bytes_out: AtomicU64,
+}
+impl TrafficCounters {
+    pub fn add_in(&self, bytes: usize) {
+        self.bytes_in.fetch_add(bytes as u64, Ordering::Relaxed);
+    }
+    pub fn add_out(&self, bytes: usize) {
+        self.bytes_out.fetch_add(bytes as u64, Ordering::Relaxed);
+    }
+    pub fn bytes_in(&self) -> u64 {
+        self.bytes_in.load(Ordering::Relaxed)
+    }
+    pub fn bytes_out(&self) -> u64 {
+        self.bytes_out.load(Ordering::Relaxed)
+    }
+}
+
+/// `bridge_with_prefix` that also adds the bytes actually written in each
+/// direction to `counters` when one is supplied.
+pub(crate) fn bridge_counted(
+    session: Session,
     mut channel: Channel,
     mut socket: TcpStream,
     stop: Arc<AtomicBool>,
     prefix: Vec<u8>,
+    counters: Option<Arc<TrafficCounters>>,
 ) {
     session.set_blocking(false);
     if socket.set_nonblocking(true).is_err() {
@@ -467,6 +504,9 @@ pub(crate) fn bridge_with_prefix(
         if !to_remote.is_empty() {
             match channel.write(&to_remote) {
                 Ok(n) => {
+                    if let Some(counters) = &counters {
+                        counters.add_out(n);
+                    }
                     to_remote.drain(..n);
                 }
                 Err(error) if would_block(&error) => {}
@@ -487,6 +527,9 @@ pub(crate) fn bridge_with_prefix(
         if !to_local.is_empty() {
             match socket.write(&to_local) {
                 Ok(n) => {
+                    if let Some(counters) = &counters {
+                        counters.add_in(n);
+                    }
                     to_local.drain(..n);
                 }
                 Err(error) if would_block(&error) => {}

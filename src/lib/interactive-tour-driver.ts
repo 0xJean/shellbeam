@@ -2,6 +2,9 @@ import { driver, type DriveStep, type Driver, type PopoverDOM } from 'driver.js'
 import 'driver.js/dist/driver.css'
 import '@/styles/interactive-tour.css'
 import { findTourTarget, TOUR_READY, TOUR_STEPS, waitForTourTarget, type InteractiveTourId, type TourOutcome } from './interactive-tour'
+import type { Locale } from './i18n'
+import { guideAuditCopy } from './locales/guide-audit-v3'
+import { fill } from './locales/probe-install'
 
 interface TourOptions {
   id: InteractiveTourId
@@ -9,6 +12,7 @@ interface TourOptions {
   setHostFormOpen: (open: boolean) => void
   onWaiting: (waiting: boolean) => void
   onFinish: (outcome: TourOutcome) => void
+  locale?: Locale
 }
 
 export function startInteractiveTour(options: TourOptions) {
@@ -88,6 +92,26 @@ export function startInteractiveTour(options: TourOptions) {
     if (overlayElement && overlayElement.parentElement !== container) container.appendChild(overlayElement)
   }
 
+  function decoratePopover({ title, progress, footer, footerButtons, closeButton, wrapper }: PopoverDOM) {
+    if (!title || !progress || !footer || !footerButtons || !closeButton) return
+    const copy = guideAuditCopy[options.locale ?? 'en']
+    progress.textContent = fill(copy.tourProgress, { tour: options.t(`tour.launch.${options.id}`), progress: progress.textContent ?? '' })
+    progress.classList.add('shellbeam-tour-eyebrow')
+    title.before(progress)
+    const dots = document.createElement('span')
+    dots.className = 'shellbeam-tour-dots'
+    dots.setAttribute('aria-hidden', 'true')
+    for (let i = 0; i < steps.length; i++) dots.appendChild(document.createElement('i')).classList.toggle('is-active', i === index)
+    footer.prepend(dots)
+    closeButton.textContent = options.t('tour.close')
+    closeButton.classList.add('driver-popover-footer-btn')
+    footerButtons.prepend(closeButton)
+    const hint = document.createElement('p')
+    hint.className = 'shellbeam-tour-hint'
+    hint.textContent = copy.tourHint
+    wrapper.appendChild(hint)
+  }
+
   async function goTo(next: number) {
     if (stopped || busy) return
     if (next >= steps.length) { finish('completed'); return }
@@ -165,6 +189,7 @@ export function startInteractiveTour(options: TourOptions) {
       onCloseClick: () => finish('cancelled'),
       onDestroyed: () => finish('cancelled'),
       onPopoverRender: (popover) => {
+        decoratePopover(popover)
         attachToDialog(popover)
         popover.wrapper.setAttribute('aria-modal', 'true')
       },

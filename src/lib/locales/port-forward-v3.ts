@@ -15,6 +15,9 @@ export const portForwardCopy = {
     explainLocal: 'Local forward -L', explainLocalDesc: 'Maps a service inside the server’s network to a port on this machine, e.g. reach a remote database on local port 5433.',
     explainRemote: 'Remote forward -R', explainRemoteDesc: 'Exposes a service on this machine on the server, handy for briefly demoing a local dev environment.',
     explainDynamic: 'Dynamic SOCKS -D', explainDynamicDesc: 'Opens a SOCKS5 proxy on this machine; all traffic exits through the server.',
+    colTraffic: 'Traffic', traffic: '↓ {in} · ↑ {out}', trafficTitle: 'Received {in} · sent {out}', summaryTraffic: '↓ {in} · ↑ {out} total',
+    runningFor: 'Running {duration}',
+    duration: { seconds: '{n} s', minutes: '{n} min', hours: '{n} h', days: '{n} d' },
   },
   'zh-CN': {
     summary: '{running} 条运行中 · 共 {total} 条规则 · 规则随保管库保存',
@@ -32,5 +35,8 @@ export const portForwardCopy = {
     explainLocal: '本地转发 -L', explainLocalDesc: '把服务器内网的服务映射到本机端口，例如在本地用 5433 访问远程数据库。',
     explainRemote: '远程转发 -R', explainRemoteDesc: '把本机服务暴露到服务器上，适合临时给别人演示本地开发环境。',
     explainDynamic: '动态 SOCKS -D', explainDynamicDesc: '在本机开一个 SOCKS5 代理，所有流量经服务器出站。',
+    colTraffic: '流量', traffic: '↓ {in} · ↑ {out}', trafficTitle: '已接收 {in} · 已发送 {out}', summaryTraffic: '共 ↓ {in} · ↑ {out}',
+    runningFor: '运行 {duration}',
+    duration: { seconds: '{n} 秒', minutes: '{n} 分钟', hours: '{n} 小时', days: '{n} 天' },
   },
 } as const

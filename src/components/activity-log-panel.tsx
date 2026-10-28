@@ -175,7 +175,7 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
       </div>
 
       {tab === 'audit' ? (
-        <OperationsAuditCenter className="sb-card" />
+        <OperationsAuditCenter />
       ) : (
         <>
           {loading && entries.length === 0 && (

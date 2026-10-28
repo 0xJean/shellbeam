@@ -78,4 +78,35 @@ describe('PortForwardPanel', () => {
     expect(onError).toHaveBeenCalled()
     expect(within(expose).getByRole('button', { name: /Retry/ })).toBeInTheDocument()
   })
+
+  it('shows traffic and running time for running tunnels only, with totals in the summary', async () => {
+    const startedAt = Date.now() - 2 * 3600_000 - 60_000
+    invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => {
+      if (command === 'list_port_forward_rules') return rules
+      if (command === 'port_forward_tunnel_status') return running.has(args.ruleId as string)
+      if (command === 'port_forward_tunnel_stats') return [
+        { ruleId: 'local-db', running: true, bytesIn: 182 * 1024 * 1024, bytesOut: 12 * 1024 * 1024, startedAt },
+        // A registered but stopped tunnel never shows numbers.
+        { ruleId: 'socks', running: false, bytesIn: 0, bytesOut: 0, startedAt },
+      ]
+      return null
+    })
+    render(<PortForwardPanel hosts={[host, cache]} vaultId="v" />)
+    const local = await screen.findByTestId('port-forward-rule-local-db')
+    await waitFor(() => expect(within(local).getByTestId('port-forward-traffic')).toHaveTextContent('↓ 182 MB · ↑ 12.0 MB'))
+    expect(within(local).getByText('Running 2 h')).toBeInTheDocument()
+    expect(invoke).toHaveBeenCalledWith('port_forward_tunnel_stats', { ruleId: undefined })
+    expect(within(screen.getByTestId('port-forward-rule-socks')).queryByTestId('port-forward-traffic')).toBeNull()
+    expect(within(screen.getByTestId('port-forward-rule-expose')).queryByTestId('port-forward-traffic')).toBeNull()
+    expect(screen.getByTestId('port-forward-traffic-total')).toHaveTextContent('↓ 182 MB · ↑ 12.0 MB total')
+  })
+
+  it('shows no traffic or totals when nothing is running', async () => {
+    running = new Set()
+    render(<PortForwardPanel hosts={[host, cache]} vaultId="v" />)
+    await screen.findByTestId('port-forward-rule-local-db')
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('port_forward_tunnel_stats', { ruleId: undefined }))
+    expect(screen.queryByTestId('port-forward-traffic')).toBeNull()
+    expect(screen.queryByTestId('port-forward-traffic-total')).toBeNull()
+  })
 })

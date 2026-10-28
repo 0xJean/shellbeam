@@ -2,6 +2,10 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Archive, ArrowLeftRight, BookOpen, ChevronRight, Clock, Code2, KeyRound, Network, RefreshCw, Shield } from 'lucide-react'
 import type { SidebarNavId } from '@/components/pc-nav-sidebar'
 import { useT } from '@/lib/i18n'
+import { usePortForwardTraffic } from '@/hooks/use-port-forward-traffic'
+import { formatBytes } from '@/lib/metric-series'
+import { portForwardCopy } from '@/lib/locales/port-forward-v3'
+import { fill as fillTemplate } from '@/lib/locales/probe-install'
 import { listPortForwardRules, portForwardTunnelStatus, type PortForwardRule } from '@/lib/port-forward'
 
 const COPY = {
@@ -21,6 +25,7 @@ export function MobileToolsPage({ vaultId, onNavigate }: { vaultId?: string | nu
   const c = COPY[locale]
   const [rules, setRules] = useState<PortForwardRule[]>([])
   const [running, setRunning] = useState<Set<string>>(new Set())
+  const traffic = usePortForwardTraffic()
 
   useEffect(() => {
     let live = true
@@ -69,6 +74,11 @@ export function MobileToolsPage({ vaultId, onNavigate }: { vaultId?: string | nu
               <b className="block truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{rule.name}</b>
               <small className="block truncate font-mono text-xs text-[var(--workspace-text-muted)]">{rule.bindHost}:{rule.bindPort} → {rule.type === 'dynamic' ? 'SOCKS' : `${rule.targetHost}:${rule.targetPort}`}</small>
             </span>
+            {traffic.byRule[rule.id] && (
+              <span data-testid="mobile-tool-forward-traffic" className="shrink-0 whitespace-nowrap font-mono text-[11px] text-[var(--workspace-text-muted)]">
+                {fillTemplate(portForwardCopy[locale].traffic, { in: formatBytes(traffic.byRule[rule.id].bytesIn), out: formatBytes(traffic.byRule[rule.id].bytesOut) })}
+              </span>
+            )}
           </div>
         ))}
       </section>

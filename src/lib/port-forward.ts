@@ -114,3 +114,35 @@ export async function portForwardTunnelStatus(ruleId: string): Promise<boolean> 
     throw new Error(toInvokeErrorMessage(error))
   }
 }
+
+/** Live traffic for a registered tunnel: `bytesIn` arrived through the tunnel, `bytesOut` was sent into it. */
+export interface PortForwardTunnelStats {
+  ruleId: string
+  running: boolean
+  bytesIn: number
+  bytesOut: number
+  /** Unix ms when the tunnel was started; null when no tunnel is registered for the rule. */
+  startedAt: number | null
+}
+
+/** Stats for one rule, or for every registered tunnel when `ruleId` is omitted. */
+export async function portForwardTunnelStats(ruleId?: string): Promise<PortForwardTunnelStats[]> {
+  try {
+    const stats = await invoke<PortForwardTunnelStats[] | null>('port_forward_tunnel_stats', { ruleId })
+    return Array.isArray(stats) ? stats : []
+  } catch (error) {
+    throw new Error(toInvokeErrorMessage(error))
+  }
+}
+
+export interface DurationUnits { seconds: string; minutes: string; hours: string; days: string }
+
+/** Coarse running time ("35 min", "2 h"): one unit, rounded down, never negative. */
+export function formatTunnelDuration(ms: number, units: DurationUnits): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  const [template, n] = seconds < 60 ? [units.seconds, seconds]
+    : seconds < 3600 ? [units.minutes, Math.floor(seconds / 60)]
+    : seconds < 86_400 ? [units.hours, Math.floor(seconds / 3600)]
+    : [units.days, Math.floor(seconds / 86_400)]
+  return template.replace('{n}', String(n))
+}
