@@ -5,7 +5,7 @@ import { FleetDashboard } from '@/components/dashboard/fleet-dashboard'
 import { requestSettingsCategory } from '@/lib/settings-request'
 import { MobileToolsPage } from '@/components/mobile-tools-page'
 import { isToolPage } from '@/lib/mobile-navigation'
-import { requestTerminalAiToggle, requestTerminalSearchToggle, TERMINAL_SEARCH_STATE_EVENT } from '@/lib/terminal-events'
+import { requestTerminalAiToggle, requestTerminalSearchToggle, TERMINAL_AI_STATE_EVENT, TERMINAL_SEARCH_STATE_EVENT } from '@/lib/terminal-events'
 import { CLOSE_SESSION_REQUEST_EVENT, OPEN_KNOWN_HOSTS_REQUEST_EVENT, OPEN_SFTP_REQUEST_EVENT, OPEN_TERMINAL_REQUEST_EVENT, type HostDirectoryRequest } from '@/lib/navigation-request'
 import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
 import { InteractiveTour } from '@/components/interactive-tour'
@@ -288,6 +288,15 @@ export function PcLayout() {
     }
     window.addEventListener(TERMINAL_SEARCH_STATE_EVENT, onState)
     return () => window.removeEventListener(TERMINAL_SEARCH_STATE_EVENT, onState)
+  }, [])
+  const [terminalAiOpen, setTerminalAiOpen] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    const onState = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId: string; open: boolean }>).detail
+      if (detail) setTerminalAiOpen((current) => current[detail.sessionId] === detail.open ? current : { ...current, [detail.sessionId]: detail.open })
+    }
+    window.addEventListener(TERMINAL_AI_STATE_EVENT, onState)
+    return () => window.removeEventListener(TERMINAL_AI_STATE_EVENT, onState)
   }, [])
 
   // Deep panels (deployment directories) ask for a terminal or SFTP at a path.
@@ -960,6 +969,7 @@ export function PcLayout() {
           onToggleSplit={canToggleSplit ? handleToggleSplit : undefined}
           hosts={hostsCtx.hosts}
           onToggleAi={() => { if (sessions.pcActiveSessionId) requestTerminalAiToggle(sessions.pcActiveSessionId) }}
+          aiOpen={!!sessions.pcActiveSessionId && terminalAiOpen[sessions.pcActiveSessionId] === true}
           theme={app.theme}
           onToggleTheme={app.toggleTheme}
         />

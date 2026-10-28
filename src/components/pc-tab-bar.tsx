@@ -39,6 +39,8 @@ interface PcSessionTabBarProps {
   hosts?: HostProfile[]
   /** Right-hand actions: AI assistant for the active terminal, theme toggle. */
   onToggleAi?: () => void
+  /** The active session's AI bar is open. */
+  aiOpen?: boolean
   theme?: string
   onToggleTheme?: () => void
 }
@@ -56,6 +58,7 @@ export function PcSessionTabBar({
   onToggleSplit,
   hosts = [],
   onToggleAi,
+  aiOpen = false,
   theme,
   onToggleTheme,
 }: PcSessionTabBarProps) {
@@ -162,8 +165,10 @@ export function PcSessionTabBar({
 
       <div className="ml-auto flex shrink-0 items-center gap-1 pl-2">
         {onToggleAi && !isDashboard && activeSessionId && (
-          <button type="button" data-testid="pc-tab-ai" onClick={onToggleAi} title={t('tab.aiAssistant')}
-            className="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-workspace-nav transition-colors hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]">
+          <button type="button" data-testid="pc-tab-ai" onClick={onToggleAi} title={t('tab.aiAssistant')} aria-pressed={aiOpen}
+            className={cn('flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors', aiOpen
+              ? 'bg-[var(--workspace-nav-active-bg)] text-workspace-nav-active'
+              : 'text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]')}>
             <Sparkles className="h-3.5 w-3.5 text-[var(--workspace-accent-text)]" />{t('tab.aiAssistant')}
             <kbd className="rounded border border-[color:var(--workspace-border-soft)] px-1 font-sans text-[10px] text-[var(--workspace-text-subtle)]">⌘I</kbd>
           </button>

@@ -115,7 +115,7 @@ describe('session terminal view', () => {
     expect(screen.getByRole('button', { name: 'workspace.mode.terminal' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'workspace.mode.workspace' })).toBeInTheDocument()
     expect(screen.queryByTitle('terminal.openBrowser')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /ai/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^ai$/i })).not.toBeInTheDocument()
     expect(screen.getByTitle('rightSidebar.terminal')).toBeInTheDocument()
   })
 

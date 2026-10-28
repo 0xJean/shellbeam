@@ -1099,7 +1099,6 @@ const en: Record<string, string> = {
 
   // Terminal
   'terminal.reconnecting': 'Reconnecting...',
-  'terminal.aiGenerator': 'AI Command Generator',
   'terminal.connectionLost': 'Connection lost',
   'terminal.reconnect': 'Reconnect',
   'terminal.clearScrollback': 'Clear terminal scrollback',

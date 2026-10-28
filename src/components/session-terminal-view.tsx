@@ -1,5 +1,5 @@
 import { getInteractiveHistory, isInteractiveHistoryEvent, subscribeInteractiveHistory } from '@/lib/interactive-history'
-import { announceTerminalSearchState, TERMINAL_AI_TOGGLE_EVENT, TERMINAL_SEARCH_TOGGLE_EVENT } from '@/lib/terminal-events'
+import { announceTerminalAiState, announceTerminalSearchState, TERMINAL_AI_TOGGLE_EVENT, TERMINAL_SEARCH_TOGGLE_EVENT } from '@/lib/terminal-events'
 import { normalizeBrowserUrl } from '@/contexts/session-browser-state'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import { useVault } from '@/contexts/vault-context'
@@ -15,7 +15,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { Eraser, PanelRightClose, PanelRightOpen, Sparkles, ExternalLink, Globe } from 'lucide-react'
+import { Eraser, PanelRightClose, PanelRightOpen, ExternalLink, Globe } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { AICommandBar } from './ai-command-bar'
 import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
@@ -105,6 +105,7 @@ export function SessionTerminalView({
     window.addEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
     return () => window.removeEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
   }, [sessionId])
+  useEffect(() => { announceTerminalAiState(sessionId, showAI) }, [sessionId, showAI])
   const [currentInputLine, setCurrentInputLine] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [detectedLinks, setDetectedLinks] = useState<string[]>([])
@@ -463,22 +464,6 @@ export function SessionTerminalView({
               aria-label={t('terminal.clearScrollback')}
             >
               <Eraser className="h-4 w-4" />
-            </button>
-          )}
-          {isConnected && (
-            <button
-              type="button"
-              onClick={() => setShowAI((v) => !v)}
-              className={cn(
-                'flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold tracking-wide transition-all md:px-3',
-                showAI
-                  ? 'bg-primary/25 text-primary shadow-[0_0_12px_var(--workspace-accent-muted)]'
-                  : 'border border-primary/30 bg-primary/10 text-primary shadow-[0_0_6px_var(--workspace-accent-soft)] hover:bg-primary/20 hover:shadow-[0_0_10px_var(--workspace-accent-muted)]',
-              )}
-              title={`${t('terminal.aiGenerator')} (⌘+I)`}
-            >
-              <Sparkles className={cn('h-3.5 w-3.5', !showAI && 'animate-pulse')} />
-              <span className="hidden md:inline">AI</span>
             </button>
           )}
           {onToggleRightSidebar && (

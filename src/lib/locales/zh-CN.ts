@@ -1099,7 +1099,6 @@ const zhCN: Record<string, string> = {
 
   // Terminal
   'terminal.reconnecting': '重新连接中...',
-  'terminal.aiGenerator': 'AI 命令生成器',
   'terminal.connectionLost': '连接已断开',
   'terminal.reconnect': '重新连接',
   'terminal.clearScrollback': '清理终端滚动缓存',
