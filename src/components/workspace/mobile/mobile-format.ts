@@ -1,5 +1,5 @@
 import { fill } from '@/lib/locales/probe-install'
-import type { WorkspaceMobileV3Copy } from '@/lib/locales/workspace-mobile-v3'
+import { mobileFormatCopy, type WorkspaceMobileV3Copy } from '@/lib/locales/workspace-mobile-v3'
 import type { HostOpsHealthState } from '@/lib/host-ops-view'
 
 const DAY_MS = 86_400_000
@@ -14,10 +14,10 @@ export function relativeTime(now: number, time: number | null | undefined, copy:
 
 export function formatUptime(seconds: number | null | undefined, locale: string) {
   if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return null
-  const zh = locale === 'zh-CN'
-  if (seconds >= DAY_MS / 1000) return `${Math.floor(seconds / 86_400)}${zh ? ' 天' : 'd'}`
-  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}${zh ? ' 小时' : 'h'}`
-  return `${Math.max(1, Math.floor(seconds / 60))}${zh ? ' 分钟' : 'm'}`
+  const c = mobileFormatCopy[locale === 'zh-CN' ? 'zh-CN' : 'en']
+  if (seconds >= DAY_MS / 1000) return `${Math.floor(seconds / 86_400)}${c.days}`
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}${c.hours}`
+  return `${Math.max(1, Math.floor(seconds / 60))}${c.minutes}`
 }
 
 /** "12.4M" style rate for the small ring centre. */

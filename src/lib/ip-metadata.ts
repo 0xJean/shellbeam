@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { t } from './i18n'
 
 export type HostAddressType = 'ipv4' | 'ipv6' | 'domain' | 'unknown'
 export type HostAddressScope = 'public' | 'private' | 'loopback' | 'linkLocal' | 'carrierNat' | 'reserved' | 'multicast' | 'domain' | 'unknown'
@@ -87,27 +88,26 @@ function classifyIpv6(address: string): HostAddressScope {
 }
 
 function scopeLabel(scope: HostAddressScope) {
-  if (scope === 'public') return '公网 IP'
-  if (scope === 'private') return '内网 IP'
-  if (scope === 'loopback') return '本机地址'
-  if (scope === 'linkLocal') return '链路本地'
-  if (scope === 'carrierNat') return '运营商内网'
-  if (scope === 'reserved') return '保留地址'
-  if (scope === 'multicast') return '组播地址'
-  if (scope === 'domain') return '域名'
-  return '未知地址'
+  if (scope === 'public') return t('hosts.networkPublic')
+  if (scope === 'private') return t('hosts.networkPrivate')
+  if (scope === 'loopback') return t('hosts.networkLocal')
+  if (scope === 'linkLocal') return t('hosts.networkLinkLocal')
+  if (scope === 'carrierNat') return t('hosts.networkCarrierNat')
+  if (scope === 'reserved') return t('hosts.networkReserved')
+  if (scope === 'multicast') return t('hosts.networkMulticast')
+  if (scope === 'domain') return t('hosts.networkDomain')
+  return t('hosts.networkUnknown')
 }
 
 function defaultLocationLabel(scope: HostAddressScope) {
-  if (scope === 'public') return '地区待查询'
-  if (scope === 'domain') return '域名需解析'
-  if (scope === 'private') return '内网'
-  if (scope === 'loopback') return '本机'
-  if (scope === 'linkLocal') return '链路本地'
-  if (scope === 'carrierNat') return '运营商内网'
-  if (scope === 'reserved') return '不可定位'
-  if (scope === 'multicast') return '不可定位'
-  return '未知'
+  if (scope === 'public') return t('hosts.locationPending')
+  if (scope === 'domain') return t('hosts.locationDomain')
+  if (scope === 'private') return t('hosts.locationPrivate')
+  if (scope === 'loopback') return t('hosts.locationLocal')
+  if (scope === 'linkLocal') return t('hosts.locationLinkLocal')
+  if (scope === 'carrierNat') return t('hosts.locationCarrierNat')
+  if (scope === 'reserved' || scope === 'multicast') return t('hosts.locationNotLocatable')
+  return t('hosts.locationUnknown')
 }
 
 export function classifyHostAddress(rawAddress: string): HostAddressMetadata {
@@ -147,7 +147,7 @@ export function classifyHostAddress(rawAddress: string): HostAddressMetadata {
       address,
       addressType: 'domain',
       scope: 'domain',
-      versionLabel: '域名',
+      versionLabel: t('hosts.networkDomain'),
       scopeLabel: scopeLabel('domain'),
       locationLabel: defaultLocationLabel('domain'),
       publicIp: null,
@@ -159,7 +159,7 @@ export function classifyHostAddress(rawAddress: string): HostAddressMetadata {
     address,
     addressType: 'unknown',
     scope: 'unknown',
-    versionLabel: '未知',
+    versionLabel: t('workspace.asset.unknown'),
     scopeLabel: scopeLabel('unknown'),
     locationLabel: defaultLocationLabel('unknown'),
     publicIp: null,
@@ -278,7 +278,7 @@ export async function lookupPublicIpLocation(ip: string): Promise<PublicIpLocati
     typeof data.country_name === 'string' ? data.country_name : undefined,
     typeof data.region === 'string' ? data.region : undefined,
     typeof data.city === 'string' ? data.city : undefined,
-  ]) || (typeof data.timezone === 'string' ? data.timezone : undefined) || '地区未知'
+  ]) || (typeof data.timezone === 'string' ? data.timezone : undefined) || t('hosts.locationUnknown')
   const countryCode = normalizeCountryCode(data.country_code)
   const countryName = typeof data.country_name === 'string' ? data.country_name : undefined
 

@@ -11,6 +11,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
+import { t } from '@/lib/i18n'
 
 const DOMAIN = 'com.shellbeam'
 const KEY_NAME = 'vault-master-pw'
@@ -160,10 +161,10 @@ export function biometryLabel(type: BiometryType): string {
   switch (type) {
     case 'touchId': return 'Touch ID'
     case 'faceId': return 'Face ID'
-    case 'fingerprint': return '指纹识别'
-    case 'iris': return '虹膜识别'
-    case 'auto': return detectPlatform() === 'windows' ? 'Windows Hello' : '生物识别'
-    default: return '生物识别'
+    case 'fingerprint': return t('biometric.fingerprint')
+    case 'iris': return t('biometric.iris')
+    case 'auto': return detectPlatform() === 'windows' ? 'Windows Hello' : t('biometric.generic')
+    default: return t('biometric.generic')
   }
 }
 
@@ -182,7 +183,7 @@ export async function storeMasterPassword(password: string): Promise<void> {
     // Touch ID verify first, then store to encrypted file.
     // allowDeviceCredential lets the user fall back to Mac password,
     // which is equally valid as Touch ID for identity verification.
-    await plugin.authenticate('验证身份以启用 Touch ID 解锁', { allowDeviceCredential: true })
+    await plugin.authenticate(t('biometric.enablePrompt'), { allowDeviceCredential: true })
     await macosStorePassword(password)
   } else {
     await plugin.setData({ domain: DOMAIN, name: KEY_NAME, data: password })

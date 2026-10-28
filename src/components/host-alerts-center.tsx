@@ -5,6 +5,7 @@ import type { HostIncident } from '@/lib/host-incidents'
 export type { HostIncident } from '@/lib/host-incidents'
 import { hostPresentationCopy } from '@/lib/locales/host-presentation'
 import { hostOverlaysCopy } from '@/lib/locales/host-overlays-v3'
+import { monitoringAlertsCopy } from '@/lib/locales/monitoring-alerts'
 import { fill } from '@/lib/locales/probe-install'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -22,6 +23,7 @@ function statusTone(status: string) {
 
 export function HostAlertsCenter({ incidents, onOpenHost }: { incidents: HostIncident[]; onOpenHost?: (hostId: string) => void }) {
   const { t, locale } = useT()
+  const alertsCopy = monitoringAlertsCopy[locale]
   const copy = hostPresentationCopy[locale]
   const v3 = hostOverlaysCopy[locale]
   const [hostId, setHostId] = useState('')
@@ -37,7 +39,7 @@ export function HostAlertsCenter({ incidents, onOpenHost }: { incidents: HostInc
   const currentSource = sources.includes(source) ? source : ''
   if (currentHostId !== hostId) setHostId(currentHostId)
   if (currentSource !== source) setSource(currentSource)
-  const sourceLabel = (value: string) => value === 'komari' ? (locale === 'zh-CN' ? '监控服务' : 'Monitoring service') : value === 'ssh-agentless' ? 'SSH' : value === 'local' ? copy.local : value
+  const sourceLabel = (value: string) => value === 'komari' ? alertsCopy.monitoringService : value === 'ssh-agentless' ? 'SSH' : value === 'local' ? copy.local : value
   const isOpen = (row: HostIncident) => !row.historyOnly && (row.status === 'active' || row.status === 'acknowledged')
   const openCount = incidents.filter(isOpen).length
   const rows = incidents.filter(row => (!currentHostId || row.hostId === currentHostId) && (!currentSource || row.source === currentSource) && (includeHistory || isOpen(row)))
@@ -78,22 +80,22 @@ export function HostAlertsCenter({ incidents, onOpenHost }: { incidents: HostInc
             <div className="min-w-0 flex-1">
               <p className="break-words text-sm font-medium text-[var(--workspace-text-strong)]">{row.source === 'komari' && row.monitoringKind ? monitoringAlertTitle({ kind: row.monitoringKind, title: row.title }, locale) : row.title}</p>
               {row.loadEvidence && <p data-testid="load-alert-evidence" className="mt-0.5 break-words text-xs text-[var(--workspace-text-muted)]">{loadEvidenceCopy(row.loadEvidence, locale)}
-                {row.loadEvidence.sampledAt > 0 && row.loadEvidence.sampledAt <= Date.now() ? ` · ${locale === 'zh-CN' ? '采样' : 'Sample'} ${new Date(row.loadEvidence.sampledAt).toLocaleString(locale)}` : ''}
+                {row.loadEvidence.sampledAt > 0 && row.loadEvidence.sampledAt <= Date.now() ? ` · ${alertsCopy.sample} ${new Date(row.loadEvidence.sampledAt).toLocaleString(locale)}` : ''}
               </p>}
-              {row.evidenceUnavailable && <p className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{locale === 'zh-CN' ? '历史规则统计缺少事件证据，未计入当前异常。' : 'Historical rule count without event evidence; excluded from current incidents.'}</p>}
+              {row.evidenceUnavailable && <p className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{alertsCopy.evidenceUnavailable}</p>}
               {row.historyOnly && <p className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{copy.historicalSource}</p>}
             </div>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 pl-10 text-xs text-[var(--workspace-text-muted)]">
             <span>{row.hostName}</span><span aria-hidden>·</span><span>{sourceLabel(row.source)}</span><span aria-hidden>·</span>
-            <span className={cn('inline-flex items-center gap-1.5', toneText[tone])}><span className={cn('h-1.5 w-1.5 rounded-full', toneDot[tone])} />{row.status === 'closed' ? (locale === 'zh-CN' ? '已归档' : 'Archived') : t(`localOps.status.${row.status}`)}</span>
+            <span className={cn('inline-flex items-center gap-1.5', toneText[tone])}><span className={cn('h-1.5 w-1.5 rounded-full', toneDot[tone])} />{row.status === 'closed' ? alertsCopy.archived : t(`localOps.status.${row.status}`)}</span>
             {Number.isFinite(row.updatedAt) && row.updatedAt > 0 && row.updatedAt <= Date.now() && <><span aria-hidden>·</span><time>{new Date(row.updatedAt).toLocaleString(locale)}</time></>}
-            {row.lastObservation && <span className={cn('ml-auto rounded px-1.5 py-0.5 text-[11px] font-medium', toneText[observationTone], observationTone === 'bad' ? 'bg-[var(--workspace-status-bad-bg)]' : observationTone === 'good' ? 'bg-[var(--workspace-status-good-bg)]' : 'bg-[var(--workspace-surface-800)]')}>{locale === 'zh-CN' ? '最近观测：' : 'Last observation: '}{({ abnormal: locale === 'zh-CN' ? '异常' : 'Abnormal', recovered: locale === 'zh-CN' ? '已恢复' : 'Recovered', unknown: locale === 'zh-CN' ? '未知' : 'Unknown' })[row.lastObservation]}</span>}
+            {row.lastObservation && <span className={cn('ml-auto rounded px-1.5 py-0.5 text-[11px] font-medium', toneText[observationTone], observationTone === 'bad' ? 'bg-[var(--workspace-status-bad-bg)]' : observationTone === 'good' ? 'bg-[var(--workspace-status-good-bg)]' : 'bg-[var(--workspace-surface-800)]')}>{alertsCopy.lastObservation}{alertsCopy.observation[row.lastObservation]}</span>}
           </div>
           {(onOpenHost && row.hostId) || (row.act && ['active', 'acknowledged', 'resolved'].includes(row.status)) ? <div className="mt-2.5 flex flex-wrap gap-2 pl-10">
             {onOpenHost && row.hostId && <Button size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-xs" onClick={() => onOpenHost(row.hostId)}><LayoutDashboard className="h-3.5 w-3.5" />{copy.overview}</Button>}
             {row.act && !row.evidenceUnavailable && row.status === 'active' && <Button size="sm" variant="ghost" className="h-7 gap-1.5 bg-[var(--workspace-accent-subtle)] px-2 text-xs text-[var(--workspace-accent-text)]" disabled={!!pending || row.busy} onClick={() => void act(row, 'acknowledge')}><Hand className="h-3.5 w-3.5" />{t('localOps.acknowledge')}</Button>}
-            {row.act && ['active', 'acknowledged', 'resolved'].includes(row.status) && <Button size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-xs" disabled={!!pending || row.busy} onClick={() => void act(row, 'close')}><Archive className="h-3.5 w-3.5" />{locale === 'zh-CN' ? '归档' : 'Archive'}</Button>}
+            {row.act && ['active', 'acknowledged', 'resolved'].includes(row.status) && <Button size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-xs" disabled={!!pending || row.busy} onClick={() => void act(row, 'close')}><Archive className="h-3.5 w-3.5" />{alertsCopy.archive}</Button>}
           </div> : null}
           {!!row.audit?.length && <details className="group mt-2.5 pl-10 text-xs">
             <summary className="flex cursor-pointer list-none items-center gap-1 text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text)]"><ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />{t('komariAlerts.auditTitle', { count: row.audit.length })}</summary>

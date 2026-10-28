@@ -1,6 +1,7 @@
 import { COLLECTION_LIMITS, collectionConcurrency } from './collection-limits'
 import { observationVaultIds, scopeObservationHosts } from './host-observation-scope'
 import { hasSshConnection, type HostProfile } from '@/lib/hosts'
+import { VaultUnavailableError } from '@/lib/vault'
 import {
   getServerMonitorHostKey,
   listServerMonitorHistory,
@@ -44,14 +45,9 @@ function errorMessage(error: unknown) {
 }
 
 export function isServerMonitorVaultUnavailableError(error: unknown) {
+  if (error instanceof VaultUnavailableError) return true
   const message = errorMessage(error).toLowerCase()
-  return message.includes('vault')
-    && (
-      message.includes('locked')
-      || message.includes('锁定')
-      || message.includes('未初始化')
-      || message.includes('尚未初始化')
-    )
+  return message.includes('vault') && (message.includes('locked') || message.includes('not initialized'))
 }
 
 function historyForState(state: ServerMonitorHostState | undefined) {

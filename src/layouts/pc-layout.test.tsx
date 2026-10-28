@@ -6,6 +6,7 @@ import { PcLayout } from './pc-layout'
 
 vi.mock('@/lib/i18n', () => ({
   useT: () => ({ locale: 'en', t: (key: string) => key }),
+  t: (key: string) => key,
 }))
 
 vi.mock('@/components/activity-log-panel', () => ({ ActivityLogPanel: () => <div /> }))

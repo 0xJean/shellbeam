@@ -40,3 +40,9 @@ export const workspaceMobileV3Copy = {
 } as const
 
 export type WorkspaceMobileV3Copy = (typeof workspaceMobileV3Copy)[keyof typeof workspaceMobileV3Copy]
+
+/** Compact uptime unit suffixes, appended directly to the number. */
+export const mobileFormatCopy = {
+  en: { days: 'd', hours: 'h', minutes: 'm' },
+  'zh-CN': { days: ' 天', hours: ' 小时', minutes: ' 分钟' },
+} as const

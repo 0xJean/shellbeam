@@ -154,7 +154,7 @@ function ResourcesTab({ perHost, times, formatTime, range, counts, fleet, onOpen
   const serverCount = fleet.filter((item) => item.host.monitoringMode === 'server').length
   const bucketWidth = (to - from) / columns
   const bucketLabel = bucketWidth >= DAY_MS / 4 ? `${Math.round(bucketWidth / 3_600_000)} h` : bucketWidth >= 3_600_000 ? '1 h' : `${Math.round(bucketWidth / 60_000)} min`
-  const metricLabel = { cpuPercent: 'CPU', memoryPercent: locale === 'zh-CN' ? '内存' : 'Memory', diskPercent: locale === 'zh-CN' ? '磁盘' : 'Disk' }
+  const metricLabel = { cpuPercent: 'CPU', memoryPercent: c.metricMemory, diskPercent: c.metricDisk }
 
   return <div className="grid gap-4 xl:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)]">
     <ChartCard testId="fleet-cluster-cpu" title={fill(c.clusterCpu, { range: c.rangeLabel[range] })} subtitle={fill(c.clusterCpuSub, { count: top.length || 5 })}>
@@ -221,8 +221,8 @@ function OpsTab({ fleetMetrics, times, formatTime, rx, tx }: { fleetMetrics: Ret
         <DonutLegend segments={[{ label: c.monitoring, value: monitoringCount, color: CHART_COLORS[0] }, { label: c.localRules, value: week.length - monitoringCount, color: STATUS_COLORS.good }]} />
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <Tile label={c.ackTime} value={ack ?? '—'} unit={ack == null ? undefined : locale === 'zh-CN' ? '分钟' : 'min'} />
-        <Tile label={c.recoverTime} value={recover ?? '—'} unit={recover == null ? undefined : locale === 'zh-CN' ? '分钟' : 'min'} />
+        <Tile label={c.ackTime} value={ack ?? '—'} unit={ack == null ? undefined : c.minuteUnit} />
+        <Tile label={c.recoverTime} value={recover ?? '—'} unit={recover == null ? undefined : c.minuteUnit} />
       </div>
     </ChartCard>
     <ChartCard testId="fleet-network" title={c.network} subtitle={c.networkSub}>

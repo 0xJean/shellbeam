@@ -1,4 +1,5 @@
 import type { HostProfile } from './hosts'
+import { t } from './i18n'
 
 interface ProviderConsoleLink {
   label: string
@@ -61,7 +62,7 @@ export function getServerConsoleLink(host: HostProfile): ServerConsoleLink | nul
   const explicitUrl = findExplicitConsoleUrl(host.tags ?? [])
   if (explicitUrl) {
     return {
-      label: '服务器',
+      label: t('workspace.asset.consoleServer'),
       url: explicitUrl,
       source: 'tag',
     }

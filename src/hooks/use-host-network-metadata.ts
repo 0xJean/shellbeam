@@ -7,6 +7,7 @@ import {
   type HostAddressMetadata,
   type PublicIpLocation,
 } from '@/lib/ip-metadata'
+import { t } from '@/lib/i18n'
 
 export interface HostNetworkDisplay extends HostAddressMetadata {
   resolvedLocationLabel: string
@@ -138,7 +139,7 @@ export function useHostNetworkMetadata(addresses: string[]) {
       if (sharedLocations[address]?.status === 'ready' || sharedLocations[address]?.status === 'loading') return
 
       const ip = metadata.publicIp
-      setSharedLocation(address, { label: '地区查询中', status: 'loading' })
+      setSharedLocation(address, { label: t('hosts.locationLoading'), status: 'loading' })
 
       void loadSharedPersistedLocation(ip)
         .then((persisted) => {
@@ -163,7 +164,7 @@ export function useHostNetworkMetadata(addresses: string[]) {
           })
         })
         .catch(() => {
-          setSharedLocation(address, { label: '地区未知', status: 'error' })
+          setSharedLocation(address, { label: t('hosts.locationUnknown'), status: 'error' })
         })
     })
 

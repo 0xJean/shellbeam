@@ -29,7 +29,7 @@ describe('server console links', () => {
 
   it('prefers an explicit console tag over provider detection', () => {
     expect(getServerConsoleLink(host({ tags: ['Contabo', 'console:https://example.com/server/123'] }))).toEqual({
-      label: '服务器',
+      label: 'Server',
       url: 'https://example.com/server/123',
       source: 'tag',
     })
