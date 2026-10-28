@@ -179,7 +179,7 @@ export function SnippetPanel({
   const sortOptions: Array<[SortKey, string]> = [['recent', c.sortRecent], ['updated', c.sortUpdated], ['name', c.sortName]]
 
   return (
-    <div className="flex w-full flex-col">
+    <div data-tour="snippets-page" className="flex w-full flex-col">
       {showEditDialog && (
         <SnippetEditDialog
           key={editingSnippet?.id ?? 'new'}
@@ -195,14 +195,14 @@ export function SnippetPanel({
       <div className="shrink-0 px-6 pb-4 pt-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
-            <h2 className="text-[22px] font-semibold tracking-tight text-[var(--workspace-text-strong)]">{t('snippets.title')}</h2>
+            <h2 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('snippets.title')}</h2>
             <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">
               {snippets.length > 0 ? fill(c.summary, { count: snippets.length }) : t('snippets.saveDesc')}
               <span className="text-[var(--workspace-text-subtle)]"> · </span>
-              <span className="font-mono text-[12px] text-[color:var(--workspace-status-warn-text)]">{c.variablesNote}</span>
+              <span data-tour="snippet-variables" className="font-mono text-[12px] text-[color:var(--workspace-status-warn-text)]">{c.variablesNote}</span>
             </p>
           </div>
-          <Button size="sm" onClick={openCreate} className="h-9 shrink-0 gap-1.5 bg-[color:var(--workspace-primary-500)] text-xs">
+          <Button data-tour="snippet-create" size="sm" onClick={openCreate} className="h-9 shrink-0 gap-1.5 bg-[color:var(--workspace-primary-500)] text-xs">
             <Plus className="h-3.5 w-3.5" /> {t('snippets.newSnippet')}
           </Button>
         </div>

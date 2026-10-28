@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, Archive, ArrowLeft, ArrowRight, Bot, Cable, Check, FolderSync, Info, LifeBuoy, Lightbulb, MousePointerClick, RotateCcw, Server, Shield, Terminal } from 'lucide-react'
+import { Activity, Archive, ArrowLeft, ArrowRight, Cable, Check, FolderSync, Info, LifeBuoy, Lightbulb, MousePointerClick, RotateCcw, Server, Shield, Terminal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { GUIDE_CHAPTERS, loadGuideProgress, saveGuideProgress, type GuideDestination, type GuideProgress } from '@/lib/user-guide'
-import { INTERACTIVE_TOURS, type InteractiveTourId } from '@/lib/interactive-tour'
+import type { InteractiveTourId } from '@/lib/interactive-tour'
 import { guideAuditCopy } from '@/lib/locales/guide-audit-v3'
 import { fill } from '@/lib/locales/probe-install'
 
 const CHAPTER_ICONS = { vault: Shield, hosts: Server, connect: Terminal, monitor: Activity, workspace: FolderSync, mcp: Cable, backup: Archive, troubleshooting: LifeBuoy }
-const TOUR_ICONS = { hosts: MousePointerClick, monitor: Activity, mcp: Bot }
 
 export function UserGuide({ onNavigate, onStartTour }: { onNavigate: (destination: GuideDestination) => void; onStartTour?: (id: InteractiveTourId) => void }) {
   const { t, locale } = useT()
@@ -93,20 +92,6 @@ export function UserGuide({ onNavigate, onStartTour }: { onNavigate: (destinatio
             </div>
           </nav>
 
-          {onStartTour && (
-            <section aria-label={t('tour.title')} className="grid gap-1.5 border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
-              <h2 className="text-[11px] font-semibold text-[var(--workspace-text-subtle)]">{copy.tours}</h2>
-              <p className="mb-1 text-[11px] leading-4 text-[var(--workspace-text-subtle)]">{t('tour.description')}</p>
-              {INTERACTIVE_TOURS.map((id) => {
-                const TourIcon = TOUR_ICONS[id]
-                return (
-                  <Button key={id} variant="outline" size="sm" className="justify-start border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-none hover:bg-[var(--workspace-surface-800)]" onClick={() => onStartTour(id)}>
-                    <TourIcon aria-hidden="true" className="mr-2 h-3.5 w-3.5" />{t(`tour.launch.${id}`)}
-                  </Button>
-                )
-              })}
-            </section>
-          )}
         </div>
 
         <article aria-labelledby="guide-chapter-title" className="sb-card flex min-w-0 flex-col p-5 md:px-7 md:py-6">
@@ -128,9 +113,10 @@ export function UserGuide({ onNavigate, onStartTour }: { onNavigate: (destinatio
             <Lightbulb aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--workspace-accent-text)]" /><p>{t(`guide.${chapter.id}.note`)}</p>
           </aside>
           <div className="mt-4 flex flex-wrap gap-2">
+            {onStartTour && <Button data-testid="guide-demo" variant="ghost" size="sm" className="bg-[color:var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)] hover:bg-[color:var(--workspace-primary-500)] hover:text-[var(--workspace-primary-foreground)] hover:opacity-90" onClick={() => onStartTour(chapter.id)}><MousePointerClick aria-hidden="true" className="mr-1.5 h-3.5 w-3.5" />{t('guide.demo')}</Button>}
             {chapter.actions.map((action, i) => <Button key={action.destination} variant="ghost" size="sm" className={cn(i === 0 ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)] hover:opacity-90' : 'text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-800)]')} onClick={() => onNavigate(action.destination)}>{t(action.label)}<ArrowRight aria-hidden="true" className="ml-1.5 h-3.5 w-3.5" /></Button>)}
           </div>
-          <p className="mt-2 text-[11px] text-[var(--workspace-text-subtle)]">{t('guide.actionHint')}</p>
+          <p className="mt-2 text-[11px] text-[var(--workspace-text-subtle)]">{t(onStartTour ? 'guide.demoHint' : 'guide.actionHint')}</p>
           <div className="flex-1" />
           <footer className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--workspace-border-soft)] pt-4">
             <Button variant="ghost" size="sm" className="text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]" disabled={index === 0} onClick={() => updateProgress({ ...progress, current: GUIDE_CHAPTERS[index - 1].id })}><ArrowLeft aria-hidden="true" className="mr-1.5 h-4 w-4" />{t('guide.previous')}</Button>

@@ -322,7 +322,7 @@ export function KeychainTab({
   )
 
   return (
-    <div className="flex w-full flex-col">
+    <div data-tour="keychain-page" className="flex w-full flex-col">
       <Dialog open={showAddKey} onOpenChange={setShowAddKey} labelledBy="keychain-add-title">
         <DialogContent className="flex flex-col overflow-hidden p-0 shadow-2xl md:w-[560px] md:max-w-[95vw]">
           {dialogHead(t('keychain.addKey'), copy.addKeyDesc, () => setShowAddKey(false), 'keychain-add-title')}
@@ -463,10 +463,10 @@ export function KeychainTab({
 
       <div className="flex flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h2 className="text-xl font-semibold text-[var(--workspace-text-strong)]">{t('keychain.title')}</h2>
+          <h2 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('keychain.title')}</h2>
           <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">{fill(copy.summary, { n: vaultKeys.length })}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div data-tour="keychain-actions" className="flex shrink-0 items-center gap-2">
           <Button size="sm" variant="outline" onClick={() => openAddKey('paste')} className="h-8 gap-1.5">
             <FileDown className="h-3.5 w-3.5" /> {copy.importPaste}
           </Button>
@@ -477,7 +477,7 @@ export function KeychainTab({
       </div>
 
       <div className="grid min-h-0 flex-1 gap-4 px-6 pb-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]">
-        <section className="sb-card flex min-h-[200px] min-w-0 flex-col overflow-hidden">
+        <section data-tour="keychain-list" className="sb-card flex min-h-[200px] min-w-0 flex-col overflow-hidden">
           <div className="flex flex-wrap items-center gap-2 border-b border-[var(--workspace-border-soft)] p-3">
             <div className="relative w-full max-w-[260px] flex-1">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />

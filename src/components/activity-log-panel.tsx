@@ -157,7 +157,7 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
   )
 
   return (
-    <div className="flex w-full flex-col gap-4 px-6 py-6 text-[var(--workspace-text)]">
+    <div data-tour="history-page" className="flex w-full flex-col gap-4 px-6 py-6 text-[var(--workspace-text)]">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="flex items-baseline gap-2 text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">
@@ -175,7 +175,7 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
         </button>
       </header>
 
-      <div role="tablist" aria-label={c.tabsLabel} className="flex gap-6 border-b border-[color:var(--workspace-border-soft)]">
+      <div data-tour="history-tabs" role="tablist" aria-label={c.tabsLabel} className="flex gap-6 border-b border-[color:var(--workspace-border-soft)]">
         {tabButton('events', c.tabEvents)}
         {tabButton('audit', <>{c.tabAudit} <span className="ml-1 text-[10px] text-[var(--workspace-text-subtle)]">{c.tabAuditBadge}</span></>)}
       </div>
@@ -197,7 +197,7 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
 
           {entries.length > 0 && (
             <>
-              <div className="flex flex-wrap items-center gap-3">
+              <div data-tour="history-filters" className="flex flex-wrap items-center gap-3">
                 <div className="relative w-full max-w-xs">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
                   <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={c.search} className="h-9 pl-9 text-sm" />
@@ -218,7 +218,7 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
               </div>
 
               <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-                <section className="sb-card min-w-0 p-0">
+                <section data-tour="history-timeline" className="sb-card min-w-0 p-0">
                   {grouped.length === 0 && (
                     <p className="px-4 py-10 text-center text-sm text-[var(--workspace-text-muted)]">{c.noMatch}</p>
                   )}

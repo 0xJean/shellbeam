@@ -1,5 +1,7 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { TOUR_ROUTES, TOUR_SETTINGS_CATEGORY, type InteractiveTourId } from '@/lib/interactive-tour'
+import { consumeSettingsCategoryRequest } from '@/lib/settings-request'
 import { PcLayout } from './pc-layout'
 
 vi.mock('@/lib/i18n', () => ({
@@ -285,13 +287,15 @@ describe('pc layout', () => {
     expect(app.setPcSidebarNav).toHaveBeenCalledWith('guide')
   })
 
-  it.each([['hosts', 'hosts'], ['monitor', 'asset-inventory'], ['mcp', 'settings']])('routes the %s walkthrough without connecting a session', async (id, route) => {
+  it.each(Object.entries(TOUR_ROUTES))('routes the %s walkthrough without connecting a session', async (id, route) => {
     const app = { ...useApp(), pcSidebarNav: 'guide' }
     useApp.mockReturnValue(app)
     useSessions.mockReturnValue({ ...defaultSessionsValue, pcActiveSessionId: null })
     const view = render(<PcLayout />)
-    fireEvent.click(await screen.findByRole('button', { name: `tour.launch.${id}` }))
+    fireEvent.click(within(await screen.findByRole('navigation', { name: 'guide.chapters' })).getByRole('button', { name: new RegExp(`guide\\.${id}\\.title`) }))
+    fireEvent.click(screen.getByRole('button', { name: 'guide.demo' }))
     expect(app.setPcSidebarNav).toHaveBeenLastCalledWith(route)
+    expect(consumeSettingsCategoryRequest()).toBe(TOUR_SETTINGS_CATEGORY[id as InteractiveTourId] ?? null)
     useApp.mockReturnValue({ ...app, pcSidebarNav: route })
     view.rerender(<PcLayout />)
     expect(interactiveTourSpy).toHaveBeenLastCalledWith(expect.objectContaining({ id, valid: true }))

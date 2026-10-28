@@ -1,6 +1,6 @@
 export const guideAuditCopy = {
   en: {
-    steps: '{count} steps', tours: 'Interactive tours',
+    steps: '{count} steps',
     tourProgress: '{tour} · {progress}',
     tourHint: 'The page is locked during the tour; press Esc to exit. The tour ends automatically and explains why if the page, vault or a dialog changes.',
     auditTitle: 'Operations log', auditDescription: 'Remote operations started from the terminal, workspace, MCP and monitoring, with their audit trail, grouped by request',
@@ -10,7 +10,7 @@ export const guideAuditCopy = {
     colTime: 'Time', colEvent: 'Event', colAction: 'Action', colHost: 'Target host', colRequest: 'Request', colStatus: 'Status', colSummary: 'Summary',
   },
   'zh-CN': {
-    steps: '{count} 步', tours: '交互式引导',
+    steps: '{count} 步',
     tourProgress: '{tour} · {progress}',
     tourHint: '引导期间页面不可操作；按 Esc 退出。页面、保管库或弹窗状态变化时引导会自动结束并提示原因。',
     auditTitle: '运维记录', auditDescription: '终端、工作台、MCP 和监控发起的所有远端操作及其审计，按请求分组',

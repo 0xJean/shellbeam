@@ -161,7 +161,7 @@ export function startInteractiveTour(options: TourOptions) {
       popover: {
         title: options.t(`tour.${step.key}.title`),
         description: options.t(emptyMonitor ? 'tour.monitorEmpty' : limitedMcp ? 'tour.mcpUnavailable' : `tour.${step.key}.body`),
-        side: step.form ? 'right' : 'bottom',
+        side: step.side ?? (step.form ? 'right' : 'bottom'),
         align: 'start',
       },
       onHighlightStarted: () => { index = i },

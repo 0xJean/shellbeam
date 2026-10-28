@@ -36,7 +36,7 @@ import { getHostInventoryResource, resolveHostForDisplay } from '@/components/ho
 import type { HostProfile } from '@/lib/hosts'
 import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
-import { TOUR_ROUTES, type InteractiveTourId, type TourOutcome } from '@/lib/interactive-tour'
+import { TOUR_ROUTES, TOUR_SETTINGS_CATEGORY, type InteractiveTourId, type TourOutcome } from '@/lib/interactive-tour'
 import { cn } from '@/lib/utils'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { ChevronLeft, PanelTopOpen, X } from 'lucide-react'
@@ -1321,6 +1321,8 @@ export function PcLayout() {
                   <UserGuide onStartTour={(id) => {
                     setTourOutcome(null)
                     setShowQuickConnect(false)
+                    const category = TOUR_SETTINGS_CATEGORY[id]
+                    if (category) requestSettingsCategory(category)
                     app.setPcSidebarNav(TOUR_ROUTES[id])
                     setTour({ id, vaultId: vault.activeVaultId })
                   }} onNavigate={(destination) => {

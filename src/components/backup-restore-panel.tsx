@@ -226,7 +226,7 @@ export function BackupRestorePanel({ vaultId, onSuccess, onError, onRestoreCompl
           </div>
         )}
 
-        <div className="space-y-2.5">
+        <div data-tour="backup-data" className="space-y-2.5">
           <div className="flex items-center justify-between">
             <span className={sectionLabel}>{t('backup.dataToInclude')}</span>
             <span className="text-[11px] text-[var(--workspace-text-subtle)]">
@@ -236,7 +236,7 @@ export function BackupRestorePanel({ vaultId, onSuccess, onError, onRestoreCompl
           <DataChecklist value={createData} disabled={busy} onChange={(key, v) => setCreateData((d) => ({ ...d, [key]: v }))} />
         </div>
 
-        <div className="space-y-2">
+        <div data-tour="backup-password" className="space-y-2">
           <span className={sectionLabel}>{copy.backupPassword}</span>
           <PasswordInput label={copy.backupPassword} value={createPassword} onChange={setCreatePassword} placeholder={t('backup.minChars')} disabled={busy} />
           {createPassword.length > 0 && (
@@ -269,6 +269,7 @@ export function BackupRestorePanel({ vaultId, onSuccess, onError, onRestoreCompl
         </div>
 
         <Button
+          data-tour="backup-create"
           onClick={() => void handleCreate()}
           disabled={busy || !passwordsMatch || selectedCreateCount === 0}
           className="h-10 w-full gap-2"
@@ -280,7 +281,7 @@ export function BackupRestorePanel({ vaultId, onSuccess, onError, onRestoreCompl
           )}
         </Button>
 
-        <div className="flex items-center gap-3 rounded-xl border border-dashed p-4" style={{ borderColor: 'color-mix(in srgb, var(--workspace-status-bad) 45%, transparent)' }}>
+        <div data-tour="backup-restore" className="flex items-center gap-3 rounded-xl border border-dashed p-4" style={{ borderColor: 'color-mix(in srgb, var(--workspace-status-bad) 45%, transparent)' }}>
           <RotateCcw className="h-4 w-4 shrink-0 text-[color:var(--workspace-status-bad-text)]" />
           <div className="min-w-0 flex-1">
             <p className={sectionLabel}>{copy.restoreTitle}</p>

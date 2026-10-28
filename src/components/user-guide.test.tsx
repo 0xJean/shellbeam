@@ -13,19 +13,25 @@ function openChapter(id: string) {
 }
 
 describe('user guide', () => {
-  it('launches replayable interactive tours without changing written chapter progress', () => {
+  it('offers each chapter its own walkthrough without changing written chapter progress', () => {
     const onStartTour = vi.fn()
     const onNavigate = vi.fn()
     render(<UserGuide onNavigate={onNavigate} onStartTour={onStartTour} />)
     fireEvent.click(screen.getByRole('button', { name: 'Mark read and continue' }))
-    const progress = localStorage.getItem(GUIDE_PROGRESS_KEY)
-    for (const id of ['hosts', 'monitor', 'mcp', 'hosts']) {
-      fireEvent.click(screen.getByRole('button', { name: en[`tour.launch.${id}`] }))
-      expect(onStartTour).toHaveBeenLastCalledWith(id)
+    const readBefore = JSON.parse(localStorage.getItem(GUIDE_PROGRESS_KEY)!).read
+    for (const chapter of GUIDE_CHAPTERS) {
+      openChapter(chapter.id)
+      fireEvent.click(screen.getByRole('button', { name: en['guide.demo'] }))
+      expect(onStartTour).toHaveBeenLastCalledWith(chapter.id)
     }
-    expect(localStorage.getItem(GUIDE_PROGRESS_KEY)).toBe(progress)
+    expect(onStartTour).toHaveBeenCalledTimes(GUIDE_CHAPTERS.length)
+    // Walkthroughs never mark chapters read.
+    expect(JSON.parse(localStorage.getItem(GUIDE_PROGRESS_KEY)!).read).toEqual(readBefore)
     expect(onNavigate).not.toHaveBeenCalled()
-    expect(screen.getByRole('navigation', { name: 'Guide chapters' })).toBeInTheDocument()
+  })
+  it('has no walkthrough button when tours are unavailable', () => {
+    render(<UserGuide onNavigate={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: en['guide.demo'] })).not.toBeInTheDocument()
   })
   it('does not mark a chapter read simply by navigating or exiting', () => {
     const onNavigate = vi.fn()

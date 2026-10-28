@@ -419,7 +419,7 @@ export function SyncCenterPanel({
 
   const visibleChanges = changes.slice(showAllChanges ? 0 : -5).reverse()
   const syncCard = needsInit ? (
-    <section className="sb-card flex flex-col items-center gap-4 px-7 py-8 text-center">
+    <section data-tour="sync-card" className="sb-card flex flex-col items-center gap-4 px-7 py-8 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[color:var(--workspace-accent-text)]">
         <Laptop className="h-5 w-5" />
       </div>
@@ -444,7 +444,7 @@ export function SyncCenterPanel({
       </div>
     </section>
   ) : (
-    <section className="sb-card overflow-hidden">
+    <section data-tour="sync-card" className="sb-card overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b border-[color:var(--workspace-border-soft)] px-5 py-3">
         <RefreshCw className="h-4 w-4 text-[var(--workspace-text-muted)]" />
         <h2 className="text-[14px] font-semibold text-[var(--workspace-text-strong)]">{copy.deviceSync}</h2>
