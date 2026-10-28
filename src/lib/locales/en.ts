@@ -82,6 +82,7 @@ const en: Record<string, string> = {
   'mcp.requestObserved': 'An authorized tool request was observed in the recent audit.',
   'mcp.awaitingRequest': 'No successful tool request in the recent audit yet. Verify from the desktop client.',
   // Navigation
+  'nav.dashboard': 'Dashboard',
   'nav.hosts': 'Hosts',
   'nav.assetInventory': 'VPS Assets',
   'nav.projectDeployments': 'Deployments',
@@ -1114,6 +1115,7 @@ const en: Record<string, string> = {
   'workspace.app.terminal': 'Terminal',
   'workspace.app.docker': 'Docker',
   'workspace.app.sitesSsl': 'Sites & SSL',
+  'workspace.app.charts': 'Monitoring charts',
   'workspace.app.scheduledTasks': 'Scheduled Tasks',
   'workspace.emptyApp.description': 'This workspace app is scaffolded and ready for the next implementation pass.',
   'workspace.activity.empty': 'No recent activity yet',

@@ -1,0 +1,26 @@
+export const workspaceChartsCopy = {
+  en: {
+    title: 'Monitoring charts', memoryShort: 'RAM', source: 'source', lastSample: 'last sample {time}', range: 'Time range',
+    ranges: { '1': '1h', '6': '6h', '24': '24h', '168': '7d' } as Record<string, string>,
+    compare: 'Compare previous period', compareUnavailable: 'History is kept for 7 days, so the previous week is not available', copyCsv: 'Copy CSV', copied: 'Copied',
+    noVault: 'Unlock a vault to read this host’s history.', loading: 'Loading history…', failed: 'History could not be read.', empty: 'No samples for this host in this range yet. They appear after the probe reports or an SSH scan runs.',
+    cpu: 'CPU usage', avgPeak: 'Average {avg} · peak {peak}', load: 'System load', loadSub: '1 / 5 / 15 minute averages', loadPeak: 'Peak {value} in range', load1: '1 min', load5: '5 min', load15: '15 min',
+    memory: 'Memory', memorySub: 'Used of {total}', memoryPercentSub: 'Used %', used: 'Used',
+    network: 'Network throughput', networkSub: 'All interfaces', inbound: 'In', outbound: 'Out',
+    disk: 'Disk usage', diskSub: '{used} of {total}', diskUsage: 'Usage',
+    latency: 'SSH latency', noLatency: 'No latency samples', previousLabel: '{label} · previous period',
+    partial: 'Some history was imported partially; gaps are left blank rather than filled.',
+  },
+  'zh-CN': {
+    title: '监控图表', memoryShort: '内存', source: '数据来源', lastSample: '最近采样 {time}', range: '时间范围',
+    ranges: { '1': '1h', '6': '6h', '24': '24h', '168': '7d' } as Record<string, string>,
+    compare: '对比上一周期', compareUnavailable: '历史只保留 7 天，无法对比上一周', copyCsv: '复制 CSV', copied: '已复制',
+    noVault: '解锁保管库后才能读取这台主机的历史。', loading: '正在读取历史…', failed: '历史读取失败。', empty: '这个时间范围内还没有采样。探针上报或 SSH 扫描后会出现。',
+    cpu: 'CPU 使用率', avgPeak: '平均 {avg} · 峰值 {peak}', load: '系统负载', loadSub: '1 / 5 / 15 分钟平均', loadPeak: '区间峰值 {value}', load1: '1 分钟', load5: '5 分钟', load15: '15 分钟',
+    memory: '内存', memorySub: '已用 / 共 {total}', memoryPercentSub: '使用率', used: '已用',
+    network: '网络吞吐', networkSub: '全部网卡', inbound: '入站', outbound: '出站',
+    disk: '磁盘使用', diskSub: '{used} / {total}', diskUsage: '使用率',
+    latency: 'SSH 延迟', noLatency: '暂无延迟采样', previousLabel: '{label} · 上一周期',
+    partial: '部分历史为不完整导入，缺口保持空白，不做补齐。',
+  },
+} as const

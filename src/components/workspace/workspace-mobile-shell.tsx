@@ -20,6 +20,7 @@ import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
 import { DockerOpsPanel } from './docker-ops-panel'
 import { ScheduledTasksPanel } from './scheduled-tasks-panel'
 import { SitesSslPanel } from '../sites-ssl-panel'
+import { WorkspaceChartsApp } from './workspace-charts-app'
 import { NetworkOpsPanel } from './network-ops-panel'
 import { ProviderHistoryDisclosure } from './provider-history-panel'
 import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
@@ -136,6 +137,9 @@ export function WorkspaceMobileShell({
         return <DockerOpsPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={activeApp} />
+    }
+    if (activeApp === 'charts') {
+      return activeHost ? <WorkspaceChartsApp host={activeHost} vaultId={activeVaultId} /> : <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'sitesSsl') {
       if (activeHost && resolveAuthSecret) {

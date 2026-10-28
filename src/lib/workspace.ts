@@ -1,4 +1,4 @@
-export const WORKSPACE_APPS = ['overview', 'assetInventory', 'fileTransfer', 'fileSystem', 'processes', 'services', 'network', 'toolManager', 'logs', 'browser', 'terminal', 'docker', 'sitesSsl', 'scheduledTasks'] as const
+export const WORKSPACE_APPS = ['overview', 'charts', 'assetInventory', 'fileTransfer', 'fileSystem', 'processes', 'services', 'network', 'toolManager', 'logs', 'browser', 'terminal', 'docker', 'sitesSsl', 'scheduledTasks'] as const
 
 export type WorkspaceAppId = (typeof WORKSPACE_APPS)[number]
 

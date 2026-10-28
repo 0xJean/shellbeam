@@ -23,6 +23,7 @@ import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
 import { DockerOpsPanel } from './docker-ops-panel'
 import { ScheduledTasksPanel } from './scheduled-tasks-panel'
 import { SitesSslPanel } from '../sites-ssl-panel'
+import { WorkspaceChartsApp } from './workspace-charts-app'
 import { NetworkOpsPanel } from './network-ops-panel'
 import { ProviderHistoryDisclosure } from './provider-history-panel'
 import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
@@ -30,6 +31,7 @@ import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } fro
 
 const APP_LABELS: Array<{ id: WorkspaceAppId; labelKey: string }> = [
   { id: 'overview', labelKey: 'workspace.app.overview' },
+  { id: 'charts', labelKey: 'workspace.app.charts' },
   { id: 'assetInventory', labelKey: 'workspace.app.assetInventory' },
   { id: 'fileTransfer', labelKey: 'workspace.app.fileTransfer' },
   { id: 'fileSystem', labelKey: 'workspace.app.fileSystem' },
@@ -85,6 +87,7 @@ const DESKTOP_BROWSER_WINDOW_MAX_HEIGHT = 760
 
 const DEFAULT_WINDOW_POSITIONS: Record<WorkspaceAppId, { x: number; y: number }> = {
   overview: { x: 0, y: 0 },
+  charts: { x: 120, y: 24 },
   assetInventory: { x: 128, y: 28 },
   fileTransfer: { x: 128, y: 28 },
   fileSystem: { x: 144, y: 40 },
@@ -254,6 +257,9 @@ export function WorkspaceDesktopShell({
       }
       return <WorkspaceEmptyApp app={activeApp} />
     }
+    if (activeApp === 'charts') {
+      return activeHost ? <WorkspaceChartsApp host={activeHost} vaultId={activeVaultId} /> : <WorkspaceEmptyApp app={activeApp} />
+    }
     if (activeApp === 'sitesSsl') {
       if (activeHost && resolveAuthSecret) {
         return <SitesSslPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
@@ -397,6 +403,9 @@ export function WorkspaceDesktopShell({
         return <DockerOpsPanel host={activeHost} resolveAuthSecret={resolveAuthSecret} />
       }
       return <WorkspaceEmptyApp app={app} />
+    }
+    if (app === 'charts') {
+      return activeHost ? <WorkspaceChartsApp host={activeHost} vaultId={activeVaultId} /> : <WorkspaceEmptyApp app={app} />
     }
     if (app === 'sitesSsl') {
       if (activeHost && resolveAuthSecret) {

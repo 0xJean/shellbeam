@@ -1,4 +1,5 @@
 import { getHostIdentity } from '@/lib/host-identity'
+import { rememberCertificateScan } from '@/lib/certificate-cache'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/lib/i18n'
 import type { HostProfile } from '@/lib/hosts'
@@ -54,7 +55,7 @@ export function SitesSslPanel({ host, resolveAuthSecret }: SitesSslPanelProps) {
     setError('')
     try {
       const snapshot = await runSiteSslScan({ host, resolveAuthSecret })
-      if (isCurrent()) setResult(snapshot)
+      if (isCurrent()) { setResult(snapshot); rememberCertificateScan(host.vaultId, snapshot) }
     } catch (cause) {
       if (!isCurrent()) return
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -88,7 +89,7 @@ export function SitesSslPanel({ host, resolveAuthSecret }: SitesSslPanelProps) {
         return
       }
       setOutput(operationSummary(execution.job, [`verification=${execution.value.verification.status}; ${execution.value.verification.summary}`, execution.value.stdout, execution.value.stderr].filter(Boolean).join('\n')))
-      if (execution.value.snapshot) setResult(execution.value.snapshot)
+      if (execution.value.snapshot) { setResult(execution.value.snapshot); rememberCertificateScan(host.vaultId, execution.value.snapshot) }
     } catch (cause) {
       if (actionScope === currentScope.current) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -113,7 +114,7 @@ export function SitesSslPanel({ host, resolveAuthSecret }: SitesSslPanelProps) {
         return
       }
       setOutput(operationSummary(execution.job, [`verification=${execution.value.verification.status}; ${execution.value.verification.summary}`, execution.value.stdout, execution.value.stderr].filter(Boolean).join('\n')))
-      if (execution.value.snapshot) setResult(execution.value.snapshot)
+      if (execution.value.snapshot) { setResult(execution.value.snapshot); rememberCertificateScan(host.vaultId, execution.value.snapshot) }
     } catch (cause) {
       if (actionScope === currentScope.current) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {

@@ -82,6 +82,7 @@ const zhCN: Record<string, string> = {
   'mcp.requestObserved': '最近审计中已收到授权工具请求。',
   'mcp.awaitingRequest': '最近审计中暂无成功工具请求，请从桌面客户端验证。',
   // Navigation
+  'nav.dashboard': '仪表盘',
   'nav.hosts': '主机',
   'nav.assetInventory': 'VPS 资产',
   'nav.projectDeployments': '部署项目',
@@ -1114,6 +1115,7 @@ const zhCN: Record<string, string> = {
   'workspace.app.terminal': '终端',
   'workspace.app.docker': 'Docker',
   'workspace.app.sitesSsl': '站点与 SSL',
+  'workspace.app.charts': '监控图表',
   'workspace.app.scheduledTasks': '定时任务',
   'workspace.emptyApp.description': '该工作空间应用已完成脚手架，等待下一轮实现。',
   'workspace.activity.empty': '暂无最近活动',

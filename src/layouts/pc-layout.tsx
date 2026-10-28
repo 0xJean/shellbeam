@@ -1,4 +1,5 @@
 import { usePortForwardSummary } from '@/hooks/use-port-forward-summary'
+import { FleetDashboard } from '@/components/dashboard/fleet-dashboard'
 import { requestSettingsCategory } from '@/lib/settings-request'
 import { MobileToolsPage } from '@/components/mobile-tools-page'
 import { isToolPage } from '@/lib/mobile-navigation'
@@ -1590,6 +1591,13 @@ export function PcLayout() {
                     if (destination === 'add-host') hostsCtx.setPcOpenAddHost(true)
                   }} />
                 </Suspense>
+              )}
+              {app.pcSidebarNav === 'dashboard' && (
+                <div className="min-h-full p-4 md:p-6">
+                  <FleetDashboard hosts={hostsCtx.hosts} vaultId={vault.activeVaultId} unlocked={vault.vaultStatusState?.unlocked ?? false}
+                    onOpenHost={(hostId) => { void sessions.openHostWorkspace(hostId, 'charts'); app.setPcSidebarNav('terminal') }}
+                    onOpenAlerts={() => app.setPcSidebarNav('hosts')} />
+                </div>
               )}
               {app.pcSidebarNav === 'hosts' && (
                 <Suspense fallback={<DashboardSectionFallback />}>

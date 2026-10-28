@@ -1,4 +1,5 @@
 import {
+  ChartArea,
   Server,
   KeyRound,
   Code2,
@@ -26,6 +27,7 @@ import { isToolPage } from '@/lib/mobile-navigation'
 import logoSrc from '@/assets/logo.png'
 
 export type SidebarNavId =
+  | 'dashboard'
   | 'hosts'
   | 'asset-inventory'
   | 'keychain'
@@ -49,6 +51,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { id: 'dashboard', labelKey: 'nav.dashboard', icon: <ChartArea className="h-4 w-4" /> },
   { id: 'hosts', labelKey: 'nav.hosts', icon: <Server className="h-4 w-4" /> },
   { id: 'asset-inventory', labelKey: 'nav.assetInventory', icon: <Network className="h-4 w-4" /> },
   { id: 'keychain', labelKey: 'nav.keychain', icon: <KeyRound className="h-4 w-4" /> },
@@ -96,7 +99,7 @@ interface PcNavSidebarProps {
   onOpenSearch?: () => void
 }
 
-const WORKSPACE_IDS: SidebarNavId[] = ['hosts', 'asset-inventory', 'sftp', 'port-forwarding']
+const WORKSPACE_IDS: SidebarNavId[] = ['dashboard', 'hosts', 'asset-inventory', 'sftp', 'port-forwarding']
 const LIBRARY_IDS: SidebarNavId[] = ['keychain', 'snippets', 'known-hosts', 'activity']
 const FOOTER_IDS: SidebarNavId[] = ['sync', 'backup', 'guide', 'settings']
 const itemById = (id: SidebarNavId) => [...NAV_ITEMS, ...SYSTEM_ITEMS].find((item) => item.id === id)!
