@@ -3,6 +3,13 @@ import { t } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import {
   ActivitySquare,
+  AppWindow,
+  ChartSpline,
+  Container,
+  Cpu,
+  LayoutDashboard,
+  LockKeyhole,
+  Wrench,
   Boxes,
   Box,
   CalendarClock,
@@ -173,22 +180,42 @@ export function WorkspaceAppIcon({ app, size = 'lg', badge }: { app: WorkspaceAp
   )
 }
 
+const LIST_ICONS: Partial<Record<WorkspaceAppId, typeof LayoutGrid>> = {
+  terminal: SquareTerminal, browser: AppWindow, charts: ChartSpline, overview: LayoutDashboard, processes: Cpu, services: Boxes,
+  network: Globe, logs: ScrollText, fileSystem: FolderTree, fileTransfer: FolderKanban, docker: Container, scheduledTasks: CalendarClock,
+  sitesSsl: LockKeyhole, toolManager: Wrench, assetInventory: Network,
+}
+
+/** v3 list-layout groups: sessions, observation, then management tools. */
+const LIST_GROUPS: Array<{ labelKey: string; apps: WorkspaceAppId[] }> = [
+  { labelKey: 'workspace.nav.sessions', apps: ['terminal', 'browser'] },
+  { labelKey: 'workspace.nav.observe', apps: ['charts', 'overview', 'processes', 'services', 'network', 'logs'] },
+  { labelKey: 'workspace.nav.manage', apps: ['fileSystem', 'fileTransfer', 'docker', 'scheduledTasks', 'sitesSsl', 'toolManager', 'assetInventory'] },
+]
+
 /** Vertical app navigation for the workspace's list layout. */
 export function WorkspaceAppList({ activeApp, onSelectApp }: { activeApp: WorkspaceAppId; onSelectApp: (app: WorkspaceAppId) => void }) {
   return (
-    <nav data-testid="workspace-app-list" aria-label={t('workspace.layout.apps')} className="flex flex-col gap-0.5">
-      {APPS.map((app) => {
-        const Icon = app.icon
-        const active = activeApp === app.id
-        return (
-          <button key={app.id} type="button" aria-current={active ? 'page' : undefined} data-testid={`workspace-app-list-${app.id}`} onClick={() => onSelectApp(app.id)}
-            className={cn('flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors',
-              active ? 'bg-[var(--workspace-nav-active-bg)] font-medium text-[var(--workspace-nav-active-text)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-text-strong)]')}>
-            <Icon className={cn('h-4 w-4 shrink-0', active ? '' : 'text-[var(--workspace-text-muted)]')} aria-hidden="true" />
-            <span className="truncate">{t(app.labelKey)}</span>
-          </button>
-        )
-      })}
+    <nav data-testid="workspace-app-list" aria-label={t('workspace.layout.apps')} className="flex flex-col">
+      {LIST_GROUPS.map((group) => (
+        <div key={group.labelKey} className="flex flex-col gap-px">
+          <div className="px-2.5 pb-1.5 pt-4 text-[11.5px] font-medium text-[var(--workspace-text-subtle)]">{t(group.labelKey)}</div>
+          {group.apps.map((id) => {
+            const app = APPS.find((entry) => entry.id === id)
+            if (!app) return null
+            const Icon = LIST_ICONS[id] ?? app.icon
+            const active = activeApp === id
+            return (
+              <button key={id} type="button" aria-current={active ? 'page' : undefined} data-testid={`workspace-app-list-${id}`} onClick={() => onSelectApp(id)}
+                className={cn('flex h-[30px] items-center gap-2.5 rounded-md px-2.5 text-left text-[13px] transition-colors',
+                  active ? 'bg-[var(--workspace-nav-active-bg)] font-medium text-[var(--workspace-nav-active-text)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-text-strong)]')}>
+                <Icon className={cn('h-4 w-4 shrink-0', active ? '' : 'text-[var(--workspace-text-muted)]')} aria-hidden="true" />
+                <span className="truncate">{t(app.labelKey)}</span>
+              </button>
+            )
+          })}
+        </div>
+      ))}
     </nav>
   )
 }

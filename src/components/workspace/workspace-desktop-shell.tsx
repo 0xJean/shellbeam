@@ -27,6 +27,10 @@ import { WorkspaceChartsApp } from './workspace-charts-app'
 import { NetworkOpsPanel } from './network-ops-panel'
 import { ProviderHistoryDisclosure } from './provider-history-panel'
 import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
+import { WorkspaceListOverview } from './workspace-list-overview'
+import { WorkspaceHostCard } from './workspace-host-card'
+import { useWorkspaceProviderState } from '@/lib/workspace-provider-state'
+import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 import { SessionVaultMismatchCard } from './session-state-card'
 
@@ -186,6 +190,7 @@ export function WorkspaceDesktopShell({
   const activeHost = sessionVaultMismatch ? null : resolveHostForDisplay(hosts, hostId, hostAddress)
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
+  const listHealth = useWorkspaceProviderState({ host: layout === 'list' ? activeHost ?? null : null, hosts, vaultId: activeVaultId }).view?.health.state
 
   useEffect(() => {
     if (activeApp === 'overview') return
@@ -441,32 +446,22 @@ export function WorkspaceDesktopShell({
   const layoutToggle = <WorkspaceLayoutToggle layout={layout} onChange={setLayout} />
 
   if (layout === 'list') {
+    const activeNetwork = activeHost ? networkByAddress[activeHost.address] : undefined
+    const activeInventory = activeHost ? inventoryStates[getWorkspaceInventoryHostKey(activeHost)]?.inventory : undefined
     return (
       <div data-testid="workspace-list-shell" className="flex h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-[var(--workspace-content-bg)] text-foreground">
-        <aside className="flex w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r border-[color:var(--workspace-border-soft)] p-3">
-          <div className="min-w-0 px-1">
-            <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{hostName}</div>
-            <div className="truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{hostAddress}</div>
-          </div>
+        <aside className="flex w-[200px] shrink-0 flex-col overflow-y-auto border-r border-[color:var(--workspace-border-soft)] px-2.5 py-3.5">
+          <WorkspaceHostCard hostName={hostName} hostAddress={hostAddress} host={activeHost ?? null} network={activeNetwork} resource={activeInventory?.resource} health={listHealth}>
+            <WorkspaceLayoutToggle layout={layout} onChange={setLayout} full />
+          </WorkspaceHostCard>
           <WorkspaceAppList activeApp={activeApp} onSelectApp={onSelectApp} />
         </aside>
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="flex items-center justify-between gap-3 border-b border-[color:var(--workspace-border-soft)] px-5 py-3">
-            <div className="flex min-w-0 items-center gap-x-3 gap-y-1 text-sm text-[var(--workspace-text-muted)]">
-              <h2 className="truncate text-base font-semibold text-[var(--workspace-text-strong)]">{t(activeApp === 'network' ? 'workspace.network.title' : `workspace.app.${activeApp}`)}</h2>
-              <HostMetadataLine network={activeHost ? networkByAddress[activeHost.address] : undefined} resource={getHostInventoryResource(activeHost, inventoryStates)} className="hidden text-xs text-[var(--workspace-text-muted)] lg:flex" itemClassName="max-w-[10rem]" iconClassName="h-3.5 w-3.5" />
-            </div>
-            {layoutToggle}
-          </header>
-          <div className="min-h-0 flex-1 overflow-auto p-5">
-            {isOverview ? (
-              <div className="mx-auto grid max-w-6xl gap-4">
-                {sessionVaultMismatch ? <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} className="p-0" /> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
-                {activeVaultId && activeHost && <ProviderHistoryDisclosure vaultId={activeVaultId} hostId={activeHost.id} />}
-                <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
-              </div>
-            ) : <div className="h-full min-h-[28rem]">{content}</div>}
-          </div>
+        <main className="min-h-0 min-w-0 flex-1 overflow-auto p-5">
+          {isOverview ? (
+            sessionVaultMismatch
+              ? <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} className="p-0" />
+              : <WorkspaceListOverview activeVaultId={activeVaultId} hostName={hostName} hostAddress={hostAddress} host={activeHost ?? null} hosts={hosts} network={activeNetwork} inventory={activeInventory} resolveAuthSecret={resolveAuthSecret} onSelectApp={onSelectApp} />
+          ) : <div className="h-full min-h-[28rem]">{content}</div>}
         </main>
       </div>
     )

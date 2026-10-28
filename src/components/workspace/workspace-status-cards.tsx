@@ -18,6 +18,9 @@ interface WorkspaceStatusCardsProps {
   hosts?: HostProfile[]
   /** Kept for call-site compatibility. Sampling is owned by the app-level runtime. */
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
+  /** The v3 list overview shows sources and the probe in their own cards. */
+  showProviderSummary?: boolean
+  showAgent?: boolean
 }
 
 const STATUS_CARDS = [
@@ -81,7 +84,7 @@ function getCardValue(key: (typeof STATUS_CARDS)[number]['key'], snapshot: Serve
 
 export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
   const { t, locale } = useT()
-  const { hostAddress, selectedHostId = null, hosts = [] } = props
+  const { hostAddress, selectedHostId = null, hosts = [], showProviderSummary = true, showAgent = true } = props
   const host = resolveWorkspaceMetricsHost(hosts, { selectedHostId, hostAddress, vaultId: props.activeVaultId })
   const provider = useWorkspaceProviderState({ host: host ?? null, hosts, vaultId: props.activeVaultId })
   const snapshot = provider.view?.metrics ?? null
@@ -94,7 +97,7 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
 
   return (
     <>
-      <WorkspaceProviderSummary state={provider} />
+      {showProviderSummary && <WorkspaceProviderSummary state={provider} />}
       {snapshot ? <div
         data-testid="workspace-status-grid"
         className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3"
@@ -110,7 +113,7 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
             data-testid="workspace-status-card"
             data-status={tone}
             data-provider={provider.source?.kind ?? 'unknown'}
-            className={`sb-card min-w-0 overflow-hidden p-4 text-[var(--workspace-text)] ${
+            className={`sb-card min-w-0 overflow-hidden px-3.5 pb-2.5 pt-3 text-[var(--workspace-text)] ${
               tone === 'offline'
                 ? 'border-[color:var(--workspace-status-bad-border)]'
                 : tone === 'stale' || tone === 'paused'
@@ -123,7 +126,7 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
               <span className={`truncate text-xs text-[var(--workspace-text-muted)] ${tone === 'checking' ? 'animate-pulse' : ''}`} title={card.key === 'network' ? t('workspace.statusHint.network') : t('workspace.statusHint.percent')}>{cardSide(card.key, snapshot, copy.load)}</span>
             </div>
             <div className="mt-2 flex min-w-0 items-baseline gap-2">
-              <div className="truncate text-[28px] font-bold leading-none tracking-tight text-[var(--workspace-text-strong)]">{card.key === 'network' && snapshot.networkRxBytesPerSec != null ? `↓ ${formatBytesPerSecond(snapshot.networkRxBytesPerSec)}` : cardBytes(card.key, snapshot)?.used ?? primaryValue}</div>
+              <div className="truncate text-[24px] font-semibold leading-none tracking-tight text-[var(--workspace-text-strong)]">{card.key === 'network' && snapshot.networkRxBytesPerSec != null ? `↓ ${formatBytesPerSecond(snapshot.networkRxBytesPerSec)}` : cardBytes(card.key, snapshot)?.used ?? primaryValue}</div>
               {cardBytes(card.key, snapshot) && <span className="truncate text-xs text-[var(--workspace-text-muted)]">/ {cardBytes(card.key, snapshot)!.total}</span>}
             </div>
             <div className="mt-2 h-8">{trend(card.key).filter((value) => value != null).length > 1 && <Sparkline values={trend(card.key)} color={TREND_COLORS[card.key]} width={220} height={32} />}</div>
@@ -143,9 +146,9 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
         <p className="text-sm text-[var(--workspace-text-muted)]">{copy.noMetrics}</p>
         <p className="mt-1 text-xs text-[var(--workspace-text-subtle)]">{copy.noMetricsHint}</p>
       </section>}
-      <div className="mt-4">
+      {showAgent && <div className="mt-4">
         <ShellbeamAgentPanel host={host ?? null} vaultId={props.activeVaultId} resolveAuthSecret={props.resolveAuthSecret} />
-      </div>
+      </div>}
     </>
   )
 }

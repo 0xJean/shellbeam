@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { hostConnectionKey, type HostProfile } from '@/lib/hosts'
 import { WorkspaceShell } from './workspace-shell'
@@ -395,6 +395,19 @@ describe('workspace list layout', () => {
     expect(screen.getByTestId('workspace-app-list-overview')).toHaveAttribute('aria-current', 'page')
     fireEvent.click(screen.getByTestId('workspace-app-list-processes'))
     expect(onSelectApp).toHaveBeenCalledWith('processes')
+  })
+
+  it('follows the v3 layout: host card with the layout toggle, grouped apps, overview header', () => {
+    const onSelectApp = vi.fn()
+    render(<WorkspaceShell sessionId="session-1" mobile={false} hostName="Production API" hostAddress="10.0.0.15" activeApp="overview" onSelectApp={onSelectApp} />)
+    const card = screen.getByTestId('workspace-host-card')
+    expect(card).toHaveTextContent('Production API')
+    expect(within(card).getByTestId('workspace-layout-desktop')).toBeInTheDocument()
+    const nav = screen.getByTestId('workspace-app-list')
+    expect(nav).toHaveTextContent(/Sessions.*Observe.*Manage/)
+    expect(screen.getByTestId('workspace-list-overview')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open Terminal' }))
+    expect(onSelectApp).toHaveBeenCalledWith('terminal')
   })
 
   it('switches to the desktop layout and remembers the choice', () => {

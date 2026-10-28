@@ -1,13 +1,15 @@
 import { monitoringHistorySourceLabel } from '@/lib/monitoring-presentation'
 import { NativeSelect } from '@/components/ui/select'
 import { useEffect, useMemo, useState } from 'react'
-import { Button } from '@/components/ui/button'
+import { SegmentedTabs } from '@/components/charts/chart-primitives'
+import { cn } from '@/lib/utils'
+import { RotateCw } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 import { workspaceOverviewCopy } from '@/lib/locales/workspace-overview'
 import { metricHistoryPaths, listProviderMetricHistory, type ProviderMetricHistoryPoint } from '@/lib/provider-history'
 
 const RANGES = [1, 6, 24, 168]
-const METRICS = [{ key: 'cpuPercent', label: 'CPU', color: '#38bdf8' }, { key: 'memoryPercent', label: 'Memory', color: '#a78bfa' }, { key: 'diskPercent', label: 'Disk', color: '#fb923c' }] as const
+const METRICS = [{ key: 'cpuPercent', color: '#38bdf8' }, { key: 'memoryPercent', color: '#a78bfa' }, { key: 'diskPercent', color: '#fb923c' }] as const
 const sourceKey = (point: ProviderMetricHistoryPoint) => `${point.providerKind}:${point.providerId}:${point.nodeId}`
 interface ProviderHistoryPanelProps { vaultId: string; hostId: string; providerId?: string }
 
@@ -26,7 +28,7 @@ function ScopedProviderHistoryDisclosure(props: ProviderHistoryPanelProps) {
   </div>
 }
 
-export function ProviderHistoryPanel({ vaultId, hostId, providerId }: { vaultId: string; hostId: string; providerId?: string }) {
+export function ProviderHistoryPanel({ vaultId, hostId, providerId, className }: { vaultId: string; hostId: string; providerId?: string; className?: string }) {
   const { t, locale } = useT()
   const [hours, setHours] = useState(24)
   const [revision, setRevision] = useState(0)
@@ -55,30 +57,44 @@ export function ProviderHistoryPanel({ vaultId, hostId, providerId }: { vaultId:
   const inspected = points[Math.min(cursor, points.length - 1)]
   const latest = points[points.length - 1]
   const from = current?.from ?? 0; const to = current?.to ?? 0
+  const metricLabel = (key: (typeof METRICS)[number]['key']) => t(`provider.history.${key}`)
   return (
-    <section data-testid="provider-history-panel" className="rounded-xl border border-border/60 bg-card p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h3 className="text-sm font-semibold">{t('provider.history.title')}</h3><p className="mt-1 text-xs text-muted-foreground">{t('provider.history.description')}</p></div>
-        <div className="flex flex-wrap items-center gap-1">
-          {RANGES.map((value) => <Button key={value} type="button" size="sm" variant={hours === value ? 'default' : 'outline'} onClick={() => { setHours(value); setCursor(0) }}>{value === 168 ? '7d' : `${value}h`}</Button>)}
-          <Button type="button" size="sm" variant="outline" onClick={() => setRevision((value) => value + 1)}>{t('provider.history.refresh')}</Button>
+    <section data-testid="provider-history-panel" className={cn('sb-card flex min-w-0 flex-col', className)}>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--workspace-border-soft)] px-4 py-2">
+        <h3 title={t('provider.history.description')} className="text-[13px] font-semibold text-[var(--workspace-text-strong)]">{workspaceOverviewCopy[locale].history}</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          {sources.length > 0 && <NativeSelect aria-label={t('provider.history.source')} value={selectedSource} onChange={(event) => { setSource(event.target.value); setCursor(0) }} className="h-7 max-w-56 rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 text-xs">{sources.map((value) => <option key={value} value={value}>{monitoringHistorySourceLabel(value, locale)}</option>)}</NativeSelect>}
+          <SegmentedTabs label={t('provider.history.title')} value={String(hours)} onChange={(value) => { setHours(Number(value)); setCursor(0) }} options={RANGES.map((value) => ({ value: String(value), label: value === 168 ? '7d' : `${value}h` }))} />
+          <button type="button" title={t('provider.history.refresh')} aria-label={t('provider.history.refresh')} onClick={() => setRevision((value) => value + 1)} className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-text-strong)]"><RotateCw className="h-3.5 w-3.5" aria-hidden="true" /></button>
         </div>
       </div>
-      {!current ? <p role="status" className="mt-4 text-xs text-muted-foreground">{t('provider.history.loading')}</p> : current.error ? <p role="alert" className="mt-4 text-xs text-destructive">{t('provider.history.failed')}</p> : points.length === 0 ? <p className="mt-4 text-xs text-muted-foreground">{t('provider.history.empty')}</p> : <>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <label>{t('provider.history.source')} <NativeSelect aria-label={t('provider.history.source')} value={selectedSource} onChange={(event) => { setSource(event.target.value); setCursor(0) }} className="ml-1 max-w-80 rounded border border-border bg-background p-1">{sources.map((value) => <option key={value} value={value}>{monitoringHistorySourceLabel(value, locale)}</option>)}</NativeSelect></label>
-          <span>{t('provider.history.latest')}: {latest ? new Date(latest.sampledAt).toLocaleString() : '—'} · {latest && latest.expiresAt < to ? t('provider.history.stale') : t('provider.history.fresh')}</span>
-        </div>
-        {points.some((point) => point.historyPartial) && <p role="status" className="mt-2 text-xs text-amber-600">{t('provider.history.partial')}</p>}
-        <svg viewBox="0 0 800 165" role="img" aria-label={t('provider.history.chart')} className="mt-3 w-full rounded border border-border/40 bg-muted/10">
-          {[0, 50, 100].map((value) => <g key={value}><line x1="20" x2="780" y1={140 - value * 1.2} y2={140 - value * 1.2} stroke="currentColor" opacity="0.12" /><text x="2" y={143 - value * 1.2} fontSize="9" fill="currentColor" opacity="0.6">{value}</text></g>)}
-          {METRICS.map((metric) => <path key={metric.key} d={metricHistoryPaths(points, metric.key, from, to).map((path) => path.includes(' L') ? path : `${path} l0,0`).join(' ')} fill="none" stroke={metric.color} strokeWidth="2" strokeLinecap="round" />)}
-          <text x="20" y="160" fontSize="10" fill="currentColor" opacity="0.6">{new Date(from).toLocaleString()}</text><text x="780" y="160" textAnchor="end" fontSize="10" fill="currentColor" opacity="0.6">{new Date(to).toLocaleString()}</text>
-        </svg>
-        <label className="mt-3 block text-xs text-muted-foreground">{t('provider.history.inspect')}<input aria-label={t('provider.history.inspect')} type="range" min="0" max={Math.max(0, points.length - 1)} value={Math.min(cursor, points.length - 1)} onChange={(event) => setCursor(Number(event.target.value))} className="mt-1 w-full" /></label>
-        {inspected && <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"><span>{new Date(inspected.sampledAt).toLocaleString()}</span>{METRICS.map((metric) => <span key={metric.key} style={{ color: metric.color }}>{t(`provider.history.${metric.key}`)}: {inspected.metrics[metric.key] === null ? t('provider.history.unknown') : `${inspected.metrics[metric.key]?.toFixed(1)}%`}</span>)}<span className="text-muted-foreground">TTL {Math.max(0, inspected.expiresAt - inspected.sampledAt) / 1000}s · {inspected.confidence}</span></div>}
-        <p className="mt-2 text-[11px] text-muted-foreground">{t('provider.history.gaps')}</p>
-      </>}
+      <div className="flex min-h-0 flex-1 flex-col gap-2 px-4 py-3">
+        {!current ? <p role="status" className="text-xs text-[var(--workspace-text-muted)]">{t('provider.history.loading')}</p> : current.error ? <p role="alert" className="text-xs text-destructive">{t('provider.history.failed')}</p> : points.length === 0 ? <p className="text-xs text-[var(--workspace-text-muted)]">{t('provider.history.empty')}</p> : <>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-[var(--workspace-text-muted)]">
+            {METRICS.map((metric) => <span key={metric.key} className="inline-flex items-center gap-1.5"><i className="h-0.5 w-2.5 rounded-full" style={{ background: metric.color }} />{metricLabel(metric.key)}</span>)}
+            <span className="flex-1" />
+            <span>{t('provider.history.latest')}: {latest ? new Date(latest.sampledAt).toLocaleString(locale) : '—'} · <span className={latest && latest.expiresAt < to ? 'text-[color:var(--workspace-status-warn-text)]' : 'text-[color:var(--workspace-status-good-text)]'}>{latest && latest.expiresAt < to ? t('provider.history.stale') : t('provider.history.fresh')}</span></span>
+          </div>
+          {points.some((point) => point.historyPartial) && <p role="status" className="text-xs text-[color:var(--workspace-status-warn-text)]">{t('provider.history.partial')}</p>}
+          <div className="relative min-h-[150px] flex-1">
+            <svg viewBox="0 0 800 160" preserveAspectRatio="none" role="img" aria-label={t('provider.history.chart')} className="absolute inset-0 h-full w-full">
+              {[0, 50, 100].map((value) => <line key={value} x1="0" x2="800" y1={150 - value * 1.4} y2={150 - value * 1.4} stroke="var(--workspace-border-soft)" vectorEffect="non-scaling-stroke" />)}
+              {METRICS.map((metric) => <path key={metric.key} d={metricHistoryPaths(points, metric.key, from, to).map((path) => path.includes(' L') ? path : `${path} l0,0`).join(' ')} fill="none" stroke={metric.color} strokeWidth="1.8" strokeLinecap="round" vectorEffect="non-scaling-stroke" />)}
+              {inspected && to > from && <line x1={((inspected.sampledAt - from) / (to - from)) * 800} x2={((inspected.sampledAt - from) / (to - from)) * 800} y1="0" y2="160" stroke="var(--workspace-text-subtle)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />}
+            </svg>
+            {inspected && <div className="absolute right-2 top-2 flex flex-col gap-0.5 rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 py-1.5 font-mono text-[11px] text-[var(--workspace-text)] shadow-sm">
+              <span className="text-[var(--workspace-text-muted)]">{new Date(inspected.sampledAt).toLocaleString(locale)} · TTL {Math.max(0, inspected.expiresAt - inspected.sampledAt) / 1000}s · {inspected.confidence}</span>
+              {METRICS.map((metric) => <span key={metric.key}>{metricLabel(metric.key)}: {inspected.metrics[metric.key] === null ? t('provider.history.unknown') : `${inspected.metrics[metric.key]?.toFixed(1)}%`}</span>)}
+            </div>}
+          </div>
+          <div className="flex items-center gap-3 font-mono text-[11px] text-[var(--workspace-text-muted)]">
+            <span>{new Date(from).toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+            <input aria-label={t('provider.history.inspect')} type="range" min="0" max={Math.max(0, points.length - 1)} value={Math.min(cursor, points.length - 1)} onChange={(event) => setCursor(Number(event.target.value))} className="flex-1 accent-[var(--workspace-primary-500)]" />
+            <span>{new Date(to).toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+          </div>
+          <p className="text-[11px] text-[var(--workspace-text-subtle)]">{t('provider.history.gaps')}</p>
+        </>}
+      </div>
     </section>
   )
 }

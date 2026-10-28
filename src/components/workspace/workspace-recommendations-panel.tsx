@@ -18,8 +18,9 @@ export interface WorkspaceRecommendationsPanelProps {
   vaultId?: string
   onSelectApp: (app: WorkspaceAppId) => void
   recommendations?: WorkspaceRecommendation[]
+  className?: string
 }
-export function WorkspaceRecommendationsPanel({ host, hosts, vaultId, onSelectApp, recommendations }: WorkspaceRecommendationsPanelProps) {
+export function WorkspaceRecommendationsPanel({ host, hosts, vaultId, onSelectApp, recommendations, className }: WorkspaceRecommendationsPanelProps) {
   const { t } = useT()
   const { view, now } = useWorkspaceProviderState({ host, hosts, vaultId })
   const inventories = useWorkspaceInventoryStates()
@@ -67,12 +68,12 @@ export function WorkspaceRecommendationsPanel({ host, hosts, vaultId, onSelectAp
     return t('workspace.action.openTerminal')
   }
   if (items.length === 0) return null
-  return <section data-testid="workspace-recommendations" className="sb-card p-0">
-    <h2 className="border-b border-[color:var(--workspace-border-soft)] px-4 py-3 text-[13px] font-semibold text-[var(--workspace-text-strong)]">{t('workspace.section.recommendations')}</h2>
-    <div className="divide-y divide-[color:var(--workspace-border-soft)]">
+  return <section data-testid="workspace-recommendations" className={`sb-card min-w-0 p-0 ${className ?? ''}`}>
+    <h2 className="border-b border-[color:var(--workspace-border-soft)] px-4 py-2.5 text-[13px] font-semibold text-[var(--workspace-text-strong)]">{t('workspace.section.recommendations')}</h2>
+    <div className="min-h-0 overflow-auto">
       {items.map((item) => {
         const Icon = APP_ICONS[item.targetApp] ?? SquareTerminal
-        return <div key={item.id} className="flex items-center gap-3 px-4 py-3">
+        return <div key={item.id} className="flex items-center gap-3 px-4 py-2.5">
           <Icon className="h-4 w-4 shrink-0 text-[var(--workspace-text-muted)]" aria-hidden="true" />
           <span className="min-w-0 flex-1 text-[13px] text-[var(--workspace-text)]">{item.title}</span>
           <button type="button" onClick={() => onSelectApp(item.targetApp)} className="shrink-0 rounded-md bg-[var(--workspace-accent-subtle)] px-2.5 py-1 text-xs font-medium text-[var(--workspace-accent-text)] hover:bg-[color:var(--workspace-primary-500)] hover:text-[var(--workspace-primary-foreground)]">{label(item.targetApp)}</button>
