@@ -87,7 +87,7 @@ export function SettingsPanel({
   category: controlledCategory,
   hideNavigation = false,
 }: SettingsPanelProps) {
-  const { t, locale, setLocale } = useT()
+  const { t, locale, preference, setLocale } = useT()
   const copy = settingsNavigationCopy[locale]
   const [ownCategory, setCategory] = useState<SettingsCategory>(() => (controlledCategory ? null : consumeSettingsCategoryRequest()) ?? 'general')
   const category = controlledCategory ?? ownCategory
@@ -128,11 +128,11 @@ export function SettingsPanel({
               <span className="text-sm text-muted-foreground">{t('settings.languageDesc')}</span>
             </div>
             <div className="flex gap-2">
-              {LOCALE_OPTIONS.map((opt) => (
-                <button key={opt.value} type="button"
+              {[{ value: 'system' as const, label: t('settings.languageSystem') }, ...LOCALE_OPTIONS].map((opt) => (
+                <button key={opt.value} type="button" aria-pressed={preference === opt.value}
                   onClick={() => setLocale(opt.value)}
                   className={cn('rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-                    locale === opt.value ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-foreground/30'
+                    preference === opt.value ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-foreground/30'
                   )}>
                   {opt.label}
                 </button>

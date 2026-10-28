@@ -865,6 +865,7 @@ const en: Record<string, string> = {
   'settings.komariConsoleUnlock': 'Unlock this Vault before opening monitoring service settings.',
   'settings.language': 'Language',
   'settings.languageDesc': 'Interface display language',
+  'settings.languageSystem': 'Follow system',
   'settings.dangerZone': 'Danger Zone',
   'settings.clearData': 'Clear All Data',
   'settings.clearDataDesc': 'Remove all hosts, vault secrets, history, sync state, snippets, and preferences. This cannot be undone.',

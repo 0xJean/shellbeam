@@ -17,7 +17,7 @@ const fontLabel = (fontFamily: string) => fontFamily.split(',')[0]?.replace(/['"
 
 /** iOS-style grouped settings list; each row opens the matching SettingsPanel category full screen. */
 export function MobileSettingsPage(props: MobileSettingsPageProps) {
-  const { t, locale } = useT()
+  const { t, locale, preference } = useT()
   const c = mobileMiscV3Copy[locale].settings
   const nav = settingsNavigationCopy[locale]
   const { vaults, activeVaultId, vaultStatusState } = useVault()
@@ -80,7 +80,7 @@ export function MobileSettingsPage(props: MobileSettingsPageProps) {
       </button>
       {group(c.appearance, [
         row('theme', 'general', <Palette />, c.theme, themeLabel),
-        row('language', 'general', <Globe />, c.language, LOCALE_OPTIONS.find((option) => option.value === locale)?.label),
+        row('language', 'general', <Globe />, c.language, preference === 'system' ? t('settings.languageSystem') : LOCALE_OPTIONS.find((option) => option.value === locale)?.label),
       ])}
       {group(c.terminal, [
         row('font', 'connection', <Type />, c.font, fontLabel(props.terminalPrefs.fontFamily)),

@@ -865,6 +865,7 @@ const zhCN: Record<string, string> = {
   'settings.komariConsoleUnlock': '请先解锁当前 Vault，再打开监控服务设置。',
   'settings.language': '语言',
   'settings.languageDesc': '界面显示语言',
+  'settings.languageSystem': '跟随系统',
   'settings.dangerZone': '危险操作',
   'settings.clearData': '清除所有数据',
   'settings.clearDataDesc': '删除所有主机、保管库密钥、历史记录、同步状态、代码片段和偏好设置。此操作不可撤销。',
