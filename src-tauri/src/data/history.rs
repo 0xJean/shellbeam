@@ -132,6 +132,39 @@ pub(crate) fn replace_vault_history(
     save_history(app, vault_id, entries)
 }
 
+/// Move the entries `take` selects from one vault's history to another's (host
+/// move). The target is written first, so an interruption leaves a duplicate
+/// that a rerun drops by id instead of losing an entry. Returns the moved count.
+pub(crate) fn move_vault_history(
+    app: &tauri::AppHandle,
+    source: &str,
+    target: &str,
+    take: impl Fn(&CommandHistoryEntry) -> bool,
+) -> Result<usize, String> {
+    let _guard = HISTORY_FILE_LOCK
+        .lock()
+        .map_err(|_| "History file mutex poisoned".to_string())?;
+    let mut source_entries = load_history(app, Some(source))?;
+    let (moving, staying): (Vec<_>, Vec<_>) = source_entries.drain(..).partition(|e| take(e));
+    if moving.is_empty() {
+        return Ok(0);
+    }
+    let mut target_entries = load_history(app, Some(target))?;
+    for entry in &moving {
+        if !target_entries
+            .iter()
+            .any(|existing| existing.id == entry.id)
+        {
+            target_entries.push(entry.clone());
+        }
+    }
+    target_entries.sort_by_key(|entry| entry.created_at);
+    trim_history(&mut target_entries);
+    save_history(app, Some(target), &target_entries)?;
+    save_history(app, Some(source), &staying)?;
+    Ok(moving.len())
+}
+
 pub fn append_history(
     app: &tauri::AppHandle,
     payload: &SshRequest,

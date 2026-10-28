@@ -25,6 +25,7 @@ import { hostPresentationCopy } from '@/lib/locales/host-presentation'
 import { Input } from '@/components/ui/input'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
+import type { VaultMeta } from '@/lib/vaults'
 import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -53,6 +54,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { SshImportDialog } from './ssh-import-dialog'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
 import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS, HOST_RESOURCE_COLUMNS } from './host-list-layout'
+import { HostMoveDialog } from './host-move-dialog'
 import { HostBatchFloatingBar, HostKpiRow, HostStatusSegments, ProbeCoverageBanner } from './hosts-overview'
 import { ProbeInstallDialog } from './probe-install-dialog'
 import MultiHostOperationsPanel, { type MultiHostOperationKind, type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
@@ -146,6 +148,8 @@ interface HostsDashboardProps {
   onSaveToVault?: (key: string, value: string) => Promise<void>
   onLoadVaultSecret?: (key: string) => Promise<string | null>
   vaultName?: string
+  /** All Vaults; hosts can move to any other one. */
+  vaults?: ReadonlyArray<Pick<VaultMeta, 'id' | 'name'>>
   headerExtraAction?: ReactNode
 }
 
@@ -249,7 +253,7 @@ export function HostsDashboard({
   openAddForm = false, onAddFormClose,
     externalSearch, onExternalSearchChange, onScanHosts, onRefreshHosts,
     vaultKeys = [], vaultUnlocked = false, onSaveToVault, onLoadVaultSecret, vaultName = 'Vault',
-    headerExtraAction,
+    vaults = [], headerExtraAction,
 }: HostsDashboardProps) {
   const [internalSearch, setInternalSearch] = useState('')
   const effectiveSearch = externalSearch ?? internalSearch
@@ -298,6 +302,17 @@ export function HostsDashboard({
   const currentPresentation = presentation.owner === presentationOwner ? presentation : { owner: presentationOwner, monitoring: readMonitoringPreference(), alerts: false, batch: false, selected: [] as string[] }
   const [batchBusy, setBatchBusy] = useState(false)
   const [probeInstallHost, setProbeInstallHost] = useState<HostProfile | null>(null)
+  // Hosts being moved to another Vault, kept apart from the batch selection that a finished move clears.
+  const [moveRequest, setMoveRequest] = useState<{ vaultId: string; hosts: HostProfile[] } | null>(null)
+  const canMoveHosts = !!activeVaultId && vaults.some(vault => vault.id !== activeVaultId)
+  const openHostMove = (picked: HostProfile[]) => {
+    const movable = picked.filter(host => !host.vaultId || host.vaultId === activeVaultId)
+    if (activeVaultId && movable.length) setMoveRequest({ vaultId: activeVaultId, hosts: movable })
+  }
+  const handleHostsMoved = async (movedIds: string[]) => {
+    setPresentation(current => ({ ...current, selected: current.selected.filter(id => !movedIds.includes(id)) }))
+    await onRefreshHosts?.()
+  }
   const sharedStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
   const [agentDeployments, setAgentDeployments] = useState<McpDeploymentRecord[]>([])
@@ -1263,7 +1278,10 @@ export function HostsDashboard({
         </div>
           {currentPresentation.batch && selectedBatchIds.length > 0 && <HostBatchFloatingBar key={`bar:${presentationOwner}`} hosts={filteredHosts.filter(host => selectedBatchIds.includes(host.id))}
             onOperation={operation => { setBatchOperation(operation); requestAnimationFrame(() => batchPanelRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })) }}
-            onExit={() => setPresentation(current => ({ ...current, batch: false, selected: [] }))} />}
+            onExit={() => setPresentation(current => ({ ...current, batch: false, selected: [] }))}
+            onMoveToVault={canMoveHosts ? () => openHostMove(filteredHosts.filter(host => selectedBatchIds.includes(host.id))) : undefined} />}
+          {moveRequest && moveRequest.vaultId === activeVaultId && <HostMoveDialog open sourceVaultId={moveRequest.vaultId} vaults={vaults} hosts={moveRequest.hosts}
+            onOpenChange={open => { if (!open) setMoveRequest(null) }} onMoved={handleHostsMoved} />}
           {probeInstallHost && <ProbeInstallDialog host={hosts.find(host => host.id === probeInstallHost.id) ?? probeInstallHost} open onOpenChange={open => { if (!open) setProbeInstallHost(null) }} />}
           <KomariAlertsDashboardPanel headless onAdditionalIncidents={receiveIntegrationIncidents} activeVaultId={activeVaultId} vaultUnlocked={vaultUnlocked} hosts={hosts} />
           <Dialog labelledBy="host-alerts-title" open={currentPresentation.alerts && vaultUnlocked} onOpenChange={alerts => setPresentation(current => ({ ...current, alerts }))}>
@@ -1357,6 +1375,7 @@ export function HostsDashboard({
                     onRefresh={onScanHosts ? handleRefreshHost : undefined}
                     onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                     onDelete={(id) => void onDeleteHost(id)}
+                    onMoveToVault={canMoveHosts ? (id) => openHostMove(hosts.filter(host => host.id === id)) : undefined}
                     onSelect={onSelectHost}
                   />
                 ))}
@@ -1428,6 +1447,7 @@ export function HostsDashboard({
                           onRefresh={onScanHosts ? handleRefreshHost : undefined}
                           onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                           onDelete={(id) => void onDeleteHost(id)}
+                          onMoveToVault={canMoveHosts ? (id) => openHostMove(hosts.filter(host => host.id === id)) : undefined}
                         />
                       ))}
                     </div>

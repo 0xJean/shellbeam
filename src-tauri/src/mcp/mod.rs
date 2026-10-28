@@ -213,6 +213,92 @@ pub(crate) fn revoke_vault_clients(
     Ok(revoked)
 }
 
+/// `(id, name)` of this Vault's clients holding a grant for any of these hosts.
+pub(crate) fn vault_clients_granting(
+    app: &tauri::AppHandle,
+    vault_id: &str,
+    host_ids: &std::collections::BTreeSet<String>,
+) -> Result<Vec<(String, String)>, String> {
+    let state = app.state::<McpState>();
+    let settings = if state.ready.load(Ordering::SeqCst) {
+        state
+            .settings
+            .lock()
+            .map_err(|_| "MCP_STATE_UNAVAILABLE")?
+            .clone()
+    } else {
+        read_json_or_default(&data_file_path(app, "mcp_settings.json")?)?
+    };
+    Ok(clients_granting(&settings, vault_id, host_ids)
+        .map(|client| (client.id.clone(), client.name.clone()))
+        .collect())
+}
+
+fn clients_granting<'a>(
+    settings: &'a Settings,
+    vault_id: &'a str,
+    host_ids: &'a std::collections::BTreeSet<String>,
+) -> impl Iterator<Item = &'a Client> {
+    settings.clients.iter().filter(move |client| {
+        client.vault_id == vault_id && client.hosts.iter().any(|g| host_ids.contains(&g.id))
+    })
+}
+
+/// Remove grants for hosts that left this Vault (host move), in memory and on
+/// disk; the clients themselves stay. Refuses while an MCP operation for one
+/// of those hosts is still running. Returns the affected client ids.
+pub(crate) fn revoke_vault_host_grants(
+    app: &tauri::AppHandle,
+    vault_id: &str,
+    host_ids: &std::collections::BTreeSet<String>,
+) -> Result<Vec<String>, String> {
+    let strip = |settings: &mut Settings| {
+        let mut affected = Vec::new();
+        for client in settings
+            .clients
+            .iter_mut()
+            .filter(|c| c.vault_id == vault_id)
+        {
+            let before = client.hosts.len();
+            client.hosts.retain(|grant| !host_ids.contains(&grant.id));
+            if client.hosts.len() != before {
+                affected.push(client.id.clone());
+            }
+        }
+        affected
+    };
+    let state = app.state::<McpState>();
+    if !state.ready.load(Ordering::SeqCst) {
+        let mut settings: Settings =
+            read_json_or_default(&data_file_path(app, "mcp_settings.json")?)?;
+        let affected = strip(&mut settings);
+        if !affected.is_empty() {
+            persist(app, &settings)?;
+        }
+        return Ok(affected);
+    }
+    // Scoped so the jobs and settings locks are never held together.
+    if state
+        .jobs
+        .lock()
+        .map_err(|_| "MCP_STATE_UNAVAILABLE")?
+        .active
+        .iter()
+        .any(|(vault, host)| vault == vault_id && host_ids.contains(host))
+    {
+        return Err("MCP_BUSY: wait for remote operations on these hosts to finish".into());
+    }
+    let mut settings = state.settings.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
+    let mut next = settings.clone();
+    let affected = strip(&mut next);
+    if affected.is_empty() {
+        return Ok(affected);
+    }
+    persist(app, &next)?;
+    *settings = next;
+    Ok(affected)
+}
+
 fn vault_client_ids(settings: &Settings, vault_id: &str) -> Vec<String> {
     settings
         .clients

@@ -1,6 +1,7 @@
 /**
- * Browser-side leftovers of a deleted Vault. The native side purges files and
- * databases; these are the localStorage caches the renderer keys by Vault id.
+ * Browser-side leftovers of a deleted Vault, or of hosts moved out of one. The
+ * native side purges files and databases; these are the localStorage caches the
+ * renderer keys by Vault id.
  * Prefixes mirror the key builders named beside them; the unit test checks
  * them against those builders so a renamed key cannot silently survive.
  */
@@ -53,20 +54,59 @@ export function clearVaultLocalData(vaultId: string, storage: Storage | undefine
       storage.removeItem(key)
       touched.push(key)
     }
-    if (pruneInventoryCache(storage, vaultId)) touched.push(WORKSPACE_INVENTORY_CACHE_KEY)
+    const prefix = vaultObservationKeyPrefix(vaultId)
+    if (pruneInventoryCache(storage, (key) => key.startsWith(prefix))) touched.push(WORKSPACE_INVENTORY_CACHE_KEY)
   } catch { /* Storage is a cache only; a failure here must not undo the deletion. */ }
   return touched
 }
 
-function pruneInventoryCache(storage: Storage, vaultId: string) {
+/** Whether `key` holds data for one of these hosts in this Vault (the host-scoped builders above). */
+export function isHostLocalStorageKey(key: string, vaultId: string, hostId: string): boolean {
+  if (!vaultId || !hostId) return false
+  const at = (base: string) => key === base || key.startsWith(`${base}:`)
+  if (RAW_HOST_PREFIXES.some((base) => at(`${base}:${vaultId}:${hostId}`))) return true
+  const encoded = `${encodeURIComponent(vaultId)}:${encodeURIComponent(hostId)}`
+  return ENCODED_HOST_PREFIXES.some((base) => at(`${base}:${encoded}`))
+}
+
+/** The observation key of a host in a Vault; see getHostObservationKey. */
+export function hostObservationKey(vaultId: string, hostId: string) {
+  return `vault:${JSON.stringify([vaultId, hostId])}`
+}
+
+/**
+ * Remove the entries of hosts that left this Vault (moved elsewhere). The
+ * Vault's own keys stay. Returns the keys removed or rewritten.
+ */
+export function clearHostLocalData(vaultId: string, hostIds: readonly string[], storage: Storage | undefined = globalThis.localStorage): string[] {
+  const ids = hostIds.filter(Boolean)
+  if (!vaultId || !ids.length || !storage) return []
+  const touched: string[] = []
+  try {
+    const keys: string[] = []
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index)
+      if (key !== null) keys.push(key)
+    }
+    for (const key of keys) {
+      if (!ids.some((hostId) => isHostLocalStorageKey(key, vaultId, hostId))) continue
+      storage.removeItem(key)
+      touched.push(key)
+    }
+    const observed = new Set(ids.map((hostId) => hostObservationKey(vaultId, hostId)))
+    if (pruneInventoryCache(storage, (key) => observed.has(key))) touched.push(WORKSPACE_INVENTORY_CACHE_KEY)
+  } catch { /* Storage is a cache only; a failure here must not undo the move. */ }
+  return touched
+}
+
+function pruneInventoryCache(storage: Storage, drop: (key: string) => boolean) {
   const raw = storage.getItem(WORKSPACE_INVENTORY_CACHE_KEY)
   if (!raw) return false
   let cache: unknown
   try { cache = JSON.parse(raw) } catch { return false }
   if (!cache || typeof cache !== 'object' || Array.isArray(cache)) return false
-  const prefix = vaultObservationKeyPrefix(vaultId)
   const entries = Object.entries(cache as Record<string, unknown>)
-  const kept = entries.filter(([key]) => !key.startsWith(prefix))
+  const kept = entries.filter(([key]) => !drop(key))
   if (kept.length === entries.length) return false
   storage.setItem(WORKSPACE_INVENTORY_CACHE_KEY, JSON.stringify(Object.fromEntries(kept)))
   return true

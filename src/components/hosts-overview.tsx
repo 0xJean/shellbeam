@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Activity, Box, Cpu, HardDrive, HeartPulse, Layers, Radar, RotateCw, Siren, X } from 'lucide-react'
+import { Activity, ArrowRightLeft, Box, Cpu, HardDrive, HeartPulse, Layers, Radar, RotateCw, Siren, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ProbeBatchInstallDialog } from '@/components/probe-batch-install'
 import { loadProbeInstallReadiness, PROBE_DEPLOYMENT_CHANGED_EVENT } from '@/hooks/use-probe-install-readiness'
 import { hasSshConnection, type HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { KOMARI_MAPPING_CHANGED_EVENT } from '@/lib/komari-persistence'
+import { hostMoveCopy } from '@/lib/locales/host-move'
 import { hostsOverviewCopy } from '@/lib/locales/hosts-overview'
 import { fill } from '@/lib/locales/probe-install'
 import { MAX_BATCH_HOSTS } from '@/lib/multi-host-operations'
@@ -122,23 +123,25 @@ export function ProbeCoverageBanner({ hosts, osOf }: { hosts: HostProfile[]; osO
  * probe install for the selection, and shortcuts that preset the batch
  * operations panel below the list.
  */
-export function HostBatchFloatingBar({ hosts, onOperation, onExit }: { hosts: HostProfile[]; onOperation: (operation: MultiHostOperationKind) => void; onExit: () => void }) {
+/** `onMoveToVault` is passed only when another Vault exists to move into. */
+export function HostBatchFloatingBar({ hosts, onOperation, onExit, onMoveToVault }: { hosts: HostProfile[]; onOperation: (operation: MultiHostOperationKind) => void; onExit: () => void; onMoveToVault?: () => void }) {
   const { t, locale } = useT()
   const c = hostsOverviewCopy[locale]
   const [installing, setInstalling] = useState(false)
   if (hosts.length === 0) return null
-  const action = 'inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]'
+  const action = 'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-xs font-medium text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]'
   return (
     <div data-testid="host-batch-bar" role="toolbar" aria-label={fill(c.selected, { count: hosts.length })}
-      className="sb-card fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 px-2 py-1.5 shadow-[var(--workspace-shadow-overlay)]">
-      <span className="px-2 text-xs font-semibold text-[var(--workspace-text-strong)]">{fill(c.selected, { count: hosts.length })}</span>
-      <span className="mx-1 h-5 w-px bg-[color:var(--workspace-border-soft)]" />
+      className="sb-card fixed bottom-6 left-1/2 z-40 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-1 overflow-x-auto px-2 py-1.5 shadow-[var(--workspace-shadow-overlay)]">
+      <span className="shrink-0 whitespace-nowrap px-2 text-xs font-semibold text-[var(--workspace-text-strong)]">{fill(c.selected, { count: hosts.length })}</span>
+      <span className="mx-1 h-5 w-px shrink-0 bg-[color:var(--workspace-border-soft)]" />
       <button type="button" data-testid="probe-batch-entry" className={cn(action, 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]')} onClick={() => setInstalling(true)}><Radar className="h-3.5 w-3.5" />{c.installProbe}</button>
       <button type="button" className={action} onClick={() => onOperation('health-check')}><HeartPulse className="h-3.5 w-3.5" />{t('multiHost.operations.healthCheck')}</button>
       <button type="button" className={action} onClick={() => onOperation('service.restart')}><RotateCw className="h-3.5 w-3.5" />{t('multiHost.operations.serviceRestart')}</button>
       <button type="button" className={action} onClick={() => onOperation('docker.restart')}><Box className="h-3.5 w-3.5" />{t('multiHost.operations.dockerRestart')}</button>
-      <span className="mx-1 h-5 w-px bg-[color:var(--workspace-border-soft)]" />
-      <button type="button" aria-label={c.exitBatch} title={c.exitBatch} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)]" onClick={onExit}><X className="h-4 w-4" /></button>
+      {onMoveToVault && <button type="button" data-testid="host-move-entry" className={action} onClick={onMoveToVault}><ArrowRightLeft className="h-3.5 w-3.5" />{hostMoveCopy[locale].action}</button>}
+      <span className="mx-1 h-5 w-px shrink-0 bg-[color:var(--workspace-border-soft)]" />
+      <button type="button" aria-label={c.exitBatch} title={c.exitBatch} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)]" onClick={onExit}><X className="h-4 w-4" /></button>
       {installing && <ProbeBatchInstallDialog hosts={hosts.slice(0, MAX_BATCH_HOSTS)} open onOpenChange={setInstalling} />}
     </div>
   )

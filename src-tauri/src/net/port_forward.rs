@@ -111,6 +111,33 @@ fn save_rules(
     write_json(&path, rules)
 }
 
+/// Move the rules of the given hosts from one vault to another (host move).
+/// Target first, deduped by rule id, so a rerun finishes an interrupted move.
+/// Running tunnels are keyed by rule id and keep running.
+pub(crate) fn move_vault_rules(
+    app: &tauri::AppHandle,
+    source: &str,
+    target: &str,
+    host_ids: &std::collections::BTreeSet<String>,
+) -> Result<usize, String> {
+    let mut source_rules = load_rules(app, Some(source))?;
+    let (moving, staying): (Vec<_>, Vec<_>) = source_rules
+        .drain(..)
+        .partition(|rule| host_ids.contains(&rule.host_id));
+    if moving.is_empty() {
+        return Ok(0);
+    }
+    let mut target_rules = load_rules(app, Some(target))?;
+    for rule in &moving {
+        if !target_rules.iter().any(|existing| existing.id == rule.id) {
+            target_rules.push(rule.clone());
+        }
+    }
+    save_rules(app, &target_rules, Some(target))?;
+    save_rules(app, &staying, Some(source))?;
+    Ok(moving.len())
+}
+
 #[tauri::command]
 pub fn list_port_forward_rules(
     app: tauri::AppHandle,

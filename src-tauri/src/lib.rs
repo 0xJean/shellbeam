@@ -122,6 +122,8 @@ pub fn run() {
             net::known_hosts::fetch_and_add_known_host,
             net::known_hosts::remove_known_host,
             data::hosts::list_hosts,
+            data::host_move::plan_host_move,
+            data::host_move::move_hosts_to_vault,
             data::komari_persistence::import_monitoring_host,
             data::hosts::create_host,
             data::hosts::update_host,

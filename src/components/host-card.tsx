@@ -15,6 +15,8 @@ import { useT } from '@/lib/i18n'
 import { monitoringModeCopy } from '@/lib/locales/monitoring-mode'
 import { monitoringSourcesCopy } from '@/lib/locales/monitoring-sources'
 import { hostPresentationCopy } from '@/lib/locales/host-presentation'
+import { hostMoveCopy } from '@/lib/locales/host-move'
+import { fill } from '@/lib/locales/probe-install'
 import { hostsOverviewCopy } from '@/lib/locales/hosts-overview'
 import { getResourceUsageTextClassName, getResourceUsageTone } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
@@ -27,7 +29,7 @@ import { loadEvidenceCopy } from '@/lib/monitoring-load-evidence'
 import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import { hostProbeEvaluations, validHostOpsSampleTime, type HostOpsCapability, type HostOpsProbeEvaluation } from '@/lib/host-ops-view'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
-import { AlertTriangle, Activity, Bot, Check, ChevronDown, Clock, Cpu, FolderOpen, HardDrive, Laptop, MemoryStick, Network, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, Wrench, X } from 'lucide-react'
+import { AlertTriangle, Activity, ArrowRightLeft, Bot, Check, ChevronDown, Clock, Cpu, FolderOpen, HardDrive, Laptop, MemoryStick, Network, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, Wrench, X } from 'lucide-react'
 import { useEffect, useId, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
 import { HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
@@ -205,6 +207,8 @@ interface HostGridCardProps {
   onRefresh?: (id: string) => void
   onEdit: (id: string) => void
   onDelete: (id: string) => void
+  /** Present only when another Vault exists to move the host into. */
+  onMoveToVault?: (id: string) => void
   onSelect: (id: string) => void
 }
 
@@ -297,7 +301,7 @@ function hostAttention(hostId: string, summary: HostOperationalSummary | undefin
   return worst ? t('hostCard.usageHigh', { resource: worst[0], value: Math.round(worst[1] ?? 0) }) : null
 }
 
-export function HostGridCard({ host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, monitoring = true, batchSelection }: HostGridCardProps) {
+export function HostGridCard({ host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, onMoveToVault, monitoring = true, batchSelection }: HostGridCardProps) {
   const { t, locale } = useT()
   const detailsId = useId()
   const owner = JSON.stringify([host.id, host.vaultId, operations?.vaultId, monitoring])
@@ -396,6 +400,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
             <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
             <span className="flex-1" />
             <button type="button" title={t('hostCard.edit')} aria-label={t('hostCard.edit')} onClick={() => onEdit(host.id)} className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"><Pencil className="h-3.5 w-3.5" /></button>
+            {onMoveToVault && <button type="button" data-testid="host-move-to-vault" title={fill(hostMoveCopy[locale].actionHost, { name: host.name })} aria-label={fill(hostMoveCopy[locale].actionHost, { name: host.name })} onClick={() => onMoveToVault(host.id)} className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"><ArrowRightLeft className="h-3.5 w-3.5" /></button>}
             <button type="button" title={t('hostCard.delete')} aria-label={t('hostCard.delete')} onClick={() => setConfirmOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-status-bad-bg)] hover:text-[color:var(--workspace-status-bad-text)]"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>
         </div>
@@ -428,6 +433,8 @@ interface HostListItemProps {
   onRefresh?: (id: string) => void
   onEdit: (id: string) => void
   onDelete: (id: string) => void
+  /** Present only when another Vault exists to move the host into. */
+  onMoveToVault?: (id: string) => void
 }
 
 function HostStatusPill({ status, sc, t }: { status?: HostHealthStatus; sc: ReturnType<typeof statusConfig>; t: TFn }) {
@@ -958,7 +965,7 @@ function getNetworkScopeLabel(network: HostNetworkDisplay | undefined, t: TFn) {
   return t('hosts.networkUnknown')
 }
 
-export function HostListItem({ resources, index, host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, monitoring = true, batchSelection }: HostListItemProps) {
+export function HostListItem({ resources, index, host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, onMoveToVault, monitoring = true, batchSelection }: HostListItemProps) {
   const { t, locale } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t, operations?.provider, hostPresentationCopy[locale])
@@ -1066,6 +1073,12 @@ export function HostListItem({ resources, index, host, isSelected, status, resou
             onClick={(e) => { e.stopPropagation(); onEdit(host.id) }} title={t('hostCard.edit')}>
             <Pencil className="h-4 w-4" />
           </button>
+          {onMoveToVault && <button
+            type="button" data-testid="host-move-to-vault"
+            className="order-2 flex h-7 w-7 items-center justify-center rounded-md text-[var(--workspace-text-subtle)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"
+            onClick={(e) => { e.stopPropagation(); onMoveToVault(host.id) }} title={fill(hostMoveCopy[locale].actionHost, { name: host.name })} aria-label={fill(hostMoveCopy[locale].actionHost, { name: host.name })}>
+            <ArrowRightLeft className="h-4 w-4" />
+          </button>}
           <button
             type="button"
             className="order-2 flex h-7 w-7 items-center justify-center rounded-md text-[var(--workspace-text-subtle)] transition-colors hover:bg-[var(--workspace-status-bad-bg)] hover:text-[color:var(--workspace-status-bad-text)]"

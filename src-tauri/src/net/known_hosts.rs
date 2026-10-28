@@ -180,6 +180,44 @@ pub fn add_known_host(
     Ok(entry)
 }
 
+/// Host move: copy the entries `take` selects to the target vault (an entry
+/// already there for that endpoint wins), then drop from the source those that
+/// `remove` also selects. Returns the number of selected entries.
+pub(crate) fn move_vault_entries(
+    app: &tauri::AppHandle,
+    source: &str,
+    target: &str,
+    take: impl Fn(&KnownHostEntry) -> bool,
+    remove: impl Fn(&KnownHostEntry) -> bool,
+) -> Result<usize, String> {
+    let _guard = lock()?;
+    let mut source_entries = load_entries(app, Some(source))?;
+    let selected: Vec<_> = source_entries.iter().filter(|e| take(e)).cloned().collect();
+    if selected.is_empty() {
+        return Ok(0);
+    }
+    let mut target_entries = load_entries(app, Some(target))?;
+    let before = target_entries.len();
+    for entry in &selected {
+        let key = host_key(&entry.host, entry.port);
+        if !target_entries
+            .iter()
+            .any(|e| host_key(&e.host, e.port) == key)
+        {
+            target_entries.push(entry.clone());
+        }
+    }
+    if target_entries.len() != before {
+        save_entries(app, Some(target), &target_entries)?;
+    }
+    let count = source_entries.len();
+    source_entries.retain(|e| !(take(e) && remove(e)));
+    if source_entries.len() != count {
+        save_entries(app, Some(source), &source_entries)?;
+    }
+    Ok(selected.len())
+}
+
 #[tauri::command]
 pub fn list_known_hosts(
     app: tauri::AppHandle,

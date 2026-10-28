@@ -3,7 +3,7 @@ import { healthCheckHistoryStorageKey, healthCheckStorageKey } from './health-ch
 import { getHostObservationKey } from './host-observation-scope'
 import { localOpsStorageKey } from './local-ops-store'
 import { SCHEDULED_TASK_STORAGE_PREFIX } from './scheduled-tasks'
-import { clearVaultLocalData, isVaultLocalStorageKey } from './vault-local-cleanup'
+import { clearHostLocalData, clearVaultLocalData, hostObservationKey, isHostLocalStorageKey, isVaultLocalStorageKey } from './vault-local-cleanup'
 
 const host = (vaultId: string, id: string) => ({ id, vaultId, username: 'u', address: 'a', port: 22 })
 
@@ -64,6 +64,67 @@ describe('vault local cleanup', () => {
   it('leaves storage alone for an empty id', () => {
     localStorage.setItem('shellbeam.certificates.', '[]')
     expect(clearVaultLocalData('')).toEqual([])
+    expect(localStorage.length).toBe(1)
+  })
+
+  it('matches the host-scoped builders for the moved host only', () => {
+    for (const [vaultId, hostId] of [['team', 'h1'], ['a b/c', 'h:1']]) {
+      for (const key of [
+        localOpsStorageKey(vaultId, hostId, 'rules'),
+        healthCheckStorageKey(vaultId, hostId),
+        healthCheckHistoryStorageKey(vaultId, hostId),
+        `${SCHEDULED_TASK_STORAGE_PREFIX}:${vaultId}:${hostId}`,
+      ]) expect(isHostLocalStorageKey(key, vaultId, hostId), key).toBe(true)
+    }
+    for (const key of [
+      localOpsStorageKey('team', 'h10', 'rules'),
+      localOpsStorageKey('team2', 'h1', 'rules'),
+      healthCheckStorageKey('team', 'h10'),
+      healthCheckHistoryStorageKey('team', 'h10'),
+      `${SCHEDULED_TASK_STORAGE_PREFIX}:team:h10`,
+      'shellbeam.certificates.team',
+      'shellbeam.interactiveHistory:team',
+    ]) expect(isHostLocalStorageKey(key, 'team', 'h1'), key).toBe(false)
+    expect(isHostLocalStorageKey(healthCheckStorageKey('team', 'h1'), 'team', '')).toBe(false)
+    expect(hostObservationKey('team', 'h1')).toBe(getHostObservationKey(host('team', 'h1')))
+  })
+
+  it('removes only the moved hosts entries and keeps the Vault and its other hosts', () => {
+    const kept = [
+      localOpsStorageKey('team', 'h3', 'rules'),
+      healthCheckStorageKey('team', 'h3'),
+      localOpsStorageKey('personal', 'h1', 'rules'),
+      'shellbeam.certificates.team',
+      'shellbeam.interactiveHistory:team',
+    ]
+    const removed = [
+      localOpsStorageKey('team', 'h1', 'rules'),
+      healthCheckStorageKey('team', 'h1'),
+      healthCheckHistoryStorageKey('team', 'h2'),
+      `${SCHEDULED_TASK_STORAGE_PREFIX}:team:h2`,
+    ]
+    for (const key of [...kept, ...removed]) localStorage.setItem(key, '[]')
+    localStorage.setItem('shellbeam.workspaceInventoryCache.v1', JSON.stringify({
+      [getHostObservationKey(host('team', 'h1'))]: { updatedAt: 1 },
+      [getHostObservationKey(host('team', 'h3'))]: { updatedAt: 2 },
+      [getHostObservationKey(host('personal', 'h1'))]: { updatedAt: 3 },
+    }))
+
+    const touched = clearHostLocalData('team', ['h1', 'h2'])
+
+    expect(touched.sort()).toEqual([...removed, 'shellbeam.workspaceInventoryCache.v1'].sort())
+    for (const key of removed) expect(localStorage.getItem(key), key).toBeNull()
+    for (const key of kept) expect(localStorage.getItem(key), key).toBe('[]')
+    expect(Object.keys(JSON.parse(localStorage.getItem('shellbeam.workspaceInventoryCache.v1')!))).toEqual([
+      getHostObservationKey(host('team', 'h3')),
+      getHostObservationKey(host('personal', 'h1')),
+    ])
+  })
+
+  it('leaves storage alone without a Vault or hosts', () => {
+    localStorage.setItem(healthCheckStorageKey('team', 'h1'), '[]')
+    expect(clearHostLocalData('', ['h1'])).toEqual([])
+    expect(clearHostLocalData('team', [])).toEqual([])
     expect(localStorage.length).toBe(1)
   })
 })

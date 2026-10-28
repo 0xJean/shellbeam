@@ -1366,6 +1366,7 @@ export function PcLayout() {
                       onSaveToVault={hostsCtx.handleSaveToVault}
                       onLoadVaultSecret={vault.handleRevealSecret}
                       vaultName={vault.vaults.find((v) => v.id === vault.activeVaultId)?.name ?? 'Vault'}
+                      vaults={vault.vaults}
                       headerExtraAction={browserOverviewEntry}
                     />
                   </div>

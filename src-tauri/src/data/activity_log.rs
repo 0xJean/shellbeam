@@ -91,6 +91,35 @@ fn lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
         .map_err(|_| "Activity log mutex poisoned".to_string())
 }
 
+/// Move the entries `take` selects from one vault's log to another's (host
+/// move). Target first, deduped by id, so a rerun finishes an interrupted move.
+pub(crate) fn move_vault_activity(
+    app: &tauri::AppHandle,
+    source: &str,
+    target: &str,
+    take: impl Fn(&ActivityEntry) -> bool,
+) -> Result<usize, String> {
+    let _guard = lock()?;
+    let source_path = vault_log_path(app, Some(source))?;
+    let mut source_log = read_json_or_default::<Vec<ActivityEntry>>(&source_path)?;
+    let (moving, staying): (Vec<_>, Vec<_>) = source_log.drain(..).partition(|e| take(e));
+    if moving.is_empty() {
+        return Ok(0);
+    }
+    let target_path = vault_log_path(app, Some(target))?;
+    let mut target_log = read_json_or_default::<Vec<ActivityEntry>>(&target_path)?;
+    for entry in &moving {
+        if !target_log.iter().any(|existing| existing.id == entry.id) {
+            target_log.push(entry.clone());
+        }
+    }
+    target_log.sort_by_key(|entry| entry.created_at);
+    trim_log(&mut target_log);
+    write_json(&target_path, &target_log)?;
+    write_json(&source_path, &staying)?;
+    Ok(moving.len())
+}
+
 #[tauri::command]
 pub fn append_activity(
     app: tauri::AppHandle,
