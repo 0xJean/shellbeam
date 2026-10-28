@@ -202,7 +202,7 @@ export function PcLayout() {
     void hostsCtx.refreshHosts()
     void snippets.refresh()
     void vault.refreshVault()
-  })
+  }, vault.activeVaultId)
 
   const [, setVaultActiveTab] = useState<string>('hosts')
   const [mobileActiveSessionId, setMobileActiveSessionId] = useState<string | null>(null)
@@ -1527,6 +1527,7 @@ export function PcLayout() {
                       onStartServer={sync.handleStartServer}
                       onPullFromPeer={sync.handlePullFromPeer}
                       onPushToPeer={sync.handlePushToPeer}
+                      syncVaultName={vault.vaults.find((v) => v.id === vault.activeVaultId)?.name}
                       onRemoveTrustedPeer={sync.handleRemoveTrustedPeer}
                     />
                   </div>

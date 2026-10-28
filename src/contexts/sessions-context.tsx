@@ -531,7 +531,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         if (!hkInfo || hkInfo.code !== 'host_key_unknown') throw error
         const accepted = await new Promise<boolean>((resolve) => {
           pendingHostKeyResolveRef.current = resolve
-          setPendingHostKey(hkInfo)
+          setPendingHostKey({ ...hkInfo, vaultId: params.vaultId })
         })
         if (!accepted) throw new Error('Connection cancelled: host key not accepted')
         next = { ...params, acceptedHostKey: { host: hkInfo.host, port: hkInfo.port, fingerprint: hkInfo.fingerprint } }
@@ -548,7 +548,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         if (!hkInfo || hkInfo.code !== 'host_key_unknown') throw error
         const accepted = await new Promise<boolean>((resolve) => {
           pendingHostKeyResolveRef.current = resolve
-          setPendingHostKey(hkInfo)
+          setPendingHostKey({ ...hkInfo, vaultId: params.vaultId })
         })
         if (!accepted) throw new Error('Connection cancelled: host key not accepted')
         next = { ...params, acceptedHostKey: { host: hkInfo.host, port: hkInfo.port, fingerprint: hkInfo.fingerprint } }
@@ -646,7 +646,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         setPcActiveSessionId((prev) => prev === sessionId ? newSession.sessionId : prev)
         appendPaneEvent(pane, 'info', `Reconnected to ${host.username || defaultUsername}@${host.address}`, newSession.sessionId)
         void appendActivity({
-          event: 'reconnect', hostId: host.id, hostName: host.name, hostAddress: host.address,
+          vaultId: sourceVaultId, event: 'reconnect', hostId: host.id, hostName: host.name, hostAddress: host.address,
           username: host.username || defaultUsername, authType: host.authType,
         })
         reconnected = true
@@ -763,6 +763,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
         if (tab && tab.hostAddress !== 'local') {
           void appendActivity({
+            vaultId: info?.vaultId ?? activeVaultIdRef.current,
             event: 'disconnect',
             hostId: info?.hostId ?? undefined,
             hostName: tab.hostName,
@@ -1465,7 +1466,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       setPcActiveSessionId(session.sessionId)
       await refreshInteractiveSessions()
       void appendActivity({
-        event: 'connect', hostId: host.id, hostName: host.name, hostAddress: host.address,
+        vaultId: activeVaultId, event: 'connect', hostId: host.id, hostName: host.name, hostAddress: host.address,
         username: host.username || defaultUsername, authType: host.authType,
       })
       return session.sessionId
@@ -1479,7 +1480,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       }
       appendPaneEvent('left', 'error', `Connection failed: ${msg}`, null)
       void appendActivity({
-        event: 'auth_fail', hostId: host.id, hostName: host.name, hostAddress: host.address,
+        vaultId: activeVaultId, event: 'auth_fail', hostId: host.id, hostName: host.name, hostAddress: host.address,
         username: host.username || defaultUsername, authType: host.authType, detail: msg,
       })
     }
@@ -1551,7 +1552,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       } : t))
       setPcActiveSessionId(session.sessionId)
       await refreshInteractiveSessions()
-      void appendActivity({ event: 'local_terminal', hostName: t('common.local'), hostAddress: 'local' })
+      void appendActivity({ vaultId: activeVaultIdRef.current, event: 'local_terminal', hostName: t('common.local'), hostAddress: 'local' })
     } catch (error) {
       const msg = String(error instanceof Error ? error.message : error)
       setPcSessionTabs((prev) => prev.map((t) => t.sessionId === targetSessionId ? { ...t, status: 'error', errorMessage: msg, connectionStage: undefined } : t))

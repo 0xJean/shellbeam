@@ -7,7 +7,7 @@ vi.mock('@/lib/i18n', () => ({
   useT: () => ({ locale: 'en', t: (key: string) => key }),
 }))
 const listKnownHosts = vi.fn()
-vi.mock('@/lib/known-hosts', () => ({ listKnownHosts: () => listKnownHosts() }))
+vi.mock('@/lib/known-hosts', () => ({ listKnownHosts: (vaultId?: string) => listKnownHosts(vaultId) }))
 
 describe('host key confirm dialog', () => {
   it('trusts an unknown host key', () => {
@@ -23,8 +23,9 @@ describe('host key confirm dialog', () => {
     const onReject = vi.fn()
     const listener = vi.fn()
     window.addEventListener(OPEN_KNOWN_HOSTS_REQUEST_EVENT, listener)
-    render(<HostKeyConfirmDialog info={{ code: 'host_key_mismatch', host: '1.2.3.4', port: 22, fingerprint: 'new', keyType: 'Ed25519' }} onAccept={vi.fn()} onReject={onReject} />)
+    render(<HostKeyConfirmDialog info={{ code: 'host_key_mismatch', host: '1.2.3.4', port: 22, fingerprint: 'new', keyType: 'Ed25519', vaultId: 'vault-a' }} onAccept={vi.fn()} onReject={onReject} />)
     expect(await screen.findByTestId('host-key-old-fingerprint')).toHaveTextContent('SHA256:old')
+    expect(listKnownHosts).toHaveBeenCalledWith('vault-a')
     expect(screen.getByTestId('host-key-fingerprint')).toHaveTextContent('SHA256:new')
     expect(screen.queryByTestId('host-key-accept')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'View known hosts' }))

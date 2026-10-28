@@ -1,5 +1,6 @@
 import { monitoringOperationTarget } from '@/lib/monitoring-presentation'
-import { useEffect, useMemo, useState, useCallback, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react'
+import { useVault } from '@/contexts/vault-context'
 import type { HostProfile } from '@/lib/hosts'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import {
@@ -75,11 +76,16 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
   const [search, setSearch] = useState('')
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
+  // Activity and audit are scoped to the active vault; a late reply for a previous vault is dropped.
+  const { activeVaultId } = useVault()
+  const requestRef = useRef(0)
 
   const refresh = useCallback(() => {
+    const request = ++requestRef.current
     setLoading(true)
-    Promise.allSettled([listActivityLog(), listOperationAudit(AUDIT_LIMIT)])
+    Promise.allSettled([listActivityLog(activeVaultId), listOperationAudit({ vaultId: activeVaultId, limit: AUDIT_LIMIT })])
       .then(([activityResult, auditResult]) => {
+        if (request !== requestRef.current) return
         const activity = activityResult.status === 'fulfilled' ? activityResult.value : []
         const audit = auditResult.status === 'fulfilled' ? auditResult.value : []
         const operationEntries: TimelineEntry[] = audit.map((entry) => ({
@@ -97,8 +103,8 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
         setNow(Date.now())
         setEntries([...activity, ...operationEntries].sort((a, b) => b.createdAt - a.createdAt))
       })
-      .finally(() => setLoading(false))
-  }, [locale])
+      .finally(() => { if (request === requestRef.current) setLoading(false) })
+  }, [activeVaultId, locale])
 
   useEffect(() => { refresh() }, [refresh])
 

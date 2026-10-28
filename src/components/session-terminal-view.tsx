@@ -1,7 +1,8 @@
-import { getInteractiveHistory, subscribeInteractiveHistory } from '@/lib/interactive-history'
+import { getInteractiveHistory, isInteractiveHistoryEvent, subscribeInteractiveHistory } from '@/lib/interactive-history'
 import { announceTerminalSearchState, TERMINAL_AI_TOGGLE_EVENT, TERMINAL_SEARCH_TOGGLE_EVENT } from '@/lib/terminal-events'
 import { normalizeBrowserUrl } from '@/contexts/session-browser-state'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
+import { useVault } from '@/contexts/vault-context'
 import { useT } from '@/lib/i18n'
 import { recordInteractiveCommand } from '@/lib/interactive-history'
 import type { InteractiveOutputChunk, InteractiveSessionInfo } from '@/lib/interactive-session'
@@ -82,12 +83,17 @@ export function SessionTerminalView({
   const [showAI, setShowAI] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
   // Commands typed on this host feed the history half of the suggestion bar.
-  const [historyEntries, setHistoryEntries] = useState<string[]>(() => getInteractiveHistory(hostAddress).map((entry) => entry.command).reverse())
+  // Typed history is per vault: the session's own vault, else the active one.
+  const { activeVaultId } = useVault()
+  const historyVaultId = session?.vaultId ?? activeVaultId
+  const historyVaultIdRef = useRef(historyVaultId)
+  useEffect(() => { historyVaultIdRef.current = historyVaultId }, [historyVaultId])
+  const [historyEntries, setHistoryEntries] = useState<string[]>(() => getInteractiveHistory(historyVaultId, hostAddress).map((entry) => entry.command).reverse())
   useEffect(() => {
-    const load = () => setHistoryEntries(getInteractiveHistory(hostAddress).map((entry) => entry.command).reverse())
+    const load = () => setHistoryEntries(getInteractiveHistory(historyVaultId, hostAddress).map((entry) => entry.command).reverse())
     load()
-    return subscribeInteractiveHistory((host) => { if (host === hostAddress) load() })
-  }, [hostAddress])
+    return subscribeInteractiveHistory((vault, host) => { if (isInteractiveHistoryEvent(historyVaultId, hostAddress, vault, host)) load() })
+  }, [historyVaultId, hostAddress])
   useEffect(() => {
     const onToggle = (event: Event) => { if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setShowSearch((open) => !open) }
     window.addEventListener(TERMINAL_SEARCH_TOGGLE_EVENT, onToggle)
@@ -263,7 +269,7 @@ export function SessionTerminalView({
       onSendRawRef.current(data)
       if (data === '\r' || data === '\n') {
         if (inputLineRef.current.trim()) {
-          recordInteractiveCommand(hostAddress, inputLineRef.current)
+          recordInteractiveCommand(historyVaultIdRef.current, hostAddress, inputLineRef.current)
         }
         inputLineRef.current = ''
         showSuggestionsRef.current = false

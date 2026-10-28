@@ -4,6 +4,7 @@ pub mod peer_pairing;
 pub(crate) mod transport;
 pub(crate) mod transport_handler;
 pub(crate) mod transport_mdns;
+pub(crate) mod vault_ref;
 
 pub use commands::*;
 

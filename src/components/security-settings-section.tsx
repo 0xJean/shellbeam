@@ -6,8 +6,10 @@ import { useVault } from '@/contexts/vault-context'
 import { useT } from '@/lib/i18n'
 import { fill } from '@/lib/locales/probe-install'
 import { securitySettingsCopy } from '@/lib/locales/security-settings'
+import { vaultDeleteCopy } from '@/lib/locales/vault-delete'
 import { confirmUserAction } from '@/lib/user-confirmation'
 import { cn } from '@/lib/utils'
+import { clearVaultLocalData } from '@/lib/vault-local-cleanup'
 import { createVault, deleteVault, updateVault, DEFAULT_VAULT_ID } from '@/lib/vaults'
 
 /**
@@ -57,8 +59,9 @@ export function SecuritySettingsSection() {
     if (!target) return
     const started = generation.current
     const isCurrent = () => started === generation.current
-    if (await confirmUserAction({ message: fill(c.deleteConfirm, { name: target.name }), risk: 'high', vaultId: activeVaultId, isCurrent }) !== true || !isCurrent()) return
+    if (await confirmUserAction({ message: fill(vaultDeleteCopy[locale].confirm, { name: target.name }), risk: 'high', vaultId: activeVaultId, isCurrent }) !== true || !isCurrent()) return
     await deleteVault(id)
+    clearVaultLocalData(id)
     generation.current++
     await vault.refreshVaults()
     if (activeVaultId === id) vault.setActiveVaultId(DEFAULT_VAULT_ID)

@@ -47,4 +47,10 @@ describe('SyncCenterPanel (merged sync & backup page)', () => {
     rerender(<SyncCenterPanel {...base} localDevice={localDevice} trustedPeers={[peer]} backupPanel={<div>backup-column</div>} focusSection="backup" />)
     expect(screen.getByText('backup-column')).toBeInTheDocument()
   })
+
+  it('names the active vault beside the peer sync actions', () => {
+    render(<SyncCenterPanel {...base} localDevice={localDevice} trustedPeers={[peer]} syncVaultName="Work" />)
+    fireEvent.click(screen.getByRole('button', { name: '打开 iPhone' }))
+    expect(screen.getByText('同步保管库：Work')).toBeInTheDocument()
+  })
 })

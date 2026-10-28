@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionTerminalView } from './session-terminal-view'
 
+vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'personal' }) }))
+
 vi.mock('@/lib/i18n', () => ({
   useT: () => ({ t: (key: string) => key }),
   t: (key: string) => key,

@@ -614,6 +614,7 @@ pub async fn create_interactive_session(
                 crate::ssh::transport::route_for_host(&app, vault_id, host, &hosts)?
             } else {
                 crate::ssh::transport::legacy_route(
+                    payload.vault_id.as_deref(),
                     &payload.host,
                     payload.port,
                     &payload.username,

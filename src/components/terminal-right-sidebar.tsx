@@ -4,6 +4,7 @@ import { FontSizeControl, TerminalThemeGrid } from '@/components/terminal-widget
 import { useT } from '@/lib/i18n'
 import {
     getInteractiveHistory,
+    isInteractiveHistoryEvent,
     subscribeInteractiveHistory,
     type InteractiveCommand,
 } from '@/lib/interactive-history'
@@ -100,7 +101,7 @@ export function TerminalRightSidebar({
       {activeTab === 'snippets' && (
         <SnippetCompactList snippets={snippets} onApply={onApplySnippet} onRun={onRunSnippet} />
       )}
-      {activeTab === 'history' && <HistoryTab hostAddress={hostAddress} onRunCommand={onRunSnippet} />}
+      {activeTab === 'history' && <HistoryTab vaultId={vaultId} hostAddress={hostAddress} onRunCommand={onRunSnippet} />}
       {activeTab === 'appearance' && (
         <AppearanceTab terminalPrefs={terminalPrefs} onChange={onTerminalPrefsChange} />
       )}
@@ -228,7 +229,8 @@ function TerminalTab({ onSearchToggle, searchVisible }: {
   )
 }
 
-function HistoryTab({ hostAddress, onRunCommand }: {
+function HistoryTab({ vaultId, hostAddress, onRunCommand }: {
+  vaultId?: string
   hostAddress: string
   onRunCommand: (cmd: string) => void
 }) {
@@ -244,22 +246,23 @@ function HistoryTab({ hostAddress, onRunCommand }: {
           </button>
         ))}
       </div>
-      {view === 'typed' ? <TypedHistory hostAddress={hostAddress} onRunCommand={onRunCommand} /> : <RunHistory hostAddress={hostAddress} />}
+      {view === 'typed' ? <TypedHistory vaultId={vaultId} hostAddress={hostAddress} onRunCommand={onRunCommand} /> : <RunHistory vaultId={vaultId} hostAddress={hostAddress} />}
     </div>
   )
 }
 
 /** Commands run through ShellBeam's command mode, with status and output. */
-function RunHistory({ hostAddress }: { hostAddress: string }) {
+function RunHistory({ vaultId, hostAddress }: { vaultId?: string; hostAddress: string }) {
   const { t } = useT()
   const filter = useMemo(() => (hostAddress ? { host: hostAddress } : undefined), [hostAddress])
-  const { entries, loading } = useCommandHistory(filter)
+  const { entries, loading } = useCommandHistory(vaultId, filter)
   if (loading) return <p className="px-3 py-8 text-center text-xs text-muted-foreground">{t('history.loading')}</p>
   if (entries.length === 0) return <p className="px-3 py-12 text-center text-xs text-muted-foreground">{t('history.empty')}</p>
   return <div className="min-h-0 overflow-auto">{entries.map((entry) => <HistoryEntryRow key={entry.id} entry={entry} compact />)}</div>
 }
 
-function TypedHistory({ hostAddress, onRunCommand }: {
+function TypedHistory({ vaultId, hostAddress, onRunCommand }: {
+  vaultId?: string
   hostAddress: string
   onRunCommand: (cmd: string) => void
 }) {
@@ -267,15 +270,15 @@ function TypedHistory({ hostAddress, onRunCommand }: {
   const [commands, setCommands] = useState<InteractiveCommand[]>([])
 
   const refresh = useCallback(() => {
-    setCommands(getInteractiveHistory(hostAddress).slice().reverse())
-  }, [hostAddress])
+    setCommands(getInteractiveHistory(vaultId, hostAddress).slice().reverse())
+  }, [vaultId, hostAddress])
 
   useEffect(() => {
     refresh()
-    return subscribeInteractiveHistory((host) => {
-      if (host === hostAddress) refresh()
+    return subscribeInteractiveHistory((vault, host) => {
+      if (isInteractiveHistoryEvent(vaultId, hostAddress, vault, host)) refresh()
     })
-  }, [refresh, hostAddress])
+  }, [refresh, vaultId, hostAddress])
 
   if (commands.length === 0) {
     return (

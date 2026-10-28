@@ -27,6 +27,8 @@ pub struct Endpoint {
 pub struct Route {
     pub target: Endpoint,
     pub jump: Option<Endpoint>,
+    /// Vault whose known hosts verify both hops; None means Personal.
+    pub vault_id: Option<String>,
 }
 
 pub struct TunnelLease {
@@ -212,10 +214,15 @@ pub fn route_for_host(
                 passphrase: None,
             })
     };
-    Ok(Route { target, jump })
+    Ok(Route {
+        target,
+        jump,
+        vault_id: Some(vault_id.to_string()),
+    })
 }
 
 pub fn legacy_route(
+    vault_id: Option<&str>,
     host: &str,
     port: u16,
     username: &str,
@@ -252,7 +259,11 @@ pub fn legacy_route(
                 .into(),
             ..target.clone()
         });
-    Route { target, jump }
+    Route {
+        target,
+        jump,
+        vault_id: vault_id.map(str::to_owned),
+    }
 }
 
 fn failure(stage: &str, operation: &str, error: impl std::fmt::Display) -> String {
@@ -326,7 +337,14 @@ fn dial(endpoint: &Endpoint, stage: &str) -> Result<TcpStream, String> {
 
 pub fn connect(app: &tauri::AppHandle, route: &Route) -> Result<Connection, String> {
     connect_with_verifier(route, &mut |session, endpoint| {
-        super::verify_host_key(session, app, &endpoint.host, endpoint.port, false)
+        super::verify_host_key(
+            session,
+            app,
+            route.vault_id.as_deref(),
+            &endpoint.host,
+            endpoint.port,
+            false,
+        )
     })
 }
 
@@ -354,11 +372,13 @@ pub fn connect_accepting_fingerprint(
     accepted: Option<&HostKeyAcceptance>,
 ) -> Result<Connection, String> {
     let mut decision_used = false;
+    let vault_id = route.vault_id.as_deref();
     connect_with_verifier(
         route,
         &mut |session, endpoint| match super::verify_host_key(
             session,
             app,
+            vault_id,
             &endpoint.host,
             endpoint.port,
             false,
@@ -371,7 +391,14 @@ pub fn connect_accepting_fingerprint(
                     });
                 if allowed {
                     decision_used = true;
-                    super::verify_host_key(session, app, &endpoint.host, endpoint.port, true)
+                    super::verify_host_key(
+                        session,
+                        app,
+                        vault_id,
+                        &endpoint.host,
+                        endpoint.port,
+                        true,
+                    )
                 } else {
                     Err(error)
                 }
@@ -564,6 +591,7 @@ mod tests {
             let route = Route {
                 target: target.endpoint.clone(),
                 jump: jump_endpoint,
+                vault_id: None,
             };
             let connection =
                 connect_with_verifier(&route, &mut trusted(&[&target, &jump])).unwrap();
@@ -604,6 +632,7 @@ mod tests {
         let direct = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let peers = [&target, &jump];
         let connection = connect_with_verifier(&direct, &mut trusted(&peers)).unwrap();
@@ -618,6 +647,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: Some(jump.endpoint.clone()),
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let result = super::super::commands::execute(
@@ -654,6 +684,7 @@ mod tests {
             let route = Route {
                 target: target.endpoint.clone(),
                 jump: jump_endpoint,
+                vault_id: None,
             };
             let connection =
                 connect_with_verifier(&route, &mut trusted(&[&target, &jump])).unwrap();
@@ -699,6 +730,7 @@ mod tests {
             let route = Route {
                 target: target.endpoint.clone(),
                 jump: jump_endpoint,
+                vault_id: None,
             };
             let connection =
                 connect_with_verifier(&route, &mut trusted(&[&target, &jump])).unwrap();
@@ -773,6 +805,7 @@ mod tests {
         let mut route = Route {
             target: target.endpoint.clone(),
             jump: Some(jump.endpoint.clone()),
+            vault_id: None,
         };
         route.jump.as_mut().unwrap().secret = target.endpoint.secret.clone();
         let error = connect_with_verifier(&route, &mut trusted(&peers))
@@ -808,6 +841,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let result = super::super::commands::execute(
@@ -844,6 +878,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: Some(jump.endpoint.clone()),
+            vault_id: None,
         };
         let connect = || connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let local = super::super::forward::start(
@@ -913,6 +948,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: Some(jump.endpoint.clone()),
+            vault_id: None,
         };
         let echo = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let echo_port = echo.local_addr().unwrap().port();
@@ -996,6 +1032,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let result = super::super::commands::execute(
@@ -1045,6 +1082,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let result = super::super::commands::execute(
@@ -1070,6 +1108,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let result = super::super::commands::execute(
@@ -1110,6 +1149,7 @@ mod identity_tests {
         let route = Route {
             target,
             jump: Some(jump),
+            vault_id: None,
         };
         let identity = route_identity(&route, "host-1", Some("jump-1"));
         assert_eq!(

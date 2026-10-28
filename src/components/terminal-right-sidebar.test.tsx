@@ -32,11 +32,11 @@ describe('TerminalRightSidebar', () => {
   })
 
   it('shows run history for this host next to typed commands', () => {
-    render(<TerminalRightSidebar {...props()} />)
+    render(<TerminalRightSidebar {...props({ vaultId: 'vault-a' })} />)
     fireEvent.click(screen.getAllByTitle('History')[0])
     expect(screen.getAllByTestId('history-view-typed')[0]).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(screen.getAllByTestId('history-view-runs')[0])
-    expect(historyHook).toHaveBeenCalledWith({ host: '10.0.0.8' })
+    expect(historyHook).toHaveBeenCalledWith('vault-a', { host: '10.0.0.8' })
     expect(screen.getAllByText('systemctl restart nginx').length).toBeGreaterThan(0)
     expect(screen.getAllByText('docker compose up -d').length).toBeGreaterThan(0)
   })

@@ -17,7 +17,7 @@ function setup() {
   const props = {
     visible: true, onClose: vi.fn(), hostAddress: '10.9.9.9', snippets, onApplySnippet: vi.fn(), onRunSnippet: vi.fn(),
     terminalPrefs: { ...DEFAULT_TERMINAL_PREFS, fontSize: 12 }, onTerminalPrefsChange: vi.fn(), onSearchToggle: vi.fn(), searchVisible: false,
-    hosts: [{ id: 'h', name: 'prod-web-01', address: '10.9.9.9' }] as never,
+    hosts: [{ id: 'h', name: 'prod-web-01', address: '10.9.9.9' }] as never, vaultId: 'vault-a',
   }
   render(<MobileTerminalDrawer {...props} />)
   return props
@@ -35,12 +35,14 @@ describe('MobileTerminalDrawer', () => {
   })
 
   it('lists typed history for the host and runs an entry', async () => {
-    recordInteractiveCommand('10.9.9.9', 'df -h /')
+    recordInteractiveCommand('vault-a', '10.9.9.9', 'df -h /')
+    recordInteractiveCommand('vault-b', '10.9.9.9', 'cat /etc/other-vault')
     const props = setup()
     fireEvent.click(screen.getByRole('tab', { name: 'History' }))
     expect(screen.getByText('prod-web-01 · keeps up to 200')).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: 'Run df -h /' }))
     expect(props.onRunSnippet).toHaveBeenCalledWith('df -h /')
+    expect(screen.queryByText('cat /etc/other-vault')).not.toBeInTheDocument()
   })
 
   it('changes font size and colour scheme', () => {

@@ -170,6 +170,58 @@ fn persist(app: &tauri::AppHandle, settings: &Settings) -> Result<(), String> {
     write_json(&data_file_path(app, "mcp_settings.json")?, settings)
 }
 
+/// Revoke every MCP client bound to a deleted Vault, in memory and on disk.
+/// Refuses while an MCP operation for that Vault is still running.
+pub(crate) fn revoke_vault_clients(
+    app: &tauri::AppHandle,
+    vault_id: &str,
+) -> Result<Vec<String>, String> {
+    let state = app.state::<McpState>();
+    if !state.ready.load(Ordering::SeqCst) {
+        // Settings were never loaded into memory; edit the persisted file only.
+        let mut settings: Settings =
+            read_json_or_default(&data_file_path(app, "mcp_settings.json")?)?;
+        let revoked = vault_client_ids(&settings, vault_id);
+        if !revoked.is_empty() {
+            settings
+                .clients
+                .retain(|client| client.vault_id != vault_id);
+            persist(app, &settings)?;
+        }
+        return Ok(revoked);
+    }
+    // Scoped so the jobs and settings locks are never held together.
+    if state
+        .jobs
+        .lock()
+        .map_err(|_| "MCP_STATE_UNAVAILABLE")?
+        .active
+        .iter()
+        .any(|(vault, _)| vault == vault_id)
+    {
+        return Err("MCP_BUSY: wait for remote operations in this Vault to finish".into());
+    }
+    let mut settings = state.settings.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
+    let revoked = vault_client_ids(&settings, vault_id);
+    if revoked.is_empty() {
+        return Ok(revoked);
+    }
+    let mut next = settings.clone();
+    next.clients.retain(|client| client.vault_id != vault_id);
+    persist(app, &next)?;
+    *settings = next;
+    Ok(revoked)
+}
+
+fn vault_client_ids(settings: &Settings, vault_id: &str) -> Vec<String> {
+    settings
+        .clients
+        .iter()
+        .filter(|client| client.vault_id == vault_id)
+        .map(|client| client.id.clone())
+        .collect()
+}
+
 fn require_settings_webview(webview: &tauri::Webview) -> Result<(), String> {
     if webview.label() != "main" {
         return Err("MCP_SETTINGS_ACCESS_DENIED".into());

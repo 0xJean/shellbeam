@@ -9,6 +9,7 @@ vi.mock('@/lib/operation-job', async () => {
   const actual = await vi.importActual<typeof import('@/lib/operation-job')>('@/lib/operation-job')
   return { ...actual, listOperationAudit }
 })
+vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'vault-a' }) }))
 vi.mock('./operations-audit-center', () => ({ default: () => <div data-testid="audit-center" /> }))
 
 const now = Date.now()
@@ -29,7 +30,8 @@ describe('ActivityLogPanel', () => {
   it('renders the day timeline and stats from the activity records', async () => {
     render(<I18nProvider><ActivityLogPanel /></I18nProvider>)
     expect(await screen.findByText('db-master')).toBeInTheDocument()
-    expect(listOperationAudit).toHaveBeenCalledWith(100)
+    expect(listActivityLog).toHaveBeenCalledWith('vault-a')
+    expect(listOperationAudit).toHaveBeenCalledWith({ vaultId: 'vault-a', limit: 100 })
     expect(screen.getAllByText('old-box')).toHaveLength(1)
 
     const heatmap = screen.getByTestId('history-heatmap')

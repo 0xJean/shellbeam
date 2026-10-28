@@ -4,7 +4,7 @@ import { useWelcomePage } from '@/hooks/use-welcome-page'
 import { AppProvider, useApp } from '@/contexts/app-context'
 import { HostsProvider, useHosts } from '@/contexts/hosts-context'
 import { SessionsProvider, useSessions } from '@/contexts/sessions-context'
-import { VaultProvider } from '@/contexts/vault-context'
+import { VaultProvider, useVault } from '@/contexts/vault-context'
 import { ScheduledOpsRuntime } from '@/components/scheduled-ops-runtime'
 import { LocalOpsRuntime } from '@/components/local-ops-runtime'
 import { ServerMonitorRuntime } from '@/components/server-monitor-runtime'
@@ -28,16 +28,21 @@ function AppInner() {
   const hostsCtx = useHosts()
   const sessions = useSessions()
   const welcome = useWelcomePage()
-  const [historyEntries, setHistoryEntries] = useState<Array<Awaited<ReturnType<typeof listCommandHistory>>[number]>>([])
+  const { activeVaultId } = useVault()
+  const [loadedHistory, setLoadedHistory] = useState<{ vaultId: string; entries: Awaited<ReturnType<typeof listCommandHistory>> } | null>(null)
+  // Command history is per vault: only the active vault's entries are ever shown.
+  const historyEntries = loadedHistory?.vaultId === activeVaultId ? loadedHistory.entries : []
 
   useEffect(() => {
-    void listCommandHistory()
-      .then(setHistoryEntries)
+    let current = true
+    void listCommandHistory(activeVaultId)
+      .then((entries) => { if (current) setLoadedHistory({ vaultId: activeVaultId, entries }) })
       .catch((error) => {
         console.error('Load command history failed', error)
-        setHistoryEntries([])
+        if (current) setLoadedHistory({ vaultId: activeVaultId, entries: [] })
       })
-  }, [])
+    return () => { current = false }
+  }, [activeVaultId])
 
   if (welcome.show) {
     return <WelcomePage onDismiss={welcome.dismiss} onOpenGuide={() => {

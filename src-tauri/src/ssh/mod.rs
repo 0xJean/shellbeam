@@ -96,9 +96,11 @@ pub fn failed_result(
     }
 }
 
+/// Checks against the known hosts of `vault_id` only (None means Personal).
 pub(crate) fn verify_host_key(
     session: &Session,
     app: &tauri::AppHandle,
+    vault_id: Option<&str>,
     host: &str,
     port: u16,
     accept_host_key: bool,
@@ -115,11 +117,11 @@ pub(crate) fn verify_host_key(
     let hash = Sha256::digest(key_bytes);
     let fingerprint = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, hash);
 
-    match verify_known_host(app, host, port, &fingerprint) {
+    match verify_known_host(app, vault_id, host, port, &fingerprint) {
         Ok(true) => Ok(()),
         Ok(false) => {
             if accept_host_key {
-                add_known_host(app, host, port, &fingerprint, &key_type_str)?;
+                add_known_host(app, vault_id, host, port, &fingerprint, &key_type_str)?;
                 Ok(())
             } else {
                 Err(host_key_unknown_payload(

@@ -100,6 +100,17 @@ impl VaultState {
             .unwrap_or(false)
     }
 
+    /// Drop a Vault's key from memory (used when the Vault is deleted).
+    pub(crate) fn forget(&self, vault_id: &str) -> Result<(), String> {
+        self.unlocked_keys
+            .lock()
+            .map_err(|_| "Vault state lock poisoned".to_string())?
+            .remove(vault_id);
+        self.session_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
     /// Linearize a short local persistence transaction against Vault locking.
     /// The callback must not perform remote work or re-enter VaultState.
     pub(crate) fn while_unlocked<T>(

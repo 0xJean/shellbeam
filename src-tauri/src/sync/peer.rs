@@ -8,6 +8,7 @@ use crate::storage::now_unix_ms;
 use crate::vault::VaultState;
 
 use super::transport::parse_sync_secret;
+use super::vault_ref::{local_vault_ref, resolve_vault_param, vault_ref_json, VAULT_PARAM};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -126,6 +127,9 @@ pub struct SyncPullRequest {
     peer_device_id: String,
     #[serde(default)]
     options: Option<SyncDataOptions>,
+    /// Local vault to restore into; missing → Personal.
+    #[serde(default)]
+    vault_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -174,6 +178,9 @@ pub async fn sync_pull_from_peer(
         .to_string();
     let enc_key = parse_sync_secret(&peer.sync_secret);
     let req_opts = opts.clone();
+    let (vault_id, vault_name) = local_vault_ref(&app, payload.vault_id.as_deref())
+        .map_err(|e| standard_error_from_raw("sync", "pull", e))?;
+    let vault_param = vault_ref_json(&vault_id, &vault_name);
 
     let ep = endpoint.clone();
     let data = tauri::async_runtime::spawn_blocking(move || {
@@ -184,6 +191,7 @@ pub async fn sync_pull_from_peer(
                 "includeHosts": req_opts.include_hosts,
                 "includeSnippets": req_opts.include_snippets,
                 "includeVault": req_opts.include_vault,
+                VAULT_PARAM: vault_param,
             }),
             enc_key.as_ref(),
         )
@@ -201,7 +209,7 @@ pub async fn sync_pull_from_peer(
     let result = crate::data::backup::backup_restore_in_memory(
         &app,
         &backup,
-        None,
+        Some(&vault_id),
         opts.include_hosts,
         opts.include_snippets,
         false,
@@ -214,9 +222,13 @@ pub async fn sync_pull_from_peer(
     if opts.include_vault {
         if let Some(secrets) = &decrypted_secrets {
             if !secrets.is_empty() {
-                let count =
-                    crate::vault::vault_import_decrypted_secrets(&app, &state, secrets, None)
-                        .map_err(|e| standard_error_from_raw("sync", "import vault secrets", e))?;
+                let count = crate::vault::vault_import_decrypted_secrets(
+                    &app,
+                    &state,
+                    secrets,
+                    Some(&vault_id),
+                )
+                .map_err(|e| standard_error_from_raw("sync", "import vault secrets", e))?;
                 log::info!("[sync] pull: imported {} vault secrets", count);
                 vault_restored = true;
             }
@@ -224,7 +236,8 @@ pub async fn sync_pull_from_peer(
     }
 
     log::info!(
-        "[sync] pull complete: {} hosts, {} snippets, vault={}",
+        "[sync] pull complete into vault {}: {} hosts, {} snippets, vault={}",
+        vault_id,
         result.hosts_restored,
         result.snippets_restored,
         vault_restored
@@ -256,6 +269,9 @@ pub struct SyncPushRequest {
     peer_device_id: String,
     #[serde(default)]
     options: Option<SyncDataOptions>,
+    /// Local vault to push from; missing → Personal.
+    #[serde(default)]
+    vault_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -303,10 +319,13 @@ pub async fn sync_push_to_peer(
         })?
         .to_string();
     let enc_key = parse_sync_secret(&peer.sync_secret);
+    let (vault_id, vault_name) = local_vault_ref(&app, payload.vault_id.as_deref())
+        .map_err(|e| standard_error_from_raw("sync", "push", e))?;
+    let vault_param = vault_ref_json(&vault_id, &vault_name);
 
     let backup = crate::data::backup::backup_create_in_memory(
         &app,
-        None,
+        Some(&vault_id),
         opts.include_hosts,
         opts.include_snippets,
         false,
@@ -322,7 +341,7 @@ pub async fn sync_push_to_peer(
         .unwrap_or(0);
 
     let decrypted_secrets: Option<HashMap<String, String>> = if opts.include_vault {
-        match crate::vault::vault_export_decrypted_secrets(&app, &vault_state, None) {
+        match crate::vault::vault_export_decrypted_secrets(&app, &vault_state, Some(&vault_id)) {
             Ok(secrets) if !secrets.is_empty() => Some(secrets),
             Ok(_) => None,
             Err(e) => return Err(standard_error_from_raw("sync", "export vault secrets", e)),
@@ -339,6 +358,8 @@ pub async fn sync_push_to_peer(
             standard_error_from_raw("sync", "serialize vault secrets", e.to_string())
         })?;
     }
+    // Direct and pending pushes carry the vault ref inside the payload.
+    push_payload[VAULT_PARAM] = vault_param.clone();
 
     let (server_running, server_port) = super::transport::sync_server_status();
     let local_device_id = sync_state
@@ -361,12 +382,14 @@ pub async fn sync_push_to_peer(
         let oe = our_endpoint.clone();
         let did = local_device_id.clone();
         let oo = opts.clone();
+        let vp = vault_param.clone();
         let notify_result = tauri::async_runtime::spawn_blocking(move || {
             super::transport::sync_request_peer_encrypted(
                 &ep, "notify_pull",
                 serde_json::json!({
                     "endpoint": oe, "device_id": did,
                     "includeHosts": oo.include_hosts, "includeSnippets": oo.include_snippets, "includeVault": oo.include_vault,
+                    VAULT_PARAM: vp,
                 }),
                 ek.as_ref(),
             )
@@ -508,6 +531,9 @@ pub struct SyncClaimPendingResult {
     pub hosts_restored: usize,
     pub snippets_restored: usize,
     pub vault_restored: bool,
+    /// Local vault the claimed push was restored into.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vault_id: Option<String>,
 }
 
 /// Android calls this to check & claim any pending push from a peer.
@@ -575,6 +601,7 @@ pub async fn sync_claim_pending_from_peer(
             hosts_restored: 0,
             snippets_restored: 0,
             vault_restored: false,
+            vault_id: None,
         });
     }
 
@@ -608,6 +635,7 @@ pub async fn sync_claim_pending_from_peer(
             hosts_restored: 0,
             snippets_restored: 0,
             vault_restored: false,
+            vault_id: None,
         });
     }
 
@@ -635,12 +663,15 @@ pub async fn sync_claim_pending_from_peer(
     let decrypted_secrets: Option<HashMap<String, String>> = backup_data
         .get("decryptedSecrets")
         .and_then(|v| serde_json::from_value(v.clone()).ok());
+    // We are the receiver here: map the sender's vault ref onto ours.
+    let vault_id = resolve_vault_param(&app, Some(&backup_data), true)
+        .map_err(|e| standard_error_from_raw("sync", "resolve pending vault", e))?;
     let backup: crate::data::backup::BackupPayload = serde_json::from_value(backup_data)
         .map_err(|e| standard_error_from_raw("sync", "parse pending backup", e.to_string()))?;
     let result = crate::data::backup::backup_restore_in_memory(
         &app,
         &backup,
-        None,
+        Some(&vault_id),
         inc_hosts,
         inc_snippets,
         false,
@@ -657,7 +688,7 @@ pub async fn sync_claim_pending_from_peer(
                     &app,
                     &vault_state,
                     secrets,
-                    None,
+                    Some(&vault_id),
                 ) {
                     Ok(count) => {
                         log::info!("[sync] claim_pending: imported {} vault secrets", count);
@@ -673,17 +704,22 @@ pub async fn sync_claim_pending_from_peer(
     }
 
     log::info!(
-        "[sync] claimed pending push from {}: {} hosts, {} snippets, vault={}",
+        "[sync] claimed pending push from {} into vault {}: {} hosts, {} snippets, vault={}",
         payload.peer_device_id,
+        vault_id,
         result.hosts_restored,
         result.snippets_restored,
         vault_restored
     );
 
-    let _ = app.emit("sync-data-changed", ());
+    let _ = app.emit(
+        "sync-data-changed",
+        serde_json::json!({ "vaultId": vault_id }),
+    );
 
     Ok(SyncClaimPendingResult {
         claimed: true,
+        vault_id: Some(vault_id),
         hosts_restored: result.hosts_restored,
         snippets_restored: result.snippets_restored,
         vault_restored,

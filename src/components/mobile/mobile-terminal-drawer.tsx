@@ -1,7 +1,7 @@
 import { useSnippetVariableFill } from '@/hooks/use-snippet-variable-fill'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
-import { getInteractiveHistory, subscribeInteractiveHistory } from '@/lib/interactive-history'
+import { getInteractiveHistory, isInteractiveHistoryEvent, subscribeInteractiveHistory } from '@/lib/interactive-history'
 import { fill } from '@/lib/locales/probe-install'
 import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
 import type { SnippetEntry } from '@/lib/snippets'
@@ -36,7 +36,7 @@ const rowButton = 'flex h-11 w-11 shrink-0 items-center justify-center'
 const rowIcon = 'flex h-8 w-8 items-center justify-center rounded-full'
 
 export function MobileTerminalDrawer({
-  visible, onClose, hostAddress, snippets, onApplySnippet, onRunSnippet, terminalPrefs, onTerminalPrefsChange, onSearchToggle, searchVisible, hosts,
+  visible, onClose, hostAddress, snippets, onApplySnippet, onRunSnippet, terminalPrefs, onTerminalPrefsChange, onSearchToggle, searchVisible, hosts, vaultId,
 }: MobileTerminalDrawerProps) {
   const { locale } = useT()
   const copy = mobileTerminalV3Copy[locale]
@@ -74,7 +74,7 @@ export function MobileTerminalDrawer({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4">
           {tab === 'snippets' && <SnippetsTab snippets={snippets} onApply={onApplySnippet} onRun={onRunSnippet} />}
-          {tab === 'history' && <HistoryTab hostAddress={hostAddress} hostName={hostName} onRun={onRunSnippet} />}
+          {tab === 'history' && <HistoryTab vaultId={vaultId} hostAddress={hostAddress} hostName={hostName} onRun={onRunSnippet} />}
           {tab === 'appearance' && <AppearanceTab prefs={terminalPrefs} onChange={onTerminalPrefsChange} />}
         </div>
       </aside>
@@ -120,12 +120,12 @@ function SnippetsTab({ snippets, onApply, onRun }: { snippets: SnippetEntry[]; o
   )
 }
 
-function HistoryTab({ hostAddress, hostName, onRun }: { hostAddress: string; hostName: string; onRun: (command: string) => void }) {
+function HistoryTab({ vaultId, hostAddress, hostName, onRun }: { vaultId?: string; hostAddress: string; hostName: string; onRun: (command: string) => void }) {
   const { locale } = useT()
   const copy = mobileTerminalV3Copy[locale]
   const [, setVersion] = useState(0)
-  useEffect(() => subscribeInteractiveHistory((host) => { if (host === hostAddress) setVersion((value) => value + 1) }), [hostAddress])
-  const commands = getInteractiveHistory(hostAddress).slice().reverse()
+  useEffect(() => subscribeInteractiveHistory((vault, host) => { if (isInteractiveHistoryEvent(vaultId, hostAddress, vault, host)) setVersion((value) => value + 1) }), [vaultId, hostAddress])
+  const commands = getInteractiveHistory(vaultId, hostAddress).slice().reverse()
   return (
     <div>
       <p className="mb-1.5 text-xs text-[var(--workspace-text-subtle)]">{fill(copy.historyMeta, { host: hostName, count: HISTORY_LIMIT })}</p>

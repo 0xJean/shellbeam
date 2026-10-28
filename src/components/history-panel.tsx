@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Clock, CheckCircle2, XCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import type { HistoryEntry } from '@/lib/history'
 import { useCommandHistory } from '@/hooks/use-command-history'
+import { useVault } from '@/contexts/vault-context'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 
@@ -67,7 +68,8 @@ export function HistoryEntryRow({ entry, compact }: { entry: HistoryEntry; compa
 
 export function HistoryPanel() {
   const { t } = useT()
-  const { entries, loading } = useCommandHistory()
+  const { activeVaultId } = useVault()
+  const { entries, loading } = useCommandHistory(activeVaultId)
   const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed'>('all')
 
   const filtered = entries.filter((e) => {

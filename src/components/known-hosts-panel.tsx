@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useVault } from '@/contexts/vault-context'
 import { Trash2, RefreshCw, Fingerprint, ShieldAlert, Search, Copy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -30,20 +31,25 @@ export function KnownHostsPanel({ onOutput, onError, hosts }: KnownHostsPanelPro
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<KnownHostFilter>('all')
+  // Known hosts are per vault; a late reply for a previous vault is dropped.
+  const { activeVaultId } = useVault()
+  const requestRef = useRef(0)
 
   async function refresh() {
+    const request = ++requestRef.current
     setLoading(true)
     try {
-      const items = await listKnownHosts()
-      setEntries(items)
+      const items = await listKnownHosts(activeVaultId)
+      if (request === requestRef.current) setEntries(items)
     } catch (e) {
-      onError?.(String(e))
+      if (request === requestRef.current) onError?.(String(e))
     } finally {
-      setLoading(false)
+      if (request === requestRef.current) setLoading(false)
     }
   }
 
-  useEffect(() => { void refresh() }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh reads only activeVaultId
+  useEffect(() => { void refresh() }, [activeVaultId])
 
   const hostNameByEndpoint = useMemo(() => {
     const map = new Map<string, string>()
@@ -69,7 +75,7 @@ export function KnownHostsPanel({ onOutput, onError, hosts }: KnownHostsPanelPro
 
   async function handleRemove(entry: KnownHostEntry) {
     try {
-      await removeKnownHost(entry.host, entry.port)
+      await removeKnownHost(activeVaultId, entry.host, entry.port)
       await refresh()
       onOutput?.(`Removed known host: ${entry.host}:${entry.port}`)
     } catch (e) {

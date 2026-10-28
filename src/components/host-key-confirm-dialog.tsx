@@ -13,6 +13,8 @@ export interface HostKeyInfo {
   port: number
   fingerprint: string
   keyType: string
+  /** Vault whose known hosts verified the connection; unset means Personal. */
+  vaultId?: string
 }
 
 interface HostKeyConfirmDialogProps {
@@ -35,7 +37,7 @@ export function HostKeyConfirmDialog({ info, onAccept, onReject }: HostKeyConfir
   useEffect(() => {
     if (!info || mismatchFingerprint === null) return
     let cancelled = false
-    listKnownHosts()
+    listKnownHosts(info.vaultId)
       .then((entries) => {
         if (cancelled) return
         const entry = entries.find((item) => item.host === info.host && item.port === info.port)

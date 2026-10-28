@@ -31,7 +31,7 @@ describe('Vault deletion asynchronous consent', () => {
     const input = props()
     render(<VaultsDashboardPanel {...input} />)
     openDelete()
-    expect(confirm).toHaveBeenCalledWith('Delete vault "Team"? All data will be lost.')
+    expect(confirm).toHaveBeenCalledWith('Permanently delete vault “Team”? This removes its hosts, credentials, snippets, port forwards, monitoring history, known hosts and command history from this device. This cannot be undone.')
     expect(deletions()).toEqual([])
     expect(input.onRefreshVaults).not.toHaveBeenCalled()
     await act(async () => { pending.resolve(answer) })
@@ -60,7 +60,7 @@ describe('Vault deletion asynchronous consent', () => {
     openDelete()
     // Deleting Team legitimately begins from Personal; the app presenter
     // scopes consent to the active Vault while the target remains explicit.
-    expect(request).toMatchObject({ vaultId: 'personal', risk: 'high', message: 'Delete vault "Team"? All data will be lost.' })
+    expect(request).toMatchObject({ vaultId: 'personal', risk: 'high', message: 'Permanently delete vault “Team”? This removes its hosts, credentials, snippets, port forwards, monitoring history, known hosts and command history from this device. This cannot be undone.' })
     expect(request!.isCurrent?.()).toBe(true)
     if (change === 'active-vault') mounted.rerender(<VaultsDashboardPanel {...input} activeVaultId="team" />)
     if (change === 'lock') mounted.rerender(<VaultsDashboardPanel {...input} vaultStatusState={{ ...input.vaultStatusState, unlocked: false }} />)

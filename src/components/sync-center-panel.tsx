@@ -50,6 +50,8 @@ interface SyncCenterPanelProps {
   onPullFromPeer: (peerDeviceId: string, options?: SyncDataOptions) => Promise<void>
   onPushToPeer: (peerDeviceId: string, options?: SyncDataOptions) => Promise<void>
   onRemoveTrustedPeer: (peerDeviceId: string) => Promise<void>
+  /** Name of the active vault that pull/push sync. */
+  syncVaultName?: string
   /** Rendered beside device sync as the merged v3 "Sync & backup" page. */
   backupPanel?: ReactNode
   /** 'backup' scrolls the backup column into view (legacy `backup` nav id). */
@@ -60,7 +62,7 @@ export function SyncCenterPanel({
   localDevice, changes, trustedPeers,
   loading, serverRunning, serverPort,
   onRefresh, onInitDevice, onStartServer,
-  onPullFromPeer, onPushToPeer, onRemoveTrustedPeer,
+  onPullFromPeer, onPushToPeer, onRemoveTrustedPeer, syncVaultName,
   backupPanel, focusSection = 'sync',
 }: SyncCenterPanelProps) {
   const { t, locale } = useT()
@@ -409,6 +411,7 @@ export function SyncCenterPanel({
           onPullFromPeer={onPullFromPeer}
           onPushToPeer={onPushToPeer}
           onRemoveTrustedPeer={onRemoveTrustedPeer}
+          vaultName={syncVaultName}
         />
       </div>
     )

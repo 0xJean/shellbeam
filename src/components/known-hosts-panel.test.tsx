@@ -6,6 +6,7 @@ import { KnownHostsPanel } from './known-hosts-panel'
 
 const { listKnownHosts, removeKnownHost } = vi.hoisted(() => ({ listKnownHosts: vi.fn(), removeKnownHost: vi.fn() }))
 vi.mock('@/lib/known-hosts', () => ({ listKnownHosts, removeKnownHost }))
+vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'vault-a' }) }))
 
 const entries = [
   { host: '10.0.3.12', port: 22, fingerprintSha256: 'SHA256:aaa', keyType: 'ssh-ed25519', addedAt: 1_700_000_000_000 },
@@ -28,10 +29,11 @@ describe('KnownHostsPanel', () => {
     const onOutput = vi.fn()
     renderPanel({ onOutput })
     expect(await screen.findByText('SHA256:aaa')).toBeInTheDocument()
+    expect(listKnownHosts).toHaveBeenCalledWith('vault-a')
     expect(screen.getAllByRole('row')).toHaveLength(3)
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
     fireEvent.click(screen.getAllByTitle('Remove fingerprint')[0])
-    await waitFor(() => expect(removeKnownHost).toHaveBeenCalledWith('10.0.3.12', 22))
+    await waitFor(() => expect(removeKnownHost).toHaveBeenCalledWith('vault-a', '10.0.3.12', 22))
     await waitFor(() => expect(onOutput).toHaveBeenCalledWith('Removed known host: 10.0.3.12:22'))
   })
 

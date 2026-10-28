@@ -25,9 +25,14 @@ import {
   type SyncPairingSession,
   type SyncTrustedPeer,
   type SyncDataOptions,
+  type SyncDataChangedPayload,
 } from '@/lib/sync'
 
-export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () => void) {
+/**
+ * `activeVaultId` is the vault pull/push sync; `onSyncComplete` only fires for
+ * restores into that vault (other vaults' data is reloaded when switched to).
+ */
+export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () => void, activeVaultId?: string) {
   const [bootstrap, setBootstrap] = useState<SyncBootstrapResponse | null>(null)
   const [localDevice, setLocalDevice] = useState<SyncDeviceIdentity | null>(null)
   const [changes, setChanges] = useState<SyncChangeRecord[]>([])
@@ -41,6 +46,9 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
   const pendingRefreshRef = useRef<Promise<void> | null>(null)
   const onSyncCompleteRef = useRef(onSyncComplete)
   onSyncCompleteRef.current = onSyncComplete
+  const activeVaultIdRef = useRef(activeVaultId)
+  activeVaultIdRef.current = activeVaultId
+  const isActiveVault = (vaultId?: string) => !vaultId || !activeVaultIdRef.current || vaultId === activeVaultIdRef.current
 
   const fetchAll = useCallback(async () => {
     const [bs, ch, cu, tp, ps, [sr, sp]] = await Promise.all([
@@ -81,9 +89,9 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
 
   // Listen for push_full_backup received from a peer — refresh local data
   useEffect(() => {
-    const unlisten = listen('sync-data-changed', () => {
+    const unlisten = listen<SyncDataChangedPayload | null>('sync-data-changed', (event) => {
       console.log('[sync] sync-data-changed event received, refreshing...')
-      onSyncCompleteRef.current?.()
+      if (isActiveVault(event.payload?.vaultId ?? undefined)) onSyncCompleteRef.current?.()
       backgroundRefresh()
     })
     return () => { void unlisten.then((fn) => fn()) }
@@ -122,7 +130,7 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
             if (result.snippetsRestored) parts.push(`${result.snippetsRestored} snippets`)
             if (result.vaultRestored) parts.push('vault/keychain')
             setOutput(`Received pending push from ${peer.peerDeviceName ?? peer.peerDeviceId}: ${parts.join(', ')}`)
-            onSyncCompleteRef.current?.()
+            if (isActiveVault(result.vaultId)) onSyncCompleteRef.current?.()
             backgroundRefresh()
           }
         } catch {
@@ -269,7 +277,7 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
   async function handlePullFromPeer(peerDeviceId: string, options?: SyncDataOptions) {
     setLoading(true)
     try {
-      const result = await syncPullFromPeer(peerDeviceId, options)
+      const result = await syncPullFromPeer(peerDeviceId, options, activeVaultId)
       const parts: string[] = []
       if (result.hostsRestored) parts.push(`${result.hostsRestored} hosts`)
       if (result.snippetsRestored) parts.push(`${result.snippetsRestored} snippets`)
@@ -291,7 +299,7 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
   async function handlePushToPeer(peerDeviceId: string, options?: SyncDataOptions) {
     setLoading(true)
     try {
-      const result = await syncPushToPeer(peerDeviceId, options)
+      const result = await syncPushToPeer(peerDeviceId, options, activeVaultId)
       const parts: string[] = []
       if (result.hostsPushed) parts.push(`${result.hostsPushed} hosts`)
       if (result.snippetsPushed) parts.push(`${result.snippetsPushed} snippets`)

@@ -11,25 +11,26 @@ export interface KnownHostEntry {
   addedAt: number
 }
 
-export async function listKnownHosts(): Promise<KnownHostEntry[]> {
+// Known hosts are scoped per vault; an unset vault means Personal.
+export async function listKnownHosts(vaultId: string | undefined): Promise<KnownHostEntry[]> {
   try {
-    return await invoke<KnownHostEntry[]>('list_known_hosts')
+    return await invoke<KnownHostEntry[]>('list_known_hosts', { vaultId })
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))
   }
 }
 
-export async function fetchAndAddKnownHost(host: string, port: number): Promise<KnownHostEntry> {
+export async function fetchAndAddKnownHost(vaultId: string | undefined, host: string, port: number): Promise<KnownHostEntry> {
   try {
-    return await invoke<KnownHostEntry>('fetch_and_add_known_host', { host, port })
+    return await invoke<KnownHostEntry>('fetch_and_add_known_host', { vaultId, host, port })
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))
   }
 }
 
-export async function removeKnownHost(host: string, port: number): Promise<void> {
+export async function removeKnownHost(vaultId: string | undefined, host: string, port: number): Promise<void> {
   try {
-    await invoke('remove_known_host', { host, port })
+    await invoke('remove_known_host', { vaultId, host, port })
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))
   }

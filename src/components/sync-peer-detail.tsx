@@ -15,6 +15,8 @@ import {
 import type { SyncTrustedPeer, SyncDataOptions } from '@/lib/sync'
 import { Button } from '@/components/ui/button'
 import { syncBackupCopy } from '@/lib/locales/sync-backup-v3'
+import { syncVaultCopy } from '@/lib/locales/sync-vault'
+import { fill } from '@/lib/locales/probe-install'
 import { cn } from '@/lib/utils'
 import { Switch } from './sync-widgets'
 
@@ -33,14 +35,17 @@ interface SyncPeerDetailProps {
   onPullFromPeer: (peerDeviceId: string, options?: SyncDataOptions) => Promise<void>
   onPushToPeer: (peerDeviceId: string, options?: SyncDataOptions) => Promise<void>
   onRemoveTrustedPeer: (peerDeviceId: string) => Promise<void>
+  /** Active vault that pull/push sync; the line is hidden when unknown. */
+  vaultName?: string
 }
 
 export function SyncPeerDetail({
   peer, peerOnline, loading,
-  onBack, onScan, onPullFromPeer, onPushToPeer, onRemoveTrustedPeer,
+  onBack, onScan, onPullFromPeer, onPushToPeer, onRemoveTrustedPeer, vaultName,
 }: SyncPeerDetailProps) {
   const { t, locale } = useT()
   const copy = syncBackupCopy[locale] ?? syncBackupCopy['zh-CN']
+  const vaultCopy = syncVaultCopy[locale] ?? syncVaultCopy['zh-CN']
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [syncDataOpts, setSyncDataOpts] = useState<SyncDataOptions>({
     includeHosts: true, includeSnippets: true, includeVault: false,
@@ -115,6 +120,9 @@ export function SyncPeerDetail({
         <div className="space-y-3 p-5">
           {syncDataOpts.includeVault && (
             <p className="text-[12px] text-[color:var(--workspace-status-warn-text)]">{t('sync.vaultSyncHint')}</p>
+          )}
+          {vaultName && (
+            <p className="text-[12px] text-[var(--workspace-text-muted)]">{fill(vaultCopy.syncingVault, { name: vaultName })}</p>
           )}
           <div className="flex flex-wrap gap-2">
             <Button

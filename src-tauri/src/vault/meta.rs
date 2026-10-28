@@ -138,18 +138,101 @@ pub fn delete_vault(app: tauri::AppHandle, vault_id: String) -> Result<(), Strin
     if vault_id == DEFAULT_VAULT_ID {
         return Err("Cannot delete the default Personal vault".to_string());
     }
-    let mut meta = load_meta_file(&app)?;
-    let before = meta.vaults.len();
-    meta.vaults.retain(|v| v.id != vault_id);
-    if meta.vaults.len() == before {
+    if find_vault(&app, &vault_id)?.is_none() {
         return Err("Vault not found".to_string());
     }
+    // Purge before dropping the meta entry: a partial failure leaves the Vault
+    // listed so deleting it again finishes the job.
+    let report = super::purge::purge_vault_data(&app, &vault_id)?;
+    log::info!(
+        "Deleted vault {vault_id}: {} files, {} tables, {} MCP clients",
+        report.files_removed.len(),
+        report.rows_deleted.len(),
+        report.mcp_clients_revoked
+    );
+    let mut meta = load_meta_file(&app)?;
+    meta.vaults.retain(|v| v.id != vault_id);
     save_meta_file(&app, &meta)?;
     Ok(())
+}
+
+/// The local vault with this id, if any.
+pub fn find_vault(app: &tauri::AppHandle, vault_id: &str) -> Result<Option<VaultMeta>, String> {
+    Ok(load_meta_file(app)?
+        .vaults
+        .into_iter()
+        .find(|v| v.id == vault_id))
+}
+
+/// Map a vault named by another device onto a local vault: same id first,
+/// then the same name (ids are random per device), else create it with the
+/// sender's id and name when `create` is set. Personal always maps to Personal.
+pub fn resolve_peer_vault(
+    app: &tauri::AppHandle,
+    peer_id: &str,
+    peer_name: &str,
+    create: bool,
+) -> Result<String, String> {
+    let peer_id = peer_id.trim();
+    if peer_id.is_empty() || peer_id == DEFAULT_VAULT_ID {
+        return Ok(DEFAULT_VAULT_ID.to_string());
+    }
+    let mut meta = load_meta_file(app)?;
+    if meta.vaults.iter().any(|v| v.id == peer_id) {
+        return Ok(peer_id.to_string());
+    }
+    let name = peer_name.trim();
+    if let Some(v) = meta
+        .vaults
+        .iter()
+        .find(|v| !name.is_empty() && v.name.trim().eq_ignore_ascii_case(name))
+    {
+        return Ok(v.id.clone());
+    }
+    if !create {
+        return Err(format!("Vault \"{name}\" does not exist on this device"));
+    }
+    // Ids become file names (vault_{id}.json); keep the peer's only if it is a plain token.
+    let id = if is_safe_vault_id(peer_id) {
+        peer_id.to_string()
+    } else {
+        Uuid::new_v4().to_string()
+    };
+    meta.vaults.push(VaultMeta {
+        id: id.clone(),
+        name: if name.is_empty() { peer_id.to_string() } else { name.to_string() },
+        created_at: now_unix_ms(),
+        is_default: false,
+    });
+    save_meta_file(app, &meta)?;
+    Ok(id)
+}
+
+/// Plain id token: letters, digits, '-' and '_', at most 64 chars.
+fn is_safe_vault_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// Resolve vault_id for storage paths. Used by hosts, snippets, port_forward, vault.
 pub fn vault_storage_suffix(vault_id: Option<&str>) -> String {
     let id = ensure_vault_id(vault_id);
     format!("_vault_{}", id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_safe_vault_id;
+
+    #[test]
+    fn peer_vault_ids_must_be_plain_tokens() {
+        assert!(is_safe_vault_id("3f2c9a1e-0b7d-4c55-9e1a-1d2b3c4d5e6f"));
+        assert!(is_safe_vault_id("team_prod"));
+        for bad in ["", "../x", "a/b", "a:b", "vault x", &"a".repeat(65)] {
+            assert!(!is_safe_vault_id(bad), "{bad:?}");
+        }
+    }
 }

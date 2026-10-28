@@ -58,10 +58,15 @@ describe('SecuritySettingsSection', () => {
     api.confirm.mockResolvedValueOnce(false)
     fireEvent.click(screen.getByTestId('security-vault-delete-client'))
     await waitFor(() => expect(api.confirm).toHaveBeenCalledWith(expect.objectContaining({ risk: 'high', message: expect.stringContaining('Client A') })))
+    expect(api.confirm.mock.calls[0][0].message).toMatch(/hosts, credentials, snippets, port forwards, monitoring history, known hosts and command history.*cannot be undone/)
     expect(api.deleteVault).not.toHaveBeenCalled()
+    localStorage.setItem('shellbeam.certificates.client', '[]')
+    localStorage.setItem('shellbeam.certificates.personal', '[]')
     api.confirm.mockResolvedValueOnce(true)
     fireEvent.click(screen.getByTestId('security-vault-delete-client'))
     await waitFor(() => expect(api.deleteVault).toHaveBeenCalledWith('client'))
+    await waitFor(() => expect(localStorage.getItem('shellbeam.certificates.client')).toBeNull())
+    expect(localStorage.getItem('shellbeam.certificates.personal')).toBe('[]')
   })
 
   it('disables deletion while the vault is locked', () => {
