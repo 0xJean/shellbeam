@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { hostConnectionKey, type HostProfile } from '@/lib/hosts'
 import { WorkspaceShell } from './workspace-shell'
 
@@ -42,6 +42,8 @@ vi.mock('./workspace-asset-inventory-app', () => ({
 }))
 
 describe('workspace shell', () => {
+  // These cover the windowed desktop layout; the list layout is the default.
+  beforeEach(() => { localStorage.setItem('shellbeam.workspace.layout', 'desktop') })
   const sessionId = 'session-1'
   it('blocks new operations on an old connection after the default changes or SSH is removed', () => {
     const host: HostProfile = { id: 'h', name: 'WEB', address: 'old.test', port: 22, username: 'ops', authType: 'password', group: 'Custom', tags: [], createdAt: 1, updatedAt: 1 }
@@ -379,5 +381,31 @@ describe('workspace shell', () => {
     await waitFor(() => {
       expect(screen.getByText('nginx started')).toBeInTheDocument()
     })
+  })
+})
+
+describe('workspace list layout', () => {
+  beforeEach(() => { localStorage.removeItem('shellbeam.workspace.layout') })
+
+  it('is the default PC layout and lists every app beside one panel', () => {
+    const onSelectApp = vi.fn()
+    render(<WorkspaceShell sessionId="session-1" mobile={false} hostName="Production API" hostAddress="10.0.0.15" activeApp="overview" onSelectApp={onSelectApp} />)
+    expect(screen.getByTestId('workspace-list-shell')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-desktop-shell')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-app-list-overview')).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(screen.getByTestId('workspace-app-list-processes'))
+    expect(onSelectApp).toHaveBeenCalledWith('processes')
+  })
+
+  it('switches to the desktop layout and remembers the choice', () => {
+    const view = render(<WorkspaceShell sessionId="session-1" mobile={false} hostName="Production API" hostAddress="10.0.0.15" activeApp="overview" onSelectApp={() => {}} />)
+    fireEvent.click(screen.getByTestId('workspace-layout-desktop'))
+    expect(screen.getByTestId('workspace-desktop-shell')).toBeInTheDocument()
+    expect(localStorage.getItem('shellbeam.workspace.layout')).toBe('desktop')
+    view.unmount()
+    render(<WorkspaceShell sessionId="session-1" mobile={false} hostName="Production API" hostAddress="10.0.0.15" activeApp="overview" onSelectApp={() => {}} />)
+    expect(screen.getByTestId('workspace-desktop-shell')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('workspace-layout-list'))
+    expect(screen.getByTestId('workspace-list-shell')).toBeInTheDocument()
   })
 })

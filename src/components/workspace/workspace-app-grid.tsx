@@ -146,3 +146,23 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
     </div>
   )
 }
+
+/** Vertical app navigation for the workspace's list layout. */
+export function WorkspaceAppList({ activeApp, onSelectApp }: { activeApp: WorkspaceAppId; onSelectApp: (app: WorkspaceAppId) => void }) {
+  return (
+    <nav data-testid="workspace-app-list" aria-label={t('workspace.layout.apps')} className="flex flex-col gap-0.5">
+      {APPS.map((app) => {
+        const Icon = app.icon
+        const active = activeApp === app.id
+        return (
+          <button key={app.id} type="button" aria-current={active ? 'page' : undefined} data-testid={`workspace-app-list-${app.id}`} onClick={() => onSelectApp(app.id)}
+            className={cn('flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors',
+              active ? 'bg-[var(--workspace-nav-active-bg)] font-medium text-[var(--workspace-nav-active-text)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-text-strong)]')}>
+            <Icon className={cn('h-4 w-4 shrink-0', active ? '' : 'text-[var(--workspace-text-muted)]')} aria-hidden="true" />
+            <span className="truncate">{t(app.labelKey)}</span>
+          </button>
+        )
+      })}
+    </nav>
+  )
+}

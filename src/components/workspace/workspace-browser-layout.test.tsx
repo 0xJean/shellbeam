@@ -1,5 +1,5 @@
 import { act, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceDesktopShell } from './workspace-desktop-shell'
 import { WorkspaceMobileShell } from './workspace-mobile-shell'
 
@@ -17,6 +17,8 @@ vi.mock('./workspace-browser-app', () => ({
 }))
 
 describe('workspace browser layout', () => {
+  // These cover the windowed desktop layout; the list layout is the default.
+  beforeEach(() => { localStorage.setItem('shellbeam.workspace.layout', 'desktop') })
   it('returns desktop workspace browser closes back to overview', () => {
     const onSelectApp = vi.fn()
 

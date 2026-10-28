@@ -10,7 +10,9 @@ import { useEffect, useRef, useState } from 'react'
 import { WorkspaceAssetInventoryApp } from './workspace-asset-inventory-app'
 import { WorkspaceBrowserApp } from './workspace-browser-app'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
-import { WorkspaceAppGrid } from './workspace-app-grid'
+import { WorkspaceAppGrid, WorkspaceAppList } from './workspace-app-grid'
+import { WorkspaceLayoutToggle } from './workspace-layout-toggle'
+import { useWorkspaceLayout } from '@/lib/workspace-layout'
 import { WorkspaceFileSystemApp } from './workspace-file-system-app'
 import { WorkspaceFileTransferApp } from './workspace-file-transfer-app'
 import { WorkspaceLogsApp } from './workspace-logs-app'
@@ -161,6 +163,7 @@ export function WorkspaceDesktopShell({
   onEditHost,
   onBrowserCloseRequest,
 }: WorkspaceDesktopShellProps) {
+  const { layout, setLayout } = useWorkspaceLayout()
   const [diagnosticLogUnit, setDiagnosticLogUnit] = useState('')
   function openDiagnosticLogs(serviceName: string) { setDiagnosticLogUnit(serviceName); onSelectApp('logs') }
   function openDiagnosticTerminal(command: string) {
@@ -425,6 +428,40 @@ export function WorkspaceDesktopShell({
     return renderWindowContent(app)
   }
 
+  const layoutToggle = <WorkspaceLayoutToggle layout={layout} onChange={setLayout} />
+
+  if (layout === 'list') {
+    return (
+      <div data-testid="workspace-list-shell" className="flex h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-[var(--workspace-content-bg)] text-foreground">
+        <aside className="flex w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r border-[color:var(--workspace-border-soft)] p-3">
+          <div className="min-w-0 px-1">
+            <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{hostName}</div>
+            <div className="truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{hostAddress}</div>
+          </div>
+          <WorkspaceAppList activeApp={activeApp} onSelectApp={onSelectApp} />
+        </aside>
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <header className="flex items-center justify-between gap-3 border-b border-[color:var(--workspace-border-soft)] px-5 py-3">
+            <div className="flex min-w-0 items-center gap-x-3 gap-y-1 text-sm text-[var(--workspace-text-muted)]">
+              <h2 className="truncate text-base font-semibold text-[var(--workspace-text-strong)]">{t(activeApp === 'network' ? 'workspace.network.title' : `workspace.app.${activeApp}`)}</h2>
+              <HostMetadataLine network={activeHost ? networkByAddress[activeHost.address] : undefined} resource={getHostInventoryResource(activeHost, inventoryStates)} className="hidden text-xs text-[var(--workspace-text-muted)] lg:flex" itemClassName="max-w-[10rem]" iconClassName="h-3.5 w-3.5" />
+            </div>
+            {layoutToggle}
+          </header>
+          <div className="min-h-0 flex-1 overflow-auto p-5">
+            {isOverview ? (
+              <div className="mx-auto grid max-w-6xl gap-4">
+                {sessionVaultMismatch ? <p role="status" className="text-sm text-muted-foreground">{t('workspace.sessionVaultMismatch')}</p> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
+                {activeVaultId && activeHost && <ProviderHistoryDisclosure vaultId={activeVaultId} hostId={activeHost.id} />}
+                <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
+              </div>
+            ) : <div className="h-full min-h-[28rem]">{content}</div>}
+          </div>
+        </main>
+      </div>
+    )
+  }
+
   return (
     <div
       data-testid="workspace-desktop-shell"
@@ -432,6 +469,7 @@ export function WorkspaceDesktopShell({
     >
       <div ref={desktopSurfaceRef} className="relative min-h-0 flex-1 overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-workspace-desktop-overlay" />
+        <div className="absolute right-4 top-4 z-30">{layoutToggle}</div>
         <div className="absolute left-6 top-6 z-20 hidden md:block">
           <WorkspaceAppGrid activeApp={activeApp} onSelectApp={openDesktopApp} variant="desktop" />
         </div>
