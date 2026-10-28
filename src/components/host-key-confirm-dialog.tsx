@@ -54,8 +54,8 @@ export function HostKeyConfirmDialog({ info, onAccept, onReject }: HostKeyConfir
 
   return (
     <Dialog open={!!info} onOpenChange={(open) => { if (!open) onReject() }} labelledBy={titleId}>
-      <DialogContent className="sb-card md:max-w-[520px] md:w-[520px]">
-        <div data-testid="host-key-confirm" data-host={info.host} data-port={info.port} data-code={info.code}>
+      <DialogContent className="sb-card md:max-w-[520px] md:w-[520px] max-md:flex max-md:min-h-dvh max-md:flex-col max-md:!rounded-none max-md:!border-0 max-md:pb-[env(safe-area-inset-bottom)] max-md:pt-[env(safe-area-inset-top)]">
+        <div className="max-md:flex max-md:flex-1 max-md:flex-col" data-testid="host-key-confirm" data-host={info.host} data-port={info.port} data-code={info.code}>
           <div className="space-y-4 px-5 pb-5 pt-5">
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
@@ -73,7 +73,7 @@ export function HostKeyConfirmDialog({ info, onAccept, onReject }: HostKeyConfir
                 type="button"
                 onClick={onReject}
                 aria-label={t('hostKey.cancel')}
-                className="rounded-md p-1 text-[color:var(--workspace-text-subtle)] transition-colors hover:bg-[color:var(--workspace-surface-800)] hover:text-[color:var(--workspace-text-strong)]"
+                className="rounded-md p-1 max-md:-mr-2 max-md:-mt-2 max-md:flex max-md:h-11 max-md:w-11 max-md:items-center max-md:justify-center text-[color:var(--workspace-text-subtle)] transition-colors hover:bg-[color:var(--workspace-surface-800)] hover:text-[color:var(--workspace-text-strong)]"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -122,7 +122,7 @@ export function HostKeyConfirmDialog({ info, onAccept, onReject }: HostKeyConfir
             )}
           </div>
 
-          <div className="flex items-center justify-end gap-2 border-t border-[color:var(--workspace-border-soft)] px-5 py-3.5">
+          <div className="flex items-center justify-end gap-2 border-t border-[color:var(--workspace-border-soft)] px-5 py-3.5 max-md:mt-auto max-md:flex-col-reverse max-md:items-stretch max-md:border-t-0 max-md:pb-4 [&>button]:max-md:h-11 [&>button]:max-md:w-full">
             {isMismatch ? (
               <>
                 <Button variant="ghost" onClick={() => { onReject(); requestKnownHosts() }} className="gap-1.5">

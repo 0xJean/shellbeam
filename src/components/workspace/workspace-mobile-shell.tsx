@@ -1,15 +1,16 @@
 import { sendInteractiveInput } from '@/lib/interactive-session'
 import type { HostProfile } from '@/lib/hosts'
-import { t } from '@/lib/i18n'
+import { useT } from '@/lib/i18n'
+import { workspaceMobileV3Copy } from '@/lib/locales/workspace-mobile-v3'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
 import type { WorkspaceAppId } from '@/lib/workspace'
-import { BatteryFull, ChevronLeft, Signal, Wifi, Search } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { BatteryFull, ChevronLeft, Copy, Signal, Wifi, Search } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { WorkspaceAssetInventoryApp } from './workspace-asset-inventory-app'
 import { WorkspaceBrowserApp } from './workspace-browser-app'
-import { WorkspaceAppGrid } from './workspace-app-grid'
 import { WorkspaceEmptyApp } from './workspace-empty-app'
 import { WorkspaceFileSystemApp } from './workspace-file-system-app'
 import { WorkspaceFileTransferApp } from './workspace-file-transfer-app'
@@ -27,6 +28,15 @@ import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel
 import { WorkspaceStatusCards } from './workspace-status-cards'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 import { SessionVaultMismatchCard } from './session-state-card'
+import { loadMobileHomePrefs, saveMobileHomePrefs, FIRST_PAGE_WIDGETS, type MobileHomePrefs, type MobileWidgetId } from './mobile/mobile-home-prefs'
+import { MobileDock, MobileHomePage, MobileHomeTopBar, MobilePageDots, MobilePullIndicator } from './mobile/mobile-home-screen'
+import { MobileAppList } from './mobile/mobile-app-list'
+import { MobileSpotlight } from './mobile/mobile-spotlight'
+import { MobileQuickActions } from './mobile/mobile-quick-actions'
+import { MobileAppSwitcher } from './mobile/mobile-app-switcher'
+import { MobileWidgetGallery } from './mobile/mobile-widget-gallery'
+import { useMobileHomeData } from './mobile/use-mobile-home-data'
+import { useHorizontalSwipe, usePullToRefresh } from './mobile/use-mobile-gestures'
 
 function LiveClock() {
   const [time, setTime] = useState(() =>
@@ -56,6 +66,8 @@ interface WorkspaceMobileShellProps {
   onOpenProviderConsole?: (url: string, host: HostProfile) => void
   onEditHost?: (host: HostProfile) => void
   onBrowserCloseRequest?: () => void
+  /** Shows the v3 "‹ Hosts" pill on the home screen when the host list is reachable. */
+  onBackToHosts?: () => void
 }
 
 export function WorkspaceMobileShell({
@@ -73,7 +85,10 @@ export function WorkspaceMobileShell({
   onOpenProviderConsole,
   onEditHost,
   onBrowserCloseRequest,
+  onBackToHosts,
 }: WorkspaceMobileShellProps) {
+  const { t, locale } = useT()
+  const copy = workspaceMobileV3Copy[locale]
   const [diagnosticLogUnit, setDiagnosticLogUnit] = useState('')
   function openDiagnosticLogs(serviceName: string) { setDiagnosticLogUnit(serviceName); onSelectApp('logs') }
   function openDiagnosticTerminal(command: string) {
@@ -160,87 +175,110 @@ export function WorkspaceMobileShell({
     return <WorkspaceEmptyApp app={activeApp} />
   })()
 
-  // Terminal is the primary app, then Files, Services, Overview for settings
-  const dockApps: WorkspaceAppId[] = ['terminal', 'assetInventory', 'fileSystem', 'overview']
   const isOverview = activeApp === 'overview'
+  const metricsHost = sessionVaultMismatch ? null : resolveWorkspaceMetricsHost(hosts, { selectedHostId: hostId, hostAddress, vaultId: activeVaultId }) ?? null
+  const home = useMobileHomeData({ host: metricsHost, hosts, vaultId: activeVaultId })
+  const [prefs, setPrefs] = useState<MobileHomePrefs>(loadMobileHomePrefs)
+  const [page, setPage] = useState<1 | 2>(1)
+  const [overlay, setOverlay] = useState<null | 'spot' | 'switcher' | 'widgets' | { quick: WorkspaceAppId }>(null)
+  const [recents, setRecents] = useState<{ tracked: WorkspaceAppId; apps: WorkspaceAppId[] }>(() => ({ tracked: activeApp, apps: isOverview ? [] : [activeApp] }))
+  if (recents.tracked !== activeApp) setRecents({ tracked: activeApp, apps: isOverview ? recents.apps : [activeApp, ...recents.apps.filter((app) => app !== activeApp)].slice(0, 8) })
+  const overviewRef = useRef<HTMLDivElement>(null)
+  const pull = usePullToRefresh(home.refresh)
+  const hasSecondPage = prefs.widgets.some((id) => !FIRST_PAGE_WIDGETS.includes(id))
+  const currentPage = prefs.layout === 'grid' && hasSecondPage ? page : 1
+  const swipe = useHorizontalSwipe((direction) => { if (prefs.layout === 'grid' && hasSecondPage) setPage(direction > 0 ? 2 : 1) })
+
+  function updatePrefs(next: Partial<MobileHomePrefs>) {
+    const merged = { ...prefs, ...next }
+    setPrefs(merged)
+    saveMobileHomePrefs(merged)
+  }
+  function openApp(app: WorkspaceAppId) {
+    setOverlay(null)
+    if (app !== 'overview') { onSelectApp(app); return }
+    if (!isOverview) onSelectApp('overview')
+    setPage(1)
+    overviewRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  }
+  const quickApp = overlay && typeof overlay === 'object' ? overlay.quick : null
+  const showLargeTitle = activeApp !== 'browser' && activeApp !== 'charts'
 
   return (
     <div
       data-testid="workspace-mobile-shell"
       className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-workspace-shell text-[var(--workspace-text)]"
     >
-      {/* iOS Springboard Wallpaper (Blurred Gradients matching PC) */}
       <div className="absolute inset-0 z-0 pointer-events-none">
         <div className="absolute inset-0 bg-workspace-mobile-wallpaper" />
       </div>
 
-      {/* iOS Status Bar */}
-      <div className="relative z-10 flex items-center justify-between px-6 pb-2 pt-[max(env(safe-area-inset-top),16px)] text-[15px] font-semibold text-[var(--workspace-primary-foreground)] drop-shadow-md">
+      <div className="relative z-10 flex items-center justify-between px-6 pb-1 pt-[max(env(safe-area-inset-top),16px)] text-[15px] font-semibold text-[var(--workspace-text-strong)]">
         <span><LiveClock /></span>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5" aria-hidden="true">
           <Signal className="h-[14px] w-[14px]" />
           <Wifi className="h-[14px] w-[14px]" />
           <BatteryFull className="h-[18px] w-[18px]" />
         </div>
       </div>
 
-      {/* Springboard (Home Screen) */}
-      <motion.div 
-        className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-36 pt-6"
+      <motion.div
+        className="relative z-10 flex min-h-0 flex-1 flex-col"
         initial={false}
-        animate={{ 
+        animate={{
           scale: isOverview ? 1 : 0.95,
           opacity: isOverview ? 1 : 0,
           pointerEvents: isOverview ? 'auto' : 'none'
         }}
         transition={{ type: 'spring', damping: 26, stiffness: 260 }}
       >
-        <div className="mb-8 text-center text-[var(--workspace-primary-foreground)] drop-shadow-md">
-          <div className="text-2xl font-semibold tracking-tight">{hostName}</div>
-          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm opacity-80">
+        <MobileHomeTopBar hostName={hostName} health={home.provider.view?.health.state} layout={prefs.layout} onBackToHosts={onBackToHosts}
+          onToggleLayout={() => updatePrefs({ layout: prefs.layout === 'grid' ? 'list' : 'grid' })} onAddWidgets={() => setOverlay('widgets')} />
+        <div
+          data-testid="workspace-mobile-home-scroll"
+          className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pb-56 pt-2"
+          {...pull.handlers}
+          onTouchStart={(event) => { pull.handlers.onTouchStart(event); swipe.onTouchStart(event) }}
+          onTouchEnd={(event) => { pull.handlers.onTouchEnd(); swipe.onTouchEnd(event) }}
+        >
+          <MobilePullIndicator state={pull.state} distance={pull.distance} />
+          <div className="mb-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-4 text-xs text-[var(--workspace-text-muted)]">
             <span>{hostAddress}</span>
             <HostMetadataLine
               network={activeHost ? networkByAddress[activeHost.address] : undefined}
               resource={getHostInventoryResource(activeHost, inventoryStates)}
-              className="justify-center text-sm"
+              className="justify-center text-xs"
               itemClassName="max-w-[9rem]"
               iconClassName="h-3.5 w-3.5"
             />
           </div>
+          {prefs.layout === 'list'
+            ? <MobileAppList data={home} onOpen={openApp} onQuickActions={(app) => setOverlay({ quick: app })} />
+            : <MobileHomePage page={currentPage} widgets={prefs.widgets} data={home} onOpen={openApp} onQuickActions={(app) => setOverlay({ quick: app })} onOpenWidgetApp={openApp} />}
+          {currentPage === 1 && <div ref={overviewRef} data-testid="workspace-mobile-overview" className="mt-6 scroll-mt-4 space-y-4 px-4">
+            {isOverview && <>
+              {sessionVaultMismatch ? <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} className="p-0" /> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
+              <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
+              {activeVaultId && activeHost && <ProviderHistoryDisclosure vaultId={activeVaultId} hostId={activeHost.id} />}
+            </>}
+          </div>}
         </div>
-
-        <div className="min-h-[22rem]">
-          <WorkspaceAppGrid activeApp={activeApp} onSelectApp={onSelectApp} variant="ios-grid" />
-        </div>
-        {isOverview && <div className="space-y-4">
-          {sessionVaultMismatch ? <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} className="p-0" /> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
-          <WorkspaceRecommendationsPanel host={activeHost ?? null} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} />
-          {activeVaultId && activeHost && <ProviderHistoryDisclosure vaultId={activeVaultId} hostId={activeHost.id} />}
-        </div>}
       </motion.div>
 
-      {/* Fixed iOS Dock */}
-      <motion.div 
-        className="absolute bottom-4 left-4 right-4 z-20"
+      <motion.div
+        className="absolute bottom-0 left-3 right-3 z-20 pb-[max(env(safe-area-inset-bottom),12px)]"
         initial={false}
-        animate={{ 
+        animate={{
           y: isOverview ? 0 : 100,
           opacity: isOverview ? 1 : 0,
           pointerEvents: isOverview ? 'auto' : 'none'
         }}
         transition={{ type: 'spring', damping: 26, stiffness: 260 }}
       >
-        <div className="rounded-[32px] border border-[var(--workspace-mobile-stroke)] bg-[var(--workspace-mobile-card)] p-3 shadow-[var(--workspace-shadow-overlay)] backdrop-blur-2xl pb-[max(env(safe-area-inset-bottom,12px),12px)]">
-          <WorkspaceAppGrid
-            activeApp={activeApp}
-            onSelectApp={onSelectApp}
-            variant="ios-dock"
-            apps={dockApps}
-          />
-        </div>
+        {prefs.layout === 'grid' && <MobilePageDots pages={hasSecondPage ? 2 : 1} page={currentPage} onSelect={setPage} />}
+        <MobileDock data={home} onOpen={openApp} onQuickActions={(app) => setOverlay({ quick: app })} onSearch={() => setOverlay('spot')} />
       </motion.div>
 
-      {/* Full Screen App View */}
       <AnimatePresence>
         {!isOverview && (
           <motion.div
@@ -252,45 +290,54 @@ export function WorkspaceMobileShell({
             transition={{ type: 'spring', damping: 28, stiffness: 300 }}
             className="absolute inset-0 z-30 flex flex-col overflow-hidden bg-[var(--workspace-surface-950)]"
           >
-            {/* Frosted Navigation Bar */}
-            <div className="relative z-40 flex items-center justify-between border-b border-[var(--workspace-border-soft)] bg-[var(--workspace-nav-translucent)] pb-3 pt-[max(env(safe-area-inset-top),16px)] px-2 shadow-[var(--workspace-shadow-card)] backdrop-blur-xl">
-              <button
-                type="button"
-                onClick={() => onSelectApp('overview')}
-                className="flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-[color:var(--workspace-primary-500)] active:opacity-60 transition-opacity"
-                aria-label={t('workspace.mobile.backToHomeScreen')}
-              >
-                <ChevronLeft className="h-6 w-6 -ml-1" />
-                <span className="text-[17px] font-medium leading-none">{t('workspace.mobile.home')}</span>
-              </button>
-              
-              <div className="absolute left-1/2 -translate-x-1/2 text-center">
-                <div className="text-[17px] font-semibold tracking-tight text-[var(--workspace-text-strong)]">
-                  {t(`workspace.app.${activeApp}`)}
-                </div>
-                <div className="text-[10px] uppercase tracking-wider text-[var(--workspace-text-muted)]">
-                  {hostName}
-                </div>
-                <HostMetadataLine
-                  network={activeHost ? networkByAddress[activeHost.address] : undefined}
-                  resource={getHostInventoryResource(activeHost, inventoryStates)}
-                  showLocationText={false}
-                  showSystemText={false}
-                  className="mt-0.5 justify-center gap-x-1"
-                  iconClassName="h-3 w-3"
-                />
-              </div>
+            <div className="relative z-40 border-b border-[var(--workspace-border-soft)] bg-[var(--workspace-nav-translucent)] pt-[max(env(safe-area-inset-top),16px)] shadow-[var(--workspace-shadow-card)] backdrop-blur-xl">
+              <div className="relative flex items-center justify-between px-2 pb-1">
+                <button
+                  type="button"
+                  onClick={() => onSelectApp('overview')}
+                  className="flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-[color:var(--workspace-primary-500)] active:opacity-60 transition-opacity"
+                  aria-label={t('workspace.mobile.backToHomeScreen')}
+                >
+                  <ChevronLeft className="h-6 w-6 -ml-1" />
+                  <span className="text-[17px] font-medium leading-none">{t('workspace.mobile.home')}</span>
+                </button>
 
-              <button
-                type="button"
-                className="flex h-11 min-w-[44px] items-center justify-end px-3 text-[color:var(--workspace-primary-500)] active:opacity-60 transition-opacity"
-                aria-label={t('workspace.mobile.search')}
-              >
-                <Search className="h-5 w-5" />
-              </button>
+                <div className="pointer-events-none absolute left-1/2 max-w-[45%] -translate-x-1/2 text-center">
+                  {!showLargeTitle && <div className="truncate text-[17px] font-semibold tracking-tight text-[var(--workspace-text-strong)]">{t(`workspace.app.${activeApp}`)}</div>}
+                  <div className="truncate text-[11px] uppercase tracking-wider text-[var(--workspace-text-muted)]">{hostName}</div>
+                  <HostMetadataLine
+                    network={activeHost ? networkByAddress[activeHost.address] : undefined}
+                    resource={getHostInventoryResource(activeHost, inventoryStates)}
+                    showLocationText={false}
+                    showSystemText={false}
+                    className="mt-0.5 justify-center gap-x-1"
+                    iconClassName="h-3 w-3"
+                  />
+                </div>
+
+                <div className="flex items-center">
+                  <button
+                    type="button"
+                    data-testid="workspace-mobile-switcher-button"
+                    onClick={() => setOverlay('switcher')}
+                    className="flex h-11 min-w-[44px] items-center justify-center text-[color:var(--workspace-primary-500)] active:opacity-60 transition-opacity"
+                    aria-label={copy.switcher}
+                  >
+                    <Copy className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOverlay('spot')}
+                    className="flex h-11 min-w-[44px] items-center justify-end px-3 text-[color:var(--workspace-primary-500)] active:opacity-60 transition-opacity"
+                    aria-label={t('workspace.mobile.search')}
+                  >
+                    <Search className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+              {showLargeTitle && <h1 className="truncate px-4 pb-2 text-[30px] font-bold leading-tight tracking-tight text-[var(--workspace-text-strong)]">{t(`workspace.app.${activeApp}`)}</h1>}
             </div>
 
-            {/* App Content */}
             <div
               className={activeApp === 'browser'
                 ? 'flex-1 overflow-hidden bg-workspace-shell pb-[env(safe-area-inset-bottom)]'
@@ -301,6 +348,14 @@ export function WorkspaceMobileShell({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {overlay === 'spot' && <MobileSpotlight data={home} onOpenApp={openApp} onOpenLogs={(unit) => { setOverlay(null); openDiagnosticLogs(unit) }} onClose={() => setOverlay(null)} />}
+      {overlay === 'switcher' && <MobileAppSwitcher apps={recents.apps} activeApp={activeApp} hostName={hostName} onOpen={openApp}
+        onDismiss={(app) => setRecents((current) => ({ ...current, apps: current.apps.filter((value) => value !== app) }))} onClose={() => setOverlay(null)} />}
+      {overlay === 'widgets' && <MobileWidgetGallery selected={prefs.widgets} data={home} onClose={() => setOverlay(null)}
+        onSave={(widgets: MobileWidgetId[]) => { updatePrefs({ widgets }); setOverlay(null) }} />}
+      {quickApp && <MobileQuickActions app={quickApp} data={home} onOpenApp={openApp} onOpenLogs={() => openDiagnosticLogs('')}
+        onTerminalInput={sessionVaultMismatch ? undefined : openDiagnosticTerminal} onEditHome={() => setOverlay('widgets')} onClose={() => setOverlay(null)} />}
     </div>
   )
 }

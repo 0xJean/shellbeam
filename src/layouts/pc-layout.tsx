@@ -1,4 +1,6 @@
 import { usePortForwardSummary } from '@/hooks/use-port-forward-summary'
+import { MobileTerminalDrawer } from '@/components/mobile/mobile-terminal-drawer'
+import { MobileHostsPage } from '@/components/mobile/mobile-hosts-page'
 import { FleetDashboard } from '@/components/dashboard/fleet-dashboard'
 import { requestSettingsCategory } from '@/lib/settings-request'
 import { MobileToolsPage } from '@/components/mobile-tools-page'
@@ -109,6 +111,10 @@ const BackupRestorePanel = lazy(async () => {
 const SettingsPanel = lazy(async () => {
   const module = await import('@/components/settings-panel')
   return { default: module.SettingsPanel }
+})
+const MobileSettingsPage = lazy(async () => {
+  const module = await import('@/components/mobile/mobile-settings-page')
+  return { default: module.MobileSettingsPage }
 })
 const UserGuide = lazy(async () => {
   const module = await import('@/components/user-guide')
@@ -422,6 +428,7 @@ export function PcLayout() {
   }, [])
 
   const isMd = useSyncExternalStore(subscribeMediaQuery, getIsMd, () => true)
+  const SettingsScreen = isMd ? SettingsPanel : MobileSettingsPage
   const browserMetaBySession = useMemo(() => {
     return sessions.pcSessionTabs.reduce<Record<string, SessionBrowserTabMeta>>((acc, tab) => {
       const browserState = sessions.browserBySession[tab.sessionId]
@@ -1051,6 +1058,7 @@ export function PcLayout() {
                       ) : browserPageMode ? null : (
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            onBackToHosts={() => app.setPcSidebarNav('hosts')}
                             sessionConnectionKey={sessionInfo?.connectionKey}
                             sessionVaultId={sessionInfo?.vaultId}
                             activeVaultId={vault.activeVaultId}
@@ -1110,6 +1118,8 @@ export function PcLayout() {
         {!isMd && (
         <div className={cn('absolute inset-0 flex flex-col md:hidden pb-14', app.pcSidebarNav === 'terminal' ? 'z-10' : 'pointer-events-none invisible')}>
           <MobileSessionHeader
+            onOpenDrawer={toggleRightSidebar}
+            onBack={() => app.setPcSidebarNav('hosts')}
             sessionTabs={sessions.pcSessionTabs}
             activeSessionId={mobileActiveSessionId}
             onSelectSession={setMobileActiveSessionId}
@@ -1228,7 +1238,7 @@ export function PcLayout() {
               })}
               </div>
               {mobileActiveSessionId && mobileWorkspaceMode === 'terminal' && (
-                <TerminalRightSidebar
+                <MobileTerminalDrawer
                   visible={rightSidebarOpen}
                   onClose={toggleRightSidebar}
                   hostAddress={sessions.pcSessionTabs.find((t) => t.sessionId === mobileActiveSessionId)?.hostAddress ?? ''}
@@ -1327,7 +1337,7 @@ export function PcLayout() {
                     onOpenAlerts={() => app.setPcSidebarNav('hosts')} />
                 </div>
               )}
-              {app.pcSidebarNav === 'hosts' && (
+              {app.pcSidebarNav === 'hosts' && (isMd ? (
                 <Suspense fallback={<DashboardSectionFallback />}>
                   <div className="min-h-full p-4 md:p-6">
                     <HostsDashboard
@@ -1360,7 +1370,28 @@ export function PcLayout() {
                     />
                   </div>
                 </Suspense>
-              )}
+              ) : (
+                <MobileHostsPage
+                  hosts={hostsCtx.hosts}
+                  activeVaultId={vault.activeVaultId}
+                  vaultUnlocked={vault.vaultStatusState?.unlocked ?? false}
+                  vaultKeys={vault.vaultKeys}
+                  vaultName={vault.vaults.find((v) => v.id === vault.activeVaultId)?.name ?? 'Vault'}
+                  defaultUsername={hostsCtx.defaultUsername}
+                  onSaveToVault={hostsCtx.handleSaveToVault}
+                  onLoadVaultSecret={vault.handleRevealSecret}
+                  onCreateHost={hostsCtx.handleCreateHost}
+                  onUpdateHost={hostsCtx.handleUpdateHost}
+                  onDeleteHost={hostsCtx.handleDeleteHost}
+                  onRefreshHosts={hostsCtx.refreshHosts}
+                  onSelectHost={hostsCtx.setSelectedHostId}
+                  onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
+                  onOpenWorkspace={(hostId, workspaceApp) => { void sessions.openHostWorkspace(hostId, workspaceApp); app.setPcSidebarNav('terminal') }}
+                  onOpenPortForwarding={() => app.setPcSidebarNav('port-forwarding')}
+                  openAddForm={hostsCtx.pcOpenAddHost}
+                  onAddFormClose={() => hostsCtx.setPcOpenAddHost(false)}
+                />
+              ))}
               {app.pcSidebarNav === 'asset-inventory' && (
                 <div className="h-full min-h-0 p-4 md:p-6">
                   <WorkspaceAssetInventoryApp
@@ -1508,7 +1539,7 @@ export function PcLayout() {
               )}
               {app.pcSidebarNav === 'settings' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
-                  <SettingsPanel
+                  <SettingsScreen
                     onOpenGuide={() => app.setPcSidebarNav('guide')}
                     vaultAutoLockMinutes={vault.vaultAutoLockMinutes}
                     reconnectSettings={sessions.reconnectSettings}

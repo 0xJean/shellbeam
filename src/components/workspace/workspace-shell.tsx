@@ -10,6 +10,8 @@ import { WorkspaceMobileShell } from './workspace-mobile-shell'
 
 interface WorkspaceShellProps {
   activeVaultId?: string
+  /** Mobile only: the home screen's back pill returns to the host list. */
+  onBackToHosts?: () => void
   sessionConnectionKey?: string
   sessionVaultId?: string
   sessionId: string

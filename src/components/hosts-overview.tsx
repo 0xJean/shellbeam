@@ -106,7 +106,7 @@ export function ProbeCoverageBanner({ hosts, osOf }: { hosts: HostProfile[]; osO
   return (
     <div data-testid="probe-coverage-banner" className="mb-4 flex flex-wrap items-center gap-3 rounded-xl px-3 py-2.5 ring-1 ring-primary/20 [background:linear-gradient(90deg,hsl(var(--primary)/0.10),transparent_60%)]">
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-[var(--workspace-accent-text)]"><Radar className="h-4 w-4" aria-hidden="true" /></span>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-[calc(100%-3rem)] sm:basis-0">
         <b className="block text-[13px] font-semibold text-[var(--workspace-text-strong)]">{fill(c.bannerTitle, { count: eligible.length })}</b>
         <span className="block text-xs text-[var(--workspace-text-muted)]">{c.bannerBody}{eligible.length > MAX_BATCH_HOSTS ? ` ${fill(c.bannerMore, { count: MAX_BATCH_HOSTS })}` : ''}</span>
       </div>

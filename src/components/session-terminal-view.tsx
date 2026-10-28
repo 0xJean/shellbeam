@@ -369,7 +369,7 @@ export function SessionTerminalView({
       }}
     >
       <div
-        className="flex h-9 shrink-0 items-center gap-2 overflow-hidden px-4"
+        className="hidden h-9 shrink-0 items-center gap-2 overflow-hidden px-4 md:flex"
         style={{ borderBottom: `1px solid ${fg}15`, background: bg }}
       >
         <span className={cn(
@@ -504,6 +504,7 @@ export function SessionTerminalView({
       {isConnected && (
         <AICommandBar
           key={sessionId}
+          contextLabel={hostName || hostAddress}
           visible={showAI && visible}
           onExecuteCommand={handleExecuteCommand}
           getTerminalContext={getTerminalContext}

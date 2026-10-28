@@ -149,24 +149,24 @@ export function ProbeInstallDialog({ host, open, onOpenChange, onOpenDetails }: 
 
   const stepKeys = ['server', 'node', 'check', 'install'] as const
   const rail = (
-    <aside className="flex flex-col gap-1 border-r border-border bg-muted/40 p-4 md:w-56">
+    <aside className="flex flex-col gap-1 border-r border-border bg-muted/40 p-4 md:w-56 max-md:flex-row max-md:gap-1.5 max-md:overflow-x-auto max-md:border-b max-md:border-r-0 max-md:px-4 max-md:py-2">
       {stepKeys.map((key, index) => {
         const n = (index + 1) as Step
         const done = n < step || (step === 4 && outcome?.record?.status === 'active') || stage === 'installed'
         const cur = n === step && !done
         return (
-          <div key={key} className={cn('flex gap-2.5 rounded-lg p-2', cur && 'bg-background shadow-sm ring-1 ring-border')} aria-current={cur ? 'step' : undefined}>
+          <div key={key} className={cn('flex gap-2.5 rounded-lg p-2 max-md:shrink-0 max-md:items-center max-md:gap-1.5 max-md:py-1.5', cur && 'bg-background shadow-sm ring-1 ring-border')} aria-current={cur ? 'step' : undefined}>
             <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ring-1 ring-border', done && 'bg-[var(--workspace-status-good)] text-white ring-0', cur && 'bg-primary text-primary-foreground ring-4 ring-primary/20')}>
               {done ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : n}
             </span>
             <span className="min-w-0">
               <span className={cn('block text-xs font-semibold', !cur && !done && 'text-muted-foreground')}>{c.steps[key]}</span>
-              <span className="block truncate text-[11px] text-muted-foreground">{c.stepHints[key]}</span>
+              <span className="block truncate text-[11px] text-muted-foreground max-md:hidden">{c.stepHints[key]}</span>
             </span>
           </div>
         )
       })}
-      <p className="mt-auto flex gap-1.5 pt-4 text-[11px] leading-relaxed text-muted-foreground"><Info className="mt-0.5 h-3 w-3 shrink-0" />{c.railNote}</p>
+      <p className="mt-auto flex gap-1.5 pt-4 text-[11px] leading-relaxed text-muted-foreground max-md:hidden"><Info className="mt-0.5 h-3 w-3 shrink-0" />{c.railNote}</p>
     </aside>
   )
 
@@ -246,17 +246,18 @@ export function ProbeInstallDialog({ host, open, onOpenChange, onOpenDetails }: 
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} labelledBy="probe-install-title">
-      <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden p-0 md:w-[760px] md:max-w-[95vw]">
-        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+    <Dialog open={open} onOpenChange={onOpenChange} labelledBy="probe-install-title" className="max-md:items-end">
+      <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden p-0 md:w-[760px] md:max-w-[95vw] max-md:max-h-[92dvh] max-md:min-h-0 max-md:rounded-t-[20px] max-md:pb-[env(safe-area-inset-bottom)] max-md:shadow-2xl">
+        <span aria-hidden className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-[var(--workspace-border-strong)] md:hidden" />
+        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4 max-md:items-center max-md:py-3">
           <div><h2 id="probe-install-title" className="text-base font-semibold">{c.title}</h2><p className="text-xs text-muted-foreground">{host.name} · {fill(c.stepOf, { current: step })}</p></div>
-          <button type="button" aria-label={c.close} className="rounded-md p-1 text-muted-foreground hover:bg-muted" onClick={() => onOpenChange(false)}><X className="h-4 w-4" /></button>
+          <button type="button" aria-label={c.close} className="rounded-md p-1 text-muted-foreground hover:bg-muted max-md:-mr-2 max-md:flex max-md:h-11 max-md:w-11 max-md:items-center max-md:justify-center" onClick={() => onOpenChange(false)}><X className="h-4 w-4" /></button>
         </header>
-        <div className="flex min-h-[360px] flex-1 flex-col overflow-hidden md:flex-row" data-testid="probe-install-dialog" data-step={step} data-stage={stage ?? 'loading'}>
+        <div className="flex min-h-[360px] flex-1 flex-col overflow-hidden md:flex-row max-md:min-h-0 max-md:overflow-y-auto" data-testid="probe-install-dialog" data-step={step} data-stage={stage ?? 'loading'}>
           {rail}
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">{body}</div>
         </div>
-        {foot && <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">{foot}</footer>}
+        {foot && <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3 max-md:flex-col-reverse max-md:items-stretch max-md:px-4 [&>button]:max-md:h-11 [&>button]:max-md:w-full [&>button]:max-md:text-[15px] [&>span]:max-md:mr-0 [&>span]:max-md:justify-center">{foot}</footer>}
       </DialogContent>
     </Dialog>
   )

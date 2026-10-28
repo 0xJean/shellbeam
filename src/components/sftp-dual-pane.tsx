@@ -6,7 +6,12 @@ import {
   ArrowLeft,
   ArrowDown,
   ArrowUp,
+  Download,
+  FolderInput,
+  ListChecks,
+  Pencil,
   RefreshCw,
+  Trash2,
   HardDrive,
   Laptop,
   Server,
@@ -28,6 +33,7 @@ import {
 import { createRemoteFsClient } from '@/lib/remote-fs'
 import { fill } from '@/lib/locales/probe-install'
 import { sftpCopyFor } from '@/lib/locales/sftp-v3'
+import { mobileMiscV3Copy } from '@/lib/locales/mobile-misc-v3'
 import {
   applyTransferProgress,
   clearFinishedTransfers,
@@ -79,6 +85,7 @@ export function SftpDualPane(props: SftpDualPaneProps) {
 function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, className }: SftpDualPaneProps) {
   const { t, locale } = useT()
   const c = sftpCopyFor(locale)
+  const m = mobileMiscV3Copy[locale]?.files ?? mobileMiscV3Copy['zh-CN'].files
   const containerRef = useRef<HTMLDivElement>(null)
   const containerWidth = useContainerWidth(containerRef)
   const isCompact = containerWidth < COMPACT_BREAKPOINT
@@ -86,6 +93,8 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   const [activeTab, setActiveTab] = useState<'local' | 'remote'>('local')
+  const [selecting, setSelecting] = useState(false)
+  const [pathEdit, setPathEdit] = useState<{ kind: 'move' | 'rename'; value: string } | null>(null)
 
   const [localDir, setLocalDir] = useState('')
   const [localEntries, setLocalEntries] = useState<UnifiedEntry[]>([])
@@ -371,6 +380,24 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
     finally { setTransferring(false) }
   }
 
+  async function handleRemoteMove(paths: string[], destination: string) {
+    if (!remoteFs || transferring || paths.length === 0) return
+    const dir = destination.trim().replace(/\/+$/, '')
+    setTransferring(true)
+    let moved = 0
+    try {
+      for (const path of paths) {
+        if (!await remoteFs.renamePath(path, `${dir}/${path.split('/').pop()}`)) { setTransferStatus(t('files.operation.cancelled')); break }
+        moved++
+      }
+      if (moved > 0) {
+        setTransferStatus(`Moved ${moved} item(s) to ${dir || '/'}`)
+        await loadRemoteDir()
+      }
+    } catch (err) { setTransferStatus(`Move error: ${err}`) }
+    finally { setTransferring(false) }
+  }
+
   async function handleRemoteCreateDir(name: string) {
     if (!remoteFs || transferring) return
     setTransferring(true)
@@ -459,6 +486,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
       onClearSelection={() => setLocalSelected(new Set())}
       filter={localFilter}
       onFilterChange={setLocalFilter}
+      selectionMode={selecting}
     />
   )
 
@@ -495,6 +523,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
       onCreateDir={remoteConnected ? (n) => void handleRemoteCreateDir(n) : undefined}
       onChmod={remoteConnected ? (p, m) => void handleRemoteChmod(p, m) : undefined}
       onDropFiles={remoteConnected ? (f) => void handleDropUpload(f) : undefined}
+      selectionMode={selecting}
     />
   )
 
@@ -504,6 +533,47 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
   const tabButton = (active: boolean) => cn(
     'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
     active ? 'bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-sm ring-1 ring-[color:var(--workspace-border-soft)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
+  )
+
+  const activeSelected = activeTab === 'local' ? localSelected : remoteSelected
+  const canMutateRemote = !transferring && remoteConnected && !!remoteFs
+  const selectedRemoteName = remoteSelected.size === 1 ? remoteEntries.find((e) => remoteSelected.has(e.path))?.fileName ?? '' : ''
+  const submitPathEdit = () => {
+    if (!pathEdit || !pathEdit.value.trim()) return
+    const paths = [...remoteSelected]
+    if (pathEdit.kind === 'move') void handleRemoteMove(paths, pathEdit.value)
+    else if (paths.length === 1) void handleRemoteRename(paths[0], pathEdit.value.trim())
+    setPathEdit(null)
+  }
+  const barAction = (key: string, icon: React.ReactNode, label: string, disabled: boolean, onClick: () => void, danger = false) => (
+    <button key={key} type="button" data-testid={`sftp-selection-${key}`} disabled={disabled} onClick={onClick}
+      className={cn('flex min-h-[48px] min-w-[56px] flex-1 flex-col items-center justify-center gap-0.5 rounded-lg text-[11px] font-medium disabled:opacity-40 [&_svg]:h-5 [&_svg]:w-5',
+        danger ? 'text-[var(--workspace-status-bad)]' : 'text-[var(--workspace-accent-text)]')}>
+      {icon}{label}
+    </button>
+  )
+  const selectionBar = (
+    <div className="shrink-0 space-y-2 pb-[env(safe-area-inset-bottom)]">
+      {pathEdit && activeTab === 'remote' && (
+        <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); submitPathEdit() }}>
+          <input autoFocus aria-label={pathEdit.kind === 'move' ? m.moveTo : m.newName} value={pathEdit.value}
+            onChange={(e) => setPathEdit({ ...pathEdit, value: e.target.value })}
+            className="h-11 min-w-0 flex-1 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 font-mono text-sm text-[var(--workspace-text-strong)] outline-none focus:ring-1 focus:ring-[hsl(var(--primary)/0.4)]" />
+          <Button type="submit" className="h-11 bg-[color:var(--workspace-primary-500)] px-4 text-white" disabled={!pathEdit.value.trim() || !canMutateRemote}>{m.confirm}</Button>
+          <Button type="button" variant="ghost" className="h-11 px-3" onClick={() => setPathEdit(null)}>{m.cancel}</Button>
+        </form>
+      )}
+      <div role="toolbar" aria-label={m.actions} className="sb-card flex items-center justify-around gap-1 p-1">
+        {activeTab === 'local'
+          ? barAction('upload', <Upload />, m.upload, !canUpload, () => void transferToRemote())
+          : [
+            barAction('download', <Download />, m.download, !canDownload, () => void transferToLocal()),
+            barAction('move', <FolderInput />, m.move, !canMutateRemote || remoteSelected.size === 0, () => setPathEdit({ kind: 'move', value: remoteDir })),
+            barAction('rename', <Pencil />, m.rename, !canMutateRemote || remoteSelected.size !== 1, () => setPathEdit({ kind: 'rename', value: selectedRemoteName })),
+            barAction('delete', <Trash2 />, m.delete, !canMutateRemote || remoteSelected.size === 0, () => void handleRemoteDelete([...remoteSelected]), true),
+          ]}
+      </div>
+    </div>
   )
 
   return (
@@ -565,8 +635,27 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
         </div>
       </header>
 
-      {isCompact && (
-        <div className="flex shrink-0 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] p-0.5">
+      {isCompact && selecting && (
+        <div data-testid="sftp-selection-header" className="flex shrink-0 items-center justify-between gap-2">
+          <button type="button" className="min-h-[44px] px-1 text-[15px] text-[var(--workspace-accent-text)]"
+            onClick={() => {
+              const entries = activeTab === 'local' ? localEntries : remoteEntries
+              const setSelected = activeTab === 'local' ? setLocalSelected : setRemoteSelected
+              setSelected(activeSelected.size === entries.length && entries.length > 0 ? new Set() : new Set(entries.map((e) => e.path)))
+            }}>
+            {activeSelected.size > 0 && activeSelected.size === (activeTab === 'local' ? localEntries : remoteEntries).length ? m.deselectAll : m.selectAll}
+          </button>
+          <span className="truncate text-[15px] font-semibold text-[var(--workspace-text-strong)]">{fill(m.selected, { n: activeSelected.size })}</span>
+          <button type="button" data-testid="sftp-selection-done" className="min-h-[44px] px-1 text-[15px] font-semibold text-[var(--workspace-accent-text)]"
+            onClick={() => { setSelecting(false); setPathEdit(null); (activeTab === 'local' ? setLocalSelected : setRemoteSelected)(new Set()) }}>
+            {m.done}
+          </button>
+        </div>
+      )}
+
+      {isCompact && !selecting && (
+        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-1 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] p-0.5">
           <button type="button" className={tabButton(activeTab === 'local')} onClick={() => setActiveTab('local')}>
             <HardDrive className="h-3.5 w-3.5" />
             {t('sftp.local')}
@@ -576,6 +665,11 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
             {t('sftp.remoteTab')}
           </button>
         </div>
+        <button type="button" data-testid="sftp-selection-start" onClick={() => setSelecting(true)}
+          className="flex min-h-[44px] shrink-0 items-center gap-1 px-1 text-sm font-medium text-[var(--workspace-accent-text)] md:hidden">
+          <ListChecks className="h-4 w-4" />{m.select}
+        </button>
+        </div>
       )}
 
       <div className="min-h-0 flex-1">
@@ -584,7 +678,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
             <div className="flex min-h-0 flex-1 flex-col">
               {activeTab === 'local' ? localPaneEl : remotePaneEl}
             </div>
-            <div className="flex shrink-0 items-center justify-center gap-2">
+            {selecting ? selectionBar : <div className="flex shrink-0 items-center justify-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -605,7 +699,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
                 <ArrowDown className="h-3.5 w-3.5" />
                 {t('sftp.download', { n: remoteSelected.size })}
               </Button>
-            </div>
+            </div>}
           </div>
         ) : (
           <div className="flex h-full min-h-0">

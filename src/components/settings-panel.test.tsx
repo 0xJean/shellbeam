@@ -6,6 +6,7 @@ import zhCN from '@/lib/locales/zh-CN'
 import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
 import { settingsV3Copy } from '@/lib/locales/settings-v3'
 import { fill } from '@/lib/locales/probe-install'
+import { consumeSettingsCategoryRequest, requestSettingsCategory } from '@/lib/settings-request'
 import { SettingsPanel } from './settings-panel'
 
 vi.mock('@/components/terminal-widgets', () => ({ TerminalThemeGrid: () => <div>Terminal themes</div> }))
@@ -72,5 +73,14 @@ describe('settings categories', () => {
     for (const id of ['mcp-settings', 'agent-settings', 'probe-retry-settings']) expect(screen.getByTestId(id)).toBeVisible()
     expect(screen.getByRole('heading', { name: text['settings.dangerZone'] })).toBeVisible()
     expect(screen.queryByTestId('komari-settings')).not.toBeInTheDocument()
+  })
+
+  it('opens a category chosen by the mobile settings list without its own navigation', () => {
+    localStorage.setItem('shellbeam.locale', 'en')
+    requestSettingsCategory('monitoring')
+    render(<I18nProvider><SettingsPanel {...props()} category="connection" hideNavigation /></I18nProvider>)
+    expect(screen.queryByRole('navigation', { name: settingsNavigationCopy.en.navigation })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: settingsNavigationCopy.en.connection })).toBeVisible()
+    expect(consumeSettingsCategoryRequest()).toBe('monitoring')
   })
 })

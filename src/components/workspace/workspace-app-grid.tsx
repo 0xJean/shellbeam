@@ -149,6 +149,30 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
   )
 }
 
+/** v3 springboard tile: the app's gradient icon with an optional count badge. */
+export function WorkspaceAppIcon({ app, size = 'lg', badge }: { app: WorkspaceAppId; size?: 'lg' | 'md' | 'sm'; badge?: number }) {
+  const meta = APPS.find((entry) => entry.id === app)
+  if (!meta) return null
+  const Icon = meta.icon
+  return (
+    <span
+      data-testid={`workspace-app-icon-${app}`}
+      className={cn(
+        'relative flex shrink-0 items-center justify-center bg-gradient-to-br ring-1 ring-[var(--workspace-border-soft)]',
+        size === 'lg' ? 'h-[60px] w-[60px] rounded-[14px] shadow-md' : size === 'md' ? 'h-[52px] w-[52px] rounded-[12px] shadow-sm' : 'h-[34px] w-[34px] rounded-[8px]',
+        meta.accent,
+      )}
+    >
+      <Icon aria-hidden="true" className={cn('text-[var(--workspace-primary-foreground)] drop-shadow-sm', size === 'lg' ? 'h-[30px] w-[30px]' : size === 'md' ? 'h-7 w-7' : 'h-[18px] w-[18px]')} />
+      {badge ? (
+        <em aria-hidden="true" className="absolute -right-[7px] -top-[6px] flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-[var(--workspace-status-bad)] px-1.5 text-[13px] font-semibold not-italic text-[var(--workspace-primary-foreground)] shadow-sm">
+          {badge > 99 ? '99+' : badge}
+        </em>
+      ) : null}
+    </span>
+  )
+}
+
 /** Vertical app navigation for the workspace's list layout. */
 export function WorkspaceAppList({ activeApp, onSelectApp }: { activeApp: WorkspaceAppId; onSelectApp: (app: WorkspaceAppId) => void }) {
   return (

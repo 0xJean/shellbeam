@@ -38,7 +38,7 @@ interface ReconnectSettings {
   intervalMs: number
 }
 
-interface SettingsPanelProps {
+export interface SettingsPanelProps {
   onOpenGuide?: () => void
   vaultAutoLockMinutes: number
   reconnectSettings: ReconnectSettings
@@ -52,6 +52,9 @@ interface SettingsPanelProps {
   onReconnectSettingsChange: (next: Partial<ReconnectSettings>) => void
   onDefaultUsernameChange: (value: string) => void
   onKeepAliveIntervalSecsChange: (value: number) => void
+  /** Opens this category and follows the prop instead of the panel's own navigation. */
+  category?: SettingsCategory
+  hideNavigation?: boolean
 }
 
 const TERMINAL_FONT_OPTIONS = [
@@ -81,20 +84,24 @@ export function SettingsPanel({
   onReconnectSettingsChange,
   onDefaultUsernameChange,
   onKeepAliveIntervalSecsChange,
+  category: controlledCategory,
+  hideNavigation = false,
 }: SettingsPanelProps) {
   const { t, locale, setLocale } = useT()
   const copy = settingsNavigationCopy[locale]
-  const [category, setCategory] = useState<SettingsCategory>(() => consumeSettingsCategoryRequest() ?? 'general')
+  const [ownCategory, setCategory] = useState<SettingsCategory>(() => (controlledCategory ? null : consumeSettingsCategoryRequest()) ?? 'general')
+  const category = controlledCategory ?? ownCategory
   useEffect(() => {
+    if (controlledCategory) return
     const onRequest = () => { const next = consumeSettingsCategoryRequest(); if (next) setCategory(next) }
     window.addEventListener(SETTINGS_CATEGORY_REQUEST_EVENT, onRequest)
     return () => window.removeEventListener(SETTINGS_CATEGORY_REQUEST_EVENT, onRequest)
-  }, [])
+  }, [controlledCategory])
   const v3 = settingsV3Copy[locale]
   const stepLabels = (label: string) => ({ label, decreaseLabel: fill(v3.decrease, { label }), increaseLabel: fill(v3.increase, { label }) })
   return (
-    <div className="flex w-full min-w-0 flex-col gap-4 p-6 md:flex-row md:items-start md:gap-8">
-      <div className="shrink-0 md:sticky md:top-6 md:w-52">
+    <div className={cn('flex w-full min-w-0 flex-col gap-4 md:flex-row md:items-start md:gap-8', hideNavigation ? 'px-4 pb-8 pt-2' : 'p-6')}>
+      {!hideNavigation && <div className="shrink-0 md:sticky md:top-6 md:w-52">
         <h2 className="flex items-center gap-2 px-1 text-2xl font-semibold text-[var(--workspace-text-strong)]">
           <Settings className="h-5 w-5 md:hidden" />
           {t('settings.title')}
@@ -108,7 +115,7 @@ export function SettingsPanel({
               onClick={() => setCategory(item)}><Icon className={cn('h-4 w-4 shrink-0', category === item && 'text-[var(--workspace-accent-text)]')} aria-hidden="true" />{copy[item]}</button>
           ))}
         </nav>
-      </div>
+      </div>}
       <div id="settings-category-content" className={cn('min-w-0 flex-1 space-y-4', category === 'connection' || category === 'advanced' ? 'max-w-6xl' : 'max-w-4xl')} role="region" aria-label={copy[category]}>
         {category === 'general' && <>
         <section className="sb-card p-4">

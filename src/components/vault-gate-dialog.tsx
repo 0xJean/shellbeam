@@ -16,6 +16,7 @@ import { useVault } from '@/contexts/vault-context'
 import { useT } from '@/lib/i18n'
 import { welcomeLockCopy } from '@/lib/locales/welcome-lock-v3'
 import { fill } from '@/lib/locales/probe-install'
+import { cn } from '@/lib/utils'
 import type { VaultStatus } from '@/lib/vault'
 import { offerVaultSetup, useWelcomeOwnsVaultSetup } from '@/lib/vault-setup-handoff'
 import { CornerDownLeft, Fingerprint, Loader2, Lock, ShieldAlert } from 'lucide-react'
@@ -192,8 +193,8 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
 
   return (
     <Dialog open={open && !deferToWelcome} onOpenChange={() => {}}>
-      <DialogContent className="flex h-auto max-h-dvh items-center justify-center border-0 bg-transparent p-4 md:max-w-sm md:p-0">
-        <div data-testid="vault-gate-card" className="sb-card w-full max-w-sm overflow-hidden px-8 pb-6 pt-8 shadow-2xl">
+      <DialogContent className="flex h-auto max-h-dvh items-center justify-center border-0 bg-transparent p-4 md:max-w-sm md:p-0 max-md:min-h-dvh max-md:bg-[var(--workspace-surface-950)] max-md:px-0 max-md:pb-[env(safe-area-inset-bottom)] max-md:pt-[env(safe-area-inset-top)]">
+        <div data-testid="vault-gate-card" className="sb-card w-full max-w-sm overflow-hidden px-8 pb-6 pt-8 shadow-2xl max-md:!border-0 max-md:!bg-transparent max-md:!shadow-none max-md:px-6">
 
           {/* ── Phase: Biometric auto-unlock ── */}
           {phase === 'biometric' && (
@@ -206,11 +207,12 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
                 ) : (
                   <button type="button" aria-label={t('vault.biometricPrompt', { type: bioLabel })}
                     onClick={() => { bioTriggeredRef.current = false; void attemptBiometricUnlock() }}
-                    className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[color:var(--workspace-accent-subtle)] text-[color:var(--workspace-accent-text)] transition-opacity active:opacity-80">
-                    <Fingerprint className="h-8 w-8" />
+                    className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[color:var(--workspace-accent-subtle)] text-[color:var(--workspace-accent-text)] transition-opacity active:opacity-80 max-md:h-12 max-md:w-full max-md:gap-2 max-md:rounded-xl max-md:bg-[color:var(--workspace-primary-500)] max-md:text-white">
+                    <Fingerprint className="h-8 w-8 max-md:h-5 max-md:w-5" />
+                    <span className="text-[15px] font-semibold md:hidden">{fill(c.useBiometric, { type: bioLabel })}</span>
                   </button>
                 )}
-                <button type="button" onClick={() => setPhase('password')} className={quietBtn}>
+                <button type="button" onClick={() => setPhase('password')} className={cn(quietBtn, 'max-md:min-h-[44px] max-md:px-3 max-md:text-[15px] max-md:text-[color:var(--workspace-accent-text)]')}>
                   {t('vault.usePassword')}
                 </button>
               </div>
@@ -234,7 +236,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
                   </div>
                 )}
                 <div>
-                  <div className="flex h-10 items-center gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[color:var(--workspace-surface-950)] px-3 focus-within:border-[color:var(--workspace-primary-500)] focus-within:ring-2 focus-within:ring-[color:var(--workspace-accent-subtle)]">
+                  <div className="flex h-10 items-center gap-2 rounded-lg border max-md:h-12 max-md:rounded-xl border-[color:var(--workspace-border-soft)] bg-[color:var(--workspace-surface-950)] px-3 focus-within:border-[color:var(--workspace-primary-500)] focus-within:ring-2 focus-within:ring-[color:var(--workspace-accent-subtle)]">
                     <Lock className="h-4 w-4 shrink-0 text-[color:var(--workspace-text-subtle)]" />
                     <Input data-testid="vault-master-password" aria-label={isInitialized ? t('vault.enterPassword') : t('vault.setPassword')} type="password" value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -251,7 +253,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
                     </div>
                   )}
                 </div>
-                <Button data-testid="vault-submit" type="submit" className="h-10 w-full rounded-lg bg-[color:var(--workspace-primary-500)] font-semibold text-white hover:opacity-90"
+                <Button data-testid="vault-submit" type="submit" className="h-10 w-full rounded-lg bg-[color:var(--workspace-primary-500)] font-semibold text-white hover:opacity-90 max-md:h-12 max-md:rounded-xl max-md:text-[15px]"
                   disabled={busy || !password.trim()}>
                   {busy
                     ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{isInitialized ? t('vault.unlocking') : t('vault.initializing')}</>
@@ -266,7 +268,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
                     </div>
                     <button type="button" aria-label={t('vault.retryBiometric', { type: bioLabel })}
                       onClick={() => { setPhase('biometric'); bioTriggeredRef.current = false }}
-                      className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] text-sm font-medium text-[color:var(--workspace-text-strong)] transition-colors hover:border-[color:var(--workspace-border-strong)]">
+                      className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] max-md:h-12 max-md:rounded-xl text-sm font-medium text-[color:var(--workspace-text-strong)] transition-colors hover:border-[color:var(--workspace-border-strong)]">
                       <Fingerprint className="h-4 w-4" />
                       {fill(c.useBiometric, { type: bioLabel })}
                     </button>
@@ -291,14 +293,14 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
                     <span className="whitespace-pre-line">{optInError}</span>
                   </div>
                 )}
-                <Button className="h-10 w-full gap-2 rounded-lg bg-[color:var(--workspace-primary-500)] font-semibold text-white hover:opacity-90"
+                <Button className="h-10 w-full gap-2 rounded-lg bg-[color:var(--workspace-primary-500)] font-semibold text-white hover:opacity-90 max-md:h-12 max-md:rounded-xl"
                   onClick={() => void handleEnableBiometric()} disabled={busy}>
                   {busy
                     ? <Loader2 className="h-4 w-4 animate-spin" />
                     : <><Fingerprint className="h-4 w-4" />{t('vault.biometricOptInEnable', { type: bioLabel })}</>
                   }
                 </Button>
-                <button data-testid="vault-biometric-skip" type="button" onClick={handleSkipBiometric} className={quietBtn}>
+                <button data-testid="vault-biometric-skip" type="button" onClick={handleSkipBiometric} className={cn(quietBtn, 'max-md:min-h-[44px] max-md:text-sm')}>
                   {t('vault.biometricOptInSkip')}
                 </button>
               </div>
@@ -313,10 +315,10 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn }:
 /** Reusable header block for the gate dialog */
 function GateHeader({ title, desc }: { title: string; desc: string }) {
   return (
-    <div className="mb-5 flex flex-col items-center text-center">
-      <img src={logoUrl} alt="ShellBeam" className="mb-4 h-14 w-14 rounded-2xl" />
-      <h3 className="text-lg font-semibold tracking-tight text-[color:var(--workspace-text-strong)]">{title}</h3>
-      <p className="mt-1 text-xs leading-relaxed text-[color:var(--workspace-text-muted)]">{desc}</p>
+    <div className="mb-5 flex flex-col items-center text-center max-md:mb-10">
+      <img src={logoUrl} alt="ShellBeam" className="mb-4 h-14 w-14 rounded-2xl max-md:h-[76px] max-md:w-[76px] max-md:rounded-[22px]" />
+      <h3 className="text-lg font-semibold tracking-tight text-[color:var(--workspace-text-strong)] max-md:text-[22px]">{title}</h3>
+      <p className="mt-1 text-xs leading-relaxed text-[color:var(--workspace-text-muted)] max-md:text-[13px]">{desc}</p>
     </div>
   )
 }

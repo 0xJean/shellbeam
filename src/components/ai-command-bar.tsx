@@ -3,12 +3,18 @@ import { useT } from '@/lib/i18n'
 import { Sparkles, Send, Copy, Play, X, Loader2, AlertCircle, RotateCcw, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { streamAICommand, loadAISettings, isAIConfigured, createAbortController } from '@/lib/ai'
+import { AiAssistantSheet } from './mobile/ai-assistant-sheet'
+import { CommandRiskChip } from './mobile/command-risk-chip'
+import { useNarrowViewport } from './mobile/use-narrow-viewport'
 
 interface AICommandBarProps {
   onExecuteCommand: (command: string) => void
   getTerminalContext: () => string
   visible: boolean
   onClose: () => void
+  /** `auto` shows a bottom sheet below the md breakpoint. */
+  presentation?: 'auto' | 'inline' | 'sheet'
+  contextLabel?: string
 }
 
 interface ChatMessage {
@@ -18,8 +24,10 @@ interface ChatMessage {
   status?: 'executed' | 'copied'
 }
 
-export function AICommandBar({ onExecuteCommand, getTerminalContext, visible, onClose }: AICommandBarProps) {
+export function AICommandBar({ onExecuteCommand, getTerminalContext, visible, onClose, presentation = 'auto', contextLabel }: AICommandBarProps) {
   const { t } = useT()
+  const narrow = useNarrowViewport()
+  const asSheet = presentation === 'sheet' || (presentation === 'auto' && narrow)
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streamingContent, setStreamingContent] = useState('')
@@ -107,14 +115,14 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, visible, on
     setIsStreaming(false)
   }, [])
 
-  const handleExecute = useCallback((msg: ChatMessage) => {
-    onExecuteCommand(msg.content + '\n')
-    setMessages((prev) => [...prev, { id: `s-${Date.now()}`, role: 'status', content: msg.content, status: 'executed' }])
+  const handleExecute = useCallback((msg: ChatMessage, command = msg.content) => {
+    onExecuteCommand(command + '\n')
+    setMessages((prev) => [...prev, { id: `s-${Date.now()}`, role: 'status', content: command, status: 'executed' }])
   }, [onExecuteCommand])
 
-  const handleCopy = useCallback(async (msg: ChatMessage) => {
+  const handleCopy = useCallback(async (msg: ChatMessage, command = msg.content) => {
     try {
-      await navigator.clipboard.writeText(msg.content)
+      await navigator.clipboard.writeText(command)
       setCopiedId(msg.id)
       setTimeout(() => setCopiedId(null), 1500)
     } catch { /* clipboard not available */ }
@@ -134,6 +142,28 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, visible, on
   }, [handleSubmit, handleCancel, isStreaming, onClose])
 
   if (!visible) return null
+
+  if (asSheet) return (
+    <AiAssistantSheet
+      contextLabel={contextLabel}
+      messages={messages}
+      streamingContent={streamingContent}
+      isStreaming={isStreaming}
+      error={error}
+      copiedId={copiedId}
+      input={input}
+      onInputChange={setInput}
+      onInputKeyDown={handleKeyDown}
+      onSubmit={() => void handleSubmit()}
+      onCancel={handleCancel}
+      onRun={(msg, command) => handleExecute(msg, command)}
+      onCopy={(msg, command) => void handleCopy(msg, command)}
+      onNewChat={handleNewChat}
+      onClose={onClose}
+      inputRef={inputRef}
+      scrollRef={scrollRef}
+    />
+  )
 
   const hasMessages = messages.length > 0 || streamingContent || error
 
@@ -164,6 +194,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, visible, on
                       className="flex h-6 items-center gap-1 rounded-md border border-primary/20 bg-primary/10 px-2 text-[10px] font-medium text-blue-300 transition-colors hover:bg-primary/20">
                       {copiedId === msg.id ? <><Check className="h-2.5 w-2.5" /> {t('ai.copied')}</> : <><Copy className="h-2.5 w-2.5" /> {t('ai.copy')}</>}
                     </button>
+                    <CommandRiskChip command={msg.content} compact />
                   </div>
                 </div>
               )}

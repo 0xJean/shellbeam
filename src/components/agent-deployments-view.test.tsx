@@ -66,4 +66,18 @@ describe('AgentDeploymentsView', () => {
     expect(screen.getByTestId('agent-deployment-terminal')).toBeDisabled()
     expect(screen.getByTestId('agent-deployment-sftp')).toBeDisabled()
   })
+
+  it('takes turns between list and detail below the md breakpoint', () => {
+    render(<AgentDeploymentsView deployments={deployments} hosts={hosts} inventoryFor={() => undefined} />)
+    const list = screen.getAllByTestId('agent-deployment-row')[0].closest('.sb-card')!
+    expect(screen.getByTestId('agent-deployment-detail')).toHaveClass('max-md:hidden')
+    expect(list).not.toHaveClass('max-md:hidden')
+    fireEvent.click(screen.getAllByTestId('agent-deployment-row')[1])
+    expect(screen.getByTestId('agent-deployment-detail')).not.toHaveClass('max-md:hidden')
+    expect(screen.getByTestId('agent-deployment-path')).toHaveTextContent('/srv/llm')
+    expect(list).toHaveClass('max-md:hidden')
+    fireEvent.click(screen.getByTestId('agent-deployment-back'))
+    expect(list).not.toHaveClass('max-md:hidden')
+    expect(screen.getByTestId('agent-deployment-detail')).toHaveClass('max-md:hidden')
+  })
 })

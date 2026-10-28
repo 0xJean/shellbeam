@@ -8,6 +8,7 @@ import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { hasSshConnection, validateHostDraft } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { probeInstallCopy } from '@/lib/locales/probe-install'
+import { identityBaseName, type ParsedSshCommand } from '@/lib/ssh-command-parse'
 import { testSshConnection } from '@/lib/sessions'
 import type { AuthType } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
@@ -31,6 +32,8 @@ interface HostFormProps {
   availableHosts?: HostProfile[]
   metadataControls?: ReactNode
   connectionOnly?: boolean
+  /** Optional block above the fields (mobile clipboard detection) that can fill them from a parsed `ssh` command. */
+  renderPrefill?: (apply: (command: ParsedSshCommand) => void) => ReactNode
 }
 
 export function HostForm({
@@ -49,6 +52,7 @@ export function HostForm({
   availableHosts = [],
   metadataControls,
   connectionOnly = false,
+  renderPrefill,
 }: HostFormProps) {
   const [connectionSecretId] = useState(() => crypto.randomUUID())
   const [monitoringMode, setMonitoringMode] = useState(initial?.monitoringMode ?? 'ssh')
@@ -111,6 +115,26 @@ export function HostForm({
         : { status: 'failed', signature, kind: ['auth', 'network', 'validation'].includes(result.errorType ?? '') ? result.errorType : 'unknown', message: result.message })
     } catch (e) {
       setTest({ status: 'failed', signature, kind: 'unknown', message: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  function applySshCommand(command: ParsedSshCommand) {
+    setAddress(command.host)
+    if (command.port) setPort(String(command.port))
+    if (command.username) setUsername(command.username)
+    if (command.identityFile) {
+      setAuthType('privateKey')
+      const keyName = identityBaseName(command.identityFile)
+      if (vaultKeys.includes(keyName)) { setVaultKeyRef(keyName); setUseInlineSecret(false) }
+    }
+    if (command.jump) {
+      const jump = command.jump
+      const profile = availableHosts.find((host) => hasSshConnection(host) && !host.jumpHost?.trim() && !host.jumpHostId
+        && host.address === jump.host && host.port === (jump.port ?? 22) && (!jump.username || host.username === jump.username))
+      setJumpHostId(profile?.id ?? '')
+      setJumpHost(profile?.address ?? jump.host)
+      setJumpPort(String(profile?.port ?? jump.port ?? ''))
+      setJumpUser(profile?.username ?? jump.username ?? '')
     }
   }
 
@@ -191,6 +215,7 @@ export function HostForm({
         </div>
 
         <div className="max-h-[min(68dvh,40rem)] space-y-4 overflow-y-auto px-5 py-4 max-md:max-h-none">
+        {renderPrefill?.(applySshCommand)}
         {error && (
           <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
         )}

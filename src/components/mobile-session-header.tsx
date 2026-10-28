@@ -1,13 +1,16 @@
 import type { HostProfile } from '@/lib/hosts'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import { useT } from '@/lib/i18n'
+import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
+import { requestTerminalAiToggle } from '@/lib/terminal-events'
 import type { SessionTab } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
-import { ChevronDown, Plus, Server, SquareTerminal, X, Zap } from 'lucide-react'
+import { ChevronDown, ChevronLeft, Ellipsis, Sparkles } from 'lucide-react'
 import { useState } from 'react'
-import { getHostInventoryResource, HostMetadataLine, HostSystemMeta, resolveHostForDisplay } from './host-display-meta'
-import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
+import { MobileNoSession } from './mobile/mobile-no-session'
+import { MobileSessionSheet } from './mobile/mobile-session-sheet'
+import { sessionStatusDot } from './mobile/mobile-terminal-styles'
 
 interface MobileSessionHeaderProps {
   sessionTabs: SessionTab[]
@@ -18,7 +21,12 @@ interface MobileSessionHeaderProps {
   onOpenLocalTerminal: () => void
   hosts?: HostProfile[]
   onConnectHost?: (hostId: string) => void
+  onBack?: () => void
+  /** Opens the terminal side drawer (snippets, history, look). */
+  onOpenDrawer?: () => void
 }
+
+const iconButton = 'flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--workspace-text)] active:bg-[var(--workspace-surface-800)]'
 
 export function MobileSessionHeader({
   sessionTabs,
@@ -29,221 +37,77 @@ export function MobileSessionHeader({
   onOpenLocalTerminal,
   hosts = [],
   onConnectHost,
+  onBack,
+  onOpenDrawer,
 }: MobileSessionHeaderProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const copy = mobileTerminalV3Copy[locale]
   const [listOpen, setListOpen] = useState(false)
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
-  const activeTab = sessionTabs.find((tab) => tab.sessionId === activeSessionId)
-  const activeHost = activeTab ? resolveHostForDisplay(hosts, activeTab.hostId, activeTab.hostAddress) : null
-
-  // No sessions — show rich empty state with recent hosts
   if (sessionTabs.length === 0) {
-    const recentHosts = [...hosts]
-      .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
-      .slice(0, 5)
-
     return (
-      <div className="flex flex-1 flex-col px-5 pt-10">
-        {/* Hero area */}
-        <div className="flex flex-col items-center text-center">
-          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-primary/20 to-primary/5 ring-1 ring-primary/10">
-            <SquareTerminal className="h-10 w-10 text-primary/70" />
-          </div>
-          <p className="mt-4 text-base font-semibold">{t('mobile.noSessions')}</p>
-          <p className="mt-1 text-sm text-muted-foreground">{t('mobile.noSessionsHint')}</p>
-          <div className="mt-5 flex gap-3">
-            <button
-              type="button"
-              onClick={onNewConnection}
-              className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-sm active:opacity-80"
-            >
-              <Plus className="h-4 w-4" />
-              {t('mobile.newConnection')}
-            </button>
-            <button
-              type="button"
-              onClick={onOpenLocalTerminal}
-              className="flex items-center gap-2 rounded-xl border border-border px-5 py-2.5 text-sm font-medium active:bg-muted/40"
-            >
-              <SquareTerminal className="h-4 w-4" />
-              {t('mobile.localTerminal')}
-            </button>
-          </div>
-        </div>
-
-        {/* Recent hosts quick connect */}
-        {recentHosts.length > 0 && onConnectHost && (
-          <div className="mt-8">
-            <div className="mb-3 flex items-center gap-2">
-              <Zap className="h-3.5 w-3.5 text-muted-foreground/60" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/60">
-                {t('mobile.quickConnect')}
-              </span>
-            </div>
-            <div className="space-y-1.5">
-              {recentHosts.map((host) => {
-                const resource = getHostInventoryResource(host, inventoryStates)
-                return (
-                  <button
-                    key={host.id}
-                    type="button"
-                    onClick={() => onConnectHost(host.id)}
-                    className="flex w-full items-center gap-3 rounded-xl border border-border/50 bg-card/50 px-4 py-3 text-left transition-colors active:bg-muted/40"
-                  >
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted/60">
-                      {resource?.os ? (
-                        <WorkspaceOsIcon os={resource.os} className="h-4 w-4 text-muted-foreground" />
-                      ) : (
-                        <Server className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{host.name}</p>
-                      <HostMetadataLine
-                        network={networkByAddress[host.address]}
-                        resource={resource}
-                        className="mt-0.5 flex-nowrap text-xs text-muted-foreground"
-                        itemClassName="max-w-[9rem]"
-                        iconClassName="h-3 w-3"
-                      />
-                    </div>
-                    {host.group && (
-                      <span className="shrink-0 rounded-md bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                        {host.group}
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
-      </div>
+      <MobileNoSession hosts={hosts} networkByAddress={networkByAddress} inventoryStates={inventoryStates}
+        onNewConnection={onNewConnection} onOpenLocalTerminal={onOpenLocalTerminal} onConnectHost={onConnectHost} />
     )
   }
 
+  const activeIndex = sessionTabs.findIndex((tab) => tab.sessionId === activeSessionId)
+  const activeTab = activeIndex >= 0 ? sessionTabs[activeIndex] : undefined
+
   return (
     <>
-      {/* Compact header bar */}
-      <div className="flex h-11 shrink-0 items-center border-b border-border/50 bg-background/95 px-2">
-        {/* Session selector */}
-        <button
-          type="button"
-          onClick={() => setListOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/40"
-        >
-          <span className={cn(
-            'h-2 w-2 shrink-0 rounded-full',
-            activeTab?.status === 'connected' ? 'bg-emerald-500' : activeTab?.status === 'error' ? 'bg-red-500' : 'bg-amber-500'
-          )} />
-          {activeHost && (
-            <HostSystemMeta
-              resource={getHostInventoryResource(activeHost, inventoryStates)}
-              showText={false}
-              iconClassName="h-3.5 w-3.5"
-            />
-          )}
-          <span className="min-w-0 truncate text-sm font-medium">
-            {activeTab?.hostName || activeTab?.hostAddress || t('mobile.selectSession')}
-          </span>
-          <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', listOpen && 'rotate-180')} />
-          {sessionTabs.length > 1 && (
-            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1 text-[10px] font-bold text-muted-foreground">
-              {sessionTabs.length}
-            </span>
-          )}
-        </button>
-
-        {/* Close active session */}
-        {activeTab && (
+      <div data-testid="mobile-session-header" className="relative flex h-12 shrink-0 items-center gap-1 bg-[var(--workspace-surface-950)] px-1">
+        {onBack ? (
+          <button type="button" onClick={onBack} aria-label={copy.back} className={cn(iconButton, 'text-[var(--workspace-accent-text)]')}>
+            <ChevronLeft className="h-6 w-6" />
+          </button>
+        ) : <span className="w-11 shrink-0" />}
+        <div className="flex min-w-0 flex-1 justify-center">
           <button
             type="button"
-            onClick={() => onCloseSession(activeTab.sessionId)}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-            title={t('tab.close')}
+            onClick={() => setListOpen(true)}
+            aria-haspopup="dialog"
+            aria-expanded={listOpen}
+            aria-label={copy.switchSession}
+            className="flex h-11 min-w-0 max-w-full items-center gap-2 rounded-full bg-[var(--workspace-surface-800)] px-3.5 active:opacity-80"
           >
-            <X className="h-4 w-4" />
+            <span className={cn('h-2 w-2 shrink-0 rounded-full', activeTab ? sessionStatusDot(activeTab.status) : 'bg-[var(--workspace-text-subtle)]')} />
+            <span className="min-w-0 truncate text-[15px] font-semibold text-[var(--workspace-text-strong)]">
+              {activeTab?.hostName || activeTab?.hostAddress || t('mobile.selectSession')}
+            </span>
+            <span className="shrink-0 rounded-md bg-[var(--workspace-surface-700)] px-1.5 text-[11px] font-medium tabular-nums text-[var(--workspace-text-muted)]">
+              {activeIndex >= 0 ? `${activeIndex + 1}/${sessionTabs.length}` : sessionTabs.length}
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0 text-[var(--workspace-text-muted)]" />
           </button>
-        )}
-
-        {/* New connection */}
-        <button
-          type="button"
-          onClick={onNewConnection}
-          className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-          title={t('mobile.newConnection')}
-        >
-          <Plus className="h-4 w-4" />
-        </button>
+        </div>
+        {activeTab?.status === 'connected' ? (
+          <button type="button" onClick={() => requestTerminalAiToggle(activeTab.sessionId)} aria-label={copy.aiAssistant} className={iconButton}>
+            <Sparkles className="h-5 w-5" />
+          </button>
+        ) : <span className="w-11 shrink-0" />}
+        {onOpenDrawer ? (
+          <button type="button" onClick={onOpenDrawer} aria-label={copy.more} className={iconButton}>
+            <Ellipsis className="h-5 w-5" />
+          </button>
+        ) : <span className="w-11 shrink-0" />}
       </div>
 
-      {/* Session list overlay */}
       {listOpen && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setListOpen(false)} />
-          <div className="absolute inset-x-0 top-11 z-40 border-b border-border bg-background shadow-lg">
-            <div className="max-h-64 overflow-y-auto p-2">
-              {sessionTabs.map((tab) => {
-                const isActive = tab.sessionId === activeSessionId
-                const tabHost = resolveHostForDisplay(hosts, tab.hostId, tab.hostAddress)
-                return (
-                  <button
-                    key={tab.sessionId}
-                    type="button"
-                    onClick={() => { onSelectSession(tab.sessionId); setListOpen(false) }}
-                    className={cn(
-                      'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors',
-                      isActive ? 'bg-primary/10' : 'hover:bg-muted/40',
-                    )}
-                  >
-                    <span className={cn(
-                      'h-2 w-2 shrink-0 rounded-full',
-                      tab.status === 'connected' ? 'bg-emerald-500' : tab.status === 'error' ? 'bg-red-500' : 'bg-amber-500'
-                    )} />
-                    <div className="min-w-0 flex-1">
-                      <p className={cn('truncate text-sm', isActive ? 'font-medium text-primary' : '')}>{tab.hostName || tab.hostAddress}</p>
-                      <HostMetadataLine
-                        network={tabHost ? networkByAddress[tabHost.address] : undefined}
-                        resource={getHostInventoryResource(tabHost, inventoryStates)}
-                        regionLabel={tab.hostAddress && tab.hostName ? tab.hostAddress : undefined}
-                        className="mt-0.5 flex-nowrap text-[11px] text-muted-foreground"
-                        itemClassName="max-w-[8rem]"
-                        iconClassName="h-3 w-3"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); onCloseSession(tab.sessionId); if (sessionTabs.length <= 1) setListOpen(false) }}
-                      className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-destructive"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </button>
-                )
-              })}
-            </div>
-            <div className="flex gap-2 border-t border-border/50 p-2">
-              <button
-                type="button"
-                onClick={() => { onNewConnection(); setListOpen(false) }}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors hover:bg-muted/40"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {t('mobile.newConnection')}
-              </button>
-              <button
-                type="button"
-                onClick={() => { onOpenLocalTerminal(); setListOpen(false) }}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors hover:bg-muted/40"
-              >
-                <SquareTerminal className="h-3.5 w-3.5" />
-                {t('mobile.localTerminal')}
-              </button>
-            </div>
-          </div>
-        </>
+        <MobileSessionSheet
+          sessionTabs={sessionTabs}
+          activeSessionId={activeSessionId}
+          hosts={hosts}
+          networkByAddress={networkByAddress}
+          inventoryStates={inventoryStates}
+          onSelectSession={onSelectSession}
+          onCloseSession={(sessionId) => { onCloseSession(sessionId); if (sessionTabs.length <= 1) setListOpen(false) }}
+          onNewConnection={onNewConnection}
+          onOpenLocalTerminal={onOpenLocalTerminal}
+          onClose={() => setListOpen(false)}
+        />
       )}
     </>
   )

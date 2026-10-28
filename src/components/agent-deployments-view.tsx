@@ -1,10 +1,11 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { Bot, Check, Copy, Cpu, FolderOpen, FolderTree, GitBranch, MessageSquareText, Package, ScanSearch, ShieldCheck, ShieldAlert, ShieldQuestion, Terminal } from 'lucide-react'
+import { Bot, Check, ChevronLeft, Copy, Cpu, FolderOpen, FolderTree, GitBranch, MessageSquareText, Package, ScanSearch, ShieldCheck, ShieldAlert, ShieldQuestion, Terminal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { getAgentDeploymentVerification, getProjectDeploymentSignals } from '@/components/project-deployments-panel'
 import { hasSshConnection, type HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { agentDeploymentsCopy } from '@/lib/locales/agent-deployments'
+import { mobileMiscV3Copy } from '@/lib/locales/mobile-misc-v3'
 import { fill } from '@/lib/locales/probe-install'
 import type { McpDeploymentRecord } from '@/lib/mcp'
 import { requestHostSftp, requestHostTerminal } from '@/lib/navigation-request'
@@ -45,6 +46,8 @@ export function AgentDeploymentsView({ deployments, hosts, inventoryFor }: Agent
   const [filter, setFilter] = useState<Status | 'all'>('all')
   const [selected, setSelected] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  // Below md the list and the detail take turns on screen; wider layouts ignore this.
+  const [detailOpen, setDetailOpen] = useState(false)
   const hostOf = (id: string) => hosts.find((host) => host.id === id)
 
   const counts = useMemo(() => deployments.reduce<Record<string, number>>((acc, d) => { acc[statusOf(d.status)] = (acc[statusOf(d.status)] ?? 0) + 1; return acc }, {}), [deployments])
@@ -64,11 +67,11 @@ export function AgentDeploymentsView({ deployments, hosts, inventoryFor }: Agent
 
   return (
     <div data-testid="agent-deployments-view" className="grid min-w-0 gap-4 lg:grid-cols-[minmax(17rem,22rem)_minmax(0,1fr)]">
-      <div className="sb-card flex min-w-0 flex-col overflow-hidden">
+      <div className={cn('sb-card flex min-w-0 flex-col overflow-hidden', detailOpen && 'max-md:hidden')}>
         <div className="flex flex-wrap gap-1 border-b border-[color:var(--workspace-border-soft)] p-2.5">
           {(['all', ...STATUSES] as const).filter((s) => s === 'all' || counts[s]).map((s) => (
             <button key={s} type="button" data-testid={`agent-filter-${s}`} aria-pressed={filter === s} onClick={() => setFilter(s)}
-              className={cn('h-6 rounded-md px-2 text-[11px] font-medium', filter === s ? 'bg-primary/10 text-[var(--workspace-accent-text)]' : 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
+              className={cn('h-6 rounded-md px-2 text-[11px] font-medium max-md:h-8 max-md:px-2.5 max-md:text-xs', filter === s ? 'bg-primary/10 text-[var(--workspace-accent-text)]' : 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
               {s === 'all' ? c.all : t(`workspace.agentDeployments.status.${s}`)} <span className="opacity-60">{s === 'all' ? deployments.length : counts[s]}</span>
             </button>
           ))}
@@ -87,8 +90,8 @@ export function AgentDeploymentsView({ deployments, hosts, inventoryFor }: Agent
                   const on = current && keyOf(current) === keyOf(d)
                   const v = verification(d)
                   return (
-                    <button key={keyOf(d)} type="button" data-testid="agent-deployment-row" aria-current={on ? 'true' : undefined} onClick={() => setSelected(keyOf(d))}
-                      className={cn('mx-2 mb-1 grid w-[calc(100%-1rem)] gap-1 rounded-lg px-3 py-2 text-left transition-colors', on ? 'bg-primary/10 shadow-[inset_3px_0_0_hsl(var(--primary))]' : 'hover:bg-[var(--workspace-surface-800)]')}>
+                    <button key={keyOf(d)} type="button" data-testid="agent-deployment-row" aria-current={on ? 'true' : undefined} onClick={() => { setSelected(keyOf(d)); setDetailOpen(true) }}
+                      className={cn('mx-2 mb-1 grid w-[calc(100%-1rem)] gap-1 rounded-lg px-3 py-2 text-left transition-colors max-md:py-2.5', on ? 'bg-primary/10 shadow-[inset_3px_0_0_hsl(var(--primary))]' : 'hover:bg-[var(--workspace-surface-800)]')}>
                       <span className="flex min-w-0 items-center gap-2">
                         <b className="truncate text-[13px] font-semibold text-[var(--workspace-text-strong)]">{d.name || d.projectKind}</b>
                         {d.projectKind && <span className="truncate rounded bg-[var(--workspace-surface-700)] px-1.5 text-[10px] text-[var(--workspace-text-muted)]">{d.projectKind}</span>}
@@ -107,15 +110,16 @@ export function AgentDeploymentsView({ deployments, hosts, inventoryFor }: Agent
           })}
         </div>
       </div>
-      {current ? <DeploymentDetail key={keyOf(current)} deployment={current} host={hostOf(current.hostId)} scan={hostOf(current.hostId) ? inventoryFor(hostOf(current.hostId)!) : undefined} copied={copied} onCopied={() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500) }} />
-        : <div className="sb-card p-6 text-sm text-[var(--workspace-text-muted)]">{c.select}</div>}
+      {current ? <DeploymentDetail key={keyOf(current)} className={cn(!detailOpen && 'max-md:hidden')} onBack={() => setDetailOpen(false)} deployment={current} host={hostOf(current.hostId)} scan={hostOf(current.hostId) ? inventoryFor(hostOf(current.hostId)!) : undefined} copied={copied} onCopied={() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500) }} />
+        : <div className={cn('sb-card p-6 text-sm text-[var(--workspace-text-muted)]', !detailOpen && 'max-md:hidden')}>{c.select}</div>}
     </div>
   )
 }
 
-function DeploymentDetail({ deployment: d, host, scan, copied, onCopied }: { deployment: McpDeploymentRecord; host?: HostProfile; scan?: { inventory?: WorkspaceInventory; updatedAt?: number }; copied: boolean; onCopied: () => void }) {
+function DeploymentDetail({ deployment: d, host, scan, copied, onCopied, onBack, className }: { deployment: McpDeploymentRecord; host?: HostProfile; scan?: { inventory?: WorkspaceInventory; updatedAt?: number }; copied: boolean; onCopied: () => void; onBack: () => void; className?: string }) {
   const { t, locale } = useT()
   const c = agentDeploymentsCopy[locale]
+  const m = mobileMiscV3Copy[locale].deploys
   const v = verificationOf(d, t, locale)
   const project = scan?.inventory?.projects.find((p) => normalizePath(p.path) === normalizePath(d.deploymentPath))
   const signals = project && scan?.inventory ? getProjectDeploymentSignals(project, scan.inventory, t) : []
@@ -128,7 +132,11 @@ function DeploymentDetail({ deployment: d, host, scan, copied, onCopied }: { dep
   const mono = (value?: string) => value ? <code className="font-mono text-[11.5px]">{value}</code> : undefined
   const title = (icon: ReactNode, label: string, hint?: string) => <div className="mb-2 flex items-center justify-between text-xs font-semibold text-[var(--workspace-text)]"><span className="inline-flex items-center gap-1.5 [&_svg]:h-3.5 [&_svg]:w-3.5 [&_svg]:text-[var(--workspace-text-subtle)]">{icon}{label}</span>{hint && <small className="font-normal text-[var(--workspace-text-subtle)]">{hint}</small>}</div>
   return (
-    <section data-testid="agent-deployment-detail" className="sb-card flex min-w-0 flex-col gap-4 p-5">
+    <section data-testid="agent-deployment-detail" className={cn('sb-card flex min-w-0 flex-col gap-4 p-5 max-md:p-4', className)}>
+      <button type="button" data-testid="agent-deployment-back" onClick={onBack}
+        className="-ml-1 -mt-1 flex min-h-[44px] w-fit items-center gap-0.5 text-[15px] text-[var(--workspace-accent-text)] md:hidden">
+        <ChevronLeft className="h-5 w-5" />{m.back}
+      </button>
       <header className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <h3 className="flex flex-wrap items-center gap-2.5 text-lg font-semibold text-[var(--workspace-text-strong)]">{d.name || d.projectKind}
@@ -136,7 +144,7 @@ function DeploymentDetail({ deployment: d, host, scan, copied, onCopied }: { dep
             <span className={cn('inline-flex items-center gap-1 text-xs font-medium', v.tone)}><v.icon className="h-3.5 w-3.5" />{v.label}</span></h3>
           <p className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">{fill(c.registered, { agent: d.agentName || c.unknownAgent, created: new Date(d.createdAt).toLocaleDateString(locale), updated: new Date(d.updatedAt).toLocaleString(locale) })}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5 max-md:w-full max-md:[&>button]:h-11 max-md:[&>button:not(:first-child)]:flex-1">
           <Button size="sm" variant="ghost" aria-label={c.copyPath} title={c.copyPath} onClick={() => { void navigator.clipboard?.writeText(d.deploymentPath); onCopied() }}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}</Button>
           <Button size="sm" variant="outline" data-testid="agent-deployment-sftp" disabled={!canOpen} className="gap-1.5" onClick={() => requestHostSftp({ vaultId: host?.vaultId, hostId: d.hostId, path: d.deploymentPath })}><FolderOpen className="h-3.5 w-3.5" />{c.openSftp}</Button>
           <Button size="sm" data-testid="agent-deployment-terminal" disabled={!canOpen} className="gap-1.5" onClick={() => requestHostTerminal({ vaultId: host?.vaultId, hostId: d.hostId, path: d.deploymentPath })}><Terminal className="h-3.5 w-3.5" />{c.openTerminal}</Button>
@@ -169,11 +177,11 @@ function DeploymentDetail({ deployment: d, host, scan, copied, onCopied }: { dep
         {title(<FolderTree />, c.components, fill(c.componentsHint, { count: d.components.length }))}
         <div className="overflow-hidden rounded-lg ring-1 ring-[color:var(--workspace-border-soft)]">
           {d.components.map((component, index) => (
-            <div key={`${component.name}:${index}`} className="grid grid-cols-[5rem_minmax(6rem,9rem)_minmax(0,1fr)_auto] items-center gap-3 border-t border-[color:var(--workspace-border-soft)] px-3 py-1.5 text-xs first:border-t-0">
-              <span className="truncate font-mono text-[10.5px] text-[var(--workspace-text-subtle)]">{component.type}</span>
-              <b className="truncate font-semibold text-[var(--workspace-text-strong)]">{component.name}{component.version && <small className="ml-1.5 font-mono font-normal text-[var(--workspace-text-subtle)]">{component.version}</small>}</b>
-              <code className="truncate font-mono text-[11px] text-[var(--workspace-text)]" title={component.path}>{component.path ?? '—'}</code>
-              <span className="text-[11px] text-[var(--workspace-text-muted)]">{component.status ?? ''}</span>
+            <div key={`${component.name}:${index}`} className="grid grid-cols-[5rem_minmax(6rem,9rem)_minmax(0,1fr)_auto] items-center gap-3 border-t border-[color:var(--workspace-border-soft)] px-3 py-1.5 text-xs first:border-t-0 max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-2 max-md:gap-y-0.5 max-md:py-2.5">
+              <span className="truncate font-mono text-[10.5px] text-[var(--workspace-text-subtle)] max-md:hidden">{component.type}</span>
+              <b className="truncate font-semibold text-[var(--workspace-text-strong)] max-md:col-start-1 max-md:row-start-1 max-md:text-sm">{component.name}<small className="ml-1.5 font-mono text-[10.5px] font-normal text-[var(--workspace-text-subtle)] md:hidden">{component.type}</small>{component.version && <small className="ml-1.5 font-mono font-normal text-[var(--workspace-text-subtle)]">{component.version}</small>}</b>
+              <code className="truncate font-mono text-[11px] text-[var(--workspace-text)] max-md:col-start-1 max-md:row-start-2" title={component.path}>{component.path ?? '—'}</code>
+              <span className="text-[11px] text-[var(--workspace-text-muted)] max-md:col-start-2 max-md:row-span-2 max-md:row-start-1">{component.status ?? ''}</span>
             </div>
           ))}
         </div>

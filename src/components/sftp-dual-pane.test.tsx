@@ -10,6 +10,8 @@ const sftpHomeDir = vi.fn()
 const fetchAndAddKnownHost = vi.fn()
 const sftpDeletePath = vi.fn()
 const sftpUploadFile = vi.fn()
+const sftpRenamePath = vi.fn()
+const sftpStatPath = vi.fn()
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 
@@ -26,10 +28,10 @@ vi.mock('@/lib/sftp', () => ({
   sftpDownloadFile: vi.fn(),
   sftpUploadFile: (payload: unknown) => sftpUploadFile(payload),
   sftpDeletePath: (payload: unknown) => sftpDeletePath(payload),
-  sftpRenamePath: vi.fn(),
+  sftpRenamePath: (payload: unknown) => sftpRenamePath(payload),
   sftpCreateDir: vi.fn(),
   sftpChmod: vi.fn(),
-  sftpStatPath: vi.fn(async () => ({ exists: false })),
+  sftpStatPath: (payload: { remotePath: string }) => sftpStatPath(payload),
   localReadFileB64: vi.fn(),
   localWriteFileB64: vi.fn(),
 }))
@@ -47,6 +49,8 @@ describe('sftp dual pane', () => {
     fetchAndAddKnownHost.mockReset()
     sftpDeletePath.mockReset()
     sftpUploadFile.mockReset()
+    sftpRenamePath.mockReset()
+    sftpStatPath.mockReset().mockResolvedValue({ exists: false })
     invoke.mockReset()
     vi.stubGlobal('crypto', webcrypto)
     let jobCount = 0
@@ -182,5 +186,39 @@ describe('sftp dual pane', () => {
     const item = await screen.findByTestId('sftp-transfer-item')
     expect(item).toHaveTextContent('drop.txt')
     await waitFor(() => expect(item).toHaveAttribute('data-state', 'failed'))
+  })
+
+  it('selects folders in touch multi-select mode and moves the selection through the rename operation', async () => {
+    sftpListDir.mockResolvedValue([
+      { path: '/root/logs', fileName: 'logs', isDir: true }, { path: '/root/a.txt', fileName: 'a.txt', isDir: false },
+    ])
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('OVERWRITE')
+    sftpStatPath.mockImplementation(async ({ remotePath }: { remotePath: string }) => ({ exists: remotePath.startsWith('/srv/') }))
+    render(<SftpDualPane hosts={[{
+      id: 'host-1', name: 'Production API', address: '10.0.0.15', port: 22, username: 'root', group: 'Default',
+      authType: 'password', tags: [], createdAt: 0, updatedAt: 0,
+    }]} selectedHostId="host-1" vaultId="team" resolveAuthSecret={async () => 'secret'} />)
+    fireEvent.click(screen.getByRole('button', { name: 'sftp.remoteTab' }))
+    await screen.findByText('logs')
+    fireEvent.click(screen.getByTestId('sftp-selection-start'))
+    expect(screen.queryByRole('button', { name: 'sftp.remoteTab' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('sftp-selection-move')).toBeDisabled()
+    fireEvent.click(screen.getByText('logs'))
+    fireEvent.click(screen.getByText('a.txt'))
+    expect(sftpListDir).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('sftp-selection-header')).toHaveTextContent('2')
+    expect(screen.getByTestId('sftp-selection-rename')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('sftp-selection-move'))
+    const destination = screen.getByRole('textbox', { name: '移动到目录' })
+    expect(destination).toHaveValue('/root')
+    fireEvent.change(destination, { target: { value: '/srv/archive/' } })
+    fireEvent.submit(destination.closest('form')!)
+    await waitFor(() => expect(sftpRenamePath).toHaveBeenCalledTimes(2))
+    expect(sftpRenamePath).toHaveBeenCalledWith(expect.objectContaining({ oldRemotePath: '/root/logs', newRemotePath: '/srv/archive/logs' }))
+    expect(sftpRenamePath).toHaveBeenCalledWith(expect.objectContaining({ oldRemotePath: '/root/a.txt', newRemotePath: '/srv/archive/a.txt' }))
+    expect(prompt).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByTestId('sftp-selection-done'))
+    expect(screen.getByRole('button', { name: 'sftp.remoteTab' })).toBeVisible()
   })
 })

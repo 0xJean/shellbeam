@@ -61,13 +61,15 @@ export interface FilePaneProps {
   onChmod?: (path: string, mode: number) => void
   onDropFiles?: (files: FileList) => void
   mutationsDisabled?: boolean
+  /** Touch multi-select: tapping a row toggles it, folders included, instead of opening it. */
+  selectionMode?: boolean
 }
 
 export function FilePane({
   title, icon, badge, entries, currentDir, loading, selectedPaths,
   onDirChange, onRefresh, onGoUp, onEnterDir, onToggleSelect,
   onSelectAll, onClearSelection, filter, onFilterChange, placeholder,
-  onDelete, onDeletePaths, onRename, onCreateDir, onChmod, onDropFiles, mutationsDisabled = false,
+  onDelete, onDeletePaths, onRename, onCreateDir, onChmod, onDropFiles, mutationsDisabled = false, selectionMode = false,
 }: FilePaneProps) {
   const { t, locale } = useT()
   const c = sftpCopyFor(locale)
@@ -279,6 +281,7 @@ export function FilePane({
                 key={entry.path}
                 className={cn(
                   'flex items-center gap-2 border-b border-[color:var(--workspace-border-soft)] px-3 py-2.5 text-xs transition-colors md:py-1.5',
+                  selectionMode && 'min-h-[48px] gap-3 text-sm',
                   selectedPaths.has(entry.path)
                     ? 'bg-[var(--workspace-surface-row-selected)] shadow-[inset_3px_0_0_hsl(var(--primary))]'
                     : 'hover:bg-[var(--workspace-surface-800)]',
@@ -304,13 +307,13 @@ export function FilePane({
                     type="button"
                     className="flex min-w-0 flex-1 items-center gap-2 text-left"
                     onClick={() => {
-                      if (entry.isDir && window.matchMedia('(max-width: 767px)').matches) {
+                      if (entry.isDir && !selectionMode && window.matchMedia('(max-width: 767px)').matches) {
                         onEnterDir(entry.path)
                       } else {
                         onToggleSelect(entry.path)
                       }
                     }}
-                    onDoubleClick={() => { if (entry.isDir) onEnterDir(entry.path) }}
+                    onDoubleClick={() => { if (entry.isDir && !selectionMode) onEnterDir(entry.path) }}
                   >
                     {entry.isDir ? (
                       <Folder className="h-4 w-4 shrink-0 text-[var(--workspace-accent-text)] md:h-3.5 md:w-3.5" />
