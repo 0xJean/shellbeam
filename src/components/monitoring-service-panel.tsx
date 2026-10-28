@@ -13,16 +13,17 @@ import { requestUserDecision } from '@/lib/user-confirmation'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 
-export function MonitoringServicePanel({ service }: { service: KomariIntegration }) {
-  return <MonitoringServiceContent key={JSON.stringify(service)} service={service} />
+interface PanelProps { service: KomariIntegration; initialTarget?: string; embedded?: boolean }
+export function MonitoringServicePanel(props: PanelProps) {
+  return <MonitoringServiceContent key={JSON.stringify(props.service)} {...props} />
 }
-function MonitoringServiceContent({ service }: { service: KomariIntegration }) {
+function MonitoringServiceContent({ service, initialTarget = 'settings', embedded = false }: PanelProps) {
   const { locale } = useT(); const c = monitoringServiceCopy[locale]; const p = policyCopy[locale]; const e = extensionCopy[locale]
   const { captureVaultScope } = useVault()
   const [values, setValues] = useState<ServiceValues | null>(null)
   const [baseline, setBaseline] = useState<ServiceValues | null>(null)
   const [extension, setExtension] = useState<ServiceValues | null>(null)
-  const [target, setTarget] = useState<string>('settings')
+  const [target, setTarget] = useState<string>(initialTarget)
   const [metrics, setMetrics] = useState<string[]>([])
   const [channels, setChannels] = useState<string[]>([])
   const [nodes, setNodes] = useState<MonitoringNode[]>([])
@@ -140,8 +141,8 @@ function MonitoringServiceContent({ service }: { service: KomariIntegration }) {
   const field = (key: string, label: string, type = 'text') => values && key in values && <label key={key} className="block min-w-0 text-sm">{label}<span className="mt-1 flex min-w-0 gap-2"><Input aria-label={label} className="min-w-0" type={type === 'password' && revealed[key] ? 'text' : type} value={String(values[key] ?? '')} disabled={busy} readOnly={reviewing} autoComplete="off" onChange={e => setValues({ ...values, [key]: type === 'number' ? Number(e.target.value) : e.target.value })} />{type === 'password' && <Button type="button" size="sm" variant="outline" aria-label={`${revealed[key] ? c.hide : c.show} ${label}`} onClick={() => setRevealed({ ...revealed, [key]: !revealed[key] })}>{revealed[key] ? c.hide : c.show}</Button>}</span></label>
   const toggle = (key: string, label: string) => values && key in values && <label key={key} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={values[key] === true} disabled={busy || reviewing} onChange={e => setValues({ ...values, [key]: e.target.checked })} />{label}</label>
   const status = (row: ServiceIntent) => ({ verified: c.verified, prepared: c.prepared, applying: c.applying, uncertain: c.uncertain, retry: c.retryState, conflict: c.conflict, cancelled: c.cancelled })[row.intent.status]
-  return <details className="mt-4 border-t pt-3" data-testid="monitoring-service-panel" data-busy={busy}>
-    <summary className="cursor-pointer text-sm font-medium">{c.title}</summary>
+  return <details className={embedded ? 'sb-card min-w-0 px-4 pb-4' : 'mt-4 border-t pt-3'} open={embedded || undefined} data-testid="monitoring-service-panel" data-busy={busy}>
+    <summary className={embedded ? '-mx-4 cursor-pointer border-b border-[color:var(--workspace-border-soft)] px-4 py-3 text-sm font-semibold text-[color:var(--workspace-text-strong)]' : 'cursor-pointer text-sm font-medium'}>{c.title}</summary>
     <p className="my-3 max-w-3xl text-xs text-muted-foreground">{c.description}</p>
     <div className="flex flex-wrap items-center gap-2">
       <NativeSelect data-testid="monitoring-service-target" aria-label={c.title} className="max-w-full rounded border bg-background px-2 py-1 text-sm" value={target} disabled={busy} onChange={e => { setTarget(e.target.value as typeof target); setValues(null); setBaseline(null); setNotice(''); setError(''); setReviewing(false); setRevealed({}) }}>{target === 'extension-lifecycle' && <option value="extension-lifecycle">{e.title} · {c.review}</option>}<option value="settings">{c.settings}</option><option value="webhook">{c.channel}</option><option value="load-policy">{p.title}</option>{[...new Set([...channels.filter(id => id !== 'webhook' && /^[a-zA-Z0-9_.:-]{1,128}$/.test(id)), ...(target.startsWith('channel:') ? [target.slice(8)] : [])])].map(id => <option key={id} value={`channel:${id}`}>{p.channelTitle} · {id}</option>)}{[...new Set([...metrics, ...(target.startsWith('retention:') ? [target.slice(10)] : [])])].map(name => <option key={name} value={`retention:${name}`}>{c.retention} · {name}</option>)}</NativeSelect>

@@ -1,7 +1,7 @@
 import { webcrypto } from 'node:crypto'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AISettingsSection } from './settings-panel'
+import { AISettingsSection } from './ai-settings-section'
 import { DEFAULT_AI_SETTINGS, loadAISettings, saveAISettings } from '@/lib/ai'
 import { modelCacheKey, MODEL_CACHE_TTL, saveModelCache } from '@/lib/ai-models'
 import en from '@/lib/locales/en'

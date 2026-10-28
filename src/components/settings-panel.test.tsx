@@ -4,6 +4,8 @@ import { I18nProvider } from '@/lib/i18n'
 import en from '@/lib/locales/en'
 import zhCN from '@/lib/locales/zh-CN'
 import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
+import { settingsV3Copy } from '@/lib/locales/settings-v3'
+import { fill } from '@/lib/locales/probe-install'
 import { SettingsPanel } from './settings-panel'
 
 vi.mock('@/components/terminal-widgets', () => ({ TerminalThemeGrid: () => <div>Terminal themes</div> }))
@@ -20,7 +22,7 @@ const props = () => ({
   onOpenGuide: vi.fn(), vaultAutoLockMinutes: 10,
   reconnectSettings: { enabled: true, maxRetries: 3, intervalMs: 1500 },
   defaultUsername: 'ops', keepAliveIntervalSecs: 30, theme: 'dark', onToggleTheme: vi.fn(),
-  terminalPrefs: { fontSize: 14, fontFamily: 'Menlo', themeId: 'default' },
+  terminalPrefs: { fontSize: 14, fontFamily: 'Menlo', themeId: 'default', cursorStyle: 'block' as const, cursorBlink: true },
   onTerminalPrefsChange: vi.fn(), onVaultAutoLockMinutesChange: vi.fn(),
   onReconnectSettingsChange: vi.fn(), onDefaultUsernameChange: vi.fn(), onKeepAliveIntervalSecsChange: vi.fn(),
 })
@@ -54,10 +56,15 @@ describe('settings categories', () => {
     expect(screen.getByRole('heading', { name: text['settings.reconnect'] })).toBeVisible()
     fireEvent.change(screen.getByDisplayValue('ops'), { target: { value: 'deploy' } })
     expect(input.onDefaultUsernameChange).toHaveBeenCalledWith('deploy')
+    fireEvent.click(screen.getByRole('button', { name: fill(settingsV3Copy[locale].increase, { label: text['settings.keepAlive'] }) }))
+    expect(input.onKeepAliveIntervalSecsChange).toHaveBeenCalledWith(31)
+    fireEvent.click(screen.getByRole('switch', { name: text['settings.autoReconnect'] }))
+    expect(input.onReconnectSettingsChange).toHaveBeenCalledWith({ enabled: false })
 
     fireEvent.click(screen.getByTestId('settings-category-monitoring'))
-    expect(screen.getByTestId('notification-settings')).toBeVisible()
     expect(screen.getByTestId('komari-settings')).toBeVisible()
+    fireEvent.click(screen.getByTestId('monitor-tab-local'))
+    expect(screen.getByTestId('notification-settings')).toBeVisible()
     fireEvent.click(within(nav).getByRole('button', { name: copy.integrations }))
     expect(screen.queryByTestId('komari-settings')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: text['settings.ai'] })).toBeVisible()

@@ -1,15 +1,21 @@
 import type { ITheme } from '@xterm/xterm'
 
+export type TerminalCursorStyle = 'block' | 'bar' | 'underline'
+
 export interface TerminalPrefs {
   fontSize: number
   fontFamily: string
   themeId: string
+  cursorStyle: TerminalCursorStyle
+  cursorBlink: boolean
 }
 
 export const DEFAULT_TERMINAL_PREFS: TerminalPrefs = {
   fontSize: 14,
   fontFamily: "'JetBrains Mono', 'Fira Code', ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Monaco, 'Courier New', monospace",
   themeId: 'hacker-green',
+  cursorStyle: 'block',
+  cursorBlink: true,
 }
 
 export interface TerminalThemeDef {

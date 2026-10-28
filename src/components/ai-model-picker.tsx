@@ -1,15 +1,18 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { RefreshCw } from 'lucide-react'
+import { Info, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { AI_PROVIDERS, type AISettings } from '@/lib/ai'
 import { discoverModels, loadModelCache, modelCacheKey, MODEL_CACHE_TTL, ModelDiscoveryError, saveModelCache, type AIModelCatalog } from '@/lib/ai-models'
 import { useT } from '@/lib/i18n'
+import { aiMcpSettingsCopy } from '@/lib/locales/ai-mcp-settings-v3'
+import { cn } from '@/lib/utils'
 
 // Remounted by the parent when endpoint/account changes; late results cannot cross accounts.
 export function AIModelPicker({ settings, onChange }: { settings: AISettings; onChange: (model: string) => void }) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const copy = aiMcpSettingsCopy[locale]
   const id = useId()
   const [catalog, setCatalog] = useState<AIModelCatalog | null>(null)
   const [busy, setBusy] = useState(false)
@@ -58,30 +61,40 @@ export function AIModelPicker({ settings, onChange }: { settings: AISettings; on
   const options = models.map((model) => ({ value: model.id, label: model.name === model.id ? model.id : `${model.name} (${model.id})` }))
   if (value && !models.some((model) => model.id === value)) options.unshift({ value, label: value })
 
+  const stale = catalog ? Date.now() - catalog.fetchedAt > MODEL_CACHE_TTL : false
+  const chip = !catalog ? copy.chipFallback : stale ? copy.chipStale : copy.chipCached
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="mb-1 text-sm text-muted-foreground">{t('settings.availableModels')}</p>
-          <Select value={value} onChange={onChange} options={options} placeholder={t('settings.modelPlaceholder')} />
-        </div>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => void refresh()}>
-          <RefreshCw className={`mr-1 h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} />
-          {t(busy ? 'settings.modelsRefreshing' : 'settings.modelsRefresh')}
-        </Button>
+    <div className="sb-card min-w-0">
+      <div className="flex items-center justify-between gap-2 border-b border-[color:var(--workspace-border-soft)] px-4 py-3">
+        <h4 className="text-sm font-semibold text-[var(--workspace-text-strong)]">{copy.modelCard}</h4>
+        <span className={cn('rounded px-1.5 py-0.5 text-[11px] font-medium', !catalog ? 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]' : stale ? 'bg-[var(--workspace-status-warn-bg)] text-[var(--workspace-status-warn-text)]' : 'bg-[var(--workspace-status-good-bg)] text-[var(--workspace-status-good-text)]')}>{chip}</span>
       </div>
-      <label htmlFor={id} className="block text-sm text-muted-foreground">{t('settings.model')}</label>
-      <Input id={id} value={value} onChange={(event) => onChange(event.target.value)} placeholder={t('settings.modelPlaceholder')} spellCheck={false} />
-      <p className="text-xs text-muted-foreground">{t('settings.modelsHelp')}</p>
-      <p role="status" className="text-xs text-muted-foreground">
-        {catalog ? t(Date.now() - catalog.fetchedAt > MODEL_CACHE_TTL ? 'settings.modelsStale' : 'settings.modelsCached', {
-          count: catalog.models.length, time: new Date(catalog.fetchedAt).toLocaleString(),
-        }) : t('settings.modelsFallback')}
-      </p>
-      {catalog && catalog.models.length === 0 && <p className="text-xs text-muted-foreground">{t('settings.modelsEmpty')}</p>}
-      {catalog && value && !catalog.models.some((model) => model.id === value) && <p className="text-xs text-amber-600 dark:text-amber-400">{t('settings.modelNotListed')}</p>}
-      {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
-      {cacheWarning && <p role="alert" className="text-xs text-amber-600 dark:text-amber-400">{t('settings.modelsCacheFailed')}</p>}
+      <div className="space-y-3 p-4">
+        <div>
+          <p className="mb-1.5 text-xs font-medium text-[var(--workspace-text)]">{t('settings.availableModels')}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 flex-[1_1_12rem]"><Select value={value} onChange={onChange} options={options} placeholder={t('settings.modelPlaceholder')} /></div>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void refresh()}>
+              <RefreshCw className={`mr-1 h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} />
+              {t(busy ? 'settings.modelsRefreshing' : 'settings.modelsRefresh')}
+            </Button>
+          </div>
+        </div>
+        <div>
+          <label htmlFor={id} className="mb-1.5 block text-xs font-medium text-[var(--workspace-text)]">{t('settings.model')}</label>
+          <Input id={id} value={value} onChange={(event) => onChange(event.target.value)} placeholder={t('settings.modelPlaceholder')} spellCheck={false} className="font-mono" />
+        </div>
+        <p role="status" className="text-xs text-[var(--workspace-text-muted)]">
+          {catalog ? t(stale ? 'settings.modelsStale' : 'settings.modelsCached', {
+            count: catalog.models.length, time: new Date(catalog.fetchedAt).toLocaleString(),
+          }) : t('settings.modelsFallback')}
+        </p>
+        {catalog && catalog.models.length === 0 && <p className="text-xs text-[var(--workspace-text-muted)]">{t('settings.modelsEmpty')}</p>}
+        {catalog && value && !catalog.models.some((model) => model.id === value) && <p className="text-xs text-[var(--workspace-status-warn-text)]">{t('settings.modelNotListed')}</p>}
+        {error && <p role="alert" className="text-xs text-[var(--workspace-status-bad-text)]">{error}</p>}
+        {cacheWarning && <p role="alert" className="text-xs text-[var(--workspace-status-warn-text)]">{t('settings.modelsCacheFailed')}</p>}
+        <p className="flex items-start gap-2 text-xs text-[var(--workspace-text-subtle)]"><Info aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0" />{t('settings.modelsHelp')}</p>
+      </div>
     </div>
   )
 }

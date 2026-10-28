@@ -186,8 +186,8 @@ export function SessionTerminalView({
 
     const activeTheme = getThemeById(terminalPrefs?.themeId ?? DEFAULT_TERMINAL_PREFS.themeId)
     const term = new Terminal({
-      cursorBlink: true,
-      cursorStyle: 'block',
+      cursorBlink: terminalPrefs?.cursorBlink ?? DEFAULT_TERMINAL_PREFS.cursorBlink,
+      cursorStyle: terminalPrefs?.cursorStyle ?? DEFAULT_TERMINAL_PREFS.cursorStyle,
       fontSize: terminalPrefs?.fontSize ?? DEFAULT_TERMINAL_PREFS.fontSize,
       fontFamily: terminalPrefs?.fontFamily ?? DEFAULT_TERMINAL_PREFS.fontFamily,
       fontWeight: 400,
@@ -327,8 +327,10 @@ export function SessionTerminalView({
     term.options.theme = themeDef.theme
     term.options.fontSize = terminalPrefs.fontSize ?? DEFAULT_TERMINAL_PREFS.fontSize
     term.options.fontFamily = terminalPrefs.fontFamily ?? DEFAULT_TERMINAL_PREFS.fontFamily
+    term.options.cursorStyle = terminalPrefs.cursorStyle ?? DEFAULT_TERMINAL_PREFS.cursorStyle
+    term.options.cursorBlink = terminalPrefs.cursorBlink ?? DEFAULT_TERMINAL_PREFS.cursorBlink
     try { fitRef.current?.fit() } catch { /* teardown */ }
-  }, [terminalPrefs?.themeId, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, chromeOnly])
+  }, [terminalPrefs?.themeId, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, terminalPrefs?.cursorStyle, terminalPrefs?.cursorBlink, chromeOnly])
 
   const prevVisibleRef = useRef(visible)
   useEffect(() => {

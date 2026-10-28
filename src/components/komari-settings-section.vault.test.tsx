@@ -263,9 +263,9 @@ describe('Komari settings with the real Vault save handler', () => {
       fireEvent.click(screen.getByRole('button', { name: en['settings.komariRefresh'] }))
       await waitFor(() => expect(listKomariIntegrations).toHaveBeenCalledTimes(2))
       fireEvent.click(screen.getByRole('button', { name: action === 'new' ? settingsNavigationCopy.en.addSource : second.name }))
-    fireEvent.change(screen.getByLabelText(monitoringServiceCopy[localStorage.getItem('shellbeam.locale') === 'zh-CN' ? 'zh-CN' : 'en'].access), { target: { value: 'key' } })
+    fireEvent.click(screen.getByRole('radio', { name: monitoringServiceCopy[localStorage.getItem('shellbeam.locale') === 'zh-CN' ? 'zh-CN' : 'en'].key }))
     } else fireEvent.click(screen.getByRole('button', { name: settingsNavigationCopy.en.addSource }))
-    fireEvent.change(screen.getByLabelText(monitoringServiceCopy[localStorage.getItem('shellbeam.locale') === 'zh-CN' ? 'zh-CN' : 'en'].access), { target: { value: 'key' } })
+    fireEvent.click(screen.getByRole('radio', { name: monitoringServiceCopy[localStorage.getItem('shellbeam.locale') === 'zh-CN' ? 'zh-CN' : 'en'].key }))
     const expectedName = action === 'selection' ? second.name : 'New draft Komari'
     const expectedEndpoint = action === 'selection' ? second.endpoint : 'https://draft.example'
     const input = screen.getByLabelText(en['settings.komariApiKey'])
@@ -386,7 +386,7 @@ describe('Komari settings with the real Vault save handler', () => {
       render(<I18nProvider><VaultProvider setOutput={output}><KomariSettingsSection /><VaultContract /></VaultProvider></I18nProvider>)
       await waitFor(() => expect(screen.getByTestId('vault-ready')).toHaveTextContent('true'))
       fireEvent.click(screen.getByRole('button', { name: settingsNavigationCopy.en.addSource }))
-    fireEvent.change(screen.getByLabelText(monitoringServiceCopy[localStorage.getItem('shellbeam.locale') === 'zh-CN' ? 'zh-CN' : 'en'].access), { target: { value: 'key' } })
+    fireEvent.click(screen.getByRole('radio', { name: monitoringServiceCopy[localStorage.getItem('shellbeam.locale') === 'zh-CN' ? 'zh-CN' : 'en'].key }))
       fireEvent.change(screen.getByLabelText(en['settings.komariName']), { target: { value: saved.name } })
       fireEvent.change(screen.getByLabelText(en['settings.komariEndpoint']), { target: { value: saved.endpoint } })
       const input = screen.getByLabelText(en['settings.komariApiKey'])

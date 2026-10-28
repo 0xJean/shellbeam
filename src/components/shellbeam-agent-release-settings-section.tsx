@@ -1,6 +1,11 @@
 import { Button } from '@/components/ui/button'
+import { SegmentedChoice, SettingRow, SettingsGroup, SettingsNote, SettingSwitch } from '@/components/settings-controls'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { useT } from '@/lib/i18n'
+import { fill } from '@/lib/locales/probe-install'
+import { settingsV3Copy } from '@/lib/locales/settings-v3'
+import { cn } from '@/lib/utils'
 import {
   DEFAULT_SHELLBEAM_AGENT_RELEASE_SETTINGS,
   loadShellbeamAgentReleaseSettings,
@@ -15,7 +20,8 @@ import { useState } from 'react'
 const CHANNELS: ShellbeamAgentReleaseChannel[] = ['stable', 'preview', 'canary']
 
 export function ShellbeamAgentReleaseSettingsSection() {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const v3 = settingsV3Copy[locale]
   const [settings, setSettings] = useState<ShellbeamAgentReleaseSettings>(loadShellbeamAgentReleaseSettings)
   const [hostText, setHostText] = useState(() => loadShellbeamAgentReleaseSettings().artifactAllowedHosts.join(', '))
   const [saved, setSaved] = useState(false)
@@ -58,110 +64,81 @@ export function ShellbeamAgentReleaseSettingsSection() {
   const summary = shellbeamAgentReleaseSettingsSummary(settings)
   const previewAvailable = settings.allowedChannels.some((channel) => channel === 'preview' || channel === 'canary')
 
+  const label = 'text-xs font-medium text-[var(--workspace-text)]'
+  const hint = 'mt-1 text-[11px] text-[var(--workspace-text-subtle)]'
+  const mono = 'mt-1 h-8 font-mono text-xs'
   return (
-    <section className="rounded-lg border p-4" data-testid="agent-release-settings">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="flex items-center gap-2 font-semibold"><Radio className="h-4 w-4" />{t('settings.agentRelease.title')}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">{t('settings.agentRelease.description')}</p>
-        </div>
-        <span className="rounded-full border px-2 py-1 text-[10px] font-medium text-muted-foreground">
+    <SettingsGroup title={<><Radio className="h-4 w-4" />{t('settings.agentRelease.title')}</>} testId="agent-release-settings">
+      <SettingRow label={t('settings.agentRelease.enable')} description={t('settings.agentRelease.description')} htmlFor="agent-release-enabled">
+        <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', summary.enabled
+          ? 'border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[var(--workspace-status-good-text)]'
+          : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]')}>
           {summary.enabled ? t('settings.agentRelease.enabled') : t('settings.agentRelease.disabled')}
         </span>
+        <SettingSwitch id="agent-release-enabled" checked={settings.enabled} onChange={(event) => update({ enabled: event.target.checked })} />
+      </SettingRow>
+
+      <SettingRow label={t('settings.agentRelease.channel')} description={v3.allowedChannelsHint}>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+          {CHANNELS.map((channel) => (
+            <label key={channel} className="flex cursor-pointer items-center gap-2 text-xs text-[var(--workspace-text)]">
+              <Checkbox
+                checked={settings.allowedChannels.includes(channel)}
+                onChange={(event) => toggleChannel(channel, event.target.checked)}
+                aria-label={t(`settings.agentRelease.channel.${channel}`)}
+              />
+              {t(`settings.agentRelease.channel.${channel}`)}
+            </label>
+          ))}
+        </div>
+      </SettingRow>
+
+      <SettingRow label={v3.currentChannel}>
+        <SegmentedChoice label={v3.currentChannel} value={settings.channel} onChange={(channel) => update({ channel })}
+          options={CHANNELS.map((channel) => ({ value: channel, label: t(`settings.agentRelease.channel.${channel}`), disabled: !settings.allowedChannels.includes(channel) }))} />
+      </SettingRow>
+
+      <SettingRow label={t('settings.agentRelease.previewOptIn')} description={t('settings.agentRelease.previewOptInDesc')}>
+        <SettingSwitch aria-label={t('settings.agentRelease.previewOptIn')} checked={settings.allowPreview} disabled={!previewAvailable} onChange={(event) => update({ allowPreview: event.target.checked })} />
+      </SettingRow>
+
+      <div className="grid gap-3 px-4 py-3 sm:grid-cols-2">
+        <div>
+          <label className={label} htmlFor="agent-release-rollout">{fill(v3.rolloutPercent, { label: t('settings.agentRelease.rollout') })}</label>
+          <Input id="agent-release-rollout" type="number" min={0} max={100} value={settings.rolloutPercentage} onChange={(event) => update({ rolloutPercentage: Number(event.target.value) })} className={mono} />
+        </div>
+        <div>
+          <label className={label} htmlFor="agent-release-salt">{t('settings.agentRelease.rolloutSalt')}</label>
+          <Input id="agent-release-salt" value={settings.rolloutSalt} onChange={(event) => update({ rolloutSalt: event.target.value })} className={mono} />
+        </div>
+        <div className="sm:col-span-2">
+          <label className={label} htmlFor="agent-release-manifest-url">{t('settings.agentRelease.manifestUrl')}</label>
+          <Input id="agent-release-manifest-url" value={settings.releaseManifestUrl} onChange={(event) => update({ releaseManifestUrl: event.target.value })} placeholder="https://example.com/release-catalog.json" className={mono} />
+          <p className={hint}>{t('settings.agentRelease.manifestUrlDesc')}</p>
+        </div>
+        <div className="sm:col-span-2">
+          <label className={label} htmlFor="agent-release-hosts">{t('settings.agentRelease.allowedHosts')}</label>
+          <Input id="agent-release-hosts" value={hostText} onChange={(event) => { setHostText(event.target.value); setSaved(false) }} placeholder={t('settings.agentRelease.allowedHostsPlaceholder')} className={mono} />
+          <p className={hint}>{t('settings.agentRelease.allowedHostsDesc')}</p>
+        </div>
+        <div>
+          <label className={label} htmlFor="agent-release-artifact-key">{t('settings.agentRelease.artifactKey')}</label>
+          <Input id="agent-release-artifact-key" value={settings.artifactTrustedPublicKeyBase64} onChange={(event) => update({ artifactTrustedPublicKeyBase64: event.target.value })} placeholder={t('settings.agentRelease.publicKeyPlaceholder')} className={mono} autoComplete="off" />
+        </div>
+        <div>
+          <label className={label} htmlFor="agent-release-release-key">{t('settings.agentRelease.releaseKey')}</label>
+          <Input id="agent-release-release-key" value={settings.trustedReleasePublicKeyBase64} onChange={(event) => update({ trustedReleasePublicKeyBase64: event.target.value })} placeholder={t('settings.agentRelease.publicKeyPlaceholder')} className={mono} autoComplete="off" />
+        </div>
+        <SettingsNote icon={LockKeyhole} className="sm:col-span-2">{t('settings.agentRelease.storageNote')}</SettingsNote>
       </div>
 
-      <div className="mt-4 space-y-4">
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={settings.enabled} onChange={(event) => update({ enabled: event.target.checked })} className="rounded" />
-          {t('settings.agentRelease.enable')}
-        </label>
-
-        <div>
-          <span className="text-sm text-muted-foreground">{t('settings.agentRelease.channel')}</span>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {CHANNELS.map((channel) => (
-              <label key={channel} className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={settings.allowedChannels.includes(channel)}
-                  onChange={(event) => toggleChannel(channel, event.target.checked)}
-                  aria-label={t(`settings.agentRelease.channel.${channel}`)}
-                  className="rounded"
-                />
-                {t(`settings.agentRelease.channel.${channel}`)}
-              </label>
-            ))}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {settings.allowedChannels.map((channel) => (
-              <Button key={channel} type="button" variant={settings.channel === channel ? 'default' : 'outline'} size="sm" onClick={() => update({ channel })}>
-                {t(`settings.agentRelease.channel.${channel}`)}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        <label className="flex items-start gap-2 text-sm">
-          <input type="checkbox" aria-label={t('settings.agentRelease.previewOptIn')} checked={settings.allowPreview} disabled={!previewAvailable} onChange={(event) => update({ allowPreview: event.target.checked })} className="mt-0.5 rounded" />
-          <span>
-            {t('settings.agentRelease.previewOptIn')}
-            <span className="mt-0.5 block text-xs text-muted-foreground">{t('settings.agentRelease.previewOptInDesc')}</span>
-          </span>
-        </label>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="text-sm text-muted-foreground" htmlFor="agent-release-rollout">{t('settings.agentRelease.rollout')}</label>
-            <div className="mt-1 flex items-center gap-2">
-              <Input id="agent-release-rollout" type="number" min={0} max={100} value={settings.rolloutPercentage} onChange={(event) => update({ rolloutPercentage: Number(event.target.value) })} className="w-24" />
-              <span className="text-sm text-muted-foreground">%</span>
-            </div>
-          </div>
-          <div>
-            <label className="text-sm text-muted-foreground" htmlFor="agent-release-salt">{t('settings.agentRelease.rolloutSalt')}</label>
-            <Input id="agent-release-salt" value={settings.rolloutSalt} onChange={(event) => update({ rolloutSalt: event.target.value })} className="mt-1" />
-          </div>
-        </div>
-
-        <div>
-          <label className="text-sm text-muted-foreground" htmlFor="agent-release-manifest-url">{t('settings.agentRelease.manifestUrl')}</label>
-          <Input id="agent-release-manifest-url" value={settings.releaseManifestUrl} onChange={(event) => update({ releaseManifestUrl: event.target.value })} placeholder="https://example.com/release-catalog.json" className="mt-1" />
-          <p className="mt-1 text-xs text-muted-foreground">{t('settings.agentRelease.manifestUrlDesc')}</p>
-        </div>
-
-        <div>
-          <label className="text-sm text-muted-foreground" htmlFor="agent-release-hosts">{t('settings.agentRelease.allowedHosts')}</label>
-          <Input id="agent-release-hosts" value={hostText} onChange={(event) => { setHostText(event.target.value); setSaved(false) }} placeholder={t('settings.agentRelease.allowedHostsPlaceholder')} className="mt-1" />
-          <p className="mt-1 text-xs text-muted-foreground">{t('settings.agentRelease.allowedHostsDesc')}</p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="text-sm text-muted-foreground" htmlFor="agent-release-artifact-key">{t('settings.agentRelease.artifactKey')}</label>
-            <Input id="agent-release-artifact-key" value={settings.artifactTrustedPublicKeyBase64} onChange={(event) => update({ artifactTrustedPublicKeyBase64: event.target.value })} placeholder={t('settings.agentRelease.publicKeyPlaceholder')} className="mt-1 font-mono text-xs" autoComplete="off" />
-          </div>
-          <div>
-            <label className="text-sm text-muted-foreground" htmlFor="agent-release-release-key">{t('settings.agentRelease.releaseKey')}</label>
-            <Input id="agent-release-release-key" value={settings.trustedReleasePublicKeyBase64} onChange={(event) => update({ trustedReleasePublicKeyBase64: event.target.value })} placeholder={t('settings.agentRelease.publicKeyPlaceholder')} className="mt-1 font-mono text-xs" autoComplete="off" />
-          </div>
-        </div>
-
-        <div className="flex items-start gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-muted-foreground">
-          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-          <span>{t('settings.agentRelease.signatureNote')}</span>
-        </div>
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-muted-foreground">
-          <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-          <span>{t('settings.agentRelease.storageNote')}</span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" size="sm" onClick={save}>{t('settings.agentRelease.save')}</Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => { setSettings(DEFAULT_SHELLBEAM_AGENT_RELEASE_SETTINGS); setHostText(''); setSaved(false); setError('') }}>{t('settings.agentRelease.reset')}</Button>
-          {saved && <span role="status" className="text-xs text-emerald-600">{t('settings.agentRelease.saved')}</span>}
-          {error && <span role="alert" className="text-xs text-red-500">{error}</span>}
-        </div>
+      <div className="flex flex-wrap items-center gap-2 bg-[var(--workspace-surface-900)] px-4 py-2.5">
+        <SettingsNote icon={ShieldCheck} className="min-w-0 flex-1 basis-56 px-0">{t('settings.agentRelease.signatureNote')}</SettingsNote>
+        {saved && <span role="status" className="text-xs text-[var(--workspace-status-good-text)]">{t('settings.agentRelease.saved')}</span>}
+        {error && <span role="alert" className="text-xs text-[var(--workspace-status-bad-text)]">{error}</span>}
+        <Button type="button" variant="ghost" size="sm" onClick={() => { setSettings(DEFAULT_SHELLBEAM_AGENT_RELEASE_SETTINGS); setHostText(''); setSaved(false); setError('') }}>{t('settings.agentRelease.reset')}</Button>
+        <Button type="button" size="sm" onClick={save}>{t('settings.agentRelease.save')}</Button>
       </div>
-    </section>
+    </SettingsGroup>
   )
 }

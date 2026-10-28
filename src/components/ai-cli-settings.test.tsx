@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { checkAICli } from '@/lib/ai-cli'
-import { AISettingsSection } from './settings-panel'
+import { AISettingsSection } from './ai-settings-section'
 import { DEFAULT_AI_SETTINGS, loadAISettings, saveAISettings } from '@/lib/ai'
 import en from '@/lib/locales/en'
 import zhCN from '@/lib/locales/zh-CN'
