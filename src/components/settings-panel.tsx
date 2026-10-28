@@ -8,6 +8,7 @@ import { NotificationSettingsSection } from '@/components/notification-settings-
 import { ProbeRetrySettingsSection } from '@/components/probe-retry-settings-section'
 import { AIModelPicker } from '@/components/ai-model-picker'
 import { AppearancePicker } from '@/components/appearance-picker'
+import { SecuritySettingsSection } from '@/components/security-settings-section'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -34,7 +35,7 @@ import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
 import type { TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
 import { consumeSettingsCategoryRequest, SETTINGS_CATEGORY_REQUEST_EVENT, type SettingsCategory } from '@/lib/settings-request'
-import { AlertTriangle, BookOpen, Eye, EyeOff, Fingerprint, Monitor, Moon, Settings, Sparkles, Sun } from 'lucide-react'
+import { Activity, AlertTriangle, BookOpen, Eye, EyeOff, Fingerprint, Monitor, Moon, Plug, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Sun, TerminalSquare, Wrench } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 interface ReconnectSettings {
@@ -58,6 +59,11 @@ interface SettingsPanelProps {
   onDefaultUsernameChange: (value: string) => void
   onKeepAliveIntervalSecsChange: (value: number) => void
 }
+
+const SETTINGS_CATEGORIES = [
+  ['general', SlidersHorizontal], ['connection', TerminalSquare], ['monitoring', Activity],
+  ['integrations', Plug], ['security', ShieldCheck], ['advanced', Wrench],
+] as const
 
 export function SettingsPanel({
   onOpenGuide,
@@ -91,17 +97,18 @@ export function SettingsPanel({
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">{t('settings.desc')}</p>
       </div>
-      <nav className="flex flex-wrap gap-2 px-6 pb-4" aria-label={copy.navigation}>
-        {(['general', 'connection', 'monitoring', 'integrations', 'advanced'] as const).map((item) => (
+      <div className="flex min-w-0 flex-col gap-4 px-6 pb-6 md:flex-row md:items-start">
+      <nav className="flex shrink-0 flex-wrap gap-1 md:sticky md:top-4 md:w-52 md:flex-col" aria-label={copy.navigation}>
+        {SETTINGS_CATEGORIES.map(([item, Icon]) => (
           <button key={item} type="button" data-testid={`settings-category-${item}`}
             aria-pressed={category === item} aria-controls="settings-category-content"
-            className={cn('rounded-md border px-3 py-2 text-sm transition-colors', category === item ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground')}
-            onClick={() => setCategory(item)}>{copy[item]}</button>
+            className={cn('flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors', category === item ? 'bg-primary/10 font-medium text-[var(--workspace-accent-text)]' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground')}
+            onClick={() => setCategory(item)}><Icon className="h-4 w-4 shrink-0" aria-hidden="true" />{copy[item]}</button>
         ))}
       </nav>
-      <div id="settings-category-content" className="space-y-4 px-6 pb-6" role="region" aria-label={copy[category]}>
+      <div id="settings-category-content" className="min-w-0 max-w-4xl flex-1 space-y-4" role="region" aria-label={copy[category]}>
         {category === 'general' && <>
-        <section className="rounded-lg border p-4">
+        <section className="sb-card p-4">
           <h3 className="mb-2 font-semibold">{t('settings.language')}</h3>
           <div className="flex items-center justify-between">
             <div>
@@ -121,7 +128,7 @@ export function SettingsPanel({
           </div>
         </section>
 
-        <section className="rounded-lg border p-4">
+        <section className="sb-card p-4">
           <h3 className="mb-2 font-semibold">{t('settings.appearance')}</h3>
           <div className="flex items-center justify-between">
             <div>
@@ -140,7 +147,7 @@ export function SettingsPanel({
           </div>
         </section>
 
-        <section className="rounded-lg border p-4">
+        <section className="sb-card p-4">
           <h3 className="mb-2 font-semibold">{t('settings.vault')}</h3>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">{t('settings.autoLock')}</span>
@@ -170,7 +177,7 @@ export function SettingsPanel({
         )}
         </>}
         {category === 'connection' && <>
-        <section className="rounded-lg border p-4">
+        <section className="sb-card p-4">
           <h3 className="mb-2 font-semibold">{t('settings.general')}</h3>
           <div className="space-y-3">
             <div>
@@ -198,7 +205,7 @@ export function SettingsPanel({
           </div>
         </section>
 
-        <section className="rounded-lg border p-4">
+        <section className="sb-card p-4">
           <h3 className="mb-3 flex items-center gap-2 font-semibold"><Monitor className="h-4 w-4" />{t('settings.terminal')}</h3>
           <div className="space-y-4">
             <div>
@@ -234,7 +241,7 @@ export function SettingsPanel({
           </div>
         </section>
 
-        <section className="rounded-lg border p-4">
+        <section className="sb-card p-4">
           <h3 className="mb-2 font-semibold">{t('settings.reconnect')}</h3>
           <div className="space-y-3">
             <label className="flex cursor-pointer items-center gap-2">
@@ -281,12 +288,14 @@ export function SettingsPanel({
         {category === 'integrations' && <>
           <AISettingsSection />
         </>}
+        {category === 'security' && <SecuritySettingsSection />}
         {category === 'advanced' && <>
           <McpSettingsSection />
           <ShellbeamAgentReleaseSettingsSection />
           <ProbeRetrySettingsSection />
           <ClearDataSection />
         </>}
+      </div>
       </div>
     </div>
   )
@@ -387,7 +396,7 @@ export function AISettingsSection() {
   const isCustom = settings.provider === 'custom'
 
   return (
-    <section className="rounded-lg border p-4">
+    <section className="sb-card p-4">
       <h3 className="mb-3 flex items-center gap-2 font-semibold">
         <Sparkles className="h-4 w-4 text-violet-500" />
         {t('settings.ai')}

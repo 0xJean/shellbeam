@@ -1,3 +1,4 @@
+import { InAppNotifications } from '@/components/in-app-notifications'
 import { WelcomePage } from '@/components/welcome-page'
 import { useWelcomePage } from '@/hooks/use-welcome-page'
 import { AppProvider, useApp } from '@/contexts/app-context'
@@ -78,6 +79,7 @@ function AppInnerWithVault() {
     <VaultProvider setOutput={setOutput}>
       <HostsProvider>
         <UserConfirmationRuntime />
+        <InAppNotifications />
         <ProbeAlertRuntime />
         <ServerMonitorRuntime />
         <LocalOpsRuntime />

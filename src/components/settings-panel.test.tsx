@@ -35,7 +35,7 @@ describe('settings categories', () => {
     render(<I18nProvider><SettingsPanel {...input} /></I18nProvider>)
     const nav = screen.getByRole('navigation', { name: copy.navigation })
     expect(within(nav).getAllByRole('button').map((button) => button.textContent)).toEqual([
-      copy.general, copy.connection, copy.monitoring, copy.integrations, copy.advanced,
+      copy.general, copy.connection, copy.monitoring, copy.integrations, copy.security, copy.advanced,
     ])
     expect(within(nav).getByRole('button', { name: copy.general })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('region', { name: copy.general })).toBeVisible()
