@@ -6,7 +6,7 @@ import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { MAX_BATCH_HOSTS } from '@/lib/multi-host-operations'
-import { CheckCircle2, CircleAlert, Loader2, Server, Square, Wrench } from 'lucide-react'
+import { CheckCircle2, CircleAlert, Loader2, RotateCcw, Server, Square, Wrench } from 'lucide-react'
 
 /** Operations intentionally exposed by the first finite batch slice. The
  * orchestration bridge is responsible for creating one OperationJob per host
@@ -109,10 +109,11 @@ export function MultiHostOperationsPanel({
     setSelectedHostIds(hosts.slice(0, boundedMax).map((host) => host.id))
   }
 
-  async function run() {
+  async function run(onlyHostIds?: string[]) {
+    const hostIds = onlyHostIds ?? selectedHostIds
     setError('')
     setResult(null)
-    if (selectedHostIds.length === 0) {
+    if (hostIds.length === 0) {
       setError(t('multiHost.selectHostsError'))
       return
     }
@@ -138,7 +139,7 @@ export function MultiHostOperationsPanel({
     try {
       const next = await onRunOperation({
         operation,
-        hostIds: [...selectedHostIds],
+        hostIds: [...hostIds],
         target: operationMeta.target ? target.trim() : undefined,
         confirmationRequired: operationMeta.confirmation,
       })
@@ -149,6 +150,9 @@ export function MultiHostOperationsPanel({
       setRunning(false)
     }
   }
+
+  // Failed or cancelled hosts can be retried; an unknown outcome may already have run and needs checking first.
+  const retryHostIds = result?.results.filter((item) => item.status === 'failed' || item.status === 'cancelled').map((item) => item.hostId).filter((id) => hostIds.has(id)) ?? []
 
   return (
     <section data-testid="multi-host-operations-panel" className={cn('space-y-4 rounded-xl border border-border/60 bg-card px-4 py-4', className)}>
@@ -215,7 +219,13 @@ export function MultiHostOperationsPanel({
         <div className="space-y-2 rounded-lg border border-border/50 p-3" data-testid="multi-host-operation-result">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs font-semibold text-foreground">{t('multiHost.resultTitle')}</div>
-            <span className={cn('rounded-full border px-2 py-1 text-[10px] uppercase', resultTone(result.status))}>{t(`multiHost.status.${result.status}`)}</span>
+            <span className="flex items-center gap-2">
+              {retryHostIds.length > 0 && <button type="button" data-testid="multi-host-retry" disabled={running || disabled} onClick={() => void run(retryHostIds)}
+                className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[11px] font-medium hover:bg-muted/50 disabled:opacity-50">
+                <RotateCcw className="h-3 w-3" />{t('multiHost.retryUnfinished', { count: retryHostIds.length })}
+              </button>}
+              <span className={cn('rounded-full border px-2 py-1 text-[10px] uppercase', resultTone(result.status))}>{t(`multiHost.status.${result.status}`)}</span>
+            </span>
           </div>
           <div className="space-y-1.5">
             {result.results.map((item) => {

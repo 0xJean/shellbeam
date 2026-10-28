@@ -474,6 +474,7 @@ const en: Record<string, string> = {
   'multiHost.run': 'Run operation',
   'multiHost.running': 'Running…',
   'multiHost.auditNote': 'Write operations require one confirmation and are bounded to the selected hosts.',
+  'multiHost.retryUnfinished': 'Retry unfinished hosts ({count})',
   'multiHost.resultTitle': 'Batch result',
   'multiHost.status.queued': 'Queued',
   'multiHost.status.running': 'Running',

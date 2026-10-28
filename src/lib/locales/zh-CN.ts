@@ -474,6 +474,7 @@ const zhCN: Record<string, string> = {
   'multiHost.run': '执行操作',
   'multiHost.running': '执行中…',
   'multiHost.auditNote': '写操作只需一次确认，并限制在选中的主机范围内。',
+  'multiHost.retryUnfinished': '重试未完成的主机（{count}）',
   'multiHost.resultTitle': '批量结果',
   'multiHost.status.queued': '排队中',
   'multiHost.status.running': '执行中',
