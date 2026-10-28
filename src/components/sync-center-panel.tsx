@@ -380,7 +380,7 @@ export function SyncCenterPanel({
   const header = (subtitle: string, action?: ReactNode) => (
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div className="min-w-0">
-        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--workspace-text-strong)]">{copy.title}</h1>
+        <h1 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{copy.title}</h1>
         <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">{subtitle}</p>
       </div>
       {action}
@@ -393,7 +393,7 @@ export function SyncCenterPanel({
     const peerOnline = isPeerOnline(peer)
     const back = () => { setActivePeer(null); setView('home') }
     return (
-      <div className="mx-auto max-w-6xl space-y-5">
+      <div className="space-y-5">
         {header(copy.descDetail, (
           <button type="button" onClick={back} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
             <ArrowLeft className="h-4 w-4" />
@@ -550,7 +550,7 @@ export function SyncCenterPanel({
   )
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5">
+    <div className="space-y-5">
       {header(needsInit ? copy.descInit : copy.desc)}
       <div className={cn('grid items-start gap-4', backupPanel != null && 'lg:grid-cols-2')}>
         {syncCard}

@@ -44,10 +44,10 @@ export function UserGuide({ onNavigate, onStartTour }: { onNavigate: (destinatio
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-col p-4 text-[var(--workspace-text)] md:p-6">
+    <main className="flex w-full flex-col p-4 text-[var(--workspace-text)] md:p-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0 max-w-3xl">
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--workspace-text-strong)]">{t('guide.title')}</h1>
+          <h1 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('guide.title')}</h1>
           <p className="mt-1 text-[13px] leading-relaxed text-[var(--workspace-text-muted)]">{t('guide.description')}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

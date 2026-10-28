@@ -1499,7 +1499,7 @@ export function PcLayout() {
               )}
               {(app.pcSidebarNav === 'sync' || app.pcSidebarNav === 'backup') && (
                 <Suspense fallback={<DashboardSectionFallback />}>
-                  <div className="p-6">
+                  <div className="p-4 md:p-6">
                     <SyncCenterPanel
                       focusSection={app.pcSidebarNav === 'backup' ? 'backup' : 'sync'}
                       backupPanel={

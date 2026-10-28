@@ -100,14 +100,17 @@ export function SettingsPanel({
   const v3 = settingsV3Copy[locale]
   const stepLabels = (label: string) => ({ label, decreaseLabel: fill(v3.decrease, { label }), increaseLabel: fill(v3.increase, { label }) })
   return (
-    <div className={cn('flex w-full min-w-0 flex-col gap-4 md:flex-row md:items-start md:gap-8', hideNavigation ? 'px-4 pb-8 pt-2' : 'p-6')}>
-      {!hideNavigation && <div className="shrink-0 md:sticky md:top-6 md:w-52">
-        <h2 className="flex items-center gap-2 px-1 text-2xl font-semibold text-[var(--workspace-text-strong)]">
+    <div className={cn('flex w-full min-w-0 flex-col', hideNavigation ? 'px-4 pb-8 pt-2' : 'gap-5 p-4 md:p-6')}>
+      {!hideNavigation && <header className="min-w-0">
+        <h1 className="flex items-center gap-2 text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">
           <Settings className="h-5 w-5 md:hidden" />
           {t('settings.title')}
-        </h2>
-        <p className="mt-1 px-1 text-xs text-[var(--workspace-text-subtle)]">{t('settings.desc')}</p>
-        <nav className="mt-4 flex flex-wrap gap-1 md:flex-col" aria-label={copy.navigation}>
+        </h1>
+        <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">{t('settings.desc')}</p>
+      </header>}
+      <div className="flex w-full min-w-0 flex-col gap-4 md:flex-row md:items-start md:gap-8">
+      {!hideNavigation && <div className="shrink-0 md:sticky md:top-6 md:w-52">
+        <nav className="flex flex-wrap gap-1 md:flex-col" aria-label={copy.navigation}>
           {SETTINGS_CATEGORIES.map(([item, Icon]) => (
             <button key={item} type="button" data-testid={`settings-category-${item}`}
               aria-pressed={category === item} aria-controls="settings-category-content"
@@ -116,7 +119,7 @@ export function SettingsPanel({
           ))}
         </nav>
       </div>}
-      <div id="settings-category-content" className={cn('min-w-0 flex-1 space-y-4', category === 'connection' || category === 'advanced' ? 'max-w-6xl' : 'max-w-4xl')} role="region" aria-label={copy[category]}>
+      <div id="settings-category-content" className="min-w-0 flex-1 space-y-4" role="region" aria-label={copy[category]}>
         {category === 'general' && <>
         <section className="sb-card p-4">
           <h3 className="mb-2 font-semibold">{t('settings.language')}</h3>
@@ -260,6 +263,7 @@ export function SettingsPanel({
             </div>
           </div>
         </>}
+      </div>
       </div>
     </div>
   )
