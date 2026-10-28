@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Activity, Cpu, HardDrive, Layers, Radar, Siren } from 'lucide-react'
+import { Activity, Box, Cpu, HardDrive, HeartPulse, Layers, Radar, RotateCw, Siren, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ProbeBatchInstallDialog } from '@/components/probe-batch-install'
 import { loadProbeInstallReadiness, PROBE_DEPLOYMENT_CHANGED_EVENT } from '@/hooks/use-probe-install-readiness'
@@ -9,6 +9,7 @@ import { KOMARI_MAPPING_CHANGED_EVENT } from '@/lib/komari-persistence'
 import { hostsOverviewCopy } from '@/lib/locales/hosts-overview'
 import { fill } from '@/lib/locales/probe-install'
 import { MAX_BATCH_HOSTS } from '@/lib/multi-host-operations'
+import type { MultiHostOperationKind } from '@/components/multi-host-operations-panel'
 import { offersProbeInstall } from '@/lib/probe-install'
 import { cn } from '@/lib/utils'
 
@@ -39,7 +40,7 @@ export function HostKpiRow({ total, online, offline, stale, openAlerts, readings
   const cpu = stat('cpu'); const disk = stat('disk')
   if (total === 0) return null
   return (
-    <div data-testid="host-kpis" className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div data-testid="host-kpis" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Kpi icon={<Activity className="h-4 w-4" />} label={c.online} value={<>{online}<small className="ml-1 text-sm font-medium text-[var(--workspace-text-muted)]">/ {total}</small></>} sub={offline || stale ? fill(c.onlineSub, { offline, stale }) : c.onlineAll} />
       <Kpi icon={<Siren className="h-4 w-4" />} label={c.alerts} value={openAlerts} tone={openAlerts > 0 ? 'warn' : undefined} sub={openAlerts > 0 ? c.alertsSub : c.alertsNone} onClick={openAlerts > 0 ? onOpenAlerts : undefined} />
       <Kpi icon={<Cpu className="h-4 w-4" />} label={c.cpu} value={cpu ? `${cpu.average}%` : '—'} sub={cpu ? fill(c.cpuSub, { value: cpu.peak, host: cpu.host }) : c.noData} />
@@ -112,6 +113,33 @@ export function ProbeCoverageBanner({ hosts, osOf }: { hosts: HostProfile[]; osO
       <Button size="sm" variant="ghost" onClick={() => { setDismissed(eligible.length); try { localStorage.setItem(DISMISS_KEY, String(eligible.length)) } catch { /* session-only preference */ } }}>{c.bannerLater}</Button>
       <Button size="sm" variant="outline" data-testid="probe-coverage-install" className="gap-1.5" onClick={() => setOpen(true)}><Layers className="h-3.5 w-3.5" />{c.bannerInstall}</Button>
       {open && <ProbeBatchInstallDialog hosts={batch} open onOpenChange={setOpen} />}
+    </div>
+  )
+}
+
+/**
+ * Floating action pill for batch selection (v3 host table): the count, a
+ * probe install for the selection, and shortcuts that preset the batch
+ * operations panel below the list.
+ */
+export function HostBatchFloatingBar({ hosts, onOperation, onExit }: { hosts: HostProfile[]; onOperation: (operation: MultiHostOperationKind) => void; onExit: () => void }) {
+  const { t, locale } = useT()
+  const c = hostsOverviewCopy[locale]
+  const [installing, setInstalling] = useState(false)
+  if (hosts.length === 0) return null
+  const action = 'inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]'
+  return (
+    <div data-testid="host-batch-bar" role="toolbar" aria-label={fill(c.selected, { count: hosts.length })}
+      className="sb-card fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 px-2 py-1.5 shadow-[var(--workspace-shadow-overlay)]">
+      <span className="px-2 text-xs font-semibold text-[var(--workspace-text-strong)]">{fill(c.selected, { count: hosts.length })}</span>
+      <span className="mx-1 h-5 w-px bg-[color:var(--workspace-border-soft)]" />
+      <button type="button" data-testid="probe-batch-entry" className={cn(action, 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]')} onClick={() => setInstalling(true)}><Radar className="h-3.5 w-3.5" />{c.installProbe}</button>
+      <button type="button" className={action} onClick={() => onOperation('health-check')}><HeartPulse className="h-3.5 w-3.5" />{t('multiHost.operations.healthCheck')}</button>
+      <button type="button" className={action} onClick={() => onOperation('service.restart')}><RotateCw className="h-3.5 w-3.5" />{t('multiHost.operations.serviceRestart')}</button>
+      <button type="button" className={action} onClick={() => onOperation('docker.restart')}><Box className="h-3.5 w-3.5" />{t('multiHost.operations.dockerRestart')}</button>
+      <span className="mx-1 h-5 w-px bg-[color:var(--workspace-border-soft)]" />
+      <button type="button" aria-label={c.exitBatch} title={c.exitBatch} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)]" onClick={onExit}><X className="h-4 w-4" /></button>
+      {installing && <ProbeBatchInstallDialog hosts={hosts.slice(0, MAX_BATCH_HOSTS)} open onOpenChange={setInstalling} />}
     </div>
   )
 }

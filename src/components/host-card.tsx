@@ -3,6 +3,7 @@ import { ProbeInstallEntry } from '@/components/probe-install-entry'
 import { SegmentedMeter } from '@/components/ui/segmented-meter'
 import { NativeSelect } from '@/components/ui/select'
 import { hasSshConnection, hostConnections } from '@/lib/hosts'
+import { requestHostSftp } from '@/lib/navigation-request'
 import type { ServerMonitorSnapshot } from '@/lib/server-monitor'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { Button } from '@/components/ui/button'
@@ -13,6 +14,7 @@ import { useT } from '@/lib/i18n'
 import { monitoringModeCopy } from '@/lib/locales/monitoring-mode'
 import { monitoringSourcesCopy } from '@/lib/locales/monitoring-sources'
 import { hostPresentationCopy } from '@/lib/locales/host-presentation'
+import { hostsOverviewCopy } from '@/lib/locales/hosts-overview'
 import { getResourceUsageTextClassName, getResourceUsageTone } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
@@ -24,9 +26,9 @@ import { loadEvidenceCopy } from '@/lib/monitoring-load-evidence'
 import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import { hostProbeEvaluations, validHostOpsSampleTime, type HostOpsCapability, type HostOpsProbeEvaluation } from '@/lib/host-ops-view'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
-import { AlertTriangle, Activity, Bot, Check, ChevronDown, Clock, Cpu, HardDrive, KeyRound, Laptop, LockKeyhole, MemoryStick, Network, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, User, Wrench, X } from 'lucide-react'
-import { useId, useState, type ComponentType, type CSSProperties } from 'react'
-import { HostMetadataLine, HostRegionMeta } from './host-display-meta'
+import { AlertTriangle, Activity, Bot, Check, ChevronDown, Clock, Cpu, FolderOpen, HardDrive, Laptop, MemoryStick, Network, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, Wrench, X } from 'lucide-react'
+import { useEffect, useId, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
+import { HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { KomariProbeOpsView } from './komari-probe-ops-view'
 import { CompatibleAgentTools } from './compatible-agent-panel'
@@ -215,6 +217,95 @@ interface HostGridCardProps {
   onSelect: (id: string) => void
 }
 
+/**
+ * Right-hand drawer with a host's full operations detail (v3 "hostops" overlay).
+ * It stays inside the card's DOM so the card keeps owning its id and toggle.
+ */
+function HostOpsDrawer({ id, host, summary, open, onClose, dot, groupLabel, network, jumpHost, actions, children }: {
+  id: string; host: HostProfile; summary: HostOperationalSummary; open: boolean; onClose: () => void; dot?: string; groupLabel?: string
+  network?: HostNetworkDisplay; jumpHost?: string | null; actions: ReactNode; children: ReactNode
+}) {
+  const { t, locale } = useT()
+  const copy = hostsOverviewCopy[locale]
+  const formatCount = (value: number | null | undefined) => value == null ? '—' : String(value)
+  useEffect(() => {
+    if (!open) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+  const connections = hostConnections(host).length
+  const stop = (event: React.SyntheticEvent) => event.stopPropagation()
+  return <>
+    {open && <div aria-hidden="true" data-testid="host-ops-drawer-backdrop" className="fixed inset-0 z-[60] bg-black/45" onClick={(event) => { event.stopPropagation(); onClose() }} />}
+    <section id={id} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!open}
+      onClick={stop} onDoubleClick={stop} onKeyDown={stop}
+      className={cn('fixed inset-y-0 right-0 z-[61] w-[min(50rem,100vw)] cursor-default flex-col border-l border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] text-left shadow-[var(--workspace-shadow-overlay)]', open ? 'flex' : 'hidden')}>
+      {open && <header className="flex items-start gap-3 border-b border-[color:var(--workspace-border-soft)] px-5 pb-4 pt-5">
+        <div className="min-w-0 flex-1">
+          <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold text-[var(--workspace-text-strong)]">
+            {dot && <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', dot)} />}
+            <span className="truncate">{host.name}</span>
+            {groupLabel && <span className="shrink-0 rounded-md bg-[var(--workspace-surface-700)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--workspace-text-muted)]">{groupLabel}</span>}
+          </h2>
+          <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-[var(--workspace-text-muted)]">
+            <span className="font-mono">{hasSshConnection(host) ? `${host.username || 'root'}@${host.address}:${host.port}` : t('hostDirectory.monitoringOnly')}</span>
+            {jumpHost && <span>· {t('hosts.jumpHost')} {jumpHost}</span>}
+            {connections > 1 && <span>· {t('hostDirectory.connectionCount', { count: connections })}</span>}
+            {network && <span className="inline-flex items-center gap-1">· <HostRegionMeta network={network} /></span>}
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">{actions}</div>
+        </div>
+        <button type="button" aria-label={t('common.close')} title={t('common.close')} onClick={onClose}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"><X className="h-4 w-4" /></button>
+      </header>}
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+        {open && <div data-testid="host-ops-drawer-stats" className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {([
+            [t('hosts.opsServicesShort'), summary.serviceTotal == null ? '—' : `${formatCount(summary.serviceActive)} / ${formatCount(summary.serviceTotal)}`, (summary.serviceFailed ?? 0) > 0 ? `${summary.serviceFailed} ${t('hosts.opsFailed')}` : undefined, (summary.serviceFailed ?? 0) > 0],
+            [t('hosts.opsProcessesShort'), formatCount(summary.processRunning ?? summary.processTotal), summary.processTotal != null ? `/ ${formatCount(summary.processTotal)}` : undefined, false],
+            [copy.drawerAlerts, String(summary.alertOpen ?? summary.alertActive ?? 0), summary.highestAlertSeverity ? t(`hosts.opsFilters.${summary.highestAlertSeverity}`) : undefined, (summary.alertOpen ?? summary.alertActive ?? 0) > 0],
+            [copy.drawerLocal, String(summary.localAlertOpen ?? 0), undefined, (summary.localAlertOpen ?? 0) > 0],
+            [copy.drawerSource, summary.provider ? monitoringProviderLabel(summary.provider, locale) : '—', summary.sampledAt ? formatRelativeTime(summary.sampledAt, t) : undefined, false],
+            [copy.drawerTasks, String(summary.auditActive ?? 0), summary.auditUnknown ? `${summary.auditUnknown} ${hostPresentationCopy[locale].needsVerification}` : undefined, (summary.auditUnknown ?? 0) > 0],
+          ] as const).map(([label, value, hint, warn]) => (
+            <div key={label} className="min-w-0 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2.5">
+              <div className="truncate text-[11px] text-[var(--workspace-text-muted)]">{label}</div>
+              <div className={cn('mt-0.5 truncate text-base font-semibold', warn ? 'text-[color:var(--workspace-status-warn-text)]' : 'text-[var(--workspace-text-strong)]')}>{value}</div>
+              {hint && <div className="truncate text-[11px] text-[var(--workspace-text-subtle)]">{hint}</div>}
+            </div>
+          ))}
+        </div>}
+        {children}
+      </div>
+    </section>
+  </>
+}
+
+// Environment tag colours for the common group names; anything else stays neutral.
+function envTone(group: string | undefined) {
+  const value = (group ?? '').toLowerCase()
+  if (/prod|生产/.test(value)) return 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]'
+  if (/stag|预发|test|测试/.test(value)) return 'bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]'
+  if (/dev|开发/.test(value)) return 'bg-[var(--workspace-status-info-bg)] text-[color:var(--workspace-status-info-text)]'
+  return 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]'
+}
+
+/** The card's one-line reason for attention: an open alert first, otherwise the busiest resource. */
+function hostAttention(hostId: string, summary: HostOperationalSummary | undefined, resource: WorkspaceInventoryResource | undefined, metrics: ServerMonitorSnapshot | undefined, t: TFn, locale: 'en' | 'zh-CN'): string | null {
+  const local = (summary?.localAlerts ?? []).find((alert) => alert.hostId === hostId && (alert.status === 'active' || alert.status === 'acknowledged'))
+  if (local) return `${local.name} · ${t(`localOps.metric.${local.metric}`)}${local.value != null ? ` ${Math.round(local.value)}%` : ''}`
+  const incident = groupKomariAlertIncidents(summary?.komariAlerts ?? []).map(({ alert }) => alert).find((alert) => !isHistoricalKomariAlert(alert) && (alert.status === 'active' || alert.status === 'acknowledged'))
+  if (incident) return monitoringAlertTitle(incident, locale)
+  const readings: Array<[string, number | null | undefined]> = [
+    [t('workspace.common.cpu'), metrics ? metrics.cpuPercent : resource?.cpuPercent],
+    [t('workspace.common.memoryShort'), metrics ? metrics.memoryPercent : resource?.memoryPercent],
+    [t('workspace.common.diskShort'), metrics ? metrics.diskPercent : resource?.diskPercent],
+  ]
+  const worst = readings.filter(([, value]) => getResourceUsageTone(value) === 'bad').sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))[0]
+  return worst ? t('hostCard.usageHigh', { resource: worst[0], value: Math.round(worst[1] ?? 0) }) : null
+}
+
 export function HostGridCard({ host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, monitoring = true, batchSelection }: HostGridCardProps) {
   const { t, locale } = useT()
   const detailsId = useId()
@@ -222,138 +313,99 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
   const [disclosure, setDisclosure] = useState({ owner, expanded: false })
   if (disclosure.owner !== owner) setDisclosure({ owner, expanded: false })
   const detailsOpen = disclosure.owner === owner && disclosure.expanded
+  const toggleDetails = () => setDisclosure({ owner, expanded: !detailsOpen })
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t, operations?.provider, hostPresentationCopy[locale])
   const [confirmOpen, setConfirmOpen] = useState(false)
   const groupLabel = getDisplayGroupLabel(host.group, t)
   const jumpHost = formatJumpHost(host, operations)
+  const ssh = hasSshConnection(host)
+  const attention = monitoring ? hostAttention(host.id, operations, resource, metrics, t, locale) : null
+  const offline = status === 'offline' || status === 'jump-unavailable'
+  const endpoint = ssh ? `${host.username ? `${host.username}@` : ''}${host.address}${host.port !== 22 ? `:${host.port}` : ''}` : t('hostDirectory.monitoringOnly')
 
   return (
     <>
       <div
         data-testid="host-card" data-host-id={host.id} data-host-name={host.name} data-host-health={status ?? 'unknown'} data-vault-id={host.vaultId ?? operations?.vaultId}
+        data-attention={attention ? 'true' : undefined}
         className={cn('sb-card sb-host-card group relative flex flex-col', isSelected && 'outline outline-2 outline-offset-0 outline-primary/50')}
       >
-        <div
-          className="absolute right-2.5 top-2.5 flex gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
-          style={isSelected ? { opacity: 1 } : undefined}
-        >
-          <span role="button" tabIndex={0}
-            className="flex h-9 w-9 items-center justify-center rounded-md text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] md:h-7 md:w-7"
-            onClick={() => hasSshConnection(host) ? onConnect(host.id) : onEdit(host.id)} title={hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}>
-            <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />
-          </span>
-          <span role="button" tabIndex={0}
-            className="flex h-9 w-9 items-center justify-center rounded-md text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] md:h-7 md:w-7"
-            onClick={() => onEdit(host.id)} title={t('hostCard.edit')}>
-            <Pencil className="h-4 w-4 md:h-3.5 md:w-3.5" />
-          </span>
-          <span role="button" tabIndex={0}
-            className="flex h-9 w-9 items-center justify-center rounded-md text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-status-bad-bg)] hover:text-[color:var(--workspace-status-bad-text)] md:h-7 md:w-7"
-            onClick={() => setConfirmOpen(true)} title={t('hostCard.delete')}>
-            <Trash2 className="h-4 w-4 md:h-3.5 md:w-3.5" />
-          </span>
-        </div>
-
-        <div className="flex items-center gap-3 px-4 pt-4 pb-3">
-          {batchSelection && <input type="checkbox" aria-label={`${hostPresentationCopy[locale].selectHost} · ${host.name}`} checked={batchSelection.selected} disabled={batchSelection.disabled} onChange={batchSelection.onChange} />}
-          <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-lg', resource?.os ? 'sb-os-badge' : bg)} style={resource?.os ? { '--os': osBrandColor(resource.os) } as CSSProperties : undefined}>
-            {resource?.os ? <WorkspaceOsIcon os={resource.os} className="h-5 w-5" /> : icon}
+        <div className="flex items-start gap-3 px-4 pb-3 pt-4">
+          {batchSelection && <input type="checkbox" className="mt-2" aria-label={`${hostPresentationCopy[locale].selectHost} · ${host.name}`} checked={batchSelection.selected} disabled={batchSelection.disabled} onChange={batchSelection.onChange} />}
+          <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', resource?.os ? 'sb-os-badge' : bg)} style={resource?.os ? { '--os': osBrandColor(resource.os) } as CSSProperties : undefined}>
+            {resource?.os ? <WorkspaceOsIcon os={resource.os} className="h-[18px] w-[18px]" /> : icon}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[15px] font-semibold text-[var(--workspace-text-strong)]">{host.name}</p>
-            <p className="mt-0.5 truncate text-xs text-[var(--workspace-text-muted)]">
-              {!hasSshConnection(host) ? t('hostDirectory.monitoringOnly') : resource?.os || `${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
-              {hostConnections(host).length > 1 && <span className="ml-2">{t('hostDirectory.connectionCount', { count: hostConnections(host).length })}</span>}
+            <p className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-[var(--workspace-text-strong)]">
+              {sc ? <span data-testid="host-card-status" title={sc.label} className={cn('h-2 w-2 shrink-0 rounded-full', sc.dot)} />
+                : status === 'checking' ? <RefreshCw className="h-3 w-3 shrink-0 animate-spin text-[var(--workspace-text-muted)]" aria-label={t('hostCard.checking')} /> : null}
+              <span className="truncate">{host.name}</span>
+            </p>
+            <p className="mt-0.5 flex min-w-0 items-center gap-1 truncate text-xs text-[var(--workspace-text-muted)]">
+              {network && <span className="flex shrink-0 items-center"><HostRegionMeta network={network} /></span>}
+              {network && <span className="text-[var(--workspace-text-subtle)]">·</span>}
+              <span className="truncate font-mono text-[11.5px]">{endpoint}</span>
+              {hostConnections(host).length > 1 && <span className="shrink-0">· {t('hostDirectory.connectionCount', { count: hostConnections(host).length })}</span>}
             </p>
           </div>
+          {host.group && <span className={cn('shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium', envTone(host.group))}>{groupLabel}</span>}
         </div>
 
-        <div className="flex-1 space-y-2 border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
-          {hasSshConnection(host) && <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-xs text-[var(--workspace-text-muted)]">
-              <User className="h-3 w-3" /><span className="truncate">{hasSshConnection(host) ? host.username || 'root' : '—'}</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-[var(--workspace-text-muted)]">
-              {host.authType === 'privateKey'
-                ? <><KeyRound className="h-3 w-3" /><span>{t('hostCard.sshKey')}</span></>
-                : <><LockKeyhole className="h-3 w-3" /><span>{t('hostCard.password')}</span></>}
-            </div>
-          </div>}
-          <div className="flex flex-wrap items-center gap-2">
-            {sc ? (
-              <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold', sc.bg, sc.text)}>
-                <span className={cn('h-1.5 w-1.5 rounded-full', sc.dot)} />{sc.label}
-              </span>
-            ) : status === 'checking' ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--workspace-surface-700)] px-2 py-0.5 text-[10px] font-medium text-[var(--workspace-text-muted)]">
-                <RefreshCw className="h-2.5 w-2.5 animate-spin" />{t('hostCard.checking')}
-              </span>
-            ) : null}
-            {host.group && (
-              <span className="rounded-full bg-[var(--workspace-surface-700)] px-2 py-0.5 text-[10px] font-medium text-[var(--workspace-text-muted)]">{groupLabel}</span>
-            )}
-            {jumpHost && (
-              <span
-                className="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--workspace-accent-subtle)] px-2 py-0.5 text-[10px] font-medium text-[var(--workspace-accent-text)]"
-                title={`${t('hosts.jumpHost')}: ${jumpHost}`}
-              >
-                <Route className="h-2.5 w-2.5 shrink-0" />
-                <span className="truncate">{t('hosts.jumpHost')}: {jumpHost}</span>
-              </span>
-            )}
+        {attention && (
+          <div data-testid="host-card-attention" className="mx-4 mb-3 flex items-center gap-2 rounded-lg bg-[var(--workspace-status-warn-bg)] px-3 py-2 text-xs font-medium text-[color:var(--workspace-status-warn-text)]">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{attention}</span>
+            {operations && <button type="button" onClick={toggleDetails} className="shrink-0 rounded px-1 text-[color:var(--workspace-status-warn-text)] hover:underline">{t('hostCard.viewDetails')} →</button>}
           </div>
-          {network && (
-            <div className="flex min-w-0 items-center gap-1.5 text-xs text-[var(--workspace-text-muted)]">
-              <HostRegionMeta network={network} />
+        )}
+
+        <div className="flex-1 space-y-2 px-4 pb-3">
+          {status && status !== 'online' && !(offline && !metrics && !resource) && <HostStatusPill status={status} sc={sc} t={t} />}
+          {offline && !metrics && !resource ? (
+            <div className="flex items-center gap-2 rounded-lg bg-[var(--workspace-surface-800)] px-3 py-2.5 text-xs text-[var(--workspace-text-muted)]">
+              <Network className="h-3.5 w-3.5" />{sc?.label}{host.updatedAt > 0 ? ` · ${formatRelativeTime(host.updatedAt, t)}` : ''}
             </div>
-          )}
-          <HostMetadataLine
-            resource={resource}
-            showLocation={false}
-            showSystem={false}
-            className="text-xs text-[var(--workspace-text-muted)]"
-            iconClassName="h-3.5 w-3.5"
-          />
-          {(metrics || resource) && <HostResourceSummary resource={resource} metrics={metrics} t={t} />}
-          {operations && <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} compactOnly={!monitoring} onToggle={() => setDisclosure({ owner, expanded: !detailsOpen })} />}
-          <div className="flex items-center gap-1 overflow-hidden">
-            {host.tags && host.tags.length > 0 ? (
-              <>
-                <Tag className="h-3 w-3 shrink-0 text-[var(--workspace-text-subtle)]" />
-                <div className="flex gap-1 overflow-hidden">
-                  {host.tags.slice(0, 3).map((tag) => (
-                    <span key={tag} className="shrink-0 rounded bg-[var(--workspace-surface-700)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--workspace-text-muted)]">{tag}</span>
-                  ))}
-                  {host.tags.length > 3 && <span className="shrink-0 text-[10px] text-[var(--workspace-text-subtle)]">+{host.tags.length - 3}</span>}
-                </div>
-              </>
-            ) : (
-              <span className="text-[10px] text-[var(--workspace-text-subtle)]">&nbsp;</span>
-            )}
-          </div>
-          {agentDeploymentCount > 0 && (
-            <div className="truncate text-[10px] font-medium text-[var(--workspace-status-info-text)]">
-              {t('workspace.agentDeployments.summary', { count: agentDeploymentCount })}{agentDeploymentStatus ? ` · ${t(`workspace.agentDeployments.status.${['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(agentDeploymentStatus) ? agentDeploymentStatus : 'unknown'}`)}` : ''}
+          ) : (metrics || resource) ? <HostResourceSummary resource={resource} metrics={metrics} t={t} /> : null}
+          {(host.tags?.length ?? 0) > 0 && (
+            <div className="flex items-center gap-1 overflow-hidden">
+              <Tag className="h-3 w-3 shrink-0 text-[var(--workspace-text-subtle)]" />
+              {host.tags.slice(0, 3).map((tag) => <span key={tag} className="shrink-0 rounded bg-[var(--workspace-surface-700)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--workspace-text-muted)]">{tag}</span>)}
+              {host.tags.length > 3 && <span className="shrink-0 text-[10px] text-[var(--workspace-text-subtle)]">+{host.tags.length - 3}</span>}
             </div>
           )}
         </div>
 
-        {operations && <section id={detailsId} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!detailsOpen} className="border-t border-[color:var(--workspace-border-soft)] p-4">
-          <HostOperationalMeta key={JSON.stringify([host.id, host.vaultId, operations.vaultId])} host={host} summary={operations} t={t} expanded stacked />
-        </section>}
-        <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-3">
-          <div className="flex flex-wrap items-center gap-2">
+        {operations && <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-2">
+          <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} compactOnly={!monitoring} onToggle={toggleDetails} />
+        </div>}
+        {operations && <HostOpsDrawer id={detailsId} host={host} summary={operations} open={detailsOpen} onClose={() => setDisclosure({ owner, expanded: false })} dot={sc?.dot} groupLabel={host.group ? groupLabel : undefined} network={network} jumpHost={jumpHost}
+          actions={<>
+            <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => ssh ? onConnect(host.id) : onEdit(host.id)}><Terminal className="h-3.5 w-3.5" />{ssh ? t('hostCard.connect') : t('hostDirectory.addSsh')}</Button>
+            {ssh && <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => requestHostSftp({ vaultId: host.vaultId, hostId: host.id, path: '' })}><FolderOpen className="h-3.5 w-3.5" />SFTP</Button>}
             <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
-            <Button data-testid="host-connect" size="sm" className="h-10 flex-1 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => hasSshConnection(host) ? onConnect(host.id) : onEdit(host.id)}>
-              <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}
-            </Button>
+          </>}>
+          <HostOperationalMeta key={JSON.stringify([host.id, host.vaultId, operations.vaultId])} host={host} summary={operations} t={t} expanded />
+        </HostOpsDrawer>}
+
+        <div className="relative border-t border-[color:var(--workspace-border-soft)] px-4 py-2.5">
+          {/* Resting footer: uptime and route; actions take over on hover, focus or selection. */}
+          <div className={cn('flex min-h-8 items-center gap-2 text-xs text-[var(--workspace-text-muted)] transition-opacity', 'sm:group-hover:pointer-events-none sm:group-hover:opacity-0 sm:group-focus-within:pointer-events-none sm:group-focus-within:opacity-0', isSelected && 'sm:pointer-events-none sm:opacity-0', 'max-sm:hidden')}>
+            {jumpHost && <span className="inline-flex min-w-0 items-center gap-1 truncate" title={`${t('hosts.jumpHost')}: ${jumpHost}`}><Route className="h-3 w-3 shrink-0" />{t('hosts.jumpHost')}</span>}
+            {agentDeploymentCount > 0 && <span className="truncate text-[color:var(--workspace-status-info-text)]">{t('workspace.agentDeployments.summary', { count: agentDeploymentCount })}{agentDeploymentStatus ? ` · ${t(`workspace.agentDeployments.status.${['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(agentDeploymentStatus) ? agentDeploymentStatus : 'unknown'}`)}` : ''}</span>}
+            {!jumpHost && agentDeploymentCount === 0 && host.updatedAt > 0 && <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{formatRelativeTime(host.updatedAt, t)}</span>}
+            <span className="flex-1" />
             <ProbeInstallEntry host={host} os={resource?.os} enabled={monitoring} onOpenDetails={operations ? () => setDisclosure({ owner, expanded: true }) : undefined} />
-            {host.updatedAt > 0 && (
-              <span className="shrink-0 flex items-center gap-1 text-[10px] text-[var(--workspace-text-subtle)]" title={new Date(host.updatedAt).toLocaleString()}>
-                <Clock className="h-3 w-3" />{formatRelativeTime(host.updatedAt, t)}
-              </span>
-            )}
+          </div>
+          <div className={cn('flex items-center gap-1.5 transition-opacity', 'sm:absolute sm:inset-x-4 sm:top-1/2 sm:-translate-y-1/2', 'sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100', isSelected && 'sm:pointer-events-auto sm:opacity-100')}>
+            <Button data-testid="host-connect" size="sm" className="h-10 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => ssh ? onConnect(host.id) : onEdit(host.id)}>
+              <Terminal className="h-4 w-4 md:h-3.5 md:w-3.5" />{ssh ? t('hostCard.connect') : t('hostDirectory.addSsh')}
+            </Button>
+            {ssh && <Button size="sm" variant="ghost" className="h-10 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => requestHostSftp({ vaultId: host.vaultId, hostId: host.id, path: '' })}><FolderOpen className="h-3.5 w-3.5" />SFTP</Button>}
+            <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
+            <span className="flex-1" />
+            <button type="button" title={t('hostCard.edit')} aria-label={t('hostCard.edit')} onClick={() => onEdit(host.id)} className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"><Pencil className="h-3.5 w-3.5" /></button>
+            <button type="button" title={t('hostCard.delete')} aria-label={t('hostCard.delete')} onClick={() => setConfirmOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-status-bad-bg)] hover:text-[color:var(--workspace-status-bad-text)]"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>
         </div>
       </div>
@@ -940,10 +992,10 @@ export function HostListItem({ resources, index, host, isSelected, status, resou
         data-testid="host-card" data-host-id={host.id} data-host-name={host.name} data-host-health={status ?? 'unknown'}
         data-vault-id={host.vaultId ?? operations?.vaultId}
         className={cn(
-          'group w-full min-w-0 rounded-xl border text-left transition-[background-color,border-color,box-shadow]',
-          isSelected
-            ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-row)] shadow-[inset_3px_0_0_var(--workspace-primary-500)]'
-            : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] shadow-[var(--workspace-shadow-card)] hover:border-[color:var(--workspace-border-strong)] hover:bg-[var(--workspace-surface-800)]',
+          'group w-full min-w-0 text-left transition-colors',
+          isSelected || batchSelection?.selected
+            ? 'bg-[var(--workspace-surface-row-selected)] shadow-[inset_3px_0_0_var(--workspace-primary-500)]'
+            : 'hover:bg-[var(--workspace-surface-800)]',
         )}
       >
         <div data-testid="host-list-primary" role="button" tabIndex={0}
@@ -954,21 +1006,21 @@ export function HostListItem({ resources, index, host, isSelected, status, resou
               onSelect(host.id)
             }
           }}
-          className={cn('grid min-w-0 cursor-pointer gap-4 rounded-xl px-4 py-4 sm:grid-cols-2 xl:items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-border-glow)]', monitoring ? HOST_LIST_COLUMNS : showResources ? HOST_RESOURCE_COLUMNS : HOST_CONNECTION_COLUMNS)}>
+          className={cn('grid min-w-0 cursor-pointer gap-4 px-4 py-3 sm:grid-cols-2 xl:items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-border-glow)]', monitoring ? HOST_LIST_COLUMNS : showResources ? HOST_RESOURCE_COLUMNS : HOST_CONNECTION_COLUMNS)}>
         <div className={cn('font-mono text-xs tabular-nums text-[var(--workspace-text-subtle)]', !batchSelection && 'hidden xl:block')}>
           {batchSelection ? <input type="checkbox" aria-label={`${hostPresentationCopy[locale].selectHost} · ${host.name}`} checked={batchSelection.selected} disabled={batchSelection.disabled} onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onChange={batchSelection.onChange} /> : String(index).padStart(2, '0')}
         </div>
 
         <div className="flex min-w-0 items-center gap-3">
-          <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl shadow-[var(--workspace-shadow-card)]', resource?.os ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]' : bg)}>
-            {resource?.os ? <WorkspaceOsIcon os={resource.os} className="h-5 w-5" /> : icon}
+          <div className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', resource?.os ? 'sb-os-badge' : bg)} style={resource?.os ? { '--os': osBrandColor(resource.os) } as CSSProperties : undefined}>
+            {resource?.os ? <WorkspaceOsIcon os={resource.os} className="h-4 w-4" /> : icon}
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
-              <p className="truncate text-[15px] font-semibold text-[var(--workspace-text-strong)]">{host.name}</p>
+              <p className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{host.name}</p>
             </div>
-            <p className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">
-              {!hasSshConnection(host) ? t('hostDirectory.monitoringOnly') : resource?.os || `${host.username || 'root'}@${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
+            <p className="mt-0.5 truncate font-mono text-[11.5px] text-[var(--workspace-text-muted)]">
+              {!hasSshConnection(host) ? t('hostDirectory.monitoringOnly') : `${host.username || 'root'}@${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
               {hostConnections(host).length > 1 && <span className="ml-2">{t('hostDirectory.connectionCount', { count: hostConnections(host).length })}</span>}
             </p>
             <HostGroupTagsMeta operations={operations} host={host} t={t} agentDeploymentCount={agentDeploymentCount} agentDeploymentStatus={agentDeploymentStatus} />
@@ -985,7 +1037,7 @@ export function HostListItem({ resources, index, host, isSelected, status, resou
             />
             {network?.locationStatus === 'loading' && <RefreshCw className="h-3 w-3 shrink-0 animate-spin text-[var(--workspace-text-subtle)]" />}
           </div>
-          <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{scopeLabel}</div>
+          <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{resource?.os || scopeLabel}</div>
         </div>
 
         <div className="min-w-0 xl:self-center">
@@ -1012,7 +1064,7 @@ export function HostListItem({ resources, index, host, isSelected, status, resou
         <div className="flex min-w-0 flex-wrap items-center gap-1.5 xl:justify-end [&>button]:shrink-0">
           <button
             type="button"
-            className="flex h-8 items-center justify-center gap-1.5 rounded-md bg-[var(--workspace-primary-500)] px-3 text-xs font-medium text-white transition-colors hover:bg-[var(--workspace-primary-400)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            className="flex h-8 items-center justify-center gap-1.5 rounded-md bg-[var(--workspace-accent-subtle)] px-3 text-xs font-medium text-[var(--workspace-accent-text)] transition-colors hover:bg-[var(--workspace-primary-500)] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
             data-testid="host-connect" onClick={(e) => { e.stopPropagation(); if (hasSshConnection(host)) onConnect(host.id); else onEdit(host.id) }} title={hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}>
             <Terminal className="h-3.5 w-3.5" />{hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}
           </button>
@@ -1031,10 +1083,14 @@ export function HostListItem({ resources, index, host, isSelected, status, resou
           </button>
         </div>
         </div>
-        {operations && <section id={detailsId} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!detailsOpen}
-          className="cursor-default rounded-b-xl border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4">
+        {operations && <HostOpsDrawer id={detailsId} host={host} summary={operations} open={detailsOpen} onClose={() => setDetailsState({ owner: detailsOwner, expanded: false })} dot={sc?.dot} groupLabel={host.group ? getDisplayGroupLabel(host.group, t) : undefined} network={network} jumpHost={formatJumpHost(host, operations)}
+          actions={<>
+            <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => hasSshConnection(host) ? onConnect(host.id) : onEdit(host.id)}><Terminal className="h-3.5 w-3.5" />{hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}</Button>
+            {hasSshConnection(host) && <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => requestHostSftp({ vaultId: host.vaultId, hostId: host.id, path: '' })}><FolderOpen className="h-3.5 w-3.5" />SFTP</Button>}
+            <HostOpsQuickActions host={host} onOpenWorkspace={onOpenWorkspace} onRefresh={onRefresh} />
+          </>}>
           <HostOperationalMeta key={JSON.stringify([host.id, host.vaultId, operations.vaultId])} host={host} summary={operations} t={t} expanded />
-        </section>}
+        </HostOpsDrawer>}
       </div>
 
       <DeleteConfirmDialog open={confirmOpen} onOpenChange={setConfirmOpen}

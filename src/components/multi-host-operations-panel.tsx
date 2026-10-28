@@ -46,6 +46,7 @@ export interface MultiHostOperationsPanelProps {
   onRunOperation: (request: MultiHostOperationRequest) => Promise<MultiHostOperationResult>
   maxHosts?: number
   initialSelectedHostIds?: string[]
+  initialOperation?: MultiHostOperationKind
   /** The host list owns selection; do not render a second host picker. */
   selectionFromList?: boolean
   disabled?: boolean
@@ -70,6 +71,7 @@ export function MultiHostOperationsPanel({
   onRunOperation,
   maxHosts = MAX_BATCH_HOSTS,
   initialSelectedHostIds = [],
+  initialOperation = 'health-check',
   selectionFromList = false,
   disabled = false,
   className,
@@ -78,7 +80,7 @@ export function MultiHostOperationsPanel({
   const boundedMax = Math.max(1, Math.min(MAX_BATCH_HOSTS, Number.isFinite(maxHosts) ? Math.floor(maxHosts) : MAX_BATCH_HOSTS))
   const hostIds = useMemo(() => new Set(hosts.map((host) => host.id)), [hosts])
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>(() => initialSelectedHostIds.filter((id) => hostIds.has(id)).slice(0, boundedMax))
-  const [operation, setOperation] = useState<MultiHostOperationKind>('health-check')
+  const [operation, setOperation] = useState<MultiHostOperationKind>(initialOperation)
   const [target, setTarget] = useState('')
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')

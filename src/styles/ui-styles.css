@@ -69,6 +69,8 @@ html.dark[data-dark-style="sharp"], html:not(.dark)[data-light-style="sharp"] {
 /* Host cards: a status edge for hosts that need attention, brand-tinted OS badges. */
 .sb-host-card[data-host-health="stale"] { box-shadow: inset 3px 0 0 var(--workspace-status-warn), var(--sb-card-shadow); }
 .sb-host-card[data-host-health="offline"], .sb-host-card[data-host-health="jump-unavailable"] { box-shadow: inset 3px 0 0 var(--workspace-status-bad), var(--sb-card-shadow); }
+.sb-host-card[data-attention="true"] { border-color: color-mix(in srgb, var(--workspace-status-warn) 55%, transparent); box-shadow: inset 3px 0 0 var(--workspace-status-warn), var(--sb-card-shadow); }
+.sb-host-card[data-attention="true"]:hover { box-shadow: inset 3px 0 0 var(--workspace-status-warn), var(--sb-card-shadow-hover); }
 .sb-host-card[data-host-health="stale"]:hover { box-shadow: inset 3px 0 0 var(--workspace-status-warn), var(--sb-card-shadow-hover); }
 .sb-host-card[data-host-health="offline"]:hover, .sb-host-card[data-host-health="jump-unavailable"]:hover { box-shadow: inset 3px 0 0 var(--workspace-status-bad), var(--sb-card-shadow-hover); }
 .sb-os-badge {
