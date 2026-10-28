@@ -9,6 +9,7 @@ export const agentDeploymentsCopy = {
     registered: 'Registered by {agent} over MCP · first {created} · updated {updated}', unknownAgent: 'an agent',
     footnote: 'Metadata submitted by an agent over MCP and stored only on this device. ShellBeam did not perform or verify this deployment; verification older than 24 hours shows as expired.',
     select: 'Select a deployment to see its directory and details.',
+    hasRegistration: 'Registered by an agent', kpiRegistered: 'Agent registrations', kpiFromAgents: 'from {count} agents', kpiVerified: 'Verified in 24h', kpiAttention: 'Needs attention', kpiAttentionSub: '{failed} failed · {stale} verification expired', kpiDiscovered: 'Asset discovery', kpiScanned: '{scanned} / {total} hosts scanned',
   },
   'zh-CN': {
     viewLabel: '部署来源', scanView: '资产发现', all: '全部', directory: '部署目录', copyPath: '复制路径', copied: '已复制',
@@ -20,5 +21,6 @@ export const agentDeploymentsCopy = {
     registered: '由 {agent} 通过 MCP 登记 · 首次 {created} · 更新于 {updated}', unknownAgent: 'Agent',
     footnote: '以上是 Agent 通过 MCP 提交的元数据，仅保存在本机。ShellBeam 没有执行、也没有验证这次部署；验证超过 24 小时会标为「验证已过期」。',
     select: '选择一个部署，查看目录和详情。',
+    hasRegistration: '已有 Agent 登记', kpiRegistered: 'Agent 登记', kpiFromAgents: '来自 {count} 个 Agent', kpiVerified: '24 小时内已验证', kpiAttention: '需要关注', kpiAttentionSub: '失败 {failed} · 验证过期 {stale}', kpiDiscovered: '资产发现', kpiScanned: '{scanned} / {total} 台已扫描',
   },
 } as const

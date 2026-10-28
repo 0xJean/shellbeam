@@ -1,5 +1,5 @@
 import { hasSshConnection } from '@/lib/hosts'
-import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { useHostNetworkMetadata, type HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
@@ -13,8 +13,7 @@ import {
   type WorkspaceInventoryProject,
 } from '@/lib/workspace-inventory'
 import { getServerConsoleLink } from '@/lib/server-console'
-import { RESOURCE_USAGE_BAD_THRESHOLD, RESOURCE_USAGE_WARN_THRESHOLD } from '@/lib/resource-usage'
-import { SegmentedMeter, type MeterKind } from '@/components/ui/segmented-meter'
+import { SegmentedMeter } from '@/components/ui/segmented-meter'
 import {
   createReadyWorkspaceInventoryStates,
   mergeWorkspaceInventoryStates,
@@ -35,37 +34,37 @@ import { cn } from '@/lib/utils'
 import {
   Activity,
   AlertTriangle,
-  Boxes,
   Bot,
   Check,
   CheckCircle2,
   ChevronDown,
   CircleDot,
   Clock,
-  Cpu,
   ExternalLink,
   FileDown,
-  FolderGit2,
   Gauge,
   GitBranch,
-  HardDrive,
   Loader2,
-  MemoryStick,
   Network,
   Settings2,
   Pencil,
   Plus,
-  RefreshCw,
   Search,
   SquareTerminal,
   Timer,
   Tags,
   Wifi,
   Wrench,
+  ArrowDownWideNarrow,
+  Filter,
+  ScanSearch,
+  Info,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 import { WorkspaceOsIcon } from './workspace-os-icon'
-import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup, type WorkspaceResourceHeaderTab } from './workspace-resource-overview-header'
+import { Sparkline } from '@/components/charts/chart-primitives'
+import { osBrandColor } from '@/lib/os-brand'
+import type { WorkspaceResourceHeaderTab } from './workspace-resource-overview-header'
 import { WorkspaceServiceIcon } from './workspace-service-icon'
 import { WorkspaceServerList, workspaceServerMatchesSearch, type WorkspaceServerSearchData } from './workspace-server-list'
 import { WorkspaceToolManagerApp } from './workspace-tool-manager-app'
@@ -95,17 +94,6 @@ interface HostInventoryState {
 }
 
 const SCAN_CONCURRENCY = 3
-const ASSET_GROUP_COLORS = [
-  'bg-[color:var(--workspace-primary-400)]',
-  'bg-emerald-400',
-  'bg-sky-400',
-  'bg-amber-300',
-  'bg-violet-400',
-  'bg-rose-400',
-  'bg-cyan-400',
-  'bg-orange-400',
-]
-
 type AssetSortMode = 'recent' | 'name' | 'resource' | 'status'
 type TFunction = ReturnType<typeof useT>['t']
 
@@ -113,50 +101,14 @@ function hostKey(host: HostProfile) {
   return getWorkspaceInventoryHostKey(host)
 }
 
-function formatPercent(value: number | null, t: TFunction) {
-  return value === null ? t('workspace.common.notAvailable') : `${Math.round(value)}%`
-}
+/** v3 asset risk rule, judged on the busiest of CPU / memory / disk. */
+const ASSET_RISK_TIGHT = 90
+const ASSET_RISK_HIGH = 75
 
-function getRiskLabel(value: number | null, t: TFunction) {
-  if (value === null) return t('workspace.asset.unknown')
-  if (value >= RESOURCE_USAGE_BAD_THRESHOLD) return t('workspace.asset.riskTight')
-  if (value >= RESOURCE_USAGE_WARN_THRESHOLD) return t('workspace.asset.riskHigh')
-  return t('workspace.asset.riskEnough')
-}
-
-function ResourceMeter({
-  icon: Icon,
-  kind,
-  label,
-  value,
-  detail,
-}: {
-  icon: ComponentType<{ className?: string }>
-  kind: MeterKind
-  label: string
-  value: number | null
-  detail?: string
-}) {
-  const { t } = useT()
-
-  return (
-    <div className="sb-card min-w-0 px-4 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
-            <Icon className="h-4 w-4" />
-          </span>
-          <span className="truncate text-xs font-semibold text-[var(--workspace-text-strong)]">{label}</span>
-        </div>
-        <span className="font-mono text-xs font-semibold text-[var(--workspace-text-strong)]">{formatPercent(value, t)}</span>
-      </div>
-      <SegmentedMeter kind={kind} value={value} segments={20} className="mt-3 h-2" />
-      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-[var(--workspace-text-muted)]">
-        <span>{getRiskLabel(value, t)}</span>
-        {detail && <span className="truncate text-right">{detail}</span>}
-      </div>
-    </div>
-  )
+function getRiskBadge(values: Array<number | null | undefined>, t: TFunction): { label: string; tone: 'good' | 'warn' | 'bad' } | undefined {
+  const risk = riskOf(values)
+  if (!risk) return undefined
+  return risk === 'tight' ? { label: t('workspace.asset.riskTight'), tone: 'bad' } : risk === 'high' ? { label: t('workspace.asset.riskHigh'), tone: 'warn' } : { label: t('workspace.asset.riskEnough'), tone: 'good' }
 }
 
 function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'good' | 'warn' | 'bad' | 'info' }) {
@@ -278,13 +230,6 @@ function HostStatusDot({ state }: { state: HostInventoryState }) {
   if (state.status === 'scanning') return <Loader2 className="h-3.5 w-3.5 animate-spin text-[color:var(--workspace-primary-300)]" />
   if (state.status === 'error') return <AlertTriangle className="h-3.5 w-3.5 text-[color:var(--workspace-status-bad)]" />
   return <CircleDot className="h-3.5 w-3.5 text-[var(--workspace-text-subtle)]" />
-}
-
-function getHostScanLabel(state: HostInventoryState, t: TFunction) {
-  if (state.status === 'unsupported') return t('workspace.monitor.status.unsupported')
-  if (state.status === 'scanning') return t('workspace.asset.scanning')
-  if (state.status === 'error') return t('workspace.asset.inaccessible')
-  return t('workspace.asset.notScanned')
 }
 
 function HostRegionLine({ network }: { network: HostNetworkDisplay }) {
@@ -548,10 +493,108 @@ function MonitorOverview({
   )
 }
 
-function AssetInventoryHeader({
+function riskOf(values: Array<number | null | undefined>): 'tight' | 'high' | 'ok' | null {
+  const real = values.filter((value): value is number => value != null)
+  if (!real.length) return null
+  const max = Math.max(...real)
+  return max >= ASSET_RISK_TIGHT ? 'tight' : max >= ASSET_RISK_HIGH ? 'high' : 'ok'
+}
+
+/** v3 "剩余资源": what is left on the box, from the latest sample, with a 24h trend. */
+function RemainingResources({ metrics, snapshot, history, isMobile, t }: {
+  metrics: ReturnType<typeof getDisplayMetric>; snapshot: ServerMonitorSnapshot | null; history: ServerMonitorHistoryPoint[]; isMobile: boolean; t: TFunction
+}) {
+  const since = (history[history.length - 1]?.sampledAt ?? 0) - 24 * 3_600_000
+  const recent = history.filter((point) => point.sampledAt >= since)
+  const trend = (pick: (snapshot: ServerMonitorSnapshot) => number | null) => recent.map((point) => pick(point.snapshot))
+  const free = (used: number | null, total: number | null) => used != null && total != null ? Math.max(0, total - used) : null
+  const cards: Array<{ kind: 'cpu' | 'memory' | 'disk'; label: string; value: ReactNode; aside?: ReactNode; used: number | null; trend: Array<number | null> }> = [
+    { kind: 'cpu', label: t('workspace.asset.cpuIdle'), used: metrics.cpuPercent,
+      value: metrics.cpuPercent == null ? '—' : <>{Math.round(100 - metrics.cpuPercent)}<small className="text-sm">%</small>{snapshot?.load1 != null && <small className="ml-1.5 text-xs font-normal text-[var(--workspace-text-muted)]">{t('workspace.asset.loadValue', { value: snapshot.load1.toFixed(2) })}</small>}</>,
+      trend: trend((point) => point.cpuPercent == null ? null : 100 - point.cpuPercent) },
+    { kind: 'memory', label: t('workspace.asset.memoryAvailable'), used: metrics.memoryPercent,
+      value: free(snapshot?.memoryUsedBytes ?? null, snapshot?.memoryTotalBytes ?? null) != null ? formatBytes(free(snapshot!.memoryUsedBytes, snapshot!.memoryTotalBytes)) : metrics.memoryPercent == null ? '—' : `${Math.round(100 - metrics.memoryPercent)}%`,
+      aside: snapshot?.memoryTotalBytes ? t('workspace.asset.totalValue', { value: formatBytes(snapshot.memoryTotalBytes) ?? '—' }) : undefined,
+      trend: trend((point) => free(point.memoryUsedBytes, point.memoryTotalBytes)) },
+    { kind: 'disk', label: t('workspace.asset.diskAvailable'), used: metrics.diskPercent,
+      value: free(snapshot?.diskUsedBytes ?? null, snapshot?.diskTotalBytes ?? null) != null ? formatBytes(free(snapshot!.diskUsedBytes, snapshot!.diskTotalBytes)) : metrics.diskPercent == null ? '—' : `${Math.round(100 - metrics.diskPercent)}%`,
+      aside: snapshot?.diskTotalBytes ? t('workspace.asset.totalValue', { value: formatBytes(snapshot.diskTotalBytes) ?? '—' }) : undefined,
+      trend: trend((point) => free(point.diskUsedBytes, point.diskTotalBytes)) },
+  ]
+  const risk = riskOf([metrics.cpuPercent, metrics.memoryPercent, metrics.diskPercent])
+  return (
+    <section data-tour="monitor-resources">
+      <div className="mb-2.5 flex items-center justify-between">
+        <h3 className="text-[13px] font-semibold text-[var(--workspace-text-strong)]">{t('workspace.asset.remaining')}</h3>
+        <span className="text-[11px] text-[var(--workspace-text-subtle)]">{recent.length > 1 ? t('workspace.asset.remainingTrend') : t('workspace.asset.remainingLatest')}</span>
+      </div>
+      <div className={cn('grid gap-3', isMobile ? 'grid-cols-1' : 'md:grid-cols-3')}>
+        {cards.map((card) => (
+          <div key={card.kind} data-testid={`asset-remaining-${card.kind}`} className="min-w-0 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] p-3">
+            <div className="flex items-center justify-between gap-2 text-xs text-[var(--workspace-text-muted)]"><span>{card.label}</span>{card.aside && <span className="italic text-[var(--workspace-text-subtle)]">{card.aside}</span>}</div>
+            <div className="mt-1.5 text-2xl font-bold tracking-tight text-[var(--workspace-text-strong)]">{card.value}</div>
+            <SegmentedMeter kind={card.kind} value={card.used} segments={16} className="mt-2" />
+            <div className="mt-1.5 text-[11px] text-[var(--workspace-text-subtle)]">{card.used == null ? t('workspace.common.notAvailable') : t('workspace.asset.usedValue', { value: Math.round(card.used) })}</div>
+            {card.trend.filter((value) => value != null).length > 1 && <div className="mt-2 flex justify-center"><Sparkline values={card.trend} width={200} height={30} color={card.kind === 'cpu' ? 'var(--workspace-metric-cpu-from, var(--workspace-primary-400))' : card.kind === 'memory' ? 'var(--workspace-primary-400)' : 'var(--workspace-status-good)'} /></div>}
+          </div>
+        ))}
+      </div>
+      {risk && <p data-testid="asset-risk-verdict" className={cn('mt-3 flex items-center gap-1.5 text-xs', risk === 'tight' ? 'text-[color:var(--workspace-status-bad-text)]' : risk === 'high' ? 'text-[color:var(--workspace-status-warn-text)]' : 'text-[color:var(--workspace-status-good-text)]')}>
+        {risk === 'ok' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+        {t(`workspace.asset.risk.${risk}Verdict`)} · {t('workspace.asset.riskRule', { tight: ASSET_RISK_TIGHT, high: ASSET_RISK_HIGH })}
+      </p>}
+    </section>
+  )
+}
+
+/** v3 "项目目录": discovered projects and Agent registrations in one list, each tagged with where it came from. */
+function ProjectDirectory({ projects, deployments, t }: {
+  projects: Array<{ project: WorkspaceInventoryProject; signals: string[] }>; deployments: McpDeploymentRecord[]; t: TFunction
+}) {
+  const byPath = new Map<string, { path: string; kind?: string; signals: string[]; discovered: boolean; deployment?: McpDeploymentRecord }>()
+  for (const { project, signals } of projects) byPath.set(project.path, { path: project.path, kind: project.kind, signals, discovered: true })
+  for (const deployment of deployments) {
+    const existing = byPath.get(deployment.deploymentPath)
+    if (existing) existing.deployment = deployment
+    else byPath.set(deployment.deploymentPath, { path: deployment.deploymentPath, kind: deployment.projectKind, signals: [], discovered: false, deployment })
+  }
+  const rows = [...byPath.values()]
+  return (
+    <section data-testid="asset-project-directory">
+      <div className="mb-2.5 flex items-center justify-between">
+        <h3 className="text-[13px] font-semibold text-[var(--workspace-text-strong)]">{t('workspace.asset.projectDirectory')}</h3>
+        <span className="text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.asset.projectCount', { count: rows.length })}</span>
+      </div>
+      {rows.length === 0 ? <div className="rounded-xl border border-dashed border-[color:var(--workspace-border-strong)] px-4 py-5 text-sm text-[var(--workspace-text-muted)]">{t('workspace.asset.noProjects')}</div> : (
+        <div className="divide-y divide-[color:var(--workspace-border-soft)] rounded-xl border border-[color:var(--workspace-border-soft)]">
+          {rows.map((row) => {
+            const running = row.signals.some(isRunningSignal)
+            return (
+              <div key={row.path} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">
+                <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-[var(--workspace-text-strong)]" title={row.path}>{row.path}</span>
+                <span className="flex flex-wrap items-center gap-1.5">
+                  {(row.kind || row.deployment?.name) && <Badge>{row.kind || row.deployment?.name}</Badge>}
+                  {row.signals.filter((signal) => !isRunningSignal(signal)).slice(0, 2).map((signal) => <Badge key={signal}>{signal}</Badge>)}
+                  {running && <span className="inline-flex items-center gap-1 text-xs text-[color:var(--workspace-status-good-text)]"><span className="h-1.5 w-1.5 rounded-full bg-[var(--workspace-status-good)]" />{row.signals.find(isRunningSignal)}</span>}
+                  {row.deployment && <Badge tone={agentDeploymentTone(row.deployment.status)}>{agentDeploymentStatusLabel(row.deployment.status, t)}</Badge>}
+                </span>
+                <span className="flex shrink-0 gap-1">
+                  {row.discovered && <Badge>{t('workspace.assetDiscovery.title')}</Badge>}
+                  {row.deployment && <Badge tone="info">{t('workspace.asset.agentRegistered')}</Badge>}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-5 text-[var(--workspace-text-subtle)]"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />{t('workspace.asset.projectSourcesNote')}</p>
+    </section>
+  )
+}
+
+function AssetListToolbar({
   hosts,
   visibleCount,
-  cachedCount,
   groupFilter,
   tagFilter,
   sortMode,
@@ -560,25 +603,9 @@ function AssetInventoryHeader({
   onTagFilter,
   onSortMode,
   onQueryChange,
-  readyCount,
-  serviceCount,
-  projectCount,
-  errorCount,
-  onScan,
-  scanning,
-  scanLabel,
-  lastScanAt,
-  onImportSsh,
-  onCreateHost,
-  headerExtraAction,
-  preheader,
-  tabs,
-  activeTab,
-  onTabChange,
 }: {
   hosts: HostProfile[]
   visibleCount: number
-  cachedCount: number
   groupFilter: string
   tagFilter: Set<string>
   sortMode: AssetSortMode
@@ -587,21 +614,6 @@ function AssetInventoryHeader({
   onTagFilter: (tags: Set<string>) => void
   onSortMode: (mode: AssetSortMode) => void
   onQueryChange: (value: string) => void
-  readyCount: number
-  serviceCount: number
-  projectCount: number
-  errorCount: number
-  onScan: () => void
-  scanning: boolean
-  scanLabel: string
-  lastScanAt: number | null
-  onImportSsh?: () => void
-  onCreateHost?: () => void
-  headerExtraAction?: ReactNode
-  preheader?: ReactNode
-  tabs?: WorkspaceResourceHeaderTab[]
-  activeTab?: string
-  onTabChange?: (tab: string) => void
 }) {
   const { t } = useT()
   const [tagOpen, setTagOpen] = useState(false)
@@ -625,228 +637,214 @@ function AssetInventoryHeader({
     resource: t('workspace.asset.sort.resource'),
     status: t('workspace.asset.sort.status'),
   }
-
-  if (hosts.length === 0) return null
-
-  const resourceGroups: WorkspaceResourceGroup[] = groups.map(([group, count], index) => ({
-    key: group,
-    label: groupLabel(group, t),
-    count,
-    colorClassName: ASSET_GROUP_COLORS[index % ASSET_GROUP_COLORS.length],
-  }))
-
-  const note = (
-    <div className="space-y-1">
-      {cachedCount > 0 && (
-        <div>{t('workspace.asset.cachedNote', { count: cachedCount })}</div>
-      )}
-      <div>{lastScanAt ? t('workspace.asset.lastScan', { time: new Date(lastScanAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }) : t('workspace.asset.waitingScan')}</div>
-    </div>
-  )
+  const chip = (active: boolean) => cn('inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
+    active ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]')
 
   return (
-    <>
-      <WorkspaceResourceOverviewHeader
-        preheader={preheader}
-        eyebrow={<><Network className="h-3.5 w-3.5" />{t('workspace.asset.eyebrow')}</>}
-        title={t('workspace.asset.title')}
-        description={t('workspace.asset.description')}
-        note={note}
-        actions={
-          <>
-            {headerExtraAction}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => { setTagOpen((value) => !value); setSortOpen(false) }}
-                className={cn(
-                  'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
-                  tagFilter.size > 0
-                    ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-text-strong)]'
-                    : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
-                )}
-              >
-                <Tags className="h-3.5 w-3.5" />
-                {t('workspace.asset.tags')}{tagFilter.size > 0 ? ` ${tagFilter.size}` : ''}
-                <ChevronDown className="h-3 w-3" />
-              </button>
-              {tagOpen && (
-                <>
-                  <button type="button" aria-label={t('workspace.asset.closeTagFilter')} className="fixed inset-0 z-40 cursor-default" onClick={() => setTagOpen(false)} />
-                  <div className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1 shadow-xl">
-                    {tagFilter.size > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => { onTagFilter(new Set()); setTagOpen(false) }}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text)]"
-                      >
-                        {t('workspace.asset.clearTags')}
-                      </button>
-                    )}
-                    <div className="max-h-60 overflow-auto">
-                      {tags.length === 0 ? (
-                        <div className="px-3 py-4 text-center text-xs text-[var(--workspace-text-muted)]">{t('workspace.asset.noTags')}</div>
-                      ) : tags.map((tag) => {
-                        const active = tagFilter.has(tag)
-                        return (
-                          <button
-                            key={tag}
-                            type="button"
-                            onClick={() => {
-                              const next = new Set(tagFilter)
-                              if (active) next.delete(tag)
-                              else next.add(tag)
-                              onTagFilter(next)
-                            }}
-                            className={cn(
-                              'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
-                              active ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]',
-                            )}
-                          >
-                            <span className={cn('flex h-4 w-4 items-center justify-center rounded border text-[10px]', active ? 'border-[color:var(--workspace-border-glow)] bg-[color:var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]' : 'border-[color:var(--workspace-border-soft)]')}>
-                              {active && <Check className="h-3 w-3" />}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate text-left">{tag}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => { setSortOpen((value) => !value); setTagOpen(false) }}
-                className="flex items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 py-1.5 text-xs font-medium text-[var(--workspace-text-muted)] transition-colors hover:text-[var(--workspace-text-strong)]"
-              >
-                <Clock className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{sortLabels[sortMode]}</span>
-                <ChevronDown className="h-3 w-3" />
-              </button>
-              {sortOpen && (
-                <>
-                  <button type="button" aria-label={t('workspace.asset.closeSortMenu')} className="fixed inset-0 z-40 cursor-default" onClick={() => setSortOpen(false)} />
-                  <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1 shadow-xl">
-                    {(Object.keys(sortLabels) as AssetSortMode[]).map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => { onSortMode(mode); setSortOpen(false) }}
-                        className={cn(
-                          'flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors',
-                          sortMode === mode ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]',
-                        )}
-                      >
-                        <span>{sortLabels[mode]}</span>
-                        {sortMode === mode && <Check className="h-3.5 w-3.5" />}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </>
-        }
-        total={hosts.length}
-        totalLabel={t('workspace.asset.totalHosts')}
-        visibleCount={visibleCount}
-        visibleLabel={t('workspace.asset.matchedHosts')}
-        groups={resourceGroups}
-        selectedGroup={groupFilter}
-        allGroupLabel={t('workspace.common.all')}
-        onGroupSelect={onGroupFilter}
-        search={
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
-            <input
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
-              placeholder={t('workspace.asset.searchPlaceholder')}
-              className="h-10 w-full rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 pr-3 text-sm text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
-            />
-          </div>
-        }
-        controls={
-          <>
-            <div className="flex-1" />
-            <button
-              type="button"
-              onClick={onScan}
-              disabled={scanning}
-              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-xs font-semibold text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              {scanLabel}
-            </button>
-            <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">
-              {readyCount}/{hosts.length} {t('workspace.asset.metricHosts')}
-            </span>
-            <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">
-              {serviceCount} {t('workspace.asset.metricServices')}
-            </span>
-            <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">
-              {projectCount} {t('workspace.asset.metricProjects')}
-            </span>
-            {errorCount > 0 && (
-              <span className="rounded-full border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-2.5 py-1 text-[11px] text-[var(--workspace-status-bad-text)]">
-                {errorCount} {t('workspace.asset.metricErrors')}
-              </span>
-            )}
-            {onImportSsh && (
-              <button
-                type="button"
-                onClick={onImportSsh}
-                className="flex items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2 text-xs font-medium text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"
-              >
-                <FileDown className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{t('workspace.asset.importSsh')}</span>
-              </button>
-            )}
-            {onCreateHost && (
-              <button
-                type="button"
-                onClick={onCreateHost}
-                className="inline-flex h-9 items-center gap-2 rounded-xl bg-[color:var(--workspace-primary-500)] px-3 text-xs font-semibold text-[var(--workspace-primary-foreground)] transition-colors hover:bg-[color:var(--workspace-primary-400)]"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {t('workspace.asset.newConnection')}
-              </button>
-            )}
-          </>
-        }
-      />
-
-      {tabs?.length ? (
-        <div role="tablist" className="mt-4 flex flex-wrap gap-1 rounded-lg bg-[var(--workspace-surface-800)] p-0.5">
-          {tabs.map((tab) => {
-            const Icon = tab.icon
-            const active = activeTab === tab.key
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                disabled={tab.disabled}
-                onClick={() => onTabChange?.(tab.key)}
-                className={cn(
-                  'inline-flex h-9 items-center gap-2 rounded-lg px-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                  active
-                    ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)] shadow-sm ring-1 ring-[var(--workspace-border-glow)]'
-                    : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
-                )}
-              >
-                {Icon && <Icon className="h-3.5 w-3.5" />}
-                {tab.label}
-              </button>
-            )
-          })}
+    <div className="space-y-2.5 border-b border-[color:var(--workspace-border-soft)] p-3">
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder={t('workspace.asset.searchPlaceholder')}
+            className="h-9 w-full rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 pr-3 text-[13px] text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
+          />
         </div>
-      ) : null}
-    </>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => { setTagOpen((value) => !value); setSortOpen(false) }}
+          className={cn(
+            'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
+            tagFilter.size > 0
+              ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-text-strong)]'
+              : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
+          )}
+        >
+          <Tags className="h-3.5 w-3.5" />
+          {t('workspace.asset.tags')}{tagFilter.size > 0 ? ` ${tagFilter.size}` : ''}
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        {tagOpen && (
+          <>
+            <button type="button" aria-label={t('workspace.asset.closeTagFilter')} className="fixed inset-0 z-40 cursor-default" onClick={() => setTagOpen(false)} />
+            <div className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1 shadow-xl">
+              {tagFilter.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { onTagFilter(new Set()); setTagOpen(false) }}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text)]"
+                >
+                  {t('workspace.asset.clearTags')}
+                </button>
+              )}
+              <div className="max-h-60 overflow-auto">
+                {tags.length === 0 ? (
+                  <div className="px-3 py-4 text-center text-xs text-[var(--workspace-text-muted)]">{t('workspace.asset.noTags')}</div>
+                ) : tags.map((tag) => {
+                  const active = tagFilter.has(tag)
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => {
+                        const next = new Set(tagFilter)
+                        if (active) next.delete(tag)
+                        else next.add(tag)
+                        onTagFilter(next)
+                      }}
+                      className={cn(
+                        'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
+                        active ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]',
+                      )}
+                    >
+                      <span className={cn('flex h-4 w-4 items-center justify-center rounded border text-[10px]', active ? 'border-[color:var(--workspace-border-glow)] bg-[color:var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]' : 'border-[color:var(--workspace-border-soft)]')}>
+                        {active && <Check className="h-3 w-3" />}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-left">{tag}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => { setSortOpen((value) => !value); setTagOpen(false) }}
+          className="flex items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 py-1.5 text-xs font-medium text-[var(--workspace-text-muted)] transition-colors hover:text-[var(--workspace-text-strong)]"
+        >
+          <ArrowDownWideNarrow className="h-3.5 w-3.5" />
+          <span>{sortLabels[sortMode]}</span>
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        {sortOpen && (
+          <>
+            <button type="button" aria-label={t('workspace.asset.closeSortMenu')} className="fixed inset-0 z-40 cursor-default" onClick={() => setSortOpen(false)} />
+            <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1 shadow-xl">
+              {(Object.keys(sortLabels) as AssetSortMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => { onSortMode(mode); setSortOpen(false) }}
+                  className={cn(
+                    'flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors',
+                    sortMode === mode ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]',
+                  )}
+                >
+                  <span>{sortLabels[mode]}</span>
+                  {sortMode === mode && <Check className="h-3.5 w-3.5" />}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+      </div>
+      {groups.length > 0 && <div className="flex items-center gap-1 overflow-x-auto">
+        <button type="button" aria-pressed={groupFilter === 'All'} onClick={() => onGroupFilter('All')} className={chip(groupFilter === 'All')}>{t('workspace.common.all')}</button>
+        {groups.map(([group, count]) => (
+          <button key={group} type="button" aria-pressed={groupFilter === group} onClick={() => onGroupFilter(groupFilter === group ? 'All' : group)} className={chip(groupFilter === group)}>
+            {groupLabel(group, t)}<span className="font-semibold">{count}</span>
+          </button>
+        ))}
+      </div>}
+      <div className="flex items-center gap-1.5 text-[11px] text-[var(--workspace-text-muted)]">
+        <span>{t('workspace.asset.totalHosts')}</span><span aria-hidden="true">·</span><span>{t('workspace.serverIndex.matched', { visible: visibleCount, total: hosts.length })}</span>
+      </div>
+    </div>
+  )
+}
+
+function AssetInventoryHeader({
+  hosts,
+  cachedCount,
+  readyCount,
+  serviceCount,
+  projectCount,
+  errorCount,
+  onScan,
+  onScanFiltered,
+  scanning,
+  lastScanAt,
+  onImportSsh,
+  onCreateHost,
+  headerExtraAction,
+  tabs,
+  activeTab,
+  onTabChange,
+}: {
+  hosts: HostProfile[]
+  cachedCount: number
+  readyCount: number
+  serviceCount: number
+  projectCount: number
+  errorCount: number
+  onScan: () => void
+  onScanFiltered?: () => void
+  scanning: boolean
+  lastScanAt: number | null
+  onImportSsh?: () => void
+  onCreateHost?: () => void
+  headerExtraAction?: ReactNode
+  tabs?: Array<WorkspaceResourceHeaderTab & { count?: number }>
+  activeTab?: string
+  onTabChange?: (tab: string) => void
+}) {
+  const { t } = useT()
+  if (hosts.length === 0) return null
+  const minutesAgo = lastScanAt ? Math.max(0, Math.round((Date.now() - lastScanAt) / 60_000)) : null
+  const ghost = 'inline-flex h-9 items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 text-[13px] font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:cursor-not-allowed disabled:opacity-60'
+  const stat = (value: number, label: string, warn = false) => <span className="inline-flex items-baseline gap-1">
+    <b className={cn('text-xl font-bold tabular-nums', warn ? 'text-[color:var(--workspace-status-warn-text)]' : 'text-[var(--workspace-text-strong)]')}>{value}</b>
+    <span className="text-xs text-[var(--workspace-text-muted)]">{label}</span>
+  </span>
+
+  return (
+    <header className="space-y-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('nav.assetInventory')}</h1>
+          <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">
+            {t('workspace.asset.description')} · {minutesAgo == null ? t('workspace.asset.waitingScan') : t('workspace.asset.lastScanAgo', { minutes: minutesAgo })}
+            {cachedCount > 0 && <> · {t('workspace.asset.cachedNote', { count: cachedCount })}</>}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {headerExtraAction}
+          {onImportSsh && <button type="button" onClick={onImportSsh} className={ghost} title={t('workspace.asset.importSsh')}><FileDown className="h-3.5 w-3.5" /><span className="hidden xl:inline">{t('workspace.asset.importSsh')}</span></button>}
+          {onCreateHost && <button type="button" onClick={onCreateHost} className={ghost}><Plus className="h-3.5 w-3.5" />{t('workspace.asset.newConnection')}</button>}
+          {onScanFiltered && <button type="button" onClick={onScanFiltered} disabled={scanning} className={ghost}><Filter className="h-3.5 w-3.5" />{t('workspace.asset.scanFiltered')}</button>}
+          <button type="button" onClick={onScan} disabled={scanning}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[color:var(--workspace-primary-500)] px-3 text-[13px] font-semibold text-[var(--workspace-primary-foreground)] transition-colors hover:bg-[color:var(--workspace-primary-400)] disabled:cursor-not-allowed disabled:opacity-60">
+            {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="h-3.5 w-3.5" />}{t('workspace.asset.scanAll')}
+          </button>
+        </div>
+      </div>
+      <div className="flex flex-col gap-3 border-b border-[color:var(--workspace-border-soft)] md:flex-row md:items-end md:justify-between">
+        {tabs?.length ? <div role="tablist" className="flex gap-5">
+          {tabs.map((tab) => {
+            const active = activeTab === tab.key
+            return <button key={tab.key} type="button" role="tab" aria-selected={active} disabled={tab.disabled} onClick={() => onTabChange?.(tab.key)}
+              className={cn('-mb-px inline-flex items-center gap-1.5 border-b-2 pb-2.5 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                active ? 'border-primary text-[var(--workspace-text-strong)]' : 'border-transparent text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
+              {tab.label}{tab.count != null && <span aria-hidden="true" className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">{tab.count}</span>}
+            </button>
+          })}
+        </div> : <span />}
+        <div data-testid="asset-header-stats" className="flex flex-wrap items-baseline gap-5 pb-2.5" title={`${readyCount}/${hosts.length} ${t('workspace.asset.metricHosts')}`}>
+          {stat(hosts.length, t('workspace.asset.metricHosts'))}
+          {stat(serviceCount, t('workspace.asset.metricServices'))}
+          {stat(projectCount, t('workspace.asset.metricProjects'))}
+          {errorCount > 0 && stat(errorCount, t('workspace.asset.metricErrors'), true)}
+        </div>
+      </div>
+    </header>
   )
 }
 
@@ -1098,10 +1096,11 @@ export function WorkspaceAssetInventoryApp({
     }))
     .filter((entry) => projectMatches(entry.project, normalizedQuery, entry.signals)) ?? []
   const componentStatusCount = selectedInventory?.tools.length ?? 0
-  const headerTabs: WorkspaceResourceHeaderTab[] = [
+  const toolCount = readyStates.reduce((sum, state) => sum + (state.inventory?.tools.length ?? 0), 0)
+  const headerTabs: Array<WorkspaceResourceHeaderTab & { count?: number }> = [
     { key: 'assets', label: t('workspace.asset.assetsTab'), icon: Network },
-    { key: 'tools', label: t('workspace.asset.toolsTab'), icon: Wrench },
-    { key: 'deployments', label: t('workspace.asset.deploymentsTab'), icon: GitBranch },
+    { key: 'tools', label: t('workspace.asset.toolsTab'), icon: Wrench, count: toolCount },
+    { key: 'deployments', label: t('workspace.asset.deploymentsTab'), icon: GitBranch, count: projectCount + agentDeployments.length },
   ]
   const handleHeaderTabChange = (tab: string) => {
     if (tab === 'tools') openToolManagerForSelectedHost()
@@ -1128,23 +1127,14 @@ export function WorkspaceAssetInventoryApp({
           activeTab={view}
           onTabChange={handleHeaderTabChange}
           hosts={hosts}
-          visibleCount={hostRows.length}
           cachedCount={cachedCount}
-          groupFilter={groupFilter}
-          tagFilter={tagFilter}
-          sortMode={sortMode}
-          query={query}
-          onGroupFilter={setGroupFilter}
-          onTagFilter={setTagFilter}
-          onSortMode={setSortMode}
-          onQueryChange={setQuery}
           readyCount={readyStates.length}
           serviceCount={serviceCount}
           projectCount={projectCount}
           errorCount={errorCount}
-          onScan={() => void scanHosts(hostRows.length > 0 ? hostRows : hosts, { force: true })}
+          onScan={() => void scanHosts(hosts, { force: true })}
+          onScanFiltered={hostRows.length > 0 && hostRows.length !== hosts.length ? () => void scanHosts(hostRows, { force: true }) : undefined}
           scanning={scanningCount > 0}
-          scanLabel={hostRows.length > 0 && hostRows.length !== hosts.length ? t('workspace.asset.scanFiltered') : t('workspace.asset.scanAll')}
           lastScanAt={lastScanAt}
           onImportSsh={onImportSsh}
           onCreateHost={onCreateHost}
@@ -1156,6 +1146,9 @@ export function WorkspaceAssetInventoryApp({
         isMobile ? 'pt-0' : 'min-h-0 flex-1 pt-4 xl:grid-cols-[minmax(20rem,0.68fr)_minmax(0,1.42fr)]',
       )}>
         <WorkspaceServerList
+          variant="compact"
+          header={<AssetListToolbar hosts={hosts} visibleCount={hostRows.length} groupFilter={groupFilter} tagFilter={tagFilter} sortMode={sortMode} query={query}
+            onGroupFilter={setGroupFilter} onTagFilter={setTagFilter} onSortMode={setSortMode} onQueryChange={setQuery} />}
           hosts={hostRows}
           totalCount={hosts.length}
           selectedKey={selectedHost ? hostKey(selectedHost) : selectedKey}
@@ -1177,7 +1170,15 @@ export function WorkspaceAssetInventoryApp({
           getPrimaryBadge={(host) => {
             const state = states[hostKey(host)] ?? { status: 'idle' as const }
             if (state.status === 'error') return undefined
-            return { label: state.inventory?.projects.length ? t('workspace.asset.projectsCount', { count: state.inventory.projects.length }) : t('workspace.asset.assetBadge'), tone: state.status === 'ready' ? 'info' : 'default' }
+            const metrics = getDisplayMetric(state.inventory, monitorStates[getServerMonitorHostKey(host)]?.latest?.snapshot, t)
+            return getRiskBadge([metrics.cpuPercent, metrics.memoryPercent, metrics.diskPercent], t)
+          }}
+          renderLeading={(host) => {
+            const os = monitorStates[getServerMonitorHostKey(host)]?.latest?.snapshot?.os || states[hostKey(host)]?.inventory?.resource.os
+            return <span className={cn('relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', os ? 'sb-os-badge' : 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]')} style={os ? { '--os': osBrandColor(os) } as CSSProperties : undefined}>
+              <WorkspaceOsIcon os={os} className="h-4 w-4" />
+              <span className="absolute -bottom-0.5 -right-0.5"><HostStatusDot state={states[hostKey(host)] ?? { status: 'idle' }} /></span>
+            </span>
           }}
           renderRegionLine={(host) => {
             const network = networkByAddress[host.address]
@@ -1263,93 +1264,54 @@ export function WorkspaceAssetInventoryApp({
           ) : !selectedHost ? (
             <WorkspaceEmptyState title={t('workspace.asset.noSelectedTitle')} description={t('workspace.asset.noSelectedDescription')} />
           ) : (
-            <div className={cn('space-y-4', isMobile && 'pb-2')}>
-              <div className={cn(
-                'rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]',
-                isMobile ? 'p-3' : 'p-4',
-              )}>
-                <div className={cn('flex flex-col gap-4', !isMobile && 'lg:flex-row lg:items-start lg:justify-between')}>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
-                        <WorkspaceOsIcon os={selectedMonitorSnapshot?.os || selectedInventory?.resource.os} className="h-5 w-5" />
-                      </span>
-                      <div className="min-w-0">
-                        <div className="truncate text-xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">{selectedHost.name}</div>
-                        <div className="mt-1 truncate text-sm text-[var(--workspace-text-muted)]">
-                          {selectedHost.username}@{selectedHost.address}:{selectedHost.port}
-                        </div>
-                      </div>
-                    </div>
-                    <div data-tour="monitor-status" className="mt-3 flex flex-wrap gap-2">
+            <div className={cn('space-y-5', isMobile && 'pb-2')}>
+              <div data-tour="monitor-status" className={cn('flex flex-col gap-3', !isMobile && 'lg:flex-row lg:items-start lg:justify-between')}>
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className={cn('mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', (selectedMonitorSnapshot?.os || selectedInventory?.resource.os) ? 'sb-os-badge' : 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]')}
+                    style={(selectedMonitorSnapshot?.os || selectedInventory?.resource.os) ? { '--os': osBrandColor(selectedMonitorSnapshot?.os || selectedInventory?.resource.os || '') } as CSSProperties : undefined}>
+                    <WorkspaceOsIcon os={selectedMonitorSnapshot?.os || selectedInventory?.resource.os} className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <HostStatusDot state={selectedState ?? { status: 'idle' }} />
+                      <span className="truncate text-xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">{selectedHost.name}</span>
                       <Badge>{groupLabel(selectedHost.group || 'Custom', t)}</Badge>
-                      {selectedMonitor?.latest && (
-                        <Badge tone={monitorStatusTone(selectedMonitor.latest.status)}>
-                          {monitorStatusLabel(selectedMonitor.latest.status, t)}
-                        </Badge>
-                      )}
-                      {selectedState?.status === 'error' && <Badge tone="bad">{getHostScanLabel(selectedState, t)}</Badge>}
-                      {selectedNetwork && (
-                        <Badge>
-                          <HostRegionMeta network={selectedNetwork} />
-                        </Badge>
-                      )}
-                      {(selectedHost.tags ?? []).map((tag) => <Badge key={tag}>{tag}</Badge>)}
-                      <Badge>
-                        {selectedMonitorSnapshot?.os
-                          || <HostSystemMeta resource={selectedInventory?.resource} fallbackKey="workspace.asset.versionPending" />}
-                      </Badge>
-                      {(selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel) && <Badge>{selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel}</Badge>}
+                      {selectedMonitor?.latest && <Badge tone={monitorStatusTone(selectedMonitor.latest.status)}>{monitorStatusLabel(selectedMonitor.latest.status, t)}</Badge>}
                     </div>
+                    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-[var(--workspace-text-muted)]">
+                      <span className="font-mono">{selectedHost.username}@{selectedHost.address}:{selectedHost.port}</span>
+                      {selectedNetwork && <span className="inline-flex items-center gap-1">· <HostRegionMeta network={selectedNetwork} /></span>}
+                      <span>· {selectedMonitorSnapshot?.os || <HostSystemMeta resource={selectedInventory?.resource} fallbackKey="workspace.asset.versionPending" />}</span>
+                      {(selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel) && <span className="font-mono">· {selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel}</span>}
+                      {selectedState?.updatedAt ? <span>· {t('workspace.asset.scannedAgo', { minutes: Math.max(0, Math.round((Date.now() - selectedState.updatedAt) / 60_000)) })}</span> : null}
+                    </div>
+                    {(selectedHost.tags ?? []).length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{(selectedHost.tags ?? []).map((tag) => <Badge key={tag}>{tag}</Badge>)}</div>}
                   </div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
-                    <button
-                      type="button"
-                      onClick={() => void scanHosts([selectedHost], { force: true })}
-                      disabled={selectedState?.status === 'scanning'}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-xs font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {selectedState?.status === 'scanning' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                      {t('workspace.asset.scanThisVps')}
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
+                  <button type="button" onClick={() => void scanHosts([selectedHost], { force: true })} disabled={selectedState?.status === 'scanning'}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:cursor-not-allowed disabled:opacity-60">
+                    {selectedState?.status === 'scanning' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="h-3.5 w-3.5" />}{t('workspace.asset.scanThisVps')}
+                  </button>
+                  {selectedConsoleLink && onOpenProviderConsole && (
+                    <button type="button" onClick={() => onOpenProviderConsole(selectedConsoleLink.url, selectedHost)}
+                      aria-label={t('workspace.asset.openConsole', { label: selectedConsoleLink.label })} title={t('workspace.asset.openConsole', { label: selectedConsoleLink.label })}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] px-2.5 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)]">
+                      <ExternalLink className="h-3.5 w-3.5" /><span>{t('workspace.asset.console', { label: selectedConsoleLink.label })}</span>
                     </button>
-                    {(onOpenTerminal || onEditHost || (selectedConsoleLink && onOpenProviderConsole)) && (
-                      <>
-                      {onOpenTerminal && (
-                        <button
-                          type="button"
-                          disabled={!hasSshConnection(selectedHost)}
-                          onClick={() => onOpenTerminal(selectedHost)}
-                          className="inline-flex h-9 items-center justify-center gap-2 rounded-xl bg-[color:var(--workspace-primary-500)] px-3 text-xs font-semibold text-[var(--workspace-primary-foreground)] transition-colors hover:bg-[color:var(--workspace-primary-400)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-primary-400)]"
-                        >
-                          <SquareTerminal className="h-3.5 w-3.5" />
-                          {t('workspace.asset.terminal')}
-                        </button>
-                      )}
-                      {onEditHost && (
-                        <button
-                          type="button"
-                          onClick={() => onEditHost(selectedHost)}
-                          className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-xs font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[var(--workspace-surface-700)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-primary-400)]"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                          {t('workspace.asset.edit')}
-                        </button>
-                      )}
-                      {selectedConsoleLink && onOpenProviderConsole && (
-                        <button
-                          type="button"
-                          onClick={() => onOpenProviderConsole(selectedConsoleLink.url, selectedHost)}
-                          aria-label={t('workspace.asset.openConsole', { label: selectedConsoleLink.label })}
-                          title={t('workspace.asset.openConsole', { label: selectedConsoleLink.label })}
-                          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-xs font-semibold text-[var(--workspace-text-strong)] transition-colors hover:bg-[var(--workspace-surface-700)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--workspace-primary-400)]"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          <span>{t('workspace.asset.console', { label: selectedConsoleLink.label })}</span>
-                        </button>
-                      )}
-                      </>
-                    )}
-                  </div>
+                  )}
+                  {onEditHost && (
+                    <button type="button" onClick={() => onEditHost(selectedHost)} title={t('workspace.asset.edit')}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)]">
+                      <Pencil className="h-3.5 w-3.5" />{t('workspace.asset.edit')}
+                    </button>
+                  )}
+                  {onOpenTerminal && (
+                    <button type="button" disabled={!hasSshConnection(selectedHost)} onClick={() => onOpenTerminal(selectedHost)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[var(--workspace-accent-subtle)] px-3 text-xs font-semibold text-[var(--workspace-accent-text)] transition-colors hover:bg-[color:var(--workspace-primary-500)] hover:text-[var(--workspace-primary-foreground)] disabled:opacity-50">
+                      <SquareTerminal className="h-3.5 w-3.5" />{t('workspace.asset.terminal')}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1372,12 +1334,7 @@ export function WorkspaceAssetInventoryApp({
 
               {selectedInventory || selectedMonitor?.latest ? (
                 <>
-                  <div data-tour="monitor-resources" className={cn('grid gap-3', isMobile ? 'grid-cols-1' : 'md:grid-cols-3')}>
-                    <ResourceMeter icon={Cpu} kind="cpu" label={t('workspace.common.cpu')} value={selectedDisplayMetrics.cpuPercent} detail={selectedDisplayMetrics.cpuDetail} />
-                    <ResourceMeter icon={MemoryStick} kind="memory" label={t('workspace.common.memory')} value={selectedDisplayMetrics.memoryPercent} detail={selectedDisplayMetrics.memoryDetail} />
-                    <ResourceMeter icon={HardDrive} kind="disk" label={t('workspace.common.disk')} value={selectedDisplayMetrics.diskPercent} detail={selectedDisplayMetrics.diskDetail} />
-                  </div>
-
+                  <RemainingResources metrics={selectedDisplayMetrics} snapshot={selectedMonitorSnapshot} history={selectedMonitor?.history ?? []} isMobile={isMobile} t={t} />
                   <div data-tour="monitor-source" className="flex flex-wrap items-center gap-2 text-xs text-[var(--workspace-text-muted)]">
                     <span>{t('workspace.monitor.sourceLabel')}</span>
                     <Badge tone={selectedMonitorSnapshot ? 'good' : 'default'}>
@@ -1389,102 +1346,46 @@ export function WorkspaceAssetInventoryApp({
                   </div>
 
                   {selectedMonitor?.latest && (
-                    <div data-tour="monitor-trends">
-                      <MonitorOverview
-                        latest={selectedMonitor.latest}
-                        history={selectedMonitor.history}
-                        t={t}
-                      />
-                    </div>
+                    <details data-tour="monitor-trends" className="group rounded-xl border border-[color:var(--workspace-border-soft)] px-3 py-2">
+                      <summary className="cursor-pointer list-none text-xs font-medium text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]">{t('workspace.asset.moreMetrics')}</summary>
+                      <div className="mt-3"><MonitorOverview latest={selectedMonitor.latest} history={selectedMonitor.history} t={t} /></div>
+                    </details>
                   )}
 
                   {selectedInventory ? (
-                    <>
-                  <AssetDetailSection
-                    icon={Boxes}
-                    title={t('workspace.asset.components')}
-                    meta={componentStatusCount}
-                    action={
-                        <button
-                          type="button"
-                          onClick={openToolManagerForSelectedHost}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"
-                          aria-label={t('workspace.asset.manageCurrentTools')}
-                          title={t('workspace.asset.manageCurrentTools')}
-                        >
-                          <Settings2 className="h-3.5 w-3.5" />
+                    <section>
+                      <div className="mb-2.5 flex items-center justify-between">
+                        <h3 className="text-[13px] font-semibold text-[var(--workspace-text-strong)]">{t('workspace.asset.components')}<span className="ml-1.5 font-mono text-[11px] font-normal text-[var(--workspace-text-subtle)]">{componentStatusCount}</span></h3>
+                        <button type="button" onClick={openToolManagerForSelectedHost} aria-label={t('workspace.asset.manageCurrentTools')} title={t('workspace.asset.manageCurrentTools')}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-[var(--workspace-accent-text)] hover:underline">
+                          <Settings2 className="h-3.5 w-3.5" />{t('workspace.asset.manageTools')} →
                         </button>
-                    }
-                  >
-                    <div className={cn('grid gap-2', isMobile ? 'grid-cols-1' : 'md:grid-cols-2 2xl:grid-cols-3')}>
-                      {selectedInventory.tools.map((tool) => {
-                        const serviceName = getInventoryToolServiceName(tool.id)
-                        const service = serviceName
-                          ? selectedInventory.services.find((entry) => entry.name === serviceName)
-                          : undefined
-                        return (
-                          <div key={`${tool.id}-${tool.binary}`} className="min-w-0 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] px-3 py-2.5">
-                            <div className="flex min-w-0 items-center justify-between gap-2">
-                              <div className="flex min-w-0 items-center gap-2">
-                                <WorkspaceServiceIcon name={tool.id} className="h-4 w-4 text-[var(--workspace-text-muted)]" />
-                                <div className="truncate text-xs font-semibold text-[var(--workspace-text-strong)]">{tool.name}</div>
-                              </div>
-                              {service && <Badge tone={getServiceTone(service.active)}>{service.active || service.enabled}</Badge>}
+                      </div>
+                      <div className={cn('grid gap-2', isMobile ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4')}>
+                        {selectedInventory.tools.map((tool) => {
+                          const serviceName = getInventoryToolServiceName(tool.id)
+                          const service = serviceName ? selectedInventory.services.find((entry) => entry.name === serviceName) : undefined
+                          const tone = service ? getServiceTone(service.active) : null
+                          return (
+                            <div key={`${tool.id}-${tool.binary}`} data-testid="asset-component" className="flex min-w-0 items-center gap-2.5 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] px-3 py-2.5" title={tool.path || tool.binary}>
+                              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--workspace-surface-700)]"><WorkspaceServiceIcon name={tool.id} className="h-4 w-4 text-[var(--workspace-text)]" /></span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] font-semibold text-[var(--workspace-text-strong)]">{tool.name}</span>
+                                <span className="block truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{tool.version.match(/\d+(?:\.\d+)+/)?.[0] ?? (tool.version || tool.binary)}</span>
+                              </span>
+                              {service && <span className="sr-only">{service.active || service.enabled}</span>}
+                              {service && <span aria-hidden="true" title={service.active || service.enabled} className={cn('h-2 w-2 shrink-0 rounded-full', tone === 'good' ? 'bg-[var(--workspace-status-good)]' : tone === 'bad' ? 'bg-[var(--workspace-status-bad)]' : tone === 'warn' ? 'bg-[var(--workspace-status-warn)]' : 'bg-[var(--workspace-text-subtle)]')} />}
                             </div>
-                            <div className="mt-1 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{tool.binary}</div>
-                          </div>
-                        )
-                      })}
-                      {componentStatusCount === 0 && <div className="text-sm text-[var(--workspace-text-muted)]">{t('workspace.asset.noComponents')}</div>}
-                    </div>
-                  </AssetDetailSection>
-                    </>
+                          )
+                        })}
+                        {componentStatusCount === 0 && <div className="text-sm text-[var(--workspace-text-muted)]">{t('workspace.asset.noComponents')}</div>}
+                      </div>
+                    </section>
                   ) : (
                     <div className="rounded-xl border border-dashed border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-panel)] px-4 py-5 text-sm text-[var(--workspace-text-muted)]">
                       {t('workspace.monitor.inventoryPending')}
                     </div>
                   )}
-
-                  {selectedInventory && <AssetDetailSection
-                    icon={FolderGit2}
-                    title={t('workspace.assetDiscovery.title')}
-                    meta={filteredProjects.length}
-                  >
-                    <p className="mb-3 text-xs leading-5 text-[var(--workspace-text-muted)]">{t('workspace.assetDiscovery.description')}</p>
-                    <div className={cn('grid gap-2', isMobile ? 'grid-cols-1' : 'xl:grid-cols-2')}>
-                      {filteredProjects.map(({ project, signals }) => {
-                        const isRunning = signals.some(isRunningSignal)
-                        return (
-                          <div
-                            key={`${project.path}-${project.kind}`}
-                            className={cn(
-                              'min-w-0 rounded-xl border px-3 py-2.5',
-                              isRunning
-                                ? 'border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)]'
-                                : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)]',
-                            )}
-                          >
-                            <div className="flex min-w-0 items-center justify-between gap-3">
-                              <div className="truncate text-xs font-semibold text-[var(--workspace-text-strong)]">{project.name || project.kind}</div>
-                              <div className="flex shrink-0 items-center gap-1.5">
-                                {isRunning && <Badge tone="good">{t('workspace.asset.running')}</Badge>}
-                                <Badge>{project.kind}</Badge>
-                              </div>
-                            </div>
-                            <div className="mt-1 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{project.path}</div>
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              {signals.slice(0, 4).map((signal) => (
-                                <Badge key={signal} tone={isRunningSignal(signal) ? 'good' : 'default'}>{signal}</Badge>
-                              ))}
-                              {signals.length === 0 && <span className="text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.asset.noRunSignals')}</span>}
-                            </div>
-                            {project.modifiedAt && <div className="mt-1 text-[11px] text-[var(--workspace-text-subtle)]">{project.modifiedAt}</div>}
-                          </div>
-                        )
-                      })}
-                      {filteredProjects.length === 0 && <div className="text-sm text-[var(--workspace-text-muted)]">{t('workspace.asset.noProjects')}</div>}
-                    </div>
-                  </AssetDetailSection>}
                 </>
               ) : (
                 <div className="flex min-h-[18rem] items-center justify-center rounded-xl border border-dashed border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-panel)] px-6 text-center text-sm text-[var(--workspace-text-muted)]">
@@ -1496,40 +1397,7 @@ export function WorkspaceAssetInventoryApp({
                 </div>
               )}
 
-              <AssetDetailSection
-                icon={Bot}
-                title={t('workspace.agentDeployments.title')}
-                meta={t('workspace.agentDeployments.count', { count: selectedAgentDeployments.length })}
-              >
-                <p className="mb-3 text-xs leading-5 text-[var(--workspace-text-muted)]">{t('workspace.agentDeployments.description')}</p>
-                {selectedAgentDeployments.length > 0 ? (
-                  <div className={cn('grid gap-2', isMobile ? 'grid-cols-1' : 'xl:grid-cols-2')}>
-                    {selectedAgentDeployments.map((deployment) => (
-                      <div key={`${deployment.clientId}:${deployment.deploymentId}`} className="min-w-0 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] px-3 py-2.5">
-                        <div className="flex min-w-0 items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="truncate text-xs font-semibold text-[var(--workspace-text-strong)]">{deployment.name || deployment.projectKind}</div>
-                            <div className="mt-1 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{deployment.deploymentPath}</div>
-                          </div>
-                          <Badge tone={agentDeploymentTone(deployment.status)}>{agentDeploymentStatusLabel(deployment.status, t)}</Badge>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {deployment.agentName && <Badge tone="info">{t('workspace.agentDeployments.agent', { name: deployment.agentName })}</Badge>}
-                          {deployment.projectKind && <Badge>{deployment.projectKind}</Badge>}
-                          {deployment.runtime?.language && <Badge>{deployment.runtime.language}{deployment.runtime.version ? ` ${deployment.runtime.version}` : ''}</Badge>}
-                          {deployment.runtime?.packageManager && <Badge>{deployment.runtime.packageManager}</Badge>}
-                        </div>
-                        {deployment.source?.repository && <div className="mt-2 truncate text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.agentDeployments.source')}: {deployment.source.repository}</div>}
-                        <div className="mt-1 text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.agentDeployments.updatedAt', { time: new Date(deployment.updatedAt).toLocaleString() })}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-dashed border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-panel)] px-4 py-5 text-sm text-[var(--workspace-text-muted)]">
-                    {t('workspace.agentDeployments.empty')}
-                  </div>
-                )}
-              </AssetDetailSection>
+              <ProjectDirectory projects={selectedInventory ? filteredProjects : []} deployments={selectedAgentDeployments} t={t} />
             </div>
           )}
         </div>
