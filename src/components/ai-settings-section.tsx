@@ -3,7 +3,7 @@ import { Asterisk, Cloud, Cpu, Eye, EyeOff, Lock, Plug, Route, ShieldCheck, Spar
 import { AICliSettings } from '@/components/ai-cli-settings'
 import { AIModelPicker } from '@/components/ai-model-picker'
 import { Input } from '@/components/ui/input'
-import { AI_PROVIDERS, loadAISettings, saveAISettings, switchAIProvider, type AIBackend, type AIProviderId, type AISettings } from '@/lib/ai'
+import { AI_PROVIDERS, AI_SETTINGS_EVENT, loadAISettings, saveAISettings, switchAIProvider, type AIBackend, type AIProviderId, type AISettings } from '@/lib/ai'
 import { useT } from '@/lib/i18n'
 import { aiMcpSettingsCopy } from '@/lib/locales/ai-mcp-settings-v3'
 import { cn } from '@/lib/utils'
@@ -20,6 +20,15 @@ export function AISettingsSection() {
   const { t, locale } = useT()
   const copy = aiMcpSettingsCopy[locale]
   useEffect(() => { saveAISettings(settings) }, [settings])
+  // The terminal AI panel can switch backend or model while Settings is open.
+  useEffect(() => {
+    const sync = () => setSettings((current) => {
+      const next = loadAISettings()
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next
+    })
+    window.addEventListener(AI_SETTINGS_EVENT, sync)
+    return () => window.removeEventListener(AI_SETTINGS_EVENT, sync)
+  }, [])
   const providerDef = AI_PROVIDERS.find((p) => p.id === settings.provider)
   const isOllama = settings.provider === 'ollama'
   const isCustom = settings.provider === 'custom'

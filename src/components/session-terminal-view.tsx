@@ -10,13 +10,14 @@ import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { resizeInteractiveTerminal } from '@/lib/interactive-session'
 import { DEFAULT_TERMINAL_PREFS, useResolvedTerminalTheme, type TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
+import { OUTPUT_LINE_LIMIT, type TerminalAiBridge } from '@/lib/ai-conversation'
 import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { Eraser, PanelRightClose, PanelRightOpen, ExternalLink, Globe } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { AICommandBar } from './ai-command-bar'
 import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
 import { SuggestBar } from './suggest-bar'
@@ -107,6 +108,10 @@ export function SessionTerminalView({
     return () => window.removeEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
   }, [sessionId])
   useEffect(() => { announceTerminalAiState(sessionId, showAI) }, [sessionId, showAI])
+  // The assistant works on the terminal, so asking for it from the workbench switches to the terminal.
+  useEffect(() => {
+    if (showAI && chromeOnly && workspaceMode !== 'terminal') onWorkspaceModeChange?.('terminal')
+  }, [showAI, chromeOnly, workspaceMode, onWorkspaceModeChange])
   const [currentInputLine, setCurrentInputLine] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [detectedLinks, setDetectedLinks] = useState<string[]>([])
@@ -126,12 +131,12 @@ export function SessionTerminalView({
   const prefsRef = useRef(terminalPrefs)
   prefsRef.current = terminalPrefs
 
-  const getTerminalContext = useCallback(() => {
+  const getTerminalContext = useCallback((rows = 20) => {
     const term = termRef.current
     if (!term) return ''
     const buf = term.buffer.active
     const totalRows = buf.length
-    const startRow = Math.max(0, totalRows - 20)
+    const startRow = Math.max(0, totalRows - rows)
     const lines: string[] = []
     for (let i = startRow; i < totalRows; i++) {
       const line = buf.getLine(i)
@@ -152,6 +157,33 @@ export function SessionTerminalView({
   const handleExecuteCommand = useCallback((cmd: string) => {
     onSendRawRef.current(cmd)
   }, [])
+
+  // The AI panel runs commands here and reads back what the terminal printed after them.
+  const aiBridge = useMemo<TerminalAiBridge>(() => ({
+    run(command) {
+      const term = termRef.current
+      const marker = term?.registerMarker(0)
+      onSendRawRef.current(`${command.replace(/\n+$/, '').replace(/\n/g, '\r')}\r`)
+      return {
+        read() {
+          if (!term) return ''
+          const buf = term.buffer.active
+          if (!marker || marker.isDisposed || marker.line < 0) return getTerminalContext(OUTPUT_LINE_LIMIT)
+          const lines: string[] = []
+          // The marker line is the prompt with the echoed command; output starts below it.
+          for (let i = marker.line + 1; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? '')
+          return lines.join('\n')
+        },
+        onOutput(listener) {
+          const subscription = term?.onWriteParsed(listener)
+          return () => subscription?.dispose()
+        },
+        dispose: () => marker?.dispose(),
+      }
+    },
+    insert: (command) => onSendRawRef.current(command.replace(/\n+$/, '').replace(/\n/g, '\r')),
+    recentOutput: (rows) => getTerminalContext(rows),
+  }), [getTerminalContext])
 
   const scheduleInputUiSync = useCallback(() => {
     if (uiSyncFrameRef.current !== null) return
@@ -490,18 +522,10 @@ export function SessionTerminalView({
           onClose={() => { setShowSearch(false); termRef.current?.focus() }}
         />
       )}
-      {isConnected && (
-        <AICommandBar
-          key={sessionId}
-          contextLabel={hostName || hostAddress}
-          visible={showAI && visible}
-          onExecuteCommand={handleExecuteCommand}
-          getTerminalContext={getTerminalContext}
-          onClose={() => setShowAI(false)}
-        />
-      )}
       {!chromeOnly && (
         <>
+          <div className="flex min-h-0 flex-1">
+          <div className="relative flex min-w-0 flex-1 flex-col">
           <div
             ref={containerRef}
             className="terminal-surface min-h-0 flex-1"
@@ -526,6 +550,19 @@ export function SessionTerminalView({
             }}
           />
           <SessionConnectionLostOverlay sessionId={sessionId} hostName={hostName || hostAddress} backdrop={bg} isDisconnected={isDisconnected} isReconnecting={isReconnecting} onReconnect={onReconnect} />
+          </div>
+          {isConnected && (
+            <AICommandBar
+              key={sessionId}
+              contextLabel={hostName || hostAddress}
+              visible={showAI && visible}
+              bridge={aiBridge}
+              onExecuteCommand={handleExecuteCommand}
+              getTerminalContext={getTerminalContext}
+              onClose={() => { setShowAI(false); termRef.current?.focus() }}
+            />
+          )}
+          </div>
 
           {isConnected && (
             <MobileTerminalToolbar onSend={onSendRaw} />

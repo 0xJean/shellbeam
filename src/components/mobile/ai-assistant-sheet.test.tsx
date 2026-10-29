@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { streamAICommand, type AIStreamCallbacks } from '@/lib/ai'
 import { AICommandBar } from '../ai-command-bar'
 
-vi.mock('@/lib/ai', () => ({ streamAICommand: vi.fn(), loadAISettings: () => ({ backend: 'codex-cli' }), isAIConfigured: () => true, createAbortController: () => new AbortController() }))
+vi.mock('@/lib/ai', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/ai')>(),
+  streamAICommand: vi.fn(), loadAISettings: () => ({ backend: 'codex-cli' }), isAIConfigured: () => true,
+}))
 let callbacks!: AIStreamCallbacks
 beforeEach(() => {
   localStorage.setItem('shellbeam.locale', 'en'); vi.clearAllMocks()

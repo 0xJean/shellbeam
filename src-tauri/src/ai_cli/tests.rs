@@ -7,6 +7,7 @@ fn request() -> Request {
         model: String::new(),
         prompt: "find large files".into(),
         context: "remote Linux".into(),
+        history: Vec::new(),
     }
 }
 #[test]
@@ -28,12 +29,30 @@ fn request_limits_and_registry_do_not_overwrite_or_expand_concurrency() {
     assert!(resolve_executable(Backend::CodexCli, "relative/path").is_err());
 }
 #[test]
+fn history_is_bounded_and_rejects_unknown_roles() {
+    let item = |role, content: &str| HistoryItem { role, content: content.into() };
+    let mut r = request();
+    r.history = vec![item(HistoryRole::User, "df -h"), item(HistoryRole::Output, "/dev/sda1 98%")];
+    assert!(validate_request(&r).is_ok());
+    r.history = (0..=MAX_HISTORY_ITEMS).map(|_| item(HistoryRole::User, "x")).collect();
+    assert!(validate_request(&r).is_err());
+    r.history = vec![item(HistoryRole::Output, &"x".repeat(MAX_HISTORY_BYTES + 1))];
+    assert!(validate_request(&r).is_err());
+    r.history = vec![item(HistoryRole::Assistant, "a\0b")];
+    assert!(validate_request(&r).is_err());
+    assert!(serde_json::from_str::<HistoryItem>(r#"{"role":"system","content":"x"}"#).is_err());
+    assert!(serde_json::from_str::<HistoryItem>(r#"{"role":"user","content":"x","extra":1}"#).is_err());
+}
+#[test]
 fn claude_partial_and_final_messages_emit_text_once() {
     let mut p = Parser::new(Backend::ClaudeCode);
     assert!(p
-        .line(r#"{"type":"system","subtype":"init","sensitive":"never forward"}"#)
+        .line(r#"{"type":"system","subtype":"init","model":"claude-sonnet-4-6","sensitive":"never forward"}"#)
         .unwrap()
         .is_none());
+    assert_eq!(p.model.take().as_deref(), Some("claude-sonnet-4-6"));
+    p.line(r#"{"type":"system","subtype":"status","model":"other"}"#).unwrap();
+    assert!(p.model.is_none());
     assert_eq!(p.line(r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"ls "}}}"#).unwrap(), Some("ls ".into()));
     assert_eq!(
         p.line(r#"{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"-la"}}}"#)
