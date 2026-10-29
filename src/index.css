@@ -210,6 +210,11 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  /* Breathing room around terminal text; FitAddon subtracts this padding when sizing. */
+  .terminal-surface .xterm {
+    padding: 8px 6px 6px 14px;
+  }
+
   .terminal-surface .xterm,
   .terminal-surface .xterm-rows {
     -webkit-font-smoothing: subpixel-antialiased;

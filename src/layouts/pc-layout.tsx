@@ -5,7 +5,7 @@ import { FleetDashboard } from '@/components/dashboard/fleet-dashboard'
 import { requestSettingsCategory } from '@/lib/settings-request'
 import { MobileToolsPage } from '@/components/mobile-tools-page'
 import { isToolPage } from '@/lib/mobile-navigation'
-import { requestTerminalAiToggle, requestTerminalSearchToggle, TERMINAL_AI_STATE_EVENT, TERMINAL_SEARCH_STATE_EVENT } from '@/lib/terminal-events'
+import { requestTerminalAiToggle, requestTerminalSearchToggle, TERMINAL_AI_STATE_EVENT, TERMINAL_SEARCH_STATE_EVENT, TERMINAL_SIDEBAR_TAB_EVENT } from '@/lib/terminal-events'
 import { CLOSE_SESSION_REQUEST_EVENT, OPEN_KNOWN_HOSTS_REQUEST_EVENT, OPEN_SFTP_REQUEST_EVENT, OPEN_TERMINAL_REQUEST_EVENT, type HostDirectoryRequest } from '@/lib/navigation-request'
 import { HostKeyConfirmDialog } from '@/components/host-key-confirm-dialog'
 import { InteractiveTour } from '@/components/interactive-tour'
@@ -221,7 +221,8 @@ export function PcLayout() {
   const [assetEditingHost, setAssetEditingHost] = useState<HostProfile | null>(null)
   const [assetSshImportOpen, setAssetSshImportOpen] = useState(false)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(() => {
-    try { return localStorage.getItem('shellbeam.rightSidebar') === 'true' } catch { return false }
+    // Open by default; closing it is remembered.
+    try { return localStorage.getItem('shellbeam.rightSidebar') !== 'false' } catch { return true }
   })
   const [lastDashboardNav, setLastDashboardNav] = useState(() => app.pcSidebarNav === 'terminal' ? 'hosts' : app.pcSidebarNav)
   const browserSwitcherInputRef = useRef<HTMLInputElement | null>(null)
@@ -256,6 +257,15 @@ export function PcLayout() {
       app.setPcSidebarNav('hosts')
     }
   }, [app.pcSidebarNav, app.setPcSidebarNav, sessions.pcActiveSessionId, sessions.pcSessionTabs.length, showQuickConnect])
+
+  useEffect(() => {
+    const open = () => {
+      setRightSidebarOpen(true)
+      try { localStorage.setItem('shellbeam.rightSidebar', 'true') } catch {}
+    }
+    window.addEventListener(TERMINAL_SIDEBAR_TAB_EVENT, open)
+    return () => window.removeEventListener(TERMINAL_SIDEBAR_TAB_EVENT, open)
+  }, [])
 
   const toggleRightSidebar = useCallback(() => {
     setRightSidebarOpen((v) => {

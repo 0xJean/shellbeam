@@ -9,14 +9,14 @@ vi.mock('@/lib/ai', async (importOriginal) => {
   return { ...actual, streamAICommand: vi.fn(), isAIConfigured: () => true }
 })
 let callbacks!: AIStreamCallbacks; let signal: AbortSignal | undefined
-let lastHistory: unknown[] = []
+let lastHistory: unknown[] = []; let lastHost = ''
 const codex: AISettings = { backend: 'codex-cli', provider: 'openai', apiKey: '', model: '', customBaseUrl: '', customModel: '' }
 beforeEach(() => {
   localStorage.clear()
   localStorage.setItem('shellbeam.locale', 'en')
   localStorage.setItem('shellbeam.aiSettings', JSON.stringify(codex))
   vi.clearAllMocks()
-  vi.mocked(streamAICommand).mockImplementation(async (_settings, _prompt, _context, cb, s, history) => { callbacks = cb; signal = s; lastHistory = history ?? [] })
+  vi.mocked(streamAICommand).mockImplementation(async (_settings, _prompt, _context, cb, s, history, host) => { callbacks = cb; signal = s; lastHistory = history ?? []; lastHost = host ?? '' })
 })
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
@@ -111,5 +111,30 @@ describe('AICommandBar', () => {
     expect(saved.cliProfiles?.['claude-code']?.model).toBe('opus')
     expect(screen.getByTestId('ai-model-switcher')).toHaveTextContent('Claude Code')
     expect(screen.getByText('pwd')).toBeInTheDocument()
+  })
+
+  it('shows a leading "# " line as the caption and runs only the command', () => {
+    const bridge = fakeBridge('')
+    render(<AICommandBar {...base} bridge={bridge} />)
+    ask(); act(() => { callbacks.onToken('# List listening ports\nss -tlnp'); callbacks.onDone() })
+    expect(screen.getByTestId('ai-caption')).toHaveTextContent('List listening ports')
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+    expect(bridge.run).toHaveBeenCalledExactlyOnceWith('ss -tlnp')
+  })
+
+  it('remembers the conversation per host and sends host facts', () => {
+    const first = render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.5" hostFacts="os: Ubuntu 24.04" />)
+    ask('disk usage'); act(() => { callbacks.onToken('df -h'); callbacks.onDone() })
+    expect(lastHost).toBe('os: Ubuntu 24.04')
+    first.unmount()
+    render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.5" />)
+    expect(screen.getByText('df -h')).toBeInTheDocument()
+    expect(screen.getByText(/Continued from/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }))
+    expect(screen.queryByText('df -h')).not.toBeInTheDocument()
+    expect(localStorage.getItem('shellbeam.aiConversation.v1:root@10.0.0.5')).toBeNull()
+    cleanup()
+    render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.6" />)
+    expect(screen.queryByText('df -h')).not.toBeInTheDocument()
   })
 })

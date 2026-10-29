@@ -18,7 +18,7 @@ export async function checkAICli(backend: AICliBackend, executable: string): Pro
 /** Per-invocation channel; no global events, credentials, or terminal output in logs. */
 export async function streamCliCommand(
   backend: AICliBackend, profile: AICliProfile | undefined, prompt: string, context: string,
-  callbacks: AIStreamCallbacks, signal?: AbortSignal, history: AIHistoryItem[] = [],
+  callbacks: AIStreamCallbacks, signal?: AbortSignal, history: AIHistoryItem[] = [], host = '',
 ): Promise<void> {
   if (signal?.aborted) return
   if (!isTauri()) { callbacks.onError(cliErrorMessage('desktop_only')); return }
@@ -49,7 +49,7 @@ export async function streamCliCommand(
   signal?.addEventListener('abort', abort, { once: true })
   try {
     await invoke('ai_cli_start', {
-      request: { requestId, backend, executable: profile?.executable ?? '', model: profile?.model ?? '', prompt, context, history },
+      request: { requestId, backend, executable: profile?.executable ?? '', model: profile?.model ?? '', prompt, context, history, host },
       channel,
     })
     started = true

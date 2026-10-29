@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildHistory, currentModelTarget, historyToMessages, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput, withModel, type AITurn } from './ai-conversation'
+import { splitReply, buildHistory, currentModelTarget, historyToMessages, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput, withModel, type AITurn } from './ai-conversation'
 import { DEFAULT_AI_SETTINGS } from './ai'
 
 describe('ai conversation', () => {
@@ -46,6 +46,8 @@ describe('ai conversation', () => {
     expect(isNoteReply('# done\n# nothing else')).toBe(true)
     expect(isNoteReply('# list\nls')).toBe(false)
     expect(noteText('# a\n#b')).toBe('a\nb')
+    expect(splitReply('# check ports\nss -tlnp\n# keep')).toEqual({ caption: 'check ports', command: 'ss -tlnp\n# keep' })
+    expect(splitReply('ls')).toEqual({ caption: '', command: 'ls' })
     expect(outputLooksFailed('bash: foo: command not found')).toBe(true)
     expect(outputLooksFailed('total 12')).toBe(false)
   })

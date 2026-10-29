@@ -1,5 +1,5 @@
 import { getInteractiveHistory, isInteractiveHistoryEvent, subscribeInteractiveHistory } from '@/lib/interactive-history'
-import { announceTerminalAiState, announceTerminalSearchState, TERMINAL_AI_TOGGLE_EVENT, TERMINAL_SEARCH_TOGGLE_EVENT } from '@/lib/terminal-events'
+import { announceTerminalAiState, announceTerminalSearchState, requestTerminalSidebarTab, TERMINAL_AI_TOGGLE_EVENT, TERMINAL_SEARCH_TOGGLE_EVENT } from '@/lib/terminal-events'
 import { normalizeBrowserUrl } from '@/contexts/session-browser-state'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import { useVault } from '@/contexts/vault-context'
@@ -16,7 +16,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { Eraser, PanelRightClose, PanelRightOpen, ExternalLink, Globe } from 'lucide-react'
+import { Eraser, PanelRightClose, PanelRightOpen, ExternalLink, Globe, Palette, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { AICommandBar } from './ai-command-bar'
 import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
@@ -53,6 +53,9 @@ interface SessionTerminalViewProps {
   resource?: Pick<WorkspaceInventoryResource, 'os'>
 }
 
+const STYLE_TIP_KEY = 'shellbeam.terminalStyleTipSeen'
+const STYLE_TIP_SEEN_EVENT = 'shellbeam:terminal-style-tip-seen'
+
 export function SessionTerminalView({
   sessionId,
   session,
@@ -84,6 +87,16 @@ export function SessionTerminalView({
   const [showAI, setShowAI] = useState(false)
   const terminalTheme = useResolvedTerminalTheme(terminalPrefs?.themeId)
   const [showSearch, setShowSearch] = useState(false)
+  const [styleTip, setStyleTip] = useState(() => { try { return !localStorage.getItem(STYLE_TIP_KEY) } catch { return false } })
+  useEffect(() => {
+    const hide = () => setStyleTip(false)
+    window.addEventListener(STYLE_TIP_SEEN_EVENT, hide)
+    return () => window.removeEventListener(STYLE_TIP_SEEN_EVENT, hide)
+  }, [])
+  const dismissStyleTip = useCallback(() => {
+    try { localStorage.setItem(STYLE_TIP_KEY, '1') } catch { /* tip shows again next time */ }
+    window.dispatchEvent(new Event(STYLE_TIP_SEEN_EVENT))
+  }, [])
   // Commands typed on this host feed the history half of the suggestion bar.
   // Typed history is per vault: the session's own vault, else the active one.
   const { activeVaultId } = useVault()
@@ -549,6 +562,28 @@ export function SessionTerminalView({
               scheduleInputUiSync()
             }}
           />
+          {styleTip && isConnected && visible && (
+            <div role="status" data-testid="terminal-style-tip"
+              className="absolute right-3 top-3 z-20 hidden w-72 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-3 shadow-[var(--workspace-shadow-overlay)] md:block">
+              <div className="flex items-start gap-2.5">
+                <Palette className="mt-0.5 h-4 w-4 shrink-0 text-[var(--workspace-accent-text)]" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold text-[var(--workspace-text-strong)]">{t('terminal.styleTip.title')}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--workspace-text-muted)]">{t('terminal.styleTip.body')}</p>
+                  <div className="mt-2.5 flex gap-2">
+                    <button type="button" onClick={() => { requestTerminalSidebarTab('appearance'); dismissStyleTip() }}
+                      className="h-7 rounded-md bg-[var(--workspace-primary-500)] px-2.5 text-xs font-medium text-white hover:opacity-90">{t('terminal.styleTip.action')}</button>
+                    <button type="button" onClick={dismissStyleTip}
+                      className="h-7 rounded-md px-2.5 text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]">{t('terminal.styleTip.dismiss')}</button>
+                  </div>
+                </div>
+                <button type="button" onClick={dismissStyleTip} aria-label={t('terminal.styleTip.dismiss')}
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-subtle)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
           <SessionConnectionLostOverlay sessionId={sessionId} hostName={hostName || hostAddress} backdrop={bg} isDisconnected={isDisconnected} isReconnecting={isReconnecting} onReconnect={onReconnect} />
           </div>
           {isConnected && (
@@ -557,6 +592,13 @@ export function SessionTerminalView({
               contextLabel={hostName || hostAddress}
               visible={showAI && visible}
               bridge={aiBridge}
+              memoryKey={`${historyVaultId ?? 'none'}:${session?.username ?? ''}@${hostAddress}`}
+              hostFacts={[
+                hostName && `name: ${hostName}`,
+                `user: ${session?.username ?? 'unknown'}`,
+                `address: ${hostAddress}`,
+                resource?.os && `os: ${resource.os}`,
+              ].filter(Boolean).join('\n')}
               onExecuteCommand={handleExecuteCommand}
               getTerminalContext={getTerminalContext}
               onClose={() => { setShowAI(false); termRef.current?.focus() }}

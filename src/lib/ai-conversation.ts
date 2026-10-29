@@ -47,6 +47,14 @@ export function isNoteReply(text: string): boolean {
   return lines.length > 0 && lines.every((line) => line.startsWith('#'))
 }
 
+/** Leading `# ` lines describe the step; the rest is what Run sends. */
+export function splitReply(text: string): { caption: string; command: string } {
+  const lines = text.split('\n')
+  let i = 0
+  while (i < lines.length && (lines[i].trim().startsWith('#') || !lines[i].trim())) i++
+  return { caption: noteText(lines.slice(0, i).join('\n')), command: lines.slice(i).join('\n').trim() }
+}
+
 export function noteText(text: string): string {
   return text.split('\n').map((line) => line.trim().replace(/^#\s?/, '')).filter(Boolean).join('\n')
 }
@@ -118,4 +126,27 @@ export function withModel(settings: AISettings, model: string): AISettings {
     return { ...settings, cliProfiles: { ...settings.cliProfiles, [backend]: { ...profile, model } } }
   }
   return settings.provider === 'custom' ? { ...settings, customModel: model } : { ...settings, model }
+}
+
+const MEMORY_PREFIX = 'shellbeam.aiConversation.'
+const MEMORY_TURN_LIMIT = 30
+export interface StoredConversation { savedAt: number; turns: AITurn[] }
+
+/** One conversation per vault and host, so returning to a server picks up where it left off. */
+export function loadConversation(key: string): StoredConversation | null {
+  try {
+    const raw = localStorage.getItem(MEMORY_PREFIX + key)
+    if (!raw) return null
+    const value = JSON.parse(raw) as StoredConversation
+    return Array.isArray(value.turns) && typeof value.savedAt === 'number' ? value : null
+  } catch { return null }
+}
+
+export function saveConversation(key: string, turns: AITurn[]) {
+  // Unfinished runs and errors are not worth restoring.
+  const kept = turns.filter((turn) => turn.kind === 'user' || turn.kind === 'ai' || (turn.kind === 'run' && turn.state === 'captured')).slice(-MEMORY_TURN_LIMIT)
+  try {
+    if (kept.length) localStorage.setItem(MEMORY_PREFIX + key, JSON.stringify({ savedAt: Date.now(), turns: kept }))
+    else localStorage.removeItem(MEMORY_PREFIX + key)
+  } catch { /* storage full or unavailable: memory is best effort */ }
 }

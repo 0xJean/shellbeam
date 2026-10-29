@@ -20,6 +20,7 @@ import { formatBytes, formatBytesRate } from '@/lib/metric-series'
 import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
 import { useWorkspaceProviderState } from '@/lib/workspace-provider-state'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { TERMINAL_SIDEBAR_TAB_EVENT } from '@/lib/terminal-events'
 import { HistoryEntryRow } from '@/components/history-panel'
 import { useCommandHistory } from '@/hooks/use-command-history'
 
@@ -66,6 +67,14 @@ export function TerminalRightSidebar({
   const { t } = useT()
   const [activeTab, setActiveTab] = useState<TabId>(hosts ? 'status' : 'terminal')
   const tabs = hosts ? TABS : TABS.filter((tab) => tab.id !== 'status')
+  useEffect(() => {
+    const select = (event: Event) => {
+      const tab = (event as CustomEvent<{ tab: TabId }>).detail?.tab
+      if (tab && (tab !== 'status' || hosts)) setActiveTab(tab)
+    }
+    window.addEventListener(TERMINAL_SIDEBAR_TAB_EVENT, select)
+    return () => window.removeEventListener(TERMINAL_SIDEBAR_TAB_EVENT, select)
+  }, [hosts])
 
   if (!visible) return null
 

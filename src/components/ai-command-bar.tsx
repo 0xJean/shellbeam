@@ -4,7 +4,7 @@ import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AI_SETTINGS_EVENT, streamAICommand, loadAISettings, saveAISettings, isAIConfigured, createAbortController, type AISettings } from '@/lib/ai'
 import {
-  buildHistory, currentModelTarget, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput,
+  buildHistory, currentModelTarget, isNoteReply, loadConversation, noteText, outputLooksFailed, saveConversation, splitReply, trimCapturedOutput,
   type AITurn, type TerminalAiBridge, type TerminalCapture,
 } from '@/lib/ai-conversation'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
@@ -24,6 +24,10 @@ interface AICommandBarProps {
   /** `auto` shows a bottom sheet below the md breakpoint. */
   presentation?: 'auto' | 'inline' | 'sheet'
   contextLabel?: string
+  /** Vault and host the conversation is remembered under; without it nothing is kept. */
+  memoryKey?: string
+  /** Host name, user and OS, sent so commands fit the machine. */
+  hostFacts?: string
 }
 
 const CONTEXT_LINES = 30
@@ -33,13 +37,15 @@ const CAPTURE_LIMIT_MS = 20_000
 let turnSeq = 0
 const nextId = (prefix: string) => `${prefix}-${Date.now()}-${++turnSeq}`
 
-export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel }: AICommandBarProps) {
+export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, hostFacts = '' }: AICommandBarProps) {
   const { t, locale } = useT()
   const copy = aiAssistantCopy[locale]
   const narrow = useNarrowViewport()
   const asSheet = presentation === 'sheet' || (presentation === 'auto' && narrow)
   const [settings, setSettings] = useState<AISettings>(loadAISettings)
-  const [turns, setTurns] = useState<AITurn[]>([])
+  const [restored] = useState(() => (memoryKey ? loadConversation(memoryKey) : null))
+  const [restoredAt, setRestoredAt] = useState(restored?.savedAt ?? null)
+  const [turns, setTurns] = useState<AITurn[]>(() => restored?.turns ?? [])
   const [input, setInput] = useState('')
   const [streamingContent, setStreamingContent] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -54,6 +60,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const captures = useRef(new Map<string, { capture: TerminalCapture; stop: () => void }>())
   const turnsRef = useRef(turns)
   useEffect(() => { turnsRef.current = turns }, [turns])
+  useEffect(() => { if (memoryKey) saveConversation(memoryKey, turns) }, [memoryKey, turns])
 
   useEffect(() => {
     const sync = () => setSettings(loadAISettings())
@@ -144,8 +151,8 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         setIsStreaming(false)
         abortRef.current = null
       },
-    }, ac.signal, history)
-  }, [includeContext, bridge, getTerminalContext, t])
+    }, ac.signal, history, hostFacts)
+  }, [includeContext, bridge, getTerminalContext, hostFacts, t])
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort()
@@ -203,6 +210,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     handleCancel()
     stopCaptures()
     setTurns([])
+    setRestoredAt(null)
     setInput('')
     setReportedModel('')
     setTimeout(() => inputRef.current?.focus(), 50)
@@ -294,6 +302,13 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
           </div>
         )}
 
+        {restoredAt && turns.length > 0 && (
+          <p className="flex items-center gap-2 text-[11px] text-[var(--workspace-text-subtle)]">
+            <span className="h-px flex-1 bg-[var(--workspace-border-soft)]" />
+            {fillCopy(copy.restored, { time: new Date(restoredAt).toLocaleString(locale) })}
+            <span className="h-px flex-1 bg-[var(--workspace-border-soft)]" />
+          </p>
+        )}
         {turns.map((turn) => {
           if (turn.kind === 'user') return (
             <div key={turn.id} className="flex justify-end">
@@ -381,7 +396,8 @@ function CommandCard({ turn, copied, onRun, onInsert, onCopy }: {
   const { locale } = useT()
   const copy = aiAssistantCopy[locale]
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(turn.text)
+  const reply = splitReply(turn.text)
+  const [draft, setDraft] = useState(reply.command)
   const meta = [turn.model, turn.durationMs ? fillCopy(copy.duration, { seconds: (turn.durationMs / 1000).toFixed(1) }) : ''].filter(Boolean).join(' · ')
 
   if (isNoteReply(turn.text)) return (
@@ -396,6 +412,7 @@ function CommandCard({ turn, copied, onRun, onInsert, onCopy }: {
   const button = 'flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-medium transition-colors'
   return (
     <div className="overflow-hidden rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]">
+      {reply.caption && <p data-testid="ai-caption" className="whitespace-pre-wrap break-words border-b border-[color:var(--workspace-border-soft)] px-3 py-2 text-xs leading-relaxed text-[var(--workspace-text)]">{reply.caption}</p>}
       {editing
         ? <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={Math.min(8, draft.split('\n').length + 1)} spellCheck={false} aria-label={copy.edit}
             className="block w-full resize-y bg-[var(--workspace-surface-950)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--workspace-text-strong)] outline-none" />

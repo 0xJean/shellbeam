@@ -8,6 +8,7 @@ fn request() -> Request {
         prompt: "find large files".into(),
         context: "remote Linux".into(),
         history: Vec::new(),
+        host: String::new(),
     }
 }
 #[test]
@@ -39,6 +40,9 @@ fn history_is_bounded_and_rejects_unknown_roles() {
     r.history = vec![item(HistoryRole::Output, &"x".repeat(MAX_HISTORY_BYTES + 1))];
     assert!(validate_request(&r).is_err());
     r.history = vec![item(HistoryRole::Assistant, "a\0b")];
+    assert!(validate_request(&r).is_err());
+    r.history.clear();
+    r.host = "x".repeat(2049);
     assert!(validate_request(&r).is_err());
     assert!(serde_json::from_str::<HistoryItem>(r#"{"role":"system","content":"x"}"#).is_err());
     assert!(serde_json::from_str::<HistoryItem>(r#"{"role":"user","content":"x","extra":1}"#).is_err());

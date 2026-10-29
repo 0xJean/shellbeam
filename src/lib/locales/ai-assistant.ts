@@ -23,7 +23,8 @@ export const aiAssistantCopy = {
     terminalContextOff: 'Terminal output is not sent. Click to send the last 30 lines.',
     shared: 'AI sees {messages} messages and {outputs} captured outputs',
     emptyTitle: 'Describe a task. AI writes the command, and you decide whether to run it.',
-    emptyBody: 'When you run a command from here, its output is captured so AI can check the result and suggest the next step.',
+    emptyBody: 'When you run a command from here, its output is captured so AI can check the result and suggest the next step. The conversation is kept per server, so you can pick it up next time.',
+    restored: 'Continued from {time}',
     examples: [
       'Find the 10 largest files under /var',
       'Which process is listening on port 8080?',
@@ -81,7 +82,8 @@ export const aiAssistantCopy = {
     terminalContextOff: '不附带终端输出。点击附带最近 30 行。',
     shared: 'AI 可见：{messages} 条消息、{outputs} 段执行输出',
     emptyTitle: '描述你要做的事，AI 生成命令，由你决定是否执行。',
-    emptyBody: '在这里执行的命令，其输出会被捕获，AI 可以据此检查结果并给出下一步。',
+    emptyBody: '在这里执行的命令，其输出会被捕获，AI 可以据此检查结果并给出下一步。对话按服务器保存，下次连接可以接着聊。',
+    restored: '接续 {time} 的对话',
     examples: [
       '找出 /var 下最大的 10 个文件',
       '哪个进程在监听 8080 端口？',

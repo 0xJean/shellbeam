@@ -224,4 +224,24 @@ describe('session terminal view', () => {
     fireEvent.click(screen.getByTitle('terminal.openLatestLink'))
     expect(openLink).toHaveBeenCalledWith('https://example.com/docs')
   })
+
+  it('shows the terminal style tip once and opens the appearance tab from it', () => {
+    localStorage.removeItem('shellbeam.terminalStyleTipSeen')
+    const requested: string[] = []
+    const listener = (event: Event) => requested.push((event as CustomEvent<{ tab: string }>).detail.tab)
+    window.addEventListener('shellbeam:terminal-sidebar-tab', listener)
+    const props = {
+      sessionId: 'session-tip', session: { sessionId: 'session-tip', status: 'running', username: 'root' } as never,
+      hostName: 'web', hostAddress: '10.0.0.5', chunkEmitterRef: { current: {} }, onSendRaw: () => {},
+    }
+    const view = render(<SessionTerminalView {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'terminal.styleTip.action' }))
+    expect(requested).toEqual(['appearance'])
+    expect(screen.queryByTestId('terminal-style-tip')).not.toBeInTheDocument()
+    view.unmount()
+    render(<SessionTerminalView {...props} />)
+    expect(screen.queryByTestId('terminal-style-tip')).not.toBeInTheDocument()
+    window.removeEventListener('shellbeam:terminal-sidebar-tab', listener)
+  })
 })
+
