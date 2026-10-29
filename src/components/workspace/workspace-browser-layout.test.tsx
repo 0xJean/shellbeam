@@ -70,8 +70,8 @@ describe('workspace browser layout', () => {
 
     const windowFrame = screen.getByTestId('workspace-desktop-window-logs')
 
-    expect(windowFrame).toHaveStyle({ width: 'min(1080px, calc(100% - 11rem))' })
-    expect(windowFrame).toHaveStyle({ height: 'min(720px, calc(100% - 7rem))' })
+    expect(windowFrame).toHaveStyle({ width: 'min(1080px, calc(100% - 15rem))' })
+    expect(windowFrame).toHaveStyle({ height: 'min(720px, calc(100% - 5rem))' })
     expect(windowFrame).not.toHaveStyle({ right: '1.5rem' })
     expect(windowFrame).not.toHaveStyle({ bottom: '1rem' })
   })

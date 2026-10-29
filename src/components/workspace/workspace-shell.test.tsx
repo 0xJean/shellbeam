@@ -74,8 +74,39 @@ describe('workspace shell', () => {
 
     expect(screen.getByTestId('workspace-desktop-shell')).toHaveClass('w-full', 'min-w-0', 'flex-1', 'bg-workspace-desktop-wallpaper')
     expect(screen.getByTestId('workspace-desktop-taskbar')).toHaveClass('w-full', 'min-w-0', 'bg-[var(--workspace-surface-900)]')
-    expect(screen.getByText('Start')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back to desktop' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('workspace-desktop-rail')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-desktop-metrics')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-desktop-host-status')).toHaveTextContent('Production API · Connected')
     expect(screen.getAllByText('Production API').length).toBeGreaterThan(0)
+  })
+
+  it('keeps background windows mounted and lets the taskbar minimize, restore and maximize them', () => {
+    const onSelectApp = vi.fn()
+    const props = { sessionId, mobile: false, hostName: 'Production API', hostAddress: '10.0.0.15', onSelectApp }
+    const { rerender } = render(<WorkspaceShell {...props} activeApp="services" />)
+    rerender(<WorkspaceShell {...props} activeApp="logs" />)
+
+    const services = screen.getByTestId('workspace-desktop-window-services')
+    const logs = screen.getByTestId('workspace-desktop-window-logs')
+    expect(within(services).getByText('Background · content kept')).toBeInTheDocument()
+    expect(within(logs).getByText('Current window')).toBeInTheDocument()
+    expect(within(services).getByTestId('workspace-window-body')).not.toHaveTextContent(/background/i)
+    expect(screen.getByTestId('workspace-taskbar-logs')).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(within(logs).getByRole('button', { name: 'Maximize window' }))
+    expect(logs).toHaveStyle({ inset: '0' })
+    fireEvent.click(within(logs).getByRole('button', { name: 'Restore window' }))
+    expect(logs).not.toHaveStyle({ inset: '0' })
+
+    fireEvent.click(within(logs).getByRole('button', { name: 'Minimize window' }))
+    expect(logs).not.toBeVisible()
+    expect(onSelectApp).toHaveBeenLastCalledWith('services')
+    expect(screen.getByTestId('workspace-taskbar-logs')).toHaveAttribute('title', 'Logs (minimized)')
+
+    fireEvent.click(screen.getByTestId('workspace-taskbar-logs'))
+    expect(onSelectApp).toHaveBeenLastCalledWith('logs')
+    expect(logs).toBeVisible()
   })
 
   it('renders the mobile shell when mobile is true', () => {
@@ -347,7 +378,9 @@ describe('workspace shell', () => {
     )
 
     expect(screen.getAllByText('File System').length).toBeGreaterThan(0)
-    expect(screen.getByText(/scaffolded and ready/i)).toBeInTheDocument()
+    // The file transfer window stays open behind it with its own content.
+    expect(within(screen.getByTestId('workspace-desktop-window-fileSystem')).getByText(/scaffolded and ready/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/scaffolded and ready/i)).toHaveLength(2)
 
     rerender(
       <WorkspaceShell

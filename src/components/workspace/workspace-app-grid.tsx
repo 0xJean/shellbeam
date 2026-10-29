@@ -46,7 +46,7 @@ const APPS: Array<{ id: WorkspaceAppId; labelKey: string; icon: typeof LayoutGri
 interface WorkspaceAppGridProps {
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
-  variant?: 'panel' | 'desktop' | 'mobile' | 'ios-grid' | 'ios-dock'
+  variant?: 'panel' | 'mobile' | 'ios-grid' | 'ios-dock'
   apps?: WorkspaceAppId[]
 }
 
@@ -63,9 +63,7 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
             ? 'grid-cols-4 px-1 gap-2'
             : variant === 'mobile'
               ? 'grid-cols-4'
-              : variant === 'desktop'
-                ? 'grid-cols-1 justify-items-start'
-                : 'sm:grid-cols-2 xl:grid-cols-3',
+              : 'sm:grid-cols-2 xl:grid-cols-3',
       )}
     >
       {visibleApps.map((app) => {
@@ -84,15 +82,11 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
                 ? 'flex flex-col items-center active:scale-90 active:opacity-75'
                 : variant === 'mobile'
                   ? 'flex flex-col items-center gap-2 rounded-[26px] px-2 py-2'
-                  : variant === 'desktop'
-                    ? 'group flex w-20 flex-col items-center gap-1 px-2 py-2'
-                    : 'rounded-2xl border px-4 py-4',
+                  : 'rounded-2xl border px-4 py-4',
             activeApp === app.id
               ? variant === 'panel'
                 ? 'border-primary/40 bg-primary/10 text-foreground'
-                : variant === 'desktop'
-                  ? 'text-[var(--workspace-text-strong)]'
-                  : variant === 'ios-grid' || variant === 'ios-dock'
+                : variant === 'ios-grid' || variant === 'ios-dock'
                     ? ''
                     : 'scale-[1.02] text-[var(--workspace-text-strong)]'
               : variant === 'panel'
@@ -112,11 +106,8 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
                   ? 'h-[52px] w-[52px] rounded-[12px] shadow-sm bg-gradient-to-br ring-1 ring-[var(--workspace-border-soft)]'
                   : variant === 'mobile'
                     ? 'relative h-14 w-14 overflow-hidden rounded-[18px] shadow-lg'
-                    : variant === 'desktop'
-                      ? 'h-12 w-12 rounded-lg border border-primary/20 bg-primary/10 group-hover:border-primary/50 group-hover:bg-primary/25'
-                      : 'h-12 w-12 rounded-2xl bg-muted',
+                    : 'h-12 w-12 rounded-2xl bg-muted',
               (variant === 'mobile' || variant === 'ios-grid' || variant === 'ios-dock') && `${app.accent} ${app.glow}`,
-              activeApp === app.id && variant === 'desktop' && 'border-primary/50 bg-primary/25',
               activeApp === app.id && variant === 'mobile' && 'ring-2 ring-[color:var(--workspace-border-glow)]',
             )}
           >
@@ -128,7 +119,6 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
                 variant === 'ios-grid' ? 'h-8 w-8 text-[var(--workspace-primary-foreground)] drop-shadow-sm' :
                 variant === 'ios-dock' ? 'h-7 w-7 text-[var(--workspace-primary-foreground)] drop-shadow-sm' :
                 variant === 'mobile' ? 'h-7 w-7' : 'h-6 w-6',
-                variant === 'desktop' ? 'text-[color:var(--workspace-primary-400)]' : '',
               )}
             />
           </div>
@@ -138,8 +128,7 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
                 className={cn(
                   'font-semibold truncate w-full px-1', 
                   variant === 'ios-grid' ? 'text-[11px] text-[var(--workspace-primary-foreground)] drop-shadow-md tracking-wide' : 
-                  variant === 'mobile' ? 'text-[11px] text-[var(--workspace-text-strong)]' : 
-                  variant === 'desktop' ? 'text-[12px] leading-4 text-[var(--workspace-text-strong)] [text-shadow:0_1px_2px_var(--workspace-elevated-ring)]' : 'text-sm'
+                  variant === 'mobile' ? 'text-[11px] text-[var(--workspace-text-strong)]' : 'text-sm'
                 )}
               >
                 {label}
@@ -216,6 +205,37 @@ export function WorkspaceAppList({ activeApp, onSelectApp }: { activeApp: Worksp
           })}
         </div>
       ))}
+    </nav>
+  )
+}
+
+/** v3 desktop order: the overview first, then sessions, files and system tools. */
+const DESKTOP_APPS: WorkspaceAppId[] = ['overview', 'terminal', 'charts', 'assetInventory', 'fileTransfer', 'fileSystem', 'processes', 'services', 'network', 'toolManager', 'logs', 'browser', 'docker', 'sitesSsl', 'scheduledTasks']
+
+/** Line icon for an app, shared by the desktop rail, window title bars and the taskbar. */
+export function WorkspaceAppLineIcon({ app, className }: { app: WorkspaceAppId; className?: string }) {
+  const Icon = LIST_ICONS[app] ?? LayoutGrid
+  return <Icon className={className} aria-hidden="true" />
+}
+
+/** v3 desktop icon rail: two columns of quiet tiles, with a dot under apps that have a window open. */
+export function WorkspaceDesktopRail({ openApps, onSelectApp }: { openApps: ReadonlySet<WorkspaceAppId>; onSelectApp: (app: WorkspaceAppId) => void }) {
+  return (
+    <nav data-testid="workspace-desktop-rail" aria-label={t('workspace.layout.apps')} className="grid w-[168px] grid-cols-2 content-start gap-x-1.5 gap-y-2.5">
+      {DESKTOP_APPS.map((app) => {
+        const label = t(APPS.find((entry) => entry.id === app)?.labelKey ?? 'workspace.app.overview')
+        const open = openApps.has(app)
+        return (
+          <button key={app} type="button" onClick={() => onSelectApp(app)} aria-label={label} data-open={open || undefined}
+            className="group relative flex min-w-0 flex-col items-center gap-2 text-center text-[11.5px] leading-4 text-[var(--workspace-text)]">
+            <span className="flex h-[46px] w-[46px] items-center justify-center rounded-xl bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-[var(--workspace-shadow-card)] ring-1 ring-[color:var(--workspace-border-soft)] transition-colors group-hover:ring-[color:var(--workspace-border-strong)]">
+              <WorkspaceAppLineIcon app={app} className="h-[21px] w-[21px]" />
+            </span>
+            {open && <i aria-hidden="true" className="absolute top-[49px] h-1 w-1 rounded-full bg-[var(--workspace-primary-400)]" />}
+            <span className="w-full truncate px-0.5">{label}</span>
+          </button>
+        )
+      })}
     </nav>
   )
 }
