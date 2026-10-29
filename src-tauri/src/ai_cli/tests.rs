@@ -294,3 +294,24 @@ fn installed_cli_loopback_generation() {
     .unwrap();
     assert_eq!(text, "pwd");
 }
+
+#[test]
+fn child_path_starts_with_the_cli_directory_and_keeps_install_locations() {
+    let path = child_path(Path::new("/opt/tools/bin/codex")).unwrap();
+    let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    assert_eq!(dirs[0], PathBuf::from("/opt/tools/bin"));
+    assert!(dirs.contains(&PathBuf::from("/usr/local/bin")));
+    assert!(dirs.contains(&PathBuf::from("/opt/homebrew/bin")));
+    let unique: std::collections::HashSet<_> = dirs.iter().collect();
+    assert_eq!(unique.len(), dirs.len());
+}
+
+#[test]
+fn only_parent_session_variables_are_dropped() {
+    for name in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_AGENT_SDK_VERSION", "USE_LOCAL_OAUTH"] {
+        assert!(is_host_session_var(name), "{name}");
+    }
+    for name in ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "HOME", "PATH"] {
+        assert!(!is_host_session_var(name), "{name}");
+    }
+}

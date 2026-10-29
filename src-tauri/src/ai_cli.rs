@@ -208,19 +208,12 @@ fn resolve_executable(backend: Backend, configured: &str) -> Result<PathBuf, Str
                     .collect()
             })
             .unwrap_or_default();
-        if let Some(home) = dirs::home_dir() {
-            dirs.extend([
-                home.join(".local/bin"),
-                home.join(".npm-global/bin"),
-                home.join(".bun/bin"),
-            ]);
+        dirs.extend(extra_search_dirs());
+        let mut paths: Vec<PathBuf> = dirs.into_iter().map(|p| p.join(&name)).collect();
+        if backend == Backend::CodexCli {
+            paths.extend(codex_native_candidates());
         }
-        dirs.extend([
-            PathBuf::from("/opt/homebrew/bin"),
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/usr/bin"),
-        ]);
-        dirs.into_iter().map(|p| p.join(&name)).collect()
+        paths
     };
     paths
         .into_iter()
@@ -245,6 +238,97 @@ fn resolve_executable(backend: Backend, configured: &str) -> Result<PathBuf, Str
             }
         })
         .ok_or_else(|| "not_found".into())
+}
+/// Install locations a Finder-launched app misses because its PATH is only the system default.
+fn extra_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        dirs.extend([
+            home.join(".local/bin"),
+            home.join(".npm-global/bin"),
+            home.join(".bun/bin"),
+            home.join(".volta/bin"),
+            home.join("Library/pnpm"),
+            home.join(".local/share/pnpm"),
+        ]);
+        // nvm keeps one bin directory per installed Node version; prefer the newest.
+        if let Ok(entries) = std::fs::read_dir(home.join(".nvm/versions/node")) {
+            let mut versions: Vec<PathBuf> = entries
+                .filter_map(|e| e.ok().map(|e| e.path().join("bin")))
+                .collect();
+            versions.sort();
+            dirs.extend(versions.into_iter().rev());
+        }
+    }
+    dirs.extend([
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+    ]);
+    dirs
+}
+/// The native binary inside an npm global install of @openai/codex. It still works when the
+/// `codex` launcher link is missing (an interrupted `npm i -g` leaves a hidden `.codex-*` link).
+fn codex_native_candidates() -> Vec<PathBuf> {
+    let mut roots = vec![
+        PathBuf::from("/usr/local/lib/node_modules"),
+        PathBuf::from("/opt/homebrew/lib/node_modules"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join(".npm-global/lib/node_modules"));
+    }
+    let mut found = Vec::new();
+    for root in roots {
+        let platforms = root.join("@openai/codex/node_modules/@openai");
+        let Ok(entries) = std::fs::read_dir(&platforms) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let vendor = entry.path().join("vendor");
+            let Ok(triples) = std::fs::read_dir(&vendor) else {
+                continue;
+            };
+            for triple in triples.flatten() {
+                found.push(triple.path().join("bin/codex"));
+                found.push(triple.path().join("codex/codex"));
+            }
+        }
+    }
+    found
+}
+/// The CLI's own directory first, so `#!/usr/bin/env node` launchers find the Node they were
+/// installed with, then the inherited PATH and the usual install locations.
+fn child_path(executable: &Path) -> Option<std::ffi::OsString> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = executable.parent() {
+        dirs.push(dir.to_path_buf());
+    }
+    if let Some(dir) = std::fs::canonicalize(executable)
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+    {
+        dirs.push(dir);
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+    dirs.extend(extra_search_dirs());
+    dirs.extend([PathBuf::from("/bin"), PathBuf::from("/usr/sbin"), PathBuf::from("/sbin")]);
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|d| seen.insert(d.clone()));
+    std::env::join_paths(dirs).ok()
+}
+/// Variables a parent Claude Code session exports to its children. A nested `claude` treats
+/// them as the host session's and reports "Not logged in", so they are dropped when the app
+/// itself was started from such a session. The user's own ANTHROPIC_* settings are kept.
+fn is_host_session_var(name: &str) -> bool {
+    name == "CLAUDECODE"
+        || name == "CLAUDE_PID"
+        || name == "CLAUDE_EFFORT"
+        || name == "USE_STAGING_OAUTH"
+        || name == "USE_LOCAL_OAUTH"
+        || name.starts_with("CLAUDE_CODE_")
+        || name.starts_with("CLAUDE_AGENT_SDK_")
 }
 struct Scratch(PathBuf);
 impl Scratch {
@@ -647,6 +731,16 @@ fn run_process(
         .env_remove("DEBUG")
         .env_remove("NODE_OPTIONS")
         .env("NO_COLOR", "1");
+    if let Some(path) = child_path(executable) {
+        cmd.env("PATH", path);
+    }
+    if std::env::var_os("CLAUDECODE").is_some() {
+        for (name, _) in std::env::vars_os() {
+            if name.to_str().is_some_and(is_host_session_var) {
+                cmd.env_remove(name);
+            }
+        }
+    }
     let mut process = Process::spawn(cmd)?;
     let mut stdin = process.child.stdin.take().ok_or("failed")?;
     let stdout = process.child.stdout.take().ok_or("failed")?;
