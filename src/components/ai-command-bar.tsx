@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { AlertCircle, ArrowUp, Lightbulb, Server, Check, ChevronDown, Copy, CornerDownLeft, Loader2, MessageSquareText, Pencil, Play, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
+import { AlertCircle, ArrowUp, Lightbulb, Server, Check, ChevronDown, Copy, CornerDownLeft, Eraser, Loader2, MessageSquareText, MoreHorizontal, Pencil, Play, Radar, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AI_SETTINGS_EVENT, streamAICommand, loadAISettings, saveAISettings, isAIConfigured, createAbortController, type AISettings } from '@/lib/ai'
@@ -9,6 +9,8 @@ import {
 } from '@/lib/ai-conversation'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
 import { hostFactsText, type HostFact } from '@/lib/ai-host-facts'
+import { suggestPrompts } from '@/lib/ai-suggestions'
+import type { WorkspaceInventory } from '@/lib/workspace-inventory'
 import { AiAssistantSheet, type AiSheetMessage } from './mobile/ai-assistant-sheet'
 import { CommandRiskChip } from './mobile/command-risk-chip'
 import { useNarrowViewport } from './mobile/use-narrow-viewport'
@@ -29,7 +31,15 @@ interface AICommandBarProps {
   memoryKey?: string
   /** What ShellBeam knows about the server, sent so commands fit the machine. */
   hostFacts?: HostFact[]
+  /** The host's last asset scan, used to suggest requests that fit this server. */
+  inventory?: WorkspaceInventory
+  /** Present while the host can still get a ShellBeam probe. */
+  probe?: { onInstall: () => void }
 }
+
+const PROBE_TIP_KEY = 'shellbeam.aiProbeTipDismissed.'
+const readFlag = (key: string) => { try { return localStorage.getItem(key) === '1' } catch { return false } }
+const writeFlag = (key: string) => { try { localStorage.setItem(key, '1') } catch { /* private mode */ } }
 
 const CONTEXT_LINES = 30
 /** Output counts as finished once the terminal has been quiet this long. */
@@ -38,7 +48,7 @@ const CAPTURE_LIMIT_MS = 20_000
 let turnSeq = 0
 const nextId = (prefix: string) => `${prefix}-${Date.now()}-${++turnSeq}`
 
-export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, hostFacts }: AICommandBarProps) {
+export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, hostFacts, inventory, probe }: AICommandBarProps) {
   const { t, locale } = useT()
   const copy = aiAssistantCopy[locale]
   const narrow = useNarrowViewport()
@@ -54,6 +64,10 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const [includeFacts, setIncludeFacts] = useState(true)
   const factsText = useMemo(() => hostFactsText(hostFacts ?? []), [hostFacts])
   const [reportedModel, setReportedModel] = useState('')
+  const suggestions = useMemo(() => suggestPrompts(inventory, copy.smart, copy.examples), [inventory, copy])
+  const probeTipKey = `${PROBE_TIP_KEY}${memoryKey ?? ''}`
+  const [probeTipDismissed, setProbeTipDismissed] = useState(() => readFlag(probeTipKey))
+  const dismissProbeTip = () => { writeFlag(probeTipKey); setProbeTipDismissed(true) }
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -281,10 +295,11 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         <h2 className="shrink-0 text-[13px] font-semibold text-[var(--workspace-text-strong)]">{copy.title}</h2>
         <span className="flex-1" />
         <AIModelSwitcher settings={settings} reportedModel={reportedModel} onChange={changeSettings} />
-        <button type="button" onClick={handleNewChat} disabled={turns.length === 0 && !isStreaming} title={copy.newChat} aria-label={copy.newChat}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)] disabled:opacity-40">
-          <RotateCcw className="h-3.5 w-3.5" />
-        </button>
+        <AIPanelMenu items={[
+          { key: 'chat', label: copy.clearChat, icon: RotateCcw, disabled: turns.length === 0 && !isStreaming, onSelect: handleNewChat },
+          ...(bridge?.clear ? [{ key: 'screen', label: copy.clearScreen, icon: Eraser, onSelect: bridge.clear }] : []),
+          ...(probe ? [{ key: 'probe', label: copy.probeInstall, icon: Radar, onSelect: probe.onInstall }] : []),
+        ]} />
         <button type="button" onClick={() => { handleCancel(); onClose() }} title={copy.close} aria-label={copy.close}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
           <X className="h-3.5 w-3.5" />
@@ -310,15 +325,37 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
                 {!hostFacts.some((fact) => fact.key === 'os') && <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--workspace-text-subtle)]">{copy.knownHint}</p>}
               </div>
             )}
-            <div className="flex flex-col gap-1.5 pt-1">
-              {copy.examples.map((example) => (
-                <button key={example} type="button" onClick={() => void submit(example)}
-                  className="flex items-center gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2 text-left text-xs text-[var(--workspace-text)] transition-colors hover:border-[color:var(--workspace-border-strong)] hover:text-[var(--workspace-text-strong)]">
-                  <MessageSquareText className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-subtle)]" aria-hidden="true" />
-                  <span className="min-w-0">{example}</span>
-                </button>
-              ))}
-            </div>
+            {probe && !probeTipDismissed && (
+              <div data-testid="ai-probe-offer" className="rounded-lg border border-dashed border-primary/50 bg-primary/5 px-3 py-2.5">
+                <p className="mb-1 flex items-center gap-1.5 text-[11.5px] font-medium text-[var(--workspace-text-strong)]"><Radar className="h-3.5 w-3.5 text-[var(--workspace-accent-text)]" aria-hidden="true" />{copy.probeTitle}</p>
+                <p className="text-[11px] leading-relaxed text-[var(--workspace-text-muted)]">{copy.probeBody}</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <button type="button" onClick={probe.onInstall}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2.5 text-[11.5px] font-medium text-primary-foreground hover:bg-primary/90">{copy.probeAction}</button>
+                  <button type="button" onClick={dismissProbeTip}
+                    className="inline-flex h-7 items-center rounded-md px-2 text-[11.5px] text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">{copy.probeDismiss}</button>
+                </div>
+              </div>
+            )}
+            {[true, false].map((smart) => {
+              const group = suggestions.filter((item) => item.smart === smart)
+              if (group.length === 0) return null
+              return (
+                <div key={String(smart)} data-testid={smart ? 'ai-smart-suggestions' : 'ai-examples'} className="flex flex-col gap-1.5 pt-1">
+                  <p className="px-0.5 text-[11px] font-medium text-[var(--workspace-text-subtle)]">{smart ? copy.suggestedFor : copy.examplesTitle}</p>
+                  {group.map(({ text }) => {
+                    const Icon = smart ? Sparkles : MessageSquareText
+                    return (
+                      <button key={text} type="button" onClick={() => void submit(text)}
+                        className="flex items-center gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2 text-left text-xs text-[var(--workspace-text)] transition-colors hover:border-[color:var(--workspace-border-strong)] hover:text-[var(--workspace-text-strong)]">
+                        <Icon className={cn('h-3.5 w-3.5 shrink-0', smart ? 'text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text-subtle)]')} aria-hidden="true" />
+                        <span className="min-w-0">{text}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )
+            })}
           </div>
         )}
 
@@ -511,6 +548,39 @@ function RunBlock({ turn, onRefresh }: { turn: Extract<AITurn, { kind: 'run' }>;
             </pre>
           )}
         </>
+      )}
+    </div>
+  )
+}
+
+function AIPanelMenu({ items }: { items: Array<{ key: string; label: string; icon: typeof RotateCcw; disabled?: boolean; onSelect: () => void }> }) {
+  const { locale } = useT()
+  const copy = aiAssistantCopy[locale]
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false) }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false) } }
+    window.addEventListener('pointerdown', onPointer)
+    window.addEventListener('keydown', onKey, true)
+    return () => { window.removeEventListener('pointerdown', onPointer); window.removeEventListener('keydown', onKey, true) }
+  }, [open])
+  return (
+    <div ref={root} className="relative shrink-0">
+      <button type="button" aria-haspopup="menu" aria-expanded={open} title={copy.more} aria-label={copy.more} onClick={() => setOpen((value) => !value)}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-8 z-30 min-w-[180px] rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-1 shadow-lg">
+          {items.map(({ key, label, icon: Icon, disabled, onSelect }) => (
+            <button key={key} type="button" role="menuitem" disabled={disabled} onClick={() => { setOpen(false); onSelect() }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)] disabled:pointer-events-none disabled:opacity-40">
+              <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-muted)]" aria-hidden="true" />{label}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   )

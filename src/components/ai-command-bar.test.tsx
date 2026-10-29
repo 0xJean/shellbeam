@@ -130,7 +130,8 @@ describe('AICommandBar', () => {
     render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.5" />)
     expect(screen.getByText('df -h')).toBeInTheDocument()
     expect(screen.getByText(/Continued from/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Clear conversation' }))
     expect(screen.queryByText('df -h')).not.toBeInTheDocument()
     expect(localStorage.getItem('shellbeam.aiConversation.v1:root@10.0.0.5')).toBeNull()
     cleanup()
@@ -153,5 +154,29 @@ describe('AICommandBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Generate command' }))
     expect(lastHost).toBe('')
   })
-})
 
+  it('suggests requests from the asset scan, offers the probe, and clears the screen from the menu', () => {
+    const bridge = { ...fakeBridge(''), clear: vi.fn() }
+    const onInstall = vi.fn()
+    const inventory = {
+      resource: { hostname: 'web', os: 'Ubuntu', kernel: '', uptime: '', cpuPercent: 3, memoryPercent: 40, memoryText: '', diskPercent: 91, diskText: '', network: '' },
+      tools: [{ id: 'nginx', name: 'nginx', category: 'web', binary: 'nginx', path: '', version: '1.24' }],
+      services: [], containers: [], pm2: [], projects: [], scannedAt: 1,
+    }
+    render(<AICommandBar {...base} bridge={bridge} inventory={inventory} memoryKey="v1:root@10.0.0.7" probe={{ onInstall }} />)
+    expect(screen.getByTestId('ai-smart-suggestions')).toHaveTextContent('Disk is 91% full')
+    expect(screen.getByTestId('ai-smart-suggestions')).toHaveTextContent('Test the nginx config')
+    expect(screen.getByTestId('ai-examples')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Install probe' }))
+    expect(onInstall).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
+    expect(screen.queryByTestId('ai-probe-offer')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Clear conversation' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Install ShellBeam probe' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Clear terminal screen' }))
+    expect(bridge.clear).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByText(/Disk is 91% full/))
+    expect(streamAICommand).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('Disk is 91% full'), expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything())
+  })
+})

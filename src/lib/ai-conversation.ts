@@ -16,6 +16,8 @@ export interface TerminalAiBridge {
   /** Types the command at the prompt without running it. */
   insert: (command: string) => void
   recentOutput: (lines: number) => string
+  /** Clears the terminal screen and scrollback. */
+  clear?: () => void
 }
 export interface TerminalCapture {
   read: () => string

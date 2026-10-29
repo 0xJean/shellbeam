@@ -1042,6 +1042,7 @@ export function PcLayout() {
                           network={displayNetwork}
                           resource={displayResource}
                           inventory={displayInventory}
+                          host={displayHost ?? undefined}
                           chunkEmitterRef={sessions.pcChunkEmitterRef}
                           onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
                           terminalPrefs={app.terminalPrefs}
@@ -1199,6 +1200,7 @@ export function PcLayout() {
                           network={displayNetwork}
                           resource={displayResource}
                           inventory={displayInventory}
+                          host={displayHost ?? undefined}
                           chunkEmitterRef={sessions.pcChunkEmitterRef}
                           onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
                           terminalPrefs={app.terminalPrefs}

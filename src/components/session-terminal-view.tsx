@@ -13,6 +13,10 @@ import { cn } from '@/lib/utils'
 import { OUTPUT_LINE_LIMIT, type TerminalAiBridge } from '@/lib/ai-conversation'
 import type { WorkspaceInventory, WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import { collectHostFacts } from '@/lib/ai-host-facts'
+import type { HostProfile } from '@/lib/hosts'
+import { offersProbeInstall } from '@/lib/probe-install'
+import { useProbeInstallReadiness } from '@/hooks/use-probe-install-readiness'
+import { ProbeInstallDialog } from './probe-install-dialog'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
@@ -54,7 +58,12 @@ interface SessionTerminalViewProps {
   resource?: Pick<WorkspaceInventoryResource, 'os'> & Partial<WorkspaceInventoryResource>
   /** The host's last asset scan, summarised for the AI assistant. */
   inventory?: WorkspaceInventory
+  /** The saved host behind this session, used to offer the ShellBeam probe. */
+  host?: HostProfile
 }
+
+// The readiness hook needs a host; with none it stays disabled and never reads this.
+const NO_HOST = { id: '', updatedAt: 0 } as unknown as HostProfile
 
 const STYLE_TIP_KEY = 'shellbeam.terminalStyleTipSeen'
 const STYLE_TIP_SEEN_EVENT = 'shellbeam:terminal-style-tip-seen'
@@ -82,6 +91,7 @@ export function SessionTerminalView({
   network,
   resource,
   inventory,
+  host,
 }: SessionTerminalViewProps) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -89,6 +99,9 @@ export function SessionTerminalView({
   const fitRef = useRef<FitAddon | null>(null)
   const onSendRawRef = useRef(onSendRaw)
   const [showAI, setShowAI] = useState(false)
+  const { readiness: probeReadiness } = useProbeInstallReadiness(host ?? NO_HOST, Boolean(host?.vaultId) && showAI)
+  const probeOffered = Boolean(host && probeReadiness && offersProbeInstall(probeReadiness, inventory?.resource.os ?? resource?.os))
+  const [probeDialogOpen, setProbeDialogOpen] = useState(false)
   const terminalTheme = useResolvedTerminalTheme(terminalPrefs?.themeId)
   const [showSearch, setShowSearch] = useState(false)
   const [styleTip, setStyleTip] = useState(() => { try { return !localStorage.getItem(STYLE_TIP_KEY) } catch { return false } })
@@ -205,6 +218,7 @@ export function SessionTerminalView({
     },
     insert: (command) => onSendRawRef.current(command.replace(/\n+$/, '').replace(/\n/g, '\r')),
     recentOutput: (rows) => getTerminalContext(rows),
+    clear: () => termRef.current?.clear(),
   }), [getTerminalContext])
 
   const scheduleInputUiSync = useCallback(() => {
@@ -603,11 +617,14 @@ export function SessionTerminalView({
               bridge={aiBridge}
               memoryKey={`${historyVaultId ?? 'none'}:${session?.username ?? ''}@${hostAddress}`}
               hostFacts={hostFacts}
+              inventory={inventory}
+              probe={probeOffered ? { onInstall: () => setProbeDialogOpen(true) } : undefined}
               onExecuteCommand={handleExecuteCommand}
               getTerminalContext={getTerminalContext}
               onClose={() => { setShowAI(false); termRef.current?.focus() }}
             />
           )}
+          {host && probeDialogOpen && <ProbeInstallDialog host={host} open onOpenChange={setProbeDialogOpen} />}
           </div>
 
           {isConnected && (
