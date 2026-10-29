@@ -1941,6 +1941,7 @@ const zhCN: Record<string, string> = {
   'browser.sessionClose.title': '关闭会话？',
   'browser.sessionClose.description': '{host} 仍有浏览器标签页。关闭此会话会移除该浏览器上下文。',
   'browser.sessionClose.tabCount': '{count} 个浏览器标签页',
+  'browser.sessionClose.remoteCount': '{count} 个经服务器端口转发',
   'browser.sessionClose.confirm': '关闭会话',
   'browser.switcher.title': '跳转到浏览器标签页',
   'browser.switcher.description': '搜索所有活动浏览器标签页。快捷键：Cmd/Ctrl + Shift + B',

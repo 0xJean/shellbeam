@@ -1941,6 +1941,7 @@ const en: Record<string, string> = {
   'browser.sessionClose.title': 'Close Session?',
   'browser.sessionClose.description': '{host} still has browser tabs. Closing this session will remove that browser context.',
   'browser.sessionClose.tabCount': '{count} browser tabs',
+  'browser.sessionClose.remoteCount': '{count} through server port forwarding',
   'browser.sessionClose.confirm': 'Close Session',
   'browser.switcher.title': 'Jump to Browser Tab',
   'browser.switcher.description': 'Search across all active browser tabs. Shortcut: Cmd/Ctrl + Shift + B',

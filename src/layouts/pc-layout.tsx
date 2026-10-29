@@ -15,8 +15,7 @@ import { BrowserSwitcherDialog } from '@/components/browser/browser-switcher-dia
 import { MobileSessionHeader } from '@/components/mobile-session-header'
 import { MobileBottomNav, PcNavSidebar } from '@/components/pc-nav-sidebar'
 import { PcSessionTabBar, type SessionBrowserTabMeta } from '@/components/pc-tab-bar'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { SessionCloseDialog } from '@/components/browser/session-close-dialog'
 import { SessionConnectPlaceholder } from '@/components/session-connect-placeholder'
 import { SessionTerminalView } from '@/components/session-terminal-view'
 import { TerminalRightSidebar } from '@/components/terminal-right-sidebar'
@@ -901,44 +900,16 @@ export function PcLayout() {
           onImported={() => { setAssetSshImportOpen(false); void hostsCtx.refreshHosts() }}
         />
       )}
-      <Dialog open={!!pendingCloseSession} onOpenChange={(open) => { if (!open) setPendingCloseSessionId(null) }}>
-        <DialogContent className="md:max-w-md">
-          <div className="space-y-4">
-            <div className="space-y-2 text-center">
-              <div className="text-lg font-semibold text-foreground">{t('browser.sessionClose.title')}</div>
-              <div className="text-sm text-muted-foreground">
-                {pendingCloseSession
-                  ? t('browser.sessionClose.description', {
-                      host: pendingCloseSession.hostName || pendingCloseSession.hostAddress,
-                    })
-                  : ''}
-              </div>
-            </div>
-            {pendingCloseSession && browserMetaBySession[pendingCloseSession.sessionId] && (
-              <div className="rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-700)] px-4 py-3 text-sm text-[var(--workspace-text-muted)]">
-                <div className="font-medium text-[var(--workspace-text-strong)]">
-                  {t('browser.sessionClose.tabCount', { count: browserMetaBySession[pendingCloseSession.sessionId]!.tabCount })}
-                </div>
-                <div className="mt-1">{browserMetaBySession[pendingCloseSession.sessionId]!.detail}</div>
-              </div>
-            )}
-            <div className="flex items-center gap-3">
-              <Button variant="outline" className="flex-1" onClick={() => setPendingCloseSessionId(null)}>
-                {t('common.cancel')}
-              </Button>
-              <Button
-                className="flex-1"
-                onClick={() => {
-                  if (pendingCloseSessionId) closeSessionWithGuards(pendingCloseSessionId)
-                  setPendingCloseSessionId(null)
-                }}
-              >
-                {t('browser.sessionClose.confirm')}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <SessionCloseDialog
+        open={!!pendingCloseSession}
+        hostName={pendingCloseSession ? pendingCloseSession.hostName || pendingCloseSession.hostAddress : ''}
+        tabs={resumableBrowserSessions.find((item) => item.sessionId === pendingCloseSession?.sessionId)?.tabs ?? []}
+        onCancel={() => setPendingCloseSessionId(null)}
+        onConfirm={() => {
+          if (pendingCloseSessionId) closeSessionWithGuards(pendingCloseSessionId)
+          setPendingCloseSessionId(null)
+        }}
+      />
       <BrowserSwitcherDialog
         open={browserSwitcherOpen}
         onOpenChange={setBrowserSwitcherOpen}
