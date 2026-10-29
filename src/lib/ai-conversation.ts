@@ -9,7 +9,17 @@ export type AITurn =
   | { id: string; kind: 'user'; text: string; auto?: boolean }
   | { id: string; kind: 'ai'; text: string; model: string; durationMs?: number; suggestion?: string }
   | { id: string; kind: 'error'; text: string }
-  | { id: string; kind: 'run'; command: string; state: 'running' | 'captured' | 'sent'; output: string; lineCount: number }
+  | {
+      id: string; kind: 'run'; command: string; state: 'running' | 'captured' | 'sent'; output: string; lineCount: number
+      /** How the run ended, once captured. */
+      outcome?: RunOutcome
+      /** The AI reply the command came from, and whether ShellBeam ran it without a click. */
+      source?: string; auto?: boolean
+      startedAt?: number; durationMs?: number
+    }
+
+/** `input`: the command stopped at a question; `timeout`: it never finished; `stopped`: the user stopped waiting. */
+export type RunOutcome = 'ok' | 'failed' | 'input' | 'timeout' | 'stopped'
 
 /** Lets the assistant run a command in the session and read back what the terminal printed. */
 export interface TerminalAiBridge {
@@ -20,12 +30,32 @@ export interface TerminalAiBridge {
   recentOutput: (lines: number) => string
   /** Clears the terminal screen and scrollback. */
   clear?: () => void
+  /** Sends Ctrl+C to whatever is running. */
+  interrupt?: () => void
 }
 export interface TerminalCapture {
   read: () => string
   /** Called on every write to the terminal; returns an unsubscribe function. */
   onOutput: (listener: () => void) => () => void
+  /** Whether the shell prompt is back, a program is asking a question, or it is still busy. */
+  status?: () => TerminalTail
   dispose: () => void
+}
+
+export type TerminalTail = 'prompt' | 'input' | 'busy' | 'unknown'
+const PROMPT_ENDS = new Set(['$', '#', '%', '>', '❯', '»', '➜', 'λ'])
+const INPUT_PATTERN = /\[y\/n\]|\(y\/n\)|yes\/no|password|passphrase|press (enter|any key|return)|continue\?|[?:]$/i
+
+/**
+ * Reads the line the cursor is on after a command was sent. The prompt is the text that was
+ * before the cursor when it was sent; the command is done once a line ending like it is back.
+ */
+export function classifyTerminalTail(prompt: string, cursorLine: string, cursorMoved: boolean): TerminalTail {
+  const line = cursorLine.trimEnd()
+  const end = prompt.trimEnd().slice(-1)
+  if (cursorMoved && line && PROMPT_ENDS.has(end) && line.endsWith(end) && line.length <= 160) return 'prompt'
+  if (cursorMoved && line && INPUT_PATTERN.test(line)) return 'input'
+  return PROMPT_ENDS.has(end) ? 'busy' : 'unknown'
 }
 
 export const OUTPUT_LINE_LIMIT = 80

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { autoRunAllowed, loadRunMode, parseQuestion, saveRunMode, extractSuggestion, nextStepTip, splitReply, buildHistory, currentModelTarget, historyToMessages, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput, withModel, type AITurn } from './ai-conversation'
+import { autoRunAllowed, classifyTerminalTail, loadRunMode, parseQuestion, saveRunMode, extractSuggestion, nextStepTip, splitReply, buildHistory, currentModelTarget, historyToMessages, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput, withModel, type AITurn } from './ai-conversation'
 import { DEFAULT_AI_SETTINGS } from './ai'
 
 describe('ai conversation', () => {
@@ -93,5 +93,15 @@ describe('ai conversation', () => {
   it('reads a question and its choices', () => {
     expect(parseQuestion('# Two sites found\n#? Which one should I reload?\n#- example.com\n#- api.example.com')).toEqual({ notes: 'Two sites found', question: 'Which one should I reload?', options: ['example.com', 'api.example.com'] })
     expect(parseQuestion('# done')).toBeNull()
+  })
+
+  it('tells a returned prompt from a question or a busy command', () => {
+    expect(classifyTerminalTail('deploy@web:~$ ', 'deploy@web:~$', true)).toBe('prompt')
+    expect(classifyTerminalTail('deploy@web:~$ ', 'deploy@web:/var/log$', true)).toBe('prompt')
+    expect(classifyTerminalTail('deploy@web:~$ ', 'deploy@web:~$ df -h', false)).toBe('busy')
+    expect(classifyTerminalTail('deploy@web:~$ ', 'Do you want to continue? [Y/n]', true)).toBe('input')
+    expect(classifyTerminalTail('deploy@web:~$ ', '[sudo] password for deploy:', true)).toBe('input')
+    expect(classifyTerminalTail('deploy@web:~$ ', 'Unpacking nginx (1.24) ...', true)).toBe('busy')
+    expect(classifyTerminalTail('', 'anything', true)).toBe('unknown')
   })
 })

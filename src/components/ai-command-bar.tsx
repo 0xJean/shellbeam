@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { AI_SETTINGS_EVENT, streamAICommand, loadAISettings, saveAISettings, isAIConfigured, createAbortController, type AISettings } from '@/lib/ai'
 import {
   AI_RUN_MODES, MAX_AUTO_STEPS, autoRunAllowed, buildHistory, currentModelTarget, extractSuggestion, isNoteReply, loadRunMode, nextStepTip, loadConversation, noteText, outputLooksFailed, parseQuestion, saveConversation, saveRunMode, splitReply, trimCapturedOutput,
-  type AIRunMode, type AITurn, type TerminalAiBridge, type TerminalCapture,
+  type AIRunMode, type AITurn, type RunOutcome, type TerminalAiBridge, type TerminalCapture,
 } from '@/lib/ai-conversation'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
 import { hostFactsText, type HostFact } from '@/lib/ai-host-facts'
@@ -44,7 +44,16 @@ const writeFlag = (key: string) => { try { localStorage.setItem(key, '1') } catc
 const CONTEXT_LINES = 30
 /** Output counts as finished once the terminal has been quiet this long. */
 const SETTLE_MS = 1200
+/** Without a known prompt there is no way to tell a slow command from a stuck one. */
 const CAPTURE_LIMIT_MS = 20_000
+/** With a known prompt, long installs and builds are waited for. */
+const PROMPT_LIMIT_MS = 10 * 60_000
+const PROMPT_IDLE_MS = 200
+const INPUT_IDLE_MS = 1500
+const POLL_MS = 250
+const LIVE_MS = 400
+type AutoStatusKind = 'running' | 'waiting' | 'limit' | 'unsettled' | 'input'
+type RunOptions = { source?: string; auto?: boolean }
 let turnSeq = 0
 const nextId = (prefix: string) => `${prefix}-${Date.now()}-${++turnSeq}`
 
@@ -76,16 +85,16 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const [confirmAuto, setConfirmAuto] = useState(false)
   /** The automatic run of the current request; null when every step waits for a click. */
   const chainRef = useRef<{ steps: number } | null>(null)
-  const [autoState, setAutoState] = useState<{ status: 'running' | 'waiting' | 'limit' | 'unsettled'; steps: number } | null>(null)
+  const [autoState, setAutoState] = useState<{ status: AutoStatusKind; steps: number } | null>(null)
   const continueAfterRef = useRef<string | null>(null)
-  const runRef = useRef<(command: string) => void>(() => {})
-  const stopChain = useCallback((status?: 'unsettled') => {
+  const runRef = useRef<(command: string, options?: RunOptions) => void>(() => {})
+  const stopChain = useCallback((status?: 'unsettled' | 'input') => {
     chainRef.current = null
     continueAfterRef.current = null
     setAutoState(status ? { status, steps: 0 } : null)
   }, [])
   /** Runs an automatic step when the mode allows it, otherwise leaves the chain waiting for a click. */
-  const advanceChain = useCallback((reply: string) => {
+  const advanceChain = useCallback((reply: string, source: string) => {
     const chain = chainRef.current
     if (!chain) return
     const question = parseQuestion(reply)
@@ -96,14 +105,14 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     if (chain.steps >= MAX_AUTO_STEPS) { setAutoState({ status: 'limit', steps: chain.steps }); return }
     chain.steps += 1
     setAutoState({ status: 'running', steps: chain.steps })
-    runRef.current(command)
+    runRef.current(command, { source, auto: true })
   }, [stopChain])
   const abortRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const sheetInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const streamBuf = useRef('')
-  const captures = useRef(new Map<string, { capture: TerminalCapture; stop: () => void }>())
+  const captures = useRef(new Map<string, { capture: TerminalCapture; stop: () => void; finish?: () => void }>())
   const turnsRef = useRef(turns)
   useEffect(() => { turnsRef.current = turns }, [turns])
   useEffect(() => { if (memoryKey) saveConversation(memoryKey, turns) }, [memoryKey, turns])
@@ -128,6 +137,9 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     abortRef.current = null
     chainRef.current = null
     continueAfterRef.current = null
+    // Hiding the panel ends any automatic run; drop its status so it is not stale when reopened.
+    const timer = setTimeout(() => setAutoState(null), 0)
+    return () => clearTimeout(timer)
   }, [visible, asSheet])
 
   useEffect(() => {
@@ -188,14 +200,15 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       onDone() {
         if (!live()) return
         const { body: content, suggestion } = extractSuggestion(streamBuf.current)
+        const replyId = nextId('a')
         if (content) {
           const model = served || target.model || target.providerName
-          setTurns((prev) => [...prev, { id: nextId('a'), kind: 'ai', text: content, model, durationMs: Date.now() - started, ...(suggestion ? { suggestion } : {}) }])
+          setTurns((prev) => [...prev, { id: replyId, kind: 'ai', text: content, model, durationMs: Date.now() - started, ...(suggestion ? { suggestion } : {}) }])
         }
         setStreamingContent('')
         setIsStreaming(false)
         abortRef.current = null
-        if (content) advanceChain(content)
+        if (content) advanceChain(content, replyId)
         else stopChain()
         setTimeout(() => inputRef.current?.focus(), 50)
       },
@@ -227,34 +240,54 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     const entry = captures.current.get(id)
     if (!entry) return
     const { text, lineCount } = trimCapturedOutput(entry.capture.read())
-    updateRun(id, { state: 'captured', output: text, lineCount })
+    updateRun(id, { output: text, lineCount })
   }, [updateRun])
 
-  const handleRun = useCallback((command: string) => {
+  const handleRun = useCallback((command: string, options: RunOptions = {}) => {
     const id = nextId('r')
+    const startedAt = Date.now()
+    const base = { id, kind: 'run' as const, command, output: '', lineCount: 0, startedAt, ...(options.source ? { source: options.source } : {}), ...(options.auto ? { auto: true } : {}) }
+    // A click during an automatic run is the user taking part, so the step budget starts over.
+    if (!options.auto && chainRef.current) chainRef.current.steps = 0
     if (!bridge) {
       onExecuteCommand(command + '\n')
-      setTurns((prev) => [...prev, { id, kind: 'run', command, state: 'sent', output: '', lineCount: 0 }])
+      setTurns((prev) => [...prev, { ...base, state: 'sent' }])
       return
     }
     const capture = bridge.run(command)
-    setTurns((prev) => [...prev, { id, kind: 'run', command, state: 'running', output: '', lineCount: 0 }])
-    let idle: ReturnType<typeof setTimeout> | undefined
-    const finish = (settled: boolean) => {
-      stop(); readCapture(id)
-      if (!chainRef.current) return
-      // A command still printing after the limit may be waiting for input; never type the next one into it.
-      if (settled) { continueAfterRef.current = id; setAutoState({ status: 'running', steps: chainRef.current.steps }) }
-      else stopChain('unsettled')
-    }
-    const arm = () => { clearTimeout(idle); idle = setTimeout(() => finish(true), SETTLE_MS) }
-    const unsubscribe = capture.onOutput(arm)
-    const limit = setTimeout(() => finish(false), CAPTURE_LIMIT_MS)
+    setTurns((prev) => [...prev, { ...base, state: 'running' }])
+    const promptKnown = capture.status?.() === 'busy'
+    const limitMs = promptKnown ? PROMPT_LIMIT_MS : CAPTURE_LIMIT_MS
+    let lastOutput = Date.now()
+    let live: ReturnType<typeof setTimeout> | undefined
+    const unsubscribe = capture.onOutput(() => {
+      lastOutput = Date.now()
+      live ??= setTimeout(() => { live = undefined; readCapture(id) }, LIVE_MS)
+    })
     // Stops watching, but keeps the capture so "Capture again" can re-read later output.
-    const stop = () => { clearTimeout(idle); clearTimeout(limit); unsubscribe() }
-    captures.current.set(id, { capture, stop })
-    arm()
-  }, [bridge, onExecuteCommand, readCapture, stopChain])
+    const stop = () => { clearInterval(poll); clearTimeout(live); unsubscribe() }
+    const finish = (how: 'done' | 'input' | 'timeout' | 'stopped') => {
+      stop()
+      const { text, lineCount } = trimCapturedOutput(capture.read())
+      const outcome: RunOutcome = how === 'done' ? (outputLooksFailed(text) ? 'failed' : 'ok') : how
+      updateRun(id, { state: 'captured', output: text, lineCount, outcome, durationMs: Date.now() - startedAt })
+      if (!chainRef.current) return
+      // Never type the next command into something that is still running or asking a question.
+      if (how === 'done') { continueAfterRef.current = id; setAutoState({ status: 'running', steps: chainRef.current.steps }) }
+      else if (how === 'input') stopChain('input')
+      else if (how === 'timeout') stopChain('unsettled')
+      else stopChain()
+    }
+    const poll = setInterval(() => {
+      const idle = Date.now() - lastOutput
+      const status = capture.status?.() ?? 'unknown'
+      if (status === 'prompt' && idle >= PROMPT_IDLE_MS) finish('done')
+      else if (status === 'input' && idle >= INPUT_IDLE_MS) finish('input')
+      else if (status === 'unknown' && idle >= SETTLE_MS) finish('done')
+      else if (Date.now() - startedAt >= limitMs) finish('timeout')
+    }, POLL_MS)
+    captures.current.set(id, { capture, stop, finish: () => finish('stopped') })
+  }, [bridge, onExecuteCommand, readCapture, stopChain, updateRun])
   useEffect(() => { runRef.current = handleRun }, [handleRun])
 
   // Sends the captured output back once it is in the conversation, so the next request carries it.
@@ -287,7 +320,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     const last = [...turnsRef.current].reverse().find((turn) => turn.kind === 'ai')
     if (!chain || last?.kind !== 'ai') return
     chain.steps = 0
-    advanceChain(last.text)
+    advanceChain(last.text, last.id)
   }, [advanceChain])
 
   const handleInsert = useCallback((command: string) => {
@@ -318,13 +351,23 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const handleKeyDown = useCallback((event: ReactKeyboardEvent) => {
     if (event.nativeEvent.isComposing) return
     if (event.key === 'Tab' && !event.shiftKey && !input && tip) { event.preventDefault(); setInput(tip); return }
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault()
+      const latest = [...turnsRef.current].reverse().find((turn): turn is Extract<AITurn, { kind: 'ai' }> => turn.kind === 'ai')
+      const command = latest && !isNoteReply(latest.text) ? splitReply(latest.text).command : ''
+      if (command && !turnsRef.current.some((turn) => turn.kind === 'run' && turn.source === latest!.id && turn.state === 'running')) handleRun(command, { source: latest!.id })
+      return
+    }
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(input) }
     if (event.key === 'Escape') { if (isStreaming) handleCancel(); else onClose() }
-  }, [submit, input, tip, handleCancel, isStreaming, onClose])
+  }, [submit, input, tip, handleCancel, isStreaming, onClose, handleRun])
 
   if (!visible) return null
 
   const lastTurn = turns[turns.length - 1]
+  const lastPrompt = [...turns].reverse().find((turn): turn is Extract<AITurn, { kind: 'user' }> => turn.kind === 'user' && !turn.auto)?.text ?? ''
+  const lastRunBySource = new Map<string, Extract<AITurn, { kind: 'run' }>>()
+  for (const turn of turns) if (turn.kind === 'run' && turn.source) lastRunBySource.set(turn.source, turn)
   const followUps = !isStreaming && lastTurn?.kind === 'run' && lastTurn.state === 'captured'
     ? [
         ...(outputLooksFailed(lastTurn.output) ? [{ label: copy.fix, prompt: copy.fixPrompt }] : []),
@@ -354,7 +397,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         onInputKeyDown={handleKeyDown}
         onSubmit={() => void submit(input)}
         onCancel={handleCancel}
-        onRun={(_msg, command) => handleRun(command)}
+        onRun={(msg, command) => handleRun(command, { source: msg.id })}
         onCopy={(msg, command) => void handleCopy(msg.id, command)}
         onNewChat={handleNewChat}
         onClose={onClose}
@@ -462,13 +505,22 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
           if (turn.kind === 'error') return (
             <div key={turn.id} role="alert" className="flex items-start gap-2 rounded-lg border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[var(--workspace-status-bad-text)]">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 break-words">{turn.text}</span>
+              <span className="min-w-0 flex-1 break-words">{turn.text}</span>
+              {lastPrompt && turn.id === lastTurn?.id && !isStreaming && (
+                <button type="button" onClick={() => void submit(lastPrompt)}
+                  className="flex h-6 shrink-0 items-center gap-1 rounded-md border border-current px-2 text-[11px] font-medium hover:opacity-80">
+                  <RotateCcw className="h-3 w-3" aria-hidden="true" />{copy.retry}
+                </button>
+              )}
             </div>
           )
-          if (turn.kind === 'run') return <RunBlock key={turn.id} turn={turn} onRefresh={() => readCapture(turn.id)} />
+          if (turn.kind === 'run') return (
+            <RunBlock key={turn.id} turn={turn} onRefresh={() => readCapture(turn.id)}
+              onInterrupt={bridge?.interrupt} onStopWaiting={() => captures.current.get(turn.id)?.finish?.()} />
+          )
           return (
-            <CommandCard key={turn.id} turn={turn} copied={copiedId === turn.id}
-              onRun={handleRun} onInsert={handleInsert} onCopy={(command) => void handleCopy(turn.id, command)} onAnswer={(text) => void submit(text)} />
+            <CommandCard key={turn.id} turn={turn} copied={copiedId === turn.id} run={lastRunBySource.get(turn.id)}
+              onRun={(command) => handleRun(command, { source: turn.id })} onInsert={handleInsert} onCopy={(command) => void handleCopy(turn.id, command)} onAnswer={(text) => void submit(text)} />
           )
         })}
 
@@ -511,21 +563,12 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
             className="block max-h-40 min-h-[44px] w-full resize-none bg-transparent px-3 pt-2 text-[13px] text-[var(--workspace-text-strong)] outline-none placeholder:text-[var(--workspace-text-subtle)]" />
           <div className="flex items-center gap-1.5 px-2 pb-2">
             <RunModePicker mode={runMode} onChange={changeRunMode} />
-            <button type="button" aria-pressed={includeContext} onClick={() => setIncludeContext((value) => !value)}
-              title={includeContext ? copy.terminalContextOn : copy.terminalContextOff}
-              className={cn('flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] transition-colors',
-                includeContext ? 'border-[color:var(--workspace-primary-500)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]'
-                  : 'border-[color:var(--workspace-border-soft)] text-[var(--workspace-text-subtle)] line-through')}>
-              <SquareTerminal className="h-3 w-3" aria-hidden="true" />{copy.terminalContext}
-            </button>
+            <ContextChip icon={SquareTerminal} label={copy.terminalContext} on={includeContext} onToggle={() => setIncludeContext((value) => !value)}
+              hint={includeContext ? copy.terminalContextOn : copy.terminalContextOff}
+              preview={() => (bridge?.recentOutput(CONTEXT_LINES) ?? getTerminalContext()).trim()} />
             {factsText && (
-              <button type="button" aria-pressed={includeFacts} onClick={() => setIncludeFacts((value) => !value)}
-                title={`${includeFacts ? copy.hostFactsOn : copy.hostFactsOff}\n\n${factsText}`}
-                className={cn('flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] transition-colors',
-                  includeFacts ? 'border-[color:var(--workspace-primary-500)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]'
-                    : 'border-[color:var(--workspace-border-soft)] text-[var(--workspace-text-subtle)] line-through')}>
-                <Server className="h-3 w-3" aria-hidden="true" />{copy.hostFacts}
-              </button>
+              <ContextChip icon={Server} label={copy.hostFacts} on={includeFacts} onToggle={() => setIncludeFacts((value) => !value)}
+                hint={includeFacts ? copy.hostFactsOn : copy.hostFactsOff} preview={() => factsText} />
             )}
             {history.length > 0 && (
               <span className="min-w-0 truncate text-[11px] text-[var(--workspace-text-subtle)]">
@@ -552,9 +595,11 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   )
 }
 
-function CommandCard({ turn, copied, onRun, onInsert, onCopy, onAnswer }: {
+function CommandCard({ turn, copied, run, onRun, onInsert, onCopy, onAnswer }: {
   turn: Extract<AITurn, { kind: 'ai' }>
   copied: boolean
+  /** The latest run of this command, by the user or by AI. */
+  run?: Extract<AITurn, { kind: 'run' }>
   onRun: (command: string) => void
   onInsert: (command: string) => void
   onCopy: (command: string) => void
@@ -605,10 +650,16 @@ function CommandCard({ turn, copied, onRun, onInsert, onCopy, onAnswer }: {
             className="block w-full resize-y bg-[var(--workspace-surface-950)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--workspace-text-strong)] outline-none" />
         : <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--workspace-text-strong)]">{command}</pre>}
       <div className="flex flex-wrap items-center gap-1 border-t border-[color:var(--workspace-border-soft)] px-2 py-1.5">
-        <button type="button" disabled={!command} onClick={() => { setEditing(false); onRun(command) }} title={copy.runHint}
-          className={cn(button, 'bg-[var(--workspace-primary-500)] text-white hover:opacity-90 disabled:opacity-40')}>
-          <Play className="h-3 w-3" aria-hidden="true" />{copy.run}
-        </button>
+        {run?.state === 'running' ? (
+          <span data-testid="ai-card-run" data-state="running" className={cn(button, 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]')}>
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />{copy.runStatus.running}
+          </span>
+        ) : (
+          <button type="button" disabled={!command} onClick={() => { setEditing(false); onRun(command) }} title={copy.runHint}
+            className={cn(button, run ? 'border border-[color:var(--workspace-border-soft)] text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]' : 'bg-[var(--workspace-primary-500)] text-white hover:opacity-90', 'disabled:opacity-40')}>
+            {run ? <RotateCcw className="h-3 w-3" aria-hidden="true" /> : <Play className="h-3 w-3" aria-hidden="true" />}{run ? copy.runAgain : copy.run}
+          </button>
+        )}
         <button type="button" disabled={!command} onClick={() => onInsert(command)} title={copy.insertHint}
           className={cn(button, 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]')}>
           <CornerDownLeft className="h-3 w-3" aria-hidden="true" />{copy.insert}
@@ -622,20 +673,63 @@ function CommandCard({ turn, copied, onRun, onInsert, onCopy, onAnswer }: {
         <span className="flex-1" />
         <CommandRiskChip command={command} compact />
       </div>
+      {run && run.state !== 'running' && (
+        <div data-testid="ai-card-run" data-state={run.outcome ?? run.state} className="flex items-center gap-1.5 border-t border-[color:var(--workspace-border-soft)] px-3 py-1 text-[10.5px] text-[var(--workspace-text-subtle)]">
+          {run.outcome && <RunOutcomeChip outcome={run.outcome} />}
+          <span>{run.auto ? copy.byAI : copy.byYou}</span>
+          {run.durationMs !== undefined && <span>· {fillCopy(copy.duration, { seconds: (run.durationMs / 1000).toFixed(1) })}</span>}
+        </div>
+      )}
       {meta && <p className="border-t border-[color:var(--workspace-border-soft)] px-3 py-1 font-mono text-[10.5px] text-[var(--workspace-text-subtle)]">{meta}</p>}
     </div>
   )
 }
 
-function RunBlock({ turn, onRefresh }: { turn: Extract<AITurn, { kind: 'run' }>; onRefresh: () => void }) {
+const OUTCOME_TONE: Record<RunOutcome, string> = {
+  ok: 'text-[var(--workspace-status-good-text)] bg-[var(--workspace-status-good-bg)]',
+  failed: 'text-[var(--workspace-status-bad-text)] bg-[var(--workspace-status-bad-bg)]',
+  input: 'text-[var(--workspace-status-warn-text)] bg-[var(--workspace-status-warn-bg)]',
+  timeout: 'text-[var(--workspace-status-warn-text)] bg-[var(--workspace-status-warn-bg)]',
+  stopped: 'text-[var(--workspace-text-muted)] bg-[var(--workspace-surface-800)]',
+}
+const OUTCOME_ICON = { ok: Check, failed: X, input: HelpCircle, timeout: TriangleAlert, stopped: Square } as const
+
+function RunOutcomeChip({ outcome }: { outcome: RunOutcome }) {
+  const { locale } = useT()
+  const copy = aiAssistantCopy[locale]
+  const Icon = OUTCOME_ICON[outcome]
+  return (
+    <span data-testid="ai-run-outcome" data-outcome={outcome} className={cn('inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] font-medium', OUTCOME_TONE[outcome])}>
+      <Icon className="h-2.5 w-2.5" aria-hidden="true" />{copy.runStatus[outcome]}
+    </span>
+  )
+}
+
+function RunBlock({ turn, onRefresh, onInterrupt, onStopWaiting }: {
+  turn: Extract<AITurn, { kind: 'run' }>
+  onRefresh: () => void
+  onInterrupt?: () => void
+  onStopWaiting: () => void
+}) {
   const { t, locale } = useT()
   const copy = aiAssistantCopy[locale]
   const [expanded, setExpanded] = useState(false)
+  const running = turn.state === 'running'
+  const small = 'flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]'
   return (
-    <div data-testid="ai-run" data-state={turn.state} className="rounded-lg border border-dashed border-[color:var(--workspace-border-soft)] px-3 py-2">
+    <div data-testid="ai-run" data-state={turn.state} data-outcome={turn.outcome}
+      className={cn('rounded-lg border border-dashed px-3 py-2', running ? 'border-[color:var(--workspace-primary-500)]' : 'border-[color:var(--workspace-border-soft)]')}>
       <div className="flex items-center gap-2 text-[11.5px]">
-        <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-subtle)]" aria-hidden="true" />
+        {running ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--workspace-accent-text)]" aria-hidden="true" />
+          : <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-subtle)]" aria-hidden="true" />}
         <code className="min-w-0 flex-1 truncate font-mono text-[var(--workspace-text)]" title={turn.command}>$ {turn.command}</code>
+        {turn.outcome && <RunOutcomeChip outcome={turn.outcome} />}
+        {running && onInterrupt && (
+          <button type="button" onClick={onInterrupt} title={copy.interruptHint} className={small}>
+            <Square className="h-2.5 w-2.5 fill-current" aria-hidden="true" />{copy.interrupt}
+          </button>
+        )}
+        {running && <button type="button" onClick={onStopWaiting} title={copy.stopWaitingHint} className={small}>{copy.stopWaiting}</button>}
         {turn.state === 'captured' && (
           <button type="button" onClick={onRefresh} title={copy.refreshHint} aria-label={copy.refresh}
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
@@ -643,16 +737,23 @@ function RunBlock({ turn, onRefresh }: { turn: Extract<AITurn, { kind: 'run' }>;
           </button>
         )}
       </div>
-      {turn.state === 'running' && (
-        <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-[var(--workspace-text-muted)]"><Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />{copy.running}</p>
+      {running && (
+        <>
+          <p className="mt-1.5 text-[11px] text-[var(--workspace-text-muted)]">{turn.auto ? `${copy.byAI} · ` : ''}{copy.running}</p>
+          {turn.output && (
+            <pre className="mt-1.5 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded-md bg-[var(--workspace-surface-900)] px-2.5 py-2 font-mono text-[11px] leading-relaxed text-[var(--workspace-text)]">{turn.output.split('\n').slice(-8).join('\n')}</pre>
+          )}
+        </>
       )}
       {turn.state === 'sent' && <p className="mt-1.5 text-[11px] text-[var(--workspace-text-muted)]">{t('ai.executed')}</p>}
       {turn.state === 'captured' && (
         <>
+          {turn.outcome === 'input' && <p className="mt-1.5 text-[11px] text-[var(--workspace-status-warn-text)]">{copy.inputHint}</p>}
           <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}
             className="mt-1.5 flex items-center gap-1 text-[11px] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]">
             <ChevronDown className={cn('h-3 w-3 transition-transform', !expanded && '-rotate-90')} aria-hidden="true" />
             {turn.lineCount ? fillCopy(copy.output, { count: turn.lineCount }) : copy.noOutput}
+            {turn.durationMs !== undefined && <span className="text-[var(--workspace-text-subtle)]">· {fillCopy(copy.duration, { seconds: (turn.durationMs / 1000).toFixed(1) })}</span>}
             <span className="text-[var(--workspace-text-subtle)]">· {copy.sharedNext}</span>
           </button>
           {turn.output && (
@@ -769,7 +870,7 @@ function AutoWarning({ onConfirm, onCancel }: { onConfirm: () => void; onCancel:
 }
 
 function AutoStatus({ state, onStop, onKeepGoing, onDismiss }: {
-  state: { status: 'running' | 'waiting' | 'limit' | 'unsettled'; steps: number }
+  state: { status: AutoStatusKind; steps: number }
   onStop: () => void
   onKeepGoing: () => void
   onDismiss: () => void
@@ -779,8 +880,9 @@ function AutoStatus({ state, onStop, onKeepGoing, onDismiss }: {
   const text = state.status === 'running' ? fillCopy(copy.autoRunning, { step: state.steps, max: MAX_AUTO_STEPS })
     : state.status === 'waiting' ? copy.autoWaiting
       : state.status === 'limit' ? fillCopy(copy.autoLimit, { max: MAX_AUTO_STEPS })
-        : copy.autoUnsettled
-  const warn = state.status === 'unsettled' || state.status === 'limit'
+        : state.status === 'input' ? copy.autoInput
+          : copy.autoUnsettled
+  const warn = state.status === 'unsettled' || state.status === 'limit' || state.status === 'input'
   const action = 'h-6 shrink-0 rounded-md px-2 text-[11px] font-medium'
   return (
     <div data-testid="ai-auto-status" data-status={state.status} role="status"
@@ -791,9 +893,63 @@ function AutoStatus({ state, onStop, onKeepGoing, onDismiss }: {
         : <FastForward className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
       <span className="min-w-0 flex-1 leading-snug">{text}</span>
       {state.status === 'limit' && <button type="button" onClick={onKeepGoing} className={cn(action, 'bg-[var(--workspace-primary-500)] text-white hover:opacity-90')}>{copy.continueAuto}</button>}
-      {state.status === 'unsettled'
+      {state.status === 'unsettled' || state.status === 'input'
         ? <button type="button" onClick={onDismiss} className={cn(action, 'hover:bg-[var(--workspace-surface-800)]')}>{copy.dismiss}</button>
         : <button type="button" onClick={onStop} className={cn(action, 'border border-current hover:opacity-80')}>{copy.stopAuto}</button>}
+    </div>
+  )
+}
+
+function ContextChip({ icon: Icon, label, on, onToggle, hint, preview }: {
+  icon: typeof Server
+  label: string
+  on: boolean
+  onToggle: () => void
+  hint: string
+  /** Read when the popover opens, so it shows what the next message would carry. */
+  preview: () => string
+}) {
+  const { locale } = useT()
+  const copy = aiAssistantCopy[locale]
+  const [content, setContent] = useState<string | null>(null)
+  const root = useRef<HTMLDivElement>(null)
+  const open = content !== null
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setContent(null) }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setContent(null) } }
+    window.addEventListener('pointerdown', onPointer)
+    window.addEventListener('keydown', onKey, true)
+    return () => { window.removeEventListener('pointerdown', onPointer); window.removeEventListener('keydown', onKey, true) }
+  }, [open])
+  return (
+    // Not positioned itself, so the popover spans the whole input box instead of overflowing from the chip.
+    <div ref={root} className="shrink-0">
+      <button type="button" aria-haspopup="dialog" aria-expanded={open} aria-label={label} title={hint} data-on={on}
+        onClick={() => setContent(open ? null : preview())}
+        className={cn('flex h-6 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] transition-colors',
+          on ? 'border-[color:var(--workspace-primary-500)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]'
+            : 'border-dashed border-[color:var(--workspace-border-soft)] text-[var(--workspace-text-subtle)] line-through')}>
+        <Icon className="h-3 w-3" aria-hidden="true" />{label}
+      </button>
+      {open && (
+        <div role="dialog" aria-label={label} className="absolute inset-x-0 bottom-full z-30 mb-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-2.5 text-xs shadow-[var(--workspace-shadow-overlay)]">
+          <div className="flex items-center gap-2">
+            <Icon className="h-3.5 w-3.5 text-[var(--workspace-accent-text)]" aria-hidden="true" />
+            <span className="flex-1 font-medium text-[var(--workspace-text-strong)]">{label}</span>
+            <span className="text-[11px] text-[var(--workspace-text-muted)]">{copy.contextSend}</span>
+            <button type="button" role="switch" aria-checked={on} aria-label={copy.contextSend} onClick={onToggle}
+              className={cn('relative h-4 w-7 shrink-0 rounded-full transition-colors', on ? 'bg-[var(--workspace-primary-500)]' : 'bg-[var(--workspace-surface-800)] ring-1 ring-inset ring-[color:var(--workspace-border-soft)]')}>
+              <span className={cn('absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-[left]', on ? 'left-3.5' : 'left-0.5')} />
+            </button>
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--workspace-text-muted)]">{hint}</p>
+          <p className="mt-2 text-[10.5px] font-medium text-[var(--workspace-text-subtle)]">{copy.contextPreview}</p>
+          <pre className={cn('mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-[var(--workspace-surface-900)] px-2 py-1.5 font-mono text-[10.5px] leading-relaxed text-[var(--workspace-text)]', !on && 'opacity-50')}>
+            {content || copy.contextEmpty}
+          </pre>
+        </div>
+      )}
     </div>
   )
 }

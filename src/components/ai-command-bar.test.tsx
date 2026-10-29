@@ -153,6 +153,9 @@ describe('AICommandBar', () => {
     expect(box).toHaveValue('Find what fills the disk')
     expect(screen.queryByTestId('ai-next-tip')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Server info' }))
+    expect(screen.getByRole('dialog', { name: 'Server info' })).toHaveTextContent('os: Ubuntu 24.04')
+    fireEvent.click(screen.getByRole('switch', { name: 'Send with each message' }))
+    expect(screen.getByRole('switch', { name: 'Send with each message' })).toHaveAttribute('aria-checked', 'false')
     fireEvent.click(screen.getByRole('button', { name: 'Generate command' }))
     expect(lastHost).toBe('')
   })
@@ -251,5 +254,74 @@ describe('AICommandBar', () => {
     for (let i = 0; i < 25; i++) act(() => { bridge.emit(); vi.advanceTimersByTime(1000) })
     expect(screen.getByTestId('ai-auto-status')).toHaveAttribute('data-status', 'unsettled')
     expect(screen.queryByTestId('ai-auto-continue')).not.toBeInTheDocument()
+  })
+
+  it('waits for the prompt to come back, shows live output, and marks the card with the outcome', () => {
+    vi.useFakeTimers()
+    let status: 'busy' | 'prompt' | 'input' = 'busy'
+    let output = ''
+    const listeners = new Set<() => void>()
+    const bridge: TerminalAiBridge = {
+      run: vi.fn(() => ({ read: () => output, status: () => status, onOutput: (l: () => void) => { listeners.add(l); return () => listeners.delete(l) }, dispose: vi.fn() })),
+      insert: vi.fn(), recentOutput: () => '', interrupt: vi.fn(),
+    }
+    const write = (text: string) => act(() => { output += text; listeners.forEach((l) => l()) })
+    render(<AICommandBar {...base} bridge={bridge} />)
+    ask(); act(() => { callbacks.onToken('sudo apt-get install -y nginx'); callbacks.onDone() })
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+    write('Reading package lists...')
+    act(() => { vi.advanceTimersByTime(5000) })
+    expect(screen.getByTestId('ai-run')).toHaveAttribute('data-state', 'running')
+    expect(screen.getByTestId('ai-run')).toHaveTextContent('Reading package lists...')
+    expect(screen.getByTestId('ai-card-run')).toHaveAttribute('data-state', 'running')
+    fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }))
+    expect(bridge.interrupt).toHaveBeenCalledOnce()
+    write('\nDone'); status = 'prompt'
+    act(() => { vi.advanceTimersByTime(500) })
+    expect(screen.getByTestId('ai-run')).toHaveAttribute('data-outcome', 'ok')
+    expect(screen.getByTestId('ai-card-run')).toHaveTextContent('Run by you')
+    expect(screen.getByRole('button', { name: 'Run again' })).toBeInTheDocument()
+  })
+
+  it('stops the automatic run when a command asks a question', () => {
+    vi.useFakeTimers()
+    localStorage.setItem('shellbeam.aiRunMode.k', 'auto')
+    const bridge: TerminalAiBridge = {
+      run: vi.fn(() => ({ read: () => 'Do you want to continue? [Y/n]', status: () => 'input' as const, onOutput: () => () => {}, dispose: vi.fn() })),
+      insert: vi.fn(), recentOutput: () => '',
+    }
+    render(<AICommandBar {...base} bridge={bridge} memoryKey="k" />)
+    ask('upgrade'); act(() => { callbacks.onToken('sudo apt upgrade'); callbacks.onDone() })
+    act(() => { vi.advanceTimersByTime(2000) })
+    expect(screen.getByTestId('ai-run')).toHaveAttribute('data-outcome', 'input')
+    expect(screen.getByTestId('ai-auto-status')).toHaveAttribute('data-status', 'input')
+    expect(screen.getByTestId('ai-card-run')).toHaveTextContent('Run by AI')
+  })
+
+  it('restarts the step budget when the user runs a command during an automatic run', () => {
+    vi.useFakeTimers()
+    localStorage.setItem('shellbeam.aiRunMode.k', 'auto')
+    const bridge = fakeBridge('ok')
+    render(<AICommandBar {...base} bridge={bridge} memoryKey="k" />)
+    ask('loop')
+    for (let step = 1; step <= 10; step++) {
+      act(() => { callbacks.onToken(`echo ${step}`); callbacks.onDone() })
+      settle(bridge)
+    }
+    act(() => { callbacks.onToken('echo 11'); callbacks.onDone() })
+    expect(screen.getByTestId('ai-auto-status')).toHaveAttribute('data-status', 'limit')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Run' }).at(-1)!)
+    settle(bridge)
+    act(() => { callbacks.onToken('echo 12'); callbacks.onDone() })
+    expect(bridge.run).toHaveBeenLastCalledWith('echo 12')
+    expect(screen.getByTestId('ai-auto-status')).toHaveAttribute('data-status', 'running')
+  })
+
+  it('offers a retry after an error', () => {
+    render(<AICommandBar {...base} />)
+    ask('disk usage'); act(() => callbacks.onError('network down'))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(streamAICommand).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(streamAICommand).mock.calls[1][1]).toBe('disk usage')
   })
 })

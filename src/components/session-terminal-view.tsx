@@ -10,7 +10,7 @@ import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { resizeInteractiveTerminal } from '@/lib/interactive-session'
 import { DEFAULT_TERMINAL_PREFS, useResolvedTerminalTheme, type TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
-import { OUTPUT_LINE_LIMIT, type TerminalAiBridge } from '@/lib/ai-conversation'
+import { createTerminalAiBridge } from '@/lib/terminal-ai-bridge'
 import type { WorkspaceInventory, WorkspaceInventoryResource } from '@/lib/workspace-inventory'
 import { collectHostFacts } from '@/lib/ai-host-facts'
 import type { HostProfile } from '@/lib/hosts'
@@ -194,32 +194,7 @@ export function SessionTerminalView({
   }), [hostName, session?.username, hostAddress, network?.countryName, network?.resolvedLocationLabel, resource, inventory])
 
   // The AI panel runs commands here and reads back what the terminal printed after them.
-  const aiBridge = useMemo<TerminalAiBridge>(() => ({
-    run(command) {
-      const term = termRef.current
-      const marker = term?.registerMarker(0)
-      onSendRawRef.current(`${command.replace(/\n+$/, '').replace(/\n/g, '\r')}\r`)
-      return {
-        read() {
-          if (!term) return ''
-          const buf = term.buffer.active
-          if (!marker || marker.isDisposed || marker.line < 0) return getTerminalContext(OUTPUT_LINE_LIMIT)
-          const lines: string[] = []
-          // The marker line is the prompt with the echoed command; output starts below it.
-          for (let i = marker.line + 1; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? '')
-          return lines.join('\n')
-        },
-        onOutput(listener) {
-          const subscription = term?.onWriteParsed(listener)
-          return () => subscription?.dispose()
-        },
-        dispose: () => marker?.dispose(),
-      }
-    },
-    insert: (command) => onSendRawRef.current(command.replace(/\n+$/, '').replace(/\n/g, '\r')),
-    recentOutput: (rows) => getTerminalContext(rows),
-    clear: () => termRef.current?.clear(),
-  }), [getTerminalContext])
+  const aiBridge = useMemo(() => createTerminalAiBridge(() => termRef.current, (data) => onSendRawRef.current(data), getTerminalContext), [getTerminalContext])
 
   const scheduleInputUiSync = useCallback(() => {
     if (uiSyncFrameRef.current !== null) return
