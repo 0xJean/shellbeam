@@ -34,6 +34,8 @@ function fakeBridge(output: string) {
   }
   return bridge
 }
+/** Lets a run settle, then lets the deferred automatic continue go out. */
+const settle = (bridge: { emit: () => void }) => { act(() => { bridge.emit(); vi.advanceTimersByTime(1300) }); act(() => { vi.advanceTimersByTime(1) }) }
 const base = { onExecuteCommand: vi.fn(), getTerminalContext: () => '', visible: true, onClose: vi.fn(), presentation: 'inline' as const }
 
 describe('AICommandBar', () => {
@@ -177,6 +179,77 @@ describe('AICommandBar', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Clear terminal screen' }))
     expect(bridge.clear).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByText(/Disk is 91% full/))
-    expect(streamAICommand).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('Disk is 91% full'), expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything())
+    expect(streamAICommand).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('Disk is 91% full'), expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(), 'confirm')
+  })
+
+  it('asks before turning on continuous run and keeps the default until confirmed', () => {
+    render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.8" />)
+    expect(screen.getByTestId('ai-run-mode')).toHaveAttribute('data-mode', 'confirm')
+    fireEvent.click(screen.getByTestId('ai-run-mode'))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Run continuously/ }))
+    expect(screen.getByTestId('ai-auto-warning')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByTestId('ai-run-mode')).toHaveAttribute('data-mode', 'confirm')
+    fireEvent.click(screen.getByTestId('ai-run-mode'))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Run continuously/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'I understand, turn it on' }))
+    expect(screen.getByTestId('ai-run-mode')).toHaveAttribute('data-mode', 'auto')
+    expect(localStorage.getItem('shellbeam.aiRunMode.v1:root@10.0.0.8')).toBe('auto')
+  })
+
+  it('runs read-only checks by itself, waits on changes, and stops when AI is done', () => {
+    vi.useFakeTimers()
+    localStorage.setItem('shellbeam.aiRunMode.k', 'read-only')
+    const bridge = fakeBridge('/ 91%')
+    render(<AICommandBar {...base} bridge={bridge} memoryKey="k" />)
+    ask('disk is full'); act(() => { callbacks.onToken('df -h'); callbacks.onDone() })
+    expect(bridge.run).toHaveBeenCalledExactlyOnceWith('df -h')
+    settle(bridge)
+    expect(screen.getByTestId('ai-auto-continue')).toBeInTheDocument()
+    expect(lastHistory).toContainEqual({ role: 'output', content: '$ df -h\n/ 91%' })
+    act(() => { callbacks.onToken('sudo journalctl --vacuum-time=7d'); callbacks.onDone() })
+    expect(bridge.run).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('ai-auto-status')).toHaveAttribute('data-status', 'waiting')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Run' }).at(-1)!)
+    expect(bridge.run).toHaveBeenLastCalledWith('sudo journalctl --vacuum-time=7d')
+    settle(bridge)
+    expect(screen.getAllByTestId('ai-auto-continue')).toHaveLength(2)
+    act(() => { callbacks.onToken('# Freed 2 GB.'); callbacks.onDone() })
+    expect(screen.queryByTestId('ai-auto-status')).not.toBeInTheDocument()
+  })
+
+  it('never auto-runs destructive commands, stops on a question, and pauses after the step limit', () => {
+    vi.useFakeTimers()
+    localStorage.setItem('shellbeam.aiRunMode.k', 'auto')
+    const bridge = fakeBridge('ok')
+    render(<AICommandBar {...base} bridge={bridge} memoryKey="k" />)
+    ask('clean up'); act(() => { callbacks.onToken('rm -rf /var/www/old'); callbacks.onDone() })
+    expect(bridge.run).not.toHaveBeenCalled()
+    expect(screen.getByTestId('ai-auto-status')).toHaveAttribute('data-status', 'waiting')
+    ask('which site?'); act(() => { callbacks.onToken('#? Which site should I reload?\n#- a.com\n#- b.com'); callbacks.onDone() })
+    expect(screen.getByTestId('ai-question')).toHaveTextContent('Which site should I reload?')
+    expect(screen.queryByTestId('ai-auto-status')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'b.com' }))
+    for (let step = 1; step <= 10; step++) {
+      act(() => { callbacks.onToken(`echo ${step}`); callbacks.onDone() })
+      settle(bridge)
+    }
+    expect(bridge.run).toHaveBeenCalledTimes(10)
+    act(() => { callbacks.onToken('echo 11'); callbacks.onDone() })
+    expect(bridge.run).toHaveBeenCalledTimes(10)
+    expect(screen.getByTestId('ai-auto-status')).toHaveAttribute('data-status', 'limit')
+    fireEvent.click(screen.getByRole('button', { name: 'Keep going' }))
+    expect(bridge.run).toHaveBeenLastCalledWith('echo 11')
+  })
+
+  it('stops the automatic run when a command is still printing at the capture limit', () => {
+    vi.useFakeTimers()
+    localStorage.setItem('shellbeam.aiRunMode.k', 'auto')
+    const bridge = fakeBridge('Do you want to continue? [Y/n]')
+    render(<AICommandBar {...base} bridge={bridge} memoryKey="k" />)
+    ask('upgrade'); act(() => { callbacks.onToken('sudo apt upgrade'); callbacks.onDone() })
+    for (let i = 0; i < 25; i++) act(() => { bridge.emit(); vi.advanceTimersByTime(1000) })
+    expect(screen.getByTestId('ai-auto-status')).toHaveAttribute('data-status', 'unsettled')
+    expect(screen.queryByTestId('ai-auto-continue')).not.toBeInTheDocument()
   })
 })

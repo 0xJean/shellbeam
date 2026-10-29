@@ -9,6 +9,7 @@ fn request() -> Request {
         context: "remote Linux".into(),
         history: Vec::new(),
         host: String::new(),
+        mode: RunMode::Confirm,
     }
 }
 #[test]
@@ -337,4 +338,13 @@ fn only_parent_session_variables_are_dropped() {
     for name in ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "HOME", "PATH"] {
         assert!(!is_host_session_var(name), "{name}");
     }
+}
+#[test]
+fn run_mode_defaults_to_confirm_and_rejects_unknown_values() {
+    let base = r#"{"requestId":"r","backend":"codex-cli","executable":"","model":"","prompt":"p","context":""}"#;
+    assert_eq!(serde_json::from_str::<Request>(base).unwrap().mode, RunMode::Confirm);
+    let auto = base.replace(r#""context":"""#, r#""context":"","mode":"read-only""#);
+    assert_eq!(serde_json::from_str::<Request>(&auto).unwrap().mode, RunMode::ReadOnly);
+    let bad = base.replace(r#""context":"""#, r#""context":"","mode":"yolo""#);
+    assert!(serde_json::from_str::<Request>(&bad).is_err());
 }

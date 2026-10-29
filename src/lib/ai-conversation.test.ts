@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractSuggestion, nextStepTip, splitReply, buildHistory, currentModelTarget, historyToMessages, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput, withModel, type AITurn } from './ai-conversation'
+import { autoRunAllowed, loadRunMode, parseQuestion, saveRunMode, extractSuggestion, nextStepTip, splitReply, buildHistory, currentModelTarget, historyToMessages, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput, withModel, type AITurn } from './ai-conversation'
 import { DEFAULT_AI_SETTINGS } from './ai'
 
 describe('ai conversation', () => {
@@ -71,5 +71,27 @@ describe('ai conversation', () => {
     expect(nextStepTip([{ ...ai, suggestion: undefined }, { ...run, output: 'permission denied' }], prompts)).toBe('FIX')
     expect(nextStepTip([ai, { id: 'u', kind: 'user', text: 'x' }], prompts)).toBe('')
   })
-})
 
+  it('lets each run mode auto-run only what it allows', () => {
+    expect(autoRunAllowed('confirm', 'df -h')).toBe(false)
+    expect(autoRunAllowed('read-only', 'df -h')).toBe(true)
+    expect(autoRunAllowed('read-only', 'sudo systemctl restart nginx')).toBe(false)
+    expect(autoRunAllowed('auto', 'sudo systemctl restart nginx')).toBe(true)
+    expect(autoRunAllowed('auto', 'rm -rf /var/www')).toBe(false)
+  })
+
+  it('stores the run mode per host and defaults to confirm', () => {
+    localStorage.clear()
+    expect(loadRunMode('v:h')).toBe('confirm')
+    saveRunMode('v:h', 'auto')
+    expect(loadRunMode('v:h')).toBe('auto')
+    expect(loadRunMode('v:other')).toBe('confirm')
+    saveRunMode('v:h', 'confirm')
+    expect(localStorage.getItem('shellbeam.aiRunMode.v:h')).toBeNull()
+  })
+
+  it('reads a question and its choices', () => {
+    expect(parseQuestion('# Two sites found\n#? Which one should I reload?\n#- example.com\n#- api.example.com')).toEqual({ notes: 'Two sites found', question: 'Which one should I reload?', options: ['example.com', 'api.example.com'] })
+    expect(parseQuestion('# done')).toBeNull()
+  })
+})

@@ -1,11 +1,11 @@
 import { useState, useRef, useCallback, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { AlertCircle, ArrowUp, Lightbulb, Server, Check, ChevronDown, Copy, CornerDownLeft, Eraser, Loader2, MessageSquareText, MoreHorizontal, Pencil, Play, Radar, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
+import { AlertCircle, ArrowUp, FastForward, HelpCircle, Lightbulb, ShieldCheck, TriangleAlert, Zap, Server, Check, ChevronDown, Copy, CornerDownLeft, Eraser, Loader2, MessageSquareText, MoreHorizontal, Pencil, Play, Radar, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AI_SETTINGS_EVENT, streamAICommand, loadAISettings, saveAISettings, isAIConfigured, createAbortController, type AISettings } from '@/lib/ai'
 import {
-  buildHistory, currentModelTarget, extractSuggestion, isNoteReply, nextStepTip, loadConversation, noteText, outputLooksFailed, saveConversation, splitReply, trimCapturedOutput,
-  type AITurn, type TerminalAiBridge, type TerminalCapture,
+  AI_RUN_MODES, MAX_AUTO_STEPS, autoRunAllowed, buildHistory, currentModelTarget, extractSuggestion, isNoteReply, loadRunMode, nextStepTip, loadConversation, noteText, outputLooksFailed, parseQuestion, saveConversation, saveRunMode, splitReply, trimCapturedOutput,
+  type AIRunMode, type AITurn, type TerminalAiBridge, type TerminalCapture,
 } from '@/lib/ai-conversation'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
 import { hostFactsText, type HostFact } from '@/lib/ai-host-facts'
@@ -69,6 +69,35 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const [probeTipDismissed, setProbeTipDismissed] = useState(() => readFlag(probeTipKey))
   const dismissProbeTip = () => { writeFlag(probeTipKey); setProbeTipDismissed(true) }
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const runModeKey = memoryKey ?? ''
+  const [runMode, setRunMode] = useState<AIRunMode>(() => loadRunMode(runModeKey))
+  const runModeRef = useRef(runMode)
+  useEffect(() => { runModeRef.current = runMode }, [runMode])
+  const [confirmAuto, setConfirmAuto] = useState(false)
+  /** The automatic run of the current request; null when every step waits for a click. */
+  const chainRef = useRef<{ steps: number } | null>(null)
+  const [autoState, setAutoState] = useState<{ status: 'running' | 'waiting' | 'limit' | 'unsettled'; steps: number } | null>(null)
+  const continueAfterRef = useRef<string | null>(null)
+  const runRef = useRef<(command: string) => void>(() => {})
+  const stopChain = useCallback((status?: 'unsettled') => {
+    chainRef.current = null
+    continueAfterRef.current = null
+    setAutoState(status ? { status, steps: 0 } : null)
+  }, [])
+  /** Runs an automatic step when the mode allows it, otherwise leaves the chain waiting for a click. */
+  const advanceChain = useCallback((reply: string) => {
+    const chain = chainRef.current
+    if (!chain) return
+    const question = parseQuestion(reply)
+    if (question || isNoteReply(reply)) { stopChain(); return }
+    const { command } = splitReply(reply)
+    if (!command) { stopChain(); return }
+    if (!autoRunAllowed(runModeRef.current, command)) { setAutoState({ status: 'waiting', steps: chain.steps }); return }
+    if (chain.steps >= MAX_AUTO_STEPS) { setAutoState({ status: 'limit', steps: chain.steps }); return }
+    chain.steps += 1
+    setAutoState({ status: 'running', steps: chain.steps })
+    runRef.current(command)
+  }, [stopChain])
   const abortRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const sheetInputRef = useRef<HTMLInputElement>(null)
@@ -97,6 +126,8 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     }
     abortRef.current?.abort()
     abortRef.current = null
+    chainRef.current = null
+    continueAfterRef.current = null
   }, [visible, asSheet])
 
   useEffect(() => {
@@ -111,7 +142,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     saveAISettings(next)
   }, [])
 
-  const submit = useCallback(async (text: string) => {
+  const submit = useCallback(async (text: string, options: { auto?: boolean } = {}) => {
     const prompt = text.trim()
     if (!prompt || abortRef.current) return
     const current = loadAISettings()
@@ -120,7 +151,12 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       return
     }
     const history = buildHistory(turnsRef.current)
-    setTurns((prev) => [...prev, { id: nextId('u'), kind: 'user', text: prompt }])
+    if (!options.auto) {
+      chainRef.current = runModeRef.current === 'confirm' ? null : { steps: 0 }
+      continueAfterRef.current = null
+      setAutoState(chainRef.current ? { status: 'running', steps: 0 } : null)
+    }
+    setTurns((prev) => [...prev, { id: nextId('u'), kind: 'user', text: prompt, ...(options.auto ? { auto: true } : {}) }])
     setInput('')
     setIsStreaming(true)
     setStreamingContent('')
@@ -159,6 +195,8 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         setStreamingContent('')
         setIsStreaming(false)
         abortRef.current = null
+        if (content) advanceChain(content)
+        else stopChain()
         setTimeout(() => inputRef.current?.focus(), 50)
       },
       onError(message) {
@@ -167,17 +205,19 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         setStreamingContent('')
         setIsStreaming(false)
         abortRef.current = null
+        stopChain()
       },
-    }, ac.signal, history, includeFacts ? factsText : '')
-  }, [includeContext, includeFacts, bridge, getTerminalContext, factsText, t])
+    }, ac.signal, history, includeFacts ? factsText : '', runModeRef.current)
+  }, [includeContext, includeFacts, bridge, getTerminalContext, factsText, t, advanceChain, stopChain])
 
   const handleCancel = useCallback(() => {
+    stopChain()
     abortRef.current?.abort()
     abortRef.current = null
     streamBuf.current = ''
     setStreamingContent('')
     setIsStreaming(false)
-  }, [])
+  }, [stopChain])
 
   const updateRun = useCallback((id: string, patch: Partial<Extract<AITurn, { kind: 'run' }>>) => {
     setTurns((prev) => prev.map((turn) => (turn.id === id && turn.kind === 'run' ? { ...turn, ...patch } : turn)))
@@ -200,15 +240,55 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     const capture = bridge.run(command)
     setTurns((prev) => [...prev, { id, kind: 'run', command, state: 'running', output: '', lineCount: 0 }])
     let idle: ReturnType<typeof setTimeout> | undefined
-    const finish = () => { stop(); readCapture(id) }
-    const arm = () => { clearTimeout(idle); idle = setTimeout(finish, SETTLE_MS) }
+    const finish = (settled: boolean) => {
+      stop(); readCapture(id)
+      if (!chainRef.current) return
+      // A command still printing after the limit may be waiting for input; never type the next one into it.
+      if (settled) { continueAfterRef.current = id; setAutoState({ status: 'running', steps: chainRef.current.steps }) }
+      else stopChain('unsettled')
+    }
+    const arm = () => { clearTimeout(idle); idle = setTimeout(() => finish(true), SETTLE_MS) }
     const unsubscribe = capture.onOutput(arm)
-    const limit = setTimeout(finish, CAPTURE_LIMIT_MS)
+    const limit = setTimeout(() => finish(false), CAPTURE_LIMIT_MS)
     // Stops watching, but keeps the capture so "Capture again" can re-read later output.
     const stop = () => { clearTimeout(idle); clearTimeout(limit); unsubscribe() }
     captures.current.set(id, { capture, stop })
     arm()
-  }, [bridge, onExecuteCommand, readCapture])
+  }, [bridge, onExecuteCommand, readCapture, stopChain])
+  useEffect(() => { runRef.current = handleRun }, [handleRun])
+
+  // Sends the captured output back once it is in the conversation, so the next request carries it.
+  useEffect(() => {
+    const id = continueAfterRef.current
+    if (!id || !chainRef.current) return
+    const run = turns.find((turn) => turn.id === id)
+    if (run?.kind !== 'run' || run.state !== 'captured') return
+    const timer = setTimeout(() => {
+      if (continueAfterRef.current !== id) return
+      continueAfterRef.current = null
+      void submit(copy.continuePrompt, { auto: true })
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [turns, submit, copy])
+
+  const changeRunMode = useCallback((mode: AIRunMode) => {
+    if (mode === 'auto' && runModeRef.current !== 'auto') { setConfirmAuto(true); return }
+    setRunMode(mode)
+    saveRunMode(runModeKey, mode)
+    if (mode === 'confirm') stopChain()
+  }, [runModeKey, stopChain])
+  const enableAuto = useCallback(() => {
+    setConfirmAuto(false)
+    setRunMode('auto')
+    saveRunMode(runModeKey, 'auto')
+  }, [runModeKey])
+  const keepGoing = useCallback(() => {
+    const chain = chainRef.current
+    const last = [...turnsRef.current].reverse().find((turn) => turn.kind === 'ai')
+    if (!chain || last?.kind !== 'ai') return
+    chain.steps = 0
+    advanceChain(last.text)
+  }, [advanceChain])
 
   const handleInsert = useCallback((command: string) => {
     if (bridge) bridge.insert(command)
@@ -367,6 +447,13 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
           </p>
         )}
         {turns.map((turn) => {
+          if (turn.kind === 'user' && turn.auto) return (
+            <p key={turn.id} data-testid="ai-auto-continue" className="flex items-center gap-2 text-[11px] text-[var(--workspace-text-subtle)]">
+              <span className="h-px flex-1 bg-[var(--workspace-border-soft)]" />
+              <FastForward className="h-3 w-3" aria-hidden="true" />{copy.autoContinued}
+              <span className="h-px flex-1 bg-[var(--workspace-border-soft)]" />
+            </p>
+          )
           if (turn.kind === 'user') return (
             <div key={turn.id} className="flex justify-end">
               <p className="max-w-[88%] whitespace-pre-wrap break-words rounded-lg rounded-br-sm bg-[var(--workspace-accent-subtle)] px-3 py-2 text-[13px] text-[var(--workspace-text-strong)]">{turn.text}</p>
@@ -381,7 +468,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
           if (turn.kind === 'run') return <RunBlock key={turn.id} turn={turn} onRefresh={() => readCapture(turn.id)} />
           return (
             <CommandCard key={turn.id} turn={turn} copied={copiedId === turn.id}
-              onRun={handleRun} onInsert={handleInsert} onCopy={(command) => void handleCopy(turn.id, command)} />
+              onRun={handleRun} onInsert={handleInsert} onCopy={(command) => void handleCopy(turn.id, command)} onAnswer={(text) => void submit(text)} />
           )
         })}
 
@@ -405,7 +492,11 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         )}
       </div>
 
-      <div className="shrink-0 border-t border-[color:var(--workspace-border-soft)] p-2.5">
+      <div className="relative shrink-0 border-t border-[color:var(--workspace-border-soft)] p-2.5">
+        {autoState && (autoState.status !== 'running' || runMode !== 'confirm') && (
+          <AutoStatus state={autoState} onStop={handleCancel} onKeepGoing={keepGoing} onDismiss={() => stopChain()} />
+        )}
+        {confirmAuto && <AutoWarning onConfirm={enableAuto} onCancel={() => setConfirmAuto(false)} />}
         <div className="relative rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] focus-within:border-[color:var(--workspace-primary-500)]">
           {tip && !input && (
             <div data-testid="ai-next-tip" aria-hidden="true" className="pointer-events-none absolute inset-x-3 top-2 flex items-start gap-1.5 text-[13px] text-[var(--workspace-text-muted)]">
@@ -419,6 +510,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
             aria-description={tip ? fillCopy(copy.tipA11y, { tip }) : undefined}
             className="block max-h-40 min-h-[44px] w-full resize-none bg-transparent px-3 pt-2 text-[13px] text-[var(--workspace-text-strong)] outline-none placeholder:text-[var(--workspace-text-subtle)]" />
           <div className="flex items-center gap-1.5 px-2 pb-2">
+            <RunModePicker mode={runMode} onChange={changeRunMode} />
             <button type="button" aria-pressed={includeContext} onClick={() => setIncludeContext((value) => !value)}
               title={includeContext ? copy.terminalContextOn : copy.terminalContextOff}
               className={cn('flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] transition-colors',
@@ -460,12 +552,13 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   )
 }
 
-function CommandCard({ turn, copied, onRun, onInsert, onCopy }: {
+function CommandCard({ turn, copied, onRun, onInsert, onCopy, onAnswer }: {
   turn: Extract<AITurn, { kind: 'ai' }>
   copied: boolean
   onRun: (command: string) => void
   onInsert: (command: string) => void
   onCopy: (command: string) => void
+  onAnswer: (text: string) => void
 }) {
   const { locale } = useT()
   const copy = aiAssistantCopy[locale]
@@ -473,6 +566,26 @@ function CommandCard({ turn, copied, onRun, onInsert, onCopy }: {
   const reply = splitReply(turn.text)
   const [draft, setDraft] = useState(reply.command)
   const meta = [turn.model, turn.durationMs ? fillCopy(copy.duration, { seconds: (turn.durationMs / 1000).toFixed(1) }) : ''].filter(Boolean).join(' · ')
+
+  const question = isNoteReply(turn.text) ? parseQuestion(turn.text) : null
+  if (question) return (
+    <div data-testid="ai-question" className="rounded-lg border border-[color:var(--workspace-primary-500)] bg-[var(--workspace-surface-900)] px-3 py-2.5">
+      <p className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-[var(--workspace-accent-text)]"><HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />{copy.question}</p>
+      {question.notes && <p className="mb-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--workspace-text-muted)]">{question.notes}</p>}
+      <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-[var(--workspace-text-strong)]">{question.question}</p>
+      {question.options.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {question.options.map((option) => (
+            <button key={option} type="button" onClick={() => onAnswer(option)}
+              className="rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-2.5 py-1 text-left text-xs text-[var(--workspace-text-strong)] transition-colors hover:border-[color:var(--workspace-primary-500)] hover:bg-[var(--workspace-accent-subtle)]">
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+      {meta && <p className="mt-1.5 font-mono text-[10.5px] text-[var(--workspace-text-subtle)]">{meta}</p>}
+    </div>
+  )
 
   if (isNoteReply(turn.text)) return (
     <div data-testid="ai-note" className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2.5">
@@ -573,7 +686,7 @@ function AIPanelMenu({ items }: { items: Array<{ key: string; label: string; ico
         <MoreHorizontal className="h-3.5 w-3.5" />
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 top-8 z-30 min-w-[180px] rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-1 shadow-lg">
+        <div role="menu" className="absolute right-0 top-8 z-30 min-w-[180px] rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1 shadow-[var(--workspace-shadow-overlay)]">
           {items.map(({ key, label, icon: Icon, disabled, onSelect }) => (
             <button key={key} type="button" role="menuitem" disabled={disabled} onClick={() => { setOpen(false); onSelect() }}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)] disabled:pointer-events-none disabled:opacity-40">
@@ -582,6 +695,105 @@ function AIPanelMenu({ items }: { items: Array<{ key: string; label: string; ico
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+const MODE_ICON = { confirm: ShieldCheck, 'read-only': Zap, auto: FastForward } as const
+
+function RunModePicker({ mode, onChange }: { mode: AIRunMode; onChange: (mode: AIRunMode) => void }) {
+  const { locale } = useT()
+  const copy = aiAssistantCopy[locale]
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false) }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false) } }
+    window.addEventListener('pointerdown', onPointer)
+    window.addEventListener('keydown', onKey, true)
+    return () => { window.removeEventListener('pointerdown', onPointer); window.removeEventListener('keydown', onKey, true) }
+  }, [open])
+  const Icon = MODE_ICON[mode]
+  return (
+    <div ref={root} className="relative shrink-0">
+      <button type="button" data-testid="ai-run-mode" data-mode={mode} aria-haspopup="menu" aria-expanded={open}
+        title={`${copy.runMode}: ${copy.modes[mode].desc}`} onClick={() => setOpen((value) => !value)}
+        className={cn('flex h-6 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] transition-colors',
+          mode === 'auto' ? 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[var(--workspace-status-warn-text)]'
+            : 'border-[color:var(--workspace-border-soft)] text-[var(--workspace-text)] hover:border-[color:var(--workspace-border-strong)]')}>
+        <Icon className="h-3 w-3" aria-hidden="true" />{copy.modes[mode].label}<ChevronDown className="h-3 w-3 opacity-60" aria-hidden="true" />
+      </button>
+      {open && (
+        <div role="menu" aria-label={copy.runMode} className="absolute bottom-8 left-0 z-30 w-[290px] rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1 shadow-[var(--workspace-shadow-overlay)]">
+          <p className="px-2.5 pb-1 pt-1.5 text-[11px] font-medium text-[var(--workspace-text-subtle)]">{copy.runMode}</p>
+          {AI_RUN_MODES.map((item) => {
+            const ItemIcon = MODE_ICON[item]
+            return (
+              <button key={item} type="button" role="menuitemradio" aria-checked={item === mode} onClick={() => { setOpen(false); onChange(item) }}
+                className={cn('flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left hover:bg-[var(--workspace-surface-800)]', item === mode && 'bg-[var(--workspace-accent-subtle)]')}>
+                <ItemIcon className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', item === 'auto' ? 'text-[var(--workspace-status-warn-text)]' : 'text-[var(--workspace-accent-text)]')} aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--workspace-text-strong)]">{copy.modes[item].label}{item === mode && <Check className="h-3 w-3 text-[var(--workspace-accent-text)]" aria-hidden="true" />}</span>
+                  <span className="mt-0.5 block text-[11px] leading-relaxed text-[var(--workspace-text-muted)]">{copy.modes[item].desc}</span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AutoWarning({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
+  const { locale } = useT()
+  const copy = aiAssistantCopy[locale]
+  return (
+    <div role="alertdialog" aria-modal="true" aria-labelledby="ai-auto-warn-title" data-testid="ai-auto-warning"
+      className="absolute inset-x-2.5 bottom-full z-30 mb-2 rounded-lg border border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-surface-950)] p-3 shadow-[var(--workspace-shadow-overlay)]">
+      <p id="ai-auto-warn-title" className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--workspace-text-strong)]">
+        <TriangleAlert className="h-4 w-4 text-[var(--workspace-status-warn-text)]" aria-hidden="true" />{copy.autoWarnTitle}
+      </p>
+      <ul className="mt-2 list-disc space-y-1 pl-4 text-[11.5px] leading-relaxed text-[var(--workspace-text)]">
+        {copy.autoWarnPoints.map((point) => <li key={point}>{fillCopy(point, { max: MAX_AUTO_STEPS })}</li>)}
+      </ul>
+      <div className="mt-3 flex justify-end gap-2">
+        <button type="button" onClick={onCancel} autoFocus
+          className="h-7 rounded-md px-3 text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]">{copy.cancel}</button>
+        <button type="button" onClick={onConfirm}
+          className="h-7 rounded-md bg-[var(--workspace-status-warn-text)] px-3 text-xs font-medium text-[var(--workspace-surface-950)] hover:opacity-90">{copy.autoWarnConfirm}</button>
+      </div>
+    </div>
+  )
+}
+
+function AutoStatus({ state, onStop, onKeepGoing, onDismiss }: {
+  state: { status: 'running' | 'waiting' | 'limit' | 'unsettled'; steps: number }
+  onStop: () => void
+  onKeepGoing: () => void
+  onDismiss: () => void
+}) {
+  const { locale } = useT()
+  const copy = aiAssistantCopy[locale]
+  const text = state.status === 'running' ? fillCopy(copy.autoRunning, { step: state.steps, max: MAX_AUTO_STEPS })
+    : state.status === 'waiting' ? copy.autoWaiting
+      : state.status === 'limit' ? fillCopy(copy.autoLimit, { max: MAX_AUTO_STEPS })
+        : copy.autoUnsettled
+  const warn = state.status === 'unsettled' || state.status === 'limit'
+  const action = 'h-6 shrink-0 rounded-md px-2 text-[11px] font-medium'
+  return (
+    <div data-testid="ai-auto-status" data-status={state.status} role="status"
+      className={cn('mb-2 flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11.5px]',
+        warn ? 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[var(--workspace-status-warn-text)]'
+          : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text)]')}>
+      {state.status === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--workspace-accent-text)]" aria-hidden="true" />
+        : <FastForward className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+      <span className="min-w-0 flex-1 leading-snug">{text}</span>
+      {state.status === 'limit' && <button type="button" onClick={onKeepGoing} className={cn(action, 'bg-[var(--workspace-primary-500)] text-white hover:opacity-90')}>{copy.continueAuto}</button>}
+      {state.status === 'unsettled'
+        ? <button type="button" onClick={onDismiss} className={cn(action, 'hover:bg-[var(--workspace-surface-800)]')}>{copy.dismiss}</button>
+        : <button type="button" onClick={onStop} className={cn(action, 'border border-current hover:opacity-80')}>{copy.stopAuto}</button>}
     </div>
   )
 }

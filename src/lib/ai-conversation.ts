@@ -1,10 +1,12 @@
 import { AI_PROVIDERS, type AISettings } from './ai'
+import { classifyCommandRisk } from './command-risk'
 
 /** One entry the model sees: the user's request, its own reply, or output captured after a run. */
 export interface AIHistoryItem { role: 'user' | 'assistant' | 'output'; content: string }
 
 export type AITurn =
-  | { id: string; kind: 'user'; text: string }
+  /** `auto` marks the continue message ShellBeam sent itself after an automatic run. */
+  | { id: string; kind: 'user'; text: string; auto?: boolean }
   | { id: string; kind: 'ai'; text: string; model: string; durationMs?: number; suggestion?: string }
   | { id: string; kind: 'error'; text: string }
   | { id: string; kind: 'run'; command: string; state: 'running' | 'captured' | 'sent'; output: string; lineCount: number }
@@ -174,4 +176,46 @@ export function saveConversation(key: string, turns: AITurn[]) {
     if (kept.length) localStorage.setItem(MEMORY_PREFIX + key, JSON.stringify({ savedAt: Date.now(), turns: kept }))
     else localStorage.removeItem(MEMORY_PREFIX + key)
   } catch { /* storage full or unavailable: memory is best effort */ }
+}
+
+/**
+ * How far the assistant may go without a click:
+ * `confirm` waits on every command, `read-only` runs read-only checks by itself,
+ * `auto` runs every step except destructive ones and only stops to ask.
+ */
+export type AIRunMode = 'confirm' | 'read-only' | 'auto'
+export const AI_RUN_MODES: readonly AIRunMode[] = ['confirm', 'read-only', 'auto']
+/** Automatic steps allowed for one request before ShellBeam pauses and asks to keep going. */
+export const MAX_AUTO_STEPS = 10
+const RUN_MODE_PREFIX = 'shellbeam.aiRunMode.'
+
+export function loadRunMode(key: string): AIRunMode {
+  try {
+    const value = localStorage.getItem(RUN_MODE_PREFIX + key)
+    return AI_RUN_MODES.includes(value as AIRunMode) ? value as AIRunMode : 'confirm'
+  } catch { return 'confirm' }
+}
+
+export function saveRunMode(key: string, mode: AIRunMode) {
+  try {
+    if (mode === 'confirm') localStorage.removeItem(RUN_MODE_PREFIX + key)
+    else localStorage.setItem(RUN_MODE_PREFIX + key, mode)
+  } catch { /* storage unavailable: the mode lasts for this panel only */ }
+}
+
+/** Whether a mode may run this command without a click. Destructive commands always wait. */
+export function autoRunAllowed(mode: AIRunMode, command: string): boolean {
+  if (mode === 'confirm') return false
+  const risk = classifyCommandRisk(command)
+  return mode === 'auto' ? risk !== 'destructive' : risk === 'read-only'
+}
+
+/** A reply with `#? ` lines asks the user; `#- ` lines are the choices it offers. */
+export function parseQuestion(text: string): { notes: string; question: string; options: string[] } | null {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
+  const question = lines.filter((line) => line.startsWith('#?')).map((line) => line.slice(2).trim()).join('\n')
+  if (!question) return null
+  const options = lines.filter((line) => line.startsWith('#-')).map((line) => line.slice(2).trim()).filter(Boolean).slice(0, 6)
+  const notes = noteText(lines.filter((line) => !line.startsWith('#?') && !line.startsWith('#-')).join('\n'))
+  return { notes, question, options }
 }
