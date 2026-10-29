@@ -5,7 +5,7 @@ export interface AIHistoryItem { role: 'user' | 'assistant' | 'output'; content:
 
 export type AITurn =
   | { id: string; kind: 'user'; text: string }
-  | { id: string; kind: 'ai'; text: string; model: string; durationMs?: number }
+  | { id: string; kind: 'ai'; text: string; model: string; durationMs?: number; suggestion?: string }
   | { id: string; kind: 'error'; text: string }
   | { id: string; kind: 'run'; command: string; state: 'running' | 'captured' | 'sent'; output: string; lineCount: number }
 
@@ -45,6 +45,29 @@ export function trimCapturedOutput(raw: string): { text: string; lineCount: numb
 export function isNoteReply(text: string): boolean {
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
   return lines.length > 0 && lines.every((line) => line.startsWith('#'))
+}
+
+/** A final `#> ` line is the request the model expects the user to send next. */
+export function extractSuggestion(text: string): { body: string; suggestion: string } {
+  const lines = text.trimEnd().split('\n')
+  const last = lines[lines.length - 1]?.trim() ?? ''
+  if (!last.startsWith('#>')) return { body: text.trim(), suggestion: '' }
+  return { body: lines.slice(0, -1).join('\n').trim(), suggestion: last.slice(2).trim().slice(0, 200) }
+}
+
+/** What to offer in the empty input: the model's own suggestion, else a default after captured output. */
+export function nextStepTip(turns: AITurn[], prompts: { next: string; fix: string }): string {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const turn = turns[i]
+    if (turn.kind === 'user' || turn.kind === 'error') return ''
+    if (turn.kind === 'ai') return turn.suggestion ?? ''
+    if (turn.kind === 'run' && turn.state === 'captured' && i === turns.length - 1) {
+      const earlier = turns.slice(0, i).reverse().find((item) => item.kind !== 'run')
+      if (earlier?.kind === 'ai' && earlier.suggestion) return earlier.suggestion
+      return outputLooksFailed(turn.output) ? prompts.fix : prompts.next
+    }
+  }
+  return ''
 }
 
 /** Leading `# ` lines describe the step; the rest is what Run sends. */

@@ -11,7 +11,8 @@ import { resizeInteractiveTerminal } from '@/lib/interactive-session'
 import { DEFAULT_TERMINAL_PREFS, useResolvedTerminalTheme, type TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
 import { OUTPUT_LINE_LIMIT, type TerminalAiBridge } from '@/lib/ai-conversation'
-import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
+import type { WorkspaceInventory, WorkspaceInventoryResource } from '@/lib/workspace-inventory'
+import { collectHostFacts } from '@/lib/ai-host-facts'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
@@ -50,7 +51,9 @@ interface SessionTerminalViewProps {
   onOpenLinkInBrowser?: (url: string) => void
   onOpenBrowser?: () => void
   network?: HostNetworkDisplay
-  resource?: Pick<WorkspaceInventoryResource, 'os'>
+  resource?: Pick<WorkspaceInventoryResource, 'os'> & Partial<WorkspaceInventoryResource>
+  /** The host's last asset scan, summarised for the AI assistant. */
+  inventory?: WorkspaceInventory
 }
 
 const STYLE_TIP_KEY = 'shellbeam.terminalStyleTipSeen'
@@ -78,6 +81,7 @@ export function SessionTerminalView({
   onOpenBrowser,
   network,
   resource,
+  inventory,
 }: SessionTerminalViewProps) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -170,6 +174,11 @@ export function SessionTerminalView({
   const handleExecuteCommand = useCallback((cmd: string) => {
     onSendRawRef.current(cmd)
   }, [])
+
+  const hostFacts = useMemo(() => collectHostFacts({
+    name: hostName, user: session?.username, address: hostAddress,
+    region: network?.countryName ?? network?.resolvedLocationLabel, resource, inventory,
+  }), [hostName, session?.username, hostAddress, network?.countryName, network?.resolvedLocationLabel, resource, inventory])
 
   // The AI panel runs commands here and reads back what the terminal printed after them.
   const aiBridge = useMemo<TerminalAiBridge>(() => ({
@@ -593,12 +602,7 @@ export function SessionTerminalView({
               visible={showAI && visible}
               bridge={aiBridge}
               memoryKey={`${historyVaultId ?? 'none'}:${session?.username ?? ''}@${hostAddress}`}
-              hostFacts={[
-                hostName && `name: ${hostName}`,
-                `user: ${session?.username ?? 'unknown'}`,
-                `address: ${hostAddress}`,
-                resource?.os && `os: ${resource.os}`,
-              ].filter(Boolean).join('\n')}
+              hostFacts={hostFacts}
               onExecuteCommand={handleExecuteCommand}
               getTerminalContext={getTerminalContext}
               onClose={() => { setShowAI(false); termRef.current?.focus() }}

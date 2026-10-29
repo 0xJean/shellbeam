@@ -1,13 +1,14 @@
-import { useState, useRef, useCallback, useEffect, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { AlertCircle, ArrowUp, Check, ChevronDown, Copy, CornerDownLeft, Loader2, MessageSquareText, Pencil, Play, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
+import { useState, useRef, useCallback, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { AlertCircle, ArrowUp, Lightbulb, Server, Check, ChevronDown, Copy, CornerDownLeft, Loader2, MessageSquareText, Pencil, Play, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AI_SETTINGS_EVENT, streamAICommand, loadAISettings, saveAISettings, isAIConfigured, createAbortController, type AISettings } from '@/lib/ai'
 import {
-  buildHistory, currentModelTarget, isNoteReply, loadConversation, noteText, outputLooksFailed, saveConversation, splitReply, trimCapturedOutput,
+  buildHistory, currentModelTarget, extractSuggestion, isNoteReply, nextStepTip, loadConversation, noteText, outputLooksFailed, saveConversation, splitReply, trimCapturedOutput,
   type AITurn, type TerminalAiBridge, type TerminalCapture,
 } from '@/lib/ai-conversation'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
+import { hostFactsText, type HostFact } from '@/lib/ai-host-facts'
 import { AiAssistantSheet, type AiSheetMessage } from './mobile/ai-assistant-sheet'
 import { CommandRiskChip } from './mobile/command-risk-chip'
 import { useNarrowViewport } from './mobile/use-narrow-viewport'
@@ -26,8 +27,8 @@ interface AICommandBarProps {
   contextLabel?: string
   /** Vault and host the conversation is remembered under; without it nothing is kept. */
   memoryKey?: string
-  /** Host name, user and OS, sent so commands fit the machine. */
-  hostFacts?: string
+  /** What ShellBeam knows about the server, sent so commands fit the machine. */
+  hostFacts?: HostFact[]
 }
 
 const CONTEXT_LINES = 30
@@ -37,7 +38,7 @@ const CAPTURE_LIMIT_MS = 20_000
 let turnSeq = 0
 const nextId = (prefix: string) => `${prefix}-${Date.now()}-${++turnSeq}`
 
-export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, hostFacts = '' }: AICommandBarProps) {
+export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, hostFacts }: AICommandBarProps) {
   const { t, locale } = useT()
   const copy = aiAssistantCopy[locale]
   const narrow = useNarrowViewport()
@@ -50,6 +51,8 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const [streamingContent, setStreamingContent] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [includeContext, setIncludeContext] = useState(true)
+  const [includeFacts, setIncludeFacts] = useState(true)
+  const factsText = useMemo(() => hostFactsText(hostFacts ?? []), [hostFacts])
   const [reportedModel, setReportedModel] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -134,10 +137,10 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       },
       onDone() {
         if (!live()) return
-        const content = streamBuf.current.trim()
+        const { body: content, suggestion } = extractSuggestion(streamBuf.current)
         if (content) {
           const model = served || target.model || target.providerName
-          setTurns((prev) => [...prev, { id: nextId('a'), kind: 'ai', text: content, model, durationMs: Date.now() - started }])
+          setTurns((prev) => [...prev, { id: nextId('a'), kind: 'ai', text: content, model, durationMs: Date.now() - started, ...(suggestion ? { suggestion } : {}) }])
         }
         setStreamingContent('')
         setIsStreaming(false)
@@ -151,8 +154,8 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         setIsStreaming(false)
         abortRef.current = null
       },
-    }, ac.signal, history, hostFacts)
-  }, [includeContext, bridge, getTerminalContext, hostFacts, t])
+    }, ac.signal, history, includeFacts ? factsText : '')
+  }, [includeContext, includeFacts, bridge, getTerminalContext, factsText, t])
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort()
@@ -216,11 +219,14 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     setTimeout(() => inputRef.current?.focus(), 50)
   }, [handleCancel, stopCaptures])
 
+  const tip = useMemo(() => (isStreaming ? '' : nextStepTip(turns, { next: copy.nextPrompt, fix: copy.fixPrompt })), [turns, isStreaming, copy])
+
   const handleKeyDown = useCallback((event: ReactKeyboardEvent) => {
     if (event.nativeEvent.isComposing) return
+    if (event.key === 'Tab' && !event.shiftKey && !input && tip) { event.preventDefault(); setInput(tip); return }
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(input) }
     if (event.key === 'Escape') { if (isStreaming) handleCancel(); else onClose() }
-  }, [submit, input, handleCancel, isStreaming, onClose])
+  }, [submit, input, tip, handleCancel, isStreaming, onClose])
 
   if (!visible) return null
 
@@ -290,6 +296,20 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
           <div className="space-y-3 px-1 pt-2">
             <p className="text-[13px] font-medium leading-relaxed text-[var(--workspace-text-strong)]">{copy.emptyTitle}</p>
             <p className="text-xs leading-relaxed text-[var(--workspace-text-muted)]">{copy.emptyBody}</p>
+            {hostFacts && hostFacts.length > 0 && (
+              <div data-testid="ai-host-facts" className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2.5">
+                <p className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-[var(--workspace-text-strong)]"><Server className="h-3.5 w-3.5 text-[var(--workspace-accent-text)]" aria-hidden="true" />{copy.knownTitle}</p>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11.5px]">
+                  {hostFacts.map((fact) => (
+                    <div key={fact.key} className="contents">
+                      <dt className="text-[var(--workspace-text-subtle)]">{copy.facts[fact.key]}</dt>
+                      <dd className="min-w-0 truncate font-mono text-[11px] text-[var(--workspace-text)]" title={fact.value}>{fact.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                {!hostFacts.some((fact) => fact.key === 'os') && <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--workspace-text-subtle)]">{copy.knownHint}</p>}
+              </div>
+            )}
             <div className="flex flex-col gap-1.5 pt-1">
               {copy.examples.map((example) => (
                 <button key={example} type="button" onClick={() => void submit(example)}
@@ -331,7 +351,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         {isStreaming && (
           <div className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]">
             {streamingContent
-              ? <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--workspace-text-strong)]">{streamingContent}<span className="ml-0.5 inline-block h-3.5 w-1 animate-pulse bg-[var(--workspace-accent-text)] align-middle" /></pre>
+              ? <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--workspace-text-strong)]">{streamingContent.replace(/\n#>[^\n]*$/, '')}<span className="ml-0.5 inline-block h-3.5 w-1 animate-pulse bg-[var(--workspace-accent-text)] align-middle" /></pre>
               : <p className="flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--workspace-text-muted)]"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />{copy.thinking}</p>}
           </div>
         )}
@@ -349,18 +369,35 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       </div>
 
       <div className="shrink-0 border-t border-[color:var(--workspace-border-soft)] p-2.5">
-        <div className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] focus-within:border-[color:var(--workspace-primary-500)]">
+        <div className="relative rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] focus-within:border-[color:var(--workspace-primary-500)]">
+          {tip && !input && (
+            <div data-testid="ai-next-tip" aria-hidden="true" className="pointer-events-none absolute inset-x-3 top-2 flex items-start gap-1.5 text-[13px] text-[var(--workspace-text-muted)]">
+              <Lightbulb className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--workspace-accent-text)]" />
+              <span className="min-w-0 flex-1 line-clamp-2">{tip}</span>
+              <kbd className="shrink-0 rounded border border-[color:var(--workspace-border-soft)] px-1 font-sans text-[10px] text-[var(--workspace-text-subtle)]">{copy.tipUse}</kbd>
+            </div>
+          )}
           <textarea ref={inputRef} value={input} rows={2} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown}
-            placeholder={turns.length ? copy.followUp : copy.placeholder} aria-label={copy.placeholder}
+            placeholder={tip ? '' : turns.length ? copy.followUp : copy.placeholder} aria-label={copy.placeholder}
+            aria-description={tip ? fillCopy(copy.tipA11y, { tip }) : undefined}
             className="block max-h-40 min-h-[44px] w-full resize-none bg-transparent px-3 pt-2 text-[13px] text-[var(--workspace-text-strong)] outline-none placeholder:text-[var(--workspace-text-subtle)]" />
           <div className="flex items-center gap-1.5 px-2 pb-2">
             <button type="button" aria-pressed={includeContext} onClick={() => setIncludeContext((value) => !value)}
               title={includeContext ? copy.terminalContextOn : copy.terminalContextOff}
-              className={cn('flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] transition-colors',
+              className={cn('flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] transition-colors',
                 includeContext ? 'border-[color:var(--workspace-primary-500)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]'
                   : 'border-[color:var(--workspace-border-soft)] text-[var(--workspace-text-subtle)] line-through')}>
               <SquareTerminal className="h-3 w-3" aria-hidden="true" />{copy.terminalContext}
             </button>
+            {factsText && (
+              <button type="button" aria-pressed={includeFacts} onClick={() => setIncludeFacts((value) => !value)}
+                title={`${includeFacts ? copy.hostFactsOn : copy.hostFactsOff}\n\n${factsText}`}
+                className={cn('flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] transition-colors',
+                  includeFacts ? 'border-[color:var(--workspace-primary-500)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]'
+                    : 'border-[color:var(--workspace-border-soft)] text-[var(--workspace-text-subtle)] line-through')}>
+                <Server className="h-3 w-3" aria-hidden="true" />{copy.hostFacts}
+              </button>
+            )}
             {history.length > 0 && (
               <span className="min-w-0 truncate text-[11px] text-[var(--workspace-text-subtle)]">
                 {fillCopy(copy.shared, { messages: history.length, outputs: sharedOutputs })}

@@ -123,7 +123,7 @@ describe('AICommandBar', () => {
   })
 
   it('remembers the conversation per host and sends host facts', () => {
-    const first = render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.5" hostFacts="os: Ubuntu 24.04" />)
+    const first = render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.5" hostFacts={[{ key: 'os', value: 'Ubuntu 24.04' }]} />)
     ask('disk usage'); act(() => { callbacks.onToken('df -h'); callbacks.onDone() })
     expect(lastHost).toBe('os: Ubuntu 24.04')
     first.unmount()
@@ -137,4 +137,21 @@ describe('AICommandBar', () => {
     render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.6" />)
     expect(screen.queryByText('df -h')).not.toBeInTheDocument()
   })
+
+  it('offers the suggested next step in the empty input and fills it with Tab', () => {
+    render(<AICommandBar {...base} hostFacts={[{ key: 'os', value: 'Ubuntu 24.04' }]} />)
+    expect(screen.getByTestId('ai-host-facts')).toHaveTextContent('Ubuntu 24.04')
+    ask(); act(() => { callbacks.onToken('df -h\n#> Find what fills the disk'); callbacks.onDone() })
+    expect(screen.getByText('df -h')).toBeInTheDocument()
+    expect(screen.queryByText(/#>/)).not.toBeInTheDocument()
+    expect(screen.getByTestId('ai-next-tip')).toHaveTextContent('Find what fills the disk')
+    const box = screen.getByRole('textbox', { name: 'Describe what you want to do…' })
+    fireEvent.keyDown(box, { key: 'Tab' })
+    expect(box).toHaveValue('Find what fills the disk')
+    expect(screen.queryByTestId('ai-next-tip')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Server info' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Generate command' }))
+    expect(lastHost).toBe('')
+  })
 })
+

@@ -39,6 +39,7 @@ import { useT } from '@/lib/i18n'
 import { TOUR_ROUTES, TOUR_SETTINGS_CATEGORY, type InteractiveTourId, type TourOutcome } from '@/lib/interactive-tour'
 import { cn } from '@/lib/utils'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { ChevronLeft, PanelTopOpen, X } from 'lucide-react'
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
@@ -1003,6 +1004,7 @@ export function PcLayout() {
                 const displayHost = resolveHostForDisplay(hostsCtx.hosts, sessionInfo?.hostId ?? tab.hostId, tab.hostAddress)
                 const displayNetwork = displayHost ? networkByAddress[displayHost.address] : undefined
                 const displayResource = getHostInventoryResource(displayHost, inventoryStates)
+                const displayInventory = displayHost ? inventoryStates[getWorkspaceInventoryHostKey(displayHost)]?.inventory : undefined
                 return (
                   <div
                     key={tab.sessionId}
@@ -1039,6 +1041,7 @@ export function PcLayout() {
                           hostAddress={tab.hostAddress}
                           network={displayNetwork}
                           resource={displayResource}
+                          inventory={displayInventory}
                           chunkEmitterRef={sessions.pcChunkEmitterRef}
                           onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
                           terminalPrefs={app.terminalPrefs}
@@ -1164,6 +1167,7 @@ export function PcLayout() {
                 const displayHost = resolveHostForDisplay(hostsCtx.hosts, sessionInfo?.hostId ?? tab.hostId, tab.hostAddress)
                 const displayNetwork = displayHost ? networkByAddress[displayHost.address] : undefined
                 const displayResource = getHostInventoryResource(displayHost, inventoryStates)
+                const displayInventory = displayHost ? inventoryStates[getWorkspaceInventoryHostKey(displayHost)]?.inventory : undefined
                 return (
                   <div
                     key={tab.sessionId}
@@ -1194,6 +1198,7 @@ export function PcLayout() {
                           hostAddress={tab.hostAddress}
                           network={displayNetwork}
                           resource={displayResource}
+                          inventory={displayInventory}
                           chunkEmitterRef={sessions.pcChunkEmitterRef}
                           onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
                           terminalPrefs={app.terminalPrefs}

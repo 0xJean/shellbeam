@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitReply, buildHistory, currentModelTarget, historyToMessages, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput, withModel, type AITurn } from './ai-conversation'
+import { extractSuggestion, nextStepTip, splitReply, buildHistory, currentModelTarget, historyToMessages, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput, withModel, type AITurn } from './ai-conversation'
 import { DEFAULT_AI_SETTINGS } from './ai'
 
 describe('ai conversation', () => {
@@ -58,4 +58,18 @@ describe('ai conversation', () => {
     expect(currentModelTarget(claude)).toEqual({ backend: 'claude-code', providerName: 'Claude Code', model: 'opus' })
     expect(withModel({ ...DEFAULT_AI_SETTINGS, provider: 'custom' }, 'x').customModel).toBe('x')
   })
+
+  it('separates the next-step line and picks the tip to offer', () => {
+    expect(extractSuggestion('# check\ndf -h\n#> Find what fills the disk')).toEqual({ body: '# check\ndf -h', suggestion: 'Find what fills the disk' })
+    expect(extractSuggestion('ls')).toEqual({ body: 'ls', suggestion: '' })
+    const prompts = { next: 'NEXT', fix: 'FIX' }
+    const ai: AITurn = { id: 'a', kind: 'ai', text: 'df -h', model: 'm', suggestion: 'Find what fills the disk' }
+    expect(nextStepTip([ai], prompts)).toBe('Find what fills the disk')
+    const run: AITurn = { id: 'r', kind: 'run', command: 'df -h', state: 'captured', output: '/ 92%', lineCount: 1 }
+    expect(nextStepTip([ai, run], prompts)).toBe('Find what fills the disk')
+    expect(nextStepTip([{ ...ai, suggestion: undefined }, run], prompts)).toBe('NEXT')
+    expect(nextStepTip([{ ...ai, suggestion: undefined }, { ...run, output: 'permission denied' }], prompts)).toBe('FIX')
+    expect(nextStepTip([ai, { id: 'u', kind: 'user', text: 'x' }], prompts)).toBe('')
+  })
 })
+
