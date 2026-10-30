@@ -401,7 +401,7 @@ function unitJourney(t, { disclosures = false } = {}) {
     const { role, action } = pending, id = `job-${++job}`, status = accepted ? 'completed' : 'cancelled'
     events.push(`${accepted ? 'accept' : 'reject'}:${role}:${action}`)
     if (accepted) setAlert(role, action === 'acknowledge' ? 'acknowledged' : 'closed', id)
-    document.querySelector('[data-testid="operations-audit-center"]').insertAdjacentHTML('beforeend', `<div data-testid="operation-audit-row" data-vault-id="${state.vaultId}" data-host-id="${state.hostIds[role]}" data-job-id="${id}" data-target="${rule}" data-action="local-alert.${action}" data-status="${status}" data-confirmation="${accepted ? 'confirmed' : 'rejected'}" data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}">workspace · local-ops · ${role === 'via' ? 'proxy-jump' : 'direct'}</div>`)
+    document.querySelector('[data-testid="operations-audit-center"]').insertAdjacentHTML('beforeend', `<div data-testid="operation-audit-row" data-vault-id="${state.vaultId}" data-host-id="${state.hostIds[role]}" data-job-id="${id}" data-target="${rule}" data-action="local-alert.${action}" data-status="${status}" data-confirmation="${accepted ? 'confirmed' : 'rejected'}" data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}">Workspace · local-ops · ${role === 'via' ? 'proxy-jump' : 'direct'}</div>`)
     document.querySelector('dialog').remove()
     pending = null
   }

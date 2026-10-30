@@ -268,7 +268,7 @@ export async function verifyOpsUiProbeAudit(driver, state, role, { action, statu
   check(await driver.isDisplayed(row), 'audit_not_visible')
   const id = await driver.attr(row, 'data-job-id')
   check(validId(id) && (!jobId || jobId === id), 'audit_job_mismatch')
-  check((await driver.text(row)).replace(/\s+/g, ' ').includes(`workspace · local-ops · ${route(role)}`), 'audit_source_mismatch')
+  check((await driver.text(row)).replace(/\s+/g, ' ').includes(`Workspace · local-ops · ${route(role)}`), 'audit_source_mismatch')
   return id
 }
 
