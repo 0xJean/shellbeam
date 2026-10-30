@@ -223,6 +223,8 @@ export async function settleOpsUiProbeInventory({ driver, fixture, resumeState, 
     }, { timeoutMs: 240_000 })
     await record(`ops-ui-probe-${role}-inventory-settled`, { passed: true, freshObservation: true, originalSampleAt: result.sampledAt, inventoryAlertPresent: result.alertPresent, noOpenInventoryAlert: true })
   }
+  // Later stages navigate from the sidebar, which the open drawer covers.
+  await closeOpsUiHostDrawer(driver)
   return { passed: true, profiles: 3, freshObservations: 3 }
 }
 
