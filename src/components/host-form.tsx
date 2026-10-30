@@ -301,7 +301,7 @@ export function HostForm({
                 className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md text-[13px] font-medium transition-colors', authType === 'privateKey' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
                 <Key className="h-3.5 w-3.5" />{t('hostForm.key')}
               </button>
-              <button type="button" onClick={() => setAuthType('password')}
+              <button data-testid="host-auth-password" type="button" onClick={() => setAuthType('password')}
                 className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md text-[13px] font-medium transition-colors', authType === 'password' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
                 <Lock className="h-3.5 w-3.5" />{t('hostForm.password')}
               </button>

@@ -237,7 +237,8 @@ fn cancellation_and_timeout_kill_the_entire_process_group() {
             &dir.0,
             None,
             &cancel,
-            Duration::from_millis(200),
+            // Far past the cancel, so a slow runner cannot turn it into a timeout.
+            Duration::from_millis(if cancel_request { 10_000 } else { 200 }),
             |_| Ok(()),
         );
         assert_eq!(

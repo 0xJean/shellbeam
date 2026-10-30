@@ -90,7 +90,7 @@ export async function setupExtensionUi({driver:d,fixture:f,record}) {
   for(const s of f.services) {
     await d.click(id('pc-dashboard'));await d.click(id('pc-nav-settings'));await d.click(id('settings-category-monitoring'))
     await d.click(button('Add monitoring service'));await d.fill('#komari-name',s.name);await d.fill('#komari-endpoint',s.endpoint)
-    await d.select(`${id('komari-settings')} select[aria-label="Authorization method"]`,'key');await d.fill('#komari-api-key',s.apiKey)
+    await d.click('xpath=//*[@data-testid="komari-settings"]//label[input[@type="radio" and @value="key"]]');await d.fill('#komari-api-key',s.apiKey)
     const enabled='xpath=//*[@data-testid="komari-settings"]//label[contains(.,"Enable monitoring connection")]/input[@type="checkbox"]'
     if(!await d.isSelected(enabled))await d.click(enabled)
     await d.click(button('Save connection'));await d.until(async()=>await d.attr('#komari-api-key','value')==='')
