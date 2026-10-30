@@ -30,7 +30,7 @@ import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import { hostProbeEvaluations, validHostOpsSampleTime, type HostOpsCapability, type HostOpsProbeEvaluation } from '@/lib/host-ops-view'
 import type { ProbeProviderTelemetry } from '@/lib/probe-provider'
 import { AlertTriangle, Activity, ArrowRightLeft, Bot, Check, ChevronDown, Clock, Cpu, FolderOpen, HardDrive, Laptop, MemoryStick, Network, Pencil, RefreshCw, Route, Server, ShieldCheck, Tag, Terminal, Trash2, Wrench, X } from 'lucide-react'
-import { useEffect, useId, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
 import { HostRegionMeta } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { KomariProbeOpsView } from './komari-probe-ops-view'
@@ -223,6 +223,9 @@ function HostOpsDrawer({ id, host, summary, open, onClose, dot, groupLabel, netw
   const { t, locale } = useT()
   const copy = hostsOverviewCopy[locale]
   const formatCount = (value: number | null | undefined) => value == null ? '—' : String(value)
+  const panel = useRef<HTMLElement>(null)
+  // Modal: take focus from the toggle behind it, so the keyboard acts on the drawer.
+  useEffect(() => { if (open) panel.current?.focus({ preventScroll: true }) }, [open])
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) onClose() }
@@ -233,9 +236,9 @@ function HostOpsDrawer({ id, host, summary, open, onClose, dot, groupLabel, netw
   const stop = (event: React.SyntheticEvent) => event.stopPropagation()
   return <>
     {open && <div aria-hidden="true" data-testid="host-ops-drawer-backdrop" data-host-drawer-backdrop className="fixed inset-0 z-[60] bg-black/45" onClick={(event) => { event.stopPropagation(); onClose() }} />}
-    <section id={id} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!open}
+    <section ref={panel} tabIndex={-1} id={id} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!open}
       onClick={stop} onDoubleClick={stop} onKeyDown={(event) => { if (event.key !== 'Escape') stop(event) }}
-      className={cn('fixed inset-y-0 right-0 z-[61] w-[min(50rem,100vw)] cursor-default flex-col border-l border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] text-left shadow-[var(--workspace-shadow-overlay)]', open ? 'flex' : 'hidden')}>
+      className={cn('fixed inset-y-0 right-0 z-[61] w-[min(50rem,100vw)] cursor-default flex-col outline-none border-l border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] text-left shadow-[var(--workspace-shadow-overlay)]', open ? 'flex' : 'hidden')}>
       {open && <header className="flex items-start gap-3 border-b border-[color:var(--workspace-border-soft)] px-5 pb-4 pt-5">
         <div className="min-w-0 flex-1">
           <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold text-[var(--workspace-text-strong)]">

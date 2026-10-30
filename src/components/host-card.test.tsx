@@ -216,12 +216,16 @@ describe('host list item', () => {
     const onSelect = vi.fn(), onConnect = vi.fn(), parent = vi.fn()
     const operations: HostOperationalSummary = { vaultId: 'vault-a', serviceTotal: 1, serviceActive: 1, serviceFailed: 0, processTotal: 1, processRunning: 1, auditCount: 0, transport: 'direct' }
     render(<div onClick={parent} onDoubleClick={parent} onKeyDown={parent}><HostListItem index={1} host={host} operations={operations} isSelected={false} onSelect={onSelect} onConnect={onConnect} onEdit={vi.fn()} onDelete={vi.fn()} /></div>)
-    fireEvent.click(screen.getByTestId('host-ops-details-toggle'))
+    const toggle = screen.getByTestId('host-ops-details-toggle')
+    toggle.focus()
+    fireEvent.click(toggle)
     const details = screen.getByTestId('host-ops-details')
     expect(details).toBeVisible()
-    fireEvent.keyDown(details, { key: 'Enter' })
+    // Opening takes focus from the toggle, which swallows key events.
+    expect(document.activeElement).toBe(details)
+    fireEvent.keyDown(document.activeElement!, { key: 'Enter' })
     expect(details).toBeVisible()
-    fireEvent.keyDown(details, { key: 'Escape' })
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
     expect(details).not.toBeVisible()
   })
   it('expands and collapses details without selecting, connecting, or bubbling keyboard events', () => {
