@@ -409,5 +409,6 @@ export async function resumeOpsUiProbeJourney({ driver, fixture, resumeState, pr
   const resolved = await waitForAlert(driver, probeState, 'jump', 'resolved')
   check(resolved.jobId === jump.resolvedJobId, 'jump_unexpected_lifecycle_action')
   await record('ops-ui-probe-jump-restored', { passed: true, freshObservation: true, alertResolved: true, lifecycleActions: 0 })
+  await closeOpsUiHostDrawer(driver)
   return { passed: true, scope: 'ssh-probe-metrics', targetHosts: 2, collateralJumpHosts: 1, profiles: 3, restoredJobs: 6, freshObservations: 3, actualMetricsLifecycleVerified: true, inventoryLifecycleVerified: false, osVisibilityVerified: false }
 }
