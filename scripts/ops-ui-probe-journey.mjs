@@ -175,6 +175,8 @@ export async function settleOpsUiProbeInventory({ driver, fixture, resumeState, 
     assertScope()
     const previous = await readOpsUiProbeEvaluation(driver, probeState, role, 'inventory')
     const menu = `${card(probeState, role)} ${tid('host-ops-open')}`
+    // Reading opened the host's details; its drawer covers the host list.
+    await closeOpsUiHostDrawer(driver)
     await driver.waitFor(menu)
     await revealOpsUiHostActions(driver, menu)
     assertScope()
