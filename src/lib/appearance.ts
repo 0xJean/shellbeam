@@ -7,8 +7,8 @@ import { useSyncExternalStore } from 'react'
  * data-{dark,light}-{palette,accent} attributes on <html>.
  */
 export type ThemeFamily = 'dark' | 'light'
-export type DarkPalette = 'midnight' | 'nord' | 'dracula' | 'graphite' | 'ocean'
-export type LightPalette = 'aqua' | 'paper' | 'solarized' | 'mist' | 'lavender'
+export type DarkPalette = 'aqua-dark' | 'midnight' | 'nord' | 'dracula' | 'graphite' | 'ocean' | 'solarized-dark' | 'mist-dark'
+export type LightPalette = 'aqua' | 'paper' | 'solarized' | 'mist' | 'lavender' | 'nord-light' | 'dracula-light' | 'ocean-light'
 export type Palette = DarkPalette | LightPalette
 export type Accent = 'violet' | 'blue' | 'cyan' | 'teal' | 'green' | 'amber' | 'orange' | 'pink'
 /** Geometry and depth (radius, borders, shadows); 'auto' pairs outline with dark and elevated with light. */
@@ -25,23 +25,41 @@ export interface AppearancePrefs {
 }
 
 export const PALETTES: Record<Palette, { family: ThemeFamily; label: string; accent: Accent; swatch: [string, string, string] }> = {
+  'aqua-dark': { family: 'dark', label: 'Aqua Dark', accent: 'blue', swatch: ['#18181a', '#242426', '#0a84ff'] },
   midnight: { family: 'dark', label: 'Midnight', accent: 'violet', swatch: ['#0f1013', '#16171c', '#7c6cf2'] },
   nord: { family: 'dark', label: 'Nord', accent: 'cyan', swatch: ['#242933', '#2e3440', '#22b8d6'] },
   dracula: { family: 'dark', label: 'Dracula', accent: 'pink', swatch: ['#21222c', '#2b2d3a', '#ec5fa8'] },
   graphite: { family: 'dark', label: 'Graphite', accent: 'amber', swatch: ['#161514', '#201f1d', '#e3a43c'] },
   ocean: { family: 'dark', label: 'Ocean', accent: 'blue', swatch: ['#0b1220', '#121c30', '#3b8bff'] },
+  'solarized-dark': { family: 'dark', label: 'Solarized', accent: 'teal', swatch: ['#002b36', '#073642', '#2bb5a0'] },
+  'mist-dark': { family: 'dark', label: 'Mist', accent: 'green', swatch: ['#121817', '#1c2422', '#2fbf7d'] },
   aqua: { family: 'light', label: 'Aqua', accent: 'blue', swatch: ['#f5f5f7', '#ffffff', '#0a84ff'] },
   paper: { family: 'light', label: 'Paper', accent: 'orange', swatch: ['#f4efe6', '#fffdf8', '#f2700d'] },
   solarized: { family: 'light', label: 'Solarized', accent: 'teal', swatch: ['#eee8d5', '#fffaeb', '#0f9488'] },
   mist: { family: 'light', label: 'Mist', accent: 'green', swatch: ['#eef2f1', '#ffffff', '#1fa463'] },
   lavender: { family: 'light', label: 'Lavender', accent: 'violet', swatch: ['#f3f1fa', '#ffffff', '#6e5ce6'] },
+  'nord-light': { family: 'light', label: 'Nord', accent: 'cyan', swatch: ['#e5e9f0', '#ffffff', '#0891b2'] },
+  'dracula-light': { family: 'light', label: 'Dracula', accent: 'pink', swatch: ['#f5f3f9', '#ffffff', '#d6407f'] },
+  'ocean-light': { family: 'light', label: 'Ocean', accent: 'blue', swatch: ['#e9f0fa', '#ffffff', '#0a84ff'] },
 }
+
+/** A theme is one look with a dark and a light side; the light/dark mode picks the side. */
+export const THEMES: readonly { id: string; label: string; dark: DarkPalette; light: LightPalette }[] = [
+  { id: 'aqua', label: 'Aqua', dark: 'aqua-dark', light: 'aqua' },
+  { id: 'midnight', label: 'Midnight', dark: 'midnight', light: 'lavender' },
+  { id: 'nord', label: 'Nord', dark: 'nord', light: 'nord-light' },
+  { id: 'dracula', label: 'Dracula', dark: 'dracula', light: 'dracula-light' },
+  { id: 'graphite', label: 'Graphite', dark: 'graphite', light: 'paper' },
+  { id: 'ocean', label: 'Ocean', dark: 'ocean', light: 'ocean-light' },
+  { id: 'solarized', label: 'Solarized', dark: 'solarized-dark', light: 'solarized' },
+  { id: 'mist', label: 'Mist', dark: 'mist-dark', light: 'mist' },
+]
 
 export const ACCENTS: Record<Accent, string> = {
   violet: '#7c6cf2', blue: '#3b8bff', cyan: '#22b8d6', teal: '#2bb5a0', green: '#2fbf7d', amber: '#e3a43c', orange: '#f2853a', pink: '#ec5fa8',
 }
 
-export const DEFAULT_APPEARANCE: AppearancePrefs = { darkPalette: 'midnight', lightPalette: 'aqua', darkAccent: null, lightAccent: null, uiStyle: 'auto' }
+export const DEFAULT_APPEARANCE: AppearancePrefs = { darkPalette: 'aqua-dark', lightPalette: 'aqua', darkAccent: null, lightAccent: null, uiStyle: 'auto' }
 
 const STORAGE_KEY = 'shellbeam.appearance'
 

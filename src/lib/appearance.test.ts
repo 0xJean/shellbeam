@@ -13,15 +13,15 @@ describe('appearance preferences', () => {
     delete root.dataset.lightStyle
   })
 
-  it('defaults to Midnight / Aqua with palette accents', () => {
+  it('defaults to Aqua Dark / Aqua with the same blue accent', () => {
     expect(loadAppearance()).toEqual(DEFAULT_APPEARANCE)
     applyAppearance(DEFAULT_APPEARANCE)
-    expect(document.documentElement.dataset).toMatchObject({ darkPalette: 'midnight', lightPalette: 'aqua', darkAccent: 'violet', lightAccent: 'blue', darkStyle: 'outline', lightStyle: 'elevated' })
+    expect(document.documentElement.dataset).toMatchObject({ darkPalette: 'aqua-dark', lightPalette: 'aqua', darkAccent: 'blue', lightAccent: 'blue', darkStyle: 'outline', lightStyle: 'elevated' })
   })
 
   it('rejects palettes from the wrong family and unknown accents', () => {
     localStorage.setItem('shellbeam.appearance', JSON.stringify({ darkPalette: 'paper', lightPalette: 'nord', darkAccent: 'neon', lightAccent: 'teal' }))
-    expect(loadAppearance()).toEqual({ darkPalette: 'midnight', lightPalette: 'aqua', darkAccent: null, lightAccent: 'teal', uiStyle: 'auto' })
+    expect(loadAppearance()).toEqual({ darkPalette: 'aqua-dark', lightPalette: 'aqua', darkAccent: null, lightAccent: 'teal', uiStyle: 'auto' })
   })
 
   it('falls back to defaults when storage holds invalid JSON', () => {

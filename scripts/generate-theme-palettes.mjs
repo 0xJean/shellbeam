@@ -19,8 +19,8 @@ function block(sel) {
 }
 
 const PAL = {
-  midnight: ['dark', 'violet'], nord: ['dark', 'cyan'], dracula: ['dark', 'pink'], graphite: ['dark', 'amber'], ocean: ['dark', 'blue'],
-  aqua: ['light', 'blue'], paper: ['light', 'orange'], solarized: ['light', 'teal'], mist: ['light', 'green'], lavender: ['light', 'violet'],
+  'aqua-dark': ['dark', 'blue'], midnight: ['dark', 'violet'], nord: ['dark', 'cyan'], dracula: ['dark', 'pink'], graphite: ['dark', 'amber'], ocean: ['dark', 'blue'], 'solarized-dark': ['dark', 'teal'], 'mist-dark': ['dark', 'green'],
+  aqua: ['light', 'blue'], paper: ['light', 'orange'], solarized: ['light', 'teal'], mist: ['light', 'green'], lavender: ['light', 'violet'], 'nord-light': ['light', 'cyan'], 'dracula-light': ['light', 'pink'], 'ocean-light': ['light', 'blue'],
 }
 const ACCENTS = ['violet', 'blue', 'cyan', 'teal', 'green', 'amber', 'orange', 'pink']
 
@@ -133,13 +133,9 @@ for (const [id, [fam]] of Object.entries(PAL)) {
   lines.push(`/* ${id} · ${fam} */`, `${sel} {`, ...decl.filter(([, x]) => x).map(([k, x]) => `  ${k}: ${x};`), '}', '')
 }
 
-for (const fam of ['dark', 'light']) {
-  const famSel = fam === 'dark' ? 'html.dark' : 'html:not(.dark)'
-  for (const a of ACCENTS) {
-    const v = block(`[data-theme="${fam}"][data-accent="${a}"]`)
-    if (!v.accent) throw new Error(`missing accent ${fam}/${a}`)
+function accentBlock(selector, v) {
     const c = parse(v.accent)
-    lines.push(`${famSel}[data-${fam}-accent="${a}"] {`,
+    lines.push(`${selector} {`,
       `  --primary: ${hsl(c)};`,
       `  --primary-foreground: ${hsl(parse(v['accent-fg']))};`,
       `  --ring: ${hsl(c)};`,
@@ -159,8 +155,19 @@ for (const fam of ['dark', 'light']) {
       `  --workspace-metric-cpu-glow: ${rgba(c, 0.14)};`,
       `  --workspace-mobile-accent: ${v.accent};`,
       '}', '')
+}
+
+for (const fam of ['dark', 'light']) {
+  const famSel = fam === 'dark' ? 'html.dark' : 'html:not(.dark)'
+  for (const a of ACCENTS) {
+    const v = block(`[data-theme="${fam}"][data-accent="${a}"]`)
+    if (!v.accent) throw new Error(`missing accent ${fam}/${a}`)
+    accentBlock(`${famSel}[data-${fam}-accent="${a}"]`, v)
   }
 }
+
+// Aqua Dark shares Aqua's exact blue instead of the brighter dark-family one.
+accentBlock('html.dark[data-dark-palette="aqua-dark"][data-dark-accent="blue"]', block('[data-theme="dark"][data-palette="aqua-dark"][data-accent="blue"]'))
 
 writeFileSync(out, lines.filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n'))
 console.log('wrote', out)

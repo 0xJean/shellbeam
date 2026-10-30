@@ -21,8 +21,8 @@ describe('terminal themes', () => {
   })
 
   it('builds the follow-app theme from the palette and accent', () => {
-    expect(appTerminalTheme('dark', DEFAULT_APPEARANCE)).toMatchObject({ background: '#0f1013', cursor: '#7c6cf2' })
-    expect(appTerminalTheme('light', { ...DEFAULT_APPEARANCE, lightPalette: 'paper' })).toMatchObject({ background: '#fffdf8', cursor: '#f2853a' })
+    expect(appTerminalTheme('dark', DEFAULT_APPEARANCE)).toMatchObject({ background: '#18181a', cursor: '#0a84ff' })
+    expect(appTerminalTheme('light', { ...DEFAULT_APPEARANCE, lightPalette: 'paper' })).toMatchObject({ background: '#fffdf8', cursor: '#f2700d' })
   })
 
   it('switches with the app light/dark mode and palette, but not for a fixed theme', async () => {
@@ -31,7 +31,7 @@ describe('terminal themes', () => {
     expect(follow.result.current.background).toBe('#ffffff')
     const draculaBg = fixed.result.current.background
     await act(async () => { document.documentElement.classList.add('dark') })
-    expect(follow.result.current.background).toBe('#0f1013')
+    expect(follow.result.current.background).toBe('#18181a')
     act(() => setAppearance({ darkPalette: 'nord' }))
     expect(follow.result.current.background).toBe('#242933')
     expect(fixed.result.current.background).toBe(draculaBg)

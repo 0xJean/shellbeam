@@ -141,8 +141,10 @@ export const APP_TERMINAL_THEME_ID = 'app'
 
 // Text colour per app palette; the background is the palette's own base.
 const PALETTE_FOREGROUND: Record<Palette, string> = {
-  midnight: '#d7d9e0', nord: '#d8dee9', dracula: '#f8f8f2', graphite: '#e4e1db', ocean: '#cdd8ea',
+  'aqua-dark': '#e5e5ea', midnight: '#d7d9e0', nord: '#d8dee9', dracula: '#f8f8f2', graphite: '#e4e1db', ocean: '#cdd8ea',
+  'solarized-dark': '#93a1a1', 'mist-dark': '#dfe8e5',
   aqua: '#2c2e33', paper: '#433d33', solarized: '#586e75', mist: '#2f3a37', lavender: '#38334d',
+  'nord-light': '#3b4252', 'dracula-light': '#383a4c', 'ocean-light': '#25344f',
 }
 const ANSI: Record<ThemeFamily, ITheme> = {
   dark: (TERMINAL_THEMES.find((theme) => theme.id === 'one-dark') as TerminalThemeDef).theme,
@@ -152,7 +154,9 @@ const ANSI: Record<ThemeFamily, ITheme> = {
 export function appTerminalTheme(family: ThemeFamily, prefs: AppearancePrefs): ITheme {
   const palette = family === 'dark' ? prefs.darkPalette : prefs.lightPalette
   const background = PALETTES[palette].swatch[family === 'dark' ? 0 : 1]
-  const accent = ACCENTS[resolveAccent(prefs, family)]
+  const resolved = resolveAccent(prefs, family)
+  // The palette's own accent uses its exact swatch colour (Aqua's blue differs from the shared blue).
+  const accent = resolved === PALETTES[palette].accent ? PALETTES[palette].swatch[2] : ACCENTS[resolved]
   const foreground = PALETTE_FOREGROUND[palette]
   return { ...ANSI[family], background, foreground, cursor: accent, cursorAccent: background, selectionBackground: `${accent}40`, selectionForeground: undefined, black: family === 'dark' ? background : ANSI.light.black }
 }
