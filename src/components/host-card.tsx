@@ -232,7 +232,7 @@ function HostOpsDrawer({ id, host, summary, open, onClose, dot, groupLabel, netw
   const connections = hostConnections(host).length
   const stop = (event: React.SyntheticEvent) => event.stopPropagation()
   return <>
-    {open && <div aria-hidden="true" data-testid="host-ops-drawer-backdrop" className="fixed inset-0 z-[60] bg-black/45" onClick={(event) => { event.stopPropagation(); onClose() }} />}
+    {open && <div aria-hidden="true" data-testid="host-ops-drawer-backdrop" data-host-drawer-backdrop className="fixed inset-0 z-[60] bg-black/45" onClick={(event) => { event.stopPropagation(); onClose() }} />}
     <section id={id} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!open}
       onClick={stop} onDoubleClick={stop} onKeyDown={stop}
       className={cn('fixed inset-y-0 right-0 z-[61] w-[min(50rem,100vw)] cursor-default flex-col border-l border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] text-left shadow-[var(--workspace-shadow-overlay)]', open ? 'flex' : 'hidden')}>

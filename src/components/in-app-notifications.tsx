@@ -10,6 +10,14 @@ const MAX_VISIBLE = 4
 /** Critical alerts stay until dismissed; others fade after this long. */
 const AUTO_DISMISS_MS = 8_000
 
+// Sit in the free space beside an open host drawer, or below its header when
+// the window is too narrow, so its close and action buttons stay reachable.
+const TOAST_STACK = cn(
+  'pointer-events-none fixed right-4 top-4 z-[70] flex w-[22rem] max-w-[calc(100vw-2rem)] flex-col gap-2',
+  '[html:has([data-host-drawer-backdrop])_&]:right-[calc(min(50rem,100vw)+1rem)]',
+  '[@media(max-width:74rem)]:[html:has([data-host-drawer-backdrop])_&]:right-4 [@media(max-width:74rem)]:[html:has([data-host-drawer-backdrop])_&]:top-36',
+)
+
 interface Toast { key: number; payload: NotificationPayload }
 
 /**
@@ -49,7 +57,7 @@ export function InAppNotifications() {
 
   if (toasts.length === 0 || typeof document === 'undefined') return null
   return createPortal(
-    <div aria-live="polite" className="pointer-events-none fixed right-4 top-4 z-[70] flex w-[22rem] max-w-[calc(100vw-2rem)] flex-col gap-2">
+    <div aria-live="polite" className={TOAST_STACK}>
       {toasts.map(({ key, payload }) => {
         const Icon = payload.severity === 'critical' ? CircleAlert : payload.severity === 'warning' ? TriangleAlert : Info
         return (
