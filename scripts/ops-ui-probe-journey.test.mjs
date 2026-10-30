@@ -460,7 +460,8 @@ test('journey prepares every affected host before failure and recovery and keeps
   }
   unit.checkpoint = async (kind, details) => {
     assert.equal(notificationWindow, null)
-    const affected = details.role === 'via' ? ['via', 'jump'] : [details.role]
+    // The details drawer is modal, so only the target host's can be open.
+    const affected = [details.role]
     for (const role of affected) {
       const card = unit.hostCard(role)
       assert.equal(card.querySelector('[data-testid="host-ops-details-toggle"]').getAttribute('aria-expanded'), 'true', `${kind}: ${role} not prepared`)
@@ -474,7 +475,7 @@ test('journey prepares every affected host before failure and recovery and keeps
   const capture = async (role, event) => {
     assert.equal(notificationWindow, `${event === 'opened' ? 'probe-stop' : 'probe-restore'}:${role}`)
     for (const member of role === 'via' ? ['via', 'jump'] : [role]) {
-      assert.equal(await isOpsUiHostDetailsVisible(unit.driver, { hostId: unit.resumeState.hostIds[member], vaultId: unit.resumeState.vaultId }), true)
+      assert.equal(await isOpsUiHostDetailsVisible(unit.driver, { hostId: unit.resumeState.hostIds[member], vaultId: unit.resumeState.vaultId }), member === role)
       assert.equal(unit.alert(member).dataset.alertStatus, event === 'opened' ? 'active' : 'resolved')
     }
     windows.push(`${event}:${role}`)
@@ -484,7 +485,7 @@ test('journey prepares every affected host before failure and recovery and keeps
     const state = await runOpsUiProbeJourney({
       ...unit, onOpened: role => capture(role, 'opened'), onResolved: role => capture(role, 'resolved'),
     })
-    assert.deepEqual(prepared, ['probe-stop:direct', 'probe-restore:direct', 'probe-stop:via+jump', 'probe-restore:via+jump'])
+    assert.deepEqual(prepared, ['probe-stop:direct', 'probe-restore:direct', 'probe-stop:via', 'probe-restore:via'])
     assert.deepEqual(windows, ['opened:direct', 'resolved:direct', 'opened:via', 'resolved:via'])
     assert.equal(notificationWindow, null)
     assert.equal(state.hosts.direct.closed, unit.alert('direct').dataset.jobId)

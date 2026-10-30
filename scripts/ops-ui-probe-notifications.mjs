@@ -65,19 +65,22 @@ export async function assertSafeProbeNotificationUi(driver, { state, titles, pro
     const card = `[data-testid="host-card"][data-host-id=${q(state.hostIds[role])}]`
     const cards = await driver.findAll(card)
     check(cards.length === 1 && await driver.isDisplayed(cards[0]), 'unsafe_host_scope')
-    check(await isOpsUiHostDetailsVisible(driver, { hostId: state.hostIds[role], vaultId: state.vaultId }), 'unsafe_host_scope')
+    // Details are a modal drawer: the target host's is open and the jump host's
+    // rows stay mounted behind it, so only their scoped data can be read.
+    const behindDrawer = role === 'jump'
+    check(behindDrawer || await isOpsUiHostDetailsVisible(driver, { hostId: state.hostIds[role], vaultId: state.vaultId }), 'unsafe_host_scope')
     const evaluations = await driver.findAll(`${card} [data-testid="host-probe-evaluation"][data-rule-id=${q(RULE)}][data-host-id=${q(state.hostIds[role])}][data-vault-id=${q(state.vaultId)}]`)
-    check(evaluations.length === 1 && await driver.isDisplayed(evaluations[0]), 'unsafe_vault_scope')
+    check(evaluations.length === 1 && (behindDrawer || await driver.isDisplayed(evaluations[0])), 'unsafe_vault_scope')
     check(await driver.attr(evaluations[0], 'data-state') === (event === 'opened' ? 'firing' : 'healthy'), 'unexpected_evaluation_state')
     const rawSample = await driver.attr(evaluations[0], 'data-sampled-at')
     check(typeof rawSample === 'string' && /^[0-9]{1,16}$/.test(rawSample) && Number.isSafeInteger(Number(rawSample)) && Number(rawSample) > 0 && Number(rawSample) <= Date.now(), 'invalid_original_sample')
     const alerts = await driver.findAll(`${card} [data-testid="host-local-alert"][data-rule-id=${q(RULE)}][data-host-id=${q(state.hostIds[role])}]`)
-    check(alerts.length === 1 && await driver.isDisplayed(alerts[0]), 'unsafe_alert_scope')
+    check(alerts.length === 1 && (behindDrawer || await driver.isDisplayed(alerts[0])), 'unsafe_alert_scope')
     const row = alerts[0]
     check(await driver.attr(row, 'data-vault-id') === state.vaultId, 'unsafe_alert_vault_scope')
     check(await driver.attr(row, 'data-metric') === 'probe-provider' && await driver.attr(row, 'data-source') === 'ssh-agentless'
       && await driver.attr(row, 'data-transport') === route(role) && await driver.attr(row, 'data-alert-status') === (event === 'opened' ? 'active' : 'resolved'), 'unexpected_alert_source')
-    check((await driver.text(row)).includes(titles[role]), 'unexpected_alert_title')
+    if (!behindDrawer) check((await driver.text(row)).includes(titles[role]), 'unexpected_alert_title')
   }
   for (const field of await driver.findAll('input[type="password"], textarea')) {
     const value = await driver.attr(field, 'value')
