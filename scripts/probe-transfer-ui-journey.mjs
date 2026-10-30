@@ -117,7 +117,7 @@ const observations=f=>Object.fromEntries(Object.values(f.hosts).map(h=>[h.role,f
 const stable=async(f,before)=>{await delay(5000);assert.deepEqual(observations(f),before,'transfer_ui_unexpected_remote_replay')}
 async function state(d,h,wanted) {await d.until(async()=>await d.attr(transfer(h),'data-status')===wanted,{timeoutMs:120000})}
 async function audit(d,ids,statuses){
-  await main(d,'activity');await d.click(id('audit-tab'));await d.click(id('operations-refresh'))
+  await main(d,'activity');await d.click(id('history-tab-audit'));await d.click(id('audit-tab'));await d.click(id('operations-refresh'))
   const pending=new Map(ids.map((value,i)=>[value,statuses[i]]))
   for(let page=0;page<20;page++) {
     await d.until(async()=>await exists(d,id('operation-audit-row')) || await exists(d,id('audit-empty')))

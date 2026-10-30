@@ -55,7 +55,7 @@ async function stable(s,ms=5000){
   if(before.running)assertPreserved(after,before,before.version);else assert.deepEqual(after,before)
 }
 async function audit(d,expected) {
-  await d.click(id('pc-dashboard'));await d.click(id('pc-nav-activity'));await d.click(id('audit-tab'));await d.click(id('operations-refresh'))
+  await d.click(id('pc-dashboard'));await d.click(id('pc-nav-activity'));await d.click(id('history-tab-audit'));await d.click(id('audit-tab'));await d.click(id('operations-refresh'))
   const found=new Map();let selected
   for(let page=0;page<30;page++) {
     await d.waitFor(id('operation-audit-row'));selected=undefined

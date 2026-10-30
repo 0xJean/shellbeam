@@ -143,6 +143,7 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
     <button
       type="button"
       role="tab"
+      data-testid={`history-tab-${value}`}
       aria-selected={tab === value}
       onClick={() => setTab(value)}
       className={cn(

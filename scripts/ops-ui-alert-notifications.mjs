@@ -15,14 +15,14 @@ const SETTINGS_XPATH = "//*[@data-testid='notification-settings']"
 const SYSTEM = `${SETTINGS} [data-testid="notification-channel-system"]`
 const attrString = (value) => `"${String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
 const labelInput = (label) => `xpath=${SETTINGS_XPATH}//label[normalize-space(.)='${label}']/input[@type='checkbox']`
-const POLICY_ENABLE = labelInput('Send reminders from this device')
+const POLICY_ENABLE = `${SETTINGS} input[aria-label="Send reminders from this device"]`
 const SYSTEM_ENABLE = labelInput('System')
 const LOCAL_ENABLE = labelInput('In-app')
 const WEBHOOK_ENABLE = labelInput('Webhook')
 const RECOVERY = `${SETTINGS} [data-testid="notification-recovery-enabled"]`
 const recoveryChannel = (channel) => `${SETTINGS} [data-testid="notification-recovery-channel-${channel}"]`
-const cooldown = `xpath=${SETTINGS_XPATH}//label[contains(.,'Cooldown (minutes)')]/input`
-const dedupe = `xpath=${SETTINGS_XPATH}//label[contains(.,'Dedupe window (seconds)')]/input`
+const cooldown = `${SETTINGS} input[aria-label="Cooldown (minutes)"]`
+const dedupe = `${SETTINGS} input[aria-label="Dedupe window (seconds)"]`
 
 function fail(stage) { return new Error(`ops_ui_alert_notifications_${stage}`) }
 function requireFact(value, stage) { if (!value) throw fail(stage) }

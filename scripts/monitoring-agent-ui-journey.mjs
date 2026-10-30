@@ -84,7 +84,7 @@ async function policy(d, h, f, source) {
   await d.click(box + ' > summary')
 }
 async function audit(d, jobs, vaultId) {
-  await d.click(id('pc-dashboard')); await d.click(id('pc-nav-activity')); await d.click(id('audit-tab')); await d.click(id('operations-refresh'))
+  await d.click(id('pc-dashboard')); await d.click(id('pc-nav-activity')); await d.click(id('history-tab-audit')); await d.click(id('audit-tab')); await d.click(id('operations-refresh'))
   const found = new Set(); let selected
   for (let page = 0; page < 20; page++) {
     await d.waitFor(id('operation-audit-row')); selected = undefined

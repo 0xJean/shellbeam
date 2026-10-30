@@ -37,7 +37,10 @@ async function openPage(driver, page, state, role) {
   await driver.waitFor(tid('pc-dashboard'))
   await driver.click(tid('pc-dashboard'))
   await driver.click(tid(page === 'activity' ? 'pc-nav-activity' : 'pc-nav-hosts'))
-  if (page === 'activity') await driver.waitFor(tid('operations-audit-center'))
+  if (page === 'activity') {
+    await driver.click(tid('history-tab-audit'))
+    await driver.waitFor(tid('operations-audit-center'))
+  }
   else if (state) await waitForOpsUiHostOperations(driver, { hostId: state.hostIds[role], vaultId: state.vaultId })
   else await driver.waitFor(tid('host-card'))
 }

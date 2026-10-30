@@ -24,6 +24,7 @@ export const OPS_UI_SELECTORS = Object.freeze({
   hostKey: 'dialog[open] [data-testid="host-key-confirm"]',
   fingerprint: 'dialog[open] [data-testid="host-key-fingerprint"]',
   trust: 'dialog[open] [data-testid="host-key-accept"]',
+  auditView: '[data-testid="history-tab-audit"]',
   audit: '[data-testid="operations-audit-center"]',
   auditTab: '[data-testid="audit-tab"]',
   confirmation: 'dialog[open] [data-testid="user-confirmation"]',
@@ -82,7 +83,10 @@ async function openDashboardPage(driver, page) {
   await driver.waitFor(target)
   await driver.click(target)
   if (page === 'hosts') await driver.waitFor(S.create)
-  else await driver.waitFor(S.audit)
+  else {
+    await driver.click(S.auditView)
+    await driver.waitFor(S.audit)
+  }
 }
 
 // WebKit's element click can leave a partially clipped button behind a nested

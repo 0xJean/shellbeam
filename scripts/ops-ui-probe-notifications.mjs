@@ -48,14 +48,14 @@ timeout = 0
 }
 
 export async function verifyProbeNotificationPolicy(driver) {
-  check(await driver.isSelected(input('Send reminders from this device')) && await driver.isSelected(input('System'))
+  check(await driver.isSelected(`${SETTINGS} input[aria-label="Send reminders from this device"]`) && await driver.isSelected(input('System'))
     && !await driver.isSelected(input('In-app')) && !await driver.isSelected(input('Webhook'))
     && await driver.isSelected(`${SETTINGS} [data-testid="notification-recovery-enabled"]`)
     && await driver.isSelected(`${SETTINGS} [data-testid="notification-recovery-channel-system"]`)
     && !await driver.isSelected(`${SETTINGS} [data-testid="notification-recovery-channel-local"]`)
     && !await driver.isSelected(`${SETTINGS} [data-testid="notification-recovery-channel-webhook"]`), 'policy_not_system_only')
-  check(await driver.attr(`xpath=${SX}//label[contains(.,'Cooldown (minutes)')]/input`, 'value') === '5'
-    && await driver.attr(`xpath=${SX}//label[contains(.,'Dedupe window (seconds)')]/input`, 'value') === '60', 'policy_timing_changed')
+  check(await driver.attr(`${SETTINGS} input[aria-label="Cooldown (minutes)"]`, 'value') === '5'
+    && await driver.attr(`${SETTINGS} input[aria-label="Dedupe window (seconds)"]`, 'value') === '60', 'policy_timing_changed')
 }
 
 export async function assertSafeProbeNotificationUi(driver, { state, titles, profiles, event }) {

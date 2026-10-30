@@ -26,7 +26,7 @@ function ui() {
     findAll: async selector => [...document.querySelectorAll(selector)],
     isDisplayed: async element => !element.closest('[hidden]'),
     attr: async (element, field) => {
-      if (typeof element === 'string' && element.startsWith('xpath=')) return element.includes('Cooldown') ? '5' : '60'
+      if (typeof element === 'string' && /Cooldown|Dedupe/.test(element)) return element.includes('Cooldown') ? '5' : '60'
       return field === 'value' ? element.value : element.getAttribute(field)
     },
     text: async element => element.textContent,
@@ -40,7 +40,7 @@ function ui() {
       if (target.includes('//aside//button')) monitoringOpen = false
       if (target === '[data-testid="settings-category-monitoring"]') monitoringOpen = true
     },
-    isSelected: async selector => selector.includes("='Send reminders from this device'") || selector.includes("='System'") || /notification-recovery-(?:enabled|channel-system)/.test(selector),
+    isSelected: async selector => selector.includes('"Send reminders from this device"') || selector.includes("='System'") || /notification-recovery-(?:enabled|channel-system)/.test(selector),
   }
   const transition = (role, event) => {
     const card = document.querySelector(`[data-host-id="${options.resumeState.hostIds[role]}"]`)
