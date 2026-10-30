@@ -78,7 +78,7 @@ export function NetworkOpsPanel({ host, vaultId, resolveAuthSecret, onOpenServic
   const connections = snapshot ? filtered(snapshot.connections) : []
   const blocked = snapshot?.status === 'unsupported' ? <p className="sb-card border-dashed p-4 text-sm text-[var(--workspace-text-muted)]">{t('workspace.network.unsupported')}</p> : snapshot?.status === 'unknown' ? <p role="alert" className="rounded-xl border border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] p-4 text-sm text-[color:var(--workspace-status-warn-text)]">{t('workspace.network.unknown')}</p> : null
   const tabs: Array<[NetworkTab, string]> = [['ports', c.tabPorts], ['iface', c.tabIface], ['health', c.tabHealth]]
-  return <div data-testid="network-ops-panel" className="space-y-4">
+  return <div data-testid="network-ops-panel" data-host-id={host.id} className="space-y-4">
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div><h2 className="text-xl font-semibold text-[var(--workspace-text-strong)]">{t('workspace.network.title')}</h2><p className="mt-1 text-xs text-[var(--workspace-text-muted)]">{c.netSubtitle}</p></div>
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -94,7 +94,7 @@ export function NetworkOpsPanel({ host, vaultId, resolveAuthSecret, onOpenServic
       </div>
     </div>
     <div role="tablist" aria-label={c.netTabs} className="flex gap-5 border-b border-[color:var(--workspace-border-soft)]">
-      {tabs.map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
+      {tabs.map(([key, label]) => <button key={key} data-testid={`network-tab-${key}`} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
         className={cn('-mb-px border-b-2 pb-2.5 text-[13px] font-medium transition-colors', tab === key ? 'border-primary text-[var(--workspace-text-strong)]' : 'border-transparent text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>{label}</button>)}
     </div>
     <div role="tabpanel" aria-label={c.tabPorts} hidden={tab !== 'ports'} className="space-y-3">

@@ -72,11 +72,13 @@ async function audit(d,expected) {
 export async function revealExtensionAudit(d,expected) {
   assert(/^[a-f0-9-]{36}$/.test(expected.id)&&['completed','unknown','failed','cancelled'].includes(expected.status))
   const target=`${id('operation-audit-row')}[data-job-id="${expected.id}"][data-status="${expected.status}"]`
-  // An inert audit row has no action handler. One native click reveals it
-  // vertically; subsequent inspection is read-only and must prove both axes.
-  await d.click(target)
+  // An inert audit row has no action handler. One native click on its first
+  // cell reveals it (the row can be wider than the table's scroll area);
+  // subsequent inspection is read-only and must prove both axes for that cell.
+  const cell=`${target} td:first-child`
+  await d.click(cell)
   await d.until(async()=>{
-    const box=await d.rect(target)
+    const box=await d.rect(cell)
     const width=Number(await d.request('GET',await d.elementRoute('html','/property/clientWidth')))
     const height=Number(await d.request('GET',await d.elementRoute('html','/property/clientHeight')))
     return [box.x,box.y,box.width,box.height,width,height].every(Number.isFinite)&&box.width>0&&box.height>0&&box.x>=0&&box.y>=0&&box.x+box.width<=width&&box.y+box.height<=height

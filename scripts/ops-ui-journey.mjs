@@ -37,7 +37,13 @@ const testId = (id) => `[data-testid=${q(id)}]`
 const byHost = (id) => `${testId('host-card')}[data-host-id=${q(id)}]`
 const serviceRoot = (id) => `${testId('workspace-services-app')}[data-host-id=${q(id)}]`
 const serviceRow = (id, unit) => `${serviceRoot(id)} ${testId('workspace-service-row')}[data-service-unit=${q(unit)}]`
-const ruleRoot = (id) => `${testId('local-alert-rules')}[data-host-id=${q(id)}]`
+const networkPanel = (id) => `${testId('network-ops-panel')}[data-host-id=${q(id)}]`
+// The overview mounts the same rules panel; these journeys use the Network app's.
+const ruleRoot = (id) => `${networkPanel(id)} ${testId('local-alert-rules')}[data-host-id=${q(id)}]`
+async function openOpsUiHostRules(driver, id) {
+  await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
+  await driver.click(`${networkPanel(id)} ${testId('network-tab-health')}`)
+}
 const normalizeFingerprint = (value) => String(value).trim().replace(/^SHA256:/, '').replace(/=+$/, '')
 const hash = (value) => createHash('sha256').update(String(value)).digest('hex')
 function check(value, code) { if (!value) throw new Error(`ops_ui_${code}`) }
@@ -229,7 +235,7 @@ async function connectAndVerify(driver, fixture, role, state, record) {
 async function configureRule(driver, fixture, role, state) {
   await openDashboardPage(driver, 'hosts')
   await revealOpsUiHostActions(driver, `${byHost(state.hostIds[role])} ${testId('host-ops-open')}`)
-  await driver.select(`${byHost(state.hostIds[role])} ${testId('host-ops-open')}`, 'network')
+  await openOpsUiHostRules(driver, state.hostIds[role])
   const root = ruleRoot(state.hostIds[role])
   await driver.waitFor(root, { timeoutMs: 60000 })
   const vaultId = await driver.attr(root, 'data-vault-id')
@@ -641,7 +647,7 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await record(`ops-ui-${role}-confirmed`, { passed: true, jobId: completed, verifiedActive: true })
     await openDashboardPage(driver, 'hosts')
     await revealOpsUiHostActions(driver, `${byHost(id)} ${testId('host-ops-open')}`)
-    await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
+    await openOpsUiHostRules(driver, id)
     await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
     await record(`ops-ui-${role}-recovered`, { passed: true })
     if (onRecovered) await onRecovered(role)
@@ -670,7 +676,7 @@ export async function resumeOpsUiJourney({ driver, fixture, record, checkpoint, 
     await openDashboardPage(driver, 'hosts')
     const id = state.hostIds[role]
     await revealOpsUiHostActions(driver, `${byHost(id)} ${testId('host-ops-open')}`)
-    await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
+    await openOpsUiHostRules(driver, id)
     await driver.waitFor(ruleRoot(id), { timeoutMs: 60000 })
     check(await driver.attr(ruleRoot(id), 'data-vault-id') === state.vaultId, 'restored_rule_vault_scope_mismatch')
     await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })

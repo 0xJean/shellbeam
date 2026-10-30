@@ -207,7 +207,7 @@ export function HostForm({
           <h2 className="text-base font-semibold">{connectionOnly ? t('hostDirectory.editConnection') : initial ? t('hostForm.editHost') : t('hostForm.newHost')}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">{t('hostForm.subtitle', { vault: vaultName })}</p>
           <div role="tablist" className="mt-4 flex gap-5 border-b border-border">
-            <button type="button" role="tab" aria-selected={!showAdvanced} className={tabClass(!showAdvanced)} onClick={() => setShowAdvanced(false)}>{t('hostForm.tabBasic')}</button>
+            <button data-testid="host-basics-tab" type="button" role="tab" aria-selected={!showAdvanced} className={tabClass(!showAdvanced)} onClick={() => setShowAdvanced(false)}>{t('hostForm.tabBasic')}</button>
             <button data-testid="host-jump-toggle" type="button" role="tab" aria-selected={showAdvanced} aria-expanded={showAdvanced} className={tabClass(showAdvanced)} onClick={() => setShowAdvanced(true)}>
               {t('hostForm.jumpHost')}{(jumpHostId || jumpHost.trim()) && <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" aria-hidden="true" />}
             </button>
