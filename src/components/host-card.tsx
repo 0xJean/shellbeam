@@ -234,7 +234,7 @@ function HostOpsDrawer({ id, host, summary, open, onClose, dot, groupLabel, netw
   return <>
     {open && <div aria-hidden="true" data-testid="host-ops-drawer-backdrop" data-host-drawer-backdrop className="fixed inset-0 z-[60] bg-black/45" onClick={(event) => { event.stopPropagation(); onClose() }} />}
     <section id={id} data-testid="host-ops-details" role="region" aria-label={`${t('hosts.columnOperations')} · ${host.name}`} hidden={!open}
-      onClick={stop} onDoubleClick={stop} onKeyDown={stop}
+      onClick={stop} onDoubleClick={stop} onKeyDown={(event) => { if (event.key !== 'Escape') stop(event) }}
       className={cn('fixed inset-y-0 right-0 z-[61] w-[min(50rem,100vw)] cursor-default flex-col border-l border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] text-left shadow-[var(--workspace-shadow-overlay)]', open ? 'flex' : 'hidden')}>
       {open && <header className="flex items-start gap-3 border-b border-[color:var(--workspace-border-soft)] px-5 pb-4 pt-5">
         <div className="min-w-0 flex-1">

@@ -525,7 +525,7 @@ export async function findOpsUiAuditRow({ driver, selector, status }) {
   await driver.click(refresh)
   for (let number = 1; number <= 100; number++) {
     await driver.until(async () => await enabled(driver, refresh)
-      && (await driver.text(page)).trim() === `Page ${number}`
+      && (await driver.text(page)).trim().split(' · ')[0] === `Page ${number}`
       && await driver.attr(source, 'aria-checked') === 'true' && await driver.attr(filter, 'aria-checked') === 'true', { timeoutMs: 30000 })
     check((await driver.findAll(`${root} ${testId('operations-error')}`)).length === 0, 'audit_load_failed')
     const rows = await driver.findAll(selector)

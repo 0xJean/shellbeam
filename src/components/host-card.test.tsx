@@ -212,6 +212,18 @@ describe('host list item', () => {
     }
   })
 
+  it('closes the details drawer with Escape when focus is inside it', () => {
+    const onSelect = vi.fn(), onConnect = vi.fn(), parent = vi.fn()
+    const operations: HostOperationalSummary = { vaultId: 'vault-a', serviceTotal: 1, serviceActive: 1, serviceFailed: 0, processTotal: 1, processRunning: 1, auditCount: 0, transport: 'direct' }
+    render(<div onClick={parent} onDoubleClick={parent} onKeyDown={parent}><HostListItem index={1} host={host} operations={operations} isSelected={false} onSelect={onSelect} onConnect={onConnect} onEdit={vi.fn()} onDelete={vi.fn()} /></div>)
+    fireEvent.click(screen.getByTestId('host-ops-details-toggle'))
+    const details = screen.getByTestId('host-ops-details')
+    expect(details).toBeVisible()
+    fireEvent.keyDown(details, { key: 'Enter' })
+    expect(details).toBeVisible()
+    fireEvent.keyDown(details, { key: 'Escape' })
+    expect(details).not.toBeVisible()
+  })
   it('expands and collapses details without selecting, connecting, or bubbling keyboard events', () => {
     const onSelect = vi.fn(), onConnect = vi.fn(), parent = vi.fn()
     const operations: HostOperationalSummary = { vaultId: 'vault-a', serviceTotal: 1, serviceActive: 1, serviceFailed: 0, processTotal: 1, processRunning: 1, auditCount: 0, transport: 'direct' }
