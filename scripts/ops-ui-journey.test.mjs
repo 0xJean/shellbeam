@@ -261,6 +261,7 @@ function serviceSelectionUnit({ role = 'via', problem } = {}) {
       : { x: 176, y: 120, width: 1080, height: 540 }
   }
   const driver = {
+    async waitFor() {},
     async findAll(selector, parent = document) { return [...parent.querySelectorAll(selector)] },
     async isDisplayed(value) { return !element(value).closest('[hidden]') },
     async attr(value, field) { const row = element(value); return field === 'value' ? row.value : row.getAttribute(field) },

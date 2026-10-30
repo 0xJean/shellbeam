@@ -139,7 +139,7 @@ export async function runMonitoringAgentUiJourney({ driver, fixture: f, state: s
     assert.equal(await d.attr(panel(h), 'data-product'), version === '1.5.13' ? 'shellbeam' : 'upstream')
     assert((await d.text(control(h, 'origin'))).includes(version === '1.5.13' ? 'ShellBeam Monitoring Agent' : 'Komari Agent (compatible)'))
     record(name, evidence)
-    await revealTransferObservations(d, control(h, 'identity'), control(h, 'endpoint') + ' + span')
+    await revealTransferObservations(d, control(h, 'identity'), control(h, 'identity') + ' dt')
     for (const field of await d.findAll('input[type="password"],textarea,#komari-api-key')) assert(!await d.attr(field, 'value'), 'agent_ui_secret_visible')
     assert.equal((await d.findAll('iframe')).length, 0)
     await checkpoint(name)
