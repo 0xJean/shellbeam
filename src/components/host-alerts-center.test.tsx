@@ -237,7 +237,7 @@ describe('unified host alerts center', () => {
     render(panel(rows))
     expect(screen.queryByRole('button', { name: /alert$/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Include history' }))
-    const recovered = screen.getByText('Recovered').closest('article')!
+    const recovered = screen.getByText('Recovered', { selector: 'p' }).closest('article')!
     const closed = screen.getByText('Closed').closest('article')!
     expect(within(recovered).queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument()
     expect(within(recovered).getByRole('button', { name: 'Archive' })).toBeVisible()

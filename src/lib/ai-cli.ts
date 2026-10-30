@@ -1,9 +1,10 @@
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core'
-import type { AICliBackend, AICliProfile, AIStreamCallbacks } from './ai'
+import type { AICliBackend, AICliProfile, AIRequestMode, AIStreamCallbacks } from './ai'
+import type { AIHistoryItem } from './ai-conversation'
 import { t } from './i18n'
 
 export interface AICliStatus { version: string; executable: string }
-type CliEvent = { type: 'token'; text: string } | { type: 'done' } | { type: 'error'; code: string }
+type CliEvent = { type: 'token'; text: string } | { type: 'model'; name: string } | { type: 'done' } | { type: 'error'; code: string }
 const ERROR_CODES = new Set(['desktop_only', 'not_found', 'unsupported', 'invalid_request', 'busy', 'timeout', 'failed', 'invalid_output', 'tool_use', 'cancelled'])
 export function cliErrorMessage(error: unknown): string {
   const code = typeof error === 'string' && ERROR_CODES.has(error) ? error : 'failed'
@@ -17,7 +18,7 @@ export async function checkAICli(backend: AICliBackend, executable: string): Pro
 /** Per-invocation channel; no global events, credentials, or terminal output in logs. */
 export async function streamCliCommand(
   backend: AICliBackend, profile: AICliProfile | undefined, prompt: string, context: string,
-  callbacks: AIStreamCallbacks, signal?: AbortSignal,
+  callbacks: AIStreamCallbacks, signal?: AbortSignal, history: AIHistoryItem[] = [], host = '', mode: AIRequestMode = 'confirm',
 ): Promise<void> {
   if (signal?.aborted) return
   if (!isTauri()) { callbacks.onError(cliErrorMessage('desktop_only')); return }
@@ -37,6 +38,7 @@ export async function streamCliCommand(
   channel.onmessage = (event) => {
     if (settled || signal?.aborted) return
     if (event.type === 'token') callbacks.onToken(event.text)
+    else if (event.type === 'model') callbacks.onModel?.(event.name)
     else {
       settled = true
       if (event.type === 'done') callbacks.onDone()
@@ -47,7 +49,7 @@ export async function streamCliCommand(
   signal?.addEventListener('abort', abort, { once: true })
   try {
     await invoke('ai_cli_start', {
-      request: { requestId, backend, executable: profile?.executable ?? '', model: profile?.model ?? '', prompt, context },
+      request: { requestId, backend, executable: profile?.executable ?? '', model: profile?.model ?? '', prompt, context, history, host, mode },
       channel,
     })
     started = true

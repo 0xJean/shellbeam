@@ -164,7 +164,7 @@ describe('workspace asset inventory app', () => {
     fireEvent.click(screen.getByRole('button', { name: '清除标签筛选' }))
 
     fireEvent.click(screen.getByRole('button', { name: '全部' }))
-    fireEvent.click(screen.getByRole('button', { name: '开发环境' }))
+    fireEvent.click(screen.getByRole('button', { name: '开发环境 1' }))
     expect(screen.getByText('1/2 台匹配')).toBeInTheDocument()
     expect(screen.getAllByText('Worker Node').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Worker Node').length).toBeGreaterThan(0)
@@ -190,7 +190,7 @@ describe('workspace asset inventory app', () => {
       expect(runSshCommand).toHaveBeenCalledTimes(2)
     })
 
-    fireEvent.change(screen.getByPlaceholderText(/搜索服务器/), { target: { value: 'nginx' } })
+    fireEvent.change(screen.getByPlaceholderText(/搜索主机/), { target: { value: 'nginx' } })
 
     expect(screen.getByText('1/2 台匹配')).toBeInTheDocument()
     expect(screen.getAllByText('Production API').length).toBeGreaterThan(0)
@@ -229,7 +229,7 @@ describe('workspace asset inventory app', () => {
     })
 
     const tabButtons = screen.getAllByRole('tab')
-    expect(tabButtons.map((button) => button.textContent)).toEqual(['资源总览', '工具管理', '部署项目'])
+    expect(tabButtons.map((button) => button.firstChild?.textContent)).toEqual(['资源总览', '工具管理', '部署项目'])
 
     fireEvent.click(screen.getByRole('tab', { name: '工具管理' }))
 
@@ -270,18 +270,18 @@ describe('workspace asset inventory app', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getAllByPlaceholderText(/搜索服务器/)).toHaveLength(1)
+      expect(screen.getAllByPlaceholderText(/搜索主机/)).toHaveLength(1)
     })
 
     fireEvent.click(screen.getByText('Worker Node'))
     fireEvent.click(screen.getByRole('tab', { name: '工具管理' }))
 
-    expect(screen.getAllByPlaceholderText(/搜索服务器/)).toHaveLength(1)
+    expect(screen.getAllByPlaceholderText(/搜索主机/)).toHaveLength(1)
     expect(screen.getByTestId('workspace-tool-manager-app')).toHaveAttribute('data-selected-host-id', 'host-2')
 
     fireEvent.click(screen.getByRole('tab', { name: '部署项目' }))
 
-    expect(screen.getAllByPlaceholderText(/搜索服务器/)).toHaveLength(1)
+    expect(screen.getAllByPlaceholderText(/搜索主机/)).toHaveLength(1)
     expect(screen.getByTestId('project-deployments-panel')).toHaveAttribute('data-selected-host-key', 'host-2')
   })
 

@@ -14,7 +14,7 @@ use crate::error::{standard_error_from_raw, standard_error_payload};
 use crate::history::CommandHistoryEntry;
 use crate::hosts::{load_hosts, HostProfile};
 use crate::snippets::SnippetEntry;
-use crate::storage::{data_file_path, now_unix_ms, read_json_or_default, write_json, HISTORY_FILE};
+use crate::storage::now_unix_ms;
 use crate::sync::{load_sync_state_for_transport, save_sync_state_for_transport, SyncStateFile};
 
 const BACKUP_KEY_SIZE: usize = 32;
@@ -306,9 +306,8 @@ pub fn backup_create_in_memory(
         None
     };
     let history = if include_history {
-        let path = data_file_path(app, HISTORY_FILE)?;
         Some(
-            read_json_or_default::<Vec<CommandHistoryEntry>>(&path)
+            crate::history::load_vault_history(app, vault_id)
                 .map_err(|e| format!("load history: {e}"))?,
         )
     } else {
@@ -374,8 +373,8 @@ pub fn backup_restore_in_memory(
     }
     if overwrite_history {
         if let Some(history) = &payload.history {
-            let path = data_file_path(app, HISTORY_FILE)?;
-            write_json(&path, history).map_err(|e| format!("restore history: {e}"))?;
+            crate::history::replace_vault_history(app, vault_id, history)
+                .map_err(|e| format!("restore history: {e}"))?;
             history_restored = history.len();
         }
     }

@@ -21,6 +21,9 @@ import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 import { listMcpDeploymentRecords } from '@/lib/mcp'
 import { confirmUserAction } from '@/lib/user-confirmation'
+import { fill } from '@/lib/locales/probe-install'
+import { vaultDeleteCopy } from '@/lib/locales/vault-delete'
+import { clearVaultLocalData } from '@/lib/vault-local-cleanup'
 
 interface VaultStats {
   hosts: number
@@ -79,7 +82,7 @@ export function VaultsDashboardPanel({
   const [newVaultName, setNewVaultName] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
-  const { t } = useT()
+  const { t, locale } = useT()
   const [showVaultDropdown, setShowVaultDropdown] = useState(false)
   const [internalTab, setInternalTab] = useState<VaultTab>('hosts')
   const activeTab = controlledTab ?? internalTab
@@ -160,13 +163,14 @@ export function VaultsDashboardPanel({
     const scopeCurrent = () => generation === deletionGeneration.current
     const isCurrent = () => scopeCurrent() && currentVaults.current.some(vault => vault.id === target.id && vault.name === target.name && vault.createdAt === target.createdAt)
     try {
-      if (await confirmUserAction({ message: `Delete vault "${target.name}"? All data will be lost.`, risk: 'high', vaultId: activeVaultId, isCurrent }) !== true || !isCurrent()) return
+      if (await confirmUserAction({ message: fill(vaultDeleteCopy[locale].confirm, { name: target.name }), risk: 'high', vaultId: activeVaultId, isCurrent }) !== true || !isCurrent()) return
       await deleteVault(vaultId)
+      clearVaultLocalData(vaultId)
       if (!scopeCurrent()) return
       await onRefreshVaults?.(); await onRefresh()
       if (!scopeCurrent()) return
       if (activeVaultId === vaultId) onSwitchVault(DEFAULT_VAULT_ID)
-      onOutput?.('Vault deleted')
+      onOutput?.(vaultDeleteCopy[locale].deleted)
     } catch (e) { if (scopeCurrent()) onError?.(String(e)) }
   }
 

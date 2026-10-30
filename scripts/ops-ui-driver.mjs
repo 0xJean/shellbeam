@@ -176,13 +176,16 @@ export class OpsUiDriver {
     // A field can be clipped by a scrollable dialog. Follow the actual tab
     // order once, from the caller's focused control, and verify both ends.
     // Never guess, retry, inject JS or change a value to obtain focus.
-    const previous = await this.find(tabFrom)
+    // tabFrom may list every control on the way, the focused one first.
+    const [start, ...between] = Array.isArray(tabFrom) ? tabFrom : [tabFrom]
     const activeId = async () => (await this.request('GET', this.route('/element/active')))?.[elementKey]
-    if (await activeId() !== previous.id) throw new WebDriverError('element not interactable')
-    await this.request('POST', this.route('/actions'), { actions: [{ type: 'key', id: 'field-keyboard', actions: [
-      { type: 'keyDown', value: '\uE004' }, { type: 'keyUp', value: '\uE004' },
-    ] }] })
-    if (await activeId() !== element.id) throw new WebDriverError('element not interactable')
+    if (await activeId() !== (await this.find(start)).id) throw new WebDriverError('element not interactable')
+    for (const stop of [...await Promise.all(between.map((locator) => this.find(locator))), element]) {
+      await this.request('POST', this.route('/actions'), { actions: [{ type: 'key', id: 'field-keyboard', actions: [
+        { type: 'keyDown', value: '\uE004' }, { type: 'keyUp', value: '\uE004' },
+      ] }] })
+      if (await activeId() !== stop.id) throw new WebDriverError('element not interactable')
+    }
   }
   async text(locator) { return this.request('GET', await this.elementRoute(locator, '/text')) }
   async attr(locator, name) {

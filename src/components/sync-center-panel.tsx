@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useT } from '@/lib/i18n'
 import {
   Monitor,
+  Laptop,
   Loader2,
   RefreshCw,
-  Radio,
+  Radar,
   ArrowLeft,
+  ArrowRight,
+  ArrowLeftRight,
+  ChevronRight,
   ShieldCheck,
+  Check,
+  Server,
+  Code2,
+  KeyRound,
+  Pencil,
+  Trash2,
 } from 'lucide-react'
 import { mdnsStartDiscover, mdnsStopDiscover, onMdnsDeviceFound, getAndroidDeviceName, type DiscoveredDevice } from '@/lib/mdns'
 import { getSystemHostname, syncSendPairRequest, syncAcceptPair } from '@/lib/sync'
@@ -19,8 +29,10 @@ import type {
   SyncDataOptions,
 } from '@/lib/sync'
 import { Button } from '@/components/ui/button'
+import { fill } from '@/lib/locales/probe-install'
+import { syncBackupCopy } from '@/lib/locales/sync-backup-v3'
 import { cn } from '@/lib/utils'
-import { ScanningView, PairingView, ConfirmingView, IncomingPairView, ConnectFailedView } from './sync-pairing-views'
+import { PairDialog, ScanningView, PairingView, ConfirmingView, IncomingPairView, ConnectFailedView, type PairStep } from './sync-pairing-views'
 import { SyncPeerDetail } from './sync-peer-detail'
 type SyncView = 'home' | 'scanning' | 'pairing' | 'confirming' | 'incoming' | 'peer-detail' | 'connect-failed'
 
@@ -38,17 +50,38 @@ interface SyncCenterPanelProps {
   onPullFromPeer: (peerDeviceId: string, options?: SyncDataOptions) => Promise<void>
   onPushToPeer: (peerDeviceId: string, options?: SyncDataOptions) => Promise<void>
   onRemoveTrustedPeer: (peerDeviceId: string) => Promise<void>
+  /** Name of the active vault that pull/push sync. */
+  syncVaultName?: string
+  /** Rendered beside device sync as the merged v3 "Sync & backup" page. */
+  backupPanel?: ReactNode
+  /** 'backup' scrolls the backup column into view (legacy `backup` nav id). */
+  focusSection?: 'sync' | 'backup'
 }
 
 export function SyncCenterPanel({
-  localDevice, changes, cursors: _cursors, trustedPeers,
+  localDevice, changes, trustedPeers,
   loading, serverRunning, serverPort,
   onRefresh, onInitDevice, onStartServer,
-  onPullFromPeer, onPushToPeer, onRemoveTrustedPeer,
+  onPullFromPeer, onPushToPeer, onRemoveTrustedPeer, syncVaultName,
+  backupPanel, focusSection = 'sync',
 }: SyncCenterPanelProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const copy = syncBackupCopy[locale] ?? syncBackupCopy['zh-CN']
   const [view, setView] = useState<SyncView>('home')
   const [activePeer, setActivePeer] = useState<SyncTrustedPeer | null>(null)
+  const [showAllChanges, setShowAllChanges] = useState(false)
+  const [seenFocus, setSeenFocus] = useState(focusSection)
+  const backupRef = useRef<HTMLDivElement>(null)
+  if (seenFocus !== focusSection) {
+    setSeenFocus(focusSection)
+    if (focusSection === 'backup' && view === 'peer-detail') {
+      setActivePeer(null)
+      setView('home')
+    }
+  }
+  useEffect(() => {
+    if (focusSection === 'backup') backupRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+  }, [focusSection])
   const [scanning, setScanning] = useState(false)
   const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredDevice[]>([])
   const [selectedDevice, setSelectedDevice] = useState<DiscoveredDevice | null>(null)
@@ -295,211 +328,250 @@ export function SyncCenterPanel({
     setView('home')
   }
 
-  // ── Home view: device info + peers + data ───────────────────────────────
-  if (view === 'home') {
-    return (
-      <div className="mx-auto max-w-2xl space-y-6 px-4 py-6 sm:px-6">
-        {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold">{t('sync.title')}</h2>
-            <p className="text-sm text-muted-foreground">
-              {serverRunning ? t('sync.serverRunning', { port: serverPort }) : t('sync.desc')}
-            </p>
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => void onRefresh()} disabled={loading} className="shrink-0 gap-1.5">
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-            {loading ? '' : t('sync.refresh')}
-          </Button>
-        </div>
+  const pairBody = (() => {
+    if (view === 'scanning') {
+      return (
+        <ScanningView
+          scanning={scanning}
+          discoveredDevices={discoveredDevices}
+          selectedDevice={selectedDevice}
+          serverPort={serverRunning ? serverPort : undefined}
+          onSelectDevice={(d) => void handleSelectDeviceAndPair(d)}
+          onRescan={startScan}
+          onCancel={handleCancel}
+        />
+      )
+    }
+    if (view === 'pairing') {
+      return (
+        <PairingView
+          selectedDeviceName={selectedDevice?.name ?? 'peer device'}
+          pairingError={pairingError}
+          onCancel={handleCancel}
+        />
+      )
+    }
+    if (view === 'confirming') {
+      return (
+        <ConfirmingView
+          selectedDevice={selectedDevice}
+          generatedPin={generatedPin}
+          pairingError={pairingError}
+          onCancel={handleCancel}
+        />
+      )
+    }
+    if (view === 'incoming' && incomingPairRequest) {
+      return (
+        <IncomingPairView
+          request={incomingPairRequest}
+          pairingBusy={pairingBusy}
+          pairingError={pairingError}
+          onAccept={() => void handleAcceptPair()}
+          onCancel={handleCancel}
+        />
+      )
+    }
+    if (view === 'connect-failed' && selectedDevice) {
+      return <ConnectFailedView device={selectedDevice} onCancel={handleCancel} onRescan={startScan} />
+    }
+    return null
+  })()
+  const pairStep: PairStep = view === 'scanning' ? 'scan' : view === 'incoming' ? 'incoming' : view === 'connect-failed' ? 'failed' : 'verify'
 
-        {/* Init device if needed */}
-        {needsInit ? (
-          <div className="flex flex-col items-center gap-4 rounded-xl border-2 border-dashed border-border py-12">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
-              <Monitor className="h-7 w-7" />
-            </div>
-            <div className="text-center">
-              <p className="font-medium">{t('sync.initDevice')}</p>
-              <p className="mt-1 text-sm text-muted-foreground">{t('sync.initDesc')}</p>
-            </div>
-            <div className="flex w-full max-w-xs items-center gap-2 px-4">
-              <input
-                type="text"
-                value={deviceName}
-                onChange={(e) => setDeviceName(e.target.value)}
-                placeholder={t('sync.deviceName')}
-                className="h-9 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/40"
-              />
-              <Button size="sm" disabled={loading} onClick={() => void onInitDevice(deviceName.trim() || undefined)}>
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : t('sync.initialize')}
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <>
-            {/* Local device card */}
-            <div className="flex items-center gap-3 rounded-xl border bg-muted/30 p-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Monitor className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{localDevice.deviceName}</p>
-                <p className="truncate font-mono text-[11px] text-muted-foreground">{localDevice.deviceId}</p>
-              </div>
-              <div className="flex items-center gap-1 text-xs text-emerald-500">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                {t('sync.online')}
-              </div>
-            </div>
-
-            {/* Scan button */}
-            <Button className="w-full gap-2" onClick={startScan} disabled={loading || scanning}>
-              {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
-              {scanning ? t('sync.scanning') : t('sync.scanDevices')}
-            </Button>
-
-            {/* Trusted peers */}
-            {trustedPeers.length > 0 && (
-              <div className="space-y-3">
-                <h3 className="flex items-center gap-2 text-sm font-medium">
-                  <ShieldCheck className="h-4 w-4 text-emerald-500" />
-                  {t('sync.trustedPeers', { n: trustedPeers.length })}
-                </h3>
-                {trustedPeers.map((peer) => (
-                  <button
-                    type="button"
-                    key={peer.peerDeviceId}
-                    className="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-muted/40"
-                    onClick={() => { setActivePeer(peer); setView('peer-detail') }}
-                  >
-                    <div className={cn('flex h-9 w-9 items-center justify-center rounded-lg', isPeerOnline(peer) ? 'bg-emerald-500/10 text-emerald-500' : 'bg-muted text-muted-foreground')}>
-                      <Monitor className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium">{peer.peerDeviceName ?? t('sync.unknown')}</p>
-                        {isPeerOnline(peer) ? (
-                          <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-500">
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                            {t('sync.online')}
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                            {t('sync.offline')}
-                          </span>
-                        )}
-                      </div>
-                      <p className="truncate text-[11px] text-muted-foreground">
-                        {peer.peerEndpoint ?? t('sync.noEndpoint')}
-                        {' · '}
-                        {new Date(peer.lastSeenAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <ArrowLeft className="h-4 w-4 rotate-180 text-muted-foreground" />
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Recent changes (collapsed) */}
-            {changes.length > 0 && (
-              <details className="rounded-xl border">
-                <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-                  {t('sync.recentChanges', { n: changes.length })}
-                </summary>
-                <div className="space-y-1 border-t px-4 py-2">
-                  {changes.slice(-8).reverse().map((c) => (
-                    <p key={c.changeId} className="truncate font-mono text-[11px] text-muted-foreground">
-                      v{c.version} · {c.objectType}/{c.objectId} · {c.summary ?? ''}
-                    </p>
-                  ))}
-                </div>
-              </details>
-            )}
-
-          </>
-        )}
+  const header = (subtitle: string, action?: ReactNode) => (
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="min-w-0">
+        <h1 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{copy.title}</h1>
+        <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">{subtitle}</p>
       </div>
-    )
-  }
-
-  // ── Scanning view ─────────────────────────────────────────────────────────
-  if (view === 'scanning') {
-    return (
-      <ScanningView
-        scanning={scanning}
-        discoveredDevices={discoveredDevices}
-        selectedDevice={selectedDevice}
-        onSelectDevice={(d) => void handleSelectDeviceAndPair(d)}
-        onRescan={startScan}
-        onCancel={handleCancel}
-      />
-    )
-  }
-
-  // ── Pairing / waiting ─────────────────────────────────────────────────────
-  if (view === 'pairing') {
-    return (
-      <PairingView
-        selectedDeviceName={selectedDevice?.name ?? 'peer device'}
-        pairingError={pairingError}
-        onCancel={handleCancel}
-      />
-    )
-  }
-
-  // ── Confirming (initiator side — shows PIN, waiting for peer to accept) ──
-  if (view === 'confirming') {
-    return (
-      <ConfirmingView
-        selectedDevice={selectedDevice}
-        generatedPin={generatedPin}
-        pairingError={pairingError}
-        onCancel={handleCancel}
-      />
-    )
-  }
-
-  // ── Incoming pair request (receiver side — shows PIN + accept/reject) ────
-  if (view === 'incoming' && incomingPairRequest) {
-    return (
-      <IncomingPairView
-        request={incomingPairRequest}
-        pairingBusy={pairingBusy}
-        pairingError={pairingError}
-        onAccept={() => void handleAcceptPair()}
-        onCancel={handleCancel}
-      />
-    )
-  }
-
-  // ── Connect failed — device blocks inbound TCP (Android) ─────────────────
-  if (view === 'connect-failed' && selectedDevice) {
-    return (
-      <ConnectFailedView
-        device={selectedDevice}
-        onCancel={handleCancel}
-      />
-    )
-  }
+      {action}
+    </div>
+  )
 
   // ── Peer detail view (push / pull / remove) ──────────────────────────────
   if (view === 'peer-detail' && activePeer) {
     const peer = trustedPeers.find((p) => p.peerDeviceId === activePeer.peerDeviceId) ?? activePeer
     const peerOnline = isPeerOnline(peer)
+    const back = () => { setActivePeer(null); setView('home') }
     return (
-      <SyncPeerDetail
-        peer={peer}
-        peerOnline={peerOnline}
-        loading={loading}
-        onBack={() => { setActivePeer(null); setView('home') }}
-        onPullFromPeer={onPullFromPeer}
-        onPushToPeer={onPushToPeer}
-        onRemoveTrustedPeer={onRemoveTrustedPeer}
-      />
+      <div className="space-y-5">
+        {header(copy.descDetail, (
+          <button type="button" onClick={back} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+            <ArrowLeft className="h-4 w-4" />
+            {t('sync.backToHome')}
+          </button>
+        ))}
+        <SyncPeerDetail
+          peer={peer}
+          peerOnline={peerOnline}
+          loading={loading}
+          onBack={back}
+          onScan={startScan}
+          onPullFromPeer={onPullFromPeer}
+          onPushToPeer={onPushToPeer}
+          onRemoveTrustedPeer={onRemoveTrustedPeer}
+          vaultName={syncVaultName}
+        />
+      </div>
     )
   }
 
-  return null
+  const visibleChanges = changes.slice(showAllChanges ? 0 : -5).reverse()
+  const syncCard = needsInit ? (
+    <section data-tour="sync-card" className="sb-card flex flex-col items-center gap-4 px-7 py-8 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[color:var(--workspace-accent-text)]">
+        <Laptop className="h-5 w-5" />
+      </div>
+      <div>
+        <h2 className="text-[16px] font-semibold text-[var(--workspace-text-strong)]">{t('sync.initDevice')}</h2>
+        <p className="mt-1 text-[12px] text-[var(--workspace-text-muted)]">{copy.initDesc}</p>
+      </div>
+      <div className="w-full max-w-sm space-y-1.5 text-left">
+        <label htmlFor="sync-device-name" className="text-[12px] font-medium text-[var(--workspace-text-strong)]">{copy.deviceName}</label>
+        <input
+          id="sync-device-name"
+          type="text"
+          value={deviceName}
+          onChange={(e) => setDeviceName(e.target.value)}
+          placeholder={t('sync.deviceName')}
+          className="h-9 w-full rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 text-[13px] text-[var(--workspace-text-strong)] outline-none focus:border-[color:var(--workspace-primary-500)]"
+        />
+        {localHostname && deviceName === localHostname && <p className="text-[11px] text-[var(--workspace-text-subtle)]">{copy.prefilled}</p>}
+        <Button className="mt-2 h-10 w-full" disabled={loading} onClick={() => void onInitDevice(deviceName.trim() || undefined)}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : t('sync.initialize')}
+        </Button>
+      </div>
+    </section>
+  ) : (
+    <section data-tour="sync-card" className="sb-card overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[color:var(--workspace-border-soft)] px-5 py-3">
+        <RefreshCw className="h-4 w-4 text-[var(--workspace-text-muted)]" />
+        <h2 className="text-[14px] font-semibold text-[var(--workspace-text-strong)]">{copy.deviceSync}</h2>
+        <span className={cn('rounded-md px-1.5 py-0.5 font-mono text-[11px]', serverRunning ? 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' : 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-subtle)]')}>
+          {serverRunning ? fill(copy.serverRunning, { port: serverPort }) : copy.serverStopped}
+        </span>
+        <div className="ml-auto flex items-center gap-1.5">
+          <Button variant="ghost" size="sm" aria-label={t('sync.refresh')} title={t('sync.refresh')} onClick={() => void onRefresh()} disabled={loading} className="h-8 w-8 p-0">
+            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+          </Button>
+          <Button size="sm" className="gap-1.5" onClick={startScan} disabled={loading || scanning}>
+            {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Radar className="h-3.5 w-3.5" />}
+            {scanning ? t('sync.scanning') : copy.scanNearby}
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 border-b border-[color:var(--workspace-border-soft)] px-5 py-3.5">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[color:var(--workspace-accent-text)]">
+          <Laptop className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[14px] font-medium text-[var(--workspace-text-strong)]">{localDevice.deviceName}</p>
+          <p className="truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{fill(copy.thisDeviceSub, { id: localDevice.deviceId })}</p>
+        </div>
+        <span className="shrink-0 rounded-md bg-[var(--workspace-accent-subtle)] px-1.5 py-0.5 text-[11px] font-medium text-[color:var(--workspace-accent-text)]">{copy.thisDevice}</span>
+      </div>
+
+      <div className="flex items-center justify-between px-5 pb-1.5 pt-3 text-[11px] text-[var(--workspace-text-subtle)]">
+        <span className="flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" />{fill(copy.trusted, { n: trustedPeers.length })}</span>
+      </div>
+      {trustedPeers.length === 0 ? (
+        <p className="border-b border-[color:var(--workspace-border-soft)] px-5 pb-4 pt-1 text-[12px] text-[var(--workspace-text-muted)]">{copy.noPeers}</p>
+      ) : trustedPeers.map((peer) => {
+        const online = isPeerOnline(peer)
+        const name = peer.peerDeviceName ?? t('sync.unknown')
+        return (
+          <button
+            type="button"
+            key={peer.peerDeviceId}
+            aria-label={fill(copy.openPeer, { name })}
+            className="flex w-full items-center gap-3 border-t border-[color:var(--workspace-border-soft)] px-5 py-3 text-left transition-colors hover:bg-[var(--workspace-surface-800)]"
+            onClick={() => { setActivePeer(peer); setView('peer-detail') }}
+          >
+            <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', online ? 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' : 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]')}>
+              <Monitor className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <p className="truncate text-[13px] font-medium text-[var(--workspace-text-strong)]">{name}</p>
+                <span className={cn('flex shrink-0 items-center gap-1 text-[11px]', online ? 'text-[color:var(--workspace-status-good-text)]' : 'text-[var(--workspace-text-subtle)]')}>
+                  <span className={cn('h-1.5 w-1.5 rounded-full', online ? 'bg-[color:var(--workspace-status-good)]' : 'bg-[var(--workspace-text-subtle)]')} />
+                  {online ? t('sync.online') : t('sync.offline')}
+                </span>
+              </div>
+              <p className="truncate text-[11px] text-[var(--workspace-text-muted)]">
+                {fill(copy.peerSub, { endpoint: peer.peerEndpoint ?? t('sync.noEndpoint'), time: new Date(peer.lastSeenAt).toLocaleDateString() })}
+              </p>
+            </div>
+            <ChevronRight className="h-4 w-4 shrink-0 text-[var(--workspace-text-subtle)]" />
+          </button>
+        )
+      })}
+
+      <div className="space-y-2 border-t border-[color:var(--workspace-border-soft)] px-5 py-4">
+        <p className="text-[11px] text-[var(--workspace-text-subtle)]">{copy.syncContent}</p>
+        <div className="flex flex-wrap gap-1.5">
+          {[copy.chipHosts, copy.chipSnippets, copy.chipVault].map((label) => (
+            <span key={label} className="inline-flex items-center gap-1 rounded-md bg-[var(--workspace-accent-subtle)] px-2 py-1 text-[11px] text-[color:var(--workspace-accent-text)]">
+              <Check className="h-3 w-3" />{label}
+            </span>
+          ))}
+          <span className="inline-flex items-center rounded-md border border-[color:var(--workspace-border-soft)] px-2 py-1 text-[11px] text-[var(--workspace-text-muted)]">{copy.chipHistory}</span>
+        </div>
+      </div>
+
+      {changes.length > 0 && (
+        <div className="border-t border-[color:var(--workspace-border-soft)] px-5 py-4">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-[11px] text-[var(--workspace-text-subtle)]">{t('sync.recentChanges', { n: changes.length })}</p>
+            {changes.length > 5 && (
+              <button type="button" aria-expanded={showAllChanges} onClick={() => setShowAllChanges((v) => !v)} className="flex items-center gap-1 text-[11px] font-medium text-[color:var(--workspace-accent-text)]">
+                {showAllChanges ? copy.showLess : copy.showAll}
+                <ArrowRight className={cn('h-3 w-3', showAllChanges && '-rotate-90')} />
+              </button>
+            )}
+          </div>
+          <ul className="space-y-1">
+            {visibleChanges.map((c) => {
+              const Icon = changeIcon(c.objectType, c.deleted)
+              return (
+                <li key={c.changeId} className="flex items-center gap-3 py-1 text-[12px]">
+                  <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-subtle)]" />
+                  <span className="min-w-0 flex-1 truncate text-[var(--workspace-text)]">
+                    {c.summary || `${c.objectType}/${c.objectId}`}
+                    {c.deleted && <span className="ml-1 text-[color:var(--workspace-status-bad-text)]">· {copy.deleted}</span>}
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] text-[var(--workspace-text-subtle)]">v{c.version} · {new Date(c.updatedAt).toLocaleString()}</span>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </section>
+  )
+
+  return (
+    <div className="space-y-5">
+      {header(needsInit ? copy.descInit : copy.desc)}
+      <div className={cn('grid items-start gap-4', backupPanel != null && 'lg:grid-cols-2')}>
+        {syncCard}
+        {backupPanel != null && <div ref={backupRef} id="sync-backup-section" className="scroll-mt-6">{backupPanel}</div>}
+      </div>
+      <PairDialog open={pairBody != null} step={pairStep} onClose={handleCancel}>
+        {pairBody}
+      </PairDialog>
+    </div>
+  )
+}
+
+function changeIcon(objectType: string, deleted: boolean) {
+  if (deleted) return Trash2
+  const type = objectType.toLowerCase()
+  if (type.includes('host')) return Server
+  if (type.includes('snippet')) return Code2
+  if (type.includes('vault') || type.includes('key')) return KeyRound
+  if (type.includes('forward')) return ArrowLeftRight
+  return Pencil
 }

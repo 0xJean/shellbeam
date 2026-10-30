@@ -16,13 +16,15 @@ describe('pc nav sidebar', () => {
     expect(onNavChange).toHaveBeenCalledWith('guide')
   })
 
-  it('offers the guide in mobile More and closes the menu after navigation', () => {
+  it('uses five fixed mobile tabs and keeps Tools active on pages opened from it', () => {
     const onNavChange = vi.fn()
-    render(<MobileBottomNav activeNav="hosts" onNavChange={onNavChange} />)
-    fireEvent.click(screen.getByRole('button', { name: 'nav.more' }))
-    fireEvent.click(screen.getByRole('button', { name: 'guide.title' }))
-    expect(onNavChange).toHaveBeenCalledWith('guide')
-    expect(screen.queryByRole('button', { name: 'guide.title' })).not.toBeInTheDocument()
+    const { rerender } = render(<MobileBottomNav activeNav="hosts" onNavChange={onNavChange} />)
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['nav.hosts', 'nav.sessions', 'nav.files', 'nav.tools', 'nav.settings'])
+    expect(screen.queryByRole('button', { name: 'nav.more' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'nav.tools' }))
+    expect(onNavChange).toHaveBeenCalledWith('tools')
+    rerender(<MobileBottomNav activeNav="port-forwarding" onNavChange={onNavChange} />)
+    expect(screen.getByRole('button', { name: 'nav.tools' })).toHaveAttribute('aria-current', 'page')
   })
   it('shows the VPS asset inventory top-level entry', () => {
     const onNavChange = vi.fn()

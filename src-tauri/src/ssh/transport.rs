@@ -4,7 +4,7 @@
 use ssh2::{Channel, Session};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -27,6 +27,8 @@ pub struct Endpoint {
 pub struct Route {
     pub target: Endpoint,
     pub jump: Option<Endpoint>,
+    /// Vault whose known hosts verify both hops; None means Personal.
+    pub vault_id: Option<String>,
 }
 
 pub struct TunnelLease {
@@ -212,10 +214,15 @@ pub fn route_for_host(
                 passphrase: None,
             })
     };
-    Ok(Route { target, jump })
+    Ok(Route {
+        target,
+        jump,
+        vault_id: Some(vault_id.to_string()),
+    })
 }
 
 pub fn legacy_route(
+    vault_id: Option<&str>,
     host: &str,
     port: u16,
     username: &str,
@@ -252,7 +259,11 @@ pub fn legacy_route(
                 .into(),
             ..target.clone()
         });
-    Route { target, jump }
+    Route {
+        target,
+        jump,
+        vault_id: vault_id.map(str::to_owned),
+    }
 }
 
 fn failure(stage: &str, operation: &str, error: impl std::fmt::Display) -> String {
@@ -326,7 +337,14 @@ fn dial(endpoint: &Endpoint, stage: &str) -> Result<TcpStream, String> {
 
 pub fn connect(app: &tauri::AppHandle, route: &Route) -> Result<Connection, String> {
     connect_with_verifier(route, &mut |session, endpoint| {
-        super::verify_host_key(session, app, &endpoint.host, endpoint.port, false)
+        super::verify_host_key(
+            session,
+            app,
+            route.vault_id.as_deref(),
+            &endpoint.host,
+            endpoint.port,
+            false,
+        )
     })
 }
 
@@ -354,11 +372,13 @@ pub fn connect_accepting_fingerprint(
     accepted: Option<&HostKeyAcceptance>,
 ) -> Result<Connection, String> {
     let mut decision_used = false;
+    let vault_id = route.vault_id.as_deref();
     connect_with_verifier(
         route,
         &mut |session, endpoint| match super::verify_host_key(
             session,
             app,
+            vault_id,
             &endpoint.host,
             endpoint.port,
             false,
@@ -371,7 +391,14 @@ pub fn connect_accepting_fingerprint(
                     });
                 if allowed {
                     decision_used = true;
-                    super::verify_host_key(session, app, &endpoint.host, endpoint.port, true)
+                    super::verify_host_key(
+                        session,
+                        app,
+                        vault_id,
+                        &endpoint.host,
+                        endpoint.port,
+                        true,
+                    )
                 } else {
                     Err(error)
                 }
@@ -439,10 +466,47 @@ pub(crate) fn bridge(session: Session, channel: Channel, socket: TcpStream, stop
 
 pub(crate) fn bridge_with_prefix(
     session: Session,
+    channel: Channel,
+    socket: TcpStream,
+    stop: Arc<AtomicBool>,
+    prefix: Vec<u8>,
+) {
+    bridge_counted(session, channel, socket, stop, prefix, None);
+}
+
+/// Per-tunnel traffic totals shared by every bridge worker of one forward.
+/// Only relaxed atomic adds happen on the copy path; readers take snapshots.
+#[derive(Debug, Default)]
+pub struct TrafficCounters {
+    /// Bytes delivered from the SSH channel to the local socket.
+    bytes_in: AtomicU64,
+    /// Bytes delivered from the local socket (plus any prefix) into the SSH channel.
+    bytes_out: AtomicU64,
+}
+impl TrafficCounters {
+    pub fn add_in(&self, bytes: usize) {
+        self.bytes_in.fetch_add(bytes as u64, Ordering::Relaxed);
+    }
+    pub fn add_out(&self, bytes: usize) {
+        self.bytes_out.fetch_add(bytes as u64, Ordering::Relaxed);
+    }
+    pub fn bytes_in(&self) -> u64 {
+        self.bytes_in.load(Ordering::Relaxed)
+    }
+    pub fn bytes_out(&self) -> u64 {
+        self.bytes_out.load(Ordering::Relaxed)
+    }
+}
+
+/// `bridge_with_prefix` that also adds the bytes actually written in each
+/// direction to `counters` when one is supplied.
+pub(crate) fn bridge_counted(
+    session: Session,
     mut channel: Channel,
     mut socket: TcpStream,
     stop: Arc<AtomicBool>,
     prefix: Vec<u8>,
+    counters: Option<Arc<TrafficCounters>>,
 ) {
     session.set_blocking(false);
     if socket.set_nonblocking(true).is_err() {
@@ -467,6 +531,9 @@ pub(crate) fn bridge_with_prefix(
         if !to_remote.is_empty() {
             match channel.write(&to_remote) {
                 Ok(n) => {
+                    if let Some(counters) = &counters {
+                        counters.add_out(n);
+                    }
                     to_remote.drain(..n);
                 }
                 Err(error) if would_block(&error) => {}
@@ -487,6 +554,9 @@ pub(crate) fn bridge_with_prefix(
         if !to_local.is_empty() {
             match socket.write(&to_local) {
                 Ok(n) => {
+                    if let Some(counters) = &counters {
+                        counters.add_in(n);
+                    }
                     to_local.drain(..n);
                 }
                 Err(error) if would_block(&error) => {}
@@ -521,6 +591,7 @@ mod tests {
             let route = Route {
                 target: target.endpoint.clone(),
                 jump: jump_endpoint,
+                vault_id: None,
             };
             let connection =
                 connect_with_verifier(&route, &mut trusted(&[&target, &jump])).unwrap();
@@ -561,6 +632,7 @@ mod tests {
         let direct = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let peers = [&target, &jump];
         let connection = connect_with_verifier(&direct, &mut trusted(&peers)).unwrap();
@@ -575,6 +647,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: Some(jump.endpoint.clone()),
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let result = super::super::commands::execute(
@@ -611,6 +684,7 @@ mod tests {
             let route = Route {
                 target: target.endpoint.clone(),
                 jump: jump_endpoint,
+                vault_id: None,
             };
             let connection =
                 connect_with_verifier(&route, &mut trusted(&[&target, &jump])).unwrap();
@@ -656,6 +730,7 @@ mod tests {
             let route = Route {
                 target: target.endpoint.clone(),
                 jump: jump_endpoint,
+                vault_id: None,
             };
             let connection =
                 connect_with_verifier(&route, &mut trusted(&[&target, &jump])).unwrap();
@@ -730,6 +805,7 @@ mod tests {
         let mut route = Route {
             target: target.endpoint.clone(),
             jump: Some(jump.endpoint.clone()),
+            vault_id: None,
         };
         route.jump.as_mut().unwrap().secret = target.endpoint.secret.clone();
         let error = connect_with_verifier(&route, &mut trusted(&peers))
@@ -765,6 +841,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let result = super::super::commands::execute(
@@ -801,6 +878,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: Some(jump.endpoint.clone()),
+            vault_id: None,
         };
         let connect = || connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let local = super::super::forward::start(
@@ -870,6 +948,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: Some(jump.endpoint.clone()),
+            vault_id: None,
         };
         let echo = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let echo_port = echo.local_addr().unwrap().port();
@@ -953,6 +1032,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let result = super::super::commands::execute(
@@ -1002,6 +1082,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let result = super::super::commands::execute(
@@ -1027,6 +1108,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&peers)).unwrap();
         let result = super::super::commands::execute(
@@ -1067,6 +1149,7 @@ mod identity_tests {
         let route = Route {
             target,
             jump: Some(jump),
+            vault_id: None,
         };
         let identity = route_identity(&route, "host-1", Some("jump-1"));
         assert_eq!(

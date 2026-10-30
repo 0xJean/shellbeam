@@ -103,3 +103,26 @@ export function filterBrowserTabs<T extends BrowserChromeTabSearchInput>(tabs: T
     return haystack.includes(normalizedQuery)
   })
 }
+
+export type BrowserRouteTone = 'local' | 'remote' | 'pending' | 'preview' | 'bad'
+
+export const browserModKey = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl+'
+
+export function getBrowserRouteTone(scope: 'local' | 'remote' | 'pending' | null | undefined, sourceKind?: 'url' | 'html' | 'markdown' | null): BrowserRouteTone {
+  if (sourceKind === 'html' || sourceKind === 'markdown') return 'preview'
+  return scope ?? 'local'
+}
+
+export function getBrowserRouteChipClass(tone: BrowserRouteTone) {
+  if (tone === 'remote') return 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]'
+  if (tone === 'pending') return 'bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]'
+  if (tone === 'bad') return 'bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]'
+  if (tone === 'preview') return 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]'
+  return 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]'
+}
+
+export function getBrowserRouteDotClass(scope: 'local' | 'remote' | 'pending' | null | undefined) {
+  if (scope === 'remote') return 'bg-[color:var(--workspace-status-info)]'
+  if (scope === 'pending') return 'bg-[color:var(--workspace-status-warn)]'
+  return 'bg-[color:var(--workspace-status-good)]'
+}

@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use tauri::{Emitter, Manager};
 
 use super::transport::{parse_sync_secret, sync_request_peer_encrypted};
+use super::vault_ref::{resolve_vault_param, VAULT_PARAM};
 use super::{SyncChangeRecord, SyncCursorRecord};
 use crate::storage::now_unix_ms;
 
@@ -149,10 +150,12 @@ pub(crate) fn handle_request(
                 .and_then(|p| p.get("includeVault"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            // Serve from the vault the requester named; never create one here.
+            let vault_id = resolve_vault_param(app, params.as_ref(), false)?;
 
             let payload = crate::data::backup::backup_create_in_memory(
                 app,
-                None,
+                Some(&vault_id),
                 inc_hosts,
                 inc_snippets,
                 false,
@@ -164,7 +167,11 @@ pub(crate) fn handle_request(
 
             if inc_vault {
                 let vault_state: tauri::State<'_, crate::vault::VaultState> = app.state();
-                match crate::vault::vault_export_decrypted_secrets(app, &vault_state, None) {
+                match crate::vault::vault_export_decrypted_secrets(
+                    app,
+                    &vault_state,
+                    Some(&vault_id),
+                ) {
                     Ok(secrets) if !secrets.is_empty() => {
                         result["decryptedSecrets"] =
                             serde_json::to_value(&secrets).map_err(|e| e.to_string())?;
@@ -180,7 +187,10 @@ pub(crate) fn handle_request(
                     ),
                 }
             } else {
-                log::info!("[sync] get_full_backup: serving backup to peer (no vault)");
+                log::info!(
+                    "[sync] get_full_backup: serving backup of vault {} to peer (no secrets)",
+                    vault_id
+                );
             }
             Ok(result)
         }
@@ -189,10 +199,18 @@ pub(crate) fn handle_request(
             let decrypted_secrets: Option<std::collections::HashMap<String, String>> = params
                 .get("decryptedSecrets")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let vault_id = resolve_vault_param(app, Some(&params), true)?;
             let backup: crate::data::backup::BackupPayload =
                 serde_json::from_value(params).map_err(|e| format!("parse backup payload: {e}"))?;
             let result = crate::data::backup::backup_restore_in_memory(
-                app, &backup, None, true, true, false, false, false,
+                app,
+                &backup,
+                Some(&vault_id),
+                true,
+                true,
+                false,
+                false,
+                false,
             )
             .map_err(|e| format!("restore backup: {e}"))?;
 
@@ -204,7 +222,7 @@ pub(crate) fn handle_request(
                         app,
                         &vault_state,
                         secrets,
-                        None,
+                        Some(&vault_id),
                     ) {
                         Ok(count) => {
                             log::info!("[sync] push_full_backup: imported {} vault secrets", count);
@@ -218,12 +236,16 @@ pub(crate) fn handle_request(
                 }
             }
             log::info!(
-                "[sync] push_full_backup: restored {} hosts, {} snippets, vault={}",
+                "[sync] push_full_backup: restored into vault {}: {} hosts, {} snippets, vault={}",
+                vault_id,
                 result.hosts_restored,
                 result.snippets_restored,
                 vault_restored
             );
-            let _ = app.emit("sync-data-changed", ());
+            let _ = app.emit(
+                "sync-data-changed",
+                serde_json::json!({ "vaultId": vault_id }),
+            );
             Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
         }
         "notify_pull" => {
@@ -263,11 +285,21 @@ pub(crate) fn handle_request(
                 .find(|p| p.peer_device_id == peer_device_id)
                 .and_then(|p| parse_sync_secret(&p.sync_secret));
 
+            // Pass the pusher's vault ref back unchanged so it serves from its
+            // own vault; resolve (and create if needed) our target after the
+            // fetch succeeds, so a failed pull leaves no empty vault behind.
+            let mut request = serde_json::json!({ "includeHosts": inc_hosts, "includeSnippets": inc_snippets, "includeVault": inc_vault });
+            if let Some(vault_ref) = params.get(VAULT_PARAM) {
+                request[VAULT_PARAM] = vault_ref.clone();
+            }
             let data = sync_request_peer_encrypted(
-                &pull_endpoint, "get_full_backup",
-                serde_json::json!({ "includeHosts": inc_hosts, "includeSnippets": inc_snippets, "includeVault": inc_vault }),
+                &pull_endpoint,
+                "get_full_backup",
+                request,
                 enc_key.as_ref(),
-            ).map_err(|e| format!("reverse-pull from {pull_endpoint}: {e}"))?;
+            )
+            .map_err(|e| format!("reverse-pull from {pull_endpoint}: {e}"))?;
+            let vault_id = resolve_vault_param(app, Some(&params), true)?;
 
             let decrypted_secrets: Option<std::collections::HashMap<String, String>> = data
                 .get("decryptedSecrets")
@@ -277,7 +309,7 @@ pub(crate) fn handle_request(
             let result = crate::data::backup::backup_restore_in_memory(
                 app,
                 &backup,
-                None,
+                Some(&vault_id),
                 inc_hosts,
                 inc_snippets,
                 false,
@@ -295,7 +327,7 @@ pub(crate) fn handle_request(
                             app,
                             &vault_state,
                             secrets,
-                            None,
+                            Some(&vault_id),
                         ) {
                             Ok(count) => {
                                 log::info!("[sync] notify_pull: imported {} vault secrets", count);
@@ -310,12 +342,16 @@ pub(crate) fn handle_request(
                 }
             }
             log::info!(
-                "[sync] notify_pull: restored {} hosts, {} snippets, vault={}",
+                "[sync] notify_pull: restored into vault {}: {} hosts, {} snippets, vault={}",
+                vault_id,
                 result.hosts_restored,
                 result.snippets_restored,
                 vault_restored
             );
-            let _ = app.emit("sync-data-changed", ());
+            let _ = app.emit(
+                "sync-data-changed",
+                serde_json::json!({ "vaultId": vault_id }),
+            );
             Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
         }
         "check_pending_push" => {

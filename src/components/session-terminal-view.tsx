@@ -1,22 +1,32 @@
+import { getInteractiveHistory, isInteractiveHistoryEvent, subscribeInteractiveHistory } from '@/lib/interactive-history'
+import { announceTerminalAiState, announceTerminalSearchState, requestTerminalSidebarTab, TERMINAL_AI_TOGGLE_EVENT, TERMINAL_SEARCH_TOGGLE_EVENT } from '@/lib/terminal-events'
 import { normalizeBrowserUrl } from '@/contexts/session-browser-state'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
+import { useVault } from '@/contexts/vault-context'
 import { useT } from '@/lib/i18n'
 import { recordInteractiveCommand } from '@/lib/interactive-history'
 import type { InteractiveOutputChunk, InteractiveSessionInfo } from '@/lib/interactive-session'
 import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { resizeInteractiveTerminal } from '@/lib/interactive-session'
-import { DEFAULT_TERMINAL_PREFS, getThemeById, type TerminalPrefs } from '@/lib/terminal-themes'
+import { DEFAULT_TERMINAL_PREFS, useResolvedTerminalTheme, type TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
-import type { WorkspaceInventoryResource } from '@/lib/workspace-inventory'
+import { createTerminalAiBridge } from '@/lib/terminal-ai-bridge'
+import type { WorkspaceInventory, WorkspaceInventoryResource } from '@/lib/workspace-inventory'
+import { collectHostFacts } from '@/lib/ai-host-facts'
+import type { HostProfile } from '@/lib/hosts'
+import { offersProbeInstall } from '@/lib/probe-install'
+import { useProbeInstallReadiness } from '@/hooks/use-probe-install-readiness'
+import { ProbeInstallDialog } from './probe-install-dialog'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { Eraser, PanelRightClose, PanelRightOpen, RefreshCw, Sparkles, WifiOff, ExternalLink, Globe } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { Eraser, PanelRightClose, PanelRightOpen, ExternalLink, Globe, Palette, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { AICommandBar } from './ai-command-bar'
 import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
 import { SuggestBar } from './suggest-bar'
+import { SessionConnectionLostOverlay } from './session-connection-lost-overlay'
 import { TerminalSearchBar } from './terminal-search-bar'
 import { HostMetadataLine } from './host-display-meta'
 import { WorkspaceModeToggle } from './workspace/workspace-mode-toggle'
@@ -45,8 +55,18 @@ interface SessionTerminalViewProps {
   onOpenLinkInBrowser?: (url: string) => void
   onOpenBrowser?: () => void
   network?: HostNetworkDisplay
-  resource?: Pick<WorkspaceInventoryResource, 'os'>
+  resource?: Pick<WorkspaceInventoryResource, 'os'> & Partial<WorkspaceInventoryResource>
+  /** The host's last asset scan, summarised for the AI assistant. */
+  inventory?: WorkspaceInventory
+  /** The saved host behind this session, used to offer the ShellBeam probe. */
+  host?: HostProfile
 }
+
+// The readiness hook needs a host; with none it stays disabled and never reads this.
+const NO_HOST = { id: '', updatedAt: 0 } as unknown as HostProfile
+
+const STYLE_TIP_KEY = 'shellbeam.terminalStyleTipSeen'
+const STYLE_TIP_SEEN_EVENT = 'shellbeam:terminal-style-tip-seen'
 
 export function SessionTerminalView({
   sessionId,
@@ -70,6 +90,8 @@ export function SessionTerminalView({
   onOpenBrowser,
   network,
   resource,
+  inventory,
+  host,
 }: SessionTerminalViewProps) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -77,7 +99,49 @@ export function SessionTerminalView({
   const fitRef = useRef<FitAddon | null>(null)
   const onSendRawRef = useRef(onSendRaw)
   const [showAI, setShowAI] = useState(false)
+  const { readiness: probeReadiness } = useProbeInstallReadiness(host ?? NO_HOST, Boolean(host?.vaultId) && showAI)
+  const probeOffered = Boolean(host && probeReadiness && offersProbeInstall(probeReadiness, inventory?.resource.os ?? resource?.os))
+  const [probeDialogOpen, setProbeDialogOpen] = useState(false)
+  const terminalTheme = useResolvedTerminalTheme(terminalPrefs?.themeId)
   const [showSearch, setShowSearch] = useState(false)
+  const [styleTip, setStyleTip] = useState(() => { try { return !localStorage.getItem(STYLE_TIP_KEY) } catch { return false } })
+  useEffect(() => {
+    const hide = () => setStyleTip(false)
+    window.addEventListener(STYLE_TIP_SEEN_EVENT, hide)
+    return () => window.removeEventListener(STYLE_TIP_SEEN_EVENT, hide)
+  }, [])
+  const dismissStyleTip = useCallback(() => {
+    try { localStorage.setItem(STYLE_TIP_KEY, '1') } catch { /* tip shows again next time */ }
+    window.dispatchEvent(new Event(STYLE_TIP_SEEN_EVENT))
+  }, [])
+  // Commands typed on this host feed the history half of the suggestion bar.
+  // Typed history is per vault: the session's own vault, else the active one.
+  const { activeVaultId } = useVault()
+  const historyVaultId = session?.vaultId ?? activeVaultId
+  const historyVaultIdRef = useRef(historyVaultId)
+  useEffect(() => { historyVaultIdRef.current = historyVaultId }, [historyVaultId])
+  const [historyEntries, setHistoryEntries] = useState<string[]>(() => getInteractiveHistory(historyVaultId, hostAddress).map((entry) => entry.command).reverse())
+  useEffect(() => {
+    const load = () => setHistoryEntries(getInteractiveHistory(historyVaultId, hostAddress).map((entry) => entry.command).reverse())
+    load()
+    return subscribeInteractiveHistory((vault, host) => { if (isInteractiveHistoryEvent(historyVaultId, hostAddress, vault, host)) load() })
+  }, [historyVaultId, hostAddress])
+  useEffect(() => {
+    const onToggle = (event: Event) => { if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setShowSearch((open) => !open) }
+    window.addEventListener(TERMINAL_SEARCH_TOGGLE_EVENT, onToggle)
+    return () => window.removeEventListener(TERMINAL_SEARCH_TOGGLE_EVENT, onToggle)
+  }, [sessionId])
+  useEffect(() => { announceTerminalSearchState(sessionId, showSearch) }, [sessionId, showSearch])
+  useEffect(() => {
+    const onToggle = (event: Event) => { if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setShowAI((open) => !open) }
+    window.addEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
+    return () => window.removeEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
+  }, [sessionId])
+  useEffect(() => { announceTerminalAiState(sessionId, showAI) }, [sessionId, showAI])
+  // The assistant works on the terminal, so asking for it from the workbench switches to the terminal.
+  useEffect(() => {
+    if (showAI && chromeOnly && workspaceMode !== 'terminal') onWorkspaceModeChange?.('terminal')
+  }, [showAI, chromeOnly, workspaceMode, onWorkspaceModeChange])
   const [currentInputLine, setCurrentInputLine] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [detectedLinks, setDetectedLinks] = useState<string[]>([])
@@ -97,12 +161,12 @@ export function SessionTerminalView({
   const prefsRef = useRef(terminalPrefs)
   prefsRef.current = terminalPrefs
 
-  const getTerminalContext = useCallback(() => {
+  const getTerminalContext = useCallback((rows = 20) => {
     const term = termRef.current
     if (!term) return ''
     const buf = term.buffer.active
     const totalRows = buf.length
-    const startRow = Math.max(0, totalRows - 20)
+    const startRow = Math.max(0, totalRows - rows)
     const lines: string[] = []
     for (let i = startRow; i < totalRows; i++) {
       const line = buf.getLine(i)
@@ -123,6 +187,14 @@ export function SessionTerminalView({
   const handleExecuteCommand = useCallback((cmd: string) => {
     onSendRawRef.current(cmd)
   }, [])
+
+  const hostFacts = useMemo(() => collectHostFacts({
+    name: hostName, user: session?.username, address: hostAddress,
+    region: network?.countryName ?? network?.resolvedLocationLabel, resource, inventory,
+  }), [hostName, session?.username, hostAddress, network?.countryName, network?.resolvedLocationLabel, resource, inventory])
+
+  // The AI panel runs commands here and reads back what the terminal printed after them.
+  const aiBridge = useMemo(() => createTerminalAiBridge(() => termRef.current, (data) => onSendRawRef.current(data), getTerminalContext), [getTerminalContext])
 
   const scheduleInputUiSync = useCallback(() => {
     if (uiSyncFrameRef.current !== null) return
@@ -163,10 +235,9 @@ export function SessionTerminalView({
     if (chromeOnly) return
     if (!containerRef.current) return
 
-    const activeTheme = getThemeById(terminalPrefs?.themeId ?? DEFAULT_TERMINAL_PREFS.themeId)
     const term = new Terminal({
-      cursorBlink: true,
-      cursorStyle: 'block',
+      cursorBlink: terminalPrefs?.cursorBlink ?? DEFAULT_TERMINAL_PREFS.cursorBlink,
+      cursorStyle: terminalPrefs?.cursorStyle ?? DEFAULT_TERMINAL_PREFS.cursorStyle,
       fontSize: terminalPrefs?.fontSize ?? DEFAULT_TERMINAL_PREFS.fontSize,
       fontFamily: terminalPrefs?.fontFamily ?? DEFAULT_TERMINAL_PREFS.fontFamily,
       fontWeight: 400,
@@ -178,7 +249,7 @@ export function SessionTerminalView({
       fastScrollSensitivity: 10,
       smoothScrollDuration: 0,
       rescaleOverlappingGlyphs: true,
-      theme: activeTheme.theme,
+      theme: terminalTheme,
     })
 
     const fit = new FitAddon()
@@ -242,7 +313,7 @@ export function SessionTerminalView({
       onSendRawRef.current(data)
       if (data === '\r' || data === '\n') {
         if (inputLineRef.current.trim()) {
-          recordInteractiveCommand(hostAddress, inputLineRef.current)
+          recordInteractiveCommand(historyVaultIdRef.current, hostAddress, inputLineRef.current)
         }
         inputLineRef.current = ''
         showSuggestionsRef.current = false
@@ -302,12 +373,13 @@ export function SessionTerminalView({
     if (chromeOnly) return
     const term = termRef.current
     if (!term || !terminalPrefs) return
-    const themeDef = getThemeById(terminalPrefs.themeId ?? DEFAULT_TERMINAL_PREFS.themeId)
-    term.options.theme = themeDef.theme
+    term.options.theme = terminalTheme
     term.options.fontSize = terminalPrefs.fontSize ?? DEFAULT_TERMINAL_PREFS.fontSize
     term.options.fontFamily = terminalPrefs.fontFamily ?? DEFAULT_TERMINAL_PREFS.fontFamily
+    term.options.cursorStyle = terminalPrefs.cursorStyle ?? DEFAULT_TERMINAL_PREFS.cursorStyle
+    term.options.cursorBlink = terminalPrefs.cursorBlink ?? DEFAULT_TERMINAL_PREFS.cursorBlink
     try { fitRef.current?.fit() } catch { /* teardown */ }
-  }, [terminalPrefs?.themeId, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, chromeOnly])
+  }, [terminalTheme, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, terminalPrefs?.cursorStyle, terminalPrefs?.cursorBlink, chromeOnly])
 
   const prevVisibleRef = useRef(visible)
   useEffect(() => {
@@ -330,9 +402,8 @@ export function SessionTerminalView({
     termRef.current?.focus()
   }, [])
 
-  const activeThemeDef = getThemeById(terminalPrefs?.themeId ?? DEFAULT_TERMINAL_PREFS.themeId)
-  const bg = activeThemeDef.theme.background ?? '#000000'
-  const fg = activeThemeDef.theme.foreground ?? '#00ff41'
+  const bg = terminalTheme.background ?? '#000000'
+  const fg = terminalTheme.foreground ?? '#00ff41'
   const showBrowserShortcuts = !onWorkspaceModeChange
 
   return (
@@ -346,7 +417,7 @@ export function SessionTerminalView({
       }}
     >
       <div
-        className="flex h-9 shrink-0 items-center gap-2 overflow-hidden px-4"
+        className="hidden h-9 shrink-0 items-center gap-2 overflow-hidden px-4 md:flex"
         style={{ borderBottom: `1px solid ${fg}15`, background: bg }}
       >
         <span className={cn(
@@ -436,22 +507,6 @@ export function SessionTerminalView({
               <Eraser className="h-4 w-4" />
             </button>
           )}
-          {isConnected && (
-            <button
-              type="button"
-              onClick={() => setShowAI((v) => !v)}
-              className={cn(
-                'flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold tracking-wide transition-all md:px-3',
-                showAI
-                  ? 'bg-primary/25 text-primary shadow-[0_0_12px_var(--workspace-accent-muted)]'
-                  : 'border border-primary/30 bg-primary/10 text-primary shadow-[0_0_6px_var(--workspace-accent-soft)] hover:bg-primary/20 hover:shadow-[0_0_10px_var(--workspace-accent-muted)]',
-              )}
-              title={`${t('terminal.aiGenerator')} (⌘+I)`}
-            >
-              <Sparkles className={cn('h-3.5 w-3.5', !showAI && 'animate-pulse')} />
-              <span className="hidden md:inline">AI</span>
-            </button>
-          )}
           {onToggleRightSidebar && (
             <button
               type="button"
@@ -478,17 +533,10 @@ export function SessionTerminalView({
           onClose={() => { setShowSearch(false); termRef.current?.focus() }}
         />
       )}
-      {isConnected && (
-        <AICommandBar
-          key={sessionId}
-          visible={showAI && visible}
-          onExecuteCommand={handleExecuteCommand}
-          getTerminalContext={getTerminalContext}
-          onClose={() => setShowAI(false)}
-        />
-      )}
       {!chromeOnly && (
         <>
+          <div className="flex min-h-0 flex-1">
+          <div className="relative flex min-w-0 flex-1 flex-col">
           <div
             ref={containerRef}
             className="terminal-surface min-h-0 flex-1"
@@ -498,7 +546,7 @@ export function SessionTerminalView({
             key={sessionId}
             visible={showSuggestions && isConnected && visible}
             inputLine={currentInputLine}
-            historyEntries={[]}
+            historyEntries={historyEntries}
             terminalContext={showSuggestions ? getTerminalContext() : ''}
             onAccept={(cmd) => {
               const remaining = cmd.slice(currentInputLine.length)
@@ -512,30 +560,48 @@ export function SessionTerminalView({
               scheduleInputUiSync()
             }}
           />
-          {isDisconnected && !isReconnecting && onReconnect && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: `${bg}cc` }}>
-              <div className="flex flex-col items-center gap-4 rounded-xl border border-red-500/20 bg-black/60 px-8 py-6 shadow-lg backdrop-blur-sm">
-                <WifiOff className="h-8 w-8 text-red-400" />
-                <p className="text-sm font-medium text-red-300">{t('terminal.connectionLost')}</p>
-                <button
-                  type="button"
-                  onClick={onReconnect}
-                  className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-[var(--workspace-primary-foreground)] transition-colors hover:bg-primary/80"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  {t('terminal.reconnect')}
+          {styleTip && isConnected && visible && (
+            <div role="status" data-testid="terminal-style-tip"
+              className="absolute right-3 top-3 z-20 hidden w-72 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-3 shadow-[var(--workspace-shadow-overlay)] md:block">
+              <div className="flex items-start gap-2.5">
+                <Palette className="mt-0.5 h-4 w-4 shrink-0 text-[var(--workspace-accent-text)]" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold text-[var(--workspace-text-strong)]">{t('terminal.styleTip.title')}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--workspace-text-muted)]">{t('terminal.styleTip.body')}</p>
+                  <div className="mt-2.5 flex gap-2">
+                    <button type="button" onClick={() => { requestTerminalSidebarTab('appearance'); dismissStyleTip() }}
+                      className="h-7 rounded-md bg-[var(--workspace-primary-500)] px-2.5 text-xs font-medium text-white hover:opacity-90">{t('terminal.styleTip.action')}</button>
+                    <button type="button" onClick={dismissStyleTip}
+                      className="h-7 rounded-md px-2.5 text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]">{t('terminal.styleTip.dismiss')}</button>
+                  </div>
+                </div>
+                <button type="button" onClick={dismissStyleTip} aria-label={t('terminal.styleTip.dismiss')}
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-subtle)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
             </div>
           )}
-          {isReconnecting && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: `${bg}99` }}>
-              <div className="flex flex-col items-center gap-3 rounded-xl border border-amber-500/20 bg-black/60 px-8 py-6 shadow-lg backdrop-blur-sm">
-                <RefreshCw className="h-7 w-7 animate-spin text-amber-400" />
-                <p className="text-sm font-medium text-amber-300">{t('terminal.reconnecting')}</p>
-              </div>
-            </div>
+          <SessionConnectionLostOverlay sessionId={sessionId} hostName={hostName || hostAddress} backdrop={bg} isDisconnected={isDisconnected} isReconnecting={isReconnecting} onReconnect={onReconnect} />
+          </div>
+          {isConnected && (
+            <AICommandBar
+              key={sessionId}
+              contextLabel={hostName || hostAddress}
+              visible={showAI && visible}
+              bridge={aiBridge}
+              memoryKey={`${historyVaultId ?? 'none'}:${session?.username ?? ''}@${hostAddress}`}
+              hostFacts={hostFacts}
+              inventory={inventory}
+              probe={probeOffered ? { onInstall: () => setProbeDialogOpen(true) } : undefined}
+              onExecuteCommand={handleExecuteCommand}
+              getTerminalContext={getTerminalContext}
+              onClose={() => { setShowAI(false); termRef.current?.focus() }}
+            />
           )}
+          {host && probeDialogOpen && <ProbeInstallDialog host={host} open onOpenChange={setProbeDialogOpen} />}
+          </div>
+
           {isConnected && (
             <MobileTerminalToolbar onSend={onSendRaw} />
           )}

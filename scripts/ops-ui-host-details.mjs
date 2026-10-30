@@ -64,9 +64,16 @@ export async function ensureOpsUiHostDetails(driver, scope) {
     check(await driver.isDisplayed(current.toggle), 'toggle_not_visible')
     await driver.click(current.selector)
   }
-  return driver.until(async () => {
-    const latest = await readSurface(driver, scope)
-    check(latest && !latest.disclosed, 'surface_changed')
-    return latest.expanded && await driver.isDisplayed(latest.region)
-  }, { timeoutMs: 10_000 })
+  // A host refresh can replace the row's data and collapse it again. Report
+  // that as not yet visible, so a caller's bounded wait can open it once more.
+  try {
+    return await driver.until(async () => {
+      const latest = await readSurface(driver, scope)
+      check(latest && !latest.disclosed, 'surface_changed')
+      return latest.expanded && await driver.isDisplayed(latest.region)
+    }, { timeoutMs: 10_000 })
+  } catch (error) {
+    if (error?.code === 'timeout') return false
+    throw error
+  }
 }

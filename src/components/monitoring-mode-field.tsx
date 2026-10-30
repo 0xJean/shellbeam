@@ -30,7 +30,7 @@ export function MonitoringModeField({ value, onChange, disabled = false, scopeKe
     <legend className="mb-2 text-sm font-medium">{c.title}</legend>
     <div className="grid gap-2 sm:grid-cols-2">
       {(['ssh', 'server'] as const).map(mode => <label key={mode} className={cn('flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border p-3', value === mode ? 'border-primary bg-primary/5' : 'border-border', (disabled || busy) && 'cursor-default opacity-60')}>
-        <input data-testid={`monitoring-mode-${mode}`} className="mt-0.5 accent-[var(--primary)]" type="radio" name={name} value={mode} checked={value === mode} onChange={() => void select(mode)} aria-label={c[mode]} />
+        <input data-testid={`monitoring-mode-${mode}`} className="mt-0.5 accent-[hsl(var(--primary))]" type="radio" name={name} value={mode} checked={value === mode} onChange={() => void select(mode)} aria-label={c[mode]} />
         <span className="min-w-0"><span className="block text-sm font-medium">{c[mode]}</span><span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{mode === 'ssh' ? c.sshHint : c.serverHint}</span></span>
       </label>)}
     </div>

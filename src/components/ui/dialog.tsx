@@ -23,6 +23,8 @@ export function Dialog({ open, onOpenChange, children, className, labelledBy, de
       } else {
         el.setAttribute('open', '')
       }
+      // showModal() focuses the first control; a dialog can name a safer default (e.g. Cancel).
+      el.querySelector<HTMLElement>('[data-autofocus]')?.focus()
     } else {
       if (typeof el.close === 'function') {
         el.close()

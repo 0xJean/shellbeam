@@ -7,6 +7,7 @@ import {
   getServerMonitorStates,
 } from './server-monitor-state'
 import { isServerMonitorVaultUnavailableError } from './server-monitor-scan'
+import { VaultUnavailableError } from './vault'
 
 const host: HostProfile = {
   id: 'host-1',
@@ -56,8 +57,8 @@ describe('server monitor state', () => {
   })
 
   it('recognizes locked and uninitialized vault errors as unavailable credentials', () => {
-    expect(isServerMonitorVaultUnavailableError(new Error('Vault 已锁定。'))).toBe(true)
-    expect(isServerMonitorVaultUnavailableError(new Error('Vault 尚未初始化。'))).toBe(true)
+    expect(isServerMonitorVaultUnavailableError(new VaultUnavailableError('locked'))).toBe(true)
+    expect(isServerMonitorVaultUnavailableError(new VaultUnavailableError('uninitialized'))).toBe(true)
     expect(isServerMonitorVaultUnavailableError(new Error('SSH connection timed out'))).toBe(false)
   })
 })

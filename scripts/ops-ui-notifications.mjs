@@ -423,6 +423,7 @@ export async function openOpsUiNotificationSettings(driver, { english = false } 
   }
   await driver.waitFor(monitoring)
   await driver.click(monitoring)
+  await driver.click('[data-testid="monitor-tab-local"]')
   await driver.waitFor(SETTINGS)
 }
 

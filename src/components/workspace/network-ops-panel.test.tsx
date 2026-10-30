@@ -13,7 +13,7 @@ describe('Network ops panel', () => {
     const onOpenTerminal = vi.fn(); const onOpenServices = vi.fn(); const onOpenLogs = vi.fn()
     render(<NetworkOpsPanel host={host} vaultId="team" resolveAuthSecret={async () => 'secret'} onOpenTerminal={onOpenTerminal} onOpenServices={onOpenServices} onOpenLogs={onOpenLogs} />)
     await screen.findByText('nginx')
-    expect(screen.getByText(/Transport: proxy-jump/)).toBeInTheDocument()
+    expect(screen.getByTitle('Transport: proxy-jump')).toHaveTextContent('ProxyJump')
     expect(screen.getByText('default via 10.0.0.254 dev eth0')).toBeInTheDocument()
     expect(screen.getByTestId('network-health-checks')).toHaveAttribute('data-vault', 'team')
     fireEvent.click(screen.getByRole('button', { name: 'Inspect port 443' }))

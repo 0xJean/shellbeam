@@ -1352,6 +1352,7 @@ fn verified_browser_connection(
         crate::ssh::transport::resolve_host_route(app, vault_id, host_id)?
     } else {
         crate::ssh::transport::legacy_route(
+            vault_id,
             host,
             port,
             username,

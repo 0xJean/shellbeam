@@ -1,17 +1,17 @@
 import { useEffect, useState, useCallback } from 'react'
 import { listCommandHistory, type HistoryEntry, type HistoryFilter } from '@/lib/history'
 
-export function useCommandHistory(filter?: HistoryFilter) {
+export function useCommandHistory(vaultId: string | undefined, filter?: HistoryFilter) {
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(() => {
     setLoading(true)
-    listCommandHistory(filter)
+    listCommandHistory(vaultId, filter)
       .then((res) => setEntries(res.reverse()))
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [filter?.host, filter?.status])
+  }, [vaultId, filter?.host, filter?.status])
 
   useEffect(() => { refresh() }, [refresh])
 

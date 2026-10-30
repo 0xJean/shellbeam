@@ -6,6 +6,7 @@ import { isCurrentKomariAlert, loadCurrentKomariSource, type CurrentKomariSource
 import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
 import type { HostIncident } from './host-alerts-center'
 import { useT } from '@/lib/i18n'
+import { monitoringAlertsCopy } from '@/lib/locales/monitoring-alerts'
 import { loadNotificationPolicy } from '@/lib/notification-policy'
 import type { NotificationDispatchState } from '@/lib/notification-dispatch'
 import {
@@ -314,7 +315,7 @@ function VaultAlertsDashboard({ activeVaultId, hosts = EMPTY_HOSTS, onOpenHost, 
   if (headless || (!error && !state?.alerts.length)) return null
   return (
     <details className="mb-4 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]">
-      <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-[var(--workspace-text-strong)]">{locale === 'zh-CN' ? '告警' : 'Alerts'} · {state?.summary.open ?? 0} {locale === 'zh-CN' ? '未关闭' : 'open'}</summary>
+      <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-[var(--workspace-text-strong)]">{monitoringAlertsCopy[locale].alerts} · {state?.summary.open ?? 0} {monitoringAlertsCopy[locale].open}</summary>
       {notificationSummary && <NotificationDeliverySummary summary={notificationSummary} state={notificationState} compact className="mb-3" />}
       <KomariAlertPanel
         state={state}

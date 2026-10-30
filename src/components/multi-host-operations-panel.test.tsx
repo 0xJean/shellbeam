@@ -65,3 +65,18 @@ describe('MultiHostOperationsPanel', () => {
     expect(await screen.findByTestId('multi-host-operation-result')).toBeInTheDocument()
   })
 })
+
+describe('retrying unfinished hosts', () => {
+  it('re-runs only failed or cancelled hosts, never unknown outcomes', async () => {
+    const four = [...hosts, { ...hosts[0], id: 'h4', name: 'edge-4', address: '10.0.0.4' }]
+    const onRunOperation = vi.fn()
+      .mockResolvedValueOnce({ operation: 'health-check', status: 'partial', results: [{ hostId: 'h1', status: 'completed' }, { hostId: 'h2', status: 'failed' }, { hostId: 'h3', status: 'unknown' }, { hostId: 'h4', status: 'cancelled' }] })
+      .mockResolvedValueOnce({ operation: 'health-check', status: 'completed', results: [{ hostId: 'h2', status: 'completed' }, { hostId: 'h4', status: 'completed' }] })
+    render(<MultiHostOperationsPanel hosts={four} onRunOperation={onRunOperation} initialSelectedHostIds={['h1', 'h2', 'h3', 'h4']} selectionFromList />)
+    fireEvent.click(screen.getByRole('button', { name: /Run operation/ }))
+    fireEvent.click(await screen.findByTestId('multi-host-retry'))
+    await waitFor(() => expect(onRunOperation).toHaveBeenCalledTimes(2))
+    expect(onRunOperation.mock.calls[1][0].hostIds).toEqual(['h2', 'h4'])
+    await waitFor(() => expect(screen.queryByTestId('multi-host-retry')).not.toBeInTheDocument())
+  })
+})

@@ -8,15 +8,12 @@ import { getKomariMappingState } from '@/lib/komari-persistence'
 import { vaultGetSecret } from '@/lib/vault'
 import { HOST_METADATA_CHANGED, listHostMetadata, metadataAction, metadataSession, notifyHostMetadataChanged, readRemoteHostMetadata, type HostMetadata, type HostMetadataBinding } from '@/lib/host-metadata-sync'
 import { Button } from './ui/button'
+import { hostMetadataSyncCopy } from '@/lib/locales/host-metadata-sync'
 
 type Candidate = { integration: KomariIntegration; nodeId: string; revision: number }
-const labels = {
-  'zh-CN': { title: '主机资料同步', fields: '名称、分组和标签在已关联的监控服务之间双向同步；SSH 地址、凭据和跳板配置保持原有存储。', enable: '启用资料同步', disable: '停止资料同步', dismiss: '保留记录并忽略', retry: '重试', resolve: '保存冲突处理', local: '我的修改', remote: '服务上的值', name: '名称', group: '分组', tags: '标签', synced: '已同步', pending: '同步中', applying: '正在写入并验证', conflict: '需要解决冲突', retryState: '等待重试', failed: '需要处理', disabled: '同步已停止', error: '未完成操作。请刷新后重试；原有资料与凭据仍保留。', warning: '此服务不支持版本条件写入；并发编辑采用读前检查与写后核验，检测到的冲突将在这里处理。', identity: '服务或节点身份变化，请核对关联后重新启用。', stale: '资料已经变化，请重新打开编辑页面后保存。' },
-  'en-US': { title: 'Host profile sync', fields: 'Sync name, group and tags with linked monitoring services. SSH addresses, credentials and jump settings keep their existing storage.', enable: 'Enable profile sync', disable: 'Stop profile sync', dismiss: 'Dismiss and keep history', retry: 'Retry', resolve: 'Save resolution', local: 'My changes', remote: 'Service value', name: 'Name', group: 'Group', tags: 'Tags', synced: 'Synced', pending: 'Syncing', applying: 'Writing and verifying', conflict: 'Resolve conflicts', retryState: 'Waiting to retry', failed: 'Needs attention', disabled: 'Sync stopped', error: 'The operation did not complete. Refresh and retry; existing profiles and credentials are retained.', warning: 'This service has no conditional writes. Concurrent edits use preflight checks and readback verification; detected conflicts are handled here.', identity: 'Service or node identity changed. Review the link before enabling again.', stale: 'This profile changed. Reopen the editor before saving.' },
-}
 function ConflictChoices({ row, zh, busy, apply }: { row: HostMetadataBinding; zh: boolean; busy: boolean; apply: (choices: Partial<Record<keyof HostMetadata, 'local' | 'remote'>>) => void }) {
   const [choices, setChoices] = useState<Partial<Record<keyof HostMetadata, 'local' | 'remote'>>>({})
-  const copy = labels[zh ? 'zh-CN' : 'en-US']
+  const copy = hostMetadataSyncCopy[zh ? 'zh-CN' : 'en']
   const value = (data: HostMetadata, key: keyof HostMetadata) => Array.isArray(data[key]) ? data[key].join(', ') : data[key]
   return <div className="space-y-2">
     {row.conflicts.map(field => <fieldset key={field} className="rounded border p-2 text-xs">
@@ -36,7 +33,7 @@ function ScopedHostMetadataSyncPanel({ host, unlocked }: { host: HostProfile; un
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const { locale } = useT()
-  const copy = labels[locale === 'zh-CN' ? 'zh-CN' : 'en-US']
+  const copy = hostMetadataSyncCopy[locale]
   const [rows, setRows] = useState<HostMetadataBinding[]>([])
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [busy, setBusy] = useState(false)
@@ -98,7 +95,7 @@ function ScopedHostMetadataSyncPanel({ host, unlocked }: { host: HostProfile; un
         {['retry', 'failed'].includes(row.status) && row.errorCode !== 'identity-changed' && <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(async (valid, session) => { if (valid()) await metadataAction(row, 'retry', session) })}>{copy.retry}</Button>}
         {(row.status !== 'disabled' || row.errorCode === 'scope-changed') && <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(async (valid, session) => { if (valid()) await metadataAction(row, 'disable', session) })}>{row.status === 'disabled' ? copy.dismiss : copy.disable}</Button>}
       </div>
-      <details><summary className="cursor-pointer text-muted-foreground">{locale === 'zh-CN' ? '同步详情与任务' : 'Sync details and task'}</summary><p className="mt-2">{copy.warning}</p><p className="break-all font-mono">{row.jobId}</p></details>
+      <details><summary className="cursor-pointer text-muted-foreground">{copy.syncDetails}</summary><p className="mt-2">{copy.warning}</p><p className="break-all font-mono">{row.jobId}</p></details>
     </div>)}
   </section>
 }
@@ -111,7 +108,7 @@ export function HostMetadataSyncNotice(props: NoticeProps) {
 }
 function ScopedMetadataSyncNotice({ vaultId, unlocked, hosts, onEdit }: NoticeProps) {
   const { locale } = useT()
-  const copy = labels[locale === 'zh-CN' ? 'zh-CN' : 'en-US']
+  const copy = hostMetadataSyncCopy[locale]
   const [state, setState] = useState<HostMetadataBinding[]>([])
   useEffect(() => {
     if (!vaultId || !unlocked || !('__TAURI_INTERNALS__' in window)) return

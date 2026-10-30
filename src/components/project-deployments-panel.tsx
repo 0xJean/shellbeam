@@ -27,18 +27,19 @@ import {
   Bot,
   CheckCircle2,
   CircleDot,
-  Cpu,
+  ShieldCheck,
   Database,
   FolderGit2,
   GitBranch,
-  HardDrive,
   Loader2,
-  MemoryStick,
   RefreshCw,
   Search,
   ServerCog,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace/workspace-empty-state'
+import { AgentDeploymentsView } from './agent-deployments-view'
+import { agentDeploymentsCopy } from '@/lib/locales/agent-deployments'
+import { fill } from '@/lib/locales/probe-install'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { WorkspaceResourceOverviewHeader } from './workspace/workspace-resource-overview-header'
 import { WorkspaceServerList } from './workspace/workspace-server-list'
@@ -140,10 +141,36 @@ function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'de
 }
 
 function StatusBadge({ status, t }: { status: DeploymentViewStatus; t: TFunction }) {
-  if (status === 'running') return <Badge tone="good">{t('workspace.deployments.statusLabelRunning')}</Badge>
-  if (status === 'stale') return <Badge tone="warn">{t('workspace.deployments.statusLabelStale')}</Badge>
-  if (status === 'inaccessible') return <Badge tone="bad">{t('workspace.deployments.statusLabelInaccessible')}</Badge>
-  return <Badge tone="info">{t('workspace.deployments.statusLabelDetected')}</Badge>
+  const [label, tone] = status === 'running' ? [t('workspace.deployments.statusLabelRunning'), 'good']
+    : status === 'stale' ? [t('workspace.deployments.statusLabelStale'), 'warn']
+      : status === 'inaccessible' ? [t('workspace.deployments.statusLabelInaccessible'), 'bad']
+        : [t('workspace.deployments.statusLabelDetected'), 'idle']
+  return <span className={cn('inline-flex items-center gap-1.5 text-xs font-medium', tone === 'good' ? 'text-[color:var(--workspace-status-good-text)]' : tone === 'warn' ? 'text-[color:var(--workspace-status-warn-text)]' : tone === 'bad' ? 'text-[color:var(--workspace-status-bad-text)]' : 'text-[var(--workspace-text-muted)]')}>
+    <span className={cn('h-1.5 w-1.5 rounded-full', tone === 'good' ? 'bg-[var(--workspace-status-good)]' : tone === 'warn' ? 'bg-[var(--workspace-status-warn)]' : tone === 'bad' ? 'bg-[var(--workspace-status-bad)]' : 'bg-[var(--workspace-text-subtle)]')} />{label}
+  </span>
+}
+
+/** v3 deployments KPI strip: registrations, 24h verification, attention, discovery coverage. */
+function DeploymentKpis({ deployments, rows, scanned, total }: { deployments: McpDeploymentRecord[]; rows: ProjectDeploymentRow[]; scanned: number; total: number }) {
+  const { locale } = useT()
+  const c = agentDeploymentsCopy[locale]
+  const agents = new Set(deployments.map((deployment) => deployment.agentName || deployment.clientId)).size
+  const [now] = useState(() => Date.now())
+  const verified = deployments.filter((deployment) => getAgentDeploymentVerification(deployment, now) === 'verified').length
+  const failed = deployments.filter((deployment) => deployment.status === 'failed').length
+  const stale = deployments.filter((deployment) => getAgentDeploymentVerification(deployment, now) === 'stale').length
+  const tiles: Array<[ReactNode, string, ReactNode, ReactNode, boolean]> = [
+    [<Bot key="i" />, c.kpiRegistered, deployments.length, fill(c.kpiFromAgents, { count: agents }), false],
+    [<ShieldCheck key="i" />, c.kpiVerified, verified, `/ ${deployments.length}`, false],
+    [<AlertTriangle key="i" />, c.kpiAttention, failed + stale, fill(c.kpiAttentionSub, { failed, stale }), failed + stale > 0],
+    [<Search key="i" />, c.kpiDiscovered, rows.length, fill(c.kpiScanned, { scanned, total }), false],
+  ]
+  return <div data-testid="deployment-kpis" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    {tiles.map(([icon, label, value, sub, warn]) => <div key={label} className="sb-card px-4 py-3">
+      <div className="flex items-center gap-1.5 text-xs text-[var(--workspace-text-muted)] [&_svg]:h-3.5 [&_svg]:w-3.5">{icon}{label}</div>
+      <div className="mt-1 flex items-baseline gap-2"><b className={cn('text-xl font-bold', warn ? 'text-[color:var(--workspace-status-warn-text)]' : 'text-[var(--workspace-text-strong)]')}>{value}</b><span className="truncate text-xs text-[var(--workspace-text-muted)]">{sub}</span></div>
+    </div>)}
+  </div>
 }
 
 function HostStatusIcon({ state }: { state?: HostInventoryState }) {
@@ -273,6 +300,10 @@ export function ProjectDeploymentsPanel({
   const { t } = useT()
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | DeploymentViewStatus>('all')
+  // Agent-registered deployments carry the real directory and details, so they lead when present.
+  const [view, setView] = useState<'agent' | 'scan'>(() => agentDeployments.length > 0 ? 'agent' : 'scan')
+  const { locale } = useT()
+  const agentCopy = agentDeploymentsCopy[locale]
   const [selectedKey, setSelectedKey] = useState(() => {
     const selectedHost = selectedHostId ? hosts.find((host) => host.id === selectedHostId) : null
     return selectedHost ? hostKey(selectedHost) : hideHostList && hosts[0] ? hostKey(hosts[0]) : 'all'
@@ -585,20 +616,24 @@ export function ProjectDeploymentsPanel({
           />
         )}
 
+        <div className="flex min-w-0 flex-col gap-4">
+        <DeploymentKpis deployments={agentDeployments} rows={deploymentRows} scanned={scannedHostCount} total={hosts.length} />
+        <div role="radiogroup" aria-label={agentCopy.viewLabel} className="inline-flex w-fit items-center gap-0.5 rounded-lg bg-[var(--workspace-surface-800)] p-0.5">
+          {([['agent', Bot, t('workspace.agentDeployments.title'), agentDeployments.length], ['scan', Search, agentCopy.scanView, deploymentRows.length]] as const).map(([key, Icon, label, count]) => (
+            <button key={key} type="button" role="radio" aria-checked={view === key} data-testid={`deployments-view-${key}`} onClick={() => setView(key)}
+              className={cn('inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors', view === key ? 'bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-sm ring-1 ring-[color:var(--workspace-border-soft)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
+              <Icon className="h-3.5 w-3.5" />{label}<span className="font-mono text-[10px] text-[var(--workspace-text-subtle)]">{count}</span>
+            </button>
+          ))}
+        </div>
+        {view === 'scan' && <>
         <section className="min-h-0 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]">
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-panel)] px-4 py-3">
-            <div className="flex min-w-0 items-start gap-2">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
-                <Search className="h-4 w-4" />
-              </span>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{t('workspace.assetDiscovery.title')}</div>
-                <div className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{t('workspace.assetDiscovery.description')}</div>
-              </div>
-            </div>
-            <Badge tone={filteredRows.length > 0 ? 'info' : 'default'}>{filteredRows.length}</Badge>
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-[color:var(--workspace-border-soft)] px-4 py-3">
+            <span className="text-sm font-semibold text-[var(--workspace-text-strong)]">{t('workspace.assetDiscovery.title')}</span>
+            <span className="text-xs text-[var(--workspace-text-muted)]">{t('workspace.assetDiscovery.description')}</span>
+            <span className="ml-auto font-mono text-[11px] text-[var(--workspace-text-subtle)]">{filteredRows.length}</span>
           </div>
-          <div className="grid grid-cols-[minmax(14rem,1.15fr)_minmax(10rem,0.8fr)_8rem_9rem] gap-3 border-b border-[color:var(--workspace-border-soft)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)]">
+          <div className="grid grid-cols-[minmax(14rem,1.4fr)_minmax(12rem,1fr)_7rem_9rem] gap-3 border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)]/50 px-4 py-2 text-xs font-medium text-[var(--workspace-text-subtle)]">
             <span>{t('workspace.deployments.projectColumn')}</span>
             <span>{t('workspace.deployments.serverColumn')}</span>
             <span>{t('workspace.deployments.statusColumn')}</span>
@@ -612,15 +647,15 @@ export function ProjectDeploymentsPanel({
                 <div
                   key={row.id}
                   className={cn(
-                    'grid grid-cols-[minmax(14rem,1.15fr)_minmax(10rem,0.8fr)_8rem_9rem] gap-3 border-b border-[color:var(--workspace-border-soft)] px-4 py-3 last:border-b-0',
+                    'grid grid-cols-[minmax(14rem,1.4fr)_minmax(12rem,1fr)_7rem_9rem] gap-3 border-b border-[color:var(--workspace-border-soft)] px-4 py-3 last:border-b-0',
                     rowHostState?.status === 'error' && 'bg-[var(--workspace-status-bad-bg)]',
                   )}
                 >
                 <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <FolderGit2 className="h-4 w-4 shrink-0 text-[color:var(--workspace-primary-300)]" />
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                     <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{row.project.name || row.project.kind}</div>
                     <Badge>{row.project.kind}</Badge>
+                    {agentDeployments.some((deployment) => deployment.hostId === row.host.id && deployment.deploymentPath === row.project.path) && <Badge tone="info">{agentCopy.hasRegistration}</Badge>}
                   </div>
                   <div className="mt-1 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{row.project.path}</div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -633,29 +668,24 @@ export function ProjectDeploymentsPanel({
                     <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{row.host.name}</div>
                     {rowHostState?.status === 'error' && <Badge tone="bad">{t('workspace.deployments.statusLabelInaccessible')}</Badge>}
                   </div>
-                  <div className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">{row.host.username}@{row.host.address}</div>
-                  <HostNetworkLine network={rowNetwork} />
-                  <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--workspace-text-subtle)]">
-                    <HostSystemMeta resource={row.inventory.resource} fallbackKey="workspace.deployments.versionPending" />
+                  <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{row.host.username}@{row.host.address}</div>
+                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[11px] text-[var(--workspace-text-subtle)]">
+                    <HostNetworkLine network={rowNetwork} />
+                    <span>·</span><HostSystemMeta resource={row.inventory.resource} fallbackKey="workspace.deployments.versionPending" />
+                    <span>· {t('workspace.deployments.snapshotAge', { age: formatAge(row.updatedAt, t) })}</span>
                   </div>
-                  <div className="mt-1 text-[11px] text-[var(--workspace-text-subtle)]">{t('workspace.deployments.snapshotAge', { age: formatAge(row.updatedAt, t) })}</div>
                 </div>
                 <div className="self-center">
                   <StatusBadge status={row.displayStatus} t={t} />
                 </div>
-                <div className="self-center space-y-1 font-mono text-[11px] text-[var(--workspace-text)]">
-                  <div className={cn('flex items-center gap-1.5', getResourceUsageTextClassName(row.inventory.resource.cpuPercent))}>
-                    <Cpu className="h-3.5 w-3.5" />
-                    {formatPercent(row.inventory.resource.cpuPercent, t)}
-                  </div>
-                  <div className={cn('flex items-center gap-1.5', getResourceUsageTextClassName(row.inventory.resource.memoryPercent))}>
-                    <MemoryStick className="h-3.5 w-3.5" />
-                    {formatPercent(row.inventory.resource.memoryPercent, t)}
-                  </div>
-                  <div className={cn('flex items-center gap-1.5', getResourceUsageTextClassName(row.inventory.resource.diskPercent))}>
-                    <HardDrive className="h-3.5 w-3.5" />
-                    {formatPercent(row.inventory.resource.diskPercent, t)}
-                  </div>
+                <div className="self-center font-mono text-xs text-[var(--workspace-text)]" title={`CPU / ${t('workspace.common.memoryShort')} / ${t('workspace.common.diskShort')}`}>
+                  {rowHostState?.status === 'error' ? '—' : <>
+                    <span className={getResourceUsageTextClassName(row.inventory.resource.cpuPercent)}>{formatPercent(row.inventory.resource.cpuPercent, t)}</span>
+                    <span className="mx-1 text-[var(--workspace-text-subtle)]">/</span>
+                    <span className={getResourceUsageTextClassName(row.inventory.resource.memoryPercent)}>{formatPercent(row.inventory.resource.memoryPercent, t)}</span>
+                    <span className="mx-1 text-[var(--workspace-text-subtle)]">/</span>
+                    <span className={getResourceUsageTextClassName(row.inventory.resource.diskPercent)}>{formatPercent(row.inventory.resource.diskPercent, t)}</span>
+                  </>}
                 </div>
                 </div>
               )
@@ -685,69 +715,9 @@ export function ProjectDeploymentsPanel({
             )}
           </div>
         </section>
-
-        <section data-testid="agent-deployments-section" className="min-w-0 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-panel)] p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex min-w-0 items-start gap-2">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]">
-                <Bot className="h-4 w-4" />
-              </span>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{t('workspace.agentDeployments.title')}</div>
-                <div className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{t('workspace.agentDeployments.description')}</div>
-              </div>
-            </div>
-            <Badge tone={filteredAgentDeployments.length > 0 ? 'info' : 'default'}>
-              {t('workspace.agentDeployments.count', { count: filteredAgentDeployments.length })}
-            </Badge>
-          </div>
-          <div className="mt-3 space-y-2">
-            {filteredAgentDeployments.map((deployment) => {
-              const host = hosts.find((item) => item.id === deployment.hostId)
-              const verification = getAgentDeploymentVerification(deployment)
-              const verificationLabel = verification === 'verified'
-                ? t('workspace.agentDeployments.verifiedAt', { time: new Date(deployment.lastVerifiedAt ?? 0).toLocaleString() })
-                : verification === 'stale'
-                  ? t('workspace.agentDeployments.verificationStale')
-                  : t('workspace.agentDeployments.notVerified')
-              const sourceLabel = deployment.source?.repository
-                ? `${deployment.source.repository}${deployment.source.ref ? `#${deployment.source.ref}` : ''}`
-                : deployment.source?.artifact || null
-              return (
-                <div key={`${deployment.clientId}:${deployment.deploymentId}`} data-testid="agent-deployment-row" className="grid gap-3 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] p-3 md:grid-cols-[minmax(0,1.4fr)_minmax(12rem,0.9fr)_auto] md:items-center">
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{deployment.name || deployment.projectKind}</div>
-                      <Badge>{deployment.projectKind}</Badge>
-                    </div>
-                    <div className="mt-1 truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{deployment.deploymentPath}</div>
-                    <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]">{host?.name || host?.address || deployment.hostId}{deployment.agentName ? ` · ${t('workspace.agentDeployments.agent', { name: deployment.agentName })}` : ''}</div>
-                    {sourceLabel && <div className="mt-1 truncate text-[11px] text-[var(--workspace-text-subtle)]" title={sourceLabel}>{t('workspace.agentDeployments.source')}: {sourceLabel}</div>}
-                    {(deployment.dependencies?.length || deployment.components?.length || deployment.notes) ? (
-                      <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-[var(--workspace-text-subtle)]">
-                        {deployment.dependencies?.length ? <span className="rounded border border-[color:var(--workspace-border-soft)] px-1.5 py-0.5">{t('workspace.agentDeployments.dependencies', { count: deployment.dependencies.length })}</span> : null}
-                        {deployment.components?.length ? <span className="rounded border border-[color:var(--workspace-border-soft)] px-1.5 py-0.5">{t('workspace.agentDeployments.components', { count: deployment.components.length })}</span> : null}
-                        {deployment.notes && <span className="max-w-full truncate" title={deployment.notes}>{deployment.notes}</span>}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    <Badge tone={deployment.status === 'deployed' ? 'good' : deployment.status === 'failed' ? 'bad' : 'warn'}>{t(`workspace.agentDeployments.status.${['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(deployment.status) ? deployment.status : 'unknown'}`)}</Badge>
-                    <Badge tone={verification === 'verified' ? 'good' : verification === 'stale' ? 'warn' : 'default'}>{verificationLabel}</Badge>
-                    {deployment.runtime?.language && <Badge>{deployment.runtime.language}{deployment.runtime.version ? ` ${deployment.runtime.version}` : ''}</Badge>}
-                    {deployment.runtime?.packageManager && <Badge>{deployment.runtime.packageManager}</Badge>}
-                  </div>
-                  <div className="text-[11px] text-[var(--workspace-text-subtle)] md:text-right">{t('workspace.agentDeployments.updatedAt', { time: new Date(deployment.updatedAt).toLocaleString() })}</div>
-                </div>
-              )
-            })}
-            {filteredAgentDeployments.length === 0 && (
-              <div className="rounded-xl border border-dashed border-[color:var(--workspace-border-strong)] px-4 py-5 text-sm text-[var(--workspace-text-muted)]">
-                {t('workspace.agentDeployments.empty')}
-              </div>
-            )}
-          </div>
-        </section>
+        </>}
+        {view === 'agent' && <AgentDeploymentsView deployments={filteredAgentDeployments} hosts={hosts} inventoryFor={(host) => states[hostKey(host)]} />}
+        </div>
 
       </div>
     </div>

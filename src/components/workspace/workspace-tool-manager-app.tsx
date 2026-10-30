@@ -25,30 +25,43 @@ import {
   selectWorkspaceInventoryStatesForHosts,
   useWorkspaceInventoryStates,
 } from '@/lib/workspace-inventory-state'
+import { fill } from '@/lib/locales/probe-install'
+import { workspaceToolsCopy } from '@/lib/locales/workspace-files-tools'
 import {
+  Activity,
   AlertTriangle,
   CheckCircle2,
   CircleAlert,
+  CircleArrowUp,
   CircleDot,
-  Download,
+  CodeXml,
+  Container,
+  Database,
+  Globe,
+  Hammer,
+  Info,
+  Layers,
+  Package,
   PackageOpen,
   PackagePlus,
-  PackageSearch,
   Play,
   Power,
   PowerOff,
   RefreshCw,
   RotateCw,
+  ScanSearch,
+  ScrollText,
   Search,
   Shield,
+  Sparkles,
   Square,
-  TerminalSquare,
   Trash2,
+  X,
+  Zap,
   type LucideIcon,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 import { WorkspaceOsIcon } from './workspace-os-icon'
-import { WorkspaceResourceOverviewHeader } from './workspace-resource-overview-header'
 import { WorkspaceServerList } from './workspace-server-list'
 import { WorkspaceServiceIcon } from './workspace-service-icon'
 import { Dialog, DialogContent } from '../ui/dialog'
@@ -101,61 +114,74 @@ function ToolLogo({ tool, size = 'sm' }: { tool: ToolDefinition; size?: 'sm' | '
   )
 }
 
-function getStatusBadge(status: ToolStatus | undefined, t: ReturnType<typeof useT>['t']) {
-  if (!status || status.installed === null) return { label: t('workspace.tools.statusUnknown'), className: 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]' }
-  if (status.installed) return { label: t('workspace.tools.statusInstalled'), className: 'border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' }
-  return { label: t('workspace.tools.statusMissing'), className: 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]' }
+type ChipTone = 'neutral' | 'good' | 'warn' | 'bad'
+
+const CHIP_TONES: Record<ChipTone, string> = {
+  neutral: 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]',
+  good: 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]',
+  warn: 'bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]',
+  bad: 'bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]',
 }
 
-function getServiceBadge(status: ToolStatus | undefined, t: ReturnType<typeof useT>['t']) {
-  const value = status?.serviceActive
-  if (!value) return { label: t('workspace.tools.noService'), className: 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]' }
-  if (value === 'active') return { label: t('workspace.tools.serviceActive'), className: 'border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' }
-  if (value === 'failed') return { label: t('workspace.tools.serviceFailed'), className: 'border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]' }
-  if (value === 'inactive') return { label: t('workspace.tools.serviceInactive'), className: 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]' }
-  if (value === 'activating') return { label: t('workspace.tools.serviceActivating'), className: 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]' }
-  return { label: value, className: 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]' }
+function StatusChip({ tone, children }: { tone: ChipTone; children: ReactNode }) {
+  return <span className={cn('inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium', CHIP_TONES[tone])}>{children}</span>
 }
+
+function getStatusBadge(status: ToolStatus | undefined, t: TFunction): { label: string; tone: ChipTone } {
+  if (!status || status.installed === null) return { label: t('workspace.tools.statusUnknown'), tone: 'neutral' }
+  if (status.installed) return { label: t('workspace.tools.statusInstalled'), tone: 'good' }
+  return { label: t('workspace.tools.statusMissing'), tone: 'bad' }
+}
+
+function getServiceBadge(status: ToolStatus | undefined, t: TFunction, notCheckedLabel: string): { label: string; tone: ChipTone } {
+  if (!status?.checkedAt && !status?.serviceActive) return { label: notCheckedLabel, tone: 'neutral' }
+  const value = status?.serviceActive
+  if (!value) return { label: t('workspace.tools.noService'), tone: 'neutral' }
+  if (value === 'active') return { label: t('workspace.tools.serviceActive'), tone: 'good' }
+  if (value === 'failed') return { label: t('workspace.tools.serviceFailed'), tone: 'bad' }
+  if (value === 'inactive') return { label: t('workspace.tools.serviceInactive'), tone: 'warn' }
+  if (value === 'activating') return { label: t('workspace.tools.serviceActivating'), tone: 'warn' }
+  return { label: value, tone: 'warn' }
+}
+
+const DANGER_ACTIONS = new Set<ToolAction>(['upgrade', 'uninstall', 'stop', 'restart', 'disable'])
 
 function getActionIcon(action: ToolAction) {
-  if (action === 'check') return PackageSearch
+  if (action === 'check') return ScanSearch
   if (action === 'install') return PackagePlus
-  if (action === 'upgrade') return Download
+  if (action === 'upgrade') return CircleArrowUp
   if (action === 'uninstall') return Trash2
   if (action === 'start') return Play
   if (action === 'stop') return Square
   if (action === 'restart') return RotateCw
   if (action === 'enable') return Power
   if (action === 'disable') return PowerOff
-  if (action === 'status') return TerminalSquare
+  if (action === 'status') return Info
+  if (action === 'logs') return ScrollText
   return PackageOpen
 }
 
 const CATEGORY_ICONS: Record<ToolCategoryId, LucideIcon> = {
-  web: PackageSearch,
-  database: PackageOpen,
-  cacheQueue: CircleDot,
-  containers: PackageOpen,
-  runtime: TerminalSquare,
-  packageManagers: PackagePlus,
-  buildOps: PackageSearch,
+  web: Globe,
+  database: Database,
+  cacheQueue: Zap,
+  containers: Container,
+  runtime: CodeXml,
+  packageManagers: Package,
+  buildOps: Hammer,
   securityNetwork: Shield,
-  aiAgents: CircleAlert,
-  processManagers: TerminalSquare,
+  aiAgents: Sparkles,
+  processManagers: Activity,
 }
 
-function getCategoryIcon(category: ToolCategoryId) {
-  return CATEGORY_ICONS[category]
-}
-
-function formatInstallType(recipe: ToolDefinition['install'], t: ReturnType<typeof useT>['t']) {
+function formatInstallType(recipe: ToolDefinition['install'], t: TFunction) {
   if (!recipe) return t('workspace.tools.statusOnly')
   if (recipe.type === 'package') return t('workspace.tools.installType.package')
   if (recipe.type === 'npm') return t('workspace.tools.installType.npm')
   return t('workspace.tools.installType.pipx')
 }
 
-function toolMatchesSearch(tool: ToolDefinition, query: string, t: ReturnType<typeof useT>['t']) {
+function toolMatchesSearch(tool: ToolDefinition, query: string, t: TFunction) {
   if (!query) return true
   const haystack = [
     tool.name,
@@ -177,7 +203,7 @@ function hostKey(host: HostProfile) {
   return getWorkspaceInventoryHostKey(host)
 }
 
-function formatAge(timestamp: number | undefined, t: ReturnType<typeof useT>['t']) {
+function formatAge(timestamp: number | undefined, t: TFunction) {
   if (!timestamp) return t('workspace.tools.notScanned')
   const diff = Math.max(0, Date.now() - timestamp)
   const minutes = Math.floor(diff / 60000)
@@ -241,7 +267,8 @@ export function WorkspaceToolManagerApp({
   hideHostList = false,
 }: WorkspaceToolManagerAppProps) {
   const hosts = useMemo(() => providedHosts.filter((entry) => !vaultId || !entry.vaultId || entry.vaultId === vaultId).map((entry) => ({ ...entry, vaultId: vaultId ?? entry.vaultId })), [providedHosts, vaultId])
-  const { t } = useT()
+  const { t, locale } = useT()
+  const tc = workspaceToolsCopy[locale]
   const toolStatusPersistenceError = t('workspace.tools.persistenceUnavailable')
   const [category, setCategory] = useState<ToolCategoryId | 'all'>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -486,9 +513,11 @@ export function WorkspaceToolManagerApp({
     )
   }
 
+
   const installActions: ToolAction[] = ['check', 'install', 'upgrade', 'uninstall']
   const serviceActions: ToolAction[] = ['status', 'start', 'stop', 'restart', 'enable', 'disable', 'logs']
   const statusBadge = getStatusBadge(selectedStatus, t)
+  const selectedServiceBadge = getServiceBadge(selectedStatus, t, tc.notChecked)
   const toolSearchControl = (
     <div className="relative min-w-0 flex-1">
       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
@@ -496,7 +525,7 @@ export function WorkspaceToolManagerApp({
         value={searchQuery}
         onChange={(event) => setSearchQuery(event.target.value)}
         placeholder={t('workspace.tools.searchPlaceholder')}
-        className="h-10 w-full rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 pr-3 text-sm text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
+        className="h-9 w-full rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 pr-3 text-sm text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
       />
     </div>
   )
@@ -505,154 +534,159 @@ export function WorkspaceToolManagerApp({
       type="button"
       onClick={() => void scanVisibleTools()}
       disabled={running !== null || visibleTools.length === 0}
-      className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-xs font-semibold text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[color:var(--workspace-primary-500)] px-3 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
     >
-      <RefreshCw className={cn('h-3.5 w-3.5', running?.action === 'check' && 'animate-spin')} />
+      {running?.action === 'check' ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="h-3.5 w-3.5" />}
       {t('workspace.tools.scanVisible')}
     </button>
   )
+  const scanNote = <span className="shrink-0 text-[11px] text-[var(--workspace-text-subtle)]">{tc.scanNote}</span>
+  const categoryItem = (id: ToolCategoryId | 'all', Icon: LucideIcon, label: string, count: number) => (
+    <button
+      key={id}
+      type="button"
+      onClick={() => setCategory(id)}
+      className={cn(
+        'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors',
+        category === id
+          ? 'bg-[var(--workspace-surface-700)] font-medium text-[var(--workspace-text-strong)] shadow-[inset_0_0_0_1px_var(--workspace-border-soft)]'
+          : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]',
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0 text-[var(--workspace-text-muted)]" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="shrink-0 font-mono text-[11px] text-[var(--workspace-text-subtle)]">{count}</span>
+    </button>
+  )
+  const renderActionButton = (action: ToolAction, disabled: boolean) => {
+    const Icon = getActionIcon(action)
+    const isRunning = running?.toolId === selectedTool.id && running.action === action
+    return (
+      <button
+        key={action}
+        type="button"
+        onClick={() => void runToolAction(action)}
+        disabled={disabled}
+        className={cn(
+          'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium capitalize transition-colors disabled:cursor-not-allowed disabled:opacity-45',
+          DANGER_ACTIONS.has(action)
+            ? 'border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)] hover:brightness-110'
+            : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]',
+        )}
+      >
+        <Icon className={cn('h-3.5 w-3.5', isRunning && 'animate-spin')} />
+        {isRunning ? t('workspace.tools.running') : t(`workspace.tools.action.${action}`)}
+      </button>
+    )
+  }
 
   return (
-    <div data-testid="workspace-tool-manager-app" data-selected-host-id={host?.id ?? ''} className="space-y-4">
+    <div data-testid="workspace-tool-manager-app" data-selected-host-id={host?.id ?? ''} className="flex flex-col gap-4 text-[var(--workspace-text)]">
       {hideHeader ? (
-        <div className="flex flex-col gap-3 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-panel)] p-3 md:flex-row md:items-center md:justify-between">
+        <div className="sb-card flex flex-col gap-3 bg-[var(--workspace-surface-900)] p-3 md:flex-row md:items-center md:justify-between">
           {toolSearchControl}
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{t('workspace.tools.toolsCount', { count: TOOL_CATALOG.length })}</span>
-            <span className="rounded-full border border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[11px] text-[var(--workspace-text-muted)]">{checkedCount} {t('workspace.tools.checked')}</span>
-            <span className="rounded-full border border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] px-2.5 py-1 text-[11px] text-[color:var(--workspace-status-good-text)]">{installedCount} {t('workspace.tools.installed')}</span>
+            {scanNote}
+            <span className="rounded-md bg-[var(--workspace-surface-700)] px-2 py-1 text-[11px] text-[var(--workspace-text-muted)]">{t('workspace.tools.toolsCount', { count: TOOL_CATALOG.length })}</span>
+            <span className="rounded-md bg-[var(--workspace-surface-700)] px-2 py-1 text-[11px] text-[var(--workspace-text-muted)]">{checkedCount} {t('workspace.tools.checked')}</span>
+            <span className="rounded-md bg-[var(--workspace-status-good-bg)] px-2 py-1 text-[11px] text-[color:var(--workspace-status-good-text)]">{installedCount} {t('workspace.tools.installed')}</span>
             {scanVisibleButton}
           </div>
         </div>
       ) : (
-        <WorkspaceResourceOverviewHeader
-          preheader={preheader}
-          eyebrow={t('workspace.tools.eyebrow')}
-          title={t('workspace.tools.title')}
-          description={t('workspace.tools.description')}
-          actions={scanVisibleButton}
-          total={TOOL_CATALOG.length}
-          totalLabel={t('workspace.tools.totalTools')}
-          totalMeta={<span className="text-xs text-[var(--workspace-text-subtle)]">{hosts.length} {t('workspace.tools.vps')}</span>}
-          visibleCount={visibleTools.length}
-          visibleLabel={t('workspace.tools.visible')}
-          search={toolSearchControl}
-          metrics={[
-            { key: 'hosts', label: t('workspace.tools.vps'), value: hosts.length, icon: TerminalSquare },
-            { key: 'checked', label: t('workspace.tools.checked'), value: checkedCount, icon: PackageSearch },
-            { key: 'installed', label: t('workspace.tools.installed'), value: installedCount, icon: CheckCircle2 },
-          ]}
-        />
+        <>
+          {preheader}
+          <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold tracking-tight text-[var(--workspace-text-strong)]">{tc.title}</h2>
+              <p className="mt-1 text-xs text-[var(--workspace-text-muted)]">
+                <span>{t('workspace.tools.title')}</span>
+                {' · '}
+                {fill(tc.summary, { host: host.name, total: TOOL_CATALOG.length, checked: checkedCount, installed: installedCount })}
+              </p>
+            </div>
+            {scanVisibleButton}
+          </header>
+        </>
       )}
 
-      <div className={cn('grid min-h-[34rem] gap-4', hideHostList ? 'xl:grid-cols-[minmax(15rem,0.44fr)_minmax(0,1.35fr)]' : 'xl:grid-cols-[minmax(22rem,0.72fr)_minmax(15rem,0.44fr)_minmax(0,1.35fr)]')}>
+      <div
+        className={cn(
+          'grid items-start gap-4',
+          hideHostList ? 'lg:grid-cols-[11rem_minmax(0,1fr)]' : 'lg:grid-cols-[11rem_minmax(0,1fr)] xl:grid-cols-[minmax(19rem,22rem)_11rem_minmax(0,1fr)]',
+        )}
+      >
         {!hideHostList && (
-          <WorkspaceServerList
-            hosts={hosts}
-            totalCount={hosts.length}
-            selectedKey={host.id}
-            getHostKey={(entry) => entry.id}
-            onSelect={(key) => setManagedHostId(key)}
-            itemTestIdPrefix="workspace-tool-host"
-            renderStatusIcon={(entry) => <HostStatusIcon state={inventoryStates[hostKey(entry)]} />}
-            getStatusBadge={(entry) => {
-              const state = inventoryStates[hostKey(entry)]
-              if (state?.status === 'error') return { label: t('workspace.serverIndex.inaccessible'), tone: 'bad' }
-              return undefined
-            }}
-            getPrimaryBadge={(entry) => {
-              const state = inventoryStates[hostKey(entry)]
-              if (!state?.inventory) return { label: entry.authType }
-              return { label: t('workspace.tools.toolsCount', { count: state.inventory.tools.length }), tone: 'info' }
-            }}
-            renderRegionLine={(entry) => <HostNetworkLine network={networkByAddress[entry.address]} />}
-            getSystemLabel={(entry) => inventoryStates[hostKey(entry)]?.inventory?.resource.os}
-            getSearchData={(entry) => {
-              const state = inventoryStates[hostKey(entry)]
-              const network = networkByAddress[entry.address]
-              return {
-                network: [network?.scopeLabel, network?.versionLabel, network?.resolvedLocationLabel],
-                system: [state?.inventory?.resource.os, state?.inventory?.resource.kernel],
-                tools: getInstalledToolSearchValues(state?.inventory),
-                projects: getProjectSearchValues(state?.inventory),
-              }
-            }}
-            getResourceMetrics={(entry) => {
-              const inventory = inventoryStates[hostKey(entry)]?.inventory
-              if (!inventory) return undefined
-              return {
-                cpuPercent: inventory?.resource.cpuPercent,
-                memoryPercent: inventory?.resource.memoryPercent,
-                diskPercent: inventory?.resource.diskPercent,
-                cpuDetail: inventory?.resource.uptime,
-                memoryDetail: inventory?.resource.memoryText,
-                diskDetail: inventory?.resource.diskText,
-              }
-            }}
-            renderFooter={(entry) => {
-              const state = inventoryStates[hostKey(entry)]
-              return (
-                <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[var(--workspace-text-subtle)]">
-                  <span>{formatAge(state?.updatedAt, t)}</span>
-                  {state?.status === 'error'
-                    ? <span className="truncate text-[color:var(--workspace-status-bad-text)]">{t('workspace.serverIndex.inaccessible')}</span>
-                    : <span className="truncate">{state?.inventory?.resource.os || t('workspace.tools.notScanned')}</span>}
-                </div>
-              )
-            }}
-            onRowDoubleClick={(entry) => onOpenTerminal?.(entry)}
-          />
+          <div className="flex max-h-[24rem] min-w-0 flex-col lg:col-span-2 xl:col-span-1 xl:max-h-[calc(100vh-12rem)]">
+            <WorkspaceServerList
+              variant="compact"
+              hosts={hosts}
+              totalCount={hosts.length}
+              selectedKey={host.id}
+              getHostKey={(entry) => entry.id}
+              onSelect={(key) => setManagedHostId(key)}
+              itemTestIdPrefix="workspace-tool-host"
+              renderStatusIcon={(entry) => <HostStatusIcon state={inventoryStates[hostKey(entry)]} />}
+              getStatusBadge={(entry) => {
+                const state = inventoryStates[hostKey(entry)]
+                if (state?.status === 'error') return { label: t('workspace.serverIndex.inaccessible'), tone: 'bad' }
+                return { label: formatAge(state?.updatedAt, t) }
+              }}
+              getPrimaryBadge={(entry) => {
+                const state = inventoryStates[hostKey(entry)]
+                if (!state?.inventory) return { label: entry.authType }
+                return { label: t('workspace.tools.toolsCount', { count: state.inventory.tools.length }), tone: 'info' }
+              }}
+              renderRegionLine={(entry) => <HostNetworkLine network={networkByAddress[entry.address]} />}
+              getSystemLabel={(entry) => inventoryStates[hostKey(entry)]?.inventory?.resource.os}
+              getSearchData={(entry) => {
+                const state = inventoryStates[hostKey(entry)]
+                const network = networkByAddress[entry.address]
+                return {
+                  network: [network?.scopeLabel, network?.versionLabel, network?.resolvedLocationLabel],
+                  system: [state?.inventory?.resource.os, state?.inventory?.resource.kernel],
+                  tools: getInstalledToolSearchValues(state?.inventory),
+                  projects: getProjectSearchValues(state?.inventory),
+                }
+              }}
+              getResourceMetrics={(entry) => {
+                const inventory = inventoryStates[hostKey(entry)]?.inventory
+                if (!inventory) return undefined
+                return {
+                  cpuPercent: inventory.resource.cpuPercent,
+                  memoryPercent: inventory.resource.memoryPercent,
+                  diskPercent: inventory.resource.diskPercent,
+                  cpuDetail: inventory.resource.uptime,
+                  memoryDetail: inventory.resource.memoryText,
+                  diskDetail: inventory.resource.diskText,
+                }
+              }}
+              onRowDoubleClick={(entry) => onOpenTerminal?.(entry)}
+            />
+          </div>
         )}
 
-        <aside className="space-y-3 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-3 shadow-[var(--workspace-shadow-card)]">
-          <button
-            type="button"
-            onClick={() => setCategory('all')}
-            className={cn(
-              'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors',
-              category === 'all'
-                ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]'
-                : 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]',
-            )}
-          >
-            <span>{t('workspace.tools.allTools')}</span>
-            <span className="text-xs">{TOOL_CATALOG.length}</span>
-          </button>
-          {TOOL_CATEGORIES.map((item) => {
-            const count = TOOL_CATALOG.filter((tool) => tool.category === item.id).length
-            const Icon = getCategoryIcon(item.id)
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setCategory(item.id)}
-                className={cn(
-                  'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors',
-                  category === item.id
-                    ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]'
-                    : 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]',
-                )}
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <Icon className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{t(item.labelKey)}</span>
-                </span>
-                <span className="text-xs">{count}</span>
-              </button>
-            )
-          })}
-        </aside>
+        <nav className="min-w-0 space-y-0.5">
+          {categoryItem('all', Layers, t('workspace.tools.allTools'), TOOL_CATALOG.length)}
+          {TOOL_CATEGORIES.map((item) => categoryItem(item.id, CATEGORY_ICONS[item.id], t(item.labelKey), TOOL_CATALOG.filter((tool) => tool.category === item.id).length))}
+        </nav>
 
-        <section className="min-w-0 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]">
-          <div data-testid="workspace-tool-catalog" className="max-h-[32rem] overflow-auto">
+        <div className="flex min-w-0 flex-col gap-3">
+          {!hideHeader && (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              {toolSearchControl}
+              {scanNote}
+            </div>
+          )}
+          <div data-testid="workspace-tool-catalog" className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3">
             {visibleTools.length === 0 ? (
-              <div className="px-4 py-8 text-sm text-[var(--workspace-text-muted)]">{t('workspace.tools.noMatchingTools')}</div>
+              <div className="col-span-full px-1 py-8 text-sm text-[var(--workspace-text-muted)]">{t('workspace.tools.noMatchingTools')}</div>
             ) : (
               visibleTools.map((tool) => {
-                const isSelected = tool.id === selectedTool.id
+                const isSelected = detailOpen && tool.id === selectedTool.id
                 const toolStatus = statuses[tool.id]
                 const badge = getStatusBadge(toolStatus, t)
-                const service = getServiceBadge(toolStatus, t)
+                const service = tool.service ? getServiceBadge(toolStatus, t, tc.notChecked) : { label: t('workspace.tools.binaryBadge'), tone: 'neutral' as const }
                 return (
                   <button
                     key={tool.id}
@@ -663,153 +697,112 @@ export function WorkspaceToolManagerApp({
                       setDetailOpen(true)
                     }}
                     className={cn(
-                      'grid w-full grid-cols-[minmax(0,1fr)_7rem_7rem] gap-3 border-b border-[color:var(--workspace-border-soft)] px-4 py-3 text-left text-sm transition-colors last:border-b-0',
-                      isSelected ? 'bg-[var(--workspace-accent-soft)]' : 'hover:bg-[var(--workspace-surface-800)]',
+                      'sb-card flex min-w-0 flex-col gap-2.5 bg-[var(--workspace-surface-900)] p-4 text-left transition-colors hover:bg-[var(--workspace-surface-800)]',
+                      isSelected && 'ring-1 ring-[hsl(var(--primary))]',
                     )}
                   >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <ToolLogo tool={tool} />
-                        <div className="min-w-0">
-                          <span className="block truncate font-semibold text-[var(--workspace-text-strong)]">{tool.name}</span>
-                          <span className="block truncate text-[11px] text-[var(--workspace-text-muted)]">{tool.binary}</span>
-                        </div>
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <ToolLogo tool={tool} />
+                      <div className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{tool.name}</span>
+                        <span className="block truncate font-mono text-[11px] text-[var(--workspace-text-subtle)]">{tool.binary}</span>
                       </div>
-                      <div className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">{getToolDescription(tool, t)}</div>
                     </div>
-                    <div>
-                      <span className={cn('rounded-full border px-2 py-1 text-[11px] font-medium', badge.className)}>
-                        {badge.label}
-                      </span>
-                    </div>
-                    <div>
-                      <span className={cn('rounded-full border px-2 py-1 text-[11px] font-medium', tool.service ? service.className : 'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-700)] text-[var(--workspace-text-muted)]')}>
-                        {tool.service ? service.label : t('workspace.tools.binaryBadge')}
-                      </span>
+                    <p className="line-clamp-2 min-h-[2rem] text-xs leading-4 text-[var(--workspace-text-muted)]">{getToolDescription(tool, t)}</p>
+                    <div className="mt-auto flex flex-wrap gap-1.5">
+                      <StatusChip tone={badge.tone}>{badge.label}</StatusChip>
+                      <StatusChip tone={service.tone}>{service.label}</StatusChip>
                     </div>
                   </button>
                 )
               })
             )}
           </div>
-        </section>
-
+        </div>
       </div>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="w-[min(72rem,calc(100vw-2rem))] rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-0 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-overlay)]">
-          <section className="min-w-0 p-6">
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(24rem,0.75fr)]">
-              <div className="min-w-0">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--workspace-text-muted)]">{getCategoryLabel(selectedTool.category, t)}</div>
-                    <h3 className="mt-2 truncate text-2xl font-semibold tracking-tight">{selectedTool.name}</h3>
-                    <p className="mt-1 text-sm text-[var(--workspace-text-muted)]">{getToolDescription(selectedTool, t)}</p>
-                  </div>
-                  <ToolLogo tool={selectedTool} size="lg" />
-                </div>
-
-                <div className="mt-5 grid grid-cols-2 gap-3 text-xs">
-                  <div className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2">
-                    <div className="text-[var(--workspace-text-muted)]">{t('workspace.tools.binary')}</div>
-                    <div className="mt-1 truncate font-medium">{selectedTool.binary}</div>
-                  </div>
-                  <div className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2">
-                    <div className="text-[var(--workspace-text-muted)]">{t('workspace.tools.install')}</div>
-                    <div className="mt-1 truncate font-medium">{formatInstallType(selectedTool.install, t)}</div>
-                  </div>
-                  <div className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2">
-                    <div className="text-[var(--workspace-text-muted)]">{t('workspace.tools.status')}</div>
-                    <div className="mt-1 flex items-center gap-1.5 font-medium">
-                      {selectedStatus?.installed ? <CheckCircle2 className="h-3.5 w-3.5 text-[color:var(--workspace-status-good)]" /> : <CircleDot className="h-3.5 w-3.5 text-[var(--workspace-text-muted)]" />}
-                      {statusBadge.label}
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2">
-                    <div className="text-[var(--workspace-text-muted)]">{t('workspace.tools.service')}</div>
-                    <div className="mt-1 truncate font-medium">{selectedTool.service ?? t('workspace.tools.noServiceValue')}</div>
-                  </div>
-                </div>
-
-                {selectedStatus?.version && (
-                  <div className="mt-3 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 py-2 text-xs">
-                    <div className="text-[var(--workspace-text-muted)]">{t('workspace.tools.version')}</div>
-                    <div className="mt-1 break-words font-medium">{selectedStatus.version}</div>
-                  </div>
-                )}
+        <DialogContent className="w-[min(56rem,calc(100vw-2rem))] rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-0 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-overlay)] md:max-w-[56rem]">
+          <section className="flex min-w-0 flex-col gap-4 p-5">
+            <div className="flex items-start gap-3">
+              <ToolLogo tool={selectedTool} size="lg" />
+              <div className="min-w-0 flex-1">
+                <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold text-[var(--workspace-text-strong)]">
+                  <span className="truncate">{selectedTool.name}</span>
+                  <StatusChip tone="neutral">{getCategoryLabel(selectedTool.category, t)}</StatusChip>
+                </h3>
+                <p className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{getToolDescription(selectedTool, t)}</p>
               </div>
+              <button
+                type="button"
+                aria-label={tc.close}
+                title={tc.close}
+                onClick={() => setDetailOpen(false)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
 
-              <div className="space-y-4">
-                <div className="space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)]">{t('workspace.tools.packageActions')}</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {installActions.map((action) => {
-                      const Icon = getActionIcon(action)
-                      const disabled = running !== null || (action !== 'check' && !selectedTool.install)
-                      return (
-                        <button
-                          key={action}
-                          type="button"
-                          onClick={() => void runToolAction(action)}
-                          disabled={disabled}
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] px-3 py-2 text-xs font-medium capitalize transition-colors hover:bg-[var(--workspace-surface-800)] disabled:cursor-not-allowed disabled:opacity-45"
-                        >
-                          <Icon className={cn('h-3.5 w-3.5', running?.toolId === selectedTool.id && running.action === action && 'animate-spin')} />
-                          {running?.toolId === selectedTool.id && running.action === action ? t('workspace.tools.running') : t(`workspace.tools.action.${action}`)}
-                        </button>
-                      )
-                    })}
+            <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 rounded-lg bg-[var(--workspace-surface-800)] px-3 py-2.5 text-xs sm:grid-cols-[5rem_minmax(0,1fr)_5rem_minmax(0,1fr)]">
+              <dt className="text-[var(--workspace-text-subtle)]">{t('workspace.tools.binary')}</dt>
+              <dd className="truncate font-mono text-[var(--workspace-text-strong)]">{selectedStatus?.path ?? selectedTool.binary}</dd>
+              <dt className="text-[var(--workspace-text-subtle)]">{tc.installMethod}</dt>
+              <dd className="truncate text-[var(--workspace-text-strong)]">{formatInstallType(selectedTool.install, t)}</dd>
+              <dt className="text-[var(--workspace-text-subtle)]">{t('workspace.tools.status')}</dt>
+              <dd className="flex min-w-0 items-center gap-1.5 text-[var(--workspace-text-strong)]">
+                {selectedStatus?.installed ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[color:var(--workspace-status-good)]" /> : <CircleDot className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-muted)]" />}
+                {statusBadge.label}
+              </dd>
+              <dt className="text-[var(--workspace-text-subtle)]">{t('workspace.tools.service')}</dt>
+              <dd className="truncate font-mono text-[var(--workspace-text-strong)]">
+                {selectedTool.service ? `${selectedTool.service} · ${selectedServiceBadge.label}` : t('workspace.tools.noServiceValue')}
+              </dd>
+              <dt className="text-[var(--workspace-text-subtle)]">{t('workspace.tools.version')}</dt>
+              <dd className="break-words font-mono text-[var(--workspace-text-strong)]">{selectedStatus?.version ?? '—'}</dd>
+              <dt className="text-[var(--workspace-text-subtle)]">{tc.checkedAt}</dt>
+              <dd className="truncate font-mono text-[var(--workspace-text-strong)]">{selectedStatus?.checkedAt ?? '—'}</dd>
+            </dl>
+
+            <div className={cn('grid gap-4', selectedTool.service && 'md:grid-cols-2')}>
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-[var(--workspace-text-subtle)]">{t('workspace.tools.packageActions')}</div>
+                <div className="flex flex-wrap gap-2">
+                  {installActions.map((action) => renderActionButton(action, running !== null || (action !== 'check' && !selectedTool.install)))}
+                </div>
+              </div>
+              {selectedTool.service && (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-[var(--workspace-text-subtle)]">
+                    {t('workspace.tools.serviceActions')}
+                    <span className="ml-2 font-normal text-[var(--workspace-text-subtle)] opacity-80">{tc.serviceRisk}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {serviceActions.map((action) => renderActionButton(action, running !== null))}
                   </div>
                 </div>
-
-                {selectedTool.service && (
-                  <div className="space-y-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)]">{t('workspace.tools.serviceActions')}</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {serviceActions.map((action) => {
-                        const Icon = getActionIcon(action)
-                        return (
-                          <button
-                            key={action}
-                            type="button"
-                            onClick={() => void runToolAction(action)}
-                            disabled={running !== null}
-                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] px-3 py-2 text-xs font-medium capitalize transition-colors hover:bg-[var(--workspace-surface-800)] disabled:cursor-not-allowed disabled:opacity-45"
-                          >
-                            <Icon className={cn('h-3.5 w-3.5', running?.toolId === selectedTool.id && running.action === action && 'animate-spin')} />
-                            {running?.toolId === selectedTool.id && running.action === action ? t('workspace.tools.running') : t(`workspace.tools.action.${action}`)}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
 
             {error && (
-              <div className="mt-4 flex gap-2 rounded-lg border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[color:var(--workspace-status-bad-text)]">
+              <div className="flex gap-2 rounded-lg border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[color:var(--workspace-status-bad-text)]">
                 <CircleAlert className="h-4 w-4 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
+
+            <div className="sb-card overflow-hidden bg-[var(--workspace-surface-900)]">
+              <div className="flex items-center justify-between gap-3 border-b border-[color:var(--workspace-border-soft)] px-4 py-2.5">
+                <h4 className="text-sm font-semibold text-[var(--workspace-text-strong)]">{t('workspace.tools.remoteOutput')}</h4>
+                <span className="truncate font-mono text-[11px] text-[var(--workspace-text-subtle)]">{selectedStatus?.checkedAt ? t('workspace.tools.checkedAt', { time: selectedStatus.checkedAt }) : selectedTool.name}</span>
+              </div>
+              <pre data-testid="workspace-tool-output" className="max-h-[16rem] overflow-auto whitespace-pre-wrap px-4 py-3 font-mono text-xs leading-5 text-[var(--workspace-text)]">
+                {output || (running ? t('workspace.tools.runningRemoteCommand') : t('workspace.tools.noCommandOutput'))}
+              </pre>
+            </div>
           </section>
         </DialogContent>
       </Dialog>
-
-      <div className="rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4 shadow-[var(--workspace-shadow-card)]">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)]">
-            <Shield className="h-3.5 w-3.5" />
-            {t('workspace.tools.remoteOutput')}
-          </div>
-          <div className="text-xs text-[var(--workspace-text-muted)]">{selectedStatus?.checkedAt ? t('workspace.tools.checkedAt', { time: selectedStatus.checkedAt }) : selectedTool.name}</div>
-        </div>
-        <pre data-testid="workspace-tool-output" className="mt-3 max-h-[16rem] overflow-auto whitespace-pre-wrap rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] p-3 text-xs leading-6 text-[var(--workspace-text)]">
-          {output || (running ? t('workspace.tools.runningRemoteCommand') : t('workspace.tools.noCommandOutput'))}
-        </pre>
-      </div>
     </div>
   )
 }

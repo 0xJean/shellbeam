@@ -1,23 +1,37 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSessions } from '@/contexts/sessions-context'
-import { Button } from '@/components/ui/button'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { fill } from '@/lib/locales/probe-install'
+import { workspaceFilesCopy } from '@/lib/locales/workspace-files-tools'
 import { createRemoteFsClient } from '@/lib/remote-fs'
 import type { SftpEntry } from '@/lib/sftp'
 import { cn } from '@/lib/utils'
 import {
-  ChevronLeft,
+  ArrowUp,
   ChevronRight,
+  CornerLeftUp,
+  Eye,
   File,
+  FileArchive,
+  FileCode,
+  FileCog,
+  FileImage,
+  FileKey,
   FilePlus,
+  FileText,
   Folder,
   FolderPlus,
+  Globe,
   HardDrive,
-  Home,
+  House,
+  Info,
   Pencil,
-  RefreshCw,
+  RotateCw,
+  Save,
   Trash2,
+  X,
+  type LucideIcon,
 } from 'lucide-react'
 import { WorkspaceEmptyState } from './workspace-empty-state'
 
@@ -97,10 +111,35 @@ function breadcrumbSegments(path: string) {
 }
 
 function SidebarLocationIcon({ id }: { id: string }) {
-  if (id === 'home') return <Home className="h-4 w-4 shrink-0" />
+  if (id === 'home') return <House className="h-4 w-4 shrink-0" />
+  if (id === 'parent') return <CornerLeftUp className="h-4 w-4 shrink-0" />
   if (id === 'root') return <HardDrive className="h-4 w-4 shrink-0" />
   return <Folder className="h-4 w-4 shrink-0" />
 }
+
+const FILE_ICON_GROUPS: Array<[LucideIcon, string[]]> = [
+  [FileCog, ['conf', 'cfg', 'ini', 'yaml', 'yml', 'toml', 'json', 'xml', 'service']],
+  [FileText, ['md', 'markdown', 'txt', 'log', 'types']],
+  [FileCode, ['sh', 'bash', 'zsh', 'js', 'ts', 'jsx', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'c', 'cpp', 'cs', 'html', 'htm', 'css', 'scss', 'php', 'sql']],
+  [FileImage, ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico']],
+  [FileArchive, ['zip', 'tar', 'gz', 'bz2', 'xz', 'tgz', '7z']],
+  [FileKey, ['env', 'pem', 'key', 'crt', 'htpasswd']],
+]
+
+function getFileIcon(entry: SftpEntry): LucideIcon {
+  if (entry.isDir) return Folder
+  const lower = entry.fileName.toLowerCase()
+  if (lower.startsWith('.env') || lower.startsWith('.ht')) return FileKey
+  const ext = lower.includes('.') ? lower.split('.').pop() ?? '' : ''
+  return FILE_ICON_GROUPS.find(([, exts]) => exts.includes(ext))?.[0] ?? (lower.endsWith('_params') ? FileCode : File)
+}
+
+function formatModifiedAt(value: number | undefined, locale: string) {
+  if (!value) return null
+  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(value < 1e11 ? value * 1000 : value)
+}
+
+const MAX_RECENT_PATHS = 5
 
 export function WorkspaceFileSystemApp({
   sessionId,
@@ -111,7 +150,8 @@ export function WorkspaceFileSystemApp({
   resolveAuthSecret,
   presentation = 'panel',
 }: WorkspaceFileSystemAppProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const c = workspaceFilesCopy[locale]
   const activeHostId = selectedHostId ?? (
     selectedHostAddress
       ? hosts.find((host) => host.address === selectedHostAddress)?.id ?? null
@@ -139,12 +179,18 @@ export function WorkspaceFileSystemApp({
   const [isOpeningFile, setIsOpeningFile] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [activeSidebarLocationId, setActiveSidebarLocationId] = useState<string | null>(null)
+  const [recent, setRecent] = useState<{ scope: string | null; paths: string[] }>({ scope: null, paths: [] })
+  const [editorBaseline, setEditorBaseline] = useState('')
+  const [cursorLine, setCursorLine] = useState(1)
+  const gutterRef = useRef<HTMLDivElement>(null)
   const homeErrorMessage = t('workspace.fileSystem.error.home')
   const directoryErrorMessage = t('workspace.fileSystem.error.directory')
 
   function navigateToPath(path: string, sidebarLocationId?: string) {
     setActiveSidebarLocationId(sidebarLocationId ?? null)
     if (path === currentPath) return
+    const scope = activeHost?.id ?? null
+    setRecent((prev) => ({ scope, paths: [path, ...(prev.scope === scope ? prev.paths : []).filter((entry) => entry !== path)].slice(0, MAX_RECENT_PATHS) }))
     setCurrentPath(path)
     setEntries([])
     setSelectedPath(null)
@@ -341,8 +387,11 @@ export function WorkspaceFileSystemApp({
     setStatusMessage(null)
     try {
       const fileData = await remoteFs.readFile(entry.path)
+      const content = decodeBase64Utf8(fileData.contentB64)
       setEditorPath(entry.path)
-      setEditorContent(decodeBase64Utf8(fileData.contentB64))
+      setEditorContent(content)
+      setEditorBaseline(content)
+      setCursorLine(1)
       setSelectedPath(entry.path)
     } finally {
       setIsOpeningFile(false)
@@ -353,9 +402,11 @@ export function WorkspaceFileSystemApp({
     if (!remoteFs || !editorPath || isMutating) return
     setIsSaving(true)
     setStatusMessage(null)
+    const savedContent = editorContent
     try {
       await performMutation(async () => {
-        if (await remoteFs.writeFile(editorPath, encodeBase64Utf8(editorContent)) === false) return false
+        if (await remoteFs.writeFile(editorPath, encodeBase64Utf8(savedContent)) === false) return false
+        setEditorBaseline(savedContent)
         setStatusMessage(t('workspace.fileSystem.status.saved', { name: editorPath.split('/').pop() ?? editorPath }))
         return true
       })
@@ -403,459 +454,382 @@ export function WorkspaceFileSystemApp({
   const canGoUp = currentPath != null && currentPath !== '/'
   const folderCount = entries.filter((e) => e.isDir).length
   const fileCount = entries.filter((e) => !e.isDir).length
+  const isMobile = presentation === 'mobile'
+  const isEditing = editorPath != null
+  const isDirty = isEditing && editorContent !== editorBaseline
+  const editorLineCount = editorContent.split('\n').length
+  const editorFileName = editorPath?.split('/').pop() ?? ''
+  const EditorIcon = getFileIcon({ path: editorPath ?? '', fileName: editorFileName, isDir: false })
+  const sidebarPaths = new Set(sidebarLocations.map((loc) => loc.path))
+  const recentPaths = (recent.scope === activeHost.id ? recent.paths : []).filter((path) => !sidebarPaths.has(path))
+  const selectedModifiedAt = selectedEntry ? formatModifiedAt(selectedEntry.modifiedAt, locale) : null
+  const SelectedIcon = selectedEntry ? getFileIcon(selectedEntry) : File
 
   const canPreviewSelected = !!selectedEntry && !selectedEntry.isDir && /\.(md|markdown|html?)$/i.test(selectedEntry.fileName)
   const folderSummary = t(folderCount === 1 ? 'workspace.fileSystem.count.folderOne' : 'workspace.fileSystem.count.folderMany', { count: folderCount })
   const fileSummary = t(fileCount === 1 ? 'workspace.fileSystem.count.fileOne' : 'workspace.fileSystem.count.fileMany', { count: fileCount })
 
-  const toolbarBtn = cn(
+  const iconBtn = cn(
     'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
     'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--workspace-border-glow)]',
-    'disabled:pointer-events-none disabled:opacity-35',
-    'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]',
+    'disabled:pointer-events-none disabled:opacity-40',
+    'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]',
+  )
+  const quietBtn = cn(
+    'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors',
+    'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--workspace-border-glow)]',
+    'disabled:pointer-events-none disabled:opacity-45',
+    'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]',
+  )
+  const primaryBtn = 'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-[color:var(--workspace-primary-500)] px-3 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-50'
+  const secondaryBtn = 'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-xs font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)] disabled:pointer-events-none disabled:opacity-45'
+  const navItem = (isActive: boolean) => cn(
+    'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors',
+    isActive
+      ? 'bg-[var(--workspace-surface-700)] font-medium text-[var(--workspace-text-strong)] shadow-[inset_0_0_0_1px_var(--workspace-border-soft)]'
+      : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]',
+  )
+  const statusBar = (left: string) => (
+    <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[color:var(--workspace-border-soft)] px-4 py-2 text-[11px] text-[var(--workspace-text-subtle)]">
+      <span className="truncate">{left}</span>
+      <span className="truncate">{activeHost.name} · {activeHost.address}</span>
+    </div>
   )
 
   return (
     <div
       data-testid="workspace-file-system-app"
-      className={isEmbedded ? 'flex h-full min-h-0 flex-col' : 'flex min-h-0 flex-col gap-4'}
+      className={cn('flex min-h-0 flex-col gap-4 text-[var(--workspace-text)]', isEmbedded ? 'h-full' : 'min-h-[36rem]')}
     >
-      {!isEmbedded && (
-        <div className="rounded-xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] px-6 py-5 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-card)]">
-          <div className="text-xs font-medium uppercase tracking-[0.22em] text-[var(--workspace-accent-text)]">{t('workspace.fileSystem.eyebrow')}</div>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--workspace-text-strong)]">{t('workspace.fileSystem.title')}</h2>
-          <p className="mt-1 text-sm text-[var(--workspace-text-muted)]">{t('workspace.fileSystem.description')}</p>
+      <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-xl font-bold tracking-tight text-[var(--workspace-text-strong)]">{c.title}</h2>
+          <p className="mt-1 truncate text-xs text-[var(--workspace-text-muted)]">
+            {isEditing ? fill(c.editSubtitle, { path: editorPath }) : c.subtitle}
+          </p>
         </div>
-      )}
+        {isEditing && (
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" className={secondaryBtn} onClick={() => { setEditorPath(null); setEditorContent(''); setEditorBaseline('') }} disabled={isSaving}>
+              <X className="h-3.5 w-3.5" />
+              {c.cancel}
+            </button>
+            <button type="button" className={primaryBtn} onClick={() => void handleSaveFile()} disabled={isSaving || isMutating}>
+              <Save className="h-3.5 w-3.5" />
+              {isSaving ? t('workspace.fileSystem.saving') : t('workspace.fileSystem.saveFile')}
+            </button>
+          </div>
+        )}
+      </header>
 
       <div
         className={cn(
-          'flex flex-col overflow-hidden',
-          isEmbedded
-            ? 'min-h-0 flex-1'
-            : 'min-h-[36rem] rounded-xl border border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text)] shadow-[var(--workspace-shadow-card)]',
+          'grid min-h-0 flex-1 gap-3',
+          !isMobile && (isEditing ? 'lg:grid-cols-[10.5rem_minmax(0,1fr)]' : 'lg:grid-cols-[10.5rem_minmax(0,1fr)_15rem]'),
         )}
       >
-        {/* Toolbar */}
-        <div
-          className={cn(
-            'flex shrink-0 items-center gap-1 border-b px-2 py-1.5',
-            'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)]',
-          )}
-        >
-          {/* Navigation */}
-          <button
-            type="button"
-            title={t('workspace.fileSystem.action.goUp')}
-            aria-label={t('workspace.fileSystem.action.goUp')}
-            disabled={!canGoUp || isLoading}
-            onClick={() => currentPath && navigateToPath(parentRemotePath(currentPath))}
-            className={toolbarBtn}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            title={t('workspace.fileSystem.action.refresh')}
-            aria-label={t('workspace.fileSystem.action.refresh')}
-            disabled={!currentPath || isLoading}
-            onClick={() => void refreshCurrentPath()}
-            className={toolbarBtn}
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
-
-          {/* Divider */}
-          <div className="mx-1 h-5 w-px shrink-0 bg-[var(--workspace-border-strong)]" />
-
-          {/* Breadcrumb */}
-          <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden text-sm">
-            <button
-              type="button"
-              onClick={() => navigateToPath('/')}
-              className={cn(
-                'shrink-0 rounded px-1.5 py-0.5 text-xs transition-colors hover:underline',
-                'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-accent-text)]',
-              )}
-            >
-              /
-            </button>
-            {breadcrumbs.map((seg, i) => (
-              <span key={seg.path} className="flex min-w-0 items-center gap-0.5">
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-subtle)]" />
-                <button
-                  type="button"
-                  onClick={() => navigateToPath(seg.path)}
-                  className={cn(
-                    'truncate rounded px-1.5 py-0.5 text-xs transition-colors hover:underline',
-                    i === breadcrumbs.length - 1
-                      ? 'font-medium text-[var(--workspace-text-strong)]'
-                      : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-accent-text)]',
-                  )}
-                >
-                  {seg.label}
+        <aside className="min-w-0 overflow-auto">
+          <div className="mb-1.5 px-2.5 text-xs font-medium text-[var(--workspace-text-subtle)]">{t('workspace.fileSystem.locations')}</div>
+          <div className="space-y-0.5">
+            {sidebarLocations.map((loc) => {
+              const isActive = currentPath === loc.path
+                && (activeSidebarLocationId == null || activeSidebarLocationId === loc.id)
+              return (
+                <button key={loc.id} type="button" onClick={() => navigateToPath(loc.path, loc.id)} className={navItem(isActive)}>
+                  <SidebarLocationIcon id={loc.id} />
+                  <span className="truncate">{loc.label}</span>
                 </button>
-              </span>
-            ))}
-            {currentPath == null && (
-              <span className="text-xs text-[var(--workspace-text-muted)]">
-                {t('workspace.fileSystem.loading')}
-              </span>
-            )}
+              )
+            })}
           </div>
-
-          {/* Divider */}
-          <div className="mx-1 h-5 w-px shrink-0 bg-[var(--workspace-border-strong)]" />
-
-          {/* Actions */}
-          <button
-            type="button"
-            title={t('workspace.fileSystem.action.newFile')}
-            aria-label={t('workspace.fileSystem.action.newFile')}
-            disabled={!currentPath || isMutating}
-            onClick={() => void handleCreateFile()}
-            className={toolbarBtn}
-          >
-            <FilePlus className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            title={t('workspace.fileSystem.action.newFolder')}
-            aria-label={t('workspace.fileSystem.action.newFolder')}
-            disabled={!currentPath || isMutating}
-            onClick={() => void handleCreateDir()}
-            className={toolbarBtn}
-          >
-            <FolderPlus className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            title={t('workspace.fileSystem.action.rename')}
-            aria-label={t('workspace.fileSystem.action.rename')}
-            disabled={!selectedEntry || isMutating}
-            onClick={() => void handleRenameSelected()}
-            className={toolbarBtn}
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            title={t('workspace.fileSystem.action.delete')}
-            aria-label={t('workspace.fileSystem.action.delete')}
-            disabled={!selectedEntry || isMutating}
-            onClick={() => void handleDeleteSelected()}
-            className={cn(toolbarBtn, 'hover:!bg-[var(--workspace-status-bad-bg)] hover:!text-[var(--workspace-status-bad-text)]')}
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={!canPreviewSelected}
-            onClick={() => selectedEntry && void handlePreviewFile(selectedEntry)}
-            className="ml-2 h-7 border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] px-2 text-xs text-[var(--workspace-text-muted)] hover:border-[var(--workspace-border-glow)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]"
-          >
-            {t('workspace.fileSystem.action.preview')}
-          </Button>
-        </div>
-
-        {/* Body: sidebar + file list + inspector */}
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-          {/* Sidebar */}
-          <aside
-            className={cn(
-              'w-40 shrink-0 overflow-auto border-r px-2 py-3',
-              'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)]',
-            )}
-          >
-            <div
-              className={cn(
-                'mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest',
-                'text-[var(--workspace-text-subtle)]',
-              )}
-            >
-              {t('workspace.fileSystem.locations')}
-            </div>
-            <div className="space-y-0.5">
-              {sidebarLocations.map((loc) => {
-                const isActive = currentPath === loc.path
-                  && (activeSidebarLocationId == null || activeSidebarLocationId === loc.id)
-                return (
-                  <button
-                    key={loc.id}
-                    type="button"
-                    onClick={() => navigateToPath(loc.path, loc.id)}
-                    className={cn(
-                      'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
-                      isActive
-                        ? 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)] font-medium ring-1 ring-[var(--workspace-border-glow)]'
-                        : 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]',
-                    )}
-                  >
-                    <SidebarLocationIcon id={loc.id} />
-                    <span className="truncate">{loc.label}</span>
-                  </button>
-                )
-              })}
-            </div>
-          </aside>
-
-          {/* File list */}
-          <section
-            className={cn(
-              'min-w-0 flex-1 overflow-auto',
-              'bg-[var(--workspace-surface-900)]',
-            )}
-          >
-            {/* Column headers */}
-            <div
-              className={cn(
-                'sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_6rem_7rem] border-b px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider',
-                'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)]',
-              )}
-            >
-              <div>{t('workspace.fileSystem.column.name')}</div>
-              <div className="text-right">{t('workspace.fileSystem.column.size')}</div>
-              <div className="text-right">{t('workspace.fileSystem.column.kind')}</div>
-            </div>
-
-            {/* Notifications */}
-            {statusMessage && (
-              <div
-                className={cn(
-                  'mx-3 mt-3 rounded-lg px-3 py-2 text-xs',
-                  'border border-[var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[var(--workspace-status-good-text)]',
-                )}
-              >
-                {statusMessage}
+          {recentPaths.length > 0 && (
+            <>
+              <div className="mb-1.5 mt-4 px-2.5 text-xs font-medium text-[var(--workspace-text-subtle)]">{c.recent}</div>
+              <div className="space-y-0.5">
+                {recentPaths.map((path) => {
+                  const id = `recent:${path}`
+                  const isActive = currentPath === path && (activeSidebarLocationId == null || activeSidebarLocationId === id)
+                  return (
+                    <button key={id} type="button" title={path} onClick={() => navigateToPath(path, id)} className={navItem(isActive)}>
+                      <Folder className="h-4 w-4 shrink-0" />
+                      <span className="truncate">{path}</span>
+                    </button>
+                  )
+                })}
               </div>
+            </>
+          )}
+          <div className="mt-4 rounded-lg bg-[var(--workspace-surface-800)] px-2.5 py-2.5 text-[11px] leading-5 text-[var(--workspace-text-muted)]">
+            <Info className="mr-1 inline h-3.5 w-3.5 align-[-2px]" />
+            {c.sftpHintBefore}
+            {sessionId ? (
+              <button type="button" onClick={() => sessions.setSessionWorkspaceApp(sessionId, 'fileTransfer')} className="text-[var(--workspace-accent-text)] hover:underline">
+                {c.sftpHintLink}
+              </button>
+            ) : <span className="text-[var(--workspace-text)]">{c.sftpHintLink}</span>}
+            {c.sftpHintAfter}
+          </div>
+        </aside>
+
+        {isEditing ? (
+          <section className="sb-card flex min-h-[24rem] min-w-0 flex-col overflow-hidden bg-[var(--workspace-surface-900)]">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[color:var(--workspace-border-soft)] px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <EditorIcon className="h-4 w-4 shrink-0 text-[var(--workspace-text-muted)]" />
+                <h3 className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{editorFileName}</h3>
+                {isDirty && (
+                  <span className="shrink-0 rounded-md bg-[var(--workspace-status-warn-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[color:var(--workspace-status-warn-text)]">{c.unsaved}</span>
+                )}
+              </div>
+              <span className="hidden truncate text-[11px] text-[var(--workspace-text-subtle)] sm:block">{c.saveNote}</span>
+            </div>
+            {statusMessage && (
+              <div className="mx-4 mt-3 rounded-lg border border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] px-3 py-2 text-xs text-[color:var(--workspace-status-good-text)]">{statusMessage}</div>
             )}
             {error && (
-              <div className="mx-3 mt-3 rounded-lg border border-[var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[var(--workspace-status-bad-text)]">
-                {error}
-              </div>
+              <div className="mx-4 mt-3 rounded-lg border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[color:var(--workspace-status-bad-text)]">{error}</div>
             )}
-            {isLoading && (
-              <div className="px-3 py-6 text-sm text-[var(--workspace-text-muted)]">
-                {isLoadingHome ? t('workspace.fileSystem.loadingHome') : t('workspace.fileSystem.loadingDirectory')}
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <div
+                ref={gutterRef}
+                aria-hidden="true"
+                className="shrink-0 overflow-hidden whitespace-pre border-r border-[color:var(--workspace-border-soft)] px-3 py-3 text-right font-mono text-xs leading-5 text-[var(--workspace-text-subtle)]"
+              >
+                {Array.from({ length: editorLineCount }, (_, index) => index + 1).join('\n')}
               </div>
-            )}
+              <textarea
+                aria-label={t('workspace.fileSystem.editorLabel')}
+                value={editorContent}
+                spellCheck={false}
+                wrap="off"
+                onChange={(e) => {
+                  setEditorContent(e.target.value)
+                  setCursorLine(e.target.value.slice(0, e.target.selectionStart).split('\n').length)
+                }}
+                onSelect={(e) => setCursorLine(e.currentTarget.value.slice(0, e.currentTarget.selectionStart).split('\n').length)}
+                onScroll={(e) => { if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop }}
+                className="min-h-0 min-w-0 flex-1 resize-none bg-transparent px-4 py-3 font-mono text-xs leading-5 text-[var(--workspace-text)] outline-none"
+              />
+            </div>
+            {statusBar(fill(c.cursor, { line: cursorLine, eol: editorContent.includes('\r\n') ? 'CRLF' : 'LF' }))}
+          </section>
+        ) : (
+          <>
+            <section className="sb-card flex min-h-[24rem] min-w-0 flex-col overflow-hidden bg-[var(--workspace-surface-900)]">
+              <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-[color:var(--workspace-border-soft)] px-3 py-2.5">
+                <div className="flex min-w-0 flex-1 items-center gap-1">
+                  <button
+                    type="button"
+                    title={t('workspace.fileSystem.action.goUp')}
+                    aria-label={t('workspace.fileSystem.action.goUp')}
+                    disabled={!canGoUp || isLoading}
+                    onClick={() => currentPath && navigateToPath(parentRemotePath(currentPath))}
+                    className={iconBtn}
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    title={t('workspace.fileSystem.action.refresh')}
+                    aria-label={t('workspace.fileSystem.action.refresh')}
+                    disabled={!currentPath || isLoading}
+                    onClick={() => void refreshCurrentPath()}
+                    className={iconBtn}
+                  >
+                    <RotateCw className="h-3.5 w-3.5" />
+                  </button>
+                  <div className="ml-1 flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden font-mono text-xs">
+                    <button
+                      type="button"
+                      onClick={() => navigateToPath('/')}
+                      className="shrink-0 rounded px-1 py-0.5 text-[var(--workspace-text-muted)] transition-colors hover:text-[var(--workspace-text-strong)]"
+                    >
+                      /
+                    </button>
+                    {breadcrumbs.map((seg, i) => (
+                      <span key={seg.path} className="flex min-w-0 items-center gap-0.5">
+                        <ChevronRight className="h-3 w-3 shrink-0 text-[var(--workspace-text-subtle)]" />
+                        <button
+                          type="button"
+                          onClick={() => navigateToPath(seg.path)}
+                          className={cn(
+                            'truncate rounded px-1 py-0.5 transition-colors',
+                            i === breadcrumbs.length - 1
+                              ? 'text-[var(--workspace-text-strong)]'
+                              : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
+                          )}
+                        >
+                          {seg.label}
+                        </button>
+                      </span>
+                    ))}
+                    {currentPath == null && (
+                      <span className="font-sans text-[var(--workspace-text-muted)]">{t('workspace.fileSystem.loading')}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-0.5">
+                  <button type="button" title={t('workspace.fileSystem.action.newFile')} aria-label={t('workspace.fileSystem.action.newFile')} disabled={!currentPath || isMutating} onClick={() => void handleCreateFile()} className={quietBtn}>
+                    <FilePlus className="h-3.5 w-3.5" />
+                    {t('workspace.fileSystem.action.newFile')}
+                  </button>
+                  <button type="button" title={t('workspace.fileSystem.action.newFolder')} aria-label={t('workspace.fileSystem.action.newFolder')} disabled={!currentPath || isMutating} onClick={() => void handleCreateDir()} className={quietBtn}>
+                    <FolderPlus className="h-3.5 w-3.5" />
+                    {t('workspace.fileSystem.action.newFolder')}
+                  </button>
+                  <button type="button" title={t('workspace.fileSystem.action.rename')} aria-label={t('workspace.fileSystem.action.rename')} disabled={!selectedEntry || isMutating} onClick={() => void handleRenameSelected()} className={quietBtn}>
+                    <Pencil className="h-3.5 w-3.5" />
+                    {t('workspace.fileSystem.action.rename')}
+                  </button>
+                  <button
+                    type="button"
+                    title={t('workspace.fileSystem.action.delete')}
+                    aria-label={t('workspace.fileSystem.action.delete')}
+                    disabled={!selectedEntry || isMutating}
+                    onClick={() => void handleDeleteSelected()}
+                    className={cn(quietBtn, 'hover:bg-[var(--workspace-status-bad-bg)] hover:text-[color:var(--workspace-status-bad-text)]')}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {t('workspace.fileSystem.action.delete')}
+                  </button>
+                  <button
+                    type="button"
+                    title={t('workspace.fileSystem.action.preview')}
+                    aria-label={t('workspace.fileSystem.action.preview')}
+                    disabled={!canPreviewSelected}
+                    onClick={() => selectedEntry && void handlePreviewFile(selectedEntry)}
+                    className={quietBtn}
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    {t('workspace.fileSystem.action.preview')}
+                  </button>
+                </div>
+              </div>
 
-            {/* Entries */}
-            {!isLoading && !error && (
-              entries.length > 0 ? (
-                <div>
-                  {entries.map((entry) => {
-                    const isSelected = selectedPath === entry.path
-                    return (
-                      <button
-                        key={entry.path}
-                        type="button"
-                        onClick={() => {
-                          if (entry.isDir) {
-                            navigateToPath(entry.path)
-                            return
-                          }
-                          setSelectedPath(entry.path)
-                        }}
-                        onDoubleClick={() => {
-                          if (entry.isDir) return
-                          void handleOpenFile(entry)
-                        }}
-                        className={cn(
-                          'grid w-full grid-cols-[minmax(0,1fr)_6rem_7rem] items-center px-3 py-1.5 text-left text-sm transition-colors',
-                          isSelected
-                            ? 'bg-[var(--workspace-surface-row-selected)] text-[var(--workspace-text-strong)] ring-1 ring-inset ring-[var(--workspace-border-glow)]'
-                            : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-text-strong)]',
-                        )}
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          {entry.isDir ? (
-                            <Folder
-                              className={cn(
-                                'h-4 w-4 shrink-0',
-                                'text-[var(--workspace-accent-text)]',
-                              )}
-                            />
-                          ) : (
-                            <File
-                              className={cn(
-                                'h-4 w-4 shrink-0',
-                                'text-[var(--workspace-text-subtle)]',
-                              )}
-                            />
-                          )}
-                          <span className="truncate">{entry.fileName}</span>
-                        </div>
-                        <div
-                          className={cn(
-                            'text-right text-xs',
-                            'text-[var(--workspace-text-muted)]',
-                          )}
-                        >
-                          {entry.isDir ? '—' : formatFileSize(entry.size)}
-                        </div>
-                        <div
-                          className={cn(
-                            'text-right text-xs',
-                            'text-[var(--workspace-text-muted)]',
-                          )}
-                        >
-                          {entry.isDir ? t('workspace.fileSystem.kind.folder') : getFileKind(entry.fileName, t)}
-                        </div>
+              <div className="min-h-0 flex-1 overflow-auto">
+                <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_6rem_7rem] border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2 text-xs font-medium text-[var(--workspace-text-subtle)]">
+                  <div>{t('workspace.fileSystem.column.name')}</div>
+                  <div>{t('workspace.fileSystem.column.size')}</div>
+                  <div>{t('workspace.fileSystem.column.kind')}</div>
+                </div>
+
+                {statusMessage && (
+                  <div className="mx-3 mt-3 rounded-lg border border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] px-3 py-2 text-xs text-[color:var(--workspace-status-good-text)]">
+                    {statusMessage}
+                  </div>
+                )}
+                {error && (
+                  <div className="mx-3 mt-3 rounded-lg border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[color:var(--workspace-status-bad-text)]">
+                    {error}
+                  </div>
+                )}
+                {isLoading && (
+                  <div className="px-3 py-6 text-sm text-[var(--workspace-text-muted)]">
+                    {isLoadingHome ? t('workspace.fileSystem.loadingHome') : t('workspace.fileSystem.loadingDirectory')}
+                  </div>
+                )}
+
+                {!isLoading && !error && (
+                  entries.length > 0 ? (
+                    <div className="divide-y divide-[color:var(--workspace-border-soft)]">
+                      {entries.map((entry) => {
+                        const isSelected = selectedPath === entry.path
+                        const EntryIcon = getFileIcon(entry)
+                        return (
+                          <button
+                            key={entry.path}
+                            type="button"
+                            onClick={() => {
+                              if (entry.isDir) {
+                                navigateToPath(entry.path)
+                                return
+                              }
+                              setSelectedPath(entry.path)
+                            }}
+                            onDoubleClick={() => {
+                              if (entry.isDir) return
+                              void handleOpenFile(entry)
+                            }}
+                            className={cn(
+                              'grid w-full grid-cols-[minmax(0,1fr)_6rem_7rem] items-center px-3 py-1.5 text-left text-[13px] transition-colors',
+                              isSelected
+                                ? 'bg-[var(--workspace-surface-row-selected)] text-[var(--workspace-text-strong)] shadow-[inset_3px_0_0_hsl(var(--primary))]'
+                                : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]',
+                            )}
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <EntryIcon className={cn('h-4 w-4 shrink-0', entry.isDir ? 'text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text-subtle)]')} />
+                              <span className="truncate">{entry.fileName}</span>
+                            </div>
+                            <div className="font-mono text-xs text-[var(--workspace-text-muted)]">
+                              {entry.isDir ? '—' : formatFileSize(entry.size)}
+                            </div>
+                            <div className="truncate text-xs text-[var(--workspace-text-muted)]">
+                              {entry.isDir ? t('workspace.fileSystem.kind.folder') : getFileKind(entry.fileName, t)}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="px-3 py-8 text-sm text-[var(--workspace-text-muted)]">
+                      {t('workspace.fileSystem.emptyDirectory')}
+                    </div>
+                  )
+                )}
+              </div>
+
+              {statusBar(isLoading ? t('workspace.fileSystem.loading') : t('workspace.fileSystem.statusSummary', { folders: folderSummary, files: fileSummary }))}
+            </section>
+
+            <aside className="sb-card min-w-0 overflow-auto bg-[var(--workspace-surface-900)] p-4">
+              {selectedEntry ? (
+                <div className="flex flex-col gap-3">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-[var(--workspace-surface-800)]">
+                    <SelectedIcon className={cn('h-6 w-6', selectedEntry.isDir ? 'text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text)]')} />
+                  </div>
+                  <h3 className="truncate text-base font-semibold text-[var(--workspace-text-strong)]" title={selectedEntry.fileName}>{selectedEntry.fileName}</h3>
+                  <dl className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
+                    <dt className="text-[var(--workspace-text-subtle)]">{t('workspace.fileSystem.column.kind')}</dt>
+                    <dd className="text-[var(--workspace-text-strong)]">{selectedEntry.isDir ? t('workspace.fileSystem.kind.folder') : getFileKind(selectedEntry.fileName, t)}</dd>
+                    {!selectedEntry.isDir && (
+                      <>
+                        <dt className="text-[var(--workspace-text-subtle)]">{t('workspace.fileSystem.column.size')}</dt>
+                        <dd className="font-mono text-[var(--workspace-text-strong)]">{formatFileSize(selectedEntry.size)}</dd>
+                      </>
+                    )}
+                    <dt className="text-[var(--workspace-text-subtle)]">{t('workspace.fileSystem.path')}</dt>
+                    <dd className="break-all font-mono text-[var(--workspace-text-strong)]">{selectedEntry.path}</dd>
+                    {selectedModifiedAt && (
+                      <>
+                        <dt className="text-[var(--workspace-text-subtle)]">{c.modified}</dt>
+                        <dd className="font-mono text-[var(--workspace-text-strong)]">{selectedModifiedAt}</dd>
+                      </>
+                    )}
+                  </dl>
+                  {!selectedEntry.isDir && (
+                    <>
+                      <button type="button" className={cn(primaryBtn, 'mt-1 w-full')} disabled={isOpeningFile} onClick={() => void handleOpenFile(selectedEntry)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                        {isOpeningFile ? t('workspace.fileSystem.openingFile') : c.edit}
                       </button>
-                    )
-                  })}
+                      <button type="button" className={cn(secondaryBtn, 'w-full')} disabled={!canPreviewSelected} onClick={() => void handlePreviewFile(selectedEntry)}>
+                        <Globe className="h-3.5 w-3.5" />
+                        {t('workspace.fileSystem.previewInBrowser')}
+                      </button>
+                      {!canPreviewSelected && <p className="text-[11px] text-[var(--workspace-text-subtle)]">{c.previewOnly}</p>}
+                    </>
+                  )}
                 </div>
               ) : (
-                <div className="px-3 py-8 text-sm text-[var(--workspace-text-muted)]">
-                  {t('workspace.fileSystem.emptyDirectory')}
+                <div className="flex h-full min-h-[10rem] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[color:var(--workspace-border-soft)] px-3 py-8 text-center text-xs text-[var(--workspace-text-subtle)]">
+                  <span>{t('workspace.fileSystem.selectPrompt')}</span>
+                  <span>{isOpeningFile ? t('workspace.fileSystem.openingFile') : t('workspace.fileSystem.doubleClickToEdit')}</span>
                 </div>
-              )
-            )}
-          </section>
-
-          {/* Inspector */}
-          <aside
-            className={cn(
-              'w-60 shrink-0 overflow-auto border-l px-4 py-4',
-              'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)]',
-            )}
-          >
-            {/* File info */}
-            {selectedEntry ? (
-              <div>
-                <div className="mb-3 flex justify-center">
-                  {selectedEntry.isDir ? (
-                    <Folder
-                      className={cn(
-                        'h-14 w-14',
-                        'text-[var(--workspace-accent-text)]',
-                      )}
-                    />
-                  ) : (
-                    <File
-                      className={cn(
-                        'h-14 w-14',
-                        'text-[var(--workspace-text-subtle)]',
-                      )}
-                    />
-                  )}
-                </div>
-                <div
-                  className={cn(
-                    'truncate text-center text-sm font-semibold',
-                    'text-[var(--workspace-text-strong)]',
-                  )}
-                >
-                  {selectedEntry.fileName}
-                </div>
-                <div
-                  className={cn(
-                    'mt-3 space-y-1.5 rounded-lg border px-3 py-2.5 text-xs',
-                    'border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-panel)] text-[var(--workspace-text-muted)]',
-                  )}
-                >
-                  <div className="flex justify-between gap-2">
-                    <span className="text-[var(--workspace-text-subtle)]">{t('workspace.fileSystem.column.kind')}</span>
-                    <span className="text-right">{selectedEntry.isDir ? t('workspace.fileSystem.kind.folder') : getFileKind(selectedEntry.fileName, t)}</span>
-                  </div>
-                  {!selectedEntry.isDir && (
-                    <div className="flex justify-between gap-2">
-                      <span className="text-[var(--workspace-text-subtle)]">{t('workspace.fileSystem.column.size')}</span>
-                      <span>{formatFileSize(selectedEntry.size)}</span>
-                    </div>
-                  )}
-                  <div className="pt-0.5">
-                    <span className="block text-[10px] text-[var(--workspace-text-subtle)]">
-                      {t('workspace.fileSystem.path')}
-                    </span>
-                    <span className="mt-0.5 block break-all text-[10px]">{selectedEntry.path}</span>
-                  </div>
-                  {canPreviewSelected && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="mt-3 w-full border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-border-glow)] hover:bg-[var(--workspace-accent-subtle)] hover:text-[var(--workspace-accent-text)]"
-                      onClick={() => void handlePreviewFile(selectedEntry)}
-                    >
-                      {t('workspace.fileSystem.previewInBrowser')}
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div
-                className={cn(
-                  'rounded-lg border border-dashed px-3 py-8 text-center text-xs',
-                  'border-[var(--workspace-border-soft)] text-[var(--workspace-text-subtle)]',
-                )}
-              >
-                {t('workspace.fileSystem.selectPrompt')}
-              </div>
-            )}
-
-            {/* Editor */}
-            <div
-              className={cn(
-                'mb-2 mt-5 text-[10px] font-semibold uppercase tracking-widest',
-                'text-[var(--workspace-text-subtle)]',
               )}
-            >
-              {t('workspace.fileSystem.editor')}
-            </div>
-            {editorPath ? (
-              <div className="space-y-2">
-                <div
-                  className={cn(
-                    'truncate text-xs',
-                    'text-[var(--workspace-text-muted)]',
-                  )}
-                >
-                  {editorPath.split('/').pop()}
-                </div>
-                <textarea
-                  aria-label={t('workspace.fileSystem.editorLabel')}
-                  value={editorContent}
-                  onChange={(e) => setEditorContent(e.target.value)}
-                  className={cn(
-                    'min-h-[14rem] w-full rounded-lg border px-3 py-2 font-mono text-xs outline-none focus:ring-1',
-                    'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-input)] text-[var(--workspace-text)] focus:ring-[color:var(--workspace-primary-500)]',
-                  )}
-                />
-                <Button size="sm" className="w-full" onClick={() => void handleSaveFile()} disabled={isSaving || isMutating}>
-                  {isSaving ? t('workspace.fileSystem.saving') : t('workspace.fileSystem.saveFile')}
-                </Button>
-              </div>
-            ) : (
-              <div
-                className={cn(
-                  'rounded-lg border border-dashed px-3 py-8 text-center text-xs',
-                  'border-[var(--workspace-border-soft)] text-[var(--workspace-text-subtle)]',
-                )}
-              >
-                {isOpeningFile ? t('workspace.fileSystem.openingFile') : t('workspace.fileSystem.doubleClickToEdit')}
-              </div>
-            )}
-          </aside>
-        </div>
-
-        {/* Status bar */}
-        <div
-          className={cn(
-            'flex shrink-0 items-center justify-between border-t px-4 py-1 text-[11px]',
-            'border-[var(--workspace-border-strong)] bg-[var(--workspace-surface-800)] text-[var(--workspace-text-subtle)]',
-          )}
-        >
-          <span>
-            {isLoading
-              ? t('workspace.fileSystem.loading')
-              : t('workspace.fileSystem.statusSummary', { folders: folderSummary, files: fileSummary })}
-          </span>
-          <span>{activeHost.name} · {activeHost.address}</span>
-        </div>
+            </aside>
+          </>
+        )}
       </div>
     </div>
   )

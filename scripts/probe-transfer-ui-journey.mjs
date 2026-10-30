@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
-import { initializeOpsUiVault, revealOpsUiHostActions } from './ops-ui-journey.mjs'
+import { closeOpsUiHostDrawer, initializeOpsUiVault, revealOpsUiHostActions } from './ops-ui-journey.mjs'
 import { wait } from './probe-transfer-ui-fixture.mjs'
 import { chooseServerMonitoring } from './monitoring-mode-ui.mjs'
 
@@ -16,7 +16,7 @@ const panel = h => `${card(h)} ${id('compatible-agent-panel')}`
 const transfer = h => `${card(h)} ${id('probe-transfer-panel')}`
 const normalFingerprint=v=>String(v).trim().replace(/^SHA256:/,'').replace(/=+$/,'')
 const exists=async(d,s)=>(await d.findAll(s)).length>0
-const main=async(d,page='hosts')=>{await d.click(id('pc-dashboard'));await d.click(id(`pc-nav-${page}`))}
+const main=async(d,page='hosts')=>{await closeOpsUiHostDrawer(d);await d.click(id('pc-dashboard'));await d.click(id(`pc-nav-${page}`))}
 const closed=async(d,s)=>d.until(async()=>!await exists(d,s))
 
 export function classifyTransferHostError(message) {
@@ -35,10 +35,10 @@ export async function setupTransferUi({driver:d,fixture:f,record}) {
     const fields={address:h.address,port:String(h.port),username:h.user,name:h.name}
     for(const [field,value] of Object.entries(fields))await d.fill(id(`host-${field}`),value,{keyboardClear:true})
     for(const [field,value] of Object.entries(fields))assert((await d.attr(id(`host-${field}`),'value'))===value,`transfer_ui_host_${field}_not_entered`)
-    await d.click(id('host-auth-private-key'));const key=await readFile(h.privateKeyPath,'utf8');await d.fill(id('host-private-key'),key,{tabFrom:id('host-auth-private-key')})
+    await d.click(id('host-auth-private-key'));const key=await readFile(h.privateKeyPath,'utf8');await d.fill(id('host-private-key'),key,{tabFrom:[id('host-auth-private-key'),id('host-auth-password')]})
     assert(String(await d.attr(id('host-private-key'),'value')).replaceAll('\r\n','\n')===key.replaceAll('\r\n','\n'),'transfer_ui_private_key_roundtrip_failed')
     await d.fill(id('host-secret-name'),`transfer-${h.role}-key`);assert(await d.attr(id('host-secret-name'),'value')===`transfer-${h.role}-key`,'transfer_ui_secret_reference_not_explicit')
-    if(h.jump){await d.click(id('host-jump-toggle'));await d.select(id('host-jump-profile'),f.hosts[h.jump].id,{tabFrom:id('host-jump-toggle')})}
+    if(h.jump){await d.click(id('host-jump-toggle'));await d.select(id('host-jump-profile'),f.hosts[h.jump].id,{tabFrom:id('host-jump-toggle')});await d.click(id('host-basics-tab'))}
     await chooseServerMonitoring(d)
     record('transfer-host-form-ready',{role:h.role,fieldsMatched:true,privateKeyMatched:true,explicitReference:true})
     await d.click(id('host-save'));await closed(d,`dialog[open] ${id('host-form')}`)
@@ -60,11 +60,11 @@ export async function setupTransferUi({driver:d,fixture:f,record}) {
   }
   for(let i=0;i<f.servers.length;i++) {
     const server=f.servers[i]
-    await main(d,'settings');await d.click(id('settings-category-monitoring'))
+    await main(d,'settings');await d.click(id('settings-category-monitoring'));await d.click(id('monitor-tab-services'))
     const root='//*[@data-testid="komari-settings"]'
     record('transfer-service-editor-opening',{service:i})
     await d.click(button(root,'Add monitoring service'));await d.fill('#komari-name',server.name);await d.fill('#komari-endpoint',server.endpoint)
-    await d.select(`${id('komari-settings')} select[aria-label="Authorization method"]`,'key');await d.fill('#komari-api-key',server.apiKey)
+    await d.click(`xpath=${root}//label[input[@type='radio' and @value='key']]`);await d.fill('#komari-api-key',server.apiKey)
     const enabled=`xpath=${root}//label[contains(.,'Enable monitoring connection')]/input[@type='checkbox']`
     if(!await d.isSelected(enabled))await d.click(enabled)
     record('transfer-service-saving',{service:i})
@@ -117,7 +117,7 @@ const observations=f=>Object.fromEntries(Object.values(f.hosts).map(h=>[h.role,f
 const stable=async(f,before)=>{await delay(5000);assert.deepEqual(observations(f),before,'transfer_ui_unexpected_remote_replay')}
 async function state(d,h,wanted) {await d.until(async()=>await d.attr(transfer(h),'data-status')===wanted,{timeoutMs:120000})}
 async function audit(d,ids,statuses){
-  await main(d,'activity');await d.click(id('audit-tab'));await d.click(id('operations-refresh'))
+  await main(d,'activity');await d.click(id('history-tab-audit'));await d.click(id('audit-tab'));await d.click(id('operations-refresh'))
   const pending=new Map(ids.map((value,i)=>[value,statuses[i]]))
   for(let page=0;page<20;page++) {
     await d.until(async()=>await exists(d,id('operation-audit-row')) || await exists(d,id('audit-empty')))
@@ -133,14 +133,12 @@ async function audit(d,ids,statuses){
 }
 async function jobs(d,h){return [await d.attr(transfer(h),'data-job-id'),await d.attr(transfer(h),'data-target-job-id')]}
 export async function revealTransferObservations(d,observations,anchor=observations){
-  // Reveal the monitoring column through the existing visible range control.
-  // A native WebKit click may scroll vertically while leaving this column
-  // horizontally clipped. Navigation happens before the evidence frame.
-  await revealOpsUiHostActions(d, observations)
+  // The observations sit in the host details drawer, which scrolls by itself.
+  const drawers=[];for(const region of await d.findAll(id('host-ops-details')))if(await d.isDisplayed(region))drawers.push(region)
+  assert.equal(drawers.length,1,'transfer_ui_drawer_not_open')
   const viewport=await d.request('GET',d.route('/window/rect'))
-  // Clicking a partially visible table can leave its edge clipped or under
-  // the fixed header. Navigate via a nearby static caption, then verify the
-  // full table. Choose direction only after horizontal navigation settles.
+  // Clicking a partially visible table can leave its edge clipped. Navigate
+  // via a nearby static caption, then verify the full table.
   let target = anchor
   if (typeof anchor !== 'string') {
     const { y } = await d.rect(anchor.above)
@@ -149,10 +147,10 @@ export async function revealTransferObservations(d,observations,anchor=observati
   }
   await d.click(target)
   // One real click only; subsequent paint checks are read-only. Both endpoint
-  // rows must fit inside the window AND the list's horizontal clipping area.
+  // rows must fit inside the window AND the drawer's horizontal clipping area.
   await d.until(async()=>{
     const box=await d.rect(observations)
-    const list=await d.rect(id('host-list-scroll-viewport'))
+    const list=await d.rect(drawers[0])
     return box.width>0 && box.height>0 && box.y>=40 && box.y+box.height<=viewport.height
       && box.x>=Math.max(0,list.x) && box.x+box.width<=Math.min(viewport.width,list.x+list.width)
   },{timeoutMs:5000})

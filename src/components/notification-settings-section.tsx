@@ -20,13 +20,16 @@ import {
 import { Bell, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import NotificationDeliverySummary from './notification-delivery-summary'
+import { CardHead, Chip, Note, SettingRow, StatusDot, SwitchInput, checkboxClass, mutedText, primaryButton, softBorder } from './monitor-settings-ui'
+import { monitorSettingsCopy } from '@/lib/locales/monitor-settings-v3'
+import { cn } from '@/lib/utils'
 import { loadNotificationDeliveryState, loadOwnNotificationDeliveryState, saveNotificationDeliveryState, NOTIFICATION_DELIVERY_CHANGED_EVENT } from '@/lib/notification-delivery-state'
 
 const CHANNELS: NotificationChannel[] = ['local', 'webhook', 'system']
 const SEVERITIES: NotificationSeverity[] = ['info', 'warning', 'critical']
 
 export function NotificationSettingsSection() {
-  const { t } = useT()
+  const { t, locale } = useT()
   const [policy, setPolicy] = useState<NotificationPolicy>(loadNotificationPolicy)
   const [deliveryState, setDeliveryState] = useState(loadNotificationDeliveryState)
   const [saved, setSaved] = useState(false)
@@ -117,120 +120,107 @@ export function NotificationSettingsSection() {
   }
 
   const summary = notificationPolicySummary(policy)
+  const v3 = monitorSettingsCopy[locale]
+  const chip = (checked: boolean) => cn('flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-xs text-[color:var(--workspace-text)]', !checked && mutedText)
 
   return (
-    <section className="rounded-lg border p-4" data-testid="notification-settings">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="flex items-center gap-2 font-semibold"><Bell className="h-4 w-4" />{t('settings.notifications.title')}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">{t('settings.notifications.description')}</p>
-        </div>
-        <span className="rounded-full border px-2 py-1 text-[10px] font-medium text-muted-foreground">
-          {summary.enabled ? t('settings.notifications.enabled') : t('settings.notifications.disabled')}
-        </span>
-      </div>
-
-      <div className="mt-4 space-y-4">
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={policy.enabled} onChange={(event) => update({ enabled: event.target.checked })} className="rounded" />
-          {t('settings.notifications.enable')}
-        </label>
-
-        <div>
-          <div className="text-sm text-muted-foreground">{t('settings.notifications.channels')}</div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {CHANNELS.map((channel) => (
-              <label key={channel} className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs">
-                <input type="checkbox" checked={policy.channels.includes(channel)} onChange={(event) => toggleChannel(channel, event.target.checked)} className="rounded" />
-                {t(`settings.notifications.channel.${channel}`)}
-              </label>
-            ))}
-          </div>
-          {(policy.channels.includes('system') || policy.recoveryChannels.includes('system')) && (
-            <div className="mt-3 rounded-md border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
-              <p>{t('settings.notifications.systemHelp')}</p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={requestSystemPermission} disabled={systemBusy || systemPermission !== 'default'}>
-                  {t('settings.notifications.requestSystemPermission')}
-                </Button>
-                <Button type="button" variant="outline" size="sm" onClick={testSystemNotification} disabled={systemBusy}>
-                  {t('settings.notifications.testSystem')}
-                </Button>
-                <span role="status">
-                  {t(`settings.notifications.systemPermission.${systemPermission}`)}
-                </span>
-                {systemTestResult && <span role="status">{t(`settings.notifications.testResult.${systemTestResult}`)}</span>}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-md border border-border/60 p-3" data-testid="notification-recovery-settings">
-          <label className="flex items-center gap-2 text-sm">
-            <input data-testid="notification-recovery-enabled" type="checkbox" checked={policy.notifyOnRecovery} onChange={(event) => update({ notifyOnRecovery: event.target.checked })} className="rounded" />
-            {t('settings.notifications.notifyRecovery')}
-          </label>
-          <p className="mt-1 text-xs text-muted-foreground">{t('settings.notifications.recoveryDescription')}</p>
-          <div className="mt-3">
-            <div className="text-sm text-muted-foreground">{t('settings.notifications.recoveryChannels')}</div>
-            <div className="mt-2 flex flex-wrap gap-2">
+    <section className="grid min-w-0 gap-3 xl:grid-cols-2 xl:items-start" data-testid="notification-settings">
+      <h3 className="sr-only">{t('settings.notifications.title')}</h3>
+      <div className="min-w-0 space-y-3">
+        <div className="sb-card overflow-hidden">
+          <SettingRow title={t('settings.notifications.enable')} hint={t('settings.notifications.description')}>
+            <Chip tone={summary.enabled ? 'good' : undefined}>{summary.enabled ? t('settings.notifications.enabled') : t('settings.notifications.disabled')}</Chip>
+            <SwitchInput aria-label={t('settings.notifications.enable')} checked={policy.enabled} onChange={(event) => update({ enabled: event.target.checked })} />
+          </SettingRow>
+          <SettingRow title={t('settings.notifications.channels')} hint={v3.channelsHint}>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
               {CHANNELS.map((channel) => (
-                <label key={`recovery-${channel}`} className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs">
+                <label key={channel} className={chip(policy.channels.includes(channel))}>
+                  <input type="checkbox" checked={policy.channels.includes(channel)} onChange={(event) => toggleChannel(channel, event.target.checked)} className={checkboxClass} />
+                  {t(`settings.notifications.channel.${channel}`)}
+                </label>
+              ))}
+            </div>
+          </SettingRow>
+          {(policy.channels.includes('system') || policy.recoveryChannels.includes('system')) && (
+            <SettingRow title={v3.systemPermission} hint={t('settings.notifications.systemHelp')}>
+              <StatusDot tone={systemPermission === 'granted' ? 'good' : systemPermission === 'denied' ? 'bad' : undefined}><span role="status">{t(`settings.notifications.systemPermission.${systemPermission}`)}</span></StatusDot>
+              <Button type="button" variant="ghost" size="sm" onClick={requestSystemPermission} disabled={systemBusy || systemPermission !== 'default'}>
+                {t('settings.notifications.requestSystemPermission')}
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={testSystemNotification} disabled={systemBusy}>
+                {t('settings.notifications.testSystem')}
+              </Button>
+              {systemTestResult && <span role="status" className={cn('text-xs', systemTestResult === 'accepted' ? 'text-[color:var(--workspace-status-good-text)]' : 'text-[color:var(--workspace-status-bad-text)]')}>{t(`settings.notifications.testResult.${systemTestResult}`)}</span>}
+            </SettingRow>
+          )}
+          <div className={cn('border-b px-4 py-3 last:border-b-0', softBorder)}>
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <label className="text-sm font-medium text-[color:var(--workspace-text-strong)]" htmlFor="notification-webhook">{t('settings.notifications.webhookUrl')}</label>
+              <Input id="notification-webhook" value={policy.webhookUrl ?? ''} onChange={(event) => update({ webhookUrl: event.target.value || null })} placeholder="https://alerts.example/hooks/..." className="h-8 w-full max-w-xs font-mono text-xs" autoComplete="off" />
+            </div>
+            <p className={cn('mt-1 text-xs', mutedText)}>{t('settings.notifications.webhookHelp')}</p>
+          </div>
+        </div>
+
+        <div className="sb-card overflow-hidden" data-testid="notification-recovery-settings">
+          <SettingRow title={t('settings.notifications.notifyRecovery')} hint={t('settings.notifications.recoveryDescription')}>
+            <SwitchInput data-testid="notification-recovery-enabled" aria-label={t('settings.notifications.notifyRecovery')} checked={policy.notifyOnRecovery} onChange={(event) => update({ notifyOnRecovery: event.target.checked })} />
+          </SettingRow>
+          <SettingRow title={t('settings.notifications.recoveryChannels')}>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {CHANNELS.map((channel) => (
+                <label key={`recovery-${channel}`} className={chip(policy.recoveryChannels.includes(channel))}>
                   <input
                     data-testid={`notification-recovery-channel-${channel}`}
                     type="checkbox"
                     checked={policy.recoveryChannels.includes(channel)}
                     aria-label={t(`settings.notifications.recoveryChannel.${channel}`)}
                     onChange={(event) => toggleRecoveryChannel(channel, event.target.checked)}
-                    className="rounded"
+                    className={checkboxClass}
                   />
                   {t(`settings.notifications.recoveryChannel.${channel}`)}
                 </label>
               ))}
             </div>
-          </div>
-          <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-            <input data-testid="notification-include-alert-summary" type="checkbox" checked={policy.includeAlertSummary} onChange={(event) => update({ includeAlertSummary: event.target.checked })} className="rounded" />
-            {t('settings.notifications.includeSummary')}
-          </label>
+          </SettingRow>
+          <SettingRow title={t('settings.notifications.includeSummary')}>
+            <SwitchInput data-testid="notification-include-alert-summary" aria-label={t('settings.notifications.includeSummary')} checked={policy.includeAlertSummary} onChange={(event) => update({ includeAlertSummary: event.target.checked })} />
+          </SettingRow>
         </div>
+      </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <label className="text-sm text-muted-foreground">{t('settings.notifications.minimumSeverity')}
-            <NativeSelect value={policy.minimumSeverity} onChange={(event) => update({ minimumSeverity: event.target.value as NotificationSeverity })} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-xs">
+      <div className="min-w-0 space-y-3">
+        <div className="sb-card overflow-hidden">
+          <SettingRow title={t('settings.notifications.minimumSeverity')}>
+            <NativeSelect aria-label={t('settings.notifications.minimumSeverity')} value={policy.minimumSeverity} onChange={(event) => update({ minimumSeverity: event.target.value as NotificationSeverity })} className="h-8 w-32 rounded-md border bg-background px-2 text-xs">
               {SEVERITIES.map((severity) => <option key={severity} value={severity}>{t(`settings.notifications.severity.${severity}`)}</option>)}
             </NativeSelect>
-          </label>
-          <label className="text-sm text-muted-foreground">{t('settings.notifications.cooldownMinutes')}
-            <Input type="number" min={0} value={Math.round(policy.cooldownMs / 60_000)} onChange={(event) => update({ cooldownMs: Math.max(0, Number(event.target.value) || 0) * 60_000 })} className="mt-1" />
-          </label>
-          <label className="text-sm text-muted-foreground">{t('settings.notifications.dedupeSeconds')}
-            <Input type="number" min={0} value={Math.round(policy.dedupeWindowMs / 1000)} onChange={(event) => update({ dedupeWindowMs: Math.max(0, Number(event.target.value) || 0) * 1000 })} className="mt-1" />
-          </label>
+          </SettingRow>
+          <SettingRow title={t('settings.notifications.cooldownMinutes')}>
+            <Input aria-label={t('settings.notifications.cooldownMinutes')} type="number" min={0} value={Math.round(policy.cooldownMs / 60_000)} onChange={(event) => update({ cooldownMs: Math.max(0, Number(event.target.value) || 0) * 60_000 })} className="h-8 w-20 text-right font-mono text-xs" />
+            <span className={cn('text-xs', mutedText)}>{v3.minutes}</span>
+          </SettingRow>
+          <SettingRow title={t('settings.notifications.dedupeSeconds')}>
+            <Input aria-label={t('settings.notifications.dedupeSeconds')} type="number" min={0} value={Math.round(policy.dedupeWindowMs / 1000)} onChange={(event) => update({ dedupeWindowMs: Math.max(0, Number(event.target.value) || 0) * 1000 })} className="h-8 w-20 text-right font-mono text-xs" />
+            <span className={cn('text-xs', mutedText)}>{v3.seconds}</span>
+          </SettingRow>
+          <div className={cn('space-y-1.5 border-t px-4 py-3', softBorder)}>
+            <Note icon={ShieldCheck}>{t('settings.notifications.redactionNote')}</Note>
+            <Note icon={LockKeyhole}>{t('settings.notifications.storageNote')}</Note>
+          </div>
+          <div className={cn('flex flex-wrap items-center gap-2 border-t px-4 py-3', softBorder)}>
+            {saved && <span role="status" className="text-xs text-[color:var(--workspace-status-good-text)]">{t('settings.notifications.saved')}</span>}
+            {error && <span role="alert" className="text-xs text-[color:var(--workspace-status-bad-text)]">{error}</span>}
+            <span className="flex-1" />
+            <Button type="button" variant="ghost" size="sm" onClick={() => { setPolicy({ ...DEFAULT_NOTIFICATION_POLICY, channels: [...DEFAULT_NOTIFICATION_POLICY.channels], recoveryChannels: [...DEFAULT_NOTIFICATION_POLICY.recoveryChannels] }); setSaved(false); setError('') }}>{t('settings.notifications.reset')}</Button>
+            <Button type="button" size="sm" className={primaryButton} onClick={save}>{t('settings.notifications.save')}</Button>
+          </div>
         </div>
 
-        <div>
-          <label className="text-sm text-muted-foreground" htmlFor="notification-webhook">{t('settings.notifications.webhookUrl')}</label>
-          <Input id="notification-webhook" value={policy.webhookUrl ?? ''} onChange={(event) => update({ webhookUrl: event.target.value || null })} placeholder="https://alerts.example/hooks/..." className="mt-1 font-mono text-xs" autoComplete="off" />
-          <p className="mt-1 text-xs text-muted-foreground">{t('settings.notifications.webhookHelp')}</p>
-        </div>
-
-        <div className="flex items-start gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-muted-foreground">
-          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-          <span>{t('settings.notifications.redactionNote')}</span>
-        </div>
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-muted-foreground">
-          <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-          <span>{t('settings.notifications.storageNote')}</span>
-        </div>
-
-        <NotificationDeliverySummary state={deliveryState} compact />
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" size="sm" onClick={save}>{t('settings.notifications.save')}</Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => { setPolicy({ ...DEFAULT_NOTIFICATION_POLICY, channels: [...DEFAULT_NOTIFICATION_POLICY.channels], recoveryChannels: [...DEFAULT_NOTIFICATION_POLICY.recoveryChannels] }); setSaved(false); setError('') }}>{t('settings.notifications.reset')}</Button>
-          {saved && <span role="status" className="text-xs text-emerald-600">{t('settings.notifications.saved')}</span>}
-          {error && <span role="alert" className="text-xs text-red-500">{error}</span>}
+        <div className="sb-card overflow-hidden">
+          <CardHead title={<span className="flex items-center gap-2"><Bell className="h-3.5 w-3.5" aria-hidden="true" />{v3.delivery}</span>} />
+          <div className="p-3"><NotificationDeliverySummary state={deliveryState} compact /></div>
         </div>
       </div>
     </section>

@@ -233,10 +233,11 @@ export interface SyncPullResult {
   vaultRestored: boolean
 }
 
-export async function syncPullFromPeer(peerDeviceId: string, options?: SyncDataOptions) {
+/** `vaultId` is the local vault to restore into; omitted → Personal. */
+export async function syncPullFromPeer(peerDeviceId: string, options?: SyncDataOptions, vaultId?: string) {
   try {
     return await invoke<SyncPullResult>('sync_pull_from_peer', {
-      payload: { peerDeviceId, options },
+      payload: { peerDeviceId, options, vaultId },
     })
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))
@@ -249,10 +250,11 @@ export interface SyncPushResult {
   vaultPushed: boolean
 }
 
-export async function syncPushToPeer(peerDeviceId: string, options?: SyncDataOptions) {
+/** `vaultId` is the local vault to push from; omitted → Personal. */
+export async function syncPushToPeer(peerDeviceId: string, options?: SyncDataOptions, vaultId?: string) {
   try {
     return await invoke<SyncPushResult>('sync_push_to_peer', {
-      payload: { peerDeviceId, options },
+      payload: { peerDeviceId, options, vaultId },
     })
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))
@@ -264,6 +266,13 @@ export interface SyncClaimPendingResult {
   hostsRestored: number
   snippetsRestored: number
   vaultRestored: boolean
+  /** Local vault the claimed push was restored into. */
+  vaultId?: string
+}
+
+/** Payload of the `sync-data-changed` event; older backends send none. */
+export interface SyncDataChangedPayload {
+  vaultId?: string
 }
 
 export async function syncClaimPendingFromPeer(peerDeviceId: string) {

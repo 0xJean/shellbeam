@@ -5,6 +5,9 @@ import { useT } from '@/lib/i18n'
 import type { HostOpsHealthState } from '@/lib/host-ops-view'
 import { useWorkspaceProviderState } from '@/lib/workspace-provider-state'
 import { workspaceOverviewCopy } from '@/lib/locales/workspace-overview'
+import { Sparkline } from '@/components/charts/chart-primitives'
+import { formatBytes } from '@/lib/metric-series'
+import { useHostMetricHistory } from '@/hooks/use-host-metric-history'
 import { ShellbeamAgentPanel } from './shellbeam-agent-panel'
 import { WorkspaceProviderSummary } from './workspace-provider-summary'
 
@@ -15,6 +18,9 @@ interface WorkspaceStatusCardsProps {
   hosts?: HostProfile[]
   /** Kept for call-site compatibility. Sampling is owned by the app-level runtime. */
   resolveAuthSecret?: (host: HostProfile) => Promise<string>
+  /** The v3 list overview shows sources and the probe in their own cards. */
+  showProviderSummary?: boolean
+  showAgent?: boolean
 }
 
 const STATUS_CARDS = [
@@ -47,6 +53,23 @@ function statusTone(status: HostOpsHealthState | undefined) {
   return 'checking'
 }
 
+const TREND_COLORS = { cpu: 'var(--workspace-primary-400)', memory: '#a78bfa', disk: '#f5a524', network: '#38bdf8' } as const
+
+function cardSide(key: (typeof STATUS_CARDS)[number]['key'], snapshot: ServerMonitorSnapshot, loadLabel: string) {
+  if (key === 'cpu') return snapshot.load1 == null ? null : `${loadLabel} ${snapshot.load1.toFixed(2)}`
+  if (key === 'network') return snapshot.networkTxBytesPerSec == null ? null : `↑ ${formatBytesPerSecond(snapshot.networkTxBytesPerSec)}`
+  if (!cardBytes(key, snapshot)) return null
+  const percent = key === 'memory' ? snapshot.memoryPercent : snapshot.diskPercent
+  return percent == null ? null : `${Math.round(percent)}%`
+}
+
+/** Memory and disk read as "used / total" when sizes are known, with the percent moved to the corner. */
+function cardBytes(key: (typeof STATUS_CARDS)[number]['key'], snapshot: ServerMonitorSnapshot) {
+  if (key === 'memory' && snapshot.memoryPercent != null && snapshot.memoryUsedBytes != null && snapshot.memoryTotalBytes) return { used: formatBytes(snapshot.memoryUsedBytes), total: formatBytes(snapshot.memoryTotalBytes) }
+  if (key === 'disk' && snapshot.diskPercent != null && snapshot.diskUsedBytes != null && snapshot.diskTotalBytes) return { used: formatBytes(snapshot.diskUsedBytes), total: formatBytes(snapshot.diskTotalBytes) }
+  return null
+}
+
 function getCardValue(key: (typeof STATUS_CARDS)[number]['key'], snapshot: ServerMonitorSnapshot | null) {
   if (!snapshot) return { value: null, percent: null }
   if (key !== 'network') {
@@ -61,16 +84,20 @@ function getCardValue(key: (typeof STATUS_CARDS)[number]['key'], snapshot: Serve
 
 export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
   const { t, locale } = useT()
-  const { hostAddress, selectedHostId = null, hosts = [] } = props
+  const { hostAddress, selectedHostId = null, hosts = [], showProviderSummary = true, showAgent = true } = props
   const host = resolveWorkspaceMetricsHost(hosts, { selectedHostId, hostAddress, vaultId: props.activeVaultId })
   const provider = useWorkspaceProviderState({ host: host ?? null, hosts, vaultId: props.activeVaultId })
   const snapshot = provider.view?.metrics ?? null
   const status = provider.view?.health.state
   const copy = workspaceOverviewCopy[locale]
+  const history = useHostMetricHistory(host?.vaultId ?? props.activeVaultId, host?.id)
+  const trend = (key: (typeof STATUS_CARDS)[number]['key']) => history.map((point) => key === 'network'
+    ? point.metrics.networkRxBytesPerSec
+    : point.metrics[key === 'cpu' ? 'cpuPercent' : key === 'memory' ? 'memoryPercent' : 'diskPercent'])
 
   return (
     <>
-      <WorkspaceProviderSummary state={provider} />
+      {showProviderSummary && <WorkspaceProviderSummary state={provider} />}
       {snapshot ? <div
         data-testid="workspace-status-grid"
         className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3"
@@ -86,35 +113,26 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
             data-testid="workspace-status-card"
             data-status={tone}
             data-provider={provider.source?.kind ?? 'unknown'}
-            className={`min-w-0 overflow-hidden rounded-xl border bg-[var(--workspace-surface-900)] p-4 text-[var(--workspace-text)] shadow-[var(--workspace-shadow-card)] ${
+            className={`sb-card min-w-0 overflow-hidden px-3.5 pb-2.5 pt-3 text-[var(--workspace-text)] ${
               tone === 'offline'
                 ? 'border-[color:var(--workspace-status-bad-border)]'
                 : tone === 'stale' || tone === 'paused'
                   ? 'border-[color:var(--workspace-status-warn-border)]'
-                  : 'border-[color:var(--workspace-border-soft)]'
+                  : ''
             }`}
           >
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--workspace-text-subtle)]">{t(card.labelKey)}</div>
-                <div className="mt-1 text-xs text-[var(--workspace-text-muted)]">
-                  {card.key === 'network'
-                    ? t('workspace.statusHint.network')
-                    : t('workspace.statusHint.percent')}
-                </div>
-              </div>
-              <div className={`flex h-9 w-9 items-center justify-center rounded-full border border-[color:var(--workspace-border-soft)] ${card.glow}`}>
-                <div className={`h-2.5 w-2.5 rounded-full bg-gradient-to-br ${card.accent} ${tone === 'checking' ? 'animate-pulse' : ''}`} />
-              </div>
+            <div className="flex items-center justify-between gap-3 text-[13px]">
+              <span className="font-semibold text-[var(--workspace-text-strong)]">{t(card.labelKey)}</span>
+              <span className={`truncate text-xs text-[var(--workspace-text-muted)] ${tone === 'checking' ? 'animate-pulse' : ''}`} title={card.key === 'network' ? t('workspace.statusHint.network') : t('workspace.statusHint.percent')}>{cardSide(card.key, snapshot, copy.load)}</span>
             </div>
-            <div className="mt-4 flex min-w-0 items-end justify-between gap-3">
-              <div className="min-w-0 text-[clamp(1.5rem,3vw,1.875rem)] font-semibold leading-none tracking-tight text-[var(--workspace-text-strong)]">
-                <div className="truncate">{primaryValue}</div>
-              </div>
+            <div className="mt-2 flex min-w-0 items-baseline gap-2">
+              <div className="truncate text-[24px] font-semibold leading-none tracking-tight text-[var(--workspace-text-strong)]">{card.key === 'network' && snapshot.networkRxBytesPerSec != null ? `↓ ${formatBytesPerSecond(snapshot.networkRxBytesPerSec)}` : cardBytes(card.key, snapshot)?.used ?? primaryValue}</div>
+              {cardBytes(card.key, snapshot) && <span className="truncate text-xs text-[var(--workspace-text-muted)]">/ {cardBytes(card.key, snapshot)!.total}</span>}
             </div>
+            <div className="mt-2 h-8">{trend(card.key).filter((value) => value != null).length > 1 && <Sparkline values={trend(card.key)} color={TREND_COLORS[card.key]} width={220} height={32} />}</div>
             <div
               data-testid="workspace-status-meter"
-              className="mt-4 h-1.5 overflow-hidden rounded-full bg-[var(--workspace-surface-950)]"
+              className="mt-2 h-1 overflow-hidden rounded-full bg-[var(--workspace-surface-950)]"
             >
               <div
                 className={`h-full rounded-full bg-gradient-to-r ${card.accent} transition-[width] duration-500`}
@@ -128,9 +146,9 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
         <p className="text-sm text-[var(--workspace-text-muted)]">{copy.noMetrics}</p>
         <p className="mt-1 text-xs text-[var(--workspace-text-subtle)]">{copy.noMetricsHint}</p>
       </section>}
-      <div className="mt-4">
+      {showAgent && <div className="mt-4">
         <ShellbeamAgentPanel host={host ?? null} vaultId={props.activeVaultId} resolveAuthSecret={props.resolveAuthSecret} />
-      </div>
+      </div>}
     </>
   )
 }

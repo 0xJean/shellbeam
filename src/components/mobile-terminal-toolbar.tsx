@@ -1,12 +1,16 @@
+import { useT } from '@/lib/i18n'
+import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
 import { cn } from '@/lib/utils'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronsLeftRight, X } from 'lucide-react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 
 interface MobileTerminalToolbarProps {
   onSend: (data: string) => void
 }
 
 type Modifier = 'ctrl' | 'alt'
+type ModState = 'off' | 'once' | 'locked'
+type Panel = 'none' | 'fkeys' | 'ctrl' | 'symbols'
 
 const SPECIAL_KEYS: { label: string; seq: string }[] = [
   { label: 'F1', seq: '\x1bOP' },
@@ -66,9 +70,11 @@ function applyModifier(seq: string, mod: Set<Modifier>): string {
 }
 
 export function MobileTerminalToolbar({ onSend }: MobileTerminalToolbarProps) {
+  const { locale } = useT()
+  const copy = mobileTerminalV3Copy[locale]
   const [activeModifiers, setActiveModifiers] = useState<Set<Modifier>>(new Set())
   const [lockedModifiers, setLockedModifiers] = useState<Set<Modifier>>(new Set())
-  const [panel, setPanel] = useState<'none' | 'fkeys' | 'ctrl' | 'symbols'>('none')
+  const [panel, setPanel] = useState<Panel>('none')
   const lastModTap = useRef<Record<string, number>>({})
 
   const toggleModifier = useCallback((mod: Modifier) => {
@@ -103,177 +109,131 @@ export function MobileTerminalToolbar({ onSend }: MobileTerminalToolbarProps) {
     [onSend, activeModifiers, lockedModifiers],
   )
 
-  const isModActive = (mod: Modifier) => activeModifiers.has(mod) || lockedModifiers.has(mod)
-  const isModLocked = (mod: Modifier) => lockedModifiers.has(mod)
-
-  const togglePanel = (p: typeof panel) => setPanel((v) => v === p ? 'none' : p)
+  const modState = (mod: Modifier): ModState => lockedModifiers.has(mod) ? 'locked' : activeModifiers.has(mod) ? 'once' : 'off'
+  const togglePanel = (p: Exclude<Panel, 'none'>) => setPanel((v) => v === p ? 'none' : p)
+  const panelTabs: { id: Exclude<Panel, 'none'>; label: string }[] = [
+    { id: 'fkeys', label: copy.fnKeys }, { id: 'ctrl', label: copy.ctrlKeys }, { id: 'symbols', label: copy.symbols },
+  ]
 
   return (
-    <div className="flex flex-col border-t border-border/50 bg-background/95 backdrop-blur-sm md:hidden"
+    <div data-testid="mobile-terminal-toolbar" className="flex flex-col border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] md:hidden"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      {/* Expandable panel area */}
+      <div className="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 [scrollbar-width:none]">
+        <ToolbarKey label="esc" onPress={() => send('\x1b')} />
+        <ToolbarKey label="tab" onPress={() => send('\t')} />
+        <ToolbarModifier label="ctrl" state={modState('ctrl')} onPress={() => toggleModifier('ctrl')} />
+        <ToolbarModifier label="alt" state={modState('alt')} onPress={() => toggleModifier('alt')} />
+        <ToolbarKey label="←" icon={<ArrowLeft className="h-4 w-4" />} onPress={() => send('\x1b[D')} />
+        <ToolbarKey label="↑" icon={<ArrowUp className="h-4 w-4" />} onPress={() => send('\x1b[A')} />
+        <ToolbarKey label="↓" icon={<ArrowDown className="h-4 w-4" />} onPress={() => send('\x1b[B')} />
+        <ToolbarKey label="→" icon={<ArrowRight className="h-4 w-4" />} onPress={() => send('\x1b[C')} />
+        <ToolbarToggle label={copy.ctrlKeys} text="^·" active={panel === 'ctrl'} onPress={() => togglePanel('ctrl')} />
+        <ToolbarToggle label={copy.symbols} icon={<ChevronsLeftRight className="h-4 w-4" />} active={panel === 'symbols'} onPress={() => togglePanel('symbols')} />
+        <ToolbarToggle label={copy.fnKeys} text="Fn" active={panel === 'fkeys'} onPress={() => togglePanel('fkeys')} />
+        {QUICK_SYMBOLS.map((ch) => <ToolbarKey key={ch} label={ch} onPress={() => send(ch)} />)}
+      </div>
+
       {panel !== 'none' && (
-        <div className="border-b border-border/30">
-          {/* Panel header */}
-          <div className="flex items-center justify-between px-3 pt-2 pb-1">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {panel === 'fkeys' ? 'Function Keys' : panel === 'ctrl' ? 'Ctrl Shortcuts' : 'Symbols'}
-            </span>
-            <button type="button" onClick={() => setPanel('none')}
-              className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground active:bg-muted">
-              <X className="h-3.5 w-3.5" />
+        <div data-testid="mobile-key-panel" className="border-t border-[color:var(--workspace-border-soft)] px-2 pb-2">
+          <div className="flex items-center justify-between py-1.5">
+            <div role="tablist" className="flex rounded-lg bg-[var(--workspace-surface-800)] p-0.5">
+              {panelTabs.map((tab) => (
+                <button key={tab.id} type="button" role="tab" aria-selected={panel === tab.id} onClick={() => setPanel(tab.id)}
+                  className={cn('h-9 rounded-md px-3 text-[13px] transition-colors',
+                    panel === tab.id ? 'bg-[var(--workspace-surface-700)] font-semibold text-[var(--workspace-text-strong)] shadow-sm' : 'text-[var(--workspace-text-muted)]')}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => setPanel('none')} aria-label={copy.closePanel}
+              className="flex h-11 w-11 items-center justify-center rounded-full text-[var(--workspace-text-muted)] active:bg-[var(--workspace-surface-800)]">
+              <X className="h-4 w-4" />
             </button>
           </div>
 
           {panel === 'fkeys' && (
-            <div className="px-2 pb-2">
-              <div className="grid grid-cols-6 gap-1.5">
-                {SPECIAL_KEYS.map((k) => (
-                  <button key={k.label} type="button"
-                    onTouchStart={(e) => { e.preventDefault(); send(k.seq) }}
-                    onMouseDown={(e) => { e.preventDefault(); send(k.seq) }}
-                    className="flex h-10 items-center justify-center rounded-lg bg-muted/60 text-xs font-medium text-foreground transition-colors active:bg-primary/20"
-                  >{k.label}</button>
-                ))}
-              </div>
-              <div className="mt-1.5 grid grid-cols-6 gap-1.5">
-                {NAV_KEYS.map((k) => (
-                  <button key={k.label} type="button"
-                    onTouchStart={(e) => { e.preventDefault(); send(k.seq) }}
-                    onMouseDown={(e) => { e.preventDefault(); send(k.seq) }}
-                    className="flex h-10 items-center justify-center rounded-lg bg-muted/60 text-[11px] font-medium text-muted-foreground transition-colors active:bg-primary/20 active:text-foreground"
-                  >{k.label}</button>
-                ))}
-              </div>
+            <div className="grid grid-cols-6 gap-1.5">
+              {[...SPECIAL_KEYS, ...NAV_KEYS].map((k) => <PanelKey key={k.label} onPress={() => send(k.seq)}>{k.label}</PanelKey>)}
             </div>
           )}
 
           {panel === 'ctrl' && (
-            <div className="grid grid-cols-4 gap-1.5 px-2 pb-2">
+            <div className="grid grid-cols-4 gap-1.5">
               {CTRL_SHORTCUTS.map((s) => (
-                <button key={s.label} type="button"
-                  onTouchStart={(e) => { e.preventDefault(); onSend(s.code) }}
-                  onMouseDown={(e) => { e.preventDefault(); onSend(s.code) }}
-                  className="flex h-11 flex-col items-center justify-center gap-0.5 rounded-lg bg-muted/60 transition-colors active:bg-primary/20"
-                >
-                  <span className="text-sm font-bold text-foreground">^{s.label}</span>
-                  <span className="text-[9px] leading-none text-muted-foreground">{s.hint}</span>
-                </button>
+                <PanelKey key={s.label} tall onPress={() => onSend(s.code)}>
+                  <span className="text-sm font-semibold text-[var(--workspace-text-strong)]">^{s.label}</span>
+                  <span className="text-[10px] leading-none text-[var(--workspace-text-muted)]">{copy.ctrlHints[s.label] ?? s.hint}</span>
+                </PanelKey>
               ))}
             </div>
           )}
 
           {panel === 'symbols' && (
-            <div className="grid grid-cols-8 gap-1.5 px-2 pb-2">
-              {SYMBOL_KEYS.map((ch) => (
-                <button key={ch} type="button"
-                  onTouchStart={(e) => { e.preventDefault(); send(ch) }}
-                  onMouseDown={(e) => { e.preventDefault(); send(ch) }}
-                  className="flex h-10 items-center justify-center rounded-lg bg-muted/60 text-sm font-medium text-foreground transition-colors active:bg-primary/20"
-                >{ch}</button>
-              ))}
+            <div className="grid grid-cols-8 gap-1.5">
+              {SYMBOL_KEYS.map((ch) => <PanelKey key={ch} onPress={() => send(ch)}>{ch}</PanelKey>)}
             </div>
           )}
+
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1 text-[11px] text-[var(--workspace-text-muted)]">
+            <span className="flex items-center gap-1.5"><i className="h-2.5 w-3.5 rounded-sm border border-[color:var(--workspace-accent-text)]" aria-hidden="true" />{copy.legendOneShot}</span>
+            <span className="flex items-center gap-1.5"><i className="h-2.5 w-3.5 rounded-sm bg-[color:var(--workspace-primary-500)]" aria-hidden="true" />{copy.legendLocked}</span>
+          </div>
         </div>
       )}
-
-      {/* Main toolbar: single row with essential keys */}
-      <div className="flex items-center gap-1 px-2 py-1.5">
-        {/* ESC */}
-        <ToolbarKey label="ESC" onPress={() => send('\x1b')} />
-        {/* TAB */}
-        <ToolbarKey label="TAB" onPress={() => send('\t')} />
-
-        {/* Modifiers */}
-        <ToolbarModifier label="CTL" active={isModActive('ctrl')} locked={isModLocked('ctrl')}
-          onPress={() => toggleModifier('ctrl')} />
-        <ToolbarModifier label="ALT" active={isModActive('alt')} locked={isModLocked('alt')}
-          onPress={() => toggleModifier('alt')} />
-
-        {/* Separator */}
-        <div className="mx-0.5 h-5 w-px shrink-0 bg-border/40" />
-
-        {/* Arrow keys */}
-        <ToolbarKey icon={<ArrowLeft className="h-4 w-4" />} onPress={() => send('\x1b[D')} />
-        <ToolbarKey icon={<ArrowUp className="h-4 w-4" />} onPress={() => send('\x1b[A')} />
-        <ToolbarKey icon={<ArrowDown className="h-4 w-4" />} onPress={() => send('\x1b[B')} />
-        <ToolbarKey icon={<ArrowRight className="h-4 w-4" />} onPress={() => send('\x1b[C')} />
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Panel toggles */}
-        <ToolbarToggle label="^·" active={panel === 'ctrl'} onPress={() => togglePanel('ctrl')} />
-        <ToolbarToggle
-          icon={panel === 'symbols' ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          active={panel === 'symbols'} onPress={() => togglePanel('symbols')} />
-        <ToolbarToggle label="Fn" active={panel === 'fkeys'} onPress={() => togglePanel('fkeys')} />
-      </div>
     </div>
   )
 }
 
-/** 44px tall key button — meets Apple HIG minimum touch target */
-function ToolbarKey({ label, icon, onPress }: {
-  label?: string
-  icon?: React.ReactNode
-  onPress: () => void
-}) {
+const QUICK_SYMBOLS = ['|', '/', '~']
+const keyBase = 'flex h-11 shrink-0 items-center justify-center rounded-lg font-mono text-[15px] transition-colors'
+const keyIdle = 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-strong)] active:bg-[var(--workspace-surface-700)]'
+
+function pressHandlers(onPress: () => void) {
+  return {
+    onTouchStart: (e: React.TouchEvent) => { e.preventDefault(); onPress() },
+    onMouseDown: (e: React.MouseEvent) => { e.preventDefault(); onPress() },
+  }
+}
+
+/** 44px key — meets the minimum touch target and keeps focus on the terminal. */
+function ToolbarKey({ label, icon, onPress }: { label: string; icon?: ReactNode; onPress: () => void }) {
   return (
-    <button type="button"
-      onTouchStart={(e) => { e.preventDefault(); onPress() }}
-      onMouseDown={(e) => { e.preventDefault(); onPress() }}
-      className="flex h-9 shrink-0 items-center justify-center rounded-lg bg-muted/70 px-2.5 text-xs font-semibold text-foreground transition-colors active:bg-primary/20"
-      style={{ minWidth: 36 }}
-    >
+    <button type="button" aria-label={label} {...pressHandlers(onPress)} className={cn(keyBase, keyIdle, 'min-w-11 px-2.5')}>
       {icon ?? label}
     </button>
   )
 }
 
-/** Modifier key with active/locked state */
-function ToolbarModifier({ label, active, locked, onPress }: {
-  label: string
-  active: boolean
-  locked: boolean
-  onPress: () => void
-}) {
+/** Modifier key: tap arms it for the next key (outlined), double-tap locks it (filled, underlined). */
+function ToolbarModifier({ label, state, onPress }: { label: string; state: ModState; onPress: () => void }) {
   return (
-    <button type="button"
-      onTouchStart={(e) => { e.preventDefault(); onPress() }}
-      onMouseDown={(e) => { e.preventDefault(); onPress() }}
-      className={cn(
-        'relative flex h-9 shrink-0 items-center justify-center rounded-lg px-2.5 text-xs font-bold transition-colors',
-        active
-          ? 'bg-primary text-primary-foreground shadow-sm'
-          : 'bg-muted/70 text-muted-foreground active:bg-muted',
-      )}
-      style={{ minWidth: 36 }}
+    <button type="button" aria-pressed={state !== 'off'} data-state={state} {...pressHandlers(onPress)}
+      className={cn(keyBase, 'relative min-w-12 px-2.5',
+        state === 'locked' ? 'bg-[color:var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]'
+          : state === 'once' ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)] ring-1 ring-inset ring-[color:var(--workspace-accent-text)]'
+            : keyIdle)}
     >
       {label}
-      {locked && <span className="absolute -bottom-0.5 left-1/2 h-[2px] w-4 -translate-x-1/2 rounded-full bg-primary-foreground" />}
+      {state === 'locked' && <span className="absolute bottom-1.5 left-1/2 h-[2px] w-5 -translate-x-1/2 rounded-full bg-[var(--workspace-primary-foreground)]" />}
     </button>
   )
 }
 
-/** Panel toggle button */
-function ToolbarToggle({ label, icon, active, onPress }: {
-  label?: string
-  icon?: React.ReactNode
-  active: boolean
-  onPress: () => void
-}) {
+function ToolbarToggle({ label, text, icon, active, onPress }: { label: string; text?: string; icon?: ReactNode; active: boolean; onPress: () => void }) {
   return (
-    <button type="button"
-      onClick={onPress}
-      className={cn(
-        'flex h-9 shrink-0 items-center justify-center rounded-lg px-2 text-xs font-bold transition-colors',
-        active ? 'bg-primary/20 text-primary' : 'bg-muted/70 text-muted-foreground active:bg-muted',
-      )}
-      style={{ minWidth: 36 }}
-    >
-      {icon ?? label}
+    <button type="button" aria-label={label} aria-expanded={active} onClick={onPress}
+      className={cn(keyBase, 'min-w-11 px-2.5', active ? 'bg-[color:var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]' : keyIdle)}>
+      {icon ?? text}
+    </button>
+  )
+}
+
+function PanelKey({ children, tall, onPress }: { children: ReactNode; tall?: boolean; onPress: () => void }) {
+  return (
+    <button type="button" {...pressHandlers(onPress)}
+      className={cn('flex min-w-0 items-center justify-center rounded-lg font-mono text-[13px]', keyIdle, tall ? 'h-12 flex-col gap-1' : 'h-11')}>
+      {children}
     </button>
   )
 }

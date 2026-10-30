@@ -1,17 +1,20 @@
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { SettingRow, SettingsGroup, SettingStepper } from '@/components/settings-controls'
 import { useT } from '@/lib/i18n'
+import { fill } from '@/lib/locales/probe-install'
+import { settingsV3Copy } from '@/lib/locales/settings-v3'
 import {
   DEFAULT_PROBE_RETRY_SETTINGS,
   loadProbeRetrySettings,
   saveProbeRetrySettings,
   type ProbeRetrySettings,
 } from '@/lib/probe-retry-settings'
-import { RotateCcw, Timer } from 'lucide-react'
+import { Check, RotateCcw, Timer } from 'lucide-react'
 import { useState } from 'react'
 
 export function ProbeRetrySettingsSection() {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const v3 = settingsV3Copy[locale]
   const [settings, setSettings] = useState<ProbeRetrySettings>(loadProbeRetrySettings)
   const [saved, setSaved] = useState(false)
 
@@ -31,54 +34,27 @@ export function ProbeRetrySettingsSection() {
   }
 
   return (
-    <section className="rounded-lg border p-4" data-testid="probe-retry-settings">
-      <div className="flex items-start gap-3">
-        <Timer className="mt-0.5 h-4 w-4 shrink-0" />
-        <div>
-          <h3 className="font-semibold">{t('settings.probeRetry.title')}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">{t('settings.probeRetry.description')}</p>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="text-sm text-muted-foreground" htmlFor="probe-retry-max">{t('settings.probeRetry.maxRetries')}</label>
-          <Input
-            id="probe-retry-max"
-            type="number"
-            min={0}
-            max={5}
-            value={settings.maxRetries}
-            onChange={(event) => update({ maxRetries: Number(event.target.value) })}
-            className="mt-1 w-24"
-          />
-        </div>
-        <div>
-          <label className="text-sm text-muted-foreground" htmlFor="probe-retry-delay">{t('settings.probeRetry.delay')}</label>
-          <div className="mt-1 flex items-center gap-2">
-            <Input
-              id="probe-retry-delay"
-              type="number"
-              min={0}
-              max={2000}
-              step={50}
-              value={settings.retryDelayMs}
-              onChange={(event) => update({ retryDelayMs: Number(event.target.value) })}
-              className="w-24"
-            />
-            <span className="text-sm text-muted-foreground">ms</span>
-          </div>
-        </div>
-      </div>
-      <p className="mt-2 text-xs text-muted-foreground">{t('settings.probeRetry.delayDesc')}</p>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button type="button" size="sm" onClick={save}>{t('settings.probeRetry.save')}</Button>
-        <Button type="button" variant="outline" size="sm" onClick={reset}>
+    <SettingsGroup title={<><Timer className="h-4 w-4" />{t('settings.probeRetry.title')}</>} testId="probe-retry-settings">
+      <p className="px-4 py-3 text-xs text-[var(--workspace-text-subtle)]">{t('settings.probeRetry.description')}</p>
+      <SettingRow label={t('settings.probeRetry.maxRetries')} description={v3.retriesRange} htmlFor="probe-retry-max">
+        <SettingStepper id="probe-retry-max" min={0} max={5} unit={v3.times} value={settings.maxRetries}
+          decreaseLabel={fill(v3.decrease, { label: t('settings.probeRetry.maxRetries') })} increaseLabel={fill(v3.increase, { label: t('settings.probeRetry.maxRetries') })}
+          onChange={(maxRetries) => update({ maxRetries })} />
+      </SettingRow>
+      <SettingRow label={t('settings.probeRetry.delay')} description={t('settings.probeRetry.delayDesc')} htmlFor="probe-retry-delay">
+        <SettingStepper id="probe-retry-delay" min={0} max={2000} step={50} unit="ms" value={settings.retryDelayMs}
+          decreaseLabel={fill(v3.decrease, { label: t('settings.probeRetry.delay') })} increaseLabel={fill(v3.increase, { label: t('settings.probeRetry.delay') })}
+          onChange={(retryDelayMs) => update({ retryDelayMs })} />
+      </SettingRow>
+      <div className="flex flex-wrap items-center gap-2 bg-[var(--workspace-surface-900)] px-4 py-2.5">
+        {saved && <span role="status" className="flex items-center gap-1 text-xs text-[var(--workspace-status-good-text)]"><Check className="h-3.5 w-3.5" />{t('settings.probeRetry.saved')}</span>}
+        <span className="grow" />
+        <Button type="button" variant="ghost" size="sm" onClick={reset}>
           <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
           {t('settings.probeRetry.reset')}
         </Button>
-        {saved && <span role="status" className="text-xs text-emerald-600">{t('settings.probeRetry.saved')}</span>}
+        <Button type="button" size="sm" onClick={save}>{t('settings.probeRetry.save')}</Button>
       </div>
-    </section>
+    </SettingsGroup>
   )
 }

@@ -4,7 +4,7 @@ import { MobileSessionHeader } from './mobile-session-header'
 import { PcSessionTabBar } from './pc-tab-bar'
 
 vi.mock('@/lib/i18n', () => ({
-  useT: () => ({ t: (key: string) => key }),
+  useT: () => ({ t: (key: string) => key, locale: 'en' }),
   t: (key: string) => key,
 }))
 

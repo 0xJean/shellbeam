@@ -61,6 +61,16 @@ export async function editKomariMapping(options: { vaultId: string; integrationI
   return saved
 }
 
+/** Creates a node on the ShellBeam Server for an unmapped host, links it, and announces the change like a manual edit. */
+export async function createKomariNodeForHost(options: { vaultId: string; integrationId: string; hostId: string }): Promise<KomariMappingState> {
+  const current = await getKomariMappingState(options.vaultId, options.integrationId)
+  const saved = await invoke<KomariMappingState>('komari_agent_create_node', { input: { ...options, expectedRevision: current.revision } })
+  getProbeProviderRegistry().invalidateProvider(options.vaultId, options.integrationId)
+  window.dispatchEvent(new CustomEvent(KOMARI_MAPPING_CHANGED_EVENT, { detail: { vaultId: options.vaultId, integrationId: options.integrationId } }))
+  window.dispatchEvent(new Event('shellbeam:host-ops-refresh'))
+  return saved
+}
+
 export async function importMonitoringHost(options: { vaultId: string; integrationId: string; nodeId: string; expectedRevision: number; expectedIntegrationVersion: number; name: string; group: string; tags: string[] }): Promise<HostProfile> {
   const host = await invoke<HostProfile>('import_monitoring_host', { payload: options })
   notifyHostMetadataChanged(options.vaultId)

@@ -3,6 +3,8 @@ import { groupKomariAlertIncidents } from '@/lib/komari-alert-incidents'
 import { AlertTriangle, Check, CheckCircle2, ChevronRight, CircleAlert, Clock3, ExternalLink, History, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useT } from '@/lib/i18n'
+import { monitoringAlertsCopy } from '@/lib/locales/monitoring-alerts'
+import { fill } from '@/lib/locales/probe-install'
 import type {
   KomariAlertAuditEntry,
   KomariAlertRecord,
@@ -74,11 +76,12 @@ export function KomariAlertPanel({
   className,
 }: KomariAlertPanelProps) {
   const { t, locale } = useT()
+  const alertsCopy = monitoringAlertsCopy[locale]
   const [expanded, setExpanded] = useState<string | null>(null)
   const [pending, setPending] = useState<string | null>(null)
   const incidents = useMemo(() => groupKomariAlertIncidents(state?.alerts ?? []), [state?.alerts])
   const alerts = useMemo(() => sortAlerts(incidents.map((incident) => incident.alert)), [incidents])
-  const localOnly = locale === 'zh-CN' ? '确认和归档仅更新 ShellBeam 本地记录，不会修改监控服务的异常事实或停止服务端通知。' : 'Acknowledging or archiving updates ShellBeam records only; remote health and server notifications are unchanged.'
+  const localOnly = alertsCopy.localOnly
   const open = alerts.filter((alert) => !alert.evidenceStatus && (alert.status === 'active' || alert.status === 'acknowledged')).length
   const audit = state?.audit ?? []
 
@@ -101,7 +104,7 @@ export function KomariAlertPanel({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-semibold text-[var(--workspace-text-strong)]">
             <AlertTriangle className="h-4 w-4 text-[color:var(--workspace-status-warn-text)]" />
-            {locale === 'zh-CN' ? '告警' : 'Alerts'}
+            {alertsCopy.alerts}
           </div>
           <p className="mt-1 text-xs text-[var(--workspace-text-muted)]">{localOnly}</p>
         </div>
@@ -141,10 +144,10 @@ export function KomariAlertPanel({
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-medium text-[var(--workspace-text-strong)]">{monitoringAlertTitle(alert, locale)}</span>
                       <span className={cn('rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide', statusColor(alert.status))}>{statusLabel(t, alert.status)}</span>
-                      {members.length > 1 && <span className="text-xs text-[var(--workspace-text-muted)]">{locale === 'zh-CN' ? `${members.length} 条关联诊断` : `${members.length} related diagnostics`}</span>}
+                      {members.length > 1 && <span className="text-xs text-[var(--workspace-text-muted)]">{fill(alertsCopy.relatedDiagnostics, { count: members.length })}</span>}
                       {alert.count != null && members.length === 1 && <span className="text-xs text-[var(--workspace-text-muted)]">×{alert.count}</span>}
                     </div>
-                    {alert.evidenceStatus && <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '缺少事件证据 · 仅保留历史与审计' : 'No event evidence · history and audit retained'}</p>}
+                    {alert.evidenceStatus && <p className="text-xs text-muted-foreground">{alertsCopy.noEvidence}</p>}
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--workspace-text-subtle)]">
                       <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatTime(alert.lastSeenAt, locale)}</span>
                       {alert.hostId && onOpenHost ? (

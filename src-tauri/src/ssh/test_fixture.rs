@@ -334,10 +334,12 @@ mod tests {
         let primary_route = Route {
             target: primary.endpoint.clone(),
             jump: Some(jump.endpoint.clone()),
+            vault_id: None,
         };
         let peer_route = Route {
             target: peer.endpoint.clone(),
             jump: Some(jump.endpoint.clone()),
+            vault_id: None,
         };
         let read_environment = |route: &Route, peer: &Server| {
             let connection =
@@ -400,6 +402,7 @@ mod tests {
         let route = Route {
             target: target.endpoint.clone(),
             jump: None,
+            vault_id: None,
         };
         let connection = connect_with_verifier(&route, &mut trusted(&[&target])).unwrap();
         let result = crate::ssh::commands::execute(

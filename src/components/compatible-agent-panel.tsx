@@ -11,6 +11,10 @@ import { probeReleaseDisplay, probeReleaseIdentity } from '@/lib/probe-release-i
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { ProbeTransferPanel } from './probe-transfer-panel'
+import { Note, SwitchInput, fieldLabel, mutedText, primaryButton, softBorder } from './monitor-settings-ui'
+import { monitorSettingsCopy } from '@/lib/locales/monitor-settings-v3'
+import { cn } from '@/lib/utils'
+import { RotateCw, ShieldCheck } from 'lucide-react'
 
 /** No server requests on mount. Hosts without a source or prior managed probe
  * keep their ordinary connection experience, including after a source removal. */
@@ -35,7 +39,7 @@ export function CompatibleAgentTools({ host, integrationId, bindingKey }: { host
 }
 
 export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfile; integrationId: string }) {
-  const { locale } = useT(); const c = compatibleAgentCopy[locale]
+  const { locale } = useT(); const c = compatibleAgentCopy[locale]; const trust = monitorSettingsCopy[locale]
   const { activeVaultId, captureVaultScope } = useVault(); const vaultId = host.vaultId ?? activeVaultId
   const [record, setRecord] = useState<CompatibleAgentRecord | null>(null)
   const [endpoint, setEndpoint] = useState(''); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState('')
@@ -114,14 +118,26 @@ export function CompatibleAgentPanel({ host, integrationId }: { host: HostProfil
     </details>
     <ProbeTransferPanel vaultId={vaultId} hostId={host.id} canMove={record?.status === 'active' && !busy} onChanged={refreshTransfer} onPending={setTransferPending} />
     {(error || record?.errorCode) && <p role="alert" className="break-words text-destructive">{error || c.generic} <span className="break-all font-mono">{code || record?.errorCode}</span></p>}{notice && <p role="status">{notice}</p>}
-    <details data-testid="compatible-agent-policy" className="min-w-0 border-t pt-2"><summary className="cursor-pointer">{c.policy}</summary><p className="my-2 text-muted-foreground">{c.policyHint}</p>
-      <Button data-testid="compatible-agent-policy-load" size="sm" variant="outline" disabled={busy} onClick={() => void work(async current => { const value = await compatibleAgentPolicy(); if (current()) { setPolicy(value); setPolicyHosts(value.allowedHosts.join(', ')) } })}>{c.loadPolicy}</Button>
-      {policy && <div className="mt-2 space-y-2">
-        <label className="block">{c.source}<NativeSelect data-testid="compatible-agent-policy-source" aria-label={c.source} disabled={busy} value={policy.source ?? 'custom'} onChange={e => setPolicy({ ...policy, source: e.target.value as 'official' | 'custom' })} className="ml-2 rounded border border-border bg-background p-1"><option value="official">{c.official}</option><option value="custom">{c.custom}</option></NativeSelect></label>
-        <label className="flex gap-2"><input type="checkbox" disabled={busy} checked={policy.enabled} onChange={e => setPolicy({ ...policy, enabled: e.target.checked })} />{c.enabled}</label>
-        {policy.source !== 'official' && (['manifestUrl', 'trustedPublicKey', 'allowedHosts'] as const).map(key => <label className="block" key={key}>{key === 'manifestUrl' ? c.catalog : key === 'trustedPublicKey' ? c.publicKey : c.hosts}<Input data-testid={`compatible-agent-policy-${key}`} disabled={busy} value={key === 'allowedHosts' ? policyHosts : policy[key]} onChange={e => key === 'allowedHosts' ? setPolicyHosts(e.target.value) : setPolicy({ ...policy, [key]: e.target.value })} /></label>)}
-        <Button data-testid="compatible-agent-policy-save" size="sm" disabled={busy} onClick={() => void work(async current => { const answer = await requestUserDecision({ vaultId, risk: 'high', message: c.policyConfirm, isCurrent: current }); if (!answer.accepted || !current() || answer.isCurrent?.() === false) return; const value = await compatibleAgentPolicy({ ...policy, allowedHosts: policyHosts.split(',').map(x => x.trim()).filter(Boolean) }, true); if (current()) { setPolicy(value); setPolicyHosts(value.allowedHosts.join(', ')); setNotice(c.saved) } })}>{c.savePolicy}</Button>
-      </div>}
+    <details data-testid="compatible-agent-policy" className={cn('min-w-0 overflow-hidden rounded-lg border', softBorder)}>
+      <summary className="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm font-medium text-[color:var(--workspace-text-strong)]"><ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[color:var(--workspace-accent-text)]" aria-hidden="true" />{c.policy}</summary>
+      <div className={cn('space-y-3 border-t px-3 py-3', softBorder)}>
+        <p className={mutedText}>{trust.trustSubtitle}</p>
+        {policy && <>
+          <label className="block">
+            <span className={fieldLabel}>{c.source}</span>
+            <NativeSelect data-testid="compatible-agent-policy-source" aria-label={c.source} disabled={busy} value={policy.source ?? 'custom'} onChange={e => setPolicy({ ...policy, source: e.target.value as 'official' | 'custom' })} className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs"><option value="official">{c.official}</option><option value="custom">{c.custom}</option></NativeSelect>
+            <span className={cn('mt-1 block', mutedText)}>{policy.source === 'official' ? trust.sourceOfficialHint : trust.sourceCustomHint}</span>
+          </label>
+          <label className="flex cursor-pointer items-center justify-between gap-3"><span className="font-medium text-[color:var(--workspace-text-strong)]">{c.enabled}</span><SwitchInput aria-label={c.enabled} disabled={busy} checked={policy.enabled} onChange={e => setPolicy({ ...policy, enabled: e.target.checked })} /></label>
+          {policy.source !== 'official' && (['manifestUrl', 'trustedPublicKey', 'allowedHosts'] as const).map(key => <label className="block" key={key}><span className={fieldLabel}>{key === 'manifestUrl' ? c.catalog : key === 'trustedPublicKey' ? c.publicKey : c.hosts}</span><Input data-testid={`compatible-agent-policy-${key}`} disabled={busy} className="mt-1 h-8 font-mono text-xs" value={key === 'allowedHosts' ? policyHosts : policy[key]} onChange={e => key === 'allowedHosts' ? setPolicyHosts(e.target.value) : setPolicy({ ...policy, [key]: e.target.value })} /></label>)}
+        </>}
+        <Note icon={ShieldCheck}>{c.policyHint}</Note>
+      </div>
+      <div className={cn('flex flex-wrap items-center gap-2 border-t px-3 py-2.5', softBorder)}>
+        <Button data-testid="compatible-agent-policy-load" size="sm" variant="ghost" className="gap-1.5" disabled={busy} onClick={() => void work(async current => { const value = await compatibleAgentPolicy(); if (current()) { setPolicy(value); setPolicyHosts(value.allowedHosts.join(', ')) } })}><RotateCw className="h-3.5 w-3.5" />{c.loadPolicy}</Button>
+        <span className="flex-1" />
+        {policy && <Button data-testid="compatible-agent-policy-save" size="sm" className={primaryButton} disabled={busy} onClick={() => void work(async current => { const answer = await requestUserDecision({ vaultId, risk: 'high', message: c.policyConfirm, isCurrent: current }); if (!answer.accepted || !current() || answer.isCurrent?.() === false) return; const value = await compatibleAgentPolicy({ ...policy, allowedHosts: policyHosts.split(',').map(x => x.trim()).filter(Boolean) }, true); if (current()) { setPolicy(value); setPolicyHosts(value.allowedHosts.join(', ')); setNotice(c.saved) } })}>{c.savePolicy}</Button>}
+      </div>
     </details>
   </div>
 }

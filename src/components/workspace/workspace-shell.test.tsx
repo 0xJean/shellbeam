@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { hostConnectionKey, type HostProfile } from '@/lib/hosts'
 import { WorkspaceShell } from './workspace-shell'
 
@@ -42,6 +42,8 @@ vi.mock('./workspace-asset-inventory-app', () => ({
 }))
 
 describe('workspace shell', () => {
+  // These cover the windowed desktop layout; the list layout is the default.
+  beforeEach(() => { localStorage.setItem('shellbeam.workspace.layout', 'desktop') })
   const sessionId = 'session-1'
   it('blocks new operations on an old connection after the default changes or SSH is removed', () => {
     const host: HostProfile = { id: 'h', name: 'WEB', address: 'old.test', port: 22, username: 'ops', authType: 'password', group: 'Custom', tags: [], createdAt: 1, updatedAt: 1 }
@@ -50,11 +52,11 @@ describe('workspace shell', () => {
     const changed = { ...host, address: 'new.test' }
     const { rerender } = render(<WorkspaceShell {...props} hosts={[changed]} />)
     expect(screen.queryByTestId('workspace-desktop-shell')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Connect with new details' }))
     expect(onOpenTerminal).toHaveBeenCalledWith(changed)
     const pure = { ...host, connections: [], address: '', username: '', port: 0 }
     rerender(<WorkspaceShell {...props} hosts={[pure]} />)
-    expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Connect with new details' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Configure SSH' }))
     expect(onEditHost).toHaveBeenCalledWith(pure)
   })
@@ -72,8 +74,39 @@ describe('workspace shell', () => {
 
     expect(screen.getByTestId('workspace-desktop-shell')).toHaveClass('w-full', 'min-w-0', 'flex-1', 'bg-workspace-desktop-wallpaper')
     expect(screen.getByTestId('workspace-desktop-taskbar')).toHaveClass('w-full', 'min-w-0', 'bg-[var(--workspace-surface-900)]')
-    expect(screen.getByText('Start')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back to desktop' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('workspace-desktop-rail')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-desktop-metrics')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-desktop-host-status')).toHaveTextContent('Production API · Connected')
     expect(screen.getAllByText('Production API').length).toBeGreaterThan(0)
+  })
+
+  it('keeps background windows mounted and lets the taskbar minimize, restore and maximize them', () => {
+    const onSelectApp = vi.fn()
+    const props = { sessionId, mobile: false, hostName: 'Production API', hostAddress: '10.0.0.15', onSelectApp }
+    const { rerender } = render(<WorkspaceShell {...props} activeApp="services" />)
+    rerender(<WorkspaceShell {...props} activeApp="logs" />)
+
+    const services = screen.getByTestId('workspace-desktop-window-services')
+    const logs = screen.getByTestId('workspace-desktop-window-logs')
+    expect(within(services).getByText('Background · content kept')).toBeInTheDocument()
+    expect(within(logs).getByText('Current window')).toBeInTheDocument()
+    expect(within(services).getByTestId('workspace-window-body')).not.toHaveTextContent(/background/i)
+    expect(screen.getByTestId('workspace-taskbar-logs')).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(within(logs).getByRole('button', { name: 'Maximize window' }))
+    expect(logs).toHaveStyle({ inset: '0' })
+    fireEvent.click(within(logs).getByRole('button', { name: 'Restore window' }))
+    expect(logs).not.toHaveStyle({ inset: '0' })
+
+    fireEvent.click(within(logs).getByRole('button', { name: 'Minimize window' }))
+    expect(logs).not.toBeVisible()
+    expect(onSelectApp).toHaveBeenLastCalledWith('services')
+    expect(screen.getByTestId('workspace-taskbar-logs')).toHaveAttribute('title', 'Logs (minimized)')
+
+    fireEvent.click(screen.getByTestId('workspace-taskbar-logs'))
+    expect(onSelectApp).toHaveBeenLastCalledWith('logs')
+    expect(logs).toBeVisible()
   })
 
   it('renders the mobile shell when mobile is true', () => {
@@ -345,7 +378,9 @@ describe('workspace shell', () => {
     )
 
     expect(screen.getAllByText('File System').length).toBeGreaterThan(0)
-    expect(screen.getByText(/scaffolded and ready/i)).toBeInTheDocument()
+    // The file transfer window stays open behind it with its own content.
+    expect(within(screen.getByTestId('workspace-desktop-window-fileSystem')).getByText(/scaffolded and ready/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/scaffolded and ready/i)).toHaveLength(2)
 
     rerender(
       <WorkspaceShell
@@ -374,10 +409,49 @@ describe('workspace shell', () => {
       />,
     )
 
-    expect(screen.getByText('Log Sources')).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Log Sources' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /run journalctl/i })).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByText('nginx started')).toBeInTheDocument()
     })
+  })
+})
+
+describe('workspace list layout', () => {
+  beforeEach(() => { localStorage.removeItem('shellbeam.workspace.layout') })
+
+  it('is the default PC layout and lists every app beside one panel', () => {
+    const onSelectApp = vi.fn()
+    render(<WorkspaceShell sessionId="session-1" mobile={false} hostName="Production API" hostAddress="10.0.0.15" activeApp="overview" onSelectApp={onSelectApp} />)
+    expect(screen.getByTestId('workspace-list-shell')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-desktop-shell')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-app-list-overview')).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(screen.getByTestId('workspace-app-list-processes'))
+    expect(onSelectApp).toHaveBeenCalledWith('processes')
+  })
+
+  it('follows the v3 layout: host card with the layout toggle, grouped apps, overview header', () => {
+    const onSelectApp = vi.fn()
+    render(<WorkspaceShell sessionId="session-1" mobile={false} hostName="Production API" hostAddress="10.0.0.15" activeApp="overview" onSelectApp={onSelectApp} />)
+    const card = screen.getByTestId('workspace-host-card')
+    expect(card).toHaveTextContent('Production API')
+    expect(within(card).getByTestId('workspace-layout-desktop')).toBeInTheDocument()
+    const nav = screen.getByTestId('workspace-app-list')
+    expect(nav).toHaveTextContent(/Sessions.*Observe.*Manage/)
+    expect(screen.getByTestId('workspace-list-overview')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open Terminal' }))
+    expect(onSelectApp).toHaveBeenCalledWith('terminal')
+  })
+
+  it('switches to the desktop layout and remembers the choice', () => {
+    const view = render(<WorkspaceShell sessionId="session-1" mobile={false} hostName="Production API" hostAddress="10.0.0.15" activeApp="overview" onSelectApp={() => {}} />)
+    fireEvent.click(screen.getByTestId('workspace-layout-desktop'))
+    expect(screen.getByTestId('workspace-desktop-shell')).toBeInTheDocument()
+    expect(localStorage.getItem('shellbeam.workspace.layout')).toBe('desktop')
+    view.unmount()
+    render(<WorkspaceShell sessionId="session-1" mobile={false} hostName="Production API" hostAddress="10.0.0.15" activeApp="overview" onSelectApp={() => {}} />)
+    expect(screen.getByTestId('workspace-desktop-shell')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('workspace-layout-list'))
+    expect(screen.getByTestId('workspace-list-shell')).toBeInTheDocument()
   })
 })

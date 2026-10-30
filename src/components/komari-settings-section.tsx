@@ -1,5 +1,4 @@
 import { monitoringDiagnostic } from '@/lib/monitoring-presentation'
-import { NativeSelect } from '@/components/ui/select'
 import { useVault } from '@/contexts/vault-context'
 import {
   deleteKomariIntegration,
@@ -20,24 +19,36 @@ import { monitoringServiceCopy } from '@/lib/locales/monitoring-service'
 import { closeServiceScope, serviceRequest, serviceScope, serviceErrorCode, type ServiceScope } from '@/lib/monitoring-service'
 import { requestUserDecision } from '@/lib/user-confirmation'
 import { KomariMappingsPanel } from './komari-mappings-panel'
-import { Eye, EyeOff, RefreshCw, Server, Trash2 } from 'lucide-react'
+import { monitorSettingsCopy } from '@/lib/locales/monitor-settings-v3'
+import { Banner, CardHead, Note, StatusDot, checkboxClass, dangerButton, fieldLabel, mutedText, primaryButton, softBorder } from './monitor-settings-ui'
+import { cn } from '@/lib/utils'
+import { Activity, ArrowRight, Check, CircleCheck, Eye, EyeOff, Info, KeyRound, Lock, Plus, PlugZap, Radar, RefreshCw, ServerOff, ShieldCheck, Sparkles, Trash2, TriangleAlert, UserCog } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 function integrationVersion(integration: KomariIntegration | null | undefined): string {
   return JSON.stringify(integration ? [integration.vaultId, integration.id, integration.endpoint, integration.credentialRef, integration.updatedAt, integration.enabled, integration.name] : null)
 }
 
-export function KomariSettingsSection() {
+interface KomariSettingsSectionProps {
+  /** When set, server configuration moves to its own page instead of rendering inline. */
+  onOpenServiceConfiguration?: (integrationId: string) => void
+  onIntegrationsChange?: (vaultId: string, integrations: KomariIntegration[]) => void
+}
+
+export function KomariSettingsSection(props: KomariSettingsSectionProps) {
   const { activeVaultId } = useVault()
   // Vault changes remount form and console state immediately. Old requests
   // cannot populate the new Vault, even when integration IDs are identical.
-  return <VaultKomariSettingsSection key={activeVaultId} vaultId={activeVaultId} />
+  return <VaultKomariSettingsSection key={activeVaultId} vaultId={activeVaultId} {...props} />
 }
 
-function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
+function VaultKomariSettingsSection({ vaultId, onOpenServiceConfiguration, onIntegrationsChange }: KomariSettingsSectionProps & { vaultId: string }) {
   const { t, locale } = useT()
   const copy = komariOnboardingCopy[locale]
   const navigation = settingsNavigationCopy[locale]
+  const v3 = monitorSettingsCopy[locale]
+  const integrationsListener = useRef(onIntegrationsChange)
+  useEffect(() => { integrationsListener.current = onIntegrationsChange })
   const { vaultStatusState, handleSaveSecret, handleRevealSecret, captureVaultScope } = useVault()
   const [integrations, setIntegrations] = useState<KomariIntegration[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -131,9 +142,11 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
         }
         selectedConfiguration.current = retained
         setIntegrations(next)
+        integrationsListener.current?.(vaultId, next)
         return true
       }
       setIntegrations(next)
+      integrationsListener.current?.(vaultId, next)
       const first = next[0]
       if (first) {
         resetVerification()
@@ -342,107 +355,144 @@ function VaultKomariSettingsSection({ vaultId }: { vaultId: string }) {
     }
   }
 
+  const steps = ['connection', 'mapping', 'complete'] as const
+  const stepIndex = steps.indexOf(step)
+  const modes = [['authorize', access.account, v3.accountMode, UserCog], ['key', access.key, v3.keyMode, KeyRound], ['initialize', access.initialize, v3.initializeMode, Sparkles]] as const
+  const openServer = onOpenServiceConfiguration && savedIntegration && !dirty ? () => onOpenServiceConfiguration(savedIntegration.id) : null
+
   return (
-    <section className="rounded-lg border p-4" data-testid="komari-settings">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="flex items-center gap-2 font-semibold"><Server className="h-4 w-4" />{copy.title}</h3>
-          <p className="mt-1 max-w-3xl text-xs text-muted-foreground">{navigation.optionalKomari}</p>
+    <section className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)] lg:items-start" data-testid="komari-settings">
+      <div className="min-w-0 space-y-2.5">
+        <div className="sb-card overflow-hidden">
+          <CardHead title={v3.servicesTitle} hint={v3.servicesHint}>
+            <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={t('settings.komariRefresh')} onClick={() => void load()} disabled={busy || !unlocked}>
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+          </CardHead>
+          {integrations.length > 0 ? (
+            <div aria-label={navigation.savedSources}>
+              {integrations.map((integration) => {
+                const active = editorOpen && selectedId === integration.id
+                return <button key={integration.id} type="button" aria-label={integration.name}
+                  onClick={() => selectIntegration(integration)} disabled={busy || !unlocked}
+                  className={cn('flex w-full min-w-0 items-center gap-3 border-b border-l-2 px-3 py-2.5 text-left transition-colors disabled:opacity-60', softBorder, active ? 'border-l-[color:var(--workspace-primary-500)] bg-[color:var(--workspace-accent-subtle)]' : 'border-l-transparent hover:bg-[color:var(--workspace-surface-800)]')}>
+                  <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', integration.enabled ? 'bg-[color:var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good)]' : 'bg-[color:var(--workspace-surface-700)] text-[color:var(--workspace-text-muted)]')}>
+                    {integration.enabled ? <Activity className="h-4 w-4" /> : <ServerOff className="h-4 w-4" />}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-[color:var(--workspace-text-strong)]">{integration.name}</span>
+                    <span className={cn('block truncate text-xs', mutedText)}>{integration.endpoint}</span>
+                  </span>
+                  <StatusDot tone={integration.enabled ? 'good' : undefined}>{integration.enabled ? navigation.enabled : navigation.paused}</StatusDot>
+                </button>
+              })}
+            </div>
+          ) : unlocked && <p className={cn('px-4 py-6 text-center text-xs', mutedText)}>{v3.noServices}</p>}
+          <div className="space-y-1.5 p-3">
+            <Button variant="outline" size="sm" className="w-full gap-1.5" onClick={addIntegration} disabled={busy || !unlocked}><Plus className="h-3.5 w-3.5" />{navigation.addSource}</Button>
+            {editorOpen && <Button variant="ghost" size="sm" className="w-full" onClick={resetForm} disabled={busy}>{navigation.closeEditor}</Button>}
+          </div>
         </div>
-        <Button variant="ghost" size="icon" aria-label={t('settings.komariRefresh')} onClick={() => void load()} disabled={busy || !unlocked}>
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+        <Note icon={ShieldCheck}>{v3.ownServerNote}</Note>
+        <Note>{navigation.optionalKomari}</Note>
+        {unlocked ? <Note icon={Lock}>{v3.lockedNote}</Note> : <Note icon={Lock} tone="warn">{t('settings.komariUnlockHint')}</Note>}
+        {!editorOpen && error && <p role="alert" className="text-xs text-[color:var(--workspace-status-bad-text)]">{monitoringDiagnostic(error, locale)}</p>}
       </div>
 
-      {integrations.length > 0 && (
-        <div className="mt-4 space-y-2" aria-label={navigation.savedSources}>
-          <p className="text-xs text-muted-foreground">{navigation.editSource}</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {integrations.map((integration) => (
-              <button key={integration.id} type="button" aria-label={integration.name}
-                onClick={() => selectIntegration(integration)} disabled={busy || !unlocked}
-                className={`min-w-0 rounded-md border px-3 py-2 text-left ${editorOpen && selectedId === integration.id ? 'border-primary bg-primary/10' : 'border-border'}`}>
-                <span className="block truncate text-sm font-medium">{integration.name}</span>
-                <span className="mt-1 block text-xs text-muted-foreground">{integration.enabled ? navigation.enabled : navigation.paused}</span>
-              </button>
-            ))}
+      {editorOpen && unlocked ? <div className="sb-card min-w-0 overflow-hidden" data-testid="komari-connection-editor">
+        <ol className={cn('flex flex-wrap items-center gap-2 border-b px-4 py-3 text-xs', softBorder)} aria-label={copy.title}>
+          {steps.map((item, index) => {
+            const current = step === item
+            const done = index < stepIndex
+            return <li key={item} aria-current={current ? 'step' : undefined} className="flex items-center gap-2">
+              {index > 0 && <span aria-hidden="true" className="h-px w-6 bg-[color:var(--workspace-border-strong)]" />}
+              <span aria-hidden="true" className={cn('grid h-5 w-5 place-items-center rounded-full text-[11px] font-semibold', current ? 'bg-[color:var(--workspace-primary-500)] text-white' : done ? 'bg-[color:var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' : 'border border-[color:var(--workspace-border-strong)] text-[color:var(--workspace-text-muted)]')}>{done ? <Check className="h-3 w-3" /> : index + 1}</span>
+              <span className={current ? 'font-semibold text-[color:var(--workspace-text-strong)]' : mutedText}>{copy[item].replace(/^\d+\.\s*/, '')}</span>
+            </li>
+          })}
+        </ol>
+        {step === 'connection' && <>
+          <div className="grid gap-3 p-4 sm:grid-cols-2">
+            <p className={cn('text-xs sm:col-span-2', mutedText)}>{copy.connectHint}</p>
+            <div>
+              <label className={fieldLabel} htmlFor="komari-name">{t('settings.komariName')}</label>
+              <Input id="komari-name" value={name} onChange={(event) => { editForm(); setName(event.target.value) }} disabled={busy} placeholder={t('settings.komariNamePlaceholder')} className="mt-1" />
+            </div>
+            <div>
+              <label className={fieldLabel} htmlFor="komari-endpoint">{t('settings.komariEndpoint')}</label>
+              <Input id="komari-endpoint" value={endpoint} onChange={(event) => { editForm(); setEndpoint(event.target.value) }} disabled={busy} placeholder={t('settings.komariEndpointPlaceholder')} className="mt-1 font-mono text-xs" />
+            </div>
+            <div className="sm:col-span-2" role="radiogroup" aria-label={access.access}>
+              <div className={fieldLabel}>{access.access}</div>
+              <div className="mt-1 grid gap-2 md:grid-cols-3">
+                {modes.map(([mode, label, hint, Icon]) => <label key={mode} className={cn('flex cursor-pointer gap-2.5 rounded-lg border p-3 text-xs transition-colors focus-within:ring-2 focus-within:ring-[hsl(var(--primary))]', authMode === mode ? 'border-[color:var(--workspace-primary-500)] bg-[color:var(--workspace-accent-subtle)]' : cn(softBorder, 'hover:bg-[color:var(--workspace-surface-800)]'), busy && 'cursor-not-allowed opacity-60')}>
+                  <input type="radio" name={`komari-access-${vaultId}`} value={mode} aria-label={label} checked={authMode === mode} disabled={busy} className="sr-only"
+                    onChange={() => { editForm(); setAuthMode(mode); setApiKey(''); setPassword(''); setTwoFactor('') }} />
+                  <span aria-hidden="true" className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md', authMode === mode ? 'bg-[color:var(--workspace-primary-500)] text-white' : 'bg-[color:var(--workspace-surface-700)] text-[color:var(--workspace-text-muted)]')}><Icon className="h-3.5 w-3.5" /></span>
+                  <span className="min-w-0"><span className="block text-sm font-medium text-[color:var(--workspace-text-strong)]">{label}</span><span className={mutedText}>{hint}</span></span>
+                </label>)}
+              </div>
+            </div>
+            {authMode !== 'key' && <>
+              <label className={fieldLabel}>{access.user}<Input className="mt-1" value={username} disabled={busy} autoComplete="username" onChange={e => { editForm(); setUsername(e.target.value) }} /></label>
+              <label className={fieldLabel}>{access.pass}<Input className="mt-1" type="password" value={password} disabled={busy} autoComplete={authMode === 'initialize' ? 'new-password' : 'current-password'} onChange={e => { editForm(); setPassword(e.target.value) }} /></label>
+              {authMode === 'authorize' && <label className={fieldLabel}>{access.twoFactor}<Input className="mt-1 font-mono text-xs" value={twoFactor} disabled={busy} autoComplete="one-time-code" onChange={e => setTwoFactor(e.target.value)} /></label>}
+              {authMode === 'initialize' && <label className={fieldLabel}>{access.database}<Input className="mt-1 font-mono text-xs" value={metricDsn} disabled={busy} onChange={e => setMetricDsn(e.target.value)} /></label>}
+            </>}
+            {authMode === 'key' && <div className="sm:col-span-2">
+              <label className={fieldLabel} htmlFor="komari-api-key">{t('settings.komariApiKey')}</label>
+              <div className="relative mt-1">
+                <Input id="komari-api-key" type={showApiKey ? 'text' : 'password'} value={apiKey} onChange={(event) => { editForm(); setApiKey(event.target.value) }} disabled={busy} placeholder={selectedId ? t('settings.komariApiKeyKeep') : t('settings.komariApiKeyPaste')} className="pr-10" />
+                <button type="button" aria-label={showApiKey ? t('settings.komariHideApiKey') : t('settings.komariShowApiKey')} onClick={() => setShowApiKey((value) => !value)} disabled={busy} className={cn('absolute right-2 top-1/2 -translate-y-1/2', mutedText)}>
+                  {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <p className={cn('mt-1 text-xs', mutedText)}>{t('settings.komariApiKeyHelp')}</p>
+            </div>}
+            <label className="flex items-center gap-2 self-end text-sm text-[color:var(--workspace-text)]">
+              <input type="checkbox" checked={enabled} onChange={(event) => { editForm(); setEnabled(event.target.checked) }} disabled={busy} className={checkboxClass} />
+              {t('settings.komariEnabled')}
+            </label>
+            {authMode !== 'key' && <Note icon={Info} className="sm:col-span-2">{authMode === 'initialize' ? access.initHint : access.accountHint}</Note>}
           </div>
-        </div>
-      )}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={addIntegration} disabled={busy || !unlocked}>{navigation.addSource}</Button>
-        {editorOpen && <Button variant="ghost" size="sm" onClick={resetForm} disabled={busy}>{navigation.closeEditor}</Button>}
-      </div>
-      {!unlocked && <p className="mt-3 text-xs text-muted-foreground">{t('settings.komariUnlockHint')}</p>}
-      {!editorOpen && error && <p role="alert" className="mt-3 text-xs text-red-500">{monitoringDiagnostic(error, locale)}</p>}
-      {editorOpen && unlocked && <div data-testid="komari-connection-editor">
-      <ol className="mt-4 flex flex-wrap gap-3 text-xs text-muted-foreground" aria-label={copy.title}>
-        {(['connection', 'mapping', 'complete'] as const).map((item) => <li key={item} aria-current={step === item ? 'step' : undefined} className={step === item ? 'font-semibold text-foreground' : undefined}>{copy[item]}</li>)}
-      </ol>
-      {step === 'connection' && <div className="mt-4 space-y-3">
-        <p className="text-xs text-muted-foreground">{copy.connectHint}</p>
-        <div>
-          <label className="text-sm text-muted-foreground" htmlFor="komari-name">{t('settings.komariName')}</label>
-          <Input id="komari-name" value={name} onChange={(event) => { editForm(); setName(event.target.value) }} disabled={busy} placeholder={t('settings.komariNamePlaceholder')} className="mt-1" />
-        </div>
-        <div>
-          <label className="text-sm text-muted-foreground" htmlFor="komari-endpoint">{t('settings.komariEndpoint')}</label>
-          <Input id="komari-endpoint" value={endpoint} onChange={(event) => { editForm(); setEndpoint(event.target.value) }} disabled={busy} placeholder={t('settings.komariEndpointPlaceholder')} className="mt-1" />
-        </div>
-        <label className="block text-sm">{access.access}<NativeSelect aria-label={access.access} className="mt-1 block max-w-full rounded border bg-background p-2" value={authMode} disabled={busy} onChange={event => { editForm(); setAuthMode(event.target.value as typeof authMode); setApiKey(''); setPassword(''); setTwoFactor('') }}><option value="authorize">{access.account}</option><option value="key">{access.key}</option><option value="initialize">{access.initialize}</option></NativeSelect></label>
-        {authMode !== 'key' && <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">{authMode === 'initialize' ? access.initHint : access.accountHint}</p>
-          <label className="block text-sm">{access.user}<Input value={username} disabled={busy} autoComplete="username" onChange={e => { editForm(); setUsername(e.target.value) }} /></label>
-          <label className="block text-sm">{access.pass}<Input type="password" value={password} disabled={busy} autoComplete={authMode === 'initialize' ? 'new-password' : 'current-password'} onChange={e => { editForm(); setPassword(e.target.value) }} /></label>
-          {authMode === 'authorize' && <label className="block text-sm">{access.twoFactor}<Input value={twoFactor} disabled={busy} autoComplete="one-time-code" onChange={e => setTwoFactor(e.target.value)} /></label>}
-          {authMode === 'initialize' && <label className="block text-sm">{access.database}<Input value={metricDsn} disabled={busy} onChange={e => setMetricDsn(e.target.value)} /></label>}
-        </div>}
-        {authMode === 'key' && <div>
-          <label className="text-sm text-muted-foreground" htmlFor="komari-api-key">{t('settings.komariApiKey')}</label>
-          <div className="relative mt-1">
-            <Input id="komari-api-key" type={showApiKey ? 'text' : 'password'} value={apiKey} onChange={(event) => { editForm(); setApiKey(event.target.value) }} disabled={busy} placeholder={selectedId ? t('settings.komariApiKeyKeep') : t('settings.komariApiKeyPaste')} className="pr-10" />
-            <button type="button" aria-label={showApiKey ? t('settings.komariHideApiKey') : t('settings.komariShowApiKey')} onClick={() => setShowApiKey((value) => !value)} disabled={busy} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
-              {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
+          <div className={cn('flex flex-wrap items-center gap-2 border-t px-4 py-3', softBorder)}>
+            <Button size="sm" className={cn('gap-1.5', primaryButton)} onClick={() => void save()} disabled={busy || !name.trim() || !endpoint.trim() || (authMode !== 'key' && (!username.trim() || !password))}><PlugZap className="h-3.5 w-3.5" />{busy ? t('settings.komariSaving') : authMode === 'key' ? t('settings.komariSave') : access.connect}</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void verify()} disabled={busy || verifying || !unlocked || !savedIntegration || dirty}><Radar className="h-3.5 w-3.5" />{verifying ? copy.verifying : copy.verify}</Button>
+            {savedIntegration && <Button variant="ghost" size="sm" onClick={() => void manageMappings()} disabled={busy || verifying || !unlocked || dirty}>{copy.manage}</Button>}
+            {openServer && <Button variant="ghost" size="sm" className="gap-1.5" onClick={openServer}>{v3.serverConfiguration}<ArrowRight className="h-3.5 w-3.5" /></Button>}
+            <span className="flex-1" />
+            {selectedId && <Button variant="ghost" size="sm" className={cn('gap-1.5', dangerButton)} onClick={() => void remove()} disabled={busy}><Trash2 className="h-3.5 w-3.5" />{t('settings.komariRemove')}</Button>}
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">{t('settings.komariApiKeyHelp')}</p>
+          {(error || savedNotice || !unlocked || dirty || verificationError) && <div className="space-y-2 px-4 pb-3">
+            {error && <p role="alert" className="text-xs text-[color:var(--workspace-status-bad-text)]">{monitoringDiagnostic(error, locale)}</p>}
+            {savedNotice && <p role="status" className="text-xs text-[color:var(--workspace-status-good-text)]">{t('settings.komariSaved')}</p>}
+            {!unlocked && <p className="text-xs text-[color:var(--workspace-status-warn-text)]">{t('settings.komariUnlockHint')}</p>}
+            {dirty && <Note icon={TriangleAlert} tone="warn">{copy.saveFirst}</Note>}
+            {verificationError && <p role="alert" className="text-xs text-[color:var(--workspace-status-bad-text)]">{verificationError}</p>}
+          </div>}
+        </>}
+        {step === 'mapping' && savedIntegration && <div className="space-y-3 p-4">
+          {verifiedNodes && <Banner icon={ShieldCheck} tone="good"><p role="status">{copy.verified} · {copy.nodes}: {verifiedNodes.length}</p></Banner>}
+          {verifiedNodes?.length === 0 && <p className={cn('text-xs', mutedText)}>{copy.empty}</p>}
+          <KomariMappingsPanel key={`${vaultId}:${savedIntegration.id}`} activeVaultId={vaultId} hosts={hosts} vaultUnlocked={unlocked} onLoadVaultSecret={handleRevealSecret} integrationId={savedIntegration.id} initiallyOpen discoveredNodes={verifiedNodes ?? undefined} onStateChange={setMappingState} onHostImported={host => setHosts(current => current.some(h => h.id === host.id) ? current : [...current, host])} />
+          {!mappingState.busy && <p className={cn('text-xs', mutedText)}>{copy.unmapped}: {mappingState.unmapped}</p>}
+          {mappingState.unsaved && <Note icon={TriangleAlert} tone="warn">{copy.unsavedMappings}</Note>}
+          <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => setStep('connection')}>{copy.back}</Button>
+            {verifiedNodes && <Button size="sm" className={primaryButton} disabled={mappingState.busy || mappingState.unsaved || mappingState.failed} onClick={() => setStep('complete')}>{copy.finish}</Button>}</div>
         </div>}
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(event) => { editForm(); setEnabled(event.target.checked) }} disabled={busy} className="rounded" />
-          {t('settings.komariEnabled')}
-        </label>
-        {error && <p role="alert" className="text-xs text-red-500">{monitoringDiagnostic(error, locale)}</p>}
-        {savedNotice && <p role="status" className="text-xs text-muted-foreground">{t('settings.komariSaved')}</p>}
-        {!unlocked && <p className="text-xs text-amber-600 dark:text-amber-400">{t('settings.komariUnlockHint')}</p>}
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => void save()} disabled={busy || !name.trim() || !endpoint.trim() || (authMode !== 'key' && (!username.trim() || !password))}>{busy ? t('settings.komariSaving') : authMode === 'key' ? t('settings.komariSave') : access.connect}</Button>
-          {selectedId && <Button variant="outline" size="sm" onClick={() => void remove()} disabled={busy}><Trash2 className="mr-1.5 h-3.5 w-3.5" />{t('settings.komariRemove')}</Button>}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => void verify()} disabled={busy || verifying || !unlocked || !savedIntegration || dirty}>{verifying ? copy.verifying : copy.verify}</Button>
-          {savedIntegration && <Button variant="ghost" size="sm" onClick={() => void manageMappings()} disabled={busy || verifying || !unlocked || dirty}>{copy.manage}</Button>}
-        </div>
-        {dirty && <p className="text-xs text-muted-foreground">{copy.saveFirst}</p>}
-        {verificationError && <p role="alert" className="text-xs text-red-500">{verificationError}</p>}
-      </div>}
-      {step === 'mapping' && savedIntegration && <div className="mt-4 space-y-3">
-        {verifiedNodes && <p role="status" className="text-sm">{copy.verified} · {copy.nodes}: {verifiedNodes.length}</p>}
-        {verifiedNodes?.length === 0 && <p className="text-xs text-muted-foreground">{copy.empty}</p>}
-        <KomariMappingsPanel key={`${vaultId}:${savedIntegration.id}`} activeVaultId={vaultId} hosts={hosts} vaultUnlocked={unlocked} onLoadVaultSecret={handleRevealSecret} integrationId={savedIntegration.id} initiallyOpen discoveredNodes={verifiedNodes ?? undefined} onStateChange={setMappingState} onHostImported={host => setHosts(current => current.some(h => h.id === host.id) ? current : [...current, host])} />
-        {!mappingState.busy && <p className="text-xs text-muted-foreground">{copy.unmapped}: {mappingState.unmapped}</p>}
-        {mappingState.unsaved && <p className="text-xs text-amber-600">{copy.unsavedMappings}</p>}
-        <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setStep('connection')}>{copy.back}</Button>
-          {verifiedNodes && <Button size="sm" disabled={mappingState.busy || mappingState.unsaved || mappingState.failed} onClick={() => setStep('complete')}>{copy.finish}</Button>}</div>
-      </div>}
-      {step === 'complete' && <div className="mt-4 space-y-3">
-        <h4 role="status" className="font-medium">{copy.ready}</h4><p className="text-sm text-muted-foreground">{copy.readyHint}</p>
-        {verifiedNodes?.length === 0 && <p className="text-xs text-muted-foreground">{copy.empty}</p>}
-        <p className="text-xs text-muted-foreground">{copy.unmapped}: {mappingState.unmapped}</p>
-        {!enabled && <p className="text-xs text-muted-foreground">{copy.disabled}</p>}
-        <Button variant="outline" size="sm" onClick={() => setStep('connection')}>{copy.back}</Button>
-      </div>}
-      {savedIntegration && !dirty && <MonitoringServicePanel key={integrationVersion(savedIntegration)} service={savedIntegration} />}
-      </div>}
+        {step === 'complete' && <div className="flex flex-col items-center gap-2 px-6 py-8 text-center">
+          <span aria-hidden="true" className="grid h-12 w-12 place-items-center rounded-2xl bg-[color:var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good)]"><CircleCheck className="h-6 w-6" /></span>
+          <h4 role="status" className="text-base font-semibold text-[color:var(--workspace-text-strong)]">{copy.ready}</h4><p className={cn('max-w-md text-sm', mutedText)}>{copy.readyHint}</p>
+          {verifiedNodes?.length === 0 && <p className={cn('text-xs', mutedText)}>{copy.empty}</p>}
+          <p className={cn('text-xs', mutedText)}>{copy.unmapped}: {mappingState.unmapped}</p>
+          {!enabled && <p className={cn('text-xs', mutedText)}>{copy.disabled}</p>}
+          <div className="mt-1 flex flex-wrap justify-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setStep('connection')}>{copy.back}</Button>
+            {openServer && <Button size="sm" className={cn('gap-1.5', primaryButton)} onClick={openServer}>{v3.serverConfiguration}<ArrowRight className="h-3.5 w-3.5" /></Button>}
+          </div>
+        </div>}
+        {!onOpenServiceConfiguration && savedIntegration && !dirty && <div className={cn('border-t px-4 pb-4', softBorder)}><MonitoringServicePanel key={integrationVersion(savedIntegration)} service={savedIntegration} /></div>}
+      </div> : <div className={cn('sb-card grid min-h-40 place-items-center p-6 text-center text-xs', mutedText)}>{navigation.editSource}</div>}
     </section>
   )
 }

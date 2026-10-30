@@ -1,15 +1,24 @@
 import type { ITheme } from '@xterm/xterm'
+import { useMemo, useSyncExternalStore } from 'react'
+import { ACCENTS, PALETTES, resolveAccent, useAppearance, type AppearancePrefs, type Palette, type ThemeFamily } from './appearance'
+import { useT } from './i18n'
+
+export type TerminalCursorStyle = 'block' | 'bar' | 'underline'
 
 export interface TerminalPrefs {
   fontSize: number
   fontFamily: string
   themeId: string
+  cursorStyle: TerminalCursorStyle
+  cursorBlink: boolean
 }
 
 export const DEFAULT_TERMINAL_PREFS: TerminalPrefs = {
   fontSize: 14,
   fontFamily: "'JetBrains Mono', 'Fira Code', ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Monaco, 'Courier New', monospace",
-  themeId: 'hacker-green',
+  themeId: 'app',
+  cursorStyle: 'block',
+  cursorBlink: true,
 }
 
 export interface TerminalThemeDef {
@@ -127,21 +136,81 @@ export const TERMINAL_THEMES: TerminalThemeDef[] = [
   },
 ]
 
+/** Follows the app: built from the current palette, light/dark mode and accent. */
+export const APP_TERMINAL_THEME_ID = 'app'
+
+// Text colour per app palette; the background is the palette's own base.
+const PALETTE_FOREGROUND: Record<Palette, string> = {
+  'aqua-dark': '#e5e5ea', midnight: '#d7d9e0', nord: '#d8dee9', dracula: '#f8f8f2', graphite: '#e4e1db', ocean: '#cdd8ea',
+  'solarized-dark': '#93a1a1', 'mist-dark': '#dfe8e5',
+  aqua: '#2c2e33', paper: '#433d33', solarized: '#586e75', mist: '#2f3a37', lavender: '#38334d',
+  'nord-light': '#3b4252', 'dracula-light': '#383a4c', 'ocean-light': '#25344f',
+}
+const ANSI: Record<ThemeFamily, ITheme> = {
+  dark: (TERMINAL_THEMES.find((theme) => theme.id === 'one-dark') as TerminalThemeDef).theme,
+  light: (TERMINAL_THEMES.find((theme) => theme.id === 'light') as TerminalThemeDef).theme,
+}
+
+export function appTerminalTheme(family: ThemeFamily, prefs: AppearancePrefs): ITheme {
+  const palette = family === 'dark' ? prefs.darkPalette : prefs.lightPalette
+  const background = PALETTES[palette].swatch[family === 'dark' ? 0 : 1]
+  const resolved = resolveAccent(prefs, family)
+  // The palette's own accent uses its exact swatch colour (Aqua's blue differs from the shared blue).
+  const accent = resolved === PALETTES[palette].accent ? PALETTES[palette].swatch[2] : ACCENTS[resolved]
+  const foreground = PALETTE_FOREGROUND[palette]
+  return { ...ANSI[family], background, foreground, cursor: accent, cursorAccent: background, selectionBackground: `${accent}40`, selectionForeground: undefined, black: family === 'dark' ? background : ANSI.light.black }
+}
+
+function subscribeAppFamily(listener: () => void) {
+  const observer = new MutationObserver(listener)
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+  return () => observer.disconnect()
+}
+const appFamily = (): ThemeFamily => document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+
+/** The app's current light/dark mode, read from <html> so it tracks every theme switch. */
+export function useAppThemeFamily(): ThemeFamily {
+  return useSyncExternalStore(subscribeAppFamily, appFamily)
+}
+
+/** Every selectable terminal theme, with "Follow theme" first and resolved for the current app look. */
+export function useTerminalThemes(): TerminalThemeDef[] {
+  const { t } = useT()
+  const family = useAppThemeFamily()
+  const { prefs } = useAppearance()
+  const name = t('terminal.themeFollowApp')
+  return useMemo(() => [{ id: APP_TERMINAL_THEME_ID, name, theme: appTerminalTheme(family, prefs) }, ...TERMINAL_THEMES], [name, family, prefs])
+}
+
+/** The xterm theme to draw with for a saved theme id. */
+export function useResolvedTerminalTheme(themeId: string | undefined): ITheme {
+  const family = useAppThemeFamily()
+  const { prefs } = useAppearance()
+  const id = themeId ?? DEFAULT_TERMINAL_PREFS.themeId
+  return useMemo(() => id === APP_TERMINAL_THEME_ID ? appTerminalTheme(family, prefs) : getThemeById(id).theme, [id, family, prefs])
+}
+
 const PREFS_KEY = 'shellbeam.terminalPrefs'
+// Version 2 made "Follow theme" the default. Earlier saves always wrote the old
+// default 'hacker-green' even when nobody picked it, so that value moves over.
+const PREFS_VERSION = 2
 
 export function loadTerminalPrefs(): TerminalPrefs {
   try {
     const raw = localStorage.getItem(PREFS_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
-      return { ...DEFAULT_TERMINAL_PREFS, ...parsed }
+      const prefs = { ...DEFAULT_TERMINAL_PREFS, ...parsed }
+      if (parsed.version !== PREFS_VERSION && parsed.themeId === 'hacker-green') prefs.themeId = APP_TERMINAL_THEME_ID
+      delete prefs.version
+      return prefs
     }
   } catch { /* ignore */ }
   return { ...DEFAULT_TERMINAL_PREFS }
 }
 
 export function saveTerminalPrefs(prefs: TerminalPrefs) {
-  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...prefs, version: PREFS_VERSION }))
 }
 
 export function getThemeById(id: string): TerminalThemeDef {

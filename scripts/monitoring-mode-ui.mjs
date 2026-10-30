@@ -23,4 +23,9 @@ export async function chooseServerMonitoring(driver) {
   await driver.click(`${confirmation} ${id('user-confirmation-accept')}`)
   await driver.until(async () => !(await driver.findAll(confirmation)).length)
   await driver.until(async () => await driver.isSelected(id('monitoring-mode-server')) && !await driver.isSelected(id('monitoring-mode-ssh')))
+  // Saving would otherwise open the probe installer over the host list; the
+  // journeys bind and install through their own reviewed steps.
+  const installOnSave = `${id('host-form-install-probe')} input[type="checkbox"]`
+  if (await driver.isSelected(installOnSave)) await driver.click(installOnSave)
+  assert(!await driver.isSelected(installOnSave), 'monitoring_choice_install_on_save_not_cleared')
 }

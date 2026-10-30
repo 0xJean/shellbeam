@@ -1,3 +1,4 @@
+import { shellQuote } from '@/lib/navigation-request'
 import { hasSshConnection, hostConnectionKey } from '@/lib/hosts'
 import { parseHostKeyError, type HostKeyInfo } from '@/components/host-key-confirm-dialog'
 import { appendActivity } from '@/lib/activity-log'
@@ -234,10 +235,12 @@ interface SessionsContextValue {
   setLeftPaneSessionId: (id: string | null) => void
   rightPaneSessionId: string | null
   setRightPaneSessionId: (id: string | null) => void
-  handleConnectHost: (hostId: string) => Promise<void>
+  /** `cwd` changes into that directory once the shell is connected. */
+  handleConnectHost: (hostId: string, options?: { cwd?: string }) => Promise<void>
   openHostWorkspace: (hostId: string, app: WorkspaceAppId) => Promise<void>
   handleOpenLocalTerminal: () => Promise<void>
   handleCloseSessionTab: (sessionId: string) => void
+  cancelSessionConnection: (sessionId: string) => void
   sendRaw: (sessionId: string, data: string) => void
   refreshInteractiveSessions: () => Promise<void>
   initializeInteractiveSessionState: (sessionId: string, options?: { hostId?: string | null; connectionKind?: 'host' | 'local' | null }) => void
@@ -263,11 +266,21 @@ interface SessionsContextValue {
   acceptPendingHostKey: () => void
   rejectPendingHostKey: () => void
   reconnectingSessionIds: Set<string>
+  /** Live auto-reconnect attempt per session; `failedAt` is set once every attempt failed. */
+  reconnectProgress: Record<string, ReconnectProgress>
   manualReconnect: (sessionId: string) => void
   retrySessionConnection: (sessionId: string) => void
 }
 
+export interface ReconnectProgress { attempt: number; maxRetries: number; intervalMs: number; failedAt?: number }
+
 const SessionsContext = createContext<SessionsContextValue | null>(null)
+
+/** For leaf UI that may render outside the provider (e.g. in isolated tests). */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useOptionalSessions() {
+  return useContext(SessionsContext)
+}
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useSessions() {
@@ -301,6 +314,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
   const [reconnectSettings, setReconnectSettings] = useState<ReconnectSettings>({ enabled: true, maxRetries: 5, intervalMs: 3000 })
   const [reconnectingSessionIds, setReconnectingSessionIds] = useState<Set<string>>(new Set())
+  const [reconnectProgress, setReconnectProgress] = useState<Record<string, ReconnectProgress>>({})
   const [paneEvents, setPaneEvents] = useState<Record<PaneId, PaneEvent[]>>({ left: [], right: [] })
   const [pendingHostKey, setPendingHostKey] = useState<HostKeyInfo | null>(null)
   const pendingHostKeyResolveRef = useRef<((accept: boolean) => void) | null>(null)
@@ -310,6 +324,8 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
   const sessionStatusCacheRef = useRef<Record<string, string>>({})
   const pcChunkEmitterRef = useRef<Record<string, (chunks: InteractiveOutputChunk[]) => void>>({})
   const pcSessionTabsRef = useRef<SessionTab[]>([])
+  // Pending tabs the user cancelled while their SSH connection was still being established.
+  const cancelledConnectionsRef = useRef(new Set<string>())
   const leftPaneSessionIdRef = useRef<string | null>(null)
   const rightPaneSessionIdRef = useRef<string | null>(null)
   const reconnectingRef = useRef<Set<string>>(new Set())
@@ -515,7 +531,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         if (!hkInfo || hkInfo.code !== 'host_key_unknown') throw error
         const accepted = await new Promise<boolean>((resolve) => {
           pendingHostKeyResolveRef.current = resolve
-          setPendingHostKey(hkInfo)
+          setPendingHostKey({ ...hkInfo, vaultId: params.vaultId })
         })
         if (!accepted) throw new Error('Connection cancelled: host key not accepted')
         next = { ...params, acceptedHostKey: { host: hkInfo.host, port: hkInfo.port, fingerprint: hkInfo.fingerprint } }
@@ -532,7 +548,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         if (!hkInfo || hkInfo.code !== 'host_key_unknown') throw error
         const accepted = await new Promise<boolean>((resolve) => {
           pendingHostKeyResolveRef.current = resolve
-          setPendingHostKey(hkInfo)
+          setPendingHostKey({ ...hkInfo, vaultId: params.vaultId })
         })
         if (!accepted) throw new Error('Connection cancelled: host key not accepted')
         next = { ...params, acceptedHostKey: { host: hkInfo.host, port: hkInfo.port, fingerprint: hkInfo.fingerprint } }
@@ -553,13 +569,16 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     let reconnected = false
     const sourceVaultId = interactiveSessionsRef.current.find((session) => session.sessionId === sessionId)?.vaultId ?? activeVaultId
     setPcSessionTabs((prev) => prev.map((t) => t.sessionId === sessionId ? { ...t, status: 'reconnecting' } : t))
+    let attempted = 0
     for (let attempt = 1; attempt <= rs.maxRetries; attempt++) {
+      setReconnectProgress((prev) => ({ ...prev, [sessionId]: { attempt, maxRetries: rs.maxRetries, intervalMs: rs.intervalMs } }))
       await new Promise<void>((r) => window.setTimeout(r, rs.intervalMs))
       if (sourceVaultId !== activeVaultIdRef.current) break
       const host = hostsRef.current.find((h) => h.id === hostId && (!h.vaultId || h.vaultId === sourceVaultId))
       if (!host || !hasSshConnection(host)) break
       const original = interactiveSessionsRef.current.find(session => session.sessionId === sessionId)
       if (original?.connectionKey && original.connectionKey !== hostConnectionKey(host)) break
+      attempted = attempt
       try {
         const previousWorkspaceState = workspaceBySessionRef.current[sessionId]
         const previousBrowserState = browserBySessionRef.current[sessionId]
@@ -627,7 +646,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         setPcActiveSessionId((prev) => prev === sessionId ? newSession.sessionId : prev)
         appendPaneEvent(pane, 'info', `Reconnected to ${host.username || defaultUsername}@${host.address}`, newSession.sessionId)
         void appendActivity({
-          event: 'reconnect', hostId: host.id, hostName: host.name, hostAddress: host.address,
+          vaultId: sourceVaultId, event: 'reconnect', hostId: host.id, hostName: host.name, hostAddress: host.address,
           username: host.username || defaultUsername, authType: host.authType,
         })
         reconnected = true
@@ -640,6 +659,12 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
     reconnectingRef.current.delete(sessionId)
     setReconnectingSessionIds((prev) => { const n = new Set(prev); n.delete(sessionId); return n })
+    setReconnectProgress((prev) => {
+      const next = { ...prev }
+      if (reconnected) delete next[sessionId]
+      else next[sessionId] = { attempt: attempted, maxRetries: rs.maxRetries, intervalMs: rs.intervalMs, failedAt: Date.now() }
+      return next
+    })
     if (!reconnected) {
       appendPaneEvent(pane, 'error', `Auto-reconnect failed after ${rs.maxRetries} attempt(s). Click "Reconnect" to try again.`, sessionId)
       setPcSessionTabs((prev) => prev.map((t) => t.sessionId === sessionId ? { ...t, status: 'closed' } : t))
@@ -738,6 +763,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
         if (tab && tab.hostAddress !== 'local') {
           void appendActivity({
+            vaultId: info?.vaultId ?? activeVaultIdRef.current,
             event: 'disconnect',
             hostId: info?.hostId ?? undefined,
             hostName: tab.hostName,
@@ -1379,9 +1405,9 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
   }
 
-  async function openHostConnection(hostId: string, placeholderId?: string, workspaceApp?: WorkspaceAppId) {
+  async function openHostConnection(hostId: string, placeholderId?: string, workspaceApp?: WorkspaceAppId): Promise<string | undefined> {
     const host = hosts.find((h) => h.id === hostId)
-    if (!host || !hasSshConnection(host)) return
+    if (!host || !hasSshConnection(host)) return undefined
     setSelectedHostId(hostId)
     const targetSessionId = placeholderId ?? `pending-${Date.now()}`
     const newTab: SessionTab = {
@@ -1415,6 +1441,11 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
         keepAliveIntervalSecs,
         jumpHost: host.jumpHost, jumpPort: host.jumpPort, jumpUser: host.jumpUser,
       })
+      if (cancelledConnectionsRef.current.delete(targetSessionId)) {
+        // The tab is gone; close the session that finished connecting after the cancel.
+        void closeInteractiveSession(session.sessionId).catch(() => {})
+        return undefined
+      }
       setInteractiveSessions((prev) => [...prev, session])
       setLeftPaneSessionId(session.sessionId)
       appendPaneEvent('left', 'info', `Connected: ${host.username || defaultUsername}@${host.address}`, session.sessionId)
@@ -1435,10 +1466,12 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       setPcActiveSessionId(session.sessionId)
       await refreshInteractiveSessions()
       void appendActivity({
-        event: 'connect', hostId: host.id, hostName: host.name, hostAddress: host.address,
+        vaultId: activeVaultId, event: 'connect', hostId: host.id, hostName: host.name, hostAddress: host.address,
         username: host.username || defaultUsername, authType: host.authType,
       })
+      return session.sessionId
     } catch (error) {
+      if (cancelledConnectionsRef.current.delete(targetSessionId)) return undefined
       const msg = String(error instanceof Error ? error.message : error)
       setPcSessionTabs((prev) => prev.map((t) => t.sessionId === targetSessionId ? { ...t, status: 'error', errorMessage: msg, connectionStage: undefined } : t))
       const emitter = pcChunkEmitterRef.current[targetSessionId]
@@ -1447,14 +1480,15 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       }
       appendPaneEvent('left', 'error', `Connection failed: ${msg}`, null)
       void appendActivity({
-        event: 'auth_fail', hostId: host.id, hostName: host.name, hostAddress: host.address,
+        vaultId: activeVaultId, event: 'auth_fail', hostId: host.id, hostName: host.name, hostAddress: host.address,
         username: host.username || defaultUsername, authType: host.authType, detail: msg,
       })
     }
   }
 
-  async function handleConnectHost(hostId: string) {
-    await openHostConnection(hostId)
+  async function handleConnectHost(hostId: string, options?: { cwd?: string }) {
+    const sessionId = await openHostConnection(hostId)
+    if (sessionId && options?.cwd) await sendInteractiveInput(sessionId, `cd -- ${shellQuote(options.cwd)}\n`).catch(() => {})
   }
 
   async function openHostWorkspace(hostId: string, app: WorkspaceAppId) {
@@ -1518,7 +1552,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       } : t))
       setPcActiveSessionId(session.sessionId)
       await refreshInteractiveSessions()
-      void appendActivity({ event: 'local_terminal', hostName: t('common.local'), hostAddress: 'local' })
+      void appendActivity({ vaultId: activeVaultIdRef.current, event: 'local_terminal', hostName: t('common.local'), hostAddress: 'local' })
     } catch (error) {
       const msg = String(error instanceof Error ? error.message : error)
       setPcSessionTabs((prev) => prev.map((t) => t.sessionId === targetSessionId ? { ...t, status: 'error', errorMessage: msg, connectionStage: undefined } : t))
@@ -1540,6 +1574,13 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     if (tab.hostId) {
       void openHostConnection(tab.hostId, sessionId)
     }
+  }
+
+  /** Closes a tab that is still connecting; a session that connects afterwards is closed again. */
+  function cancelSessionConnection(sessionId: string) {
+    const tab = pcSessionTabsRef.current.find((t) => t.sessionId === sessionId)
+    if (tab?.status === 'connecting') cancelledConnectionsRef.current.add(sessionId)
+    handleCloseSessionTab(sessionId)
   }
 
   function handleCloseSessionTab(sessionId: string) {
@@ -1605,7 +1646,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       syncSessionBrowserUrl, setSessionBrowserLoading, setSessionBrowserError, setSessionBrowserNavigation, closeSessionBrowser, rebuildSessionBrowserTransport,
       pcChunkEmitterRef, leftPaneSessionId, setLeftPaneSessionId,
       rightPaneSessionId, setRightPaneSessionId,
-      handleConnectHost, openHostWorkspace, handleOpenLocalTerminal, handleCloseSessionTab, sendRaw, refreshInteractiveSessions,
+      handleConnectHost, openHostWorkspace, handleOpenLocalTerminal, handleCloseSessionTab, cancelSessionConnection, sendRaw, refreshInteractiveSessions,
       initializeInteractiveSessionState, cleanupClosedSession,
       interactiveInputBySession, setInteractiveInputBySession,
       interactiveHistoryBySession, setInteractiveHistoryBySession,
@@ -1614,7 +1655,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       reconnectSettings, setReconnectSettings, paneEvents, setPaneEvents, appendPaneEvent,
       leftPaneSessionIdRef, rightPaneSessionIdRef, closedSessionCleanupRef,
       pendingHostKey, acceptPendingHostKey, rejectPendingHostKey,
-      reconnectingSessionIds, manualReconnect, retrySessionConnection,
+      reconnectingSessionIds, reconnectProgress, manualReconnect, retrySessionConnection,
     }}>
       {children}
     </SessionsContext.Provider>

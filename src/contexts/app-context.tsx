@@ -1,5 +1,6 @@
-import { createContext, useContext, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTheme } from '@/hooks/use-theme'
+import { paletteShortcutAction } from '@/lib/palette-shortcuts'
 import type { SidebarNavId } from '@/components/pc-nav-sidebar'
 import { loadTerminalPrefs, saveTerminalPrefs, type TerminalPrefs } from '@/lib/terminal-themes'
 
@@ -48,11 +49,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const handlePaletteActionRef = useRef<(action: CommandPaletteAction) => void>(() => {})
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'j')) {
         e.preventDefault()
         setCommandPaletteOpen((p) => !p)
+        return
+      }
+      const action = paletteShortcutAction(e)
+      if (action) {
+        e.preventDefault()
+        handlePaletteActionRef.current(action)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -60,11 +68,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const handleCommandPaletteAction = useCallback((action: CommandPaletteAction) => {
+    setCommandPaletteOpen(false)
     if (action === 'focus-sftp') setPcSidebarNav('sftp')
     else if (action === 'focus-settings') setPcSidebarNav('settings')
     else if (action === 'focus-vaults-dashboard') setPcSidebarNav('keychain')
     else if (action === 'focus-interactive') setTerminalMode('interactive')
   }, [])
+
+  useEffect(() => { handlePaletteActionRef.current = handleCommandPaletteAction }, [handleCommandPaletteAction])
 
   const value = useMemo(() => ({
     theme, toggleTheme, output, setOutput, command, setCommand,

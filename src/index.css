@@ -23,6 +23,8 @@
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 0 0% 100%;
 
     --workspace-primary-500: #2563eb;
     --workspace-primary-400: #3b82f6;
@@ -206,6 +208,11 @@
     @apply text-foreground font-display antialiased;
     background: var(--workspace-bg-950);
     -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Breathing room around terminal text; FitAddon subtracts this padding when sizing. */
+  .terminal-surface .xterm {
+    padding: 8px 6px 6px 14px;
   }
 
   .terminal-surface .xterm,

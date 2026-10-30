@@ -8,6 +8,13 @@ import { useWorkspaceProviderState } from '@/lib/workspace-provider-state'
 import { loadLocalAlertState, LOCAL_OPS_CHANGED_EVENT } from '@/lib/local-ops-store'
 import { getWorkspaceRecommendations, type WorkspaceRecommendation } from '@/lib/workspace-recommendations'
 import { COLLECTION_LIMITS } from '@/lib/collection-limits'
+import { Activity, CircleCheck, FileText, FolderTree, HardDrive, ScrollText, ServerCog, SquareTerminal, TriangleAlert, type LucideIcon } from 'lucide-react'
+import type { ReactNode } from 'react'
+
+/** Recommendations that report something healthy rather than a problem. */
+const OK_RECOMMENDATIONS = new Set(['nginx', 'docker'])
+
+const APP_ICONS: Partial<Record<WorkspaceAppId, LucideIcon>> = { fileSystem: HardDrive, fileTransfer: FolderTree, logs: ScrollText, processes: Activity, services: ServerCog, terminal: SquareTerminal, overview: FileText }
 
 export interface WorkspaceRecommendationsPanelProps {
   host: HostProfile | null
@@ -15,8 +22,12 @@ export interface WorkspaceRecommendationsPanelProps {
   vaultId?: string
   onSelectApp: (app: WorkspaceAppId) => void
   recommendations?: WorkspaceRecommendation[]
+  className?: string
+  /** `desktop` is the v3 desktop home card: warning or OK icons, quiet buttons and a closing note. */
+  variant?: 'card' | 'desktop'
+  footer?: ReactNode
 }
-export function WorkspaceRecommendationsPanel({ host, hosts, vaultId, onSelectApp, recommendations }: WorkspaceRecommendationsPanelProps) {
+export function WorkspaceRecommendationsPanel({ host, hosts, vaultId, onSelectApp, recommendations, className, variant = 'card', footer }: WorkspaceRecommendationsPanelProps) {
   const { t } = useT()
   const { view, now } = useWorkspaceProviderState({ host, hosts, vaultId })
   const inventories = useWorkspaceInventoryStates()
@@ -63,9 +74,37 @@ export function WorkspaceRecommendationsPanel({ host, hosts, vaultId, onSelectAp
     if (app === 'services') return t('workspace.action.openServices')
     return t('workspace.action.openTerminal')
   }
+  if (variant === 'desktop') {
+    if (items.length === 0 && !footer) return null
+    return <section data-testid="workspace-recommendations" className={`sb-card min-w-0 px-4 py-3.5 ${className ?? ''}`}>
+      <div className="mb-1 flex items-baseline justify-between gap-3">
+        <h2 className="text-[13px] font-semibold text-[var(--workspace-text-strong)]">{t('workspace.section.recommendations')}</h2>
+        <small className="text-[11px] text-[var(--workspace-text-muted)]">{t('workspace.desktop.tipsSource')}</small>
+      </div>
+      {items.map((item) => {
+        const ok = OK_RECOMMENDATIONS.has(item.id)
+        const Icon = ok ? CircleCheck : TriangleAlert
+        return <div key={item.id} className="flex items-center gap-2.5 border-t border-[color:var(--workspace-border-soft)] py-[7px] text-[12.5px] first-of-type:border-t-0">
+          <Icon className={`h-[15px] w-[15px] shrink-0 ${ok ? 'text-[var(--workspace-status-good-text)]' : 'text-[var(--workspace-status-warn-text)]'}`} aria-hidden="true" />
+          <span className="min-w-0 flex-1 text-[var(--workspace-text-strong)]">{item.title}</span>
+          <button type="button" onClick={() => onSelectApp(item.targetApp)} className="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-800)]">{label(item.targetApp)}</button>
+        </div>
+      })}
+      {footer && <p className="mt-2 text-xs text-[var(--workspace-text-muted)]">{footer}</p>}
+    </section>
+  }
   if (items.length === 0) return null
-  return <section data-testid="workspace-recommendations" className="space-y-3 rounded-xl border border-border/60 bg-card/90 p-4">
-    <h2 className="text-sm font-semibold">{t('workspace.section.recommendations')}</h2>
-    {items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/50 px-3 py-2"><span className="text-xs font-medium">{item.title}</span><button type="button" onClick={() => onSelectApp(item.targetApp)} className="shrink-0 rounded border px-2 py-1 text-xs">{label(item.targetApp)}</button></div>)}
+  return <section data-testid="workspace-recommendations" className={`sb-card min-w-0 p-0 ${className ?? ''}`}>
+    <h2 className="border-b border-[color:var(--workspace-border-soft)] px-4 py-2.5 text-[13px] font-semibold text-[var(--workspace-text-strong)]">{t('workspace.section.recommendations')}</h2>
+    <div className="min-h-0 overflow-auto">
+      {items.map((item) => {
+        const Icon = APP_ICONS[item.targetApp] ?? SquareTerminal
+        return <div key={item.id} className="flex items-center gap-3 px-4 py-2.5">
+          <Icon className="h-4 w-4 shrink-0 text-[var(--workspace-text-muted)]" aria-hidden="true" />
+          <span className="min-w-0 flex-1 text-[13px] text-[var(--workspace-text)]">{item.title}</span>
+          <button type="button" onClick={() => onSelectApp(item.targetApp)} className="shrink-0 rounded-md bg-[var(--workspace-accent-subtle)] px-2.5 py-1 text-xs font-medium text-[var(--workspace-accent-text)] hover:bg-[color:var(--workspace-primary-500)] hover:text-[var(--workspace-primary-foreground)]">{label(item.targetApp)}</button>
+        </div>
+      })}
+    </div>
   </section>
 }

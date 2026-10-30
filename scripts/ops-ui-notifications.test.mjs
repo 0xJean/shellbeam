@@ -31,10 +31,11 @@ function settingsNavigation() {
   const monitoring = '[data-testid="settings-category-monitoring"]'
   const language = "xpath=//button[normalize-space(.)='English']"
   const panel = '[data-testid="notification-settings"]'
+  const localTab = '[data-testid="monitor-tab-local"]'
   const calls = []
-  let page = 'workspace', category = 'general', chosenEnglish = false
+  let page = 'workspace', category = 'general', chosenEnglish = false, localOpen = false
   const visible = target => target === dashboard || target === settings && page !== 'workspace'
-    || page === 'settings' && ([general, monitoring].includes(target) || target === language && category === 'general' || target === panel && category === 'monitoring')
+    || page === 'settings' && ([general, monitoring].includes(target) || target === language && category === 'general' || target === localTab && category === 'monitoring' || target === panel && category === 'monitoring' && localOpen)
   const driver = {
     waitFor: async target => { calls.push(['wait', target]); assert(visible(target), `control must be visibly mounted: ${target}`); return target },
     click: async target => {
@@ -44,6 +45,7 @@ function settingsNavigation() {
       else if (target === general) category = 'general'
       else if (target === monitoring) category = 'monitoring'
       else if (target === language) chosenEnglish = true
+      else if (target === localTab) localOpen = true
       else assert.fail('unexpected policy change during navigation')
     },
   }
@@ -58,7 +60,7 @@ test('initial notification setup and subsequent owners open the real monitoring 
     assert.deepEqual(unit.calls, [
       ['wait', s.dashboard], ['click', s.dashboard], ['wait', s.settings], ['click', s.settings],
       ...(english ? [['wait', s.general], ['click', s.general], ['wait', s.language], ['click', s.language]] : []),
-      ['wait', s.monitoring], ['click', s.monitoring], ['wait', s.panel],
+      ['wait', s.monitoring], ['click', s.monitoring], ['click', '[data-testid="monitor-tab-local"]'], ['wait', s.panel],
     ])
   }
 })

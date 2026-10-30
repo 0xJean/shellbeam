@@ -1,5 +1,5 @@
 //! Bounded native local/remote/SOCKS forwarding over a verified SSH connection.
-use super::transport::{bridge_with_prefix, Connection};
+use super::transport::{bridge_counted, Connection, TrafficCounters};
 use ssh2::Session;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -163,6 +163,17 @@ pub fn start(
     bind_port: u16,
     kind: ForwardKind,
 ) -> Result<ForwardLease, String> {
+    start_counted(connection, bind_host, bind_port, kind, None)
+}
+
+/// `start` that adds every bridged connection's traffic to `counters`.
+pub fn start_counted(
+    connection: Connection,
+    bind_host: &str,
+    bind_port: u16,
+    kind: ForwardKind,
+    counters: Option<Arc<TrafficCounters>>,
+) -> Result<ForwardLease, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = stop.clone();
     let active = Arc::new(AtomicUsize::new(0));
@@ -204,6 +215,7 @@ pub fn start(
                             worker_stop.clone(),
                             active.clone(),
                             Vec::new(),
+                            counters.clone(),
                         );
                     }
                     Err(error) if error.code() == ssh2::ErrorCode::Session(-37) => {
@@ -315,6 +327,7 @@ pub fn start(
                             worker_stop.clone(),
                             active.clone(),
                             prefix,
+                            counters.clone(),
                         );
                     } else if matches!(kind, ForwardKind::Socks) {
                         let _ = socket.write_all(&[5, 5, 0, 1, 0, 0, 0, 0, 0, 0]);
@@ -344,10 +357,11 @@ fn spawn_bridge(
     stop: Arc<AtomicBool>,
     active: Arc<AtomicUsize>,
     prefix: Vec<u8>,
+    counters: Option<Arc<TrafficCounters>>,
 ) {
     active.fetch_add(1, Ordering::Relaxed);
     thread::spawn(move || {
-        bridge_with_prefix(session, channel, socket, stop, prefix);
+        bridge_counted(session, channel, socket, stop, prefix, counters);
         active.fetch_sub(1, Ordering::Relaxed);
     });
 }

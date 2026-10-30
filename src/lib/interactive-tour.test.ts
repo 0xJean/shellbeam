@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import en from './locales/en'
 import zhCN from './locales/zh-CN'
-import { findTourTarget, INTERACTIVE_TOURS, TOUR_STEPS, waitForTourTarget } from './interactive-tour'
+import { findTourTarget, INTERACTIVE_TOURS, TOUR_READY, TOUR_ROUTES, TOUR_STEPS, waitForTourTarget } from './interactive-tour'
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -65,4 +65,27 @@ it('provides matching bilingual copy for every tour step and control', () => {
       }
     }
   }
+})
+
+describe('tour definitions', () => {
+  const sources = Object.values(import.meta.glob(['/src/components/**/*.tsx', '/src/layouts/**/*.tsx', '!**/*.test.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>).join('\n')
+  const names = (selector: string) => [...selector.matchAll(/data-tour="([^"]+)"/g)].map((m) => m[1])
+
+  it('points every step and ready check at a target that exists in the app', () => {
+    for (const id of INTERACTIVE_TOURS) {
+      for (const selector of [TOUR_READY[id], ...TOUR_STEPS[id].map((step) => step.target)]) {
+        for (const name of names(selector)) expect(sources, `${id}: data-tour="${name}"`).toMatch(new RegExp(`data-tour=[^>\\n]*['"]${name}['"]`))
+        const nav = selector.match(/pc-nav-([a-z-]+)/)?.[1]
+        if (nav) expect(sources, `${id}: pc-nav-${nav}`).toMatch(new RegExp(`pc-nav-${nav}|'${nav}'`))
+      }
+    }
+  })
+
+  it('routes every chapter to a page and keeps sidebar steps optional', () => {
+    expect([...INTERACTIVE_TOURS].sort()).toEqual(Object.keys(TOUR_ROUTES).sort())
+    for (const id of INTERACTIVE_TOURS) {
+      expect(TOUR_STEPS[id].length, id).toBeGreaterThan(0)
+      for (const step of TOUR_STEPS[id]) if (step.target.includes('pc-nav-')) expect(step.optional, `${id}:${step.key}`).toBe(true)
+    }
+  })
 })

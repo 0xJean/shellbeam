@@ -6,9 +6,16 @@ import {
   ArrowLeft,
   ArrowDown,
   ArrowUp,
+  Download,
+  FolderInput,
+  ListChecks,
+  Pencil,
   RefreshCw,
+  Trash2,
   HardDrive,
+  Laptop,
   Server,
+  Upload,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
@@ -24,8 +31,23 @@ import {
   localWriteFileB64,
 } from '@/lib/sftp'
 import { createRemoteFsClient } from '@/lib/remote-fs'
+import { fill } from '@/lib/locales/probe-install'
+import { sftpCopyFor } from '@/lib/locales/sftp-v3'
+import { mobileMiscV3Copy } from '@/lib/locales/mobile-misc-v3'
+import {
+  applyTransferProgress,
+  clearFinishedTransfers,
+  listenToSftpTransferProgress,
+  newTransferId,
+  patchTransfers,
+  settleTransfers,
+  type SftpTransferDirection,
+  type SftpTransferItem,
+} from '@/lib/sftp-transfers'
+import { consumeSftpRequest, OPEN_SFTP_REQUEST_EVENT } from '@/lib/navigation-request'
 import { FilePane, type UnifiedEntry } from './sftp-file-pane'
 import { SftpConnectPlaceholder } from './sftp-connect-placeholder'
+import { SftpTransferQueue } from './sftp-transfer-queue'
 import { getHostInventoryResource, HostMetadataLine } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 
@@ -61,7 +83,9 @@ export function SftpDualPane(props: SftpDualPaneProps) {
 }
 
 function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, className }: SftpDualPaneProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const c = sftpCopyFor(locale)
+  const m = mobileMiscV3Copy[locale]?.files ?? mobileMiscV3Copy['zh-CN'].files
   const containerRef = useRef<HTMLDivElement>(null)
   const containerWidth = useContainerWidth(containerRef)
   const isCompact = containerWidth < COMPACT_BREAKPOINT
@@ -69,6 +93,8 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
   const [activeTab, setActiveTab] = useState<'local' | 'remote'>('local')
+  const [selecting, setSelecting] = useState(false)
+  const [pathEdit, setPathEdit] = useState<{ kind: 'move' | 'rename'; value: string } | null>(null)
 
   const [localDir, setLocalDir] = useState('')
   const [localEntries, setLocalEntries] = useState<UnifiedEntry[]>([])
@@ -87,6 +113,8 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
 
   const [transferring, setTransferring] = useState(false)
   const [transferStatus, setTransferStatus] = useState('')
+  const [transfers, setTransfers] = useState<SftpTransferItem[]>([])
+  const transferStartedAtRef = useRef(new Map<string, number>())
   const [selectedRemoteHostId, setSelectedRemoteHostId] = useState<string | null>(selectedHostId)
   const autoConnectHostRef = useRef<string | null>(null)
 
@@ -135,6 +163,41 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
     if (selectedHostId) setSelectedRemoteHostId(selectedHostId)
   }, [selectedHostId])
 
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    const startedAt = transferStartedAtRef.current
+    void Promise.resolve().then(() => listenToSftpTransferProgress((event) => {
+      if (!disposed) setTransfers((prev) => applyTransferProgress(prev, event, startedAt, performance.now()))
+    })).then((stop) => {
+      if (disposed) stop()
+      else unlisten = stop
+    }).catch(() => {})
+    return () => { disposed = true; unlisten?.() }
+  }, [])
+
+  function queueTransfers(direction: SftpTransferDirection, files: Array<{ fileName: string; size?: number }>) {
+    const route = remoteHost ? `${remoteHost.name}:${remoteDir}` : remoteDir
+    const items = files.map((file): SftpTransferItem => ({
+      id: newTransferId(direction), direction, fileName: file.fileName, route, state: 'queued', bytesTotal: file.size,
+    }))
+    setTransfers((prev) => [...prev, ...items])
+    return items.map((item) => item.id)
+  }
+
+  function startTransfer(batch: string[], id: string) {
+    setTransfers((prev) => patchTransfers(prev, batch, (item) => item.id === id ? { state: 'running' } : item.state === 'running' ? { state: 'done' } : {}))
+  }
+
+  function settleBatch(batch: string[], outcome: 'done' | 'stopped' | 'failed') {
+    setTransfers((prev) => {
+      const anyRunning = prev.some((item) => batch.includes(item.id) && item.state === 'running')
+      return outcome === 'done' ? settleTransfers(prev, batch, 'done', 'done')
+        : outcome === 'stopped' ? settleTransfers(prev, batch, 'done', 'cancelled')
+          : settleTransfers(prev, batch, 'failed', anyRunning ? 'cancelled' : 'failed')
+    })
+  }
+
   const loadLocalDir = useCallback(async (dir?: string) => {
     const target = dir ?? localDir
     if (!target) return
@@ -180,8 +243,19 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
     if (autoConnectHostRef.current === selectedRemoteHostId) return
 
     autoConnectHostRef.current = selectedRemoteHostId
-    void loadRemoteDir('')
+    // A pending "open in SFTP" request for this host starts in its directory instead of home.
+    void loadRemoteDir(consumeSftpRequest(selectedRemoteHostId) ?? '')
   }, [selectedRemoteHostId, remoteHost, remoteConnected, remoteLoading, loadRemoteDir])
+
+  useEffect(() => {
+    const onRequest = () => {
+      if (!remoteConnected || !remoteHost) return
+      const path = consumeSftpRequest(remoteHost.id)
+      if (path) void loadRemoteDir(path)
+    }
+    window.addEventListener(OPEN_SFTP_REQUEST_EVENT, onRequest)
+    return () => window.removeEventListener(OPEN_SFTP_REQUEST_EVENT, onRequest)
+  }, [remoteConnected, remoteHost, loadRemoteDir])
 
   function handleConnectRemote() {
     if (!remoteHost) return
@@ -193,20 +267,28 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
     setTransferring(true)
     setTransferStatus('')
     let done = 0
+    const selectedFiles = [...localSelected].flatMap((localPath) => {
+      const entry = localEntries.find((e) => e.path === localPath)
+      return entry && !entry.isDir ? [{ localPath, entry }] : []
+    })
+    const batch = queueTransfers('upload', selectedFiles.map(({ entry }) => entry))
+    let settled = false
     try {
-      const files = [...localSelected].flatMap((localPath) => {
-        const entry = localEntries.find((e) => e.path === localPath)
-        if (!entry || entry.isDir) return []
+      const files = selectedFiles.map(({ localPath, entry }, index) => {
         const targetPath = remoteDir.endsWith('/') ? `${remoteDir}${entry.fileName}` : `${remoteDir}/${entry.fileName}`
-        return [{ remotePath: targetPath, readContent: async () => {
+        return { remotePath: targetPath, transferId: batch[index], readContent: async () => {
+          startTransfer(batch, batch[index])
           setTransferStatus(`Uploading ${entry.fileName}... (${++done}/${localSelected.size})`)
           return localReadFileB64(localPath)
-        } }]
+        } }
       })
-      if (!await remoteFs.uploadFiles(files)) { setTransferStatus(t('files.operation.cancelled')); return }
+      if (!await remoteFs.uploadFiles(files)) { settleBatch(batch, 'stopped'); settled = true; setTransferStatus(t('files.operation.cancelled')); return }
+      settleBatch(batch, 'done')
+      settled = true
       setTransferStatus(`Uploaded ${done} file(s)`)
       await loadRemoteDir()
     } catch (err) {
+      if (!settled) settleBatch(batch, 'failed')
       setTransferStatus(`Upload error: ${err}`)
     } finally {
       setTransferring(false)
@@ -218,19 +300,27 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
     setTransferring(true)
     setTransferStatus('')
     let done = 0
+    const selectedFiles = [...remoteSelected].flatMap((remotePath) => {
+      const entry = remoteEntries.find((e) => e.path === remotePath)
+      return entry && !entry.isDir ? [{ remotePath, entry }] : []
+    })
+    const batch = queueTransfers('download', selectedFiles.map(({ entry }) => entry))
+    let settled = false
     try {
-      for (const remotePath of remoteSelected) {
-        const entry = remoteEntries.find((e) => e.path === remotePath)
-        if (!entry || entry.isDir) continue
+      for (const [index, { remotePath, entry }] of selectedFiles.entries()) {
+        startTransfer(batch, batch[index])
         setTransferStatus(`Downloading ${entry.fileName}... (${done + 1}/${remoteSelected.size})`)
-        const data = await remoteFs.readFile(remotePath)
+        const data = await remoteFs.readFile(remotePath, batch[index])
         const targetPath = localDir.endsWith('/') ? `${localDir}${entry.fileName}` : `${localDir}/${entry.fileName}`
         await localWriteFileB64(targetPath, data.contentB64)
         done++
       }
+      settleBatch(batch, 'done')
+      settled = true
       setTransferStatus(`Downloaded ${done} file(s)`)
       await loadLocalDir()
     } catch (err) {
+      if (!settled) settleBatch(batch, 'failed')
       setTransferStatus(`Download error: ${err}`)
     } finally {
       setTransferring(false)
@@ -290,6 +380,24 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
     finally { setTransferring(false) }
   }
 
+  async function handleRemoteMove(paths: string[], destination: string) {
+    if (!remoteFs || transferring || paths.length === 0) return
+    const dir = destination.trim().replace(/\/+$/, '')
+    setTransferring(true)
+    let moved = 0
+    try {
+      for (const path of paths) {
+        if (!await remoteFs.renamePath(path, `${dir}/${path.split('/').pop()}`)) { setTransferStatus(t('files.operation.cancelled')); break }
+        moved++
+      }
+      if (moved > 0) {
+        setTransferStatus(`Moved ${moved} item(s) to ${dir || '/'}`)
+        await loadRemoteDir()
+      }
+    } catch (err) { setTransferStatus(`Move error: ${err}`) }
+    finally { setTransferring(false) }
+  }
+
   async function handleRemoteCreateDir(name: string) {
     if (!remoteFs || transferring) return
     setTransferring(true)
@@ -318,10 +426,14 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
     setTransferring(true)
     setTransferStatus('')
     let done = 0
+    const dropped = Array.from(files)
+    const batch = queueTransfers('upload', dropped.map((file) => ({ fileName: file.name, size: file.size })))
+    let settled = false
     try {
-      const uploads = Array.from(files).map((file) => {
+      const uploads = dropped.map((file, index) => {
         const targetPath = remoteDir.endsWith('/') ? `${remoteDir}${file.name}` : `${remoteDir}/${file.name}`
-        return { remotePath: targetPath, readContent: async () => {
+        return { remotePath: targetPath, transferId: batch[index], readContent: async () => {
+          startTransfer(batch, batch[index])
           setTransferStatus(`Uploading ${file.name}... (${++done}/${files.length})`)
           const bytes = new Uint8Array(await file.arrayBuffer())
           let binary = ''
@@ -329,10 +441,15 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
           return btoa(binary)
         } }
       })
-      if (!await remoteFs.uploadFiles(uploads)) { setTransferStatus(t('files.operation.cancelled')); return }
+      if (!await remoteFs.uploadFiles(uploads)) { settleBatch(batch, 'stopped'); settled = true; setTransferStatus(t('files.operation.cancelled')); return }
+      settleBatch(batch, 'done')
+      settled = true
       setTransferStatus(`Uploaded ${done} file(s) via drag & drop`)
       await loadRemoteDir()
-    } catch (err) { setTransferStatus(`Upload error: ${err}`) }
+    } catch (err) {
+      if (!settled) settleBatch(batch, 'failed')
+      setTransferStatus(`Upload error: ${err}`)
+    }
     finally { setTransferring(false) }
   }
 
@@ -349,8 +466,8 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
 
   const localPaneEl = (
     <FilePane
-      title="Local"
-      icon={<HardDrive className="h-3.5 w-3.5 text-blue-500" />}
+      title={c.local}
+      icon={<Laptop className="h-4 w-4" />}
       entries={localEntries}
       currentDir={localDir}
       loading={localLoading}
@@ -369,16 +486,18 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
       onClearSelection={() => setLocalSelected(new Set())}
       filter={localFilter}
       onFilterChange={setLocalFilter}
+      selectionMode={selecting}
     />
   )
 
   const remoteResource = getHostInventoryResource(remoteHost, inventoryStates)
   const remotePaneEl = (
     <FilePane
-      title={remoteHost ? `${remoteHost.name} (${remoteHost.address})` : 'Remote'}
+      title={c.remote}
+      badge={remoteHost ? `${remoteHost.name} (${remoteHost.address})` : undefined}
       icon={remoteHost && remoteResource?.os
-        ? <WorkspaceOsIcon os={remoteResource.os} className="h-3.5 w-3.5 text-emerald-500" />
-        : <Server className="h-3.5 w-3.5 text-emerald-500" />}
+        ? <WorkspaceOsIcon os={remoteResource.os} className="h-4 w-4" />
+        : <Server className="h-4 w-4" />}
       entries={remoteEntries}
       currentDir={remoteDir}
       loading={remoteLoading}
@@ -404,16 +523,67 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
       onCreateDir={remoteConnected ? (n) => void handleRemoteCreateDir(n) : undefined}
       onChmod={remoteConnected ? (p, m) => void handleRemoteChmod(p, m) : undefined}
       onDropFiles={remoteConnected ? (f) => void handleDropUpload(f) : undefined}
+      selectionMode={selecting}
     />
   )
 
+  const canUpload = !transferring && localSelected.size > 0 && !!remoteHost && remoteConnected
+  const canDownload = !transferring && remoteSelected.size > 0 && !!remoteHost && remoteConnected
+  const roundButton = 'h-9 w-9 rounded-full border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-0 text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]'
+  const tabButton = (active: boolean) => cn(
+    'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+    active ? 'bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-sm ring-1 ring-[color:var(--workspace-border-soft)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
+  )
+
+  const activeSelected = activeTab === 'local' ? localSelected : remoteSelected
+  const canMutateRemote = !transferring && remoteConnected && !!remoteFs
+  const selectedRemoteName = remoteSelected.size === 1 ? remoteEntries.find((e) => remoteSelected.has(e.path))?.fileName ?? '' : ''
+  const submitPathEdit = () => {
+    if (!pathEdit || !pathEdit.value.trim()) return
+    const paths = [...remoteSelected]
+    if (pathEdit.kind === 'move') void handleRemoteMove(paths, pathEdit.value)
+    else if (paths.length === 1) void handleRemoteRename(paths[0], pathEdit.value.trim())
+    setPathEdit(null)
+  }
+  const barAction = (key: string, icon: React.ReactNode, label: string, disabled: boolean, onClick: () => void, danger = false) => (
+    <button key={key} type="button" data-testid={`sftp-selection-${key}`} disabled={disabled} onClick={onClick}
+      className={cn('flex min-h-[48px] min-w-[56px] flex-1 flex-col items-center justify-center gap-0.5 rounded-lg text-[11px] font-medium disabled:opacity-40 [&_svg]:h-5 [&_svg]:w-5',
+        danger ? 'text-[var(--workspace-status-bad)]' : 'text-[var(--workspace-accent-text)]')}>
+      {icon}{label}
+    </button>
+  )
+  const selectionBar = (
+    <div className="shrink-0 space-y-2 pb-[env(safe-area-inset-bottom)]">
+      {pathEdit && activeTab === 'remote' && (
+        <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); submitPathEdit() }}>
+          <input autoFocus aria-label={pathEdit.kind === 'move' ? m.moveTo : m.newName} value={pathEdit.value}
+            onChange={(e) => setPathEdit({ ...pathEdit, value: e.target.value })}
+            className="h-11 min-w-0 flex-1 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 font-mono text-sm text-[var(--workspace-text-strong)] outline-none focus:ring-1 focus:ring-[hsl(var(--primary)/0.4)]" />
+          <Button type="submit" className="h-11 bg-[color:var(--workspace-primary-500)] px-4 text-white" disabled={!pathEdit.value.trim() || !canMutateRemote}>{m.confirm}</Button>
+          <Button type="button" variant="ghost" className="h-11 px-3" onClick={() => setPathEdit(null)}>{m.cancel}</Button>
+        </form>
+      )}
+      <div role="toolbar" aria-label={m.actions} className="sb-card flex items-center justify-around gap-1 p-1">
+        {activeTab === 'local'
+          ? barAction('upload', <Upload />, m.upload, !canUpload, () => void transferToRemote())
+          : [
+            barAction('download', <Download />, m.download, !canDownload, () => void transferToLocal()),
+            barAction('move', <FolderInput />, m.move, !canMutateRemote || remoteSelected.size === 0, () => setPathEdit({ kind: 'move', value: remoteDir })),
+            barAction('rename', <Pencil />, m.rename, !canMutateRemote || remoteSelected.size !== 1, () => setPathEdit({ kind: 'rename', value: selectedRemoteName })),
+            barAction('delete', <Trash2 />, m.delete, !canMutateRemote || remoteSelected.size === 0, () => void handleRemoteDelete([...remoteSelected]), true),
+          ]}
+      </div>
+    </div>
+  )
+
   return (
-    <div ref={containerRef} className={cn('flex h-full min-h-0 flex-col', className)}>
-      {/* Header toolbar */}
-      <div className="flex shrink-0 items-center gap-3 border-b px-4 py-2.5">
-        <span className="shrink-0 text-sm font-semibold">{t('sftp.title')}</span>
-        <div className="ml-auto flex items-center gap-2">
-          <span className="hidden text-xs text-muted-foreground sm:inline">{t('sftp.remote')}</span>
+    <div ref={containerRef} className={cn('flex h-full min-h-0 flex-col gap-3 p-4 text-[var(--workspace-text)]', className)}>
+      <header className="flex shrink-0 flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[22px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('sftp.title')}</h1>
+          <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">{c.subtitle}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <Select
             disabled={transferring}
             value={selectedRemoteHostId ?? ''}
@@ -425,7 +595,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
               setRemoteEntries([])
             }}
             placeholder={t('sftp.selectHost')}
-            className="h-7 max-w-[200px] text-xs [&_button]:h-7 [&_button]:text-xs"
+            className="h-8 max-w-[220px] text-xs [&_button]:h-8 [&_button]:text-xs"
             options={[
               { value: '', label: t('sftp.selectHost') },
               ...hosts.filter(hasSshConnection).map((h) => ({
@@ -453,51 +623,67 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
               })),
             ]}
           />
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 bg-[color:var(--workspace-primary-500)] px-3 text-xs text-white hover:brightness-110"
+            disabled={!canUpload}
+            onClick={() => void transferToRemote()}
+          >
+            <Upload className="h-3.5 w-3.5" />
+            {fill(c.uploadSelected, { n: localSelected.size })}
+          </Button>
         </div>
-      </div>
+      </header>
 
-      {/* Compact mode: tab switcher */}
-      {isCompact && (
-        <div className="flex shrink-0 border-b">
-          <button
-            type="button"
-            className={cn(
-              'flex flex-1 items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors',
-              activeTab === 'local' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground hover:text-foreground',
-            )}
-            onClick={() => setActiveTab('local')}
-          >
-            <HardDrive className="h-3.5 w-3.5" />
-            {t('sftp.local')}
+      {isCompact && selecting && (
+        <div data-testid="sftp-selection-header" className="flex shrink-0 items-center justify-between gap-2">
+          <button type="button" className="min-h-[44px] px-1 text-[15px] text-[var(--workspace-accent-text)]"
+            onClick={() => {
+              const entries = activeTab === 'local' ? localEntries : remoteEntries
+              const setSelected = activeTab === 'local' ? setLocalSelected : setRemoteSelected
+              setSelected(activeSelected.size === entries.length && entries.length > 0 ? new Set() : new Set(entries.map((e) => e.path)))
+            }}>
+            {activeSelected.size > 0 && activeSelected.size === (activeTab === 'local' ? localEntries : remoteEntries).length ? m.deselectAll : m.selectAll}
           </button>
-          <button
-            type="button"
-            className={cn(
-              'flex flex-1 items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors',
-              activeTab === 'remote' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground hover:text-foreground',
-            )}
-            onClick={() => setActiveTab('remote')}
-          >
-            <Server className="h-3.5 w-3.5" />
-            {t('sftp.remoteTab')}
+          <span className="truncate text-[15px] font-semibold text-[var(--workspace-text-strong)]">{fill(m.selected, { n: activeSelected.size })}</span>
+          <button type="button" data-testid="sftp-selection-done" className="min-h-[44px] px-1 text-[15px] font-semibold text-[var(--workspace-accent-text)]"
+            onClick={() => { setSelecting(false); setPathEdit(null); (activeTab === 'local' ? setLocalSelected : setRemoteSelected)(new Set()) }}>
+            {m.done}
           </button>
         </div>
       )}
 
-      {/* Main content area */}
+      {isCompact && !selecting && (
+        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-1 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] p-0.5">
+          <button type="button" className={tabButton(activeTab === 'local')} onClick={() => setActiveTab('local')}>
+            <HardDrive className="h-3.5 w-3.5" />
+            {t('sftp.local')}
+          </button>
+          <button type="button" className={tabButton(activeTab === 'remote')} onClick={() => setActiveTab('remote')}>
+            <Server className="h-3.5 w-3.5" />
+            {t('sftp.remoteTab')}
+          </button>
+        </div>
+        <button type="button" data-testid="sftp-selection-start" onClick={() => setSelecting(true)}
+          className="flex min-h-[44px] shrink-0 items-center gap-1 px-1 text-sm font-medium text-[var(--workspace-accent-text)] md:hidden">
+          <ListChecks className="h-4 w-4" />{m.select}
+        </button>
+        </div>
+      )}
+
       <div className="min-h-0 flex-1">
         {isCompact ? (
-          /* Compact: single pane with transfer bar */
-          <div className="flex h-full flex-col">
-            <div className="flex min-h-0 flex-1 flex-col p-2">
+          <div className="flex h-full flex-col gap-2">
+            <div className="flex min-h-0 flex-1 flex-col">
               {activeTab === 'local' ? localPaneEl : remotePaneEl}
             </div>
-            <div className="flex shrink-0 items-center justify-center gap-2 border-t px-3 py-2">
+            {selecting ? selectionBar : <div className="flex shrink-0 items-center justify-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
                 className="h-8 gap-1.5 px-3 text-xs"
-                disabled={transferring || localSelected.size === 0 || !remoteHost || !remoteConnected}
+                disabled={!canUpload}
                 onClick={() => void transferToRemote()}
               >
                 <ArrowUp className="h-3.5 w-3.5" />
@@ -507,26 +693,25 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
                 variant="outline"
                 size="sm"
                 className="h-8 gap-1.5 px-3 text-xs"
-                disabled={transferring || remoteSelected.size === 0 || !remoteHost || !remoteConnected}
+                disabled={!canDownload}
                 onClick={() => void transferToLocal()}
               >
                 <ArrowDown className="h-3.5 w-3.5" />
                 {t('sftp.download', { n: remoteSelected.size })}
               </Button>
-            </div>
+            </div>}
           </div>
         ) : (
-          /* Wide: side-by-side dual pane */
           <div className="flex h-full min-h-0">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col p-2">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {localPaneEl}
             </div>
-            <div className="flex w-14 shrink-0 flex-col items-center justify-center gap-2">
+            <div className="flex w-11 shrink-0 flex-col items-center justify-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 w-9 p-0"
-                disabled={transferring || localSelected.size === 0 || !remoteHost || !remoteConnected}
+                className={roundButton}
+                disabled={!canUpload}
                 onClick={() => void transferToRemote()}
                 title={t('sftp.uploadToRemote')}
               >
@@ -535,26 +720,29 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 w-9 p-0"
-                disabled={transferring || remoteSelected.size === 0 || !remoteHost || !remoteConnected}
+                className={roundButton}
+                disabled={!canDownload}
                 onClick={() => void transferToLocal()}
                 title={t('sftp.downloadToLocal')}
               >
                 <ArrowLeft className="h-4 w-4" />
               </Button>
             </div>
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col p-2">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {remotePaneEl}
             </div>
           </div>
         )}
       </div>
 
-      {/* Status bar */}
+      {(!isCompact || transfers.length > 0) && (
+        <SftpTransferQueue items={transfers} onClearFinished={() => setTransfers(clearFinishedTransfers)} />
+      )}
+
       {transferStatus && (
-        <div className="flex shrink-0 items-center gap-2 border-t px-4 py-1.5">
-          {transferring && <RefreshCw className="h-3 w-3 animate-spin text-primary" />}
-          <span className="truncate text-xs text-muted-foreground">{transferStatus}</span>
+        <div className="flex shrink-0 items-center gap-2 px-1">
+          {transferring && <RefreshCw className="h-3 w-3 animate-spin text-[hsl(var(--primary))]" />}
+          <span className="truncate text-xs text-[var(--workspace-text-muted)]">{transferStatus}</span>
         </div>
       )}
     </div>

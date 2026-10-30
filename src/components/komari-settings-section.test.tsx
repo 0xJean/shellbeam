@@ -62,13 +62,13 @@ describe('optional Komari data sources', () => {
     expect(verifyKomariConnection).not.toHaveBeenCalled()
     expect(vault.revealSecret).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: navigation.addSource }))
-    fireEvent.change(screen.getByLabelText(monitoringServiceCopy[locale].access), { target: { value: 'key' } })
+    fireEvent.click(screen.getByRole('radio', { name: monitoringServiceCopy[locale].key }))
     expect(screen.getByLabelText(text['settings.komariApiKey'])).toHaveValue('')
     fireEvent.change(screen.getByLabelText(text['settings.komariApiKey']), { target: { value: 'unsaved-draft' } })
     fireEvent.click(screen.getByRole('button', { name: navigation.closeEditor }))
     expect(screen.queryByLabelText(text['settings.komariApiKey'])).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: navigation.addSource }))
-    fireEvent.change(screen.getByLabelText(monitoringServiceCopy[locale].access), { target: { value: 'key' } })
+    fireEvent.click(screen.getByRole('radio', { name: monitoringServiceCopy[locale].key }))
     expect(screen.getByLabelText(text['settings.komariApiKey'])).toHaveValue('')
     expect(upsertKomariIntegration).not.toHaveBeenCalled()
     expect(vault.saveSecret).not.toHaveBeenCalled()
@@ -165,7 +165,7 @@ describe('native Komari connection flow', () => {
     render(section())
     await act(async () => {})
     fireEvent.click(screen.getByRole('button', { name: settingsNavigationCopy.en.addSource }))
-    fireEvent.change(screen.getByLabelText(monitoringServiceCopy.en.access), { target: { value: 'key' } })
+    fireEvent.click(screen.getByRole('radio', { name: monitoringServiceCopy.en.key }))
     await waitFor(() => expect(listKomariIntegrations).toHaveBeenCalled())
     fireEvent.change(screen.getByLabelText(en['settings.komariName']), { target: { value: 'New source' } })
     fireEvent.change(screen.getByLabelText(en['settings.komariEndpoint']), { target: { value: 'http://localhost:25749' } })
@@ -380,7 +380,7 @@ describe('native administrator authorization', () => {
     localStorage.setItem('shellbeam.locale', locale)
     const text = monitoringServiceCopy[locale]
     await renderEditor()
-    fireEvent.change(screen.getByLabelText(text.access), { target: { value: 'authorize' } })
+    fireEvent.click(screen.getByRole('radio', { name: text.account }))
     fireEvent.change(screen.getByLabelText(text.user), { target: { value: 'synthetic-admin' } })
     fireEvent.change(screen.getByLabelText(text.pass), { target: { value: 'Synthetic-only-123' } })
     fireEvent.click(screen.getByRole('button', { name: text.connect }))
@@ -396,7 +396,7 @@ describe('native administrator authorization', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(accepted)
     const text = monitoringServiceCopy.en
     await renderEditor()
-    fireEvent.change(screen.getByLabelText(text.access), { target: { value: 'initialize' } })
+    fireEvent.click(screen.getByRole('radio', { name: text.initialize }))
     fireEvent.change(screen.getByLabelText(text.user), { target: { value: 'synthetic-admin' } })
     fireEvent.change(screen.getByLabelText(text.pass), { target: { value: 'Synthetic-only-123' } })
     fireEvent.click(screen.getByRole('button', { name: text.connect }))
@@ -415,7 +415,7 @@ describe('native administrator authorization', () => {
     let done!: (value: unknown) => void
     vi.mocked(invoke).mockImplementation(async command => command === 'monitoring_service_context' ? { vaultId: 'vault-a', integrationId: 'same-id', configVersion: 1, session: 2, contextId: 'auth-context', configurationIdentity: 'config' } : command === 'monitoring_service' ? await new Promise(resolve => { done = resolve }) : undefined)
     const view = await renderEditor(); const text = monitoringServiceCopy.en
-    fireEvent.change(screen.getByLabelText(text.access), { target: { value: 'authorize' } })
+    fireEvent.click(screen.getByRole('radio', { name: text.account }))
     fireEvent.change(screen.getByLabelText(text.user), { target: { value: 'synthetic-admin' } }); fireEvent.change(screen.getByLabelText(text.pass), { target: { value: 'Synthetic-only-123' } }); fireEvent.click(screen.getByRole('button', { name: text.connect }))
     await waitFor(() => expect(done).toBeTypeOf('function'))
     if (change === 'lock') { vault.unlocked = false; view.rerender(section()) }

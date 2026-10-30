@@ -15,6 +15,8 @@ export interface CompatibleAgentPolicy { source?: 'official' | 'custom'; enabled
 export const readCompatibleAgent = (vaultId: string, hostId: string) => invoke<CompatibleAgentRecord | null>('komari_agent_record', { vaultId, hostId })
 export const prepareCompatibleAgent = (input: { vaultId: string; hostId: string; integrationId: string; action: CompatibleAgentAction; endpoint?: string; legacyUnit?: string }) => invoke<CompatibleAgentPreview>('komari_agent_prepare', { input })
 export const operateCompatibleAgent = (planId: string, confirmed: boolean) => invoke<CompatibleAgentRecord>('komari_agent_operate', { planId, confirmed })
+/** Explicit fix for KOMARI_AGENT_LINGER_REQUIRED; never prompts for a password on the host. */
+export const enableProbeLinger = (input: { vaultId: string; hostId: string }) => invoke<void>('komari_agent_enable_linger', { input })
 export const cancelCompatibleAgent = (planId: string) => invoke<void>('komari_agent_cancel', { planId })
 export const compatibleAgentPolicy = (value?: CompatibleAgentPolicy, confirmed?: boolean) => invoke<CompatibleAgentPolicy>('komari_agent_release_policy', { value, confirmed })
 export interface ProbeTransferDestination { hostId: string; hostName: string; connectionId: string; connectionName: string; account: string; address: string; integrationId: string; serviceName: string; nodeId: string; endpoint: string }

@@ -27,7 +27,8 @@ function BrowserAppFallback() {
 
   return (
     <div className="flex h-full min-h-0 items-center justify-center bg-[var(--workspace-surface-950)]">
-      <div className="rounded-2xl border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-4 py-3 text-sm text-[var(--workspace-text-muted)]">
+      <div role="status" className="sb-card flex items-center gap-2.5 bg-[var(--workspace-surface-900)] px-4 py-3 text-sm text-[var(--workspace-text-muted)]">
+        <span aria-hidden="true" className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[color:var(--workspace-border-strong)] border-t-[hsl(var(--primary))]" />
         {t('browser.loading')}
       </div>
     </div>

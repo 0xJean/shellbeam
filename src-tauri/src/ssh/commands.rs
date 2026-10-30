@@ -34,6 +34,7 @@ fn route(app: &tauri::AppHandle, payload: &SshRequest) -> Result<(Route, Value),
         }
     }
     let route = transport::legacy_route(
+        payload.vault_id.as_deref(),
         &payload.host,
         payload.port,
         &payload.username,

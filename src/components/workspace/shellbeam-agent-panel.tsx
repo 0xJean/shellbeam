@@ -16,7 +16,7 @@ import { loadShellbeamAgentReleaseSettings } from '@/lib/shellbeam-agent-release
 import { shellbeamAgentReleaseParamsSummary, type ValidatedShellbeamAgentRelease } from '@/lib/shellbeam-agent-release'
 import { runShellbeamAgentArtifactOperation, type ShellbeamAgentArtifactPolicy } from '@/lib/shellbeam-agent-artifact'
 import { DEFAULT_VAULT_ID } from '@/lib/vaults'
-import { AlertTriangle, Bot, CheckCircle2, CircleDashed, RefreshCw, ShieldAlert, Trash2, Upload } from 'lucide-react'
+import { AlertTriangle, BadgeCheck, Bot, CheckCircle2, CircleDashed, CodeXml, Download, RefreshCw, ScanSearch, Shield, ShieldAlert, Trash2, Upload } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ShellbeamAgentHistoryView } from './shellbeam-agent-history-view'
 
@@ -28,6 +28,9 @@ interface ShellbeamAgentPanelProps {
    * production panel loads signed release catalogs from saved release policy. */
   artifactManifest?: unknown
   artifactPolicy?: ShellbeamAgentArtifactPolicy
+  /** v3 overview: always-open compact card instead of the expandable section. */
+  variant?: 'panel' | 'card'
+  className?: string
 }
 
 function statusTone(status: ShellbeamAgentRecord['status']) {
@@ -37,7 +40,7 @@ function statusTone(status: ShellbeamAgentRecord['status']) {
   return 'text-[var(--workspace-text-muted)]'
 }
 
-export function ShellbeamAgentPanel({ host, vaultId = host?.vaultId ?? DEFAULT_VAULT_ID, resolveAuthSecret, artifactManifest, artifactPolicy }: ShellbeamAgentPanelProps) {
+export function ShellbeamAgentPanel({ host, vaultId = host?.vaultId ?? DEFAULT_VAULT_ID, resolveAuthSecret, artifactManifest, artifactPolicy, variant = 'panel', className }: ShellbeamAgentPanelProps) {
   const { t, locale } = useT()
   const copy = workspaceOverviewCopy[locale]
   const scopeKey = host && (!host.vaultId || host.vaultId === vaultId) ? JSON.stringify([
@@ -172,6 +175,47 @@ export function ShellbeamAgentPanel({ host, vaultId = host?.vaultId ?? DEFAULT_V
   const needsAttention = !inactive && (record?.status === 'failed' || record?.status === 'offline'
     || record?.health === 'offline' || record?.health === 'stale' || Boolean(record?.lastError)
     || (record?.status === 'installed' && heartbeatAge !== null && heartbeatAge > record.heartbeatTtlMs))
+  const heartbeatLabel = heartbeatAge === null ? t('workspace.agentProbe.never') : record?.health === 'online' && heartbeatAge <= (record?.heartbeatTtlMs ?? SHELLBEAM_AGENT_HEARTBEAT_TTL_MS) ? t('workspace.agentProbe.online') : record?.health === 'offline' || record?.health === 'stale' ? t('workspace.agentProbe.offline') : t('workspace.agentProbe.unknown')
+  if (variant === 'card') {
+    const tile = (label: string, value: string, tone = '') => <div className="min-w-0 rounded-md bg-[var(--workspace-surface-800)] px-2.5 py-1.5"><div className="truncate text-[10.5px] text-[var(--workspace-text-muted)]">{label}</div><div className={`mt-0.5 truncate text-[13px] font-semibold ${tone || 'text-[var(--workspace-text-strong)]'}`}>{value}</div></div>
+    const note = 'flex items-start gap-1.5 text-[11.5px] leading-5 text-[var(--workspace-text-muted)]'
+    return (
+      <section data-testid="shellbeam-agent-panel" data-variant="card" className={`sb-card flex min-w-0 flex-col ${className ?? ''}`}>
+        <div className="flex items-center justify-between gap-2 border-b border-[color:var(--workspace-border-soft)] px-4 py-2.5">
+          <h3 className="truncate text-[13px] font-semibold text-[var(--workspace-text-strong)]">{t('workspace.agentProbe.title')}</h3>
+          <button type="button" onClick={() => void refresh()} disabled={!resolveAuthSecret || loading || Boolean(running)} className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-[var(--workspace-text)] hover:bg-[var(--workspace-nav-hover-bg)] disabled:opacity-50">
+            <ScanSearch className={`h-3.5 w-3.5 ${loading ? 'animate-pulse' : ''}`} aria-hidden="true" />{t('workspace.agentProbe.check')}
+          </button>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto px-4 py-3">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(4.75rem,1fr))] gap-1.5">
+            {tile(t('workspace.agentProbe.status'), t(`workspace.agentProbe.lifecycle.${record?.status ?? 'unknown'}`), statusTone(record?.status ?? 'unknown'))}
+            {tile(t('workspace.agentProbe.version'), record?.version || '—')}
+            {tile(t('workspace.agentProbe.heartbeat'), heartbeatLabel)}
+            {tile(t('workspace.agentProbe.capabilities'), record?.capabilities.length ? record.capabilities.join(', ') : '—')}
+          </div>
+          <p className={note}><BadgeCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{release ? `${t('workspace.agentProbe.releaseReady')} · ${release.release.manifest.channel} ${release.release.manifest.artifact.version} · sha256 ${release.release.manifest.artifact.sha256.slice(0, 8)}` : artifactReady ? t('workspace.agentProbe.releaseReady') : t('workspace.agentProbe.releaseMissing')}</p>
+          {record?.lastError && <p className="flex items-start gap-1.5 text-[11.5px] text-destructive"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{record.lastError}</p>}
+          {error && <p className="flex items-start gap-1.5 text-[11.5px] text-destructive"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{error}</p>}
+          <div className="flex flex-wrap items-center gap-1">
+            {!artifactReady && <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => void loadRelease()} disabled={!canOperate}>{releaseLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ShieldAlert className="h-3.5 w-3.5" />}{t('workspace.agentProbe.releaseLoad')}</Button>}
+            <Button type="button" size="sm" className="h-7 gap-1.5 px-2.5 text-xs" disabled={!canOperate || !artifactReady || record?.status === 'installed'} onClick={() => void operate('install')}><Download className="h-3.5 w-3.5" />{t('workspace.agentProbe.install')}</Button>
+            <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 px-2.5 text-xs" disabled={!canOperate || !artifactReady || record?.status !== 'installed'} onClick={() => void operate('upgrade')}><Upload className="h-3.5 w-3.5" />{t('workspace.agentProbe.upgrade')}</Button>
+            <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 px-2.5 text-xs" disabled={!canOperate || record?.status !== 'installed'} onClick={() => void operate('uninstall')}><Trash2 className="h-3.5 w-3.5" />{t('workspace.agentProbe.uninstall')}</Button>
+            <span className="flex-1" />
+            <details className="group relative">
+              <summary title={t('workspace.agentProbe.commandPreview')} aria-label={t('workspace.agentProbe.commandPreview')} className="flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-nav-hover-bg)] [&::-webkit-details-marker]:hidden"><CodeXml className="h-3.5 w-3.5" aria-hidden="true" /></summary>
+              <div className="absolute bottom-8 right-0 z-20 w-[22rem] rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-3 text-xs shadow-lg">
+                <p className="leading-5 text-[var(--workspace-text-muted)]">{t('workspace.agentProbe.runtimeNote')}</p>
+                <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px]">{['install', 'upgrade', 'uninstall'].map((action) => buildShellbeamAgentPlan(action as 'install' | 'upgrade' | 'uninstall').command).join('\n')}</pre>
+              </div>
+            </details>
+          </div>
+          <p className={note}><Shield className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{t('workspace.agentProbe.permissionNote')}{record?.transport === 'proxy-jump' ? ` · ${t('workspace.agentProbe.proxyJump')}` : ''}</p>
+        </div>
+      </section>
+    )
+  }
   if (!expanded) return <div data-testid="shellbeam-agent-entry" className="flex flex-wrap items-center gap-3 text-xs">
     <button type="button" aria-expanded="false" onClick={() => setExpandedScope(scopeToken)} className="rounded border border-border/60 px-3 py-1.5 text-muted-foreground hover:text-foreground">
       {record ? copy.manageAgent : copy.monitoringTools}

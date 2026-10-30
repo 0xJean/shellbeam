@@ -1,3 +1,5 @@
+import { monitoringLoadEvidenceCopy } from './locales/monitoring-presentation'
+
 /** Safe persisted evidence from the optional server evaluator, never channel
  * configuration, secrets or remote response text. */
 export interface MonitoringLoadEvidence {
@@ -38,13 +40,13 @@ export function loadEvidenceObservation(evidence: MonitoringLoadEvidence, now = 
   return evidence.state === 'firing' ? 'abnormal' : evidence.state === 'healthy' ? 'recovered' : 'unknown'
 }
 export function loadEvidenceCopy(evidence: MonitoringLoadEvidence, locale: string, now = Date.now()) {
-  const zh = locale === 'zh-CN'
-  const state = evidence.state === 'retired' ? (zh ? '规则已移除或身份已变化，保留历史' : 'Rule removed or identity changed; history retained')
-    : evidence.state === 'disabled' ? (zh ? '规则已停用，不代表故障恢复' : 'Rule disabled; recovery is not proven')
-      : evidence.state === 'unavailable' ? (zh ? '服务观测读取失败，保留最后状态' : 'Server observation unavailable; last state retained')
-        : loadEvidenceObservation(evidence, now) === 'unknown' ? (zh ? '等待有效的新样本' : 'Waiting for valid new samples') : ''
-  const notification = evidence.notification === 'silenced' ? (zh ? '负载通知已静默' : 'Load notifications silenced')
-    : evidence.notification === 'channel-disabled' ? (zh ? '服务端通知已关闭' : 'Server notifications disabled')
-      : (zh ? '由服务端发送通知，App 不重复发送' : 'Notifications managed by the server; no duplicate App delivery')
+  const c = monitoringLoadEvidenceCopy[locale === 'zh-CN' ? 'zh-CN' : 'en']
+  const state = evidence.state === 'retired' ? c.retired
+    : evidence.state === 'disabled' ? c.disabled
+      : evidence.state === 'unavailable' ? c.unavailable
+        : loadEvidenceObservation(evidence, now) === 'unknown' ? c.waiting : ''
+  const notification = evidence.notification === 'silenced' ? c.silenced
+    : evidence.notification === 'channel-disabled' ? c.channelDisabled
+      : c.serverManaged
   return [state, notification].filter(Boolean).join(' · ')
 }

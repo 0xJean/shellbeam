@@ -6,7 +6,10 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        primary: '#2563eb',
+        primary: {
+          DEFAULT: 'hsl(var(--primary) / <alpha-value>)',
+          foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
+        },
         'background-light': 'var(--workspace-bg-950)',
         'background-dark': '#070b10',
         workspace: {
@@ -48,10 +51,19 @@ const config: Config = {
         },
       },
       borderRadius: {
-        DEFAULT: '0.25rem',
-        lg: '0.5rem',
-        xl: '0.75rem',
+        // Interface styles (src/styles/ui-styles.css) set these per theme family.
+        sm: 'var(--sb-r-sm)',
+        DEFAULT: 'var(--sb-r)',
+        md: 'var(--sb-r-md)',
+        lg: 'var(--sb-r-lg)',
+        xl: 'var(--sb-r-xl)',
+        '2xl': 'var(--sb-r-2xl)',
         full: '9999px',
+      },
+      boxShadow: {
+        sm: 'var(--sb-shadow-sm)',
+        DEFAULT: 'var(--sb-shadow)',
+        md: 'var(--sb-shadow-md)',
       },
       fontFamily: {
         display: ['Inter', 'sans-serif'],

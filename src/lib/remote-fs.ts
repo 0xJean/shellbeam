@@ -82,7 +82,7 @@ export function createRemoteFsClient(
       verify: async () => (await observe(remotePath)).exists ? { status: 'failed' } : { status: 'verified', evidence: 'path-absent' },
     }
   }
-  function writeMutation(action: 'upload' | 'write' | 'create-file', remotePath: string, readContent: () => Promise<string>): FileMutation {
+  function writeMutation(action: 'upload' | 'write' | 'create-file', remotePath: string, readContent: () => Promise<string>, transferId?: string): FileMutation {
     let expectedSize: number | null = null
     return { action, path: remotePath,
       execute: async () => {
@@ -90,7 +90,7 @@ export function createRemoteFsClient(
         if (contentB64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(contentB64)) throw new Error('Invalid file content encoding')
         expectedSize = contentB64.length / 4 * 3 - (contentB64.endsWith('==') ? 2 : contentB64.endsWith('=') ? 1 : 0)
         const auth = await withAuth()
-        if (action === 'upload') await sftpUploadFile({ ...auth, remotePath, contentB64 })
+        if (action === 'upload') await sftpUploadFile({ ...auth, remotePath, contentB64, ...(transferId ? { transferId } : {}) })
         else if (action === 'create-file') await sftpCreateFile({ ...auth, remotePath })
         else await sftpWriteFile({ ...auth, remotePath, contentB64 })
       },
@@ -105,8 +105,8 @@ export function createRemoteFsClient(
     async listDir(remotePath: string): Promise<SftpEntry[]> {
       return runFileRead(context, 'list', remotePath, async () => sftpListDir({ ...(await withAuth()), remotePath }), (entries) => `Directory observed; entries=${entries.length}; names omitted`)
     },
-    async readFile(remotePath: string): Promise<SftpFileData> {
-      return runFileRead(context, 'read', remotePath, async () => sftpDownloadFile({ ...(await withAuth()), remotePath }), (file) => `File observed; bytes=${file.sizeBytes}; content omitted`)
+    async readFile(remotePath: string, transferId?: string): Promise<SftpFileData> {
+      return runFileRead(context, 'read', remotePath, async () => sftpDownloadFile({ ...(await withAuth()), remotePath, ...(transferId ? { transferId } : {}) }), (file) => `File observed; bytes=${file.sizeBytes}; content omitted`)
     },
     async statPath(remotePath: string, followSymlinks = false): Promise<SftpPathState> {
       return runFileRead(context, 'stat', remotePath, async () => observe(remotePath, followSymlinks), (state) => `Path observed; exists=${state.exists}; metadata only`)
@@ -152,8 +152,8 @@ export function createRemoteFsClient(
         },
       })
     },
-    async uploadFiles(files: { remotePath: string; readContent: () => Promise<string> }[]) {
-      return runFileMutations(context, files.map(({ remotePath, readContent }) => writeMutation('upload', remotePath, readContent)))
+    async uploadFiles(files: { remotePath: string; readContent: () => Promise<string>; transferId?: string }[]) {
+      return runFileMutations(context, files.map(({ remotePath, readContent, transferId }) => writeMutation('upload', remotePath, readContent, transferId)))
     },
   }
 }

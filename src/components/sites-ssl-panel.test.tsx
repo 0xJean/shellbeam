@@ -73,4 +73,13 @@ describe('SitesSslPanel', () => {
     expect(screen.queryByText('Valid')).not.toBeInTheDocument()
     expect(runSiteSslScan).toHaveBeenCalledTimes(1)
   })
+
+  it('counts down to certificate expiry and counts up after it', async () => {
+    const base = await runSiteSslScan()
+    runSiteSslScan.mockReset().mockResolvedValue({ ...base, certificates: [base.certificates[0], { ...base.certificates[0], id: 'cert-2', domains: ['legacy.example.com'], daysRemaining: -3, status: 'expired' }] })
+    render(<I18nProvider><SitesSslPanel host={host} resolveAuthSecret={vi.fn()} /></I18nProvider>)
+    await screen.findByText('Valid')
+    expect(screen.getAllByTestId('certificate-countdown').map((node) => node.textContent)).toEqual(['100 days left', 'Expired 3 days ago'])
+  })
 })
+

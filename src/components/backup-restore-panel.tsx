@@ -1,110 +1,96 @@
-import { useState, useMemo } from 'react'
+import { useId, useState, useMemo } from 'react'
 import { useT } from '@/lib/i18n'
 import {
-  Shield, CloudUpload, ArchiveRestore, AlertTriangle, Eye, EyeOff,
-  Check, X, Lock, Server, Code2, KeyRound, RefreshCw, Clock,
-  ChevronDown, Loader2,
+  Archive, ArchiveRestore, AlertTriangle, Eye, EyeOff,
+  Check, X, Lock, Loader2, RotateCcw, ShieldCheck, CheckCircle2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import { backupCreate, backupRestore } from '@/lib/backup'
-import { cn } from '@/lib/utils'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { backupCreate, backupRestore, type BackupRestoreResult } from '@/lib/backup'
+import { fill } from '@/lib/locales/probe-install'
+import { syncBackupCopy } from '@/lib/locales/sync-backup-v3'
 
 const DATA_ITEMS = [
-  { key: 'hosts', label: 'backup.hosts', icon: Server, desc: 'backup.hostsDesc' },
-  { key: 'snippets', label: 'backup.snippetsData', icon: Code2, desc: 'backup.snippetsDesc' },
-  { key: 'vault', label: 'backup.vaultData', icon: KeyRound, desc: 'backup.vaultDesc' },
-  { key: 'sync', label: 'backup.syncData', icon: RefreshCw, desc: 'backup.syncDesc' },
-  { key: 'history', label: 'backup.historyData', icon: Clock, desc: 'backup.historyDesc' },
+  { key: 'hosts', label: 'backup.hosts' },
+  { key: 'snippets', label: 'backup.snippetsData' },
+  { key: 'vault', label: 'backup.vaultData' },
+  { key: 'sync', label: 'backup.syncData' },
+  { key: 'history', label: 'backup.historyData' },
 ] as const
 
 type DataKey = (typeof DATA_ITEMS)[number]['key']
 
+const STRENGTH_COLOR = ['', 'var(--workspace-status-bad)', 'var(--workspace-status-warn)', 'var(--workspace-primary-500)', 'var(--workspace-status-good)']
+
 function getPasswordStrength(pw: string) {
-  if (pw.length === 0) return { level: 0, label: '', color: '' }
-  if (pw.length < 8) return { level: 1, label: 'backup.tooShort', color: 'bg-red-500' }
+  if (pw.length === 0) return { level: 0, label: '' }
+  if (pw.length < 8) return { level: 1, label: 'backup.tooShort' }
   let score = 0
   if (/[a-z]/.test(pw)) score++
   if (/[A-Z]/.test(pw)) score++
   if (/[0-9]/.test(pw)) score++
   if (/[^a-zA-Z0-9]/.test(pw)) score++
   if (pw.length >= 12) score++
-  if (score <= 2) return { level: 2, label: 'backup.weak', color: 'bg-amber-500' }
-  if (score <= 3) return { level: 3, label: 'backup.good', color: 'bg-blue-500' }
-  return { level: 4, label: 'backup.strong', color: 'bg-emerald-500' }
+  if (score <= 2) return { level: 2, label: 'backup.weak' }
+  if (score <= 3) return { level: 3, label: 'backup.good' }
+  return { level: 4, label: 'backup.strong' }
 }
 
-function DataToggle({ item, checked, onChange, disabled }: {
-  item: (typeof DATA_ITEMS)[number]
-  checked: boolean
-  onChange: (v: boolean) => void
+function DataChecklist({ value, onChange, disabled }: {
+  value: Record<DataKey, boolean>
+  onChange: (key: DataKey, checked: boolean) => void
   disabled?: boolean
 }) {
   const { t } = useT()
-  const Icon = item.icon
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        'flex items-center gap-3 rounded-lg border p-3 text-left transition-all',
-        checked
-          ? 'border-primary/40 bg-primary/5'
-          : 'border-transparent bg-muted/30 text-muted-foreground hover:bg-muted/50',
-        disabled && 'opacity-50 pointer-events-none',
-      )}
-    >
-      <div className={cn(
-        'flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors',
-        checked ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground',
-      )}>
-        <Icon className="h-4 w-4" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium leading-none">{t(item.label)}</div>
-        <div className="mt-0.5 text-[11px] text-muted-foreground">{t(item.desc)}</div>
-      </div>
-      <div className={cn(
-        'h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors',
-        checked ? 'border-primary bg-primary' : 'border-muted-foreground/30',
-      )}>
-        {checked && <Check className="h-2.5 w-2.5 text-white" />}
-      </div>
-    </button>
+    <div className="grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
+      {DATA_ITEMS.map((item) => (
+        <label key={item.key} className="flex cursor-pointer items-center gap-2.5 text-[13px] text-[var(--workspace-text)]">
+          <Checkbox checked={value[item.key]} disabled={disabled} onChange={(e) => onChange(item.key, e.target.checked)} />
+          {t(item.label)}
+        </label>
+      ))}
+    </div>
   )
 }
 
-function PasswordInput({ value, onChange, placeholder, disabled }: {
+function PasswordInput({ value, onChange, placeholder, disabled, label }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
   disabled?: boolean
+  label: string
 }) {
+  const { locale } = useT()
+  const copy = syncBackupCopy[locale] ?? syncBackupCopy['zh-CN']
   const [show, setShow] = useState(false)
   return (
     <div className="relative">
-      <Input
+      <Lock className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
+      <input
         type={show ? 'text' : 'password'}
+        aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         disabled={disabled}
-        className="pr-9"
+        className="h-9 w-full rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] pl-9 pr-9 font-mono text-[13px] text-[var(--workspace-text-strong)] outline-none placeholder:font-sans placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-primary-500)] disabled:opacity-50"
       />
       <button
         type="button"
         tabIndex={-1}
+        aria-label={show ? copy.hidePassword : copy.showPassword}
         onClick={() => setShow(!show)}
-        className="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+        className="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-[var(--workspace-text-subtle)] transition-colors hover:text-[var(--workspace-text-strong)]"
       >
         {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
       </button>
     </div>
   )
 }
+
+const sectionLabel = 'text-[13px] font-medium text-[var(--workspace-text-strong)]'
 
 interface BackupRestorePanelProps {
   vaultId?: string
@@ -114,7 +100,9 @@ interface BackupRestorePanelProps {
 }
 
 export function BackupRestorePanel({ vaultId, onSuccess, onError, onRestoreComplete }: BackupRestorePanelProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const copy = syncBackupCopy[locale] ?? syncBackupCopy['zh-CN']
+  const restoreTitleId = useId()
   const [createPassword, setCreatePassword] = useState('')
   const [createConfirm, setCreateConfirm] = useState('')
   const [createData, setCreateData] = useState<Record<DataKey, boolean>>({
@@ -127,8 +115,9 @@ export function BackupRestorePanel({ vaultId, onSuccess, onError, onRestoreCompl
   })
 
   const [busy, setBusy] = useState(false)
-  const [createExpanded, setCreateExpanded] = useState(false)
-  const [restoreExpanded, setRestoreExpanded] = useState(false)
+  const [restoreOpen, setRestoreOpen] = useState(false)
+  const [restoreResult, setRestoreResult] = useState<BackupRestoreResult | null>(null)
+  const [lastBackup, setLastBackup] = useState<{ path: string; size: string; at: string } | null>(null)
 
   const strength = useMemo(() => getPasswordStrength(createPassword), [createPassword])
   const passwordsMatch = createPassword.length > 0 && createConfirm.length > 0 && createPassword === createConfirm
@@ -156,9 +145,9 @@ export function BackupRestorePanel({ vaultId, onSuccess, onError, onRestoreCompl
         includeSync: createData.sync,
         includeHistory: createData.history,
       })
-      setCreateExpanded(false)
       setCreatePassword('')
       setCreateConfirm('')
+      setLastBackup({ path: result.path, size: `${(result.sizeBytes / 1024).toFixed(1)} KB`, at: new Date().toLocaleString() })
       onSuccess?.(`Backup created: ${result.path} (${(result.sizeBytes / 1024).toFixed(1)} KB)`)
     } catch (e) {
       onError?.(String(e))
@@ -182,8 +171,8 @@ export function BackupRestorePanel({ vaultId, onSuccess, onError, onRestoreCompl
         overwriteSync: restoreData.sync,
         overwriteHistory: restoreData.history,
       })
-      setRestoreExpanded(false)
       setRestorePassword('')
+      setRestoreResult(result)
       const parts: string[] = []
       if (result.hostsRestored) parts.push(`${result.hostsRestored} hosts`)
       if (result.snippetsRestored) parts.push(`${result.snippetsRestored} snippets`)
@@ -199,219 +188,197 @@ export function BackupRestorePanel({ vaultId, onSuccess, onError, onRestoreCompl
     }
   }
 
+  function closeRestore() {
+    if (busy) return
+    setRestoreOpen(false)
+    setRestoreResult(null)
+  }
+
+  const restoreStats = restoreResult ? [
+    [copy.statHosts, restoreData.hosts ? String(restoreResult.hostsRestored) : copy.skipped],
+    [copy.statSnippets, restoreData.snippets ? String(restoreResult.snippetsRestored) : copy.skipped],
+    [copy.statVault, restoreResult.vaultRestored ? copy.restored : copy.skipped],
+    [copy.statSync, restoreResult.syncRestored ? copy.restored : copy.skipped],
+    [copy.statHistory, restoreData.history ? String(restoreResult.historyRestored) : copy.skipped],
+  ] : []
+
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      {/* Page header */}
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
-          <Shield className="h-5 w-5 text-primary" />
-        </div>
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">{t('backup.title')}</h1>
-          <p className="text-sm text-muted-foreground">
-            {t('backup.desc')}
-          </p>
-        </div>
-        <Badge variant="outline" className="ml-auto gap-1.5 shrink-0">
+    <section className="sb-card overflow-hidden">
+      <div className="flex items-center gap-2 border-b border-[color:var(--workspace-border-soft)] px-5 py-3.5">
+        <Archive className="h-4 w-4 text-[var(--workspace-text-muted)]" />
+        <h2 className="text-[14px] font-semibold text-[var(--workspace-text-strong)]">{copy.encBackup}</h2>
+        <span className="ml-auto inline-flex items-center gap-1 rounded-md border border-[color:var(--workspace-border-soft)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--workspace-text-muted)]">
           <Lock className="h-3 w-3" />
           AES-256
-        </Badge>
+        </span>
       </div>
 
-      {/* ── Create Backup ── */}
-      <Card className="overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setCreateExpanded(!createExpanded)}
-          disabled={busy}
-          className="flex w-full items-center gap-4 p-5 text-left transition-colors hover:bg-muted/30"
-        >
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10">
-            <CloudUpload className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+      <div className="space-y-5 p-5">
+        {lastBackup && (
+          <div className="flex items-center gap-3 rounded-xl bg-[var(--workspace-surface-800)] p-4">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]">
+              <ShieldCheck className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <p className={sectionLabel}>{copy.lastBackup}</p>
+              <p className="break-all text-[11px] text-[var(--workspace-text-muted)]">{fill(copy.lastBackupSub, lastBackup)}</p>
+            </div>
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="font-semibold">{t('backup.createBackup')}</div>
-            <p className="text-sm text-muted-foreground">
-              {t('backup.createDesc')}
-            </p>
-          </div>
-          <ChevronDown className={cn(
-            'h-5 w-5 shrink-0 text-muted-foreground transition-transform duration-200',
-            createExpanded && 'rotate-180',
-          )} />
-        </button>
+        )}
 
-        {createExpanded && (
-          <CardContent className="border-t px-5 pb-5 pt-4 space-y-5">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{t('backup.dataToInclude')}</span>
-                <span className="text-xs text-muted-foreground">
-                  {t('backup.dataSelected', { x: selectedCreateCount, y: DATA_ITEMS.length })}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {DATA_ITEMS.map((item) => (
-                  <DataToggle
-                    key={item.key}
-                    item={item}
-                    checked={createData[item.key]}
-                    onChange={(v) => setCreateData((d) => ({ ...d, [item.key]: v }))}
-                    disabled={busy}
-                  />
+        <div data-tour="backup-data" className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className={sectionLabel}>{t('backup.dataToInclude')}</span>
+            <span className="text-[11px] text-[var(--workspace-text-subtle)]">
+              {t('backup.dataSelected', { x: selectedCreateCount, y: DATA_ITEMS.length })}
+            </span>
+          </div>
+          <DataChecklist value={createData} disabled={busy} onChange={(key, v) => setCreateData((d) => ({ ...d, [key]: v }))} />
+        </div>
+
+        <div data-tour="backup-password" className="space-y-2">
+          <span className={sectionLabel}>{copy.backupPassword}</span>
+          <PasswordInput label={copy.backupPassword} value={createPassword} onChange={setCreatePassword} placeholder={t('backup.minChars')} disabled={busy} />
+          {createPassword.length > 0 && (
+            <div className="flex items-center gap-2" aria-label={`${copy.strength}: ${strength.label ? t(strength.label) : ''}`}>
+              <div className="grid flex-1 grid-cols-4 gap-1">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="h-1 rounded-full" style={{ background: i <= strength.level ? STRENGTH_COLOR[strength.level] : 'var(--workspace-surface-700)' }} />
                 ))}
               </div>
+              <span className="text-[11px]" style={{ color: STRENGTH_COLOR[strength.level] }}>{strength.label && t(strength.label)}</span>
             </div>
+          )}
+        </div>
 
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium">{t('backup.encPassword')}</span>
-                <PasswordInput
-                  value={createPassword}
-                  onChange={setCreatePassword}
-                  placeholder={t('backup.minChars')}
-                  disabled={busy}
-                />
-                {createPassword.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="flex gap-1">
-                      {[1, 2, 3, 4].map((i) => (
-                        <div
-                          key={i}
-                          className={cn(
-                            'h-1 flex-1 rounded-full transition-colors',
-                            i <= strength.level ? strength.color : 'bg-muted',
-                          )}
-                        />
-                      ))}
-                    </div>
-                    <p className="text-xs text-muted-foreground">{strength.label && t(strength.label)}</p>
+        <div className="space-y-2">
+          <span className={sectionLabel}>{copy.confirmPassword}</span>
+          <PasswordInput label={copy.confirmPassword} value={createConfirm} onChange={setCreateConfirm} placeholder={t('backup.repeatPassword')} disabled={busy} />
+          {passwordsMatch && (
+            <p className="flex items-center gap-1 text-[11px] text-[color:var(--workspace-status-good-text)]">
+              <Check className="h-3 w-3" /> {t('backup.passwordsMatch')}
+            </p>
+          )}
+          {passwordsMismatch && (
+            <p className="flex items-center gap-1 text-[11px] text-[color:var(--workspace-status-bad-text)]">
+              <X className="h-3 w-3" /> {t('backup.passwordsNoMatch')}
+            </p>
+          )}
+          <p className="text-[11px] leading-relaxed text-[var(--workspace-text-muted)]">{copy.passwordHint}</p>
+          <p className="text-[11px] leading-relaxed text-[var(--workspace-text-subtle)]">{copy.aesNote}</p>
+        </div>
+
+        <Button
+          data-tour="backup-create"
+          onClick={() => void handleCreate()}
+          disabled={busy || !passwordsMatch || selectedCreateCount === 0}
+          className="h-10 w-full gap-2"
+        >
+          {busy && !restoreOpen ? (
+            <><Loader2 className="h-4 w-4 animate-spin" /> {t('backup.creatingBackup')}</>
+          ) : (
+            <><Archive className="h-4 w-4" /> {copy.createBackup}</>
+          )}
+        </Button>
+
+        <div data-tour="backup-restore" className="flex items-center gap-3 rounded-xl border border-dashed p-4" style={{ borderColor: 'color-mix(in srgb, var(--workspace-status-bad) 45%, transparent)' }}>
+          <RotateCcw className="h-4 w-4 shrink-0 text-[color:var(--workspace-status-bad-text)]" />
+          <div className="min-w-0 flex-1">
+            <p className={sectionLabel}>{copy.restoreTitle}</p>
+            <p className="text-[11px] text-[var(--workspace-text-muted)]">{copy.restoreDesc}</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => { setRestoreResult(null); setRestoreOpen(true) }}
+            className="shrink-0 bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)] hover:bg-[var(--workspace-status-bad-bg)] hover:text-[color:var(--workspace-status-bad-text)]"
+          >
+            {copy.chooseFile}
+          </Button>
+        </div>
+      </div>
+
+      <Dialog open={restoreOpen} onOpenChange={(open) => { if (!open) closeRestore() }} labelledBy={restoreTitleId}>
+        <DialogContent className="sb-card md:w-[560px] md:max-w-[560px]">
+          <div className="flex items-start justify-between gap-3 px-5 pt-5">
+            <div>
+              <h2 id={restoreTitleId} className="text-[17px] font-semibold text-[var(--workspace-text-strong)]">{t('backup.restoreBackup')}</h2>
+              <p className="mt-0.5 text-[12px] text-[var(--workspace-text-muted)]">{t('backup.restoreDesc')}</p>
+            </div>
+            <button type="button" aria-label={t('sync.cancel')} disabled={busy} onClick={closeRestore} className="rounded-md p-1 text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {restoreResult ? (
+            <>
+              <div className="space-y-4 p-5">
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]">
+                    <CheckCircle2 className="h-5 w-5" />
                   </div>
-                )}
+                  <h3 className="text-[15px] font-semibold text-[var(--workspace-text-strong)]">{copy.restoreDone}</h3>
+                  <p className="text-[12px] text-[var(--workspace-text-muted)]">{copy.restoreDoneDesc}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {restoreStats.map(([label, value]) => (
+                    <div key={label} className="rounded-xl bg-[var(--workspace-surface-800)] p-3">
+                      <p className="text-[11px] text-[var(--workspace-text-muted)]">{label}</p>
+                      <p className="mt-1 text-[17px] font-semibold text-[var(--workspace-text-strong)]">{value}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
-
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium">{t('backup.confirmPassword')}</span>
-                <PasswordInput
-                  value={createConfirm}
-                  onChange={setCreateConfirm}
-                  placeholder={t('backup.repeatPassword')}
-                  disabled={busy}
-                />
-                {passwordsMatch && (
-                  <p className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
-                    <Check className="h-3 w-3" /> {t('backup.passwordsMatch')}
-                  </p>
-                )}
-                {passwordsMismatch && (
-                  <p className="flex items-center gap-1 text-xs text-red-500">
-                    <X className="h-3 w-3" /> {t('backup.passwordsNoMatch')}
-                  </p>
-                )}
+              <div className="flex justify-end border-t border-[color:var(--workspace-border-soft)] px-5 py-3">
+                <Button size="sm" onClick={closeRestore}>{copy.done}</Button>
               </div>
-            </div>
-
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Your backup is encrypted with AES-256-GCM. You will need this password to restore on another device. It cannot be recovered if lost.
-            </p>
-
-            <Button
-              onClick={() => void handleCreate()}
-              disabled={busy || !passwordsMatch || selectedCreateCount === 0}
-              className="w-full gap-2"
-            >
-              {busy ? (
-                <><Loader2 className="h-4 w-4 animate-spin" /> {t('backup.creatingBackup')}</>
-              ) : (
-                <><CloudUpload className="h-4 w-4" /> {t('backup.createBtn')}</>
-              )}
-            </Button>
-          </CardContent>
-        )}
-      </Card>
-
-      {/* ── Restore from Backup ── */}
-      <Card className="overflow-hidden border-amber-500/20">
-        <button
-          type="button"
-          onClick={() => setRestoreExpanded(!restoreExpanded)}
-          disabled={busy}
-          className="flex w-full items-center gap-4 p-5 text-left transition-colors hover:bg-amber-500/5"
-        >
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/10">
-            <ArchiveRestore className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="font-semibold">{t('backup.restoreBackup')}</div>
-            <p className="text-sm text-muted-foreground">
-              {t('backup.restoreDesc')}
-            </p>
-          </div>
-          <ChevronDown className={cn(
-            'h-5 w-5 shrink-0 text-muted-foreground transition-transform duration-200',
-            restoreExpanded && 'rotate-180',
-          )} />
-        </button>
-
-        {restoreExpanded && (
-          <CardContent className="border-t border-amber-500/20 px-5 pb-5 pt-4 space-y-5">
-            <div className="flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
-              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500 mt-0.5" />
-              <div className="space-y-0.5">
-                <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
-                  {t('backup.caution')}
-                </p>
-                <p className="text-xs text-amber-600/80 dark:text-amber-400/80 leading-relaxed">
-                  {t('backup.cautionDesc')}
-                </p>
+            </>
+          ) : (
+            <>
+              <div className="space-y-4 p-5">
+                <div role="alert" className="flex gap-2.5 rounded-lg bg-[var(--workspace-status-bad-bg)] p-3 text-[12px] leading-relaxed text-[color:var(--workspace-status-bad-text)]">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <p className="font-medium">{t('backup.caution')}</p>
+                    <p>{copy.restoreWarn}</p>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <span className={sectionLabel}>{t('backup.backupPassword')}</span>
+                  <PasswordInput label={t('backup.backupPassword')} value={restorePassword} onChange={setRestorePassword} placeholder={t('backup.passwordPlaceholder')} disabled={busy} />
+                  <p className="text-[11px] text-[var(--workspace-text-muted)]">{copy.restorePwHint}</p>
+                </div>
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className={sectionLabel}>{copy.restoreData}</span>
+                    <span className="text-[11px] text-[var(--workspace-text-subtle)]">
+                      {t('backup.dataSelected', { x: selectedRestoreCount, y: DATA_ITEMS.length })}
+                    </span>
+                  </div>
+                  <DataChecklist value={restoreData} disabled={busy} onChange={(key, v) => setRestoreData((d) => ({ ...d, [key]: v }))} />
+                </div>
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <span className="text-sm font-medium">{t('backup.backupPassword')}</span>
-              <PasswordInput
-                value={restorePassword}
-                onChange={setRestorePassword}
-                placeholder={t('backup.passwordPlaceholder')}
-                disabled={busy}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{t('backup.dataToRestore')}</span>
-                <span className="text-xs text-muted-foreground">
-                  {t('backup.dataSelected', { x: selectedRestoreCount, y: DATA_ITEMS.length })}
-                </span>
+              <div className="flex justify-end gap-2 border-t border-[color:var(--workspace-border-soft)] px-5 py-3">
+                <Button variant="outline" size="sm" disabled={busy} onClick={closeRestore}>{t('sync.cancel')}</Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleRestore()}
+                  disabled={busy || !restorePassword.trim() || selectedRestoreCount === 0}
+                  className="gap-1.5 bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)] hover:bg-[var(--workspace-status-bad-bg)] hover:text-[color:var(--workspace-status-bad-text)]"
+                >
+                  {busy ? (
+                    <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {t('backup.restoring')}</>
+                  ) : (
+                    <><ArchiveRestore className="h-3.5 w-3.5" /> {copy.chooseAndRestore}</>
+                  )}
+                </Button>
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {DATA_ITEMS.map((item) => (
-                  <DataToggle
-                    key={item.key}
-                    item={item}
-                    checked={restoreData[item.key]}
-                    onChange={(v) => setRestoreData((d) => ({ ...d, [item.key]: v }))}
-                    disabled={busy}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <Button
-              onClick={() => void handleRestore()}
-              disabled={busy || !restorePassword.trim() || selectedRestoreCount === 0}
-              variant="outline"
-              className="w-full gap-2 border-amber-500/50 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
-            >
-              {busy ? (
-                <><Loader2 className="h-4 w-4 animate-spin" /> {t('backup.restoring')}</>
-              ) : (
-                <><ArchiveRestore className="h-4 w-4" /> {t('backup.chooseRestore')}</>
-              )}
-            </Button>
-          </CardContent>
-        )}
-      </Card>
-    </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </section>
   )
 }

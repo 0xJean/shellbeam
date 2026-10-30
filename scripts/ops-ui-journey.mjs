@@ -7,6 +7,11 @@ import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 
 export const OPS_UI_SELECTORS = Object.freeze({
   welcome: '[data-testid="welcome-enter"]',
+  welcomeVaultForm: '[data-testid="welcome-vault-form"]',
+  welcomePassword: '[data-testid="welcome-master-password"]',
+  welcomeConfirm: '[data-testid="welcome-confirm-password"]',
+  welcomeAck: '[data-testid="welcome-vault-ack"]',
+  welcomeCreate: '[data-testid="welcome-create-vault"]',
   vaultForm: 'dialog[open] [data-testid="vault-password-form"]',
   vaultPassword: 'dialog[open] [data-testid="vault-master-password"]',
   vaultSubmit: 'dialog[open] [data-testid="vault-submit"]',
@@ -19,6 +24,7 @@ export const OPS_UI_SELECTORS = Object.freeze({
   hostKey: 'dialog[open] [data-testid="host-key-confirm"]',
   fingerprint: 'dialog[open] [data-testid="host-key-fingerprint"]',
   trust: 'dialog[open] [data-testid="host-key-accept"]',
+  auditView: '[data-testid="history-tab-audit"]',
   audit: '[data-testid="operations-audit-center"]',
   auditTab: '[data-testid="audit-tab"]',
   confirmation: 'dialog[open] [data-testid="user-confirmation"]',
@@ -31,7 +37,13 @@ const testId = (id) => `[data-testid=${q(id)}]`
 const byHost = (id) => `${testId('host-card')}[data-host-id=${q(id)}]`
 const serviceRoot = (id) => `${testId('workspace-services-app')}[data-host-id=${q(id)}]`
 const serviceRow = (id, unit) => `${serviceRoot(id)} ${testId('workspace-service-row')}[data-service-unit=${q(unit)}]`
-const ruleRoot = (id) => `${testId('local-alert-rules')}[data-host-id=${q(id)}]`
+const networkPanel = (id) => `${testId('network-ops-panel')}[data-host-id=${q(id)}]`
+// The overview mounts the same rules panel; these journeys use the Network app's.
+const ruleRoot = (id) => `${networkPanel(id)} ${testId('local-alert-rules')}[data-host-id=${q(id)}]`
+async function openOpsUiHostRules(driver, id) {
+  await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
+  await driver.click(`${networkPanel(id)} ${testId('network-tab-health')}`)
+}
 const normalizeFingerprint = (value) => String(value).trim().replace(/^SHA256:/, '').replace(/=+$/, '')
 const hash = (value) => createHash('sha256').update(String(value)).digest('hex')
 function check(value, code) { if (!value) throw new Error(`ops_ui_${code}`) }
@@ -68,7 +80,19 @@ function validateFixture(fixture) {
   check(fixture.hosts.direct.serviceUnit !== fixture.hosts.via.serviceUnit, 'fixture_services_not_independent')
 }
 
+// Host details open as a modal drawer, which covers the sidebar and tabs.
+export async function closeOpsUiHostDrawer(driver) {
+  const close = testId('host-ops-drawer-close')
+  if (!(await driver.findAll(close)).length) return
+  // Escape, as an in-app notification can sit over the close button.
+  await driver.request('POST', driver.route('/actions'), { actions: [{ type: 'key', id: 'host-drawer-close', actions: [
+    { type: 'keyDown', value: '\uE00C' }, { type: 'keyUp', value: '\uE00C' },
+  ] }] })
+  await driver.until(async () => !(await driver.findAll(close)).length)
+}
+
 async function openDashboardPage(driver, page) {
+  await closeOpsUiHostDrawer(driver)
   // Sessions stay mounted. The real dashboard tab makes its sidebar visible;
   // clicking a hidden sidebar item would bypass the actual product path.
   await driver.waitFor(S.dashboard)
@@ -77,7 +101,10 @@ async function openDashboardPage(driver, page) {
   await driver.waitFor(target)
   await driver.click(target)
   if (page === 'hosts') await driver.waitFor(S.create)
-  else await driver.waitFor(S.audit)
+  else {
+    await driver.click(S.auditView)
+    await driver.waitFor(S.audit)
+  }
 }
 
 // WebKit's element click can leave a partially clipped button behind a nested
@@ -152,7 +179,7 @@ async function createHost(driver, fixture, role, state, record) {
   // not screenshot, dump a DOM, report a value or serialize this scope.
   const privateKey = await readFile(host.privateKeyPath, 'utf8')
   check(privateKey.length > 100 && privateKey.length <= 65536 && /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(privateKey), 'invalid_fixture_key')
-  await driver.fill(testId('host-private-key'), privateKey, { tabFrom: testId('host-auth-private-key') })
+  await driver.fill(testId('host-private-key'), privateKey, { tabFrom: [testId('host-auth-private-key'), testId('host-auth-password')] })
   check(String(await driver.attr(testId('host-private-key'), 'value')).replaceAll('\r\n', '\n') === privateKey.replaceAll('\r\n', '\n'), 'private_key_ui_roundtrip_failed')
   await driver.fill(testId('host-secret-name'), `ops-ui-${role}-private-key`)
   check(await driver.attr(testId('host-secret-name'), 'value') === `ops-ui-${role}-private-key`, 'secret_reference_not_explicit')
@@ -220,7 +247,7 @@ async function connectAndVerify(driver, fixture, role, state, record) {
 async function configureRule(driver, fixture, role, state) {
   await openDashboardPage(driver, 'hosts')
   await revealOpsUiHostActions(driver, `${byHost(state.hostIds[role])} ${testId('host-ops-open')}`)
-  await driver.select(`${byHost(state.hostIds[role])} ${testId('host-ops-open')}`, 'network')
+  await openOpsUiHostRules(driver, state.hostIds[role])
   const root = ruleRoot(state.hostIds[role])
   await driver.waitFor(root, { timeoutMs: 60000 })
   const vaultId = await driver.attr(root, 'data-vault-id')
@@ -237,9 +264,10 @@ async function configureRule(driver, fixture, role, state) {
   await driver.waitFor(`${root} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="active"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
 }
 
-// The providers mount the Vault modal alongside the animated Welcome page.
-// Wait for showModal's real open state and complete that top-layer flow before
-// touching Welcome; DOM presence alone does not make either control usable.
+// First run creates the Vault on the Welcome page, which holds back the Vault
+// modal; the modal branch remains for a dismissed Welcome. Complete whichever
+// is showing, then the biometric step, and only then dismiss Welcome. DOM
+// presence alone does not make any of these controls usable.
 export async function initializeOpsUiVault({ driver, password, record }) {
   let initialized = false
   let initializeSubmitted = false
@@ -254,6 +282,22 @@ export async function initializeOpsUiVault({ driver, password, record }) {
       await driver.click(S.biometricSkip)
       biometricSkipSubmitted = true
       await record('ops-ui-biometric-skipped', { passed: true })
+      return false
+    }
+    if (await visible(driver, S.welcomeVaultForm)) {
+      if (!initializeSubmitted) {
+        await record('ops-ui-vault-initialize-visible', { visible: true })
+        await driver.fill(S.welcomePassword, password)
+        check(await driver.attr(S.welcomePassword, 'value') === password, 'vault_password_ui_roundtrip_failed')
+        await driver.fill(S.welcomeConfirm, password)
+        await record('ops-ui-vault-password-entered', { roundtrip: true })
+        await driver.click(S.welcomeAck)
+        await waitEnabled(driver, S.welcomeCreate)
+        await record('ops-ui-vault-initialize-submit-ready', { enabled: true })
+        await driver.click(S.welcomeCreate)
+        initializeSubmitted = true
+        await record('ops-ui-vault-initialize-submitted', { passed: true })
+      }
       return false
     }
     if (await visible(driver, S.vaultForm)) {
@@ -428,6 +472,12 @@ export async function selectOpsUiServiceRow({ driver, fixture, state, role, reco
   serviceSelectionScope(fixture, state, role)
   const context = { driver, fixture, state, role }
   try {
+    // The evidence measures the service window, so use the desktop layout; the
+    // list layout is the default and has no windows. Switching remounts the list.
+    for (const toggle of await driver.findAll(testId('workspace-layout-desktop'))) {
+      if (await driver.isDisplayed(toggle) && await driver.attr(toggle, 'aria-checked') === 'false') await driver.click(toggle)
+    }
+    await driver.waitFor(serviceRow(state.hostIds[role], fixture.hosts[role].serviceUnit), { timeoutMs: 60000 })
     await record('ops-ui-service-selection-geometry', { role, phase: 'before', ...await readOpsUiServiceSelection(context) })
     let previous
     await driver.until(async () => {
@@ -460,22 +510,23 @@ export async function selectOpsUiServiceRow({ driver, fixture, state, role, reco
 export async function findOpsUiAuditRow({ driver, selector, status }) {
   check(['cancelled', 'completed'].includes(status), 'audit_status_invalid')
   const root = S.audit
-  const source = `${root} ${testId('operations-source-filter')}`
-  const filter = `${root} ${testId('operations-filter')}`
+  // Desktop widths show segmented radios; the native selects are phone-only.
+  const source = `${root} ${testId('operations-source-segments')} [data-value="workspace"]`
+  const filter = `${root} ${testId('operations-status-segments')} [data-value=${q(status)}]`
   const refresh = `${root} ${testId('operations-refresh')}`
   const page = `${root} ${testId('operations-page')}`
   const older = `${root} ${testId('operations-older')}`
   await driver.waitFor(source)
-  await driver.select(source, 'workspace')
-  await driver.select(filter, status)
+  await driver.click(source)
+  await driver.click(filter)
   await waitEnabled(driver, refresh)
   // Refresh resets any retained history cursor even when select's current
   // value was already correct and the browser emitted no change event.
   await driver.click(refresh)
   for (let number = 1; number <= 100; number++) {
     await driver.until(async () => await enabled(driver, refresh)
-      && (await driver.text(page)).trim() === `Page ${number}`
-      && await driver.attr(source, 'value') === 'workspace' && await driver.attr(filter, 'value') === status, { timeoutMs: 30000 })
+      && (await driver.text(page)).trim().split(' · ')[0] === `Page ${number}`
+      && await driver.attr(source, 'aria-checked') === 'true' && await driver.attr(filter, 'aria-checked') === 'true', { timeoutMs: 30000 })
     check((await driver.findAll(`${root} ${testId('operations-error')}`)).length === 0, 'audit_load_failed')
     const rows = await driver.findAll(selector)
     check(rows.length <= 1, 'audit_record_ambiguous')
@@ -615,7 +666,7 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await record(`ops-ui-${role}-confirmed`, { passed: true, jobId: completed, verifiedActive: true })
     await openDashboardPage(driver, 'hosts')
     await revealOpsUiHostActions(driver, `${byHost(id)} ${testId('host-ops-open')}`)
-    await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
+    await openOpsUiHostRules(driver, id)
     await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
     await record(`ops-ui-${role}-recovered`, { passed: true })
     if (onRecovered) await onRecovered(role)
@@ -644,7 +695,7 @@ export async function resumeOpsUiJourney({ driver, fixture, record, checkpoint, 
     await openDashboardPage(driver, 'hosts')
     const id = state.hostIds[role]
     await revealOpsUiHostActions(driver, `${byHost(id)} ${testId('host-ops-open')}`)
-    await driver.select(`${byHost(id)} ${testId('host-ops-open')}`, 'network')
+    await openOpsUiHostRules(driver, id)
     await driver.waitFor(ruleRoot(id), { timeoutMs: 60000 })
     check(await driver.attr(ruleRoot(id), 'data-vault-id') === state.vaultId, 'restored_rule_vault_scope_mismatch')
     await driver.waitFor(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="resolved"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })

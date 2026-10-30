@@ -1,20 +1,33 @@
 import { SnippetCompactList } from '@/components/snippet-compact-list'
+import { useSnippetVariableFill } from '@/hooks/use-snippet-variable-fill'
 import { FontSizeControl, TerminalThemeGrid } from '@/components/terminal-widgets'
 import { useT } from '@/lib/i18n'
 import {
     getInteractiveHistory,
+    isInteractiveHistoryEvent,
     subscribeInteractiveHistory,
     type InteractiveCommand,
 } from '@/lib/interactive-history'
 import type { SnippetEntry } from '@/lib/snippets'
 import type { TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
-import { Clock, Code2, Copy, Palette, Play, Rocket, Search } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { Activity, ArrowUpRight, Clock, Code2, Copy, Palette, Play, Rocket, Search } from 'lucide-react'
+import { Sparkline } from '@/components/charts/chart-primitives'
+import { useHostMetricHistory } from '@/hooks/use-host-metric-history'
+import type { HostProfile } from '@/lib/hosts'
+import { terminalSidebarCopy } from '@/lib/locales/terminal-sidebar'
+import { formatBytes, formatBytesRate } from '@/lib/metric-series'
+import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
+import { useWorkspaceProviderState } from '@/lib/workspace-provider-state'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { TERMINAL_SIDEBAR_TAB_EVENT } from '@/lib/terminal-events'
+import { HistoryEntryRow } from '@/components/history-panel'
+import { useCommandHistory } from '@/hooks/use-command-history'
 
-type TabId = 'terminal' | 'snippets' | 'history' | 'appearance'
+type TabId = 'status' | 'terminal' | 'snippets' | 'history' | 'appearance'
 
 const TABS: { id: TabId; Icon: typeof Rocket }[] = [
+  { id: 'status', Icon: Activity },
   { id: 'terminal', Icon: Rocket },
   { id: 'snippets', Icon: Code2 },
   { id: 'history', Icon: Clock },
@@ -32,6 +45,9 @@ interface TerminalRightSidebarProps {
   onTerminalPrefsChange: (prefs: Partial<TerminalPrefs>) => void
   onSearchToggle: () => void
   searchVisible: boolean
+  /** With hosts known, the sidebar opens on the host's live status (v3). */
+  hosts?: HostProfile[]
+  vaultId?: string
 }
 
 export function TerminalRightSidebar({
@@ -45,15 +61,26 @@ export function TerminalRightSidebar({
   onTerminalPrefsChange,
   onSearchToggle,
   searchVisible,
+  hosts,
+  vaultId,
 }: TerminalRightSidebarProps) {
   const { t } = useT()
-  const [activeTab, setActiveTab] = useState<TabId>('terminal')
+  const [activeTab, setActiveTab] = useState<TabId>(hosts ? 'status' : 'terminal')
+  const tabs = hosts ? TABS : TABS.filter((tab) => tab.id !== 'status')
+  useEffect(() => {
+    const select = (event: Event) => {
+      const tab = (event as CustomEvent<{ tab: TabId }>).detail?.tab
+      if (tab && (tab !== 'status' || hosts)) setActiveTab(tab)
+    }
+    window.addEventListener(TERMINAL_SIDEBAR_TAB_EVENT, select)
+    return () => window.removeEventListener(TERMINAL_SIDEBAR_TAB_EVENT, select)
+  }, [hosts])
 
   if (!visible) return null
 
   const tabBar = (
     <div className="flex shrink-0 items-center border-b border-border/50">
-      {TABS.map(({ id, Icon }) => (
+      {tabs.map(({ id, Icon }) => (
         <button
           key={id}
           type="button"
@@ -74,13 +101,16 @@ export function TerminalRightSidebar({
 
   const content = (
     <div className="min-h-0 flex-1 overflow-auto">
+      {activeTab === 'status' && hosts && (
+        <StatusTab hosts={hosts} vaultId={vaultId} hostAddress={hostAddress} snippets={snippets} onRunSnippet={onRunSnippet} onShowSnippets={() => setActiveTab('snippets')} />
+      )}
       {activeTab === 'terminal' && (
         <TerminalTab onSearchToggle={onSearchToggle} searchVisible={searchVisible} />
       )}
       {activeTab === 'snippets' && (
         <SnippetCompactList snippets={snippets} onApply={onApplySnippet} onRun={onRunSnippet} />
       )}
-      {activeTab === 'history' && <HistoryTab hostAddress={hostAddress} onRunCommand={onRunSnippet} />}
+      {activeTab === 'history' && <HistoryTab vaultId={vaultId} hostAddress={hostAddress} onRunCommand={onRunSnippet} />}
       {activeTab === 'appearance' && (
         <AppearanceTab terminalPrefs={terminalPrefs} onChange={onTerminalPrefsChange} />
       )}
@@ -102,6 +132,63 @@ export function TerminalRightSidebar({
         {content}
       </div>
     </>
+  )
+}
+
+function StatusTab({ hosts, vaultId, hostAddress, snippets, onRunSnippet, onShowSnippets }: {
+  hosts: HostProfile[]; vaultId?: string; hostAddress: string; snippets: SnippetEntry[]; onRunSnippet: (command: string) => void; onShowSnippets: () => void
+}) {
+  const { t, locale } = useT()
+  const c = terminalSidebarCopy[locale]
+  const variableFill = useSnippetVariableFill()
+  const host = resolveWorkspaceMetricsHost(hosts, { hostAddress, vaultId }) ?? null
+  const provider = useWorkspaceProviderState({ host, hosts, vaultId })
+  const snapshot = provider.view?.metrics ?? null
+  const history = useHostMetricHistory(host?.vaultId ?? vaultId, host?.id, 1)
+  const rows: Array<{ key: string; label: string; value: string; values: Array<number | null> }> = [
+    { key: 'cpu', label: 'CPU', value: snapshot?.cpuPercent == null ? '—' : `${Math.round(snapshot.cpuPercent)}%`, values: history.map((point) => point.metrics.cpuPercent) },
+    { key: 'memory', label: c.memory, value: snapshot?.memoryPercent == null ? '—' : `${Math.round(snapshot.memoryPercent)}%`, values: history.map((point) => point.metrics.memoryPercent) },
+    { key: 'disk', label: c.disk, value: snapshot?.diskPercent == null ? '—' : `${Math.round(snapshot.diskPercent)}%`, values: history.map((point) => point.metrics.diskPercent) },
+    { key: 'network', label: `${c.network} ↓`, value: formatBytesRate(snapshot?.networkRxBytesPerSec), values: history.map((point) => point.metrics.networkRxBytesPerSec) },
+  ]
+  const uptime = snapshot?.uptimeSeconds == null ? null : `${Math.floor(snapshot.uptimeSeconds / 86400)} ${c.days} ${Math.floor((snapshot.uptimeSeconds % 86400) / 3600)} ${c.hours}`
+  const info: Array<[string, string | null | undefined]> = [
+    [c.kernel, snapshot?.kernel], [c.os, snapshot?.os], [c.memory, snapshot?.memoryTotalBytes ? formatBytes(snapshot.memoryTotalBytes) : null], [c.uptime, uptime],
+    [c.load, snapshot?.load1 == null ? null : [snapshot.load1, snapshot.load5, snapshot.load15].map((value) => value == null ? '—' : value.toFixed(2)).join(' ')],
+  ]
+  return (
+    <div data-testid="terminal-sidebar-status" className="space-y-5 p-4">
+      {variableFill.dialog}
+      <section>
+        <div className="mb-2 flex items-center justify-between text-xs"><h3 className="font-semibold text-foreground">{c.live}</h3>
+          {snapshot?.sampledAt ? <span className="text-[11px] text-muted-foreground">{new Date(snapshot.sampledAt).toLocaleTimeString(locale)}</span> : null}</div>
+        {!host ? <p className="text-xs text-muted-foreground">{c.noHost}</p> : !snapshot ? <p className="text-xs text-muted-foreground">{c.noSample}</p> : (
+          <div className="divide-y divide-border/50">
+            {rows.map((row) => <div key={row.key} className="flex items-end justify-between gap-3 py-2.5">
+              <div><div className="text-[11px] text-muted-foreground">{row.label}</div><div className="font-mono text-sm font-semibold text-foreground">{row.value}</div></div>
+              {row.values.filter((value) => value != null).length > 1 && <Sparkline values={row.values} width={116} height={28} />}
+            </div>)}
+          </div>
+        )}
+      </section>
+      {snapshot && <section>
+        <h3 className="mb-2 text-xs font-semibold text-foreground">{c.system}</h3>
+        <dl className="space-y-1.5 text-xs">
+          {info.filter(([, value]) => value).map(([label, value]) => <div key={label} className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="truncate font-mono text-foreground" title={value ?? undefined}>{value}</dd></div>)}
+        </dl>
+      </section>}
+      {snippets.length > 0 && <section>
+        <div className="mb-2 flex items-center justify-between text-xs"><h3 className="font-semibold text-foreground">{c.snippets}</h3>
+          <button type="button" onClick={onShowSnippets} className="text-muted-foreground hover:text-foreground" aria-label={t('rightSidebar.snippets')}><ArrowUpRight className="h-3.5 w-3.5" /></button></div>
+        <ul className="space-y-1">
+          {snippets.slice(0, 4).map((snippet) => <li key={snippet.id}>
+            <button type="button" onClick={() => variableFill.request(snippet.command, onRunSnippet, snippet.name)} title={snippet.command} className="flex w-full items-center gap-2 rounded-md border border-border/50 px-2.5 py-2 text-left text-xs hover:bg-muted/50">
+              <Code2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /><span className="min-w-0 flex-1 truncate">{snippet.name}</span><Play className="h-3 w-3 shrink-0 text-muted-foreground" />
+            </button>
+          </li>)}
+        </ul>
+      </section>}
+    </div>
   )
 }
 
@@ -151,7 +238,40 @@ function TerminalTab({ onSearchToggle, searchVisible }: {
   )
 }
 
-function HistoryTab({ hostAddress, onRunCommand }: {
+function HistoryTab({ vaultId, hostAddress, onRunCommand }: {
+  vaultId?: string
+  hostAddress: string
+  onRunCommand: (cmd: string) => void
+}) {
+  const { t } = useT()
+  const [view, setView] = useState<'typed' | 'runs'>('typed')
+  return (
+    <div className="flex min-h-0 flex-col">
+      <div role="radiogroup" aria-label={t('history.title')} className="m-2 inline-flex w-fit gap-0.5 rounded-md bg-muted/60 p-0.5">
+        {(['typed', 'runs'] as const).map((key) => (
+          <button key={key} type="button" role="radio" aria-checked={view === key} data-testid={`history-view-${key}`} onClick={() => setView(key)}
+            className={cn('h-6 rounded px-2.5 text-[11px] font-medium', view === key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+            {t(key === 'typed' ? 'rightSidebar.historyTyped' : 'rightSidebar.historyRuns')}
+          </button>
+        ))}
+      </div>
+      {view === 'typed' ? <TypedHistory vaultId={vaultId} hostAddress={hostAddress} onRunCommand={onRunCommand} /> : <RunHistory vaultId={vaultId} hostAddress={hostAddress} />}
+    </div>
+  )
+}
+
+/** Commands run through ShellBeam's command mode, with status and output. */
+function RunHistory({ vaultId, hostAddress }: { vaultId?: string; hostAddress: string }) {
+  const { t } = useT()
+  const filter = useMemo(() => (hostAddress ? { host: hostAddress } : undefined), [hostAddress])
+  const { entries, loading } = useCommandHistory(vaultId, filter)
+  if (loading) return <p className="px-3 py-8 text-center text-xs text-muted-foreground">{t('history.loading')}</p>
+  if (entries.length === 0) return <p className="px-3 py-12 text-center text-xs text-muted-foreground">{t('history.empty')}</p>
+  return <div className="min-h-0 overflow-auto">{entries.map((entry) => <HistoryEntryRow key={entry.id} entry={entry} compact />)}</div>
+}
+
+function TypedHistory({ vaultId, hostAddress, onRunCommand }: {
+  vaultId?: string
   hostAddress: string
   onRunCommand: (cmd: string) => void
 }) {
@@ -159,15 +279,15 @@ function HistoryTab({ hostAddress, onRunCommand }: {
   const [commands, setCommands] = useState<InteractiveCommand[]>([])
 
   const refresh = useCallback(() => {
-    setCommands(getInteractiveHistory(hostAddress).slice().reverse())
-  }, [hostAddress])
+    setCommands(getInteractiveHistory(vaultId, hostAddress).slice().reverse())
+  }, [vaultId, hostAddress])
 
   useEffect(() => {
     refresh()
-    return subscribeInteractiveHistory((host) => {
-      if (host === hostAddress) refresh()
+    return subscribeInteractiveHistory((vault, host) => {
+      if (isInteractiveHistoryEvent(vaultId, hostAddress, vault, host)) refresh()
     })
-  }, [refresh, hostAddress])
+  }, [refresh, vaultId, hostAddress])
 
   if (commands.length === 0) {
     return (

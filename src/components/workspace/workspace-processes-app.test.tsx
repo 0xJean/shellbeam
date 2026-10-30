@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceProcessesApp } from './workspace-processes-app'
 
@@ -42,7 +42,7 @@ describe('workspace processes app', () => {
       />,
     )
 
-    expect(screen.getByText('Process Monitor')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Processes' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /run ps aux/i })).toBeInTheDocument()
 
     await waitFor(() => {
@@ -111,10 +111,20 @@ describe('workspace processes app', () => {
     expect(screen.queryByText('worker-1')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
     expect(screen.getByText('worker-1')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Sort processes'), { target: { value: 'pid' } })
+    fireEvent.click(within(screen.getByRole('group', { name: 'Sort processes' })).getByRole('button', { name: 'PID' }))
     fireEvent.click(screen.getByRole('button', { name: 'Descending' }))
     fireEvent.click(screen.getByRole('button', { name: 'Inspect PID 1' }))
-    await screen.findByText(/PID PPID USER ELAPSED/)
+    const details = await screen.findByRole('region', { name: 'Inspect PID 1' })
+    await within(details).findByText('root')
+    expect(within(details).getByText('01:00')).toBeInTheDocument()
+    expect(within(details).getByText('4 KB')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /PID/ })).toHaveAttribute('aria-sort', 'ascending')
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by CPU' }))
+    expect(screen.getByRole('columnheader', { name: /CPU/ })).toHaveAttribute('aria-sort', 'ascending')
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by CPU' }))
+    expect(screen.getByRole('columnheader', { name: /CPU/ })).toHaveAttribute('aria-sort', 'descending')
+    fireEvent.click(within(details).getAllByRole('button', { name: 'Close details' })[0])
+    expect(screen.queryByRole('region', { name: 'Inspect PID 1' })).not.toBeInTheDocument()
     expect(runSshCommand).toHaveBeenCalledWith(expect.objectContaining({ command: 'ps -p 1 -o pid,ppid,user,etime,rss,vsz,pcpu,pmem,stat,comm' }))
     expect(runSshCommand.mock.calls.some(([payload]) => payload.command.includes('args'))).toBe(false)
   })

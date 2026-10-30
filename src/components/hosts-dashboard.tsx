@@ -1,5 +1,4 @@
 import { monitoringAlertTitle } from '@/lib/monitoring-presentation'
-import { NativeSelect } from '@/components/ui/select'
 import { hasSshConnection } from '@/lib/hosts'
 import { HostMetadataSyncNotice } from './host-metadata-sync-panel'
 import { matchesHostSearch } from '@/lib/host-search'
@@ -13,6 +12,7 @@ import type { LocalAlertRecord } from '@/lib/local-alert-rules'
 import { LOCAL_OPS_PERSISTENCE_EVENT, localOpsPersistenceError } from '@/lib/local-ops-persistence'
 import { getProbeAlertRuntimeDiagnostic, PROBE_ALERT_RUNTIME_CHANGED } from '@/lib/probe-alert-runtime-state'
 import { HostGridCard, HostListItem, type HostOperationalSummary } from '@/components/host-card'
+import { HOST_BUCKETS, hostBucket } from '@/lib/host-grouping'
 import { HostListScrollArea } from '@/components/host-list-scroll-area'
 import { HostCreateDialog } from '@/components/host-create-dialog'
 import { HostEditorDialog } from '@/components/host-editor-dialog'
@@ -25,6 +25,7 @@ import { hostPresentationCopy } from '@/lib/locales/host-presentation'
 import { Input } from '@/components/ui/input'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
+import type { VaultMeta } from '@/lib/vaults'
 import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -48,21 +49,22 @@ import { loadNotificationPolicy } from '@/lib/notification-policy'
 import { MAX_BATCH_HOSTS, runBatchDockerOperation, runBatchOperation, runBatchServiceOperation, type BatchOperationResult } from '@/lib/multi-host-operations'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, reconcileKomariProbeAlerts, syncKomariIntegration } from '@/lib/komari-sync'
-import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, CalendarArrowUp, CheckCircle2, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, Tag, X } from 'lucide-react'
+import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, Bell, CalendarArrowUp, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, SlidersHorizontal, Tag, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
 import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS, HOST_RESOURCE_COLUMNS } from './host-list-layout'
-import MultiHostOperationsPanel, { type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
-import { WorkspaceResourceOverviewHeader, type WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
+import { HostMoveDialog } from './host-move-dialog'
+import { HostBatchFloatingBar, HostKpiRow, HostStatusSegments, ProbeCoverageBanner } from './hosts-overview'
+import { ProbeInstallDialog } from './probe-install-dialog'
+import MultiHostOperationsPanel, { type MultiHostOperationKind, type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
+import type { WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
 type SortMode = 'az' | 'za' | 'newest' | 'oldest'
 type HostStatusFilter = 'all' | 'online' | 'stale' | 'checking' | 'offline' | 'paused' | 'unsupported' | 'unknown' | 'jump-unavailable'
 type HostHealthStatus = Exclude<HostStatusFilter, 'all'>
 export type HostOpsRefreshStatus = 'idle' | 'refreshing' | 'fresh' | 'recovered' | 'error'
 const SORT_KEY = 'shellbeam.hostSortMode'
-const SHOW_HOST_SUMMARY_STRIP = false
-
 function formatHostOpsRefreshTime(timestamp: number | null): string {
   if (!timestamp) return ''
   return new Date(timestamp).toLocaleTimeString(undefined, {
@@ -78,118 +80,6 @@ function getHostHealthStatus(view: HostOpsView | undefined, fallback: HostHealth
   if (view?.health.state === 'jump-unavailable') return 'jump-unavailable'
   if (view?.health.state === 'online' || view?.health.state === 'stale' || view?.health.state === 'offline' || view?.health.state === 'checking' || view?.health.state === 'unknown') return view.health.state
   return loading && fallback === 'unknown' ? 'checking' : fallback
-}
-
-function HostSummaryStrip({
-  totalHosts,
-  onlineCount,
-  checkingCount,
-  offlineCount,
-  groups,
-}: {
-  totalHosts: number
-  onlineCount: number
-  checkingCount: number
-  offlineCount: number
-  groups: WorkspaceResourceGroup[]
-}) {
-  const { t } = useT()
-
-  if (totalHosts === 0) return null
-
-  const cards = [
-    {
-      key: 'total',
-      label: t('hosts.totalHosts'),
-      value: totalHosts,
-      icon: Server,
-      shellClassName: 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]',
-      fillClassName: 'bg-[color:var(--workspace-primary-500)]',
-    },
-    {
-      key: 'online',
-      label: t('hosts.statusOnline'),
-      value: onlineCount,
-      icon: CheckCircle2,
-      shellClassName: 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]',
-      fillClassName: 'bg-[color:var(--workspace-status-good)]',
-    },
-    {
-      key: 'checking',
-      label: t('hosts.statusChecking'),
-      value: checkingCount,
-      icon: RefreshCw,
-      shellClassName: 'bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]',
-      fillClassName: 'bg-[color:var(--workspace-status-warn)]',
-    },
-    {
-      key: 'offline',
-      label: t('hosts.statusOffline'),
-      value: offlineCount,
-      icon: X,
-      shellClassName: 'bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]',
-      fillClassName: 'bg-[color:var(--workspace-status-bad)]',
-    },
-  ]
-
-  return (
-    <div className="mb-4 space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map((card) => {
-          const Icon = card.icon
-          const ratio = totalHosts === 0 ? 0 : Math.max(0, Math.min(100, (card.value / totalHosts) * 100))
-
-          return (
-            <div
-              key={card.key}
-              className="min-w-0 rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-4 shadow-[var(--workspace-shadow-card)]"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--workspace-text-subtle)]">
-                    {card.label}
-                  </div>
-                  <div className="mt-2 text-3xl font-semibold leading-none tracking-tight text-[var(--workspace-text-strong)]">
-                    {card.value}
-                  </div>
-                </div>
-                <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[color:var(--workspace-border-soft)]', card.shellClassName)}>
-                  <Icon className="h-4 w-4" />
-                </span>
-              </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--workspace-meter-track)]">
-                <div className={cn('h-full rounded-full', card.fillClassName)} style={{ width: `${ratio}%` }} />
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {groups.length > 0 && (
-        <div className="rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-4 py-3 shadow-[var(--workspace-shadow-card)]">
-          <div className="flex h-2 overflow-hidden rounded-full bg-[var(--workspace-meter-track)]">
-            {groups.map((group) => (
-              <div
-                key={group.key}
-                className={cn('h-full', group.colorClassName)}
-                style={{ width: `${totalHosts === 0 ? 0 : (group.count / totalHosts) * 100}%` }}
-                title={`${group.label} ${group.count}`}
-              />
-            ))}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-            {groups.map((group) => (
-              <div key={group.key} className="flex items-center gap-1.5">
-                <span className={cn('h-2 w-2 rounded-full', group.colorClassName)} />
-                <span className="text-xs text-[var(--workspace-text-muted)]">{group.label}</span>
-                <span className="text-xs font-semibold text-[var(--workspace-text-strong)]">{group.count}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }
 
 export function HostOpsRefreshIndicator({
@@ -244,7 +134,7 @@ interface HostsDashboardProps {
   onSelectHost: (hostId: string) => void
   onConnectHost?: (hostId: string) => void
   onOpenWorkspace?: (hostId: string, app: WorkspaceAppId) => void
-  onCreateHost: (draft: HostProfileDraft) => Promise<void>
+  onCreateHost: (draft: HostProfileDraft) => Promise<HostProfile | void>
   onUpdateHost: (host: HostProfile, draft: HostProfileDraft) => Promise<void>
   onDeleteHost: (hostId: string) => Promise<void>
   openAddForm?: boolean
@@ -258,6 +148,8 @@ interface HostsDashboardProps {
   onSaveToVault?: (key: string, value: string) => Promise<void>
   onLoadVaultSecret?: (key: string) => Promise<string | null>
   vaultName?: string
+  /** All Vaults; hosts can move to any other one. */
+  vaults?: ReadonlyArray<Pick<VaultMeta, 'id' | 'name'>>
   headerExtraAction?: ReactNode
 }
 
@@ -361,13 +253,27 @@ export function HostsDashboard({
   openAddForm = false, onAddFormClose,
     externalSearch, onExternalSearchChange, onScanHosts, onRefreshHosts,
     vaultKeys = [], vaultUnlocked = false, onSaveToVault, onLoadVaultSecret, vaultName = 'Vault',
-    headerExtraAction,
+    vaults = [], headerExtraAction,
 }: HostsDashboardProps) {
   const [internalSearch, setInternalSearch] = useState('')
   const effectiveSearch = externalSearch ?? internalSearch
   const setEffectiveSearch = onExternalSearchChange ?? setInternalSearch
   const [groupFilter, setGroupFilter] = useState('All')
   const [showAddForm, setShowAddForm] = useState(openAddForm)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const batchPanelRef = useRef<HTMLDivElement>(null)
+  const [batchOperation, setBatchOperation] = useState<MultiHostOperationKind>('health-check')
+  useEffect(() => {
+    // ⌘N opens "new host" while the host page is on screen (Ctrl+N stays with the terminal).
+    const onKey = (event: KeyboardEvent) => {
+      if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'n') return
+      if (!rootRef.current?.getClientRects().length) return
+      event.preventDefault()
+      setShowAddForm(true)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
   useEffect(() => { setShowAddForm((prev) => (openAddForm ? true : prev)) }, [openAddForm])
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list')
   const [checkingStatus, setCheckingStatus] = useState(false)
@@ -395,6 +301,18 @@ export function HostsDashboard({
   }
   const currentPresentation = presentation.owner === presentationOwner ? presentation : { owner: presentationOwner, monitoring: readMonitoringPreference(), alerts: false, batch: false, selected: [] as string[] }
   const [batchBusy, setBatchBusy] = useState(false)
+  const [probeInstallHost, setProbeInstallHost] = useState<HostProfile | null>(null)
+  // Hosts being moved to another Vault, kept apart from the batch selection that a finished move clears.
+  const [moveRequest, setMoveRequest] = useState<{ vaultId: string; hosts: HostProfile[] } | null>(null)
+  const canMoveHosts = !!activeVaultId && vaults.some(vault => vault.id !== activeVaultId)
+  const openHostMove = (picked: HostProfile[]) => {
+    const movable = picked.filter(host => !host.vaultId || host.vaultId === activeVaultId)
+    if (activeVaultId && movable.length) setMoveRequest({ vaultId: activeVaultId, hosts: movable })
+  }
+  const handleHostsMoved = async (movedIds: string[]) => {
+    setPresentation(current => ({ ...current, selected: current.selected.filter(id => !movedIds.includes(id)) }))
+    await onRefreshHosts?.()
+  }
   const sharedStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
   const [agentDeployments, setAgentDeployments] = useState<McpDeploymentRecord[]>([])
@@ -1159,6 +1077,7 @@ export function HostsDashboard({
   ].map(incident => [incident.key, incident])).values()].sort((a, b) => b.updatedAt - a.updatedAt || a.key.localeCompare(b.key))
   const openIncidents = incidents.filter(row => !row.historyOnly && (row.status === 'active' || row.status === 'acknowledged')).length
   const selectedBatchIds = currentPresentation.selected.filter(id => filteredHosts.some(host => host.id === id && hasSshConnection(host) && (!host.vaultId || host.vaultId === activeVaultId)))
+  const batchEligible = filteredHosts.filter(host => hasSshConnection(host) && (!host.vaultId || host.vaultId === activeVaultId))
   const batchSelection = (host: HostProfile) => currentPresentation.batch ? {
     selected: selectedBatchIds.includes(host.id),
     disabled: !hasSshConnection(host) || batchBusy || (!selectedBatchIds.includes(host.id) && selectedBatchIds.length >= MAX_BATCH_HOSTS),
@@ -1169,40 +1088,86 @@ export function HostsDashboard({
   const displayStatus = (host: HostProfile) => operationalSummaryByHost.get(host.id) || sharedStates[hostKey(host)]?.inventory
     ? getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)
     : undefined
+  const groupFilterChips = resourceGroups.length > 0 ? <div data-testid="host-group-filter" className="space-y-1.5">
+    <div className="text-xs font-medium text-[var(--workspace-text-muted)]">{t('hosts.groupFilter')}</div>
+    <div className="flex flex-wrap gap-1.5">
+      {[{ key: 'All', label: t('hosts.all'), count: hosts.length }, ...resourceGroups].map((group) => (
+        <button key={group.key} type="button" aria-pressed={groupFilter === group.key} onClick={() => setGroupFilter(group.key)}
+          className={cn('rounded-md border px-2 py-1 text-xs', groupFilter === group.key ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]' : 'border-[color:var(--workspace-border-soft)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
+          {group.label} <span className="tabular-nums opacity-70">{group.count}</span>
+        </button>
+      ))}
+    </div>
+  </div> : null
+  const bucketOf = (host: HostProfile) => {
+    const view = hostOpsViews[host.id]
+    const resource = view?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource
+    const open = showMonitoring ? (view?.alertOpenCount ?? view?.localAlertOpen ?? 0) : 0
+    const readings = showMonitoring ? (view?.metrics ? [view.metrics.cpuPercent, view.metrics.memoryPercent, view.metrics.diskPercent] : [resource?.cpuPercent, resource?.memoryPercent, resource?.diskPercent]) : []
+    return hostBucket(displayStatus(host), open, readings)
+  }
 
   return (
-    <div className="flex min-w-0 w-full flex-col text-[var(--workspace-text)]">
+    <div ref={rootRef} className="flex min-w-0 w-full flex-col text-[var(--workspace-text)]">
       <HostMetadataSyncNotice vaultId={activeVaultId} unlocked={!!vaultUnlocked} hosts={hosts} onEdit={setEditingHost} />
-      {SHOW_HOST_SUMMARY_STRIP && (
-        <HostSummaryStrip
-          totalHosts={hosts.length}
-          onlineCount={statusCounts.online}
-          checkingCount={statusCounts.checking}
-          offlineCount={statusCounts.offline}
-          groups={resourceGroups}
-        />
-      )}
-      <WorkspaceResourceOverviewHeader
-        title={t('hosts.title')}
-        description={t('hosts.subtitle')}
-        total={hosts.length}
-        totalLabel={t('hosts.totalHosts')}
-        visibleCount={filteredHosts.length}
-        visibleLabel={t('hosts.totalHosts')}
-        groups={resourceGroups}
-        selectedGroup={groupFilter}
-        allGroupLabel={t('hosts.all')}
-        onGroupSelect={setGroupFilter}
-        actions={
-          <>
+      <div data-testid="hosts-header" className="space-y-4 pb-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('nav.hosts')}</h1>
+            <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-[var(--workspace-text-muted)]">
+              <span>{t('hosts.headerSummary', { total: hosts.length, online: statusCounts.online })}</span>
+              {filteredHosts.length !== hosts.length && <span>· {t('hosts.headerVisible', { count: filteredHosts.length })}</span>}
+              {(hasOperations || hostOpsRefreshError) && <><span aria-hidden="true">·</span><HostOpsRefreshIndicator
+                status={hostOpsRefreshStatus}
+                lastRefreshedAt={hostOpsLastRefreshedAt}
+                error={hostOpsRefreshError}
+              /></>}
+              <button type="button" onClick={() => void handleRefreshAll()} disabled={hostOpsLoading} data-testid="host-ops-refresh"
+                className="inline-flex items-center gap-1 rounded px-1 font-medium text-[var(--workspace-accent-text)] hover:underline disabled:opacity-60">
+                <RefreshCw className={cn('h-3.5 w-3.5', hostOpsLoading && 'animate-spin')} />{t('hosts.refreshOps')}
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             {headerExtraAction}
+            {incidents.length > 0 && <Button size="sm" variant="outline" data-testid="host-alerts-open" className="h-9 gap-1.5 border-[color:var(--workspace-status-warn)]/40 bg-[var(--workspace-status-warn-bg)] text-xs text-[color:var(--workspace-status-warn-text)] hover:bg-[var(--workspace-status-warn-bg)]" onClick={() => setPresentation(current => ({ ...current, alerts: true }))}>
+              <Bell className="h-3.5 w-3.5" />{presentationCopy.alerts} · {openIncidents} {presentationCopy.open}
+            </Button>}
+            <button
+              type="button"
+              onClick={() => setShowSshImport(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] h-9 px-3 text-xs font-medium text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{t('hosts.importSsh')}</span>
+            </button>
+            <Button data-tour="host-create" size="sm" onClick={() => setShowAddForm(!showAddForm)} className="h-9 gap-1.5 text-xs bg-[color:var(--workspace-primary-500)] text-[color:var(--workspace-primary-foreground)] hover:bg-[color:var(--workspace-primary-400)]">
+              <Plus className="h-3.5 w-3.5" /> {t('hosts.addHost')}
+              <kbd className="ml-1 hidden rounded border border-current/30 px-1 font-sans text-[10px] opacity-75 sm:inline">⌘N</kbd>
+            </Button>
+          </div>
+        </div>
+      <HostKpiRow total={hosts.length} online={statusCounts.online} offline={statusCounts.offline + statusCounts['jump-unavailable']} stale={statusCounts.stale} openAlerts={openIncidents}
+        readings={hosts.map(host => { const view = hostOpsViews[host.id]; const resource = view?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource; return { host, cpu: view?.metrics ? view.metrics.cpuPercent : resource?.cpuPercent, disk: view?.metrics ? view.metrics.diskPercent : resource?.diskPercent } })}
+        onOpenAlerts={vaultUnlocked ? () => setPresentation(current => ({ ...current, alerts: true })) : undefined} />
+      {vaultUnlocked && showMonitoring && <ProbeCoverageBanner hosts={hosts.filter(host => !host.vaultId || host.vaultId === activeVaultId)} osOf={host => (hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource)?.os} />}
+        <div data-testid="hosts-toolbar" className="flex flex-wrap items-center gap-2">
+          <div className="w-full sm:w-72">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
+              <Input value={effectiveSearch} onChange={(e) => setEffectiveSearch(e.target.value)} placeholder={t('hosts.search')} className="h-10 border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 text-sm text-[var(--workspace-text-strong)] placeholder:text-[var(--workspace-text-subtle)]" />
+            </div>
+          </div>
+            {(hasOperations || statusFilter !== 'all') && <HostStatusSegments value={statusFilter} counts={statusCounts} labels={statusFilterLabels} label={t('hosts.statusFilter')} onChange={setStatusFilter} />}
+          <div className="flex-1" />
             {(hasOperations || hasMonitoring || hasAdvancedFilters) && <details className="relative" data-testid="host-view-options">
-              <summary className="cursor-pointer rounded-lg border px-3 py-2 text-xs">{presentationCopy.filters}</summary>
+              <summary className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 text-xs font-medium text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]"><SlidersHorizontal className="h-3.5 w-3.5" />{presentationCopy.filters}{groupFilter !== 'All' && <span className="rounded bg-[var(--workspace-accent-subtle)] px-1 text-[10px] text-[var(--workspace-accent-text)]">1</span>}</summary>
               <div className="fixed inset-x-3 bottom-3 z-40 max-h-[75dvh] space-y-3 overflow-y-auto rounded-xl border bg-[var(--workspace-surface-950)] p-4 shadow-xl xl:absolute xl:inset-x-auto xl:bottom-auto xl:right-0 xl:top-full xl:mt-2 xl:w-[38rem]">
                 <div className="flex items-center justify-between xl:hidden">
                   <span className="text-sm font-medium">{presentationCopy.filters}</span>
                   <Button size="sm" variant="ghost" aria-label={t('common.close')} onClick={event => event.currentTarget.closest('details')?.removeAttribute('open')}><X className="h-4 w-4" /></Button>
                 </div>
+                {groupFilterChips}
                 {hasMonitoring && <label className="flex items-start gap-2 text-xs">
                   <input type="checkbox" data-testid="host-monitoring-summary-toggle" checked={currentPresentation.monitoring} onChange={event => {
                     const monitoring = event.target.checked
@@ -1214,16 +1179,10 @@ export function HostsDashboard({
                 <HostOpsAdvancedFilters value={advancedFilters} onChange={setAdvancedFilters} osOptions={osOptions} providerOptions={providerOptions} />
               </div>
             </details>}
-            {(hasOperations || statusFilter !== 'all') && <NativeSelect
-              aria-label={t('hosts.statusFilter')}
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as HostStatusFilter)}
-              className="h-8 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 text-xs font-medium text-[var(--workspace-text-muted)] outline-none transition-colors hover:text-[var(--workspace-text-strong)] focus:border-[color:var(--workspace-border-glow)]"
-            >
-              {(Object.keys(statusFilterLabels) as HostStatusFilter[]).map((status) => (
-                <option key={status} value={status}>{statusFilterLabels[status]}</option>
-              ))}
-            </NativeSelect>}
+            {!(hasOperations || hasMonitoring || hasAdvancedFilters) && resourceGroups.length > 1 && <details className="relative" data-testid="host-group-options">
+              <summary className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 text-xs font-medium text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]"><SlidersHorizontal className="h-3.5 w-3.5" />{groupFilter === 'All' ? t('hosts.groupFilter') : (resourceGroups.find(group => group.key === groupFilter)?.label ?? groupFilter)}</summary>
+              <div className="absolute right-0 top-full z-40 mt-2 w-72 rounded-xl border bg-[var(--workspace-surface-950)] p-3 shadow-xl">{groupFilterChips}</div>
+            </details>}
             <div className="relative">
               <button type="button" onClick={() => { setTagFilterOpen((v) => !v); setSortOpen(false) }}
                 className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
@@ -1299,7 +1258,16 @@ export function HostsDashboard({
                 </>
               )}
             </div>
-            <div className="flex rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-0.5">
+            {hosts.length > 1 && <Button size="sm" variant="outline" data-testid="host-batch-select" className="h-8 text-xs" disabled={batchBusy} onClick={() => setPresentation(current => ({ ...current, batch: !current.batch, selected: [] }))}>
+              {currentPresentation.batch ? presentationCopy.done : presentationCopy.batch}
+            </Button>}
+            {onScanHosts && filteredHosts.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => void handleCheckAllStatus()} disabled={checkingStatus} className="h-9 gap-1.5 text-xs">
+                <RefreshCw className={cn('h-3.5 w-3.5', checkingStatus && 'animate-spin')} />
+                {checkingStatus ? t('hosts.checking') : t('hosts.checkStatus')}
+              </Button>
+            )}
+            <div data-testid="host-view-toggle" className="flex rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-0.5">
               <button type="button" onClick={() => setViewMode('grid')} className={cn('rounded-md p-1.5 transition-colors', viewMode === 'grid' ? 'bg-[var(--workspace-surface-700)] text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')} title={t('hosts.gridView')}>
                 <LayoutGrid className="h-4 w-4" />
               </button>
@@ -1307,64 +1275,14 @@ export function HostsDashboard({
                 <List className="h-4 w-4" />
               </button>
             </div>
-          </>
-        }
-        search={externalSearch === undefined && (
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
-            <Input value={effectiveSearch} onChange={(e) => setEffectiveSearch(e.target.value)} placeholder={t('hosts.search')} className="h-10 border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-9 text-sm text-[var(--workspace-text-strong)] placeholder:text-[var(--workspace-text-subtle)]" />
-          </div>
-        )}
-        controls={
-          <>
-          <div className="flex-1" />
-          {incidents.length > 0 && <Button size="sm" variant="outline" data-testid="host-alerts-open" onClick={() => setPresentation(current => ({ ...current, alerts: true }))}>
-            {presentationCopy.alerts} · {openIncidents} {presentationCopy.open}
-          </Button>}
-          {hosts.length > 1 && <Button size="sm" variant="outline" data-testid="host-batch-select" disabled={batchBusy} onClick={() => setPresentation(current => ({ ...current, batch: !current.batch, selected: [] }))}>
-            {currentPresentation.batch ? presentationCopy.done : presentationCopy.batch}
-          </Button>}
-          {(hasOperations || hostOpsRefreshError) && <HostOpsRefreshIndicator
-            status={hostOpsRefreshStatus}
-            lastRefreshedAt={hostOpsLastRefreshedAt}
-            error={hostOpsRefreshError}
-          />}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void handleRefreshAll()}
-            disabled={hostOpsLoading}
-            className="h-9 gap-1.5 text-xs"
-            data-testid="host-ops-refresh"
-          >
-            <RefreshCw className={cn('h-3.5 w-3.5', hostOpsLoading && 'animate-spin')} />
-            <span className="hidden sm:inline">{t('hosts.refreshOps')}</span>
-          </Button>
-          {onScanHosts && filteredHosts.length > 0 && (
-            <Button size="sm" variant="outline" onClick={() => void handleCheckAllStatus()} disabled={checkingStatus} className="h-9 gap-1.5 text-xs">
-              <RefreshCw className={cn('h-3.5 w-3.5', checkingStatus && 'animate-spin')} />
-              {checkingStatus ? t('hosts.checking') : t('hosts.checkStatus')}
-            </Button>
-          )}
-          <button
-            type="button"
-            onClick={() => setShowSshImport(true)}
-            className="flex items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2 text-xs font-medium text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"
-          >
-            <FileDown className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{t('hosts.importSsh')}</span>
-          </button>
-          <Button data-tour="host-create" size="sm" onClick={() => setShowAddForm(!showAddForm)} className="h-9 gap-1.5 text-xs bg-[color:var(--workspace-primary-500)] text-[color:var(--workspace-primary-foreground)] hover:bg-[color:var(--workspace-primary-400)]">
-            <Plus className="h-3.5 w-3.5" /> {t('hosts.newConnection')}
-          </Button>
-          </>
-        }
-      >
-          {currentPresentation.batch && selectedBatchIds.length > 0 && <MultiHostOperationsPanel
-            key={`${presentationOwner}:${selectedBatchIds.join(',')}`} hosts={filteredHosts.filter(host => selectedBatchIds.includes(host.id))}
-            initialSelectedHostIds={selectedBatchIds} selectionFromList
-            onRunOperation={async request => { setBatchBusy(true); try { return await handleMultiHostOperation(request) } finally { setBatchBusy(false) } }}
-          />}
+        </div>
+          {currentPresentation.batch && selectedBatchIds.length > 0 && <HostBatchFloatingBar key={`bar:${presentationOwner}`} hosts={filteredHosts.filter(host => selectedBatchIds.includes(host.id))}
+            onOperation={operation => { setBatchOperation(operation); requestAnimationFrame(() => batchPanelRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })) }}
+            onExit={() => setPresentation(current => ({ ...current, batch: false, selected: [] }))}
+            onMoveToVault={canMoveHosts ? () => openHostMove(filteredHosts.filter(host => selectedBatchIds.includes(host.id))) : undefined} />}
+          {moveRequest && moveRequest.vaultId === activeVaultId && <HostMoveDialog open sourceVaultId={moveRequest.vaultId} vaults={vaults} hosts={moveRequest.hosts}
+            onOpenChange={open => { if (!open) setMoveRequest(null) }} onMoved={handleHostsMoved} />}
+          {probeInstallHost && <ProbeInstallDialog host={hosts.find(host => host.id === probeInstallHost.id) ?? probeInstallHost} open onOpenChange={open => { if (!open) setProbeInstallHost(null) }} />}
           <KomariAlertsDashboardPanel headless onAdditionalIncidents={receiveIntegrationIncidents} activeVaultId={activeVaultId} vaultUnlocked={vaultUnlocked} hosts={hosts} />
           <Dialog labelledBy="host-alerts-title" open={currentPresentation.alerts && vaultUnlocked} onOpenChange={alerts => setPresentation(current => ({ ...current, alerts }))}>
             <DialogContent className="w-full max-w-3xl p-5 md:w-full md:max-w-3xl">
@@ -1385,7 +1303,7 @@ export function HostsDashboard({
             vaultName={vaultName}
             existingGroups={allExistingGroups}
             existingTags={allExistingTags}
-            onSubmit={async (draft) => { await onCreateHost(draft); setShowAddForm(false); onAddFormClose?.() }}
+            onSubmit={async (draft, options) => { const created = await onCreateHost(draft); setShowAddForm(false); onAddFormClose?.(); if (options?.installProbe && created) setProbeInstallHost(created) }}
             onCancel={() => { setShowAddForm(false); onAddFormClose?.() }}
           />
 
@@ -1425,8 +1343,20 @@ export function HostsDashboard({
                 )}
               </div>
             ) : viewMode === 'grid' ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {filteredHosts.map((host) => (
+              <div className="space-y-6">
+                {HOST_BUCKETS.map((bucket) => {
+                  const members = filteredHosts.filter((host) => bucketOf(host) === bucket)
+                  if (!members.length) return null
+                  return <section key={bucket} data-testid={`host-bucket-${bucket}`} aria-label={t(`hosts.bucket.${bucket}`)} className="space-y-3">
+                    <h3 className="flex items-center gap-2 text-[13px] font-semibold text-[var(--workspace-text-muted)]">
+                      <span className={cn('h-2 w-2 rounded-full', bucket === 'attention' ? 'bg-[var(--workspace-status-warn)]' : bucket === 'normal' ? 'bg-[var(--workspace-status-good)]' : 'bg-[var(--workspace-text-subtle)]')} />
+                      <span className="text-[var(--workspace-text-strong)]">{t(`hosts.bucket.${bucket}`)}</span>
+                      <span className="rounded-full bg-[var(--workspace-surface-700)] px-1.5 text-[11px] font-medium tabular-nums">{members.length}</span>
+                      <span className="text-xs font-normal text-[var(--workspace-text-subtle)]">{t(`hosts.bucket.${bucket}Hint`)}</span>
+                      <span className="h-px flex-1 bg-[color:var(--workspace-border-soft)]" />
+                    </h3>
+                    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {members.map((host) => (
                   <HostGridCard
                     key={`${presentationOwner}:${host.id}`}
                     host={host}
@@ -1445,17 +1375,18 @@ export function HostsDashboard({
                     onRefresh={onScanHosts ? handleRefreshHost : undefined}
                     onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                     onDelete={(id) => void onDeleteHost(id)}
+                    onMoveToVault={canMoveHosts ? (id) => openHostMove(hosts.filter(host => host.id === id)) : undefined}
                     onSelect={onSelectHost}
                   />
                 ))}
+                    </div>
+                  </section>
+                })}
               </div>
             ) : (
-              <div className="min-w-0 rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]">
-                <div className="flex flex-col gap-2 border-b border-[color:var(--workspace-border-soft)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="text-sm font-semibold text-[var(--workspace-text-strong)]">{t('hosts.activeHosts')}</div>
-                    <div className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{t('hosts.listPanelMeta', { visible: filteredHosts.length, total: hosts.length })}</div>
-                  </div>
+              <div className="sb-card min-w-0 overflow-hidden">
+                {(statusFilter !== 'all' || tagFilter.size > 0 || groupFilter !== 'All') && <div className="flex flex-wrap items-center gap-2 border-b border-[color:var(--workspace-border-soft)] px-4 py-2.5">
+                  <span className="text-xs text-[var(--workspace-text-muted)]">{t('hosts.listPanelMeta', { visible: filteredHosts.length, total: hosts.length })}</span>
                   <div className="flex flex-wrap gap-2">
                     {statusFilter !== 'all' && (
                       <button
@@ -1478,10 +1409,12 @@ export function HostsDashboard({
                       </span>
                     )}
                   </div>
-                </div>
+                </div>}
                 <HostListScrollArea monitoring={showMonitoring} resources={showResources}>
-                    <div data-testid="host-list-header" data-monitoring={showMonitoring} className={cn("mx-3 hidden border-x border-transparent border-b border-b-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-subtle)] xl:grid xl:items-center", showMonitoring ? HOST_LIST_COLUMNS : showResources ? HOST_RESOURCE_COLUMNS : HOST_CONNECTION_COLUMNS)}>
-                      <span>{t('hosts.columnIndex')}</span>
+                    <div data-testid="host-list-header" data-monitoring={showMonitoring} className={cn("hidden border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)]/60 px-4 py-2.5 text-xs font-medium text-[var(--workspace-text-subtle)] xl:grid xl:items-center", showMonitoring ? HOST_LIST_COLUMNS : showResources ? HOST_RESOURCE_COLUMNS : HOST_CONNECTION_COLUMNS)}>
+                      <span>{currentPresentation.batch ? <input type="checkbox" data-testid="host-select-all" aria-label={presentationCopy.selectAll} disabled={batchBusy || !batchEligible.length}
+                        checked={batchEligible.length > 0 && selectedBatchIds.length === Math.min(batchEligible.length, MAX_BATCH_HOSTS)}
+                        onChange={event => { const all = event.target.checked; setPresentation(current => current.owner !== presentationOwner || batchBusy ? current : { ...current, selected: all ? batchEligible.slice(0, MAX_BATCH_HOSTS).map(host => host.id) : [] }) }} /> : t('hosts.columnIndex')}</span>
                       <span>{t('hosts.columnHost')}</span>
                       <span>{t('hosts.columnLocation')}</span>
                       <span>{t('hosts.columnIp')}</span>
@@ -1491,7 +1424,7 @@ export function HostsDashboard({
                       <span>{t('hosts.columnStatus')}</span>
                       <span className="text-right">{t('hosts.columnActions')}</span>
                     </div>
-                    <div className="space-y-2 p-3">
+                    <div className="divide-y divide-[color:var(--workspace-border-soft)]">
                       {filteredHosts.map((host, index) => (
                         <HostListItem
                           key={`${presentationOwner}:${host.id}`}
@@ -1514,6 +1447,7 @@ export function HostsDashboard({
                           onRefresh={onScanHosts ? handleRefreshHost : undefined}
                           onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                           onDelete={(id) => void onDeleteHost(id)}
+                          onMoveToVault={canMoveHosts ? (id) => openHostMove(hosts.filter(host => host.id === id)) : undefined}
                         />
                       ))}
                     </div>
@@ -1521,7 +1455,12 @@ export function HostsDashboard({
               </div>
             )}
         </PullToRefresh>
-      </WorkspaceResourceOverviewHeader>
+          {currentPresentation.batch && selectedBatchIds.length > 0 && <div ref={batchPanelRef} className="mt-4 pb-20"><MultiHostOperationsPanel
+            key={`${presentationOwner}:${selectedBatchIds.join(',')}:${batchOperation}`} hosts={filteredHosts.filter(host => selectedBatchIds.includes(host.id))}
+            initialSelectedHostIds={selectedBatchIds} selectionFromList initialOperation={batchOperation}
+            onRunOperation={async request => { setBatchBusy(true); try { return await handleMultiHostOperation(request) } finally { setBatchBusy(false) } }}
+          /></div>}
+      </div>
 
         {showSshImport && (
           <SshImportDialog

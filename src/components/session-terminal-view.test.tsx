@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionTerminalView } from './session-terminal-view'
 
+vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'personal' }) }))
+
 vi.mock('@/lib/i18n', () => ({
   useT: () => ({ t: (key: string) => key }),
   t: (key: string) => key,
@@ -13,12 +15,7 @@ vi.mock('@/lib/terminal-themes', () => ({
     fontFamily: "'JetBrains Mono', ui-monospace, monospace",
     themeId: 'hacker-green',
   },
-  getThemeById: () => ({
-    theme: {
-      background: '#000000',
-      foreground: '#00ff41',
-    },
-  }),
+  useResolvedTerminalTheme: () => ({ background: '#000000', foreground: '#00ff41' }),
 }))
 
 vi.mock('./ai-command-bar', () => ({
@@ -113,7 +110,7 @@ describe('session terminal view', () => {
     expect(screen.getByRole('button', { name: 'workspace.mode.terminal' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'workspace.mode.workspace' })).toBeInTheDocument()
     expect(screen.queryByTitle('terminal.openBrowser')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /ai/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^ai$/i })).not.toBeInTheDocument()
     expect(screen.getByTitle('rightSidebar.terminal')).toBeInTheDocument()
   })
 
@@ -227,4 +224,24 @@ describe('session terminal view', () => {
     fireEvent.click(screen.getByTitle('terminal.openLatestLink'))
     expect(openLink).toHaveBeenCalledWith('https://example.com/docs')
   })
+
+  it('shows the terminal style tip once and opens the appearance tab from it', () => {
+    localStorage.removeItem('shellbeam.terminalStyleTipSeen')
+    const requested: string[] = []
+    const listener = (event: Event) => requested.push((event as CustomEvent<{ tab: string }>).detail.tab)
+    window.addEventListener('shellbeam:terminal-sidebar-tab', listener)
+    const props = {
+      sessionId: 'session-tip', session: { sessionId: 'session-tip', status: 'running', username: 'root' } as never,
+      hostName: 'web', hostAddress: '10.0.0.5', chunkEmitterRef: { current: {} }, onSendRaw: () => {},
+    }
+    const view = render(<SessionTerminalView {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'terminal.styleTip.action' }))
+    expect(requested).toEqual(['appearance'])
+    expect(screen.queryByTestId('terminal-style-tip')).not.toBeInTheDocument()
+    view.unmount()
+    render(<SessionTerminalView {...props} />)
+    expect(screen.queryByTestId('terminal-style-tip')).not.toBeInTheDocument()
+    window.removeEventListener('shellbeam:terminal-sidebar-tab', listener)
+  })
 })
+

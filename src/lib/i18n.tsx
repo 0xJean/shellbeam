@@ -1,8 +1,10 @@
-import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, type ReactNode } from 'react'
 import en from './locales/en'
 import zhCN from './locales/zh-CN'
 
 export type Locale = 'en' | 'zh-CN'
+/** A fixed language, or 'system' to follow the OS language. */
+export type LocalePreference = Locale | 'system'
 export const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
   { value: 'en', label: 'English' },
   { value: 'zh-CN', label: '简体中文' },
@@ -11,12 +13,29 @@ export const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
 const LOCALE_KEY = 'shellbeam.locale'
 const dictionaries: Record<Locale, Record<string, string>> = { en, 'zh-CN': zhCN }
 
+function systemLocale(): Locale {
+  return navigator.language?.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
+}
+
+/** Nothing stored means following the system. */
+function readPreference(): LocalePreference {
+  try {
+    const stored = localStorage.getItem(LOCALE_KEY)
+    if (stored === 'en' || stored === 'zh-CN') return stored
+  } catch { /* Storage may be unavailable; follow the system. */ }
+  return 'system'
+}
+
+function writePreference(preference: LocalePreference) {
+  try {
+    if (preference === 'system') localStorage.removeItem(LOCALE_KEY)
+    else localStorage.setItem(LOCALE_KEY, preference)
+  } catch { /* Preference stays for this session only. */ }
+}
+
 function detectLocale(): Locale {
-  const stored = localStorage.getItem(LOCALE_KEY)
-  if (stored === 'en' || stored === 'zh-CN') return stored
-  const lang = navigator.language
-  if (lang.startsWith('zh')) return 'zh-CN'
-  return 'en'
+  const preference = readPreference()
+  return preference === 'system' ? systemLocale() : preference
 }
 
 function translate(locale: Locale, key: string, params?: Record<string, string | number>): string {
@@ -37,18 +56,28 @@ export function t(key: string, params?: Record<string, string | number>): string
 
 interface I18nContextValue {
   locale: Locale
-  setLocale: (l: Locale) => void
+  preference: LocalePreference
+  setLocale: (l: LocalePreference) => void
   t: (key: string, params?: Record<string, string | number>) => string
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null)
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(detectLocale)
+  const [preference, setPreference] = useState<LocalePreference>(readPreference)
+  const [system, setSystem] = useState<Locale>(systemLocale)
+  const locale = preference === 'system' ? system : preference
 
-  const setLocale = useCallback((l: Locale) => {
-    localStorage.setItem(LOCALE_KEY, l)
-    setLocaleState(l)
+  useEffect(() => {
+    const onChange = () => setSystem(systemLocale())
+    window.addEventListener('languagechange', onChange)
+    return () => window.removeEventListener('languagechange', onChange)
+  }, [])
+
+  const setLocale = useCallback((l: LocalePreference) => {
+    writePreference(l)
+    setPreference(l)
+    setSystem(systemLocale())
   }, [])
 
   const tFn = useCallback(
@@ -56,7 +85,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     [locale],
   )
 
-  const value = useMemo(() => ({ locale, setLocale, t: tFn }), [locale, setLocale, tFn])
+  const value = useMemo(() => ({ locale, preference, setLocale, t: tFn }), [locale, preference, setLocale, tFn])
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }
 
@@ -67,9 +96,8 @@ export function useT() {
   const locale = detectLocale()
   return {
     locale,
-    setLocale: (l: Locale) => {
-      localStorage.setItem(LOCALE_KEY, l)
-    },
+    preference: readPreference(),
+    setLocale: writePreference,
     t: (key: string, params?: Record<string, string | number>) => translate(locale, key, params),
   }
 }

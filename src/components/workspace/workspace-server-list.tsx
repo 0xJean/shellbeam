@@ -1,9 +1,10 @@
-import { useMemo, useState, type ComponentType, type ReactNode } from 'react'
+import { SegmentedMeter, type MeterKind } from '@/components/ui/segmented-meter'
+import { useMemo, useState, type ReactNode } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { getResourceUsageTextClassName } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
-import { Clock, Cpu, HardDrive, KeyRound, LockKeyhole, MemoryStick, Route, Search, Tags } from 'lucide-react'
+import { Clock, KeyRound, LockKeyhole, Route, Search, Tags } from 'lucide-react'
 
 type ServerBadgeTone = 'default' | 'good' | 'warn' | 'bad' | 'info'
 type ServerSearchValue = string | number | null | undefined | false
@@ -56,6 +57,11 @@ interface WorkspaceServerListProps {
   getSearchData?: (host: HostProfile) => WorkspaceServerSearchData
   itemTestIdPrefix?: string
   presentation?: 'panel' | 'mobile'
+  /** `compact` is the v3 asset list: one row per host with C/M/D bars and a risk label. */
+  variant?: 'default' | 'compact'
+  /** Replaces the built-in title and search (the caller owns filtering). */
+  header?: ReactNode
+  renderLeading?: (host: HostProfile) => ReactNode
 }
 
 function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: ServerBadgeTone }) {
@@ -150,67 +156,59 @@ function formatPercent(value: number | null | undefined, t: ReturnType<typeof us
 }
 
 function CompactResourceMetric({
-  icon: Icon,
+  kind,
   label,
   value,
   detail,
   t,
 }: {
-  icon: ComponentType<{ className?: string }>
+  kind: MeterKind
   label: string
   value?: number | null
   detail?: ReactNode
   t: ReturnType<typeof useT>['t']
 }) {
   const percent = value == null ? null : Math.min(100, Math.max(0, Math.round(value)))
-  const radius = 13
-  const circumference = 2 * Math.PI * radius
-  const offset = circumference - (circumference * (percent ?? 0)) / 100
   const title = detail ? `${label} ${formatPercent(value, t)} · ${detail}` : `${label} ${formatPercent(value, t)}`
 
   return (
-    <div
-      role="img"
-      aria-label={title}
-      title={title}
-      className="flex min-w-0 items-center gap-1.5"
-    >
-      <span className={cn('relative h-8 w-8 shrink-0', getResourceUsageTextClassName(value))}>
-        <svg viewBox="0 0 32 32" className="h-8 w-8 -rotate-90" aria-hidden="true">
-          <circle cx="16" cy="16" r={radius} fill="none" stroke="var(--workspace-meter-track)" strokeWidth="3.5" />
-          <circle
-            cx="16"
-            cy="16"
-            r={radius}
-            fill="none"
-            stroke="currentColor"
-            strokeLinecap="round"
-            strokeWidth="3.5"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-          />
-        </svg>
-        <span className="absolute inset-0 flex items-center justify-center font-mono text-[9px] font-semibold text-[var(--workspace-text-strong)]">
-          {percent ?? '--'}
-        </span>
+    <div role="img" aria-label={title} title={title} className="min-w-0">
+      <span className="flex items-center justify-between gap-1 text-[10px] font-medium text-[var(--workspace-text-muted)]">
+        <span className="truncate">{label}</span>
+        <span className={cn('font-mono tabular-nums', getResourceUsageTextClassName(value), percent == null && 'text-[var(--workspace-text-subtle)]')}>{percent == null ? '--' : `${percent}%`}</span>
       </span>
-      <span className="min-w-0">
-        <span className="flex items-center gap-1 truncate text-[10px] font-semibold uppercase text-[var(--workspace-text-muted)]">
-          <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
-          <span className="truncate">{label}</span>
-        </span>
-        <span className="block truncate font-mono text-[10px] text-[var(--workspace-text-strong)]">{formatPercent(value, t)}</span>
-      </span>
+      <SegmentedMeter kind={kind} value={value} segments={8} className="mt-1" />
     </div>
   )
 }
 
+/** Grid cell for the C/M/D bars: second line under the name when narrow, own column when wide. */
+const COMPACT_BARS_CELL = 'col-span-2 col-start-2 row-start-2 [@container(min-width:26rem)]:col-span-1 [@container(min-width:26rem)]:col-start-3 [@container(min-width:26rem)]:row-start-1'
+
+function CompactBars({ metrics, t, className }: { metrics: WorkspaceServerResourceMetrics; t: ReturnType<typeof useT>['t']; className?: string }) {
+  const rows: Array<[MeterKind, string, number | null | undefined, ReactNode]> = [
+    ['cpu', 'C', metrics.cpuPercent, metrics.cpuDetail],
+    ['memory', 'M', metrics.memoryPercent, metrics.memoryDetail],
+    ['disk', 'D', metrics.diskPercent, metrics.diskDetail],
+  ]
+  return <div className={cn('grid min-w-0 gap-1', className)}>
+    {rows.map(([kind, letter, value, detail]) => {
+      const label = { cpu: t('workspace.common.cpu'), memory: t('workspace.common.memoryShort'), disk: t('workspace.common.diskShort') }[kind as 'cpu' | 'memory' | 'disk']
+      return <div key={kind} role="img" aria-label={`${label} ${formatPercent(value, t)}`} title={detail ? `${label} ${formatPercent(value, t)} · ${detail}` : undefined} className="grid grid-cols-[0.7rem_minmax(0,1fr)_1.6rem] items-center gap-1.5">
+        <span className="font-mono text-[10px] text-[var(--workspace-text-subtle)]">{letter}</span>
+        <SegmentedMeter kind={kind} value={value} segments={8} className="h-1" />
+        <span className={cn('text-right font-mono text-[10px] tabular-nums', getResourceUsageTextClassName(value), value == null && 'text-[var(--workspace-text-subtle)]')}>{value == null ? '--' : Math.round(value)}</span>
+      </div>
+    })}
+  </div>
+}
+
 function ServerResourceMetrics({ metrics, t }: { metrics: WorkspaceServerResourceMetrics; t: ReturnType<typeof useT>['t'] }) {
   return (
-    <div className="mt-3 grid min-w-0 grid-cols-3 gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2 py-2">
-      <CompactResourceMetric icon={Cpu} label={t('workspace.common.cpu')} value={metrics.cpuPercent} detail={metrics.cpuDetail} t={t} />
-      <CompactResourceMetric icon={MemoryStick} label={t('workspace.common.memoryShort')} value={metrics.memoryPercent} detail={metrics.memoryDetail} t={t} />
-      <CompactResourceMetric icon={HardDrive} label={t('workspace.common.diskShort')} value={metrics.diskPercent} detail={metrics.diskDetail} t={t} />
+    <div className="mt-3 grid min-w-0 grid-cols-3 gap-3 rounded-lg bg-[var(--workspace-surface-800)] px-2.5 py-2">
+      <CompactResourceMetric kind="cpu" label={t('workspace.common.cpu')} value={metrics.cpuPercent} detail={metrics.cpuDetail} t={t} />
+      <CompactResourceMetric kind="memory" label={t('workspace.common.memoryShort')} value={metrics.memoryPercent} detail={metrics.memoryDetail} t={t} />
+      <CompactResourceMetric kind="disk" label={t('workspace.common.diskShort')} value={metrics.diskPercent} detail={metrics.diskDetail} t={t} />
     </div>
   )
 }
@@ -265,6 +263,9 @@ export function WorkspaceServerList({
   getSearchData,
   itemTestIdPrefix,
   presentation = 'panel',
+  variant = 'default',
+  header,
+  renderLeading,
 }: WorkspaceServerListProps) {
   const { t } = useT()
   const [query, setQuery] = useState('')
@@ -282,11 +283,11 @@ export function WorkspaceServerList({
       data-testid="workspace-server-list"
       data-tour="monitor-servers"
       className={cn(
-      'flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] shadow-[var(--workspace-shadow-card)]',
+      'sb-card flex min-w-0 flex-col overflow-hidden',
       !isMobile && 'h-full min-h-0',
       )}
     >
-      <div className="border-b border-[color:var(--workspace-border-soft)] px-4 py-3">
+      {header ?? <div className="border-b border-[color:var(--workspace-border-soft)] px-4 py-3">
         <div className="text-sm font-semibold text-[var(--workspace-text-strong)]">{t('workspace.serverIndex.title')}</div>
         <div className="mt-1 text-xs text-[var(--workspace-text-muted)]">{t('workspace.serverIndex.matched', { visible: visibleHosts.length, total: totalCount })}</div>
         <div className="relative mt-3">
@@ -298,8 +299,8 @@ export function WorkspaceServerList({
             className="h-9 w-full rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] pl-8 pr-3 text-xs text-[var(--workspace-text-strong)] outline-none transition-colors placeholder:text-[var(--workspace-text-subtle)] focus:border-[color:var(--workspace-border-glow)]"
           />
         </div>
-      </div>
-      <div className={cn(isMobile ? 'p-3 pb-4' : 'min-h-0 flex-1 overflow-auto p-3 pb-4')}>
+      </div>}
+      <div className={cn(variant === 'compact' ? cn('[container-type:inline-size]', isMobile ? 'pb-2' : 'min-h-0 flex-1 overflow-auto') : isMobile ? 'p-3 pb-4' : 'min-h-0 flex-1 overflow-auto p-3 pb-4')}>
         {allOption && !normalizedQuery && (
           <button
             type="button"
@@ -319,7 +320,7 @@ export function WorkspaceServerList({
           </button>
         )}
 
-        <div className="space-y-2">
+        <div className={variant === 'compact' ? 'divide-y divide-[color:var(--workspace-border-soft)]' : 'space-y-2'}>
           {visibleHosts.map((host) => {
             const key = getHostKey(host)
             const statusBadge = getStatusBadge?.(host)
@@ -329,6 +330,32 @@ export function WorkspaceServerList({
             const metrics = getResourceMetrics?.(host)
             const metricsContent = renderMetrics?.(host) ?? (!isInaccessible && metrics ? <ServerResourceMetrics metrics={metrics} t={t} /> : null)
             const systemLabel = getSystemLabel?.(host)
+            if (variant === 'compact') return (
+              <button
+                key={key}
+                type="button"
+                data-testid={itemTestIdPrefix ? `${itemTestIdPrefix}-${key}` : undefined}
+                aria-current={selectedKey === key ? 'true' : undefined}
+                onClick={() => onSelect(key, host)}
+                onDoubleClick={() => onRowDoubleClick?.(host)}
+                // Narrow lists (<26rem) drop the C/M/D bars under the name so the name keeps room to read.
+                className={cn('grid w-full min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-3 text-left transition-colors [@container(min-width:26rem)]:grid-cols-[2rem_minmax(0,1fr)_8.5rem_4rem]',
+                  selectedKey === key ? 'bg-[var(--workspace-surface-row-selected)] shadow-[inset_3px_0_0_hsl(var(--primary))]' : 'hover:bg-[var(--workspace-surface-800)]')}
+              >
+                <span className="col-start-1 row-start-1 flex justify-center">{renderLeading?.(host) ?? renderStatusIcon?.(host)}</span>
+                <div className="col-start-2 row-start-1 min-w-0">
+                  <div className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]" title={systemLabel ? `${host.name} (${systemLabel})` : host.name}>{host.name}</div>
+                  <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--workspace-text-muted)]">
+                    {renderRegionLine?.(host)}
+                    <span className="truncate font-mono">{host.address}</span>
+                  </div>
+                </div>
+                {isInaccessible || !metrics
+                  ? <span className={cn('truncate text-[11px] text-[var(--workspace-text-subtle)]', COMPACT_BARS_CELL)}>{isInaccessible ? t('workspace.serverIndex.offlineNoData') : statusBadge?.label}</span>
+                  : <CompactBars metrics={metrics} t={t} className={COMPACT_BARS_CELL} />}
+                <span className="col-start-3 row-start-1 whitespace-nowrap text-right [@container(min-width:26rem)]:col-start-4">{(isInaccessible ? visibleStatusBadge : primaryBadge) && <Badge tone={(isInaccessible ? visibleStatusBadge : primaryBadge)!.tone}>{(isInaccessible ? visibleStatusBadge : primaryBadge)!.label}</Badge>}</span>
+              </button>
+            )
             return (
               <button
                 key={key}
@@ -337,10 +364,10 @@ export function WorkspaceServerList({
                 onClick={() => onSelect(key, host)}
                 onDoubleClick={() => onRowDoubleClick?.(host)}
                 className={cn(
-                  'w-full rounded-2xl border px-3.5 py-3.5 text-left transition-[background-color,border-color,box-shadow]',
+                  'w-full rounded-xl px-3.5 py-3 text-left transition-[background-color,box-shadow]',
                   selectedKey === key
-                    ? 'border-[color:var(--workspace-border-glow)] bg-[var(--workspace-surface-row-selected)] shadow-[inset_3px_0_0_var(--workspace-primary-500),var(--workspace-shadow-card)]'
-                    : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-row)] hover:border-[color:var(--workspace-border-strong)] hover:bg-[var(--workspace-surface-950)] hover:shadow-[var(--workspace-shadow-card)]',
+                    ? 'bg-primary/10 shadow-[inset_3px_0_0_hsl(var(--primary))]'
+                    : 'hover:bg-[var(--workspace-surface-800)]',
                 )}
               >
                 <div className="flex min-w-0 items-start justify-between gap-3">

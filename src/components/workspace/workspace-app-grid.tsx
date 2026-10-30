@@ -3,6 +3,13 @@ import { t } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import {
   ActivitySquare,
+  AppWindow,
+  ChartSpline,
+  Container,
+  Cpu,
+  LayoutDashboard,
+  LockKeyhole,
+  Wrench,
   Boxes,
   Box,
   CalendarClock,
@@ -12,6 +19,7 @@ import {
   Globe,
   LayoutGrid,
   Network,
+  ChartLine,
   ScrollText,
   ShieldCheck,
   SquareTerminal,
@@ -22,6 +30,7 @@ const APPS: Array<{ id: WorkspaceAppId; labelKey: string; icon: typeof LayoutGri
   { id: 'assetInventory', labelKey: 'workspace.app.assetInventory', icon: Network, accent: 'from-[var(--workspace-primary-300)] via-[var(--workspace-primary-500)] to-[var(--workspace-accent-text)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-network-glow)]' },
   { id: 'fileTransfer', labelKey: 'workspace.app.fileTransfer', icon: FolderKanban, accent: 'from-[var(--workspace-primary-300)] via-[var(--workspace-primary-400)] to-[var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-network-glow)]' },
   { id: 'fileSystem', labelKey: 'workspace.app.fileSystem', icon: FolderTree, accent: 'from-[var(--workspace-metric-memory-from)] via-[var(--workspace-status-good)] to-[var(--workspace-metric-memory-to)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-memory-glow)]' },
+  { id: 'charts', labelKey: 'workspace.app.charts', icon: ChartLine, accent: 'from-[var(--workspace-metric-memory-from)] via-[var(--workspace-status-good)] to-[var(--workspace-metric-memory-to)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-memory-glow)]' },
   { id: 'processes', labelKey: 'workspace.app.processes', icon: ActivitySquare, accent: 'from-[var(--workspace-metric-memory-from)] via-[var(--workspace-status-good)] to-[var(--workspace-metric-memory-to)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-memory-glow)]' },
   { id: 'services', labelKey: 'workspace.app.services', icon: Files, accent: 'from-[var(--workspace-primary-300)] via-[var(--workspace-primary-500)] to-[var(--workspace-accent-text)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[0_18px_34px_var(--workspace-metric-cpu-glow)]' },
   { id: 'network', labelKey: 'workspace.network.title', icon: Network, accent: 'from-[var(--workspace-status-info)] via-[var(--workspace-primary-400)] to-[var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[var(--workspace-metric-network-glow)]' },
@@ -37,7 +46,7 @@ const APPS: Array<{ id: WorkspaceAppId; labelKey: string; icon: typeof LayoutGri
 interface WorkspaceAppGridProps {
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
-  variant?: 'panel' | 'desktop' | 'mobile' | 'ios-grid' | 'ios-dock'
+  variant?: 'panel' | 'mobile' | 'ios-grid' | 'ios-dock'
   apps?: WorkspaceAppId[]
 }
 
@@ -54,9 +63,7 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
             ? 'grid-cols-4 px-1 gap-2'
             : variant === 'mobile'
               ? 'grid-cols-4'
-              : variant === 'desktop'
-                ? 'grid-cols-1 justify-items-start'
-                : 'sm:grid-cols-2 xl:grid-cols-3',
+              : 'sm:grid-cols-2 xl:grid-cols-3',
       )}
     >
       {visibleApps.map((app) => {
@@ -75,15 +82,11 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
                 ? 'flex flex-col items-center active:scale-90 active:opacity-75'
                 : variant === 'mobile'
                   ? 'flex flex-col items-center gap-2 rounded-[26px] px-2 py-2'
-                  : variant === 'desktop'
-                    ? 'group flex w-20 flex-col items-center gap-1 px-2 py-2'
-                    : 'rounded-2xl border px-4 py-4',
+                  : 'rounded-2xl border px-4 py-4',
             activeApp === app.id
               ? variant === 'panel'
                 ? 'border-primary/40 bg-primary/10 text-foreground'
-                : variant === 'desktop'
-                  ? 'text-[var(--workspace-text-strong)]'
-                  : variant === 'ios-grid' || variant === 'ios-dock'
+                : variant === 'ios-grid' || variant === 'ios-dock'
                     ? ''
                     : 'scale-[1.02] text-[var(--workspace-text-strong)]'
               : variant === 'panel'
@@ -103,11 +106,8 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
                   ? 'h-[52px] w-[52px] rounded-[12px] shadow-sm bg-gradient-to-br ring-1 ring-[var(--workspace-border-soft)]'
                   : variant === 'mobile'
                     ? 'relative h-14 w-14 overflow-hidden rounded-[18px] shadow-lg'
-                    : variant === 'desktop'
-                      ? 'h-12 w-12 rounded-lg border border-primary/20 bg-primary/10 group-hover:border-primary/50 group-hover:bg-primary/25'
-                      : 'h-12 w-12 rounded-2xl bg-muted',
+                    : 'h-12 w-12 rounded-2xl bg-muted',
               (variant === 'mobile' || variant === 'ios-grid' || variant === 'ios-dock') && `${app.accent} ${app.glow}`,
-              activeApp === app.id && variant === 'desktop' && 'border-primary/50 bg-primary/25',
               activeApp === app.id && variant === 'mobile' && 'ring-2 ring-[color:var(--workspace-border-glow)]',
             )}
           >
@@ -119,7 +119,6 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
                 variant === 'ios-grid' ? 'h-8 w-8 text-[var(--workspace-primary-foreground)] drop-shadow-sm' :
                 variant === 'ios-dock' ? 'h-7 w-7 text-[var(--workspace-primary-foreground)] drop-shadow-sm' :
                 variant === 'mobile' ? 'h-7 w-7' : 'h-6 w-6',
-                variant === 'desktop' ? 'text-[color:var(--workspace-primary-400)]' : '',
               )}
             />
           </div>
@@ -129,8 +128,7 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
                 className={cn(
                   'font-semibold truncate w-full px-1', 
                   variant === 'ios-grid' ? 'text-[11px] text-[var(--workspace-primary-foreground)] drop-shadow-md tracking-wide' : 
-                  variant === 'mobile' ? 'text-[11px] text-[var(--workspace-text-strong)]' : 
-                  variant === 'desktop' ? 'text-[12px] leading-4 text-[var(--workspace-text-strong)] [text-shadow:0_1px_2px_var(--workspace-elevated-ring)]' : 'text-sm'
+                  variant === 'mobile' ? 'text-[11px] text-[var(--workspace-text-strong)]' : 'text-sm'
                 )}
               >
                 {label}
@@ -144,5 +142,100 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
         )
       })}
     </div>
+  )
+}
+
+/** v3 springboard tile: the app's gradient icon with an optional count badge. */
+export function WorkspaceAppIcon({ app, size = 'lg', badge }: { app: WorkspaceAppId; size?: 'lg' | 'md' | 'sm'; badge?: number }) {
+  const meta = APPS.find((entry) => entry.id === app)
+  if (!meta) return null
+  const Icon = meta.icon
+  return (
+    <span
+      data-testid={`workspace-app-icon-${app}`}
+      className={cn(
+        'relative flex shrink-0 items-center justify-center bg-gradient-to-br ring-1 ring-[var(--workspace-border-soft)]',
+        size === 'lg' ? 'h-[60px] w-[60px] rounded-[14px] shadow-md' : size === 'md' ? 'h-[52px] w-[52px] rounded-[12px] shadow-sm' : 'h-[34px] w-[34px] rounded-[8px]',
+        meta.accent,
+      )}
+    >
+      <Icon aria-hidden="true" className={cn('text-[var(--workspace-primary-foreground)] drop-shadow-sm', size === 'lg' ? 'h-[30px] w-[30px]' : size === 'md' ? 'h-7 w-7' : 'h-[18px] w-[18px]')} />
+      {badge ? (
+        <em aria-hidden="true" className="absolute -right-[7px] -top-[6px] flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-[var(--workspace-status-bad)] px-1.5 text-[13px] font-semibold not-italic text-[var(--workspace-primary-foreground)] shadow-sm">
+          {badge > 99 ? '99+' : badge}
+        </em>
+      ) : null}
+    </span>
+  )
+}
+
+const LIST_ICONS: Partial<Record<WorkspaceAppId, typeof LayoutGrid>> = {
+  terminal: SquareTerminal, browser: AppWindow, charts: ChartSpline, overview: LayoutDashboard, processes: Cpu, services: Boxes,
+  network: Globe, logs: ScrollText, fileSystem: FolderTree, fileTransfer: FolderKanban, docker: Container, scheduledTasks: CalendarClock,
+  sitesSsl: LockKeyhole, toolManager: Wrench, assetInventory: Network,
+}
+
+/** v3 list-layout groups: sessions, observation, then management tools. */
+const LIST_GROUPS: Array<{ labelKey: string; apps: WorkspaceAppId[] }> = [
+  { labelKey: 'workspace.nav.sessions', apps: ['terminal', 'browser'] },
+  { labelKey: 'workspace.nav.observe', apps: ['charts', 'overview', 'processes', 'services', 'network', 'logs'] },
+  { labelKey: 'workspace.nav.manage', apps: ['fileSystem', 'fileTransfer', 'docker', 'scheduledTasks', 'sitesSsl', 'toolManager', 'assetInventory'] },
+]
+
+/** Vertical app navigation for the workspace's list layout. */
+export function WorkspaceAppList({ activeApp, onSelectApp }: { activeApp: WorkspaceAppId; onSelectApp: (app: WorkspaceAppId) => void }) {
+  return (
+    <nav data-testid="workspace-app-list" aria-label={t('workspace.layout.apps')} className="flex flex-col">
+      {LIST_GROUPS.map((group) => (
+        <div key={group.labelKey} className="flex flex-col gap-px">
+          <div className="px-2.5 pb-1.5 pt-4 text-[11.5px] font-medium text-[var(--workspace-text-subtle)]">{t(group.labelKey)}</div>
+          {group.apps.map((id) => {
+            const app = APPS.find((entry) => entry.id === id)
+            if (!app) return null
+            const Icon = LIST_ICONS[id] ?? app.icon
+            const active = activeApp === id
+            return (
+              <button key={id} type="button" aria-current={active ? 'page' : undefined} data-testid={`workspace-app-list-${id}`} onClick={() => onSelectApp(id)}
+                className={cn('flex h-[30px] items-center gap-2.5 rounded-md px-2.5 text-left text-[13px] transition-colors',
+                  active ? 'bg-[var(--workspace-nav-active-bg)] font-medium text-[var(--workspace-nav-active-text)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-text-strong)]')}>
+                <Icon className={cn('h-4 w-4 shrink-0', active ? '' : 'text-[var(--workspace-text-muted)]')} aria-hidden="true" />
+                <span className="truncate">{t(app.labelKey)}</span>
+              </button>
+            )
+          })}
+        </div>
+      ))}
+    </nav>
+  )
+}
+
+/** v3 desktop order: the overview first, then sessions, files and system tools. */
+const DESKTOP_APPS: WorkspaceAppId[] = ['overview', 'terminal', 'charts', 'assetInventory', 'fileTransfer', 'fileSystem', 'processes', 'services', 'network', 'toolManager', 'logs', 'browser', 'docker', 'sitesSsl', 'scheduledTasks']
+
+/** Line icon for an app, shared by the desktop rail, window title bars and the taskbar. */
+export function WorkspaceAppLineIcon({ app, className }: { app: WorkspaceAppId; className?: string }) {
+  const Icon = LIST_ICONS[app] ?? LayoutGrid
+  return <Icon className={className} aria-hidden="true" />
+}
+
+/** v3 desktop icon rail: two columns of quiet tiles, with a dot under apps that have a window open. */
+export function WorkspaceDesktopRail({ openApps, onSelectApp }: { openApps: ReadonlySet<WorkspaceAppId>; onSelectApp: (app: WorkspaceAppId) => void }) {
+  return (
+    <nav data-testid="workspace-desktop-rail" aria-label={t('workspace.layout.apps')} className="grid w-[168px] grid-cols-2 content-start gap-x-1.5 gap-y-2.5">
+      {DESKTOP_APPS.map((app) => {
+        const label = t(APPS.find((entry) => entry.id === app)?.labelKey ?? 'workspace.app.overview')
+        const open = openApps.has(app)
+        return (
+          <button key={app} type="button" onClick={() => onSelectApp(app)} aria-label={label} data-open={open || undefined}
+            className="group relative flex min-w-0 flex-col items-center gap-2 text-center text-[11.5px] leading-4 text-[var(--workspace-text)]">
+            <span className="flex h-[46px] w-[46px] items-center justify-center rounded-xl bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-[var(--workspace-shadow-card)] ring-1 ring-[color:var(--workspace-border-soft)] transition-colors group-hover:ring-[color:var(--workspace-border-strong)]">
+              <WorkspaceAppLineIcon app={app} className="h-[21px] w-[21px]" />
+            </span>
+            {open && <i aria-hidden="true" className="absolute top-[49px] h-1 w-1 rounded-full bg-[var(--workspace-primary-400)]" />}
+            <span className="w-full truncate px-0.5">{label}</span>
+          </button>
+        )
+      })}
+    </nav>
   )
 }

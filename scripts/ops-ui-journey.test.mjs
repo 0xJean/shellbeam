@@ -63,7 +63,7 @@ test('service confirmation does not click a response if the visible dialog chang
 })
 
 function auditPages({ targetPage = 2, pages = 3, problem } = {}) {
-  const dom = new JSDOM('<section data-testid="operations-audit-center"><select data-testid="operations-source-filter"><option value="all">All</option><option value="workspace">Workspace</option></select><select data-testid="operations-filter"><option value="all">All</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page"></span><button data-testid="operations-older">Older</button><div data-testid="page-rows"></div></section>')
+  const dom = new JSDOM('<section data-testid="operations-audit-center"><div data-testid="operations-source-segments"><button data-value="all" aria-checked="true">All</button><button data-value="workspace" aria-checked="false">Workspace</button></div><div data-testid="operations-status-segments"><button data-value="all" aria-checked="true">All</button><button data-value="completed" aria-checked="false">Completed</button><button data-value="cancelled" aria-checked="false">Cancelled</button></div><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page"></span><button data-testid="operations-older">Older</button><div data-testid="page-rows"></div></section>')
   const document = dom.window.document, actions = []
   let page = pages
   const element = value => typeof value === 'string' ? document.querySelector(value) : value
@@ -83,7 +83,9 @@ function auditPages({ targetPage = 2, pages = 3, problem } = {}) {
     async isDisplayed(value) { return !element(value).hidden },
     async text(value) { return element(value).textContent },
     async select(selector, value) { element(selector).value = value; actions.push([element(selector).dataset.testid, value]); page = 1; render() },
-    async click(selector) { const row = element(selector); assert(!row.disabled); actions.push(row.dataset.testid); page = row.dataset.testid === 'operations-refresh' ? 1 : page + 1; render() },
+    async click(selector) { const row = element(selector); assert(!row.disabled)
+      if (row.dataset.value) { for (const peer of row.parentElement.children) peer.setAttribute('aria-checked', String(peer === row)); actions.push([row.parentElement.dataset.testid, row.dataset.value]); page = 1; render(); return }
+      actions.push(row.dataset.testid); page = row.dataset.testid === 'operations-refresh' ? 1 : page + 1; render() },
     async until(read) { const result = await read(); assert(result, 'unit visible UI state required'); return result },
   }
   return { dom, document, driver, actions, options: { driver, selector: '[data-testid="operation-audit-row"][data-job-id="saved-job"]', status: 'completed' } }
@@ -94,10 +96,10 @@ test('audit lookup uses actual Workspace/status controls, resets old pages and f
   try {
     const row = await findOpsUiAuditRow(unit.options)
     assert.equal(row.dataset.jobId, 'saved-job')
-    assert.deepEqual(unit.actions, [['operations-source-filter', 'workspace'], ['operations-filter', 'completed'], 'operations-refresh', 'operations-older'])
+    assert.deepEqual(unit.actions, [['operations-source-segments', 'workspace'], ['operations-status-segments', 'completed'], 'operations-refresh', 'operations-older'])
     assert.equal(unit.document.querySelector('[data-testid="operations-page"]').textContent, 'Page 2')
     await findOpsUiAuditRow(unit.options)
-    assert.deepEqual(unit.actions.slice(-4), [['operations-source-filter', 'workspace'], ['operations-filter', 'completed'], 'operations-refresh', 'operations-older'])
+    assert.deepEqual(unit.actions.slice(-4), [['operations-source-segments', 'workspace'], ['operations-status-segments', 'completed'], 'operations-refresh', 'operations-older'])
   } finally { unit.dom.window.close() }
 })
 
@@ -203,6 +205,33 @@ test('startup refuses an existing Vault without filling or dismissing Welcome', 
   await assert.rejects(initializeOpsUiVault({ driver, password: 'PRIVATE_TEST_VALUE', record: async () => {} }), /^Error: ops_ui_existing_vault_refused$/)
 })
 
+test('first run creates the Vault on Welcome, then dismisses Welcome once', async () => {
+  const S = OPS_UI_SELECTORS
+  const password = 'PRIVATE_TEST_VALUE'
+  const writes = []
+  const values = new Map()
+  let phase = 'form'
+  const present = (css) => (phase === 'form' && [S.welcomeVaultForm, S.welcomePassword, S.welcomeConfirm, S.welcomeAck, S.welcomeCreate, S.welcome].includes(css))
+    || (phase === 'host' && css === S.welcome)
+    || (phase === 'dashboard' && css === S.dashboard)
+  const driver = {
+    async findAll(css) { return present(css) ? [{ css }] : [] },
+    async isDisplayed(css) { return present(css) },
+    async waitFor() {},
+    async until(check) { for (let i = 0; i < 20; i += 1) if (await check()) return; assert.fail('never reached the dashboard') },
+    async attr(css, name) { return name === 'value' ? values.get(css) : null },
+    async fill(css, value) { writes.push(css); values.set(css, value) },
+    async click(css) {
+      writes.push(css)
+      if (css === S.welcomeCreate) phase = 'host'
+      if (css === S.welcome) phase = 'dashboard'
+    },
+  }
+  const result = await initializeOpsUiVault({ driver, password, record: async () => {} })
+  assert.deepEqual(result, { initialized: true, welcomeDismissed: true })
+  assert.deepEqual(writes, [S.welcomePassword, S.welcomeConfirm, S.welcomeAck, S.welcomeCreate, S.welcome])
+})
+
 function journeyContext() {
   const fixture = { schemaVersion: 1, hosts: Object.fromEntries(['jump', 'direct', 'via'].map((role, index) => [role, {
     name: `isolated ${role}`, address: '127.0.0.1', port: 22_001 + index, user: 'root', privateKeyPath: `/private/${role}.pem`, expectedFingerprint: 'SHA256:public-test-fingerprint',
@@ -234,6 +263,7 @@ function serviceSelectionUnit({ role = 'via', problem } = {}) {
       : { x: 176, y: 120, width: 1080, height: 540 }
   }
   const driver = {
+    async waitFor() {},
     async findAll(selector, parent = document) { return [...parent.querySelectorAll(selector)] },
     async isDisplayed(value) { return !element(value).closest('[hidden]') },
     async attr(value, field) { const row = element(value); return field === 'value' ? row.value : row.getAttribute(field) },
@@ -403,6 +433,7 @@ function ruleActivationDriver() {
     async horizontalScrollState() { return { width: 1054, contentWidth: 1054, left: 0 } },
     async until(fn) { assert(await fn()) },
     async findAll(css) {
+      if (css === '[data-testid="host-ops-drawer-close"]') return []
       assert.equal(css, '[data-testid="host-list-scroll-controls"] input[type="range"]')
       return []
     },
@@ -456,17 +487,17 @@ function recoveryDriver(state, restartedAfter, allowFresh) {
   return {
     reads,
     async horizontalScrollState() { return { width: 1054, contentWidth: 1054, left: 0 } },
-    async waitFor() {}, async fill() {}, async click() {},
+    async waitFor() {}, async fill() {},
+    async click(css) { const value = /operations-status-segments"\] \[data-value="([a-z]+)"/.exec(css)?.[1]; if (value) auditStatus = value },
     async findAll(css) { return css.includes('operation-audit-row') ? [css] : [] },
     async isDisplayed() { return true },
     async text(css) { assert(css.includes('operations-page')); return 'Page 1' },
     async select(css, value) {
-      if (css.includes('operations-filter')) auditStatus = value
-      else if (!css.includes('operations-source-filter')) { selected = css.includes('direct-host') ? 'direct' : 'via'; index = 0 }
+      if (css.includes('host-ops-open')) { selected = css.includes('direct-host') ? 'direct' : 'via'; index = 0 }
     },
     async attr(css, name) {
       if (name === 'disabled') return null
-      if (name === 'value') return css.includes('operations-source-filter') ? 'workspace' : auditStatus
+      if (name === 'aria-checked') return 'true'
       if (name === 'data-mode') return 'unlock'
       if (name === 'data-vault-id') return state.vaultId
       if (name === 'data-job-id') return /\[data-job-id="([^"]+)"\]/.exec(css)?.[1]
@@ -516,7 +547,7 @@ test('recovery never passes solely on a persisted healthy cache or without a res
 
 test('incident recovery awaits its evidence hook only after the matching resolved route is visible', async () => {
   const { fixture, state } = journeyContext()
-  const dom = new JSDOM('<section data-testid="operations-audit-center"><select data-testid="operations-source-filter"><option value="all">All</option><option value="workspace">Workspace</option></select><select data-testid="operations-filter"><option value="all">All</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page">Page 1</span><button data-testid="operations-older" disabled>Older</button></section>'), document = dom.window.document
+  const dom = new JSDOM('<section data-testid="operations-audit-center"><div data-testid="operations-source-segments"><button data-value="all" aria-checked="true">All</button><button data-value="workspace" aria-checked="false">Workspace</button></div><div data-testid="operations-status-segments"><button data-value="all" aria-checked="true">All</button><button data-value="completed" aria-checked="false">Completed</button><button data-value="cancelled" aria-checked="false">Cancelled</button></div><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page">Page 1</span><button data-testid="operations-older" disabled>Older</button></section>'), document = dom.window.document
   document.body.insertAdjacentHTML('beforeend', serviceWindows(fixture, state))
   let role = 'direct'
   let confirmed = false
@@ -527,8 +558,7 @@ test('incident recovery awaits its evidence hook only after the matching resolve
     async horizontalScrollState() { return { width: 1054, contentWidth: 1054, left: 0 } },
     async waitFor(css) { if (css.includes('data-alert-status="resolved"')) { assert(css.includes(`data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}"`)); observed.push(role) } },
     async select(css, value) {
-      if (css.includes('operations-')) document.querySelector(css).value = value
-      else role = css.includes('direct-host') ? 'direct' : 'via'
+      role = css.includes('direct-host') ? 'direct' : 'via'
     },
     async click(css) {
       if (css.includes('host-services-open')) {
@@ -557,6 +587,7 @@ test('incident recovery awaits its evidence hook only after the matching resolve
     async isDisplayed(row) { return !row.closest('[hidden]') },
     async rect() { return { x: 100, y: 150, width: 600, height: 60 } },
     async attr(css, name) {
+      if (name === 'aria-checked') return 'true'
       if (typeof css !== 'string') return css.getAttribute(name)
       if (css.includes('user-confirmation')) return document.querySelector(css).getAttribute(name)
       if (name === 'value') return document.querySelector(css).value

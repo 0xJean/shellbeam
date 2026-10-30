@@ -1,5 +1,4 @@
 import { flushLocalOpsHost, LOCAL_OPS_PERSISTENCE_EVENT, localOpsPersistenceError } from '@/lib/local-ops-persistence'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
@@ -13,11 +12,13 @@ import {
   loadScheduledTasks,
   normalizeScheduledTask,
   saveScheduledTasks,
-  scheduledTaskSummary,
   type ScheduledTask,
 } from '@/lib/scheduled-tasks'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
-import { CalendarClock, CheckCircle2, CircleAlert, Pause, Play, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { fill } from '@/lib/locales/probe-install'
+import { workspaceOpsPanelsCopy } from '@/lib/locales/workspace-ops-panels'
+import { cn } from '@/lib/utils'
+import { CheckCircle2, CircleAlert, Info, Play, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 interface ScheduledTasksPanelProps {
@@ -26,15 +27,18 @@ interface ScheduledTasksPanelProps {
   resolveAuthSecret: (host: HostProfile) => Promise<string>
 }
 
-function statusClass(status: ScheduledTask['lastStatus']) {
-  if (status === 'completed') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
-  if (status === 'failed' || status === 'unknown') return 'border-red-500/30 bg-red-500/10 text-red-600'
-  if (status === 'running') return 'border-blue-500/30 bg-blue-500/10 text-blue-600'
-  return 'border-border/60 bg-muted/30 text-muted-foreground'
+function statusTone(status: ScheduledTask['lastStatus']) {
+  if (status === 'running') return { dot: 'bg-[var(--workspace-status-good)]', text: 'text-[color:var(--workspace-status-good-text)]' }
+  if (status === 'unknown') return { dot: 'bg-[var(--workspace-status-warn)]', text: 'text-[color:var(--workspace-status-warn-text)]' }
+  if (status === 'failed') return { dot: 'bg-[var(--workspace-status-bad)]', text: 'text-[color:var(--workspace-status-bad-text)]' }
+  return { dot: 'bg-[var(--workspace-text-subtle)]', text: 'text-[var(--workspace-text-muted)]' }
 }
 
+const fieldClass = 'h-8 rounded-md border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] text-[13px] text-[var(--workspace-text-strong)]'
+
 export function ScheduledTasksPanel({ activeVaultId, host, resolveAuthSecret }: ScheduledTasksPanelProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const c = workspaceOpsPanelsCopy[locale].cron
   const [tasks, setTasks] = useState<ScheduledTask[]>(() => loadScheduledTasks(activeVaultId, host.id))
   const [name, setName] = useState('')
   const [command, setCommand] = useState('')
@@ -177,46 +181,79 @@ export function ScheduledTasksPanel({ activeVaultId, host, resolveAuthSecret }: 
   }
 
 
+  const formatTime = (value: number) => new Date(value).toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const persistenceFailed = localOpsPersistenceError(activeVaultId, host.id)
+
   return (
-    <section data-testid="scheduled-tasks-panel" className="space-y-3 rounded-xl border border-border/60 bg-card px-4 py-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 text-sm font-semibold"><CalendarClock className="h-4 w-4" />{t('workspace.scheduledTasks.title')}</h2>
-          <p className="mt-1 text-xs text-muted-foreground">{t('workspace.scheduledTasks.description')}</p>
+    <section data-testid="scheduled-tasks-panel" className="flex min-h-0 flex-col gap-4 p-4 text-[var(--workspace-text)] md:p-5">
+      <header className="min-w-0">
+        <h2 className="text-xl font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('workspace.scheduledTasks.title')}</h2>
+        <p className="mt-1 text-xs text-[var(--workspace-text-muted)]">{c.summary}</p>
+      </header>
+      {persistenceFailed && <p role="alert" className="rounded-lg bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[color:var(--workspace-status-bad-text)]">{t('localOps.persistenceFailed')}</p>}
+      {error && <p role="alert" className="rounded-lg bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[color:var(--workspace-status-bad-text)]">{error}</p>}
+      <div className="sb-card overflow-hidden">
+        {tasks.length === 0 ? <div className="px-4 py-8 text-center text-xs text-[var(--workspace-text-muted)]">{t('workspace.scheduledTasks.empty')}</div> : <div className="divide-y divide-[color:var(--workspace-border-soft)]">{tasks.map((task) => {
+          const tone = statusTone(task.lastStatus)
+          const busy = runningId !== null || task.lastStatus === 'running'
+          const schedule = task.lastStatus === 'running' && task.lastRunAt ? fill(c.startedAt, { time: formatTime(task.lastRunAt) }) : task.enabled && task.nextRunAt ? fill(c.next, { time: formatTime(task.nextRunAt) }) : c.paused
+          const lastRun = task.lastRunAt ? fill(c.last, { time: formatTime(task.lastRunAt), status: t(`workspace.scheduledTasks.status.${task.lastStatus}`) }) : c.neverRun
+          return (
+            <div key={task.id} className="grid gap-3 px-4 py-3 text-xs lg:grid-cols-[minmax(0,1fr)_150px_minmax(0,220px)_auto] lg:items-center">
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-[13px] font-semibold text-[var(--workspace-text-strong)]">{task.name}</span>
+                  <span className={cn('inline-flex shrink-0 items-center gap-1 text-xs', tone.text)}><span className={cn('h-1.5 w-1.5 rounded-full', tone.dot)} />{t(`workspace.scheduledTasks.status.${task.lastStatus}`)}</span>
+                </div>
+                <code className="mt-1 block truncate font-mono text-[11px] text-[var(--workspace-text-muted)]" title={task.command}>{task.command}</code>
+              </div>
+              <div className="text-[var(--workspace-text-muted)]"><div>{fill(c.every, { count: task.intervalMinutes })}</div><div>{schedule}</div></div>
+              <div className="min-w-0 space-y-0.5 text-[var(--workspace-text-muted)]">
+                <div className={cn(task.lastStatus === 'failed' && 'text-[color:var(--workspace-status-bad-text)]', task.lastStatus === 'unknown' && 'text-[color:var(--workspace-status-warn-text)]')}>{lastRun}</div>
+                {task.pausedReason && <div className="text-[color:var(--workspace-status-warn-text)]">{t(`scheduledOps.paused.${task.pausedReason}`)}</div>}
+                {task.lastErrorSummary && <div className="flex items-start gap-1 text-[color:var(--workspace-status-bad-text)]"><CircleAlert className="mt-0.5 h-3 w-3 shrink-0" /><span className="break-words">{task.lastErrorSummary}</span></div>}
+                {task.lastStatus === 'completed' && task.lastResultSummary && <div className="flex items-start gap-1 text-[color:var(--workspace-status-good-text)]"><CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" /><span className="truncate font-mono text-[11px]" title={task.lastResultSummary}>{task.lastResultSummary}</span></div>}
+                {task.authorizationJobId && <div className="truncate font-mono text-[11px]" title={`${t('scheduledOps.authorization')}: ${task.authorizationJobId}`}>{fill(c.authorization, { job: task.authorizationJobId })}</div>}
+              </div>
+              <div className="flex items-center gap-2 lg:justify-end">
+                <button type="button" aria-pressed={task.enabled} aria-label={task.enabled ? t('workspace.scheduledTasks.disable') : t('workspace.scheduledTasks.enable')} title={task.enabled ? t('workspace.scheduledTasks.disable') : t('workspace.scheduledTasks.enable')} disabled={busy} onClick={() => void toggleTask(task)}
+                  className={cn('relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors disabled:opacity-50', task.enabled ? 'bg-[color:var(--workspace-primary-500)]' : 'bg-[var(--workspace-surface-700)]')}>
+                  <span className={cn('h-3.5 w-3.5 rounded-full bg-white shadow transition-transform', task.enabled ? 'translate-x-[16px]' : 'translate-x-0.5')} />
+                </button>
+                <button type="button" disabled={busy} onClick={() => void runNow(task)} className="inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 text-xs font-medium text-[var(--workspace-text-strong)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:pointer-events-none disabled:opacity-50">
+                  {runningId === task.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}{runningId === task.id ? t('workspace.scheduledTasks.running') : t('workspace.scheduledTasks.runNow')}
+                </button>
+                <button type="button" aria-label={t('workspace.scheduledTasks.remove')} title={t('workspace.scheduledTasks.remove')} disabled={busy} onClick={() => { revokeScheduledTaskAuthorization(activeVaultId, task); persist(loadScheduledTasks(activeVaultId, host.id).filter((item) => item.id !== task.id)) }}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--workspace-text-subtle)] transition-colors hover:bg-[var(--workspace-status-bad-bg)] hover:text-[color:var(--workspace-status-bad-text)] disabled:pointer-events-none disabled:opacity-50">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )
+        })}</div>}
+      </div>
+      {output && (
+        <div className="sb-card overflow-hidden">
+          <div className="border-b border-[color:var(--workspace-border-soft)] px-4 py-2.5"><h3 className="text-[13px] font-semibold text-[var(--workspace-text-strong)]">{c.output}</h3></div>
+          <pre className="max-h-60 overflow-auto whitespace-pre-wrap bg-[var(--workspace-surface-950)] px-4 py-3 font-mono text-[11px] leading-5">{output}</pre>
         </div>
-        <span className="text-[11px] text-muted-foreground">{t('workspace.scheduledTasks.proxyJumpNote')}</span>
+      )}
+      <div className="sb-card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--workspace-border-soft)] px-4 py-2.5">
+          <h3 className="text-[13px] font-semibold text-[var(--workspace-text-strong)]">{c.addTitle}</h3>
+          <span className="flex items-center gap-1.5 text-[11px] text-[var(--workspace-text-subtle)]"><Info className="h-3 w-3" />{c.addNote}</span>
+        </div>
+        <div className="grid gap-3 px-4 py-3 sm:grid-cols-[1fr_2fr_140px_auto] sm:items-end">
+          <label className="grid gap-1.5 text-xs text-[var(--workspace-text-muted)]">{t('workspace.scheduledTasks.name')}<Input className={fieldClass} aria-label={t('workspace.scheduledTasks.name')} placeholder={t('workspace.scheduledTasks.name')} value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label className="grid gap-1.5 text-xs text-[var(--workspace-text-muted)]">{t('workspace.scheduledTasks.command')}<Input className={cn(fieldClass, 'font-mono')} aria-label={t('workspace.scheduledTasks.command')} placeholder={t('workspace.scheduledTasks.command')} value={command} onChange={(event) => setCommand(event.target.value)} /></label>
+          <label className="grid gap-1.5 text-xs text-[var(--workspace-text-muted)]"><span>{t('workspace.scheduledTasks.interval')} <span className="text-[var(--workspace-text-subtle)]">{c.intervalRange}</span></span><Input className={fieldClass} aria-label={t('workspace.scheduledTasks.interval')} type="number" min={1} max={10080} value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} /></label>
+          <button type="button" onClick={addTask} className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-[color:var(--workspace-primary-500)] px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"><Plus className="h-3.5 w-3.5" />{t('workspace.scheduledTasks.add')}</button>
+        </div>
       </div>
-      <div className="space-y-2">
-        {tasks.length === 0 ? <div className="rounded-lg border border-dashed px-3 py-4 text-xs text-muted-foreground">{t('workspace.scheduledTasks.empty')}</div> : tasks.map((task) => (
-          <div key={task.id} className="space-y-2 rounded-lg border border-border/50 px-3 py-2 text-xs">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0 flex-1"><div className="truncate font-medium">{task.name}</div><div className="truncate text-[11px] text-muted-foreground" title={task.command}>{scheduledTaskSummary(task)}</div></div>
-              <span className={`rounded-full border px-2 py-1 text-[10px] ${statusClass(task.lastStatus)}`}>{t(`workspace.scheduledTasks.status.${task.lastStatus}`)}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" variant="outline" disabled={runningId !== null || task.lastStatus === 'running'} onClick={() => void toggleTask(task)}><span className="mr-1">{task.enabled ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}</span>{task.enabled ? t('workspace.scheduledTasks.disable') : t('workspace.scheduledTasks.enable')}</Button>
-              <Button type="button" size="sm" variant="outline" disabled={runningId !== null || task.lastStatus === 'running'} onClick={() => void runNow(task)}><RefreshCw className="mr-1 h-3.5 w-3.5" />{runningId === task.id ? t('workspace.scheduledTasks.running') : t('workspace.scheduledTasks.runNow')}</Button>
-              <Button type="button" size="sm" variant="ghost" disabled={runningId !== null || task.lastStatus === 'running'} onClick={() => { revokeScheduledTaskAuthorization(activeVaultId, task); persist(loadScheduledTasks(activeVaultId, host.id).filter((item) => item.id !== task.id)) }}><Trash2 className="mr-1 h-3.5 w-3.5" />{t('workspace.scheduledTasks.remove')}</Button>
-              {task.nextRunAt && task.enabled && <span className="text-[11px] text-muted-foreground">{t('workspace.scheduledTasks.nextRun', { time: new Date(task.nextRunAt).toLocaleString() })}</span>}
-            </div>
-            {task.pausedReason && <div className="text-[11px] text-amber-600">{t(`scheduledOps.paused.${task.pausedReason}`)}</div>}
-            {task.authorizationJobId && <div className="truncate text-[10px] text-muted-foreground">{t('scheduledOps.authorization')}: {task.authorizationJobId}</div>}
-            {task.lastErrorSummary && <div className="flex items-center gap-1 text-[11px] text-red-600"><CircleAlert className="h-3 w-3" />{task.lastErrorSummary}</div>}
-            {task.lastStatus === 'completed' && <div className="flex items-center gap-1 text-[11px] text-emerald-600"><CheckCircle2 className="h-3 w-3" />{task.lastResultSummary}</div>}
-          </div>
-        ))}
+      <div className="space-y-1 text-[11px] text-[var(--workspace-text-subtle)]">
+        <p>{t('workspace.scheduledTasks.auditNote')}</p>
+        <p>{t('scheduledOps.lifecycle')}</p>
       </div>
-      <div className="grid gap-2 rounded-lg border border-dashed border-border/60 p-3 sm:grid-cols-[1fr_1.5fr_120px_auto]">
-        <Input aria-label={t('workspace.scheduledTasks.name')} placeholder={t('workspace.scheduledTasks.name')} value={name} onChange={(event) => setName(event.target.value)} />
-        <Input aria-label={t('workspace.scheduledTasks.command')} placeholder={t('workspace.scheduledTasks.command')} value={command} onChange={(event) => setCommand(event.target.value)} />
-        <Input aria-label={t('workspace.scheduledTasks.interval')} type="number" min={1} max={10080} value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} />
-        <Button type="button" size="sm" variant="outline" onClick={addTask}><Plus className="mr-1 h-3.5 w-3.5" />{t('workspace.scheduledTasks.add')}</Button>
-      </div>
-      {localOpsPersistenceError(activeVaultId, host.id) && <p role="alert" className="text-xs text-red-600">{t('localOps.persistenceFailed')}</p>}
-      {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
-      {output && <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-border/50 bg-muted/20 p-3 text-[11px]">{output}</pre>}
-      <p className="text-[11px] text-muted-foreground">{t('workspace.scheduledTasks.auditNote')}</p>
-      <p className="text-[11px] text-muted-foreground">{t('scheduledOps.lifecycle')}</p>
     </section>
   )
 }

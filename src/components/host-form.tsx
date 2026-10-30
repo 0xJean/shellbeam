@@ -7,9 +7,12 @@ import { Textarea } from '@/components/ui/textarea'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { hasSshConnection, validateHostDraft } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { probeInstallCopy } from '@/lib/locales/probe-install'
+import { identityBaseName, type ParsedSshCommand } from '@/lib/ssh-command-parse'
+import { testSshConnection } from '@/lib/sessions'
 import type { AuthType } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
-import { Archive, ChevronDown, Eye, EyeOff, Key, Lock, RefreshCw, Server, User, X } from 'lucide-react'
+import { Archive, CircleAlert, CircleCheck, Eye, EyeOff, Key, Lock, PlugZap, RefreshCw, Server, User, X } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 
 interface HostFormProps {
@@ -19,7 +22,8 @@ interface HostFormProps {
   vaultUnlocked?: boolean
   onSaveToVault?: (key: string, value: string) => Promise<void>
   onLoadVaultSecret?: (key: string) => Promise<string | null>
-  onSubmit: (draft: HostProfileDraft) => Promise<void>
+  /** `installProbe` asks the caller to open the probe installer for the saved host. */
+  onSubmit: (draft: HostProfileDraft, options?: { installProbe: boolean }) => Promise<void>
   onCancel: () => void
   vaultId?: string
   vaultName?: string
@@ -28,6 +32,8 @@ interface HostFormProps {
   availableHosts?: HostProfile[]
   metadataControls?: ReactNode
   connectionOnly?: boolean
+  /** Optional block above the fields (mobile clipboard detection) that can fill them from a parsed `ssh` command. */
+  renderPrefill?: (apply: (command: ParsedSshCommand) => void) => ReactNode
 }
 
 export function HostForm({
@@ -46,9 +52,11 @@ export function HostForm({
   availableHosts = [],
   metadataControls,
   connectionOnly = false,
+  renderPrefill,
 }: HostFormProps) {
   const [connectionSecretId] = useState(() => crypto.randomUUID())
   const [monitoringMode, setMonitoringMode] = useState(initial?.monitoringMode ?? 'ssh')
+  const [installProbe, setInstallProbe] = useState(true)
   const [address, setAddress] = useState(initial?.address ?? '')
   const [name, setName] = useState(initial?.name ?? '')
   const [group, setGroup] = useState(initial?.group ?? 'Custom')
@@ -69,9 +77,10 @@ export function HostForm({
   const [jumpHost, setJumpHost] = useState(initial?.jumpHost ?? '')
   const [jumpPort, setJumpPort] = useState(String(initial?.jumpPort ?? ''))
   const [jumpUser, setJumpUser] = useState(initial?.jumpUser ?? '')
-  const [showAdvanced, setShowAdvanced] = useState(!!initial?.jumpHost)
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
-  const { t } = useT()
+  const { t, locale } = useT()
+  const probeCopy = probeInstallCopy[locale]
 
   const tags = tagsInput.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean)
   const addrSlug = (address || 'host').replace(/[^a-zA-Z0-9.-]/g, '-')
@@ -85,6 +94,49 @@ export function HostForm({
     setUseInlineSecret(!nextRef)
     setVaultSaveName('')
   }, [authType, initial])
+
+  // Connection test runs against the unsaved form values; a result is shown only while they still match.
+  const testSignature = JSON.stringify([address.trim(), port, username.trim(), authType, useInlineSecret, vaultKeyRef, password, privateKey, jumpHost.trim(), jumpPort, jumpUser.trim()])
+  const [test, setTest] = useState<{ status: 'idle' | 'testing' | 'ok' | 'failed'; signature: string; ms?: number; kind?: string; message?: string }>({ status: 'idle', signature: '' })
+  async function runConnectionTest() {
+    const signature = testSignature
+    setTest({ status: 'testing', signature })
+    try {
+      const secret = useInlineSecret ? (authType === 'password' ? password : privateKey) || undefined
+        : vaultKeyRef && onLoadVaultSecret ? (await onLoadVaultSecret(vaultKeyRef)) ?? undefined : undefined
+      const result = await testSshConnection({
+        host: address.trim(), port: parseInt(port, 10) || 22, username: username.trim() || defaultUsername, authType,
+        password: authType === 'password' ? secret : undefined, privateKey: authType === 'privateKey' ? secret : undefined,
+        jumpHost: jumpHost.trim() || undefined, jumpPort: jumpPort.trim() ? parseInt(jumpPort, 10) || undefined : undefined, jumpUser: jumpUser.trim() || undefined,
+        command: '',
+      })
+      setTest(result.connected
+        ? { status: 'ok', signature, ms: result.durationMs }
+        : { status: 'failed', signature, kind: ['auth', 'network', 'validation'].includes(result.errorType ?? '') ? result.errorType : 'unknown', message: result.message })
+    } catch (e) {
+      setTest({ status: 'failed', signature, kind: 'unknown', message: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  function applySshCommand(command: ParsedSshCommand) {
+    setAddress(command.host)
+    if (command.port) setPort(String(command.port))
+    if (command.username) setUsername(command.username)
+    if (command.identityFile) {
+      setAuthType('privateKey')
+      const keyName = identityBaseName(command.identityFile)
+      if (vaultKeys.includes(keyName)) { setVaultKeyRef(keyName); setUseInlineSecret(false) }
+    }
+    if (command.jump) {
+      const jump = command.jump
+      const profile = availableHosts.find((host) => hasSshConnection(host) && !host.jumpHost?.trim() && !host.jumpHostId
+        && host.address === jump.host && host.port === (jump.port ?? 22) && (!jump.username || host.username === jump.username))
+      setJumpHostId(profile?.id ?? '')
+      setJumpHost(profile?.address ?? jump.host)
+      setJumpPort(String(profile?.port ?? jump.port ?? ''))
+      setJumpUser(profile?.username ?? jump.username ?? '')
+    }
+  }
 
   async function handleSubmit() {
     setError('')
@@ -137,7 +189,7 @@ export function HostForm({
 
     setSubmitting(true)
     try {
-      await onSubmit(draft)
+      await onSubmit(draft, { installProbe: monitoringMode === 'server' && installProbe })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -145,43 +197,95 @@ export function HostForm({
     }
   }
 
+  const tabClass = (active: boolean) => cn('-mb-px border-b-2 px-1 pb-2.5 text-[13px] font-medium transition-colors', active ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')
+  const testFresh = test.status !== 'idle' && test.signature === testSignature
+
   return (
-    <Card data-testid="host-form" data-tour={!initial ? 'host-form' : undefined} className="w-full max-w-xl md:max-w-xl max-md:max-w-none max-md:border-0 max-md:rounded-none max-md:shadow-none">
-      <CardContent className="space-y-5 p-5">
-        {/* Title */}
-        <div className="flex items-center justify-between">
+    <Card data-testid="host-form" data-tour={!initial ? 'host-form' : undefined} className="w-full max-w-xl overflow-hidden md:max-w-xl max-md:max-w-none max-md:border-0 max-md:rounded-none max-md:shadow-none">
+      <CardContent className="p-0">
+        <div className="px-5 pt-5">
           <h2 className="text-base font-semibold">{connectionOnly ? t('hostDirectory.editConnection') : initial ? t('hostForm.editHost') : t('hostForm.newHost')}</h2>
-          <span className="text-xs text-muted-foreground">{vaultName}</span>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t('hostForm.subtitle', { vault: vaultName })}</p>
+          <div role="tablist" className="mt-4 flex gap-5 border-b border-border">
+            <button data-testid="host-basics-tab" type="button" role="tab" aria-selected={!showAdvanced} className={tabClass(!showAdvanced)} onClick={() => setShowAdvanced(false)}>{t('hostForm.tabBasic')}</button>
+            <button data-testid="host-jump-toggle" type="button" role="tab" aria-selected={showAdvanced} aria-expanded={showAdvanced} className={tabClass(showAdvanced)} onClick={() => setShowAdvanced(true)}>
+              {t('hostForm.jumpHost')}{(jumpHostId || jumpHost.trim()) && <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" aria-hidden="true" />}
+            </button>
+          </div>
         </div>
 
+        <div className="max-h-[min(68dvh,40rem)] space-y-4 overflow-y-auto px-5 py-4 max-md:max-h-none">
+        {renderPrefill?.(applySshCommand)}
         {error && (
           <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
         )}
 
-        {/* Connection: Address + Port */}
-        <div data-tour="host-address" className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">{t('hostForm.address')}</label>
-          <div className="flex gap-2">
-            <div className="relative min-w-0 flex-1">
+        {showAdvanced ? (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{t('hostForm.jumpHostDesc')}</p>
+            <label className="block space-y-1 text-xs text-muted-foreground">
+              <span>{t('hostForm.jumpProfile')}</span>
+              <NativeSelect data-testid="host-jump-profile" aria-label={t('hostForm.jumpProfile')} value={jumpHostId} className="h-8 w-full rounded border bg-background px-2" onChange={(event) => {
+                const id = event.target.value
+                setJumpHostId(id)
+                const profile = availableHosts.find((host) => host.id === id)
+                if (profile) { setJumpHost(profile.address); setJumpPort(String(profile.port)); setJumpUser(profile.username) }
+              }}>
+                <option value="">{t('hostForm.jumpProfileLegacy')}</option>
+                {availableHosts.filter((host) => hasSshConnection(host) && !host.jumpHost?.trim() && !host.jumpHostId).map((host) => <option key={host.id} value={host.id}>{host.name} · {host.username}@{host.address}</option>)}
+              </NativeSelect>
+              <span>{t('hostForm.jumpProfileHelp')}</span>
+            </label>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">{t('hostForm.jumpAddress')}</label>
+                <Input disabled={Boolean(jumpHostId)} value={jumpHost} onChange={(e) => setJumpHost(e.target.value)}
+                  placeholder={t('hostForm.jumpAddressPlaceholder')} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">{t('hostForm.jumpPort')}</label>
+                <Input disabled={Boolean(jumpHostId)} value={jumpPort} onChange={(e) => setJumpPort(e.target.value)}
+                  placeholder="22" className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">{t('hostForm.jumpUser')}</label>
+                <Input disabled={Boolean(jumpHostId)} value={jumpUser} onChange={(e) => setJumpUser(e.target.value)}
+                  placeholder={t('hostForm.jumpUserPlaceholder')} className="h-8 text-sm" />
+              </div>
+            </div>
+          </div>
+        ) : <>
+        <div className="space-y-1.5">
+          <label className="text-[13px] font-medium text-foreground">{t('hostForm.label')}</label>
+          <Input
+            data-testid="host-name" aria-label={t('hostForm.label')} value={name} onChange={(e) => setName(e.target.value)}
+            placeholder={t('hostForm.labelPlaceholder')}
+          />
+        </div>
+
+        <div data-tour="host-address" className="grid grid-cols-[minmax(0,1fr)_5.5rem] gap-3">
+          <div className="space-y-1.5">
+            <label className="text-[13px] font-medium text-foreground">{t('hostForm.address')}</label>
+            <div className="relative">
               <Server className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 data-testid="host-address" aria-label={t('hostForm.address')} value={address} onChange={(e) => setAddress(e.target.value)}
                 placeholder={t('hostForm.addressPlaceholder')} className="pl-9"
               />
             </div>
-            <div className="w-20">
-              <Input
-                data-testid="host-port" aria-label={t('hostForm.port')} type="number" value={port} onChange={(e) => setPort(e.target.value)}
-                placeholder="22" className="text-center"
-              />
-            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-[13px] font-medium text-foreground">{t('hostForm.port')}</label>
+            <Input
+              data-testid="host-port" aria-label={t('hostForm.port')} type="number" value={port} onChange={(e) => setPort(e.target.value)}
+              placeholder="22"
+            />
           </div>
         </div>
 
-        {/* Username + Label on same row */}
-        <div data-tour="host-identity" className="grid grid-cols-2 gap-3">
+        <div data-tour="host-identity" className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">{t('hostForm.username')}</label>
+            <label className="text-[13px] font-medium text-foreground">{t('hostForm.username')}</label>
             <div className="relative">
               <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -190,186 +294,150 @@ export function HostForm({
               />
             </div>
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">{t('hostForm.label')}</label>
-            <Input
-              data-testid="host-name" aria-label={t('hostForm.label')} value={name} onChange={(e) => setName(e.target.value)}
-              placeholder={t('hostForm.labelPlaceholder')}
-            />
+          <div data-tour="host-auth" className="space-y-1.5">
+            <label className="text-[13px] font-medium text-foreground">{t('hostForm.credentials')}</label>
+            <div className="flex h-9 rounded-lg border border-border bg-muted/30 p-0.5">
+              <button data-testid="host-auth-private-key" type="button" onClick={() => setAuthType('privateKey')}
+                className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md text-[13px] font-medium transition-colors', authType === 'privateKey' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                <Key className="h-3.5 w-3.5" />{t('hostForm.key')}
+              </button>
+              <button data-testid="host-auth-password" type="button" onClick={() => setAuthType('password')}
+                className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md text-[13px] font-medium transition-colors', authType === 'password' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                <Lock className="h-3.5 w-3.5" />{t('hostForm.password')}
+              </button>
+            </div>
           </div>
         </div>
+
+        {!vaultUnlocked ? (
+          <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">{t('hostForm.vaultLocked')}</p>
+        ) : (
+          <CredentialInput
+            authType={authType} vaultKeys={vaultKeys} vaultKeyRef={vaultKeyRef} useInline={useInlineSecret}
+            password={password} privateKey={privateKey} vaultSaveName={vaultSaveName} addrSlug={addrSlug}
+            defaultVaultSaveName={(authType === 'password' ? initial?.passwordKeyRef : initial?.privateKeyRef) || `${addrSlug}-${authType === 'password' ? 'password' : 'key'}`}
+            onLoadVaultSecret={onLoadVaultSecret}
+            onVaultKeyRef={setVaultKeyRef} onUseInline={setUseInlineSecret}
+            onPassword={setPassword} onPrivateKey={setPrivateKey} onVaultSaveName={setVaultSaveName}
+          />
+        )}
 
         {!connectionOnly && <>
-        <MonitoringModeField value={monitoringMode} onChange={setMonitoringMode} disabled={submitting || !vaultUnlocked} scopeKey={`${vaultId}:${connectionSecretId}`} vaultId={vaultId} />
-        {/* Group selector */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">{t('hostForm.parentGroup')}</label>
-          <div className="flex flex-wrap gap-1.5">
-            {existingGroups.map((g) => (
-              <button key={g} type="button" onClick={() => { setGroup(g); setGroupDraft('') }}
-                className={cn(
-                  'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
-                  group === g && !groupDraft ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-primary/50 hover:text-foreground',
-                )}>
-                {groupLabel(g)}
-              </button>
-            ))}
-            {!existingGroups.includes(group) && group && !groupDraft && (
-              <span className="flex items-center gap-1 rounded-md border border-primary bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                {group}
-                <button type="button" onClick={() => setGroup(existingGroups[0] ?? 'Custom')} className="hover:text-primary/70"><X className="h-3 w-3" /></button>
-              </span>
-            )}
-            <input
-              value={groupDraft}
-              onChange={(e) => setGroupDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && groupDraft.trim()) {
-                  e.preventDefault()
-                  setGroup(groupDraft.trim())
-                  setGroupDraft('')
-                }
-              }}
-              onBlur={() => {
-                if (groupDraft.trim()) { setGroup(groupDraft.trim()); setGroupDraft('') }
-              }}
-              placeholder={t('hostForm.parentGroupPlaceholder')}
-              className="min-w-[100px] flex-1 rounded-md border border-dashed border-border bg-transparent px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
-            />
+        <div className="grid gap-4 sm:grid-cols-2">
+          {/* Group selector */}
+          <div className="space-y-1.5">
+            <label className="text-[13px] font-medium text-foreground">{t('hostForm.parentGroup')}</label>
+            <div className="flex flex-wrap gap-1.5">
+              {existingGroups.map((g) => (
+                <button key={g} type="button" onClick={() => { setGroup(g); setGroupDraft('') }}
+                  className={cn(
+                    'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                    group === g && !groupDraft ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-primary/50 hover:text-foreground',
+                  )}>
+                  {groupLabel(g)}
+                </button>
+              ))}
+              {!existingGroups.includes(group) && group && !groupDraft && (
+                <span className="flex items-center gap-1 rounded-md border border-primary bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                  {group}
+                  <button type="button" onClick={() => setGroup(existingGroups[0] ?? 'Custom')} className="hover:text-primary/70"><X className="h-3 w-3" /></button>
+                </span>
+              )}
+              <input
+                value={groupDraft}
+                onChange={(e) => setGroupDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && groupDraft.trim()) {
+                    e.preventDefault()
+                    setGroup(groupDraft.trim())
+                    setGroupDraft('')
+                  }
+                }}
+                onBlur={() => {
+                  if (groupDraft.trim()) { setGroup(groupDraft.trim()); setGroupDraft('') }
+                }}
+                placeholder={t('hostForm.parentGroupPlaceholder')}
+                className="min-w-[100px] flex-1 rounded-md border border-dashed border-border bg-transparent px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
+              />
+            </div>
           </div>
-        </div>
 
-        {/* Tags */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">{t('hostForm.tags')}</label>
-          <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
-            {tags.map((tg) => (
-              <span key={tg} className="flex items-center gap-1 rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                {tg}
-                <button type="button" onClick={() => setTagsInput(tags.filter((x) => x !== tg).join(', '))} className="hover:text-primary/70"><X className="h-3 w-3" /></button>
-              </span>
-            ))}
-            <input
-              value={tagDraft}
-              onChange={(e) => setTagDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if ((e.key === 'Enter' || e.key === ',' || e.key === '，') && tagDraft.trim()) {
-                  e.preventDefault()
+          {/* Tags */}
+          <div className="space-y-1.5">
+            <label className="text-[13px] font-medium text-foreground">{t('hostForm.tags')}</label>
+            <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
+              {tags.map((tg) => (
+                <span key={tg} className="flex items-center gap-1 rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  {tg}
+                  <button type="button" onClick={() => setTagsInput(tags.filter((x) => x !== tg).join(', '))} className="hover:text-primary/70"><X className="h-3 w-3" /></button>
+                </span>
+              ))}
+              <input
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.key === 'Enter' || e.key === ',' || e.key === '，') && tagDraft.trim()) {
+                    e.preventDefault()
+                    const v = tagDraft.trim().replace(/[,，]$/, '')
+                    if (v && !tags.includes(v)) setTagsInput([...tags, v].join(', '))
+                    setTagDraft('')
+                  } else if (e.key === 'Backspace' && !tagDraft && tags.length > 0) {
+                    setTagsInput(tags.slice(0, -1).join(', '))
+                  }
+                }}
+                onBlur={() => {
                   const v = tagDraft.trim().replace(/[,，]$/, '')
                   if (v && !tags.includes(v)) setTagsInput([...tags, v].join(', '))
                   setTagDraft('')
-                } else if (e.key === 'Backspace' && !tagDraft && tags.length > 0) {
-                  setTagsInput(tags.slice(0, -1).join(', '))
-                }
-              }}
-              onBlur={() => {
-                const v = tagDraft.trim().replace(/[,，]$/, '')
-                if (v && !tags.includes(v)) setTagsInput([...tags, v].join(', '))
-                setTagDraft('')
-              }}
-              placeholder={tags.length === 0 ? t('hostForm.tagsPlaceholder') : ''}
-              className="min-w-[60px] flex-1 border-none bg-transparent px-0 py-0 text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
-            />
-          </div>
-          {unusedTags.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {unusedTags.slice(0, 12).map((et) => (
-                <button key={et} type="button"
-                  onClick={() => { setTagsInput([...tags, et].join(', ')); setTagDraft('') }}
-                  className="rounded border border-dashed border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground">
-                  + {et}
-                </button>
-              ))}
+                }}
+                placeholder={tags.length === 0 ? t('hostForm.tagsPlaceholder') : ''}
+                className="min-w-[60px] flex-1 border-none bg-transparent px-0 py-0 text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+              />
             </div>
-          )}
+            {unusedTags.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {unusedTags.slice(0, 12).map((et) => (
+                  <button key={et} type="button"
+                    onClick={() => { setTagsInput([...tags, et].join(', ')); setTagDraft('') }}
+                    className="rounded border border-dashed border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground">
+                    + {et}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
         </div>
+        <MonitoringModeField value={monitoringMode} onChange={setMonitoringMode} disabled={submitting || !vaultUnlocked} scopeKey={`${vaultId}:${connectionSecretId}`} vaultId={vaultId} />
+        {monitoringMode === 'server' && (
+          <label data-testid="host-form-install-probe" className={cn('flex cursor-pointer items-start gap-2.5 rounded-lg border p-3', installProbe ? 'border-primary/40 bg-primary/5' : 'border-border')}>
+            <input type="checkbox" className="mt-0.5 accent-[hsl(var(--primary))]" checked={installProbe} disabled={submitting} onChange={(e) => setInstallProbe(e.target.checked)} />
+            <span className="min-w-0"><span className="block text-sm font-medium">{probeCopy.newHostInstall}</span><span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{probeCopy.newHostInstallHint}</span></span>
+          </label>
+        )}
 
         {metadataControls}
         </>}
+        </>}
 
-        {/* Divider */}
-        <div className="border-t border-border" />
-
-        {/* Auth type toggle */}
-        <div data-tour="host-auth" className="space-y-3">
-          <label className="text-xs font-medium text-muted-foreground">{t('hostForm.credentials')}</label>
-          <div className="flex rounded-lg border border-border p-0.5">
-            <button type="button" onClick={() => setAuthType('password')}
-              className={cn(
-                'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                authType === 'password' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-              )}>
-              <Lock className="h-3.5 w-3.5" />{t('hostForm.password')}
-            </button>
-            <button data-testid="host-auth-private-key" type="button" onClick={() => setAuthType('privateKey')}
-              className={cn(
-                'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                authType === 'privateKey' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-              )}>
-              <Key className="h-3.5 w-3.5" />{t('hostForm.key')}
-            </button>
+        {testFresh && (
+          <div data-testid="host-test-result" data-status={test.status} role="status"
+            className={cn('flex items-start gap-2 rounded-lg px-3 py-2.5 text-[13px]', test.status === 'ok' ? 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' : test.status === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-muted/50 text-muted-foreground')}>
+            {test.status === 'testing' ? <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin" /> : test.status === 'ok' ? <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" /> : <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />}
+            <span className="min-w-0 flex-1">
+              <span className="block font-medium">{test.status === 'testing' ? t('hostForm.testRunning') : test.status === 'ok' ? t('hostForm.testOk') : t(`hostForm.testFailed.${test.kind}`)}</span>
+              {test.status === 'failed' && test.message && <span className="mt-0.5 block break-words text-xs opacity-80">{test.message}</span>}
+            </span>
+            {test.status === 'ok' && <span className="shrink-0 font-mono text-xs opacity-80">{t('hostForm.testLatency', { ms: test.ms ?? 0 })}</span>}
           </div>
-
-          {!vaultUnlocked ? (
-            <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">{t('hostForm.vaultLocked')}</p>
-          ) : (
-            <CredentialInput
-              authType={authType} vaultKeys={vaultKeys} vaultKeyRef={vaultKeyRef} useInline={useInlineSecret}
-              password={password} privateKey={privateKey} vaultSaveName={vaultSaveName} addrSlug={addrSlug}
-              defaultVaultSaveName={(authType === 'password' ? initial?.passwordKeyRef : initial?.privateKeyRef) || `${addrSlug}-${authType === 'password' ? 'password' : 'key'}`}
-              onLoadVaultSecret={onLoadVaultSecret}
-              onVaultKeyRef={setVaultKeyRef} onUseInline={setUseInlineSecret}
-              onPassword={setPassword} onPrivateKey={setPrivateKey} onVaultSaveName={setVaultSaveName}
-            />
-          )}
+        )}
         </div>
 
-        {/* Advanced: Jump Host (collapsible) */}
-        <div className="space-y-3">
-          <button data-testid="host-jump-toggle" aria-expanded={showAdvanced} type="button" onClick={() => setShowAdvanced((v) => !v)}
-            className="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
-            <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAdvanced && 'rotate-180')} />
-            {t('hostForm.jumpHost')}
-          </button>
-          {showAdvanced && (
-            <div className="space-y-3 rounded-lg border border-border/50 bg-muted/20 p-3">
-              <p className="text-xs text-muted-foreground">{t('hostForm.jumpHostDesc')}</p>
-              <label className="block space-y-1 text-xs text-muted-foreground">
-                <span>{t('hostForm.jumpProfile')}</span>
-                <NativeSelect data-testid="host-jump-profile" aria-label={t('hostForm.jumpProfile')} value={jumpHostId} className="h-8 w-full rounded border bg-background px-2" onChange={(event) => {
-                  const id = event.target.value
-                  setJumpHostId(id)
-                  const profile = availableHosts.find((host) => host.id === id)
-                  if (profile) { setJumpHost(profile.address); setJumpPort(String(profile.port)); setJumpUser(profile.username) }
-                }}>
-                  <option value="">{t('hostForm.jumpProfileLegacy')}</option>
-                  {availableHosts.filter((host) => hasSshConnection(host) && !host.jumpHost?.trim() && !host.jumpHostId).map((host) => <option key={host.id} value={host.id}>{host.name} · {host.username}@{host.address}</option>)}
-                </NativeSelect>
-                <span>{t('hostForm.jumpProfileHelp')}</span>
-              </label>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">{t('hostForm.jumpAddress')}</label>
-                  <Input disabled={Boolean(jumpHostId)} value={jumpHost} onChange={(e) => setJumpHost(e.target.value)}
-                    placeholder={t('hostForm.jumpAddressPlaceholder')} className="h-8 text-sm" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">{t('hostForm.jumpPort')}</label>
-                  <Input disabled={Boolean(jumpHostId)} value={jumpPort} onChange={(e) => setJumpPort(e.target.value)}
-                    placeholder="22" className="h-8 text-sm" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">{t('hostForm.jumpUser')}</label>
-                  <Input disabled={Boolean(jumpHostId)} value={jumpUser} onChange={(e) => setJumpUser(e.target.value)}
-                    placeholder={t('hostForm.jumpUserPlaceholder')} className="h-8 text-sm" />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Action buttons at bottom */}
-        <div data-tour="host-save" className="flex justify-end gap-2 pt-1">
+        <div data-tour="host-save" className="flex items-center gap-2 border-t border-border px-5 py-3">
+          <Button data-testid="host-test-connection" type="button" variant="ghost" size="sm" className="gap-1.5" disabled={!address.trim() || test.status === 'testing' && testFresh} onClick={() => void runConnectionTest()}>
+            <PlugZap className="h-3.5 w-3.5" />{testFresh && test.status !== 'testing' ? t('hostForm.testAgain') : t('hostForm.testConnection')}
+          </Button>
+          <span className="flex-1" />
           <Button variant="outline" size="sm" onClick={onCancel}>{t('hostForm.cancel')}</Button>
           <Button data-testid="host-save" size="sm" onClick={handleSubmit} disabled={submitting}>
             {submitting ? t('hostForm.saving') : connectionOnly ? t('hostDirectory.useConnection') : t('hostForm.save')}

@@ -1,6 +1,8 @@
 //! A narrow, native lifecycle for the optional monitoring runtime. Secrets only
 //! travel from Vault / server to SSH stdin; never through previews or audit rows.
 pub mod artifact;
+pub mod linger;
+pub mod node;
 mod official;
 mod store;
 #[cfg(test)]

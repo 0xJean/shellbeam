@@ -510,6 +510,7 @@ impl Bridge {
         let route = Route {
             target: self.server_for(target).endpoint.clone(),
             jump: via_jump.then(|| self.jump.endpoint.clone()),
+            vault_id: None,
         };
         let (summary, mutation) = command_kind(&payload.command);
         self.stats.counts.command_count += 1;

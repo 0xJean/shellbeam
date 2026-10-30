@@ -323,7 +323,7 @@ function unitJourney(t, { disclosures = false } = {}) {
   let clock = 1_800_000_000_000
   t.mock.method(Date, 'now', () => ++clock)
   const state = scope(), hostFixture = fixture(), events = [], checkpoints = []
-  const { dom, document, driver } = domDriver(`<button data-testid="pc-dashboard"></button><button data-testid="pc-nav-hosts"></button><button data-testid="pc-nav-activity"></button><section data-testid="operations-audit-center"><button data-testid="audit-tab"></button><select data-testid="operations-source-filter"><option value="all">All</option><option value="workspace">Workspace</option></select><select data-testid="operations-filter"><option value="all">All</option><option value="cancelled">Cancelled</option><option value="completed">Completed</option></select><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page">Page 1</span><button data-testid="operations-older" disabled>Older</button></section>${roles.map(role => `<article data-testid="host-card" data-host-id="${state.hostIds[role]}">${evaluation(state, role, clock - 1000)}</article>`).join('')}`)
+  const { dom, document, driver } = domDriver(`<button data-testid="pc-dashboard"></button><button data-testid="pc-nav-hosts"></button><button data-testid="pc-nav-activity"></button><button data-testid="history-tab-audit"></button><section data-testid="operations-audit-center"><button data-testid="audit-tab"></button><div data-testid="operations-source-segments"><button data-value="workspace" aria-checked="true"></button></div><div data-testid="operations-status-segments"><button data-value="completed" aria-checked="true"></button><button data-value="cancelled" aria-checked="true"></button></div><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page">Page 1</span><button data-testid="operations-older" disabled>Older</button></section>${roles.map(role => `<article data-testid="host-card" data-host-id="${state.hostIds[role]}">${evaluation(state, role, clock - 1000)}</article>`).join('')}`)
   let pending = null, page = 'hosts', job = 0
   const node = input => typeof input === 'string' ? document.querySelector(input) : input
   const hostCard = role => document.querySelector(`[data-testid="host-card"][data-host-id="${state.hostIds[role]}"]`)
@@ -386,7 +386,7 @@ function unitJourney(t, { disclosures = false } = {}) {
       element.setAttribute('aria-expanded', 'true')
       element.closest('[data-testid="host-card"]').querySelector('[data-testid="host-ops-details"]').hidden = false
     }
-    else if (element.dataset.testid.startsWith('local-host-alert-')) {
+    else if (element.dataset.testid?.startsWith('local-host-alert-')) {
       const hostId = element.closest('[data-testid="host-card"]').dataset.hostId
       const role = roles.find(role => state.hostIds[role] === hostId)
       pending = { role, action: element.dataset.testid.includes('-ack-') ? 'acknowledge' : 'close' }
@@ -401,7 +401,7 @@ function unitJourney(t, { disclosures = false } = {}) {
     const { role, action } = pending, id = `job-${++job}`, status = accepted ? 'completed' : 'cancelled'
     events.push(`${accepted ? 'accept' : 'reject'}:${role}:${action}`)
     if (accepted) setAlert(role, action === 'acknowledge' ? 'acknowledged' : 'closed', id)
-    document.querySelector('[data-testid="operations-audit-center"]').insertAdjacentHTML('beforeend', `<div data-testid="operation-audit-row" data-vault-id="${state.vaultId}" data-host-id="${state.hostIds[role]}" data-job-id="${id}" data-target="${rule}" data-action="local-alert.${action}" data-status="${status}" data-confirmation="${accepted ? 'confirmed' : 'rejected'}" data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}">workspace · local-ops · ${role === 'via' ? 'proxy-jump' : 'direct'}</div>`)
+    document.querySelector('[data-testid="operations-audit-center"]').insertAdjacentHTML('beforeend', `<div data-testid="operation-audit-row" data-vault-id="${state.vaultId}" data-host-id="${state.hostIds[role]}" data-job-id="${id}" data-target="${rule}" data-action="local-alert.${action}" data-status="${status}" data-confirmation="${accepted ? 'confirmed' : 'rejected'}" data-transport="${role === 'via' ? 'proxy-jump' : 'direct'}">Workspace · local-ops · ${role === 'via' ? 'proxy-jump' : 'direct'}</div>`)
     document.querySelector('dialog').remove()
     pending = null
   }
@@ -460,7 +460,8 @@ test('journey prepares every affected host before failure and recovery and keeps
   }
   unit.checkpoint = async (kind, details) => {
     assert.equal(notificationWindow, null)
-    const affected = details.role === 'via' ? ['via', 'jump'] : [details.role]
+    // The details drawer is modal, so only the target host's can be open.
+    const affected = [details.role]
     for (const role of affected) {
       const card = unit.hostCard(role)
       assert.equal(card.querySelector('[data-testid="host-ops-details-toggle"]').getAttribute('aria-expanded'), 'true', `${kind}: ${role} not prepared`)
@@ -474,7 +475,7 @@ test('journey prepares every affected host before failure and recovery and keeps
   const capture = async (role, event) => {
     assert.equal(notificationWindow, `${event === 'opened' ? 'probe-stop' : 'probe-restore'}:${role}`)
     for (const member of role === 'via' ? ['via', 'jump'] : [role]) {
-      assert.equal(await isOpsUiHostDetailsVisible(unit.driver, { hostId: unit.resumeState.hostIds[member], vaultId: unit.resumeState.vaultId }), true)
+      assert.equal(await isOpsUiHostDetailsVisible(unit.driver, { hostId: unit.resumeState.hostIds[member], vaultId: unit.resumeState.vaultId }), member === role)
       assert.equal(unit.alert(member).dataset.alertStatus, event === 'opened' ? 'active' : 'resolved')
     }
     windows.push(`${event}:${role}`)
@@ -484,7 +485,7 @@ test('journey prepares every affected host before failure and recovery and keeps
     const state = await runOpsUiProbeJourney({
       ...unit, onOpened: role => capture(role, 'opened'), onResolved: role => capture(role, 'resolved'),
     })
-    assert.deepEqual(prepared, ['probe-stop:direct', 'probe-restore:direct', 'probe-stop:via+jump', 'probe-restore:via+jump'])
+    assert.deepEqual(prepared, ['probe-stop:direct', 'probe-restore:direct', 'probe-stop:via', 'probe-restore:via'])
     assert.deepEqual(windows, ['opened:direct', 'resolved:direct', 'opened:via', 'resolved:via'])
     assert.equal(notificationWindow, null)
     assert.equal(state.hosts.direct.closed, unit.alert('direct').dataset.jobId)

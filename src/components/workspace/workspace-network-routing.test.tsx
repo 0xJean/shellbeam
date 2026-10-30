@@ -19,7 +19,7 @@ const routingExpectations = [
   { surface: 'mobile', Shell: WorkspaceMobileShell, frame: 'workspace-mobile-app-frame' },
 ] as const
 describe.each(routingExpectations)('$surface Network routing', ({ Shell, frame }) => {
-  beforeEach(() => { networkSpy.mockClear(); sendInteractiveInput.mockClear() })
+  beforeEach(() => { networkSpy.mockClear(); sendInteractiveInput.mockClear(); localStorage.setItem('shellbeam.workspace.layout', 'desktop') })
   it('mounts the registered page and hands off within the same scoped host/session', async () => {
     const onSelectApp = vi.fn()
     render(<Shell activeApp="network" onSelectApp={onSelectApp} activeVaultId="team" sessionId="session-network" hostId={host.id} hostName={host.name} hostAddress={host.address} hosts={[host]} resolveAuthSecret={async () => 'secret'} />)

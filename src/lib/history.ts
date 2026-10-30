@@ -43,6 +43,7 @@ export function filterHistory(entries: HistoryEntry[], filter: HistoryFilter): H
   })
 }
 
-export async function listCommandHistory(filter?: HistoryFilter) {
-  return invoke<HistoryEntry[]>('list_command_history', { filter })
+// History is stored per vault; an unset vault means Personal.
+export async function listCommandHistory(vaultId: string | undefined, filter?: HistoryFilter) {
+  return invoke<HistoryEntry[]>('list_command_history', { vaultId, filter })
 }

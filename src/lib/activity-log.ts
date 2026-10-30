@@ -12,7 +12,9 @@ export interface ActivityEntry {
   createdAt: number
 }
 
+// The activity log is stored per vault; an unset vault means Personal.
 export async function appendActivity(params: {
+  vaultId: string | undefined
   event: string
   hostId?: string
   hostName: string
@@ -24,6 +26,6 @@ export async function appendActivity(params: {
   return invoke<void>('append_activity', params)
 }
 
-export async function listActivityLog() {
-  return invoke<ActivityEntry[]>('list_activity_log')
+export async function listActivityLog(vaultId: string | undefined) {
+  return invoke<ActivityEntry[]>('list_activity_log', { vaultId })
 }

@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ShieldCheck, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useVault } from '@/contexts/vault-context'
 import { useHosts } from '@/contexts/hosts-context'
@@ -98,12 +100,30 @@ export function UserConfirmationDialog({ vaultId, unlocked, hosts }: Confirmatio
 
   if (!pending) return null
   const request = pending.request
+  // First line states the action; the rest is shown as the review list.
+  const lines = request.message.split('\n').map((line) => line.trim()).filter(Boolean)
   return (
-    <Dialog open labelledBy="user-confirmation-title" describedBy="user-confirmation-message" onOpenChange={open => { if (!open) settle(false) }}>
+    <Dialog open labelledBy="user-confirmation-title" describedBy="user-confirmation-summary user-confirmation-message" onOpenChange={open => { if (!open) settle(false) }}>
       <DialogContent className="md:max-w-xl">
         <div data-testid="user-confirmation" data-vault-id={vaultId} data-host-id={request.host?.id} data-risk={request.risk ?? 'low'} className="space-y-4 p-6">
-          <h2 id="user-confirmation-title" className="text-lg font-semibold">{t('confirmation.title')}</h2>
-          <p id="user-confirmation-message" data-testid="user-confirmation-message" className="max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words text-sm">{request.message}</p>
+          <div data-testid="user-confirmation-message" className="space-y-4">
+          <div className="flex items-start gap-3">
+            <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', request.risk === 'high' ? 'bg-[var(--workspace-status-bad-bg)] text-[var(--workspace-status-bad)]' : 'bg-[var(--workspace-accent-soft)] text-[var(--workspace-accent-text)]')}>
+              {request.risk === 'high' ? <TriangleAlert className="h-5 w-5" /> : <ShieldCheck className="h-5 w-5" />}
+            </span>
+            <div className="min-w-0 pt-0.5">
+              <h2 id="user-confirmation-title" className="text-base font-semibold">{t('confirmation.title')}</h2>
+              {lines[0] && <p id="user-confirmation-summary" className="mt-0.5 break-words text-sm text-[var(--workspace-text)]">{lines[0]}</p>}
+            </div>
+          </div>
+          <div id="user-confirmation-message" className="max-h-[50vh] overflow-y-auto">
+            {lines.length > 1 && (
+              <ul className="divide-y divide-[color:var(--workspace-border-soft)] rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] text-[13px]">
+                {lines.slice(1).map((line, index) => <li key={index} className="whitespace-pre-wrap break-words px-3 py-1.5 text-[var(--workspace-text)]">{line}</li>)}
+              </ul>
+            )}
+          </div>
+          </div>
           {request.token !== undefined && <label className="block space-y-2 text-sm">
             <span>{t('confirmation.typeToken', { token: request.token })}</span>
             <input data-testid="user-confirmation-token" className="w-full rounded-lg border bg-background px-3 py-2 font-mono" value={token} onChange={event => setToken(event.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} />

@@ -1,7 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { classifyHostAddress } from './ip-metadata'
 
 describe('IP metadata classifier', () => {
+  beforeEach(() => localStorage.setItem('shellbeam.locale', 'zh-CN'))
+
+  it('labels addresses in the interface language', () => {
+    localStorage.setItem('shellbeam.locale', 'en')
+    expect(classifyHostAddress('10.0.0.15')).toMatchObject({ scopeLabel: 'Private IP', locationLabel: 'Private network' })
+    expect(classifyHostAddress('aicz.example.com')).toMatchObject({ versionLabel: 'Domain', scopeLabel: 'Domain' })
+  })
+
   it('marks RFC1918 addresses as private IPv4', () => {
     expect(classifyHostAddress('10.0.0.15')).toMatchObject({
       addressType: 'ipv4',
@@ -30,7 +38,7 @@ describe('IP metadata classifier', () => {
       scope: 'domain',
       versionLabel: '域名',
       scopeLabel: '域名',
-      locationLabel: '域名需解析',
+      locationLabel: '域名',
       canLookupLocation: false,
     })
   })

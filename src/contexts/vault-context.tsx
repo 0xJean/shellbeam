@@ -11,8 +11,10 @@ import {
     vaultSetSecret,
     vaultStatus,
     vaultUnlock,
+    VaultUnavailableError,
     type VaultStatus,
 } from '@/lib/vault'
+import { t } from '@/lib/i18n'
 import { DEFAULT_VAULT_ID, listVaults, type VaultMeta } from '@/lib/vaults'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
@@ -88,6 +90,8 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
   const [showBiometricOptIn, setShowBiometricOptIn] = useState(false)
   const biometricOptInPasswordRef = useRef('')
   const sessionPasswordRef = useRef('')
+  // Locked during this session: the gate covers the app and waits for an explicit unlock.
+  const [lockHeld, setLockHeld] = useState(false)
 
   useEffect(() => {
     providerAlive.current = true
@@ -98,6 +102,8 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
   }, [])
 
   const gateOpen = !!vaultStatusState && !vaultStatusState.unlocked
+  const vaultUnlocked = vaultStatusState?.unlocked ?? false
+  useEffect(() => { if (vaultUnlocked) setLockHeld(false) }, [vaultUnlocked])
 
   const appendSecurityEvent = useCallback((level: SecurityEvent['level'], message: string) => {
     const entry: SecurityEvent = {
@@ -197,12 +203,14 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       vaultAutoLockingRef.current = true
       void (async () => {
         try {
+          setLockHeld(true)
           await vaultLock(activeVaultId)
           await refreshVault()
           sessionPasswordRef.current = ''
           appendSecurityEvent('warn', `Vault auto-locked after ${vaultAutoLockMinutes} minute(s) of inactivity.`)
           setOutput('Vault auto-locked due to inactivity.')
         } catch (error) {
+          setLockHeld(false)
           appendSecurityEvent('error', `Vault auto-lock failed: ${String(error)}`)
         } finally {
           vaultAutoLockingRef.current = false
@@ -235,12 +243,13 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
   const handleLock = useCallback(async () => {
     setVaultBusy(true)
     try {
+      setLockHeld(true)
       await vaultLock(activeVaultId)
       await refreshVault()
       sessionPasswordRef.current = ''
       appendSecurityEvent('info', 'Vault locked manually.')
       setOutput('Vault locked.')
-    } catch (error) { setOutput(String(error)) } finally { setVaultBusy(false) }
+    } catch (error) { setLockHeld(false); setOutput(String(error)) } finally { setVaultBusy(false) }
   }, [activeVaultId, appendSecurityEvent, refreshVault, setOutput])
 
   const handleSaveSecret = useCallback(async (key: string, value: string) => {
@@ -268,10 +277,10 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
 
   const handleRevealSecret = useCallback(async (key: string) => {
     if (!vaultStatusState?.initialized) {
-      throw new Error('Vault 尚未初始化。')
+      throw new VaultUnavailableError('uninitialized')
     }
     if (!vaultStatusState.unlocked) {
-      throw new Error('Vault 已锁定。')
+      throw new VaultUnavailableError('locked')
     }
     const value = await vaultGetSecret(key, activeVaultId)
     touchVaultActivity(`Vault secret revealed: ${key}`)
@@ -314,14 +323,14 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
         : (hostForRef?.privateKeyRef?.trim() || hostForRef?.secretKeyRef?.trim() || '')
     if (!secretKeyRef) return undefined
     if (!vaultStatusState?.initialized) {
-      throw new Error('Vault 尚未初始化。')
+      throw new VaultUnavailableError('uninitialized')
     }
     if (!vaultStatusState.unlocked) {
-      throw new Error('Vault 已锁定。')
+      throw new VaultUnavailableError('locked')
     }
     const value = await vaultGetSecret(secretKeyRef, activeVaultId)
     touchVaultActivity(`Resolved secret from vault key: ${secretKeyRef}`)
-    if (!value) throw new Error(`Vault 中未找到密钥: ${secretKeyRef}`)
+    if (!value) throw new Error(t('vault.error.secretMissing', { key: secretKeyRef }))
     if (targetAuthType === 'password' || targetAuthType === 'privateKey') return value
     return undefined
   }, [activeVaultId, appendSecurityEvent, touchVaultActivity, vaultStatusState?.initialized, vaultStatusState?.unlocked])
@@ -370,6 +379,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
         open={gateOpen}
         vaultStatus={vaultStatusState}
         onSubmit={handleGateSubmitWithOptIn}
+        held={lockHeld}
       />
 
       <VaultGateDialog

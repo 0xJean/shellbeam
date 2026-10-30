@@ -46,7 +46,7 @@ describe('workspace services app', () => {
       />,
     )
 
-    expect(screen.getByText('Service Control')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Services' })).toBeInTheDocument()
 
     await waitFor(() => {
       expect(screen.getAllByText('nginx.service').length).toBeGreaterThan(0)
@@ -104,6 +104,25 @@ describe('workspace services app', () => {
     fireEvent.click(screen.getByRole('button', { name: `Open logs for ${unit}` }))
     expect(onOpenLogs).toHaveBeenCalledExactlyOnceWith(unit)
     expect(runSshCommand.mock.calls.every(([payload]) => /systemctl (?:list-units|status)\b/.test(payload.command))).toBe(true)
+  })
+
+  it('filters the service list by state without changing the selected service', async () => {
+    runSshCommand.mockResolvedValue({
+      stdout: 'nginx.service loaded active running Web server\npostgresql.service loaded failed failed Database\nfail2ban.service loaded inactive dead Ban service',
+      stderr: '', exitCode: 0, durationMs: 1,
+    })
+    render(<WorkspaceServicesApp selectedHostId="host-1" hosts={[host]} resolveAuthSecret={async () => 'secret'} />)
+    const list = screen.getByTestId('workspace-services-list')
+    await within(list).findByText('postgresql.service')
+    const filters = screen.getByRole('group', { name: 'Filter services by state' })
+    expect(within(filters).getByRole('button', { name: /Failed\s*1/ })).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(within(filters).getByRole('button', { name: /Failed/ }))
+    expect(within(list).getAllByTestId('workspace-service-row').map((row) => row.dataset.serviceUnit)).toEqual(['postgresql.service'])
+    expect(screen.getByTestId('workspace-services-app')).toHaveAttribute('data-selected-service', 'nginx.service')
+    fireEvent.click(within(filters).getByRole('button', { name: /Inactive/ }))
+    expect(within(list).getAllByTestId('workspace-service-row').map((row) => row.dataset.serviceUnit)).toEqual(['fail2ban.service'])
+    fireEvent.click(within(filters).getByRole('button', { name: /All/ }))
+    expect(within(list).getAllByTestId('workspace-service-row')).toHaveLength(3)
   })
 
   it('uses host address fallback when host id is unavailable', async () => {

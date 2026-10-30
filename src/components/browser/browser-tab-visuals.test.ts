@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterBrowserTabs, getBrowserTabDensity, getBrowserTabFaviconCandidates, getBrowserTabMonogram } from './browser-tab-visuals'
+import { filterBrowserTabs, getBrowserRouteTone, getBrowserTabDensity, getBrowserTabFaviconCandidates, getBrowserTabMonogram } from './browser-tab-visuals'
 
 describe('browser tab visuals helpers', () => {
   it('derives stable monograms for url and preview tabs', () => {
@@ -62,5 +62,11 @@ describe('browser tab visuals helpers', () => {
     expect(getBrowserTabDensity(3)).toBe('comfortable')
     expect(getBrowserTabDensity(8)).toBe('compact')
     expect(getBrowserTabDensity(16)).toBe('dense')
+  })
+
+  it('treats preview tabs as a neutral route tone', () => {
+    expect(getBrowserRouteTone('local', 'markdown')).toBe('preview')
+    expect(getBrowserRouteTone('remote', 'url')).toBe('remote')
+    expect(getBrowserRouteTone(null, null)).toBe('local')
   })
 })

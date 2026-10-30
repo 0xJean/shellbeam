@@ -35,7 +35,7 @@ describe('Provider metric history range view', () => {
     expect(screen.getByRole('combobox', { name: 'Source' })).toHaveValue('komari:komari-main:node-1')
     expect(screen.getByRole('combobox', { name: 'Source' })).toHaveTextContent('Monitoring service · komari-main:node-1')
     expect(screen.getByText('Memory: unknown')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '7d' }))
+    fireEvent.click(screen.getByRole('tab', { name: '7d' }))
     await waitFor(() => expect(listProviderMetricHistory).toHaveBeenCalledTimes(2))
     const query = vi.mocked(listProviderMetricHistory).mock.calls.at(-1)?.[0]
     expect((query?.to ?? 0) - (query?.from ?? 0)).toBe(7 * 24 * 3600000)

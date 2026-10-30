@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { toInvokeErrorMessage } from '@/lib/invoke-error'
+import { t } from '@/lib/i18n'
 
 export interface VaultStatus {
   initialized: boolean
@@ -68,5 +69,15 @@ export async function vaultListSecretKeys(vaultId?: string | null) {
     return await invoke<string[]>('vault_list_secret_keys', { vaultId: vaultId ?? undefined })
   } catch (error) {
     throw new Error(toInvokeErrorMessage(error))
+  }
+}
+
+/** The Vault cannot serve secrets right now; callers match on the type, not the translated message. */
+export class VaultUnavailableError extends Error {
+  readonly reason: 'uninitialized' | 'locked'
+  constructor(reason: 'uninitialized' | 'locked') {
+    super(t(reason === 'locked' ? 'vault.error.locked' : 'vault.error.uninitialized'))
+    this.name = 'VaultUnavailableError'
+    this.reason = reason
   }
 }
