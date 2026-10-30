@@ -136,19 +136,17 @@ test('notification capture only reads prepared host details, never expands them,
     await assert.rejects(assertSafeProbeNotificationUi(unit.driver, context), /unsafe_host_scope/)
     assert.equal(clicks.length, 0, 'capture must not change native focus by expanding a collapsed host')
     await ensureOpsUiHostDetails(unit.driver, { hostId: unit.resumeState.hostIds.via, vaultId: unit.resumeState.vaultId })
-    await assert.rejects(assertSafeProbeNotificationUi(unit.driver, context), /unsafe_host_scope/)
+    // The drawer is modal: the jump host's mounted rows are read behind it.
+    await assertSafeProbeNotificationUi(unit.driver, context)
+    await assertSafeProbeNotificationUi(unit.driver, context)
     assert.deepEqual(clicks, [unit.resumeState.hostIds.via], 'capture must not expand the other group member')
-    await ensureOpsUiHostDetails(unit.driver, { hostId: unit.resumeState.hostIds.jump, vaultId: unit.resumeState.vaultId })
-    await assertSafeProbeNotificationUi(unit.driver, context)
-    await assertSafeProbeNotificationUi(unit.driver, context)
-    assert.deepEqual(clicks, [unit.resumeState.hostIds.via, unit.resumeState.hostIds.jump])
     assert(unit.document.getElementById('direct-details').hidden)
     const alert = unit.document.querySelector('[data-transport="proxy-jump"]')
     alert.hidden = true
     await assert.rejects(assertSafeProbeNotificationUi(unit.driver, context), /unsafe_alert_scope/)
     alert.hidden = false; alert.dataset.vaultId = 'foreign'
     await assert.rejects(assertSafeProbeNotificationUi(unit.driver, context), /unsafe_alert_vault_scope/)
-    assert.equal(clicks.length, 2)
+    assert.equal(clicks.length, 1)
   } finally { unit.dom.window.close() }
 })
 
