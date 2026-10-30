@@ -323,7 +323,7 @@ function unitJourney(t, { disclosures = false } = {}) {
   let clock = 1_800_000_000_000
   t.mock.method(Date, 'now', () => ++clock)
   const state = scope(), hostFixture = fixture(), events = [], checkpoints = []
-  const { dom, document, driver } = domDriver(`<button data-testid="pc-dashboard"></button><button data-testid="pc-nav-hosts"></button><button data-testid="pc-nav-activity"></button><button data-testid="history-tab-audit"></button><section data-testid="operations-audit-center"><button data-testid="audit-tab"></button><select data-testid="operations-source-filter"><option value="all">All</option><option value="workspace">Workspace</option></select><select data-testid="operations-filter"><option value="all">All</option><option value="cancelled">Cancelled</option><option value="completed">Completed</option></select><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page">Page 1</span><button data-testid="operations-older" disabled>Older</button></section>${roles.map(role => `<article data-testid="host-card" data-host-id="${state.hostIds[role]}">${evaluation(state, role, clock - 1000)}</article>`).join('')}`)
+  const { dom, document, driver } = domDriver(`<button data-testid="pc-dashboard"></button><button data-testid="pc-nav-hosts"></button><button data-testid="pc-nav-activity"></button><button data-testid="history-tab-audit"></button><section data-testid="operations-audit-center"><button data-testid="audit-tab"></button><div data-testid="operations-source-segments"><button data-value="workspace" aria-checked="true"></button></div><div data-testid="operations-status-segments"><button data-value="completed" aria-checked="true"></button><button data-value="cancelled" aria-checked="true"></button></div><button data-testid="operations-refresh">Refresh</button><span data-testid="operations-page">Page 1</span><button data-testid="operations-older" disabled>Older</button></section>${roles.map(role => `<article data-testid="host-card" data-host-id="${state.hostIds[role]}">${evaluation(state, role, clock - 1000)}</article>`).join('')}`)
   let pending = null, page = 'hosts', job = 0
   const node = input => typeof input === 'string' ? document.querySelector(input) : input
   const hostCard = role => document.querySelector(`[data-testid="host-card"][data-host-id="${state.hostIds[role]}"]`)
@@ -386,7 +386,7 @@ function unitJourney(t, { disclosures = false } = {}) {
       element.setAttribute('aria-expanded', 'true')
       element.closest('[data-testid="host-card"]').querySelector('[data-testid="host-ops-details"]').hidden = false
     }
-    else if (element.dataset.testid.startsWith('local-host-alert-')) {
+    else if (element.dataset.testid?.startsWith('local-host-alert-')) {
       const hostId = element.closest('[data-testid="host-card"]').dataset.hostId
       const role = roles.find(role => state.hostIds[role] === hostId)
       pending = { role, action: element.dataset.testid.includes('-ack-') ? 'acknowledge' : 'close' }

@@ -128,7 +128,7 @@ function Segmented<T extends string>({ label, value, options, onChange, testId }
   return (
     <div role="radiogroup" aria-label={label} data-testid={testId} className="hidden flex-wrap gap-0.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] p-0.5 md:inline-flex">
       {options.map(option => (
-        <button key={option.value} type="button" role="radio" aria-checked={value === option.value} onClick={() => onChange(option.value)}
+        <button key={option.value} type="button" role="radio" data-value={option.value} aria-checked={value === option.value} onClick={() => onChange(option.value)}
           className={cn('rounded-md px-2.5 py-1 text-xs transition-colors', value === option.value ? 'bg-[var(--workspace-surface-700)] font-medium text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
           {option.label}
         </button>

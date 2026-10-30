@@ -84,7 +84,10 @@ function validateFixture(fixture) {
 export async function closeOpsUiHostDrawer(driver) {
   const close = testId('host-ops-drawer-close')
   if (!(await driver.findAll(close)).length) return
-  await driver.click(close)
+  // Escape, as an in-app notification can sit over the close button.
+  await driver.request('POST', driver.route('/actions'), { actions: [{ type: 'key', id: 'host-drawer-close', actions: [
+    { type: 'keyDown', value: '\uE00C' }, { type: 'keyUp', value: '\uE00C' },
+  ] }] })
   await driver.until(async () => !(await driver.findAll(close)).length)
 }
 
@@ -507,14 +510,15 @@ export async function selectOpsUiServiceRow({ driver, fixture, state, role, reco
 export async function findOpsUiAuditRow({ driver, selector, status }) {
   check(['cancelled', 'completed'].includes(status), 'audit_status_invalid')
   const root = S.audit
-  const source = `${root} ${testId('operations-source-filter')}`
-  const filter = `${root} ${testId('operations-filter')}`
+  // Desktop widths show segmented radios; the native selects are phone-only.
+  const source = `${root} ${testId('operations-source-segments')} [data-value="workspace"]`
+  const filter = `${root} ${testId('operations-status-segments')} [data-value=${q(status)}]`
   const refresh = `${root} ${testId('operations-refresh')}`
   const page = `${root} ${testId('operations-page')}`
   const older = `${root} ${testId('operations-older')}`
   await driver.waitFor(source)
-  await driver.select(source, 'workspace')
-  await driver.select(filter, status)
+  await driver.click(source)
+  await driver.click(filter)
   await waitEnabled(driver, refresh)
   // Refresh resets any retained history cursor even when select's current
   // value was already correct and the browser emitted no change event.
@@ -522,7 +526,7 @@ export async function findOpsUiAuditRow({ driver, selector, status }) {
   for (let number = 1; number <= 100; number++) {
     await driver.until(async () => await enabled(driver, refresh)
       && (await driver.text(page)).trim() === `Page ${number}`
-      && await driver.attr(source, 'value') === 'workspace' && await driver.attr(filter, 'value') === status, { timeoutMs: 30000 })
+      && await driver.attr(source, 'aria-checked') === 'true' && await driver.attr(filter, 'aria-checked') === 'true', { timeoutMs: 30000 })
     check((await driver.findAll(`${root} ${testId('operations-error')}`)).length === 0, 'audit_load_failed')
     const rows = await driver.findAll(selector)
     check(rows.length <= 1, 'audit_record_ambiguous')
