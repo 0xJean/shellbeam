@@ -60,11 +60,11 @@ export async function setupTransferUi({driver:d,fixture:f,record}) {
   }
   for(let i=0;i<f.servers.length;i++) {
     const server=f.servers[i]
-    await main(d,'settings');await d.click(id('settings-category-monitoring'))
+    await main(d,'settings');await d.click(id('settings-category-monitoring'));await d.click(id('monitor-tab-services'))
     const root='//*[@data-testid="komari-settings"]'
     record('transfer-service-editor-opening',{service:i})
     await d.click(button(root,'Add monitoring service'));await d.fill('#komari-name',server.name);await d.fill('#komari-endpoint',server.endpoint)
-    await d.select(`${id('komari-settings')} select[aria-label="Authorization method"]`,'key');await d.fill('#komari-api-key',server.apiKey)
+    await d.click(`xpath=${root}//label[input[@type='radio' and @value='key']]`);await d.fill('#komari-api-key',server.apiKey)
     const enabled=`xpath=${root}//label[contains(.,'Enable monitoring connection')]/input[@type='checkbox']`
     if(!await d.isSelected(enabled))await d.click(enabled)
     record('transfer-service-saving',{service:i})

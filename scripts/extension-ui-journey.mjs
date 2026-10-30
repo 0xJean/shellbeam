@@ -11,12 +11,12 @@ const row=idValue=>`${rows}[data-intent-id="${idValue}"]`
 async function idle(d){await d.until(async()=>await d.attr(root,'data-busy')==='false',{timeoutMs:120000})}
 async function openHistory(d){await d.waitFor(history);if(await d.attr(history,'open')===null)await d.click(history+' > summary')}
 async function openService(d,s) {
-  await d.click(id('pc-dashboard'));await d.click(id('pc-nav-settings'));await d.click(id('settings-category-monitoring'))
-  await d.click(`${id('komari-settings')} button[aria-label="${s.name}"]`)
+  await d.click(id('pc-dashboard'));await d.click(id('pc-nav-settings'));await d.click(id('settings-category-monitoring'));await d.click(id('monitor-tab-server'))
+  await d.click(`xpath=//*[@id="monitor-tab-panel"]//button[@aria-pressed][.//span[normalize-space(.)=${JSON.stringify(s.name)}]]`)
   await d.waitFor(root);if(await d.attr(root,'open')===null)await d.click(root+' > summary')
   await d.select(id('monitoring-service-target'),'load-policy');await idle(d)
   assert.equal((await d.findAll('iframe')).length,0,'extension_ui_second_frontend')
-  assert.equal(await d.attr('#komari-api-key','value'),'','extension_ui_credential_visible')
+  assert.equal((await d.findAll('#komari-api-key')).length,0,'extension_ui_credential_visible')
 }
 async function confirm(d,s,accept=true){
   const selector=`dialog[open] ${id('user-confirmation')}`;await d.waitFor(selector)
@@ -88,13 +88,13 @@ export async function revealExtensionAudit(d,expected) {
 export async function setupExtensionUi({driver:d,fixture:f,record}) {
   const password='Ui1'+randomBytes(24).toString('hex');await initializeOpsUiVault({driver:d,password,record})
   for(const s of f.services) {
-    await d.click(id('pc-dashboard'));await d.click(id('pc-nav-settings'));await d.click(id('settings-category-monitoring'))
+    await d.click(id('pc-dashboard'));await d.click(id('pc-nav-settings'));await d.click(id('settings-category-monitoring'));await d.click(id('monitor-tab-services'))
     await d.click(button('Add monitoring service'));await d.fill('#komari-name',s.name);await d.fill('#komari-endpoint',s.endpoint)
     await d.click('xpath=//*[@data-testid="komari-settings"]//label[input[@type="radio" and @value="key"]]');await d.fill('#komari-api-key',s.apiKey)
     const enabled='xpath=//*[@data-testid="komari-settings"]//label[contains(.,"Enable monitoring connection")]/input[@type="checkbox"]'
     if(!await d.isSelected(enabled))await d.click(enabled)
     await d.click(button('Save connection'));await d.until(async()=>await d.attr('#komari-api-key','value')==='')
-    await d.waitFor(root);record('extension-service-saved',{role:s.role,credentialsSaved:true})
+    await d.click(id('monitor-tab-server'));await d.waitFor(root);record('extension-service-saved',{role:s.role,credentialsSaved:true})
   }
   return {password}
 }
