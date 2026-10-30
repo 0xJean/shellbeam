@@ -3,7 +3,7 @@
 // controls only the disposable fixture's existing exact SSHD services.
 import { createHash } from 'node:crypto'
 import { basename, isAbsolute, relative, resolve } from 'node:path'
-import { findOpsUiAuditRow, respondOpsUiConfirmation, revealOpsUiHostActions, validateOpsUiServiceRect, waitForOpsUiConfirmation } from './ops-ui-journey.mjs'
+import { closeOpsUiHostDrawer, findOpsUiAuditRow, respondOpsUiConfirmation, revealOpsUiHostActions, validateOpsUiServiceRect, waitForOpsUiConfirmation } from './ops-ui-journey.mjs'
 import { ensureOpsUiHostDetails, isOpsUiHostDetailsVisible, waitForOpsUiHostOperations } from './ops-ui-host-details.mjs'
 
 const ROLES = Object.freeze(['direct', 'via'])
@@ -34,6 +34,7 @@ export function validateOpsUiProbeScope(fixture, state) {
 }
 
 async function openPage(driver, page, state, role) {
+  await closeOpsUiHostDrawer(driver)
   await driver.waitFor(tid('pc-dashboard'))
   await driver.click(tid('pc-dashboard'))
   await driver.click(tid(page === 'activity' ? 'pc-nav-activity' : 'pc-nav-hosts'))

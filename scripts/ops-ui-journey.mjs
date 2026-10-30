@@ -80,7 +80,16 @@ function validateFixture(fixture) {
   check(fixture.hosts.direct.serviceUnit !== fixture.hosts.via.serviceUnit, 'fixture_services_not_independent')
 }
 
+// Host details open as a modal drawer, which covers the sidebar and tabs.
+export async function closeOpsUiHostDrawer(driver) {
+  const close = testId('host-ops-drawer-close')
+  if (!(await driver.findAll(close)).length) return
+  await driver.click(close)
+  await driver.until(async () => !(await driver.findAll(close)).length)
+}
+
 async function openDashboardPage(driver, page) {
+  await closeOpsUiHostDrawer(driver)
   // Sessions stay mounted. The real dashboard tab makes its sidebar visible;
   // clicking a hidden sidebar item would bypass the actual product path.
   await driver.waitFor(S.dashboard)
@@ -365,6 +374,11 @@ async function openServices(driver, role, state) {
   await driver.click(`${byHost(state.hostIds[role])} ${testId('host-services-open')}`)
   await driver.waitFor(serviceRoot(state.hostIds[role]), { timeoutMs: 60000 })
   check(await driver.attr(serviceRoot(state.hostIds[role]), 'data-vault-id') === state.vaultId, 'service_vault_scope_mismatch')
+  // The selection evidence measures the service window, so use the desktop
+  // layout; the list layout is the default and has no windows.
+  for (const toggle of await driver.findAll(testId('workspace-layout-desktop'))) {
+    if (await driver.isDisplayed(toggle) && await driver.attr(toggle, 'aria-checked') === 'false') await driver.click(toggle)
+  }
 }
 
 function serviceSelectionScope(fixture, state, role) {

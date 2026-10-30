@@ -430,6 +430,7 @@ function ruleActivationDriver() {
     async horizontalScrollState() { return { width: 1054, contentWidth: 1054, left: 0 } },
     async until(fn) { assert(await fn()) },
     async findAll(css) {
+      if (css === '[data-testid="host-ops-drawer-close"]') return []
       assert.equal(css, '[data-testid="host-list-scroll-controls"] input[type="range"]')
       return []
     },

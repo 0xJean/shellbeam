@@ -251,7 +251,7 @@ function HostOpsDrawer({ id, host, summary, open, onClose, dot, groupLabel, netw
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-1.5">{actions}</div>
         </div>
-        <button type="button" aria-label={t('common.close')} title={t('common.close')} onClick={onClose}
+        <button data-testid="host-ops-drawer-close" type="button" aria-label={t('common.close')} title={t('common.close')} onClick={onClose}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"><X className="h-4 w-4" /></button>
       </header>}
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
