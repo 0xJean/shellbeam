@@ -7,6 +7,11 @@ import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 
 export const OPS_UI_SELECTORS = Object.freeze({
   welcome: '[data-testid="welcome-enter"]',
+  welcomeVaultForm: '[data-testid="welcome-vault-form"]',
+  welcomePassword: '[data-testid="welcome-master-password"]',
+  welcomeConfirm: '[data-testid="welcome-confirm-password"]',
+  welcomeAck: '[data-testid="welcome-vault-ack"]',
+  welcomeCreate: '[data-testid="welcome-create-vault"]',
   vaultForm: 'dialog[open] [data-testid="vault-password-form"]',
   vaultPassword: 'dialog[open] [data-testid="vault-master-password"]',
   vaultSubmit: 'dialog[open] [data-testid="vault-submit"]',
@@ -237,9 +242,10 @@ async function configureRule(driver, fixture, role, state) {
   await driver.waitFor(`${root} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="active"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
 }
 
-// The providers mount the Vault modal alongside the animated Welcome page.
-// Wait for showModal's real open state and complete that top-layer flow before
-// touching Welcome; DOM presence alone does not make either control usable.
+// First run creates the Vault on the Welcome page, which holds back the Vault
+// modal; the modal branch remains for a dismissed Welcome. Complete whichever
+// is showing, then the biometric step, and only then dismiss Welcome. DOM
+// presence alone does not make any of these controls usable.
 export async function initializeOpsUiVault({ driver, password, record }) {
   let initialized = false
   let initializeSubmitted = false
@@ -254,6 +260,22 @@ export async function initializeOpsUiVault({ driver, password, record }) {
       await driver.click(S.biometricSkip)
       biometricSkipSubmitted = true
       await record('ops-ui-biometric-skipped', { passed: true })
+      return false
+    }
+    if (await visible(driver, S.welcomeVaultForm)) {
+      if (!initializeSubmitted) {
+        await record('ops-ui-vault-initialize-visible', { visible: true })
+        await driver.fill(S.welcomePassword, password)
+        check(await driver.attr(S.welcomePassword, 'value') === password, 'vault_password_ui_roundtrip_failed')
+        await driver.fill(S.welcomeConfirm, password)
+        await record('ops-ui-vault-password-entered', { roundtrip: true })
+        await driver.click(S.welcomeAck)
+        await waitEnabled(driver, S.welcomeCreate)
+        await record('ops-ui-vault-initialize-submit-ready', { enabled: true })
+        await driver.click(S.welcomeCreate)
+        initializeSubmitted = true
+        await record('ops-ui-vault-initialize-submitted', { passed: true })
+      }
       return false
     }
     if (await visible(driver, S.vaultForm)) {

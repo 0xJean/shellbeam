@@ -95,11 +95,17 @@ pub struct HistoryItem {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Event {
-    Token { text: String },
+    Token {
+        text: String,
+    },
     /// The model the CLI reports it is using, when it reports one.
-    Model { name: String },
+    Model {
+        name: String,
+    },
     Done,
-    Error { code: String },
+    Error {
+        code: String,
+    },
 }
 #[derive(Serialize)]
 pub struct Status {
@@ -234,7 +240,11 @@ fn validate_request(r: &Request) -> Result<(), String> {
         || r.host.len() > 2048
         || r.host.contains('\0')
         || r.history.len() > MAX_HISTORY_ITEMS
-        || r.history.iter().map(|item| item.content.len()).sum::<usize>() > MAX_HISTORY_BYTES
+        || r.history
+            .iter()
+            .map(|item| item.content.len())
+            .sum::<usize>()
+            > MAX_HISTORY_BYTES
         || r.history.iter().any(|item| item.content.contains('\0'))
     {
         return Err("invalid_request".into());
@@ -369,7 +379,11 @@ fn child_path(executable: &Path) -> Option<std::ffi::OsString> {
         dirs.extend(std::env::split_paths(&path));
     }
     dirs.extend(extra_search_dirs());
-    dirs.extend([PathBuf::from("/bin"), PathBuf::from("/usr/sbin"), PathBuf::from("/sbin")]);
+    dirs.extend([
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/sbin"),
+        PathBuf::from("/sbin"),
+    ]);
     let mut seen = std::collections::HashSet::new();
     dirs.retain(|d| seen.insert(d.clone()));
     std::env::join_paths(dirs).ok()

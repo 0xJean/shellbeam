@@ -58,7 +58,11 @@ fn migrate_legacy_in(
     let legacy = read_json_or_default::<Vec<CommandHistoryEntry>>(&legacy_path)?;
     let indexes = indexes()?;
     let split = split_by_owner(&legacy, |entry| {
-        vec![legacy_entry_owner(entry.host_id.as_deref(), &entry.host, &indexes)]
+        vec![legacy_entry_owner(
+            entry.host_id.as_deref(),
+            &entry.host,
+            &indexes,
+        )]
     });
     for (vault_id, moved) in split {
         let path = history_path(dir, Some(&vault_id));

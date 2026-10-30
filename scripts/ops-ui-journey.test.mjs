@@ -203,6 +203,33 @@ test('startup refuses an existing Vault without filling or dismissing Welcome', 
   await assert.rejects(initializeOpsUiVault({ driver, password: 'PRIVATE_TEST_VALUE', record: async () => {} }), /^Error: ops_ui_existing_vault_refused$/)
 })
 
+test('first run creates the Vault on Welcome, then dismisses Welcome once', async () => {
+  const S = OPS_UI_SELECTORS
+  const password = 'PRIVATE_TEST_VALUE'
+  const writes = []
+  const values = new Map()
+  let phase = 'form'
+  const present = (css) => (phase === 'form' && [S.welcomeVaultForm, S.welcomePassword, S.welcomeConfirm, S.welcomeAck, S.welcomeCreate, S.welcome].includes(css))
+    || (phase === 'host' && css === S.welcome)
+    || (phase === 'dashboard' && css === S.dashboard)
+  const driver = {
+    async findAll(css) { return present(css) ? [{ css }] : [] },
+    async isDisplayed(css) { return present(css) },
+    async waitFor() {},
+    async until(check) { for (let i = 0; i < 20; i += 1) if (await check()) return; assert.fail('never reached the dashboard') },
+    async attr(css, name) { return name === 'value' ? values.get(css) : null },
+    async fill(css, value) { writes.push(css); values.set(css, value) },
+    async click(css) {
+      writes.push(css)
+      if (css === S.welcomeCreate) phase = 'host'
+      if (css === S.welcome) phase = 'dashboard'
+    },
+  }
+  const result = await initializeOpsUiVault({ driver, password, record: async () => {} })
+  assert.deepEqual(result, { initialized: true, welcomeDismissed: true })
+  assert.deepEqual(writes, [S.welcomePassword, S.welcomeConfirm, S.welcomeAck, S.welcomeCreate, S.welcome])
+})
+
 function journeyContext() {
   const fixture = { schemaVersion: 1, hosts: Object.fromEntries(['jump', 'direct', 'via'].map((role, index) => [role, {
     name: `isolated ${role}`, address: '127.0.0.1', port: 22_001 + index, user: 'root', privateKeyPath: `/private/${role}.pem`, expectedFingerprint: 'SHA256:public-test-fingerprint',

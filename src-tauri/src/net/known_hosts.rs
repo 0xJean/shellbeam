@@ -238,8 +238,8 @@ pub async fn fetch_and_add_known_host(
     tauri::async_runtime::spawn_blocking(move || {
         fetch_and_add_known_host_sync(&app, vault_id.as_deref(), &host, port)
     })
-        .await
-        .map_err(|e| format!("Task panicked: {e}"))?
+    .await
+    .map_err(|e| format!("Task panicked: {e}"))?
 }
 
 fn fetch_and_add_known_host_sync(
@@ -351,7 +351,12 @@ mod tests {
     #[test]
     fn legacy_file_is_split_by_owning_vaults_once() {
         let dir = temp_dir("migrate");
-        save_entries_in(&dir, Some("work"), &[entry("shared.example", 22, "already")]).unwrap();
+        save_entries_in(
+            &dir,
+            Some("work"),
+            &[entry("shared.example", 22, "already")],
+        )
+        .unwrap();
         write_json(
             &dir.join(KNOWN_HOSTS_FILE),
             &KnownHostsFile {

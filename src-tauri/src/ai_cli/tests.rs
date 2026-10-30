@@ -32,13 +32,24 @@ fn request_limits_and_registry_do_not_overwrite_or_expand_concurrency() {
 }
 #[test]
 fn history_is_bounded_and_rejects_unknown_roles() {
-    let item = |role, content: &str| HistoryItem { role, content: content.into() };
+    let item = |role, content: &str| HistoryItem {
+        role,
+        content: content.into(),
+    };
     let mut r = request();
-    r.history = vec![item(HistoryRole::User, "df -h"), item(HistoryRole::Output, "/dev/sda1 98%")];
+    r.history = vec![
+        item(HistoryRole::User, "df -h"),
+        item(HistoryRole::Output, "/dev/sda1 98%"),
+    ];
     assert!(validate_request(&r).is_ok());
-    r.history = (0..=MAX_HISTORY_ITEMS).map(|_| item(HistoryRole::User, "x")).collect();
+    r.history = (0..=MAX_HISTORY_ITEMS)
+        .map(|_| item(HistoryRole::User, "x"))
+        .collect();
     assert!(validate_request(&r).is_err());
-    r.history = vec![item(HistoryRole::Output, &"x".repeat(MAX_HISTORY_BYTES + 1))];
+    r.history = vec![item(
+        HistoryRole::Output,
+        &"x".repeat(MAX_HISTORY_BYTES + 1),
+    )];
     assert!(validate_request(&r).is_err());
     r.history = vec![item(HistoryRole::Assistant, "a\0b")];
     assert!(validate_request(&r).is_err());
@@ -46,7 +57,9 @@ fn history_is_bounded_and_rejects_unknown_roles() {
     r.host = "x".repeat(2049);
     assert!(validate_request(&r).is_err());
     assert!(serde_json::from_str::<HistoryItem>(r#"{"role":"system","content":"x"}"#).is_err());
-    assert!(serde_json::from_str::<HistoryItem>(r#"{"role":"user","content":"x","extra":1}"#).is_err());
+    assert!(
+        serde_json::from_str::<HistoryItem>(r#"{"role":"user","content":"x","extra":1}"#).is_err()
+    );
 }
 #[test]
 fn claude_partial_and_final_messages_emit_text_once() {
@@ -56,7 +69,8 @@ fn claude_partial_and_final_messages_emit_text_once() {
         .unwrap()
         .is_none());
     assert_eq!(p.model.take().as_deref(), Some("claude-sonnet-4-6"));
-    p.line(r#"{"type":"system","subtype":"status","model":"other"}"#).unwrap();
+    p.line(r#"{"type":"system","subtype":"status","model":"other"}"#)
+        .unwrap();
     assert!(p.model.is_none());
     assert_eq!(p.line(r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"ls "}}}"#).unwrap(), Some("ls ".into()));
     assert_eq!(
@@ -332,19 +346,36 @@ fn child_path_starts_with_the_cli_directory_and_keeps_install_locations() {
 
 #[test]
 fn only_parent_session_variables_are_dropped() {
-    for name in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_AGENT_SDK_VERSION", "USE_LOCAL_OAUTH"] {
+    for name in [
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_AGENT_SDK_VERSION",
+        "USE_LOCAL_OAUTH",
+    ] {
         assert!(is_host_session_var(name), "{name}");
     }
-    for name in ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "HOME", "PATH"] {
+    for name in [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "OPENAI_API_KEY",
+        "HOME",
+        "PATH",
+    ] {
         assert!(!is_host_session_var(name), "{name}");
     }
 }
 #[test]
 fn run_mode_defaults_to_confirm_and_rejects_unknown_values() {
     let base = r#"{"requestId":"r","backend":"codex-cli","executable":"","model":"","prompt":"p","context":""}"#;
-    assert_eq!(serde_json::from_str::<Request>(base).unwrap().mode, RunMode::Confirm);
+    assert_eq!(
+        serde_json::from_str::<Request>(base).unwrap().mode,
+        RunMode::Confirm
+    );
     let auto = base.replace(r#""context":"""#, r#""context":"","mode":"read-only""#);
-    assert_eq!(serde_json::from_str::<Request>(&auto).unwrap().mode, RunMode::ReadOnly);
+    assert_eq!(
+        serde_json::from_str::<Request>(&auto).unwrap().mode,
+        RunMode::ReadOnly
+    );
     let bad = base.replace(r#""context":"""#, r#""context":"","mode":"yolo""#);
     assert!(serde_json::from_str::<Request>(&bad).is_err());
 }

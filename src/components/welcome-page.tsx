@@ -254,7 +254,7 @@ function VaultStep({ c, vaultName, onCreated, onContinue, footer }: {
           )}
         </div>
         <label className="flex cursor-pointer items-start gap-2.5 text-[13px] text-[color:var(--workspace-text)]">
-          <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} disabled={busy}
+          <input data-testid="welcome-vault-ack" type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} disabled={busy}
             className="mt-0.5 h-4 w-4 shrink-0 accent-[color:var(--workspace-primary-500)]" />
           <span>{c.ack}</span>
         </label>

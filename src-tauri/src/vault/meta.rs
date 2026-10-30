@@ -200,7 +200,11 @@ pub fn resolve_peer_vault(
     };
     meta.vaults.push(VaultMeta {
         id: id.clone(),
-        name: if name.is_empty() { peer_id.to_string() } else { name.to_string() },
+        name: if name.is_empty() {
+            peer_id.to_string()
+        } else {
+            name.to_string()
+        },
         created_at: now_unix_ms(),
         is_default: false,
     });
