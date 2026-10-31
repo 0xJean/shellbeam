@@ -5,13 +5,14 @@ name: Packaged acceptance
 # request or main push runs only those its changed paths need, and everything
 # else runs all four. scripts/ci-acceptance-scope.mjs holds the path rules.
 # Workflow-level `paths` could only start or skip all four together.
+# build.yml calls this workflow for `v*` tags and holds the release until it passes.
 on:
   pull_request:
   push:
     branches: [main]
-    tags: ['v*']
   schedule:
     - cron: '17 19 * * *'
+  workflow_call:
   workflow_dispatch:
 
 permissions:

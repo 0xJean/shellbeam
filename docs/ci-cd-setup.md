@@ -61,13 +61,11 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-自动构建 macOS + Linux + Windows + Android，完成后在 Releases 页面出现 draft release。
-
-同一个 tag 也会触发 `Packaged acceptance` 的全部四项验收。发布 draft 之前，请先确认这四项都已通过；目前 `Release` 不会等待验收，需要人工确认。详见 [ci-cd.md](ci-cd.md)。
+自动构建 macOS + Linux + Windows + Android，并在同一次 `Release` 运行中执行 `Packaged acceptance` 的全部四项验收。构建和验收都通过后，Releases 页面才会出现 draft release；任何一项验收失败都不会创建 draft。详见 [ci-cd.md](ci-cd.md)。
 
 ### 手动
 
-仓库 → Actions → Release → Run workflow，勾选需要的平台。
+仓库 → Actions → Release → Run workflow，勾选需要的平台。在分支上运行时会跳过验收，也不会创建 release；在 `v*` tag 上运行时会执行全部四项验收，通过后才创建 draft release。
 
 ## 4. 产物
 

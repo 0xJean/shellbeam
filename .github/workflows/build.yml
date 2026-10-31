@@ -331,22 +331,32 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run build:ios:tf
 
+  # Uses the same ref test as `release`, so a manual run on a tag is gated as well.
+  acceptance:
+    name: Packaged acceptance
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/packaged-acceptance.yml
+
   release:
+    # Platform builds may be skipped by a manual run. Acceptance may not.
     if: >-
       always() &&
       startsWith(github.ref, 'refs/tags/v') &&
+      needs.acceptance.result == 'success' &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
-    needs: [build-macos, build-linux, build-android, build-windows, ios-testflight]
+    needs: [acceptance, build-macos, build-linux, build-android, build-windows, ios-testflight]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
+      # Acceptance artifacts share this run and must stay out of the release.
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: '{macos,linux,android,windows}'
           path: artifacts
 
       - name: List release files
