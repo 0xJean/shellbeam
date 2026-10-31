@@ -111,6 +111,8 @@
 | Android | `.apk` / `.aab` |
 | iOS | Release notes 中的 TestFlight 链接 |
 
+有新的 GitHub 发布时，ShellBeam 只会提醒你，不会自行安装。iOS 依靠 TestFlight，不做此检查。应用会在启动时及每 12 小时向 GitHub 查询最新发布，GitHub 能看到你的 IP 地址和请求时间；主机、保险库数据、使用数据及应用版本都不会发送。可在 设置 → 常规 → 更新 中关闭。
+
 发布自动化配置见 [docs/ci-cd.md](./docs/ci-cd.md)。
 
 ### 从源码构建
