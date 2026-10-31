@@ -1,0 +1,260 @@
+name: Packaged acceptance
+
+# One package and one WebDriver are built per run and shared by the suites below,
+# so a failing suite stays its own red check. `scope` picks the suites: a pull
+# request or main push runs only those its changed paths need, and everything
+# else runs all four. scripts/ci-acceptance-scope.mjs holds the path rules.
+# Workflow-level `paths` could only start or skip all four together.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  schedule:
+    - cron: '17 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packaged-acceptance-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scope:
+    name: Select acceptance suites
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      ops: ${{ steps.select.outputs.ops }}
+      agent: ${{ steps.select.outputs.agent }}
+      probe: ${{ steps.select.outputs.probe }}
+      extension: ${{ steps.select.outputs.extension }}
+      build: ${{ steps.select.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A pull request checks out its merge commit, whose first parent is the base.
+          fetch-depth: 2
+      - id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          changed=
+          # Anything that cannot name its changes runs in full.
+          if [[ $EVENT_NAME == pull_request && $HEAD_REF != release/* ]]; then
+            changed=$(git diff --name-only HEAD^1 HEAD) || changed=unknown-diff
+          elif [[ $EVENT_NAME == push && $GITHUB_REF == refs/heads/main ]]; then
+            if git fetch --depth=1 origin "$BEFORE"; then
+              changed=$(git diff --name-only "$BEFORE" HEAD) || changed=unknown-diff
+            else
+              changed=unknown-diff
+            fi
+          else
+            changed=full-acceptance-run
+          fi
+          printf '%s\n' "$changed"
+          printf '%s\n' "$changed" | node scripts/ci-acceptance-scope.mjs | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    name: Build acceptance package
+    needs: scope
+    if: needs.scope.outputs.build == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/packaged-acceptance-setup
+        with:
+          unpack-build: 'false'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: ops-ui-release
+          cache-on-failure: true
+      - name: Install pinned external Tauri WebDriver
+        run: cargo install tauri-driver --version 0.1.5 --locked --root "$RUNNER_TEMP/shellbeam-webdriver"
+      - name: Build real release Debian package with a distinct test binary filename
+        run: npx tauri build --ci --bundles deb --no-sign --config src-tauri/tauri.ops-ui.conf.json
+      - name: Pack the package and WebDriver for the suites
+        run: |
+          mapfile -t ui_packages < <(find src-tauri/target/release/bundle/deb -maxdepth 1 -type f -name '*.deb')
+          test "${#ui_packages[@]}" = 1
+          mkdir "$RUNNER_TEMP/shellbeam-acceptance-package" "$RUNNER_TEMP/packaged-acceptance-build"
+          cp "${ui_packages[0]}" "$RUNNER_TEMP/shellbeam-acceptance-package/"
+          tar -cf "$RUNNER_TEMP/packaged-acceptance-build/build.tar" -C "$RUNNER_TEMP" shellbeam-acceptance-package shellbeam-webdriver/bin/tauri-driver
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packaged-acceptance-build
+          path: ${{ runner.temp }}/packaged-acceptance-build/build.tar
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 3
+
+  ops-ui:
+    name: Installed Linux app, Vault and Ops UI
+    needs: [scope, build]
+    if: needs.scope.outputs.ops == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/packaged-acceptance-setup
+      - name: Verify transport, report and fixture guards
+        run: |
+          node --test scripts/ops-ui-driver.test.mjs scripts/ops-ui-journey.test.mjs scripts/ops-ui-notifications.test.mjs scripts/ci-ops-ui-live.test.mjs scripts/ops-ui-probe-fixture.test.mjs scripts/ops-ui-probe-journey.test.mjs scripts/ops-ui-probe-notifications.test.mjs
+          bash -n scripts/ci-ops-ui-live.sh
+          bash -n scripts/install-ops-ui-dunst.sh
+      - name: Build checksum-pinned upstream dunst 1.7.3 for the real X11/count contract
+        timeout-minutes: 5
+        env:
+          SHELLBEAM_OPS_UI_LIVE: '1'
+        run: bash scripts/install-ops-ui-dunst.sh
+      - name: Install package and exercise native UI as ordinary runner user
+        timeout-minutes: 20
+        env:
+          SHELLBEAM_OPS_UI_LIVE: '1'
+          SHELLBEAM_OPS_UI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          bash scripts/ci-with-installed-package.sh sudo env PATH="$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" RUNNER_TEMP="$RUNNER_TEMP" SHELLBEAM_OPS_UI_LIVE="$SHELLBEAM_OPS_UI_LIVE" SHELLBEAM_OPS_UI_UID="$(id -u)" SHELLBEAM_OPS_UI_GID="$(id -g)" SHELLBEAM_OPS_UI_HEAD_SHA="$SHELLBEAM_OPS_UI_HEAD_SHA" SHELLBEAM_OPS_UI_REPORT="$RUNNER_TEMP/shellbeam-ops-ui-live-report.json" SHELLBEAM_OPS_UI_ARTIFACTS="$RUNNER_TEMP/shellbeam-ops-ui-artifacts" bash scripts/ci-ops-ui-live.sh /usr/bin/shellbeam-ops-ui-acceptance "$RUNNER_TEMP/shellbeam-webdriver/bin/tauri-driver"
+      - name: Upload only redacted results and controlled notification screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-ops-ui-result
+          path: |
+            ${{ runner.temp }}/shellbeam-ops-ui-live-report.json
+            ${{ runner.temp }}/shellbeam-ops-ui-artifacts/*.png
+          if-no-files-found: warn
+          retention-days: 7
+
+  monitoring-agent-ui:
+    name: Installed app signed agent upgrade and rollback
+    needs: [scope, build]
+    if: needs.scope.outputs.agent == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the reviewed ShellBeam Server
+        uses: actions/checkout@v4
+        with:
+          repository: 0xJean/shellbeam-server
+          ref: ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b
+          path: .tmp/monitoring-server-input
+          persist-credentials: false
+      - name: Build exact server for isolated targets
+        run: |
+          test "$(git -C .tmp/monitoring-server-input rev-parse HEAD)" = ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b
+          docker build --target artifacts --build-arg VERSION_HASH=ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b --output "type=local,dest=$RUNNER_TEMP/shellbeam-server-input" .tmp/monitoring-server-input
+      - uses: ./.github/actions/packaged-acceptance-setup
+      - name: Check agent lifecycle evidence contracts
+        run: |
+          node --test scripts/monitoring-agent-ui.test.mjs scripts/probe-transfer-ui.test.mjs
+          bash -n scripts/ci-monitoring-agent-ui.sh
+      - name: Build isolated systemd target machines
+        run: docker build -t shellbeam-probe-transfer-fixture:ci scripts/fixtures/probe-transfer
+      - name: Install package and exercise native UI as ordinary runner user
+        timeout-minutes: 20
+        env:
+          SHELLBEAM_OPS_UI_LIVE: '1'
+          SHELLBEAM_OPS_UI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash scripts/ci-with-installed-package.sh bash scripts/ci-monitoring-agent-ui.sh "$RUNNER_TEMP/shellbeam-webdriver/bin/tauri-driver"
+      - name: Upload only redacted agent lifecycle results and safe UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-agent-ui-result
+          path: |
+            ${{ runner.temp }}/shellbeam-monitoring-agent-ui-report.json
+            ${{ runner.temp }}/shellbeam-monitoring-agent-ui-artifacts/*.png
+          if-no-files-found: warn
+          retention-days: 7
+
+  probe-transfer-ui:
+    name: Installed app probe migration and recovery
+    needs: [scope, build]
+    if: needs.scope.outputs.probe == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the reviewed ShellBeam Server
+        uses: actions/checkout@v4
+        with:
+          repository: 0xJean/shellbeam-server
+          ref: ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b
+          path: .tmp/monitoring-server-input
+          persist-credentials: false
+      - name: Build exact server for isolated targets
+        run: |
+          test "$(git -C .tmp/monitoring-server-input rev-parse HEAD)" = ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b
+          docker build --target artifacts --build-arg VERSION_HASH=ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b --output "type=local,dest=$RUNNER_TEMP/shellbeam-server-input" .tmp/monitoring-server-input
+      - uses: ./.github/actions/packaged-acceptance-setup
+      - name: Check migration UI fixture and recovery contracts
+        run: |
+          node --test scripts/probe-transfer-ui.test.mjs
+          bash -n scripts/ci-probe-transfer-ui.sh
+      - name: Build isolated systemd target machines
+        run: docker build -t shellbeam-probe-transfer-fixture:ci scripts/fixtures/probe-transfer
+      - name: Install package and exercise native UI as ordinary runner user
+        timeout-minutes: 20
+        env:
+          SHELLBEAM_OPS_UI_LIVE: '1'
+          SHELLBEAM_OPS_UI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash scripts/ci-with-installed-package.sh bash scripts/ci-probe-transfer-ui.sh "$RUNNER_TEMP/shellbeam-webdriver/bin/tauri-driver"
+      - name: Upload only redacted migration results and safe UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-transfer-ui-result
+          path: |
+            ${{ runner.temp }}/shellbeam-transfer-ui-report.json
+            ${{ runner.temp }}/shellbeam-transfer-ui-artifacts/*.png
+          if-no-files-found: warn
+          retention-days: 7
+
+  extension-ui:
+    name: Installed app extension lifecycle and recovery
+    needs: [scope, build]
+    if: needs.scope.outputs.extension == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the reviewed ShellBeam Server
+        uses: actions/checkout@v4
+        with:
+          repository: 0xJean/shellbeam-server
+          ref: ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b
+          path: .tmp/monitoring-server-input
+          persist-credentials: false
+      - name: Build exact server for isolated targets
+        run: |
+          test "$(git -C .tmp/monitoring-server-input rev-parse HEAD)" = ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b
+          docker build --target artifacts --build-arg VERSION_HASH=ff2dc11ab1feaf480ef39c67b946f35cad0ffb9b --output "type=local,dest=$RUNNER_TEMP/shellbeam-server-input" .tmp/monitoring-server-input
+      - uses: ./.github/actions/packaged-acceptance-setup
+      - name: Check extension UI fixture and recovery contracts
+        run: |
+          node --test scripts/extension-ui.test.mjs
+          bash -n scripts/ci-extension-ui.sh
+      - name: Install package and exercise native UI as ordinary runner user
+        timeout-minutes: 20
+        env:
+          SHELLBEAM_OPS_UI_LIVE: '1'
+          SHELLBEAM_OPS_UI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash scripts/ci-with-installed-package.sh bash scripts/ci-extension-ui.sh "$RUNNER_TEMP/shellbeam-webdriver/bin/tauri-driver"
+      - name: Upload only redacted extension results and safe UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-ui-result
+          path: |
+            ${{ runner.temp }}/shellbeam-extension-ui-report.json
+            ${{ runner.temp }}/shellbeam-extension-ui-artifacts/*.png
+          if-no-files-found: warn
+          retention-days: 7

@@ -5,9 +5,6 @@ on:
   push:
     branches:
       - main
-      - master
-      - develop
-      - 'feature/**'
 
 permissions:
   contents: read
@@ -40,6 +37,9 @@ jobs:
 
       - name: Disposable runner mirror configuration guards
         run: python3 scripts/ci-ubuntu-mirror.test.py
+
+      - name: Packaged acceptance path rules
+        run: node --test scripts/ci-acceptance-scope.test.mjs
 
       - name: Verify bundled monitoring extension and policy runtime
         run: |

@@ -51,7 +51,7 @@ iOS 默认不随 tag push 触发（需要证书才能构建成功）。
 
 | Variable | 值 |
 |---|---|
-| `ENABLE_IOS_BUILD` | `true` |
+| `ENABLE_IOS_TESTFLIGHT` 或 `ENABLE_IOS_BUILD` | `true` |
 
 ## 3. 触发构建
 
@@ -63,9 +63,11 @@ git push origin v0.1.0
 
 自动构建 macOS + Linux + Windows + Android，完成后在 Releases 页面出现 draft release。
 
+同一个 tag 也会触发 `Packaged acceptance` 的全部四项验收。发布 draft 之前，请先确认这四项都已通过；目前 `Release` 不会等待验收，需要人工确认。详见 [ci-cd.md](ci-cd.md)。
+
 ### 手动
 
-仓库 → Actions → Build & Release → Run workflow，勾选需要的平台。
+仓库 → Actions → Release → Run workflow，勾选需要的平台。
 
 ## 4. 产物
 
@@ -75,4 +77,4 @@ git push origin v0.1.0
 | Linux | `.deb` `.AppImage` `.rpm` |
 | Windows | `.msi` `.exe` |
 | Android | `.apk` `.aab` |
-| iOS | `.ipa` |
+| iOS | 上传到 TestFlight，不作为 GitHub Release 附件 |
