@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
-  "windows": [
+  "description": "The app's own frontend: local origin, main webview only. Embedded browser webviews share the main window, so never match on window label here.",
+  "webviews": [
     "main"
   ],
   "permissions": [
@@ -17,6 +17,7 @@
     "core:webview:allow-webview-show",
     "dialog:default",
     "window-state:default",
-    "biometry:default"
+    "biometry:default",
+    "allow-app-commands"
   ]
 }
