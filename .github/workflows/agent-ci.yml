@@ -6,7 +6,7 @@ on:
       - 'src/lib/shellbeam-agent*'
       - '.github/workflows/agent-*.yml'
   push:
-    branches: [main, master, develop]
+    branches: [main]
     paths:
       - 'agent/**'
       - '.github/workflows/agent-*.yml'

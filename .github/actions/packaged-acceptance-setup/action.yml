@@ -1,0 +1,33 @@
+name: Prepare packaged acceptance runner
+description: Install the Node toolchain and native UI dependencies, and optionally unpack the shared package and WebDriver.
+inputs:
+  unpack-build:
+    description: Download and unpack the package and WebDriver from the build job
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        # npm ci uses the lockfile directly; npm cache restore can stall on egress limits.
+    - name: Install real native UI and observation dependencies
+      shell: bash
+      run: |
+        sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" python3 scripts/ci-ubuntu-mirror.py
+        sudo apt-get update
+        sudo apt-get install -y libwebkit2gtk-4.1-dev webkit2gtk-driver libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev openssh-server dbus xvfb xauth x11-utils imagemagick tesseract-ocr tesseract-ocr-eng fonts-dejavu-core build-essential pkg-config curl ca-certificates libnotify-dev libx11-dev libxinerama-dev libxrandr-dev libxss-dev libxext-dev libpango1.0-dev libgdk-pixbuf-2.0-dev
+        sudo install -d /run/sshd
+    - shell: bash
+      run: npm ci
+    - name: Download the package built for this run
+      if: inputs.unpack-build == 'true'
+      uses: actions/download-artifact@v4
+      with:
+        name: packaged-acceptance-build
+        path: ${{ runner.temp }}/packaged-acceptance-build
+    - name: Unpack the package and WebDriver
+      if: inputs.unpack-build == 'true'
+      shell: bash
+      # A tar keeps the driver's executable bit, which artifact upload drops.
+      run: tar -xf "$RUNNER_TEMP/packaged-acceptance-build/build.tar" -C "$RUNNER_TEMP"
