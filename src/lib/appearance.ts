@@ -25,22 +25,22 @@ export interface AppearancePrefs {
 }
 
 export const PALETTES: Record<Palette, { family: ThemeFamily; label: string; accent: Accent; swatch: [string, string, string] }> = {
-  'aqua-dark': { family: 'dark', label: 'Aqua Dark', accent: 'blue', swatch: ['#18181a', '#242426', '#0a84ff'] },
-  midnight: { family: 'dark', label: 'Midnight', accent: 'violet', swatch: ['#0f1013', '#16171c', '#7c6cf2'] },
-  nord: { family: 'dark', label: 'Nord', accent: 'cyan', swatch: ['#242933', '#2e3440', '#22b8d6'] },
-  dracula: { family: 'dark', label: 'Dracula', accent: 'pink', swatch: ['#21222c', '#2b2d3a', '#ec5fa8'] },
-  graphite: { family: 'dark', label: 'Graphite', accent: 'amber', swatch: ['#161514', '#201f1d', '#e3a43c'] },
-  ocean: { family: 'dark', label: 'Ocean', accent: 'blue', swatch: ['#0b1220', '#121c30', '#3b8bff'] },
+  'aqua-dark': { family: 'dark', label: 'Aqua Dark', accent: 'blue', swatch: ['#000000', '#111113', '#0a84ff'] },
+  midnight: { family: 'dark', label: 'Midnight', accent: 'violet', swatch: ['#0b0c13', '#15161f', '#6f5ef0'] },
+  nord: { family: 'dark', label: 'Nord', accent: 'cyan', swatch: ['#1e222a', '#262b35', '#22b8d6'] },
+  dracula: { family: 'dark', label: 'Dracula', accent: 'pink', swatch: ['#1a1b23', '#22232e', '#ec5fa8'] },
+  graphite: { family: 'dark', label: 'Graphite', accent: 'amber', swatch: ['#181614', '#242220', '#e3a43c'] },
+  ocean: { family: 'dark', label: 'Ocean', accent: 'blue', swatch: ['#08162a', '#11263f', '#2870e4'] },
   'solarized-dark': { family: 'dark', label: 'Solarized', accent: 'teal', swatch: ['#002b36', '#073642', '#2bb5a0'] },
-  'mist-dark': { family: 'dark', label: 'Mist', accent: 'green', swatch: ['#121817', '#1c2422', '#2fbf7d'] },
-  aqua: { family: 'light', label: 'Aqua', accent: 'blue', swatch: ['#f5f5f7', '#ffffff', '#0a84ff'] },
-  paper: { family: 'light', label: 'Paper', accent: 'orange', swatch: ['#f4efe6', '#fffdf8', '#f2700d'] },
-  solarized: { family: 'light', label: 'Solarized', accent: 'teal', swatch: ['#eee8d5', '#fffaeb', '#0f9488'] },
-  mist: { family: 'light', label: 'Mist', accent: 'green', swatch: ['#eef2f1', '#ffffff', '#1fa463'] },
-  lavender: { family: 'light', label: 'Lavender', accent: 'violet', swatch: ['#f3f1fa', '#ffffff', '#6e5ce6'] },
-  'nord-light': { family: 'light', label: 'Nord', accent: 'cyan', swatch: ['#e5e9f0', '#ffffff', '#0891b2'] },
-  'dracula-light': { family: 'light', label: 'Dracula', accent: 'pink', swatch: ['#f5f3f9', '#ffffff', '#d6407f'] },
-  'ocean-light': { family: 'light', label: 'Ocean', accent: 'blue', swatch: ['#e9f0fa', '#ffffff', '#0a84ff'] },
+  'mist-dark': { family: 'dark', label: 'Mist', accent: 'green', swatch: ['#121a18', '#1c2825', '#2fbf7d'] },
+  aqua: { family: 'light', label: 'Aqua', accent: 'blue', swatch: ['#ededf0', '#ffffff', '#0a84ff'] },
+  paper: { family: 'light', label: 'Paper', accent: 'orange', swatch: ['#ebe3d4', '#fffdf8', '#c25200'] },
+  solarized: { family: 'light', label: 'Solarized', accent: 'teal', swatch: ['#e8e1cb', '#fdf6e3', '#0d8277'] },
+  mist: { family: 'light', label: 'Mist', accent: 'green', swatch: ['#e4ebe8', '#ffffff', '#147f4b'] },
+  lavender: { family: 'light', label: 'Lavender', accent: 'violet', swatch: ['#e8e4f6', '#ffffff', '#6e5ce6'] },
+  'nord-light': { family: 'light', label: 'Nord', accent: 'cyan', swatch: ['#e5e9f0', '#ffffff', '#0a7f9c'] },
+  'dracula-light': { family: 'light', label: 'Dracula', accent: 'pink', swatch: ['#eae5f1', '#ffffff', '#cc3575'] },
+  'ocean-light': { family: 'light', label: 'Ocean', accent: 'blue', swatch: ['#dfeaf7', '#ffffff', '#0a84ff'] },
 }
 
 /** A theme is one look with a dark and a light side; the light/dark mode picks the side. */
@@ -56,7 +56,7 @@ export const THEMES: readonly { id: string; label: string; dark: DarkPalette; li
 ]
 
 export const ACCENTS: Record<Accent, string> = {
-  violet: '#7c6cf2', blue: '#3b8bff', cyan: '#22b8d6', teal: '#2bb5a0', green: '#2fbf7d', amber: '#e3a43c', orange: '#f2853a', pink: '#ec5fa8',
+  violet: '#6f5ef0', blue: '#2870e4', cyan: '#22b8d6', teal: '#2bb5a0', green: '#2fbf7d', amber: '#e3a43c', orange: '#f2853a', pink: '#ec5fa8',
 }
 
 export const DEFAULT_APPEARANCE: AppearancePrefs = { darkPalette: 'aqua-dark', lightPalette: 'aqua', darkAccent: null, lightAccent: null, uiStyle: 'auto' }

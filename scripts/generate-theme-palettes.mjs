@@ -148,7 +148,8 @@ function accentBlock(selector, v) {
       `  --workspace-accent-subtle: ${rgba(c, 0.08)};`,
       `  --workspace-accent-muted: ${rgba(c, 0.18)};`,
       `  --workspace-accent-text: ${v['accent-text']};`,
-      `  --workspace-surface-row-selected: ${v['accent-soft']};`,
+      // A row is far larger than a nav item, so it takes a lighter tint than accent-soft.
+      `  --workspace-surface-row-selected: ${v['accent-row'] ?? rgba(c, 0.07)};`,
       `  --workspace-nav-active-bg: ${v['accent-soft']};`,
       `  --workspace-nav-active-text: ${v['accent-text']};`,
       `  --workspace-border-glow: ${rgba(c, 0.48)};`,
