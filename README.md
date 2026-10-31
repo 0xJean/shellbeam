@@ -111,6 +111,8 @@ Download the latest release for your platform from the [GitHub Releases](https:/
 | Android | `.apk` / `.aab` |
 | iOS | TestFlight link in the release notes |
 
+ShellBeam reminds you when a newer GitHub release is out, and never installs anything itself. iOS relies on TestFlight and does not make this check. A check asks GitHub for the latest release when the app starts and every 12 hours, so GitHub sees your IP address and the request time. No hosts, vault data, usage data or app version are sent. Turn it off under Settings → General → Updates.
+
 Release automation is documented in [docs/ci-cd.md](./docs/ci-cd.md).
 
 ### Build from Source

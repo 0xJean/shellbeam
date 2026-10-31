@@ -1,3 +1,4 @@
+import { AppUpdateSettingsSection } from '@/components/app-update'
 import { TerminalThemeGrid } from '@/components/terminal-widgets'
 import { McpSettingsSection } from '@/components/mcp-settings-section'
 import { AISettingsSection } from '@/components/ai-settings-section'
@@ -185,6 +186,7 @@ export function SettingsPanel({
             <Button variant="outline" size="sm" onClick={onOpenGuide}>{t('guide.open')}</Button>
           </section>
         )}
+        <AppUpdateSettingsSection />
         </>}
         {category === 'connection' && <>
         <SettingsHead title={v3.terminalTitle} description={v3.terminalDesc} />
