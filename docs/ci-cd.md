@@ -6,7 +6,7 @@ ShellBeam has eight GitHub Actions workflows.
 |---|---|---|---|
 | CI | `ci.yml` | every pull request, pushes to `main` | Frontend tests and build, Rust and real SSH on three platforms, monitoring extension contract |
 | Packaged acceptance | `packaged-acceptance.yml` | see below | Installs the real Linux package and drives four UI journeys |
-| Release | `build.yml` | `v*` tags, manual | Builds all platforms and creates a draft GitHub Release. iOS goes to TestFlight instead of being attached as an IPA |
+| Release | `build.yml` | `v*` tags, manual | Builds all platforms, runs packaged acceptance on `v*` tags, and creates a draft GitHub Release once it passes. iOS goes to TestFlight instead of being attached as an IPA |
 | Optional agent CI | `agent-ci.yml` | pull requests and `main` pushes touching `agent/` | Builds and tests the optional agent |
 | Build signed optional agent | `agent-release.yml` | manual, default branch | Signs an optional agent release |
 | Compatible monitoring probe lifecycle | `komari-agent-ci.yml` | pull requests touching probe code, manual | Probe install and upgrade lifecycle |
@@ -30,7 +30,7 @@ Which suites run depends on the trigger:
 |---|---|
 | Pull request, push to `main` | Those whose paths changed |
 | Pull request from a `release/*` branch | All four |
-| `v*` tag push | All four |
+| `Release` on a `v*` tag, pushed or manual | All four, inside the `Release` run |
 | Nightly at 19:17 UTC, on `main` | All four |
 | Manual **Run workflow**, on any branch | All four |
 
@@ -46,13 +46,15 @@ The nightly run is the safety net for a path rule that is too narrow. GitHub sen
    git tag v0.1.0
    git push origin v0.1.0
    ```
-3. Wait for the `Release` workflow and for `Packaged acceptance` on the same tag. Both start from the tag push:
+3. Wait for the `Release` workflow. It calls `Packaged acceptance`, so the tag has one run and the four suites appear inside it:
    ```bash
-   gh run list --workflow packaged-acceptance.yml --branch v0.1.0
+   gh run list --workflow build.yml --branch v0.1.0
    ```
-4. Publish the draft GitHub Release only after all four acceptance checks pass and the attached files and release notes look right. Nothing enforces this order yet: `Release` does not wait for acceptance, so check it by hand.
+4. Publish the draft GitHub Release once the attached files and release notes look right. The draft only exists if all four acceptance checks and every enabled platform build passed.
 
-Manual builds can be started from GitHub Actions with `workflow_dispatch`; platform builds can be enabled or disabled there. To create a draft GitHub Release from a manual run, dispatch the workflow on a `v*` tag ref. The iOS option uploads a build to TestFlight.
+If acceptance fails, no draft is created. Fix the cause and push a new tag, or use **Re-run failed jobs** on the `Release` run for a failure that does not need a code change. Acceptance does not hold back the platform builds, which run alongside it, and an enabled iOS build reaches TestFlight whatever acceptance reports.
+
+Manual builds can be started from GitHub Actions with `workflow_dispatch`; platform builds can be enabled or disabled there. A manual run on a branch skips acceptance and creates no release. To create a draft GitHub Release from a manual run, dispatch the workflow on a `v*` tag ref, which runs acceptance the same way a tag push does. The iOS option uploads a build to TestFlight.
 
 ## GitHub downloads
 
