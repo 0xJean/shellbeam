@@ -1,5 +1,5 @@
 // Generate shellbeam-app/src/styles/theme-palettes.css from the v3 design tokens.
-// Usage: node scripts/generate-theme-palettes.mjs ../docs/design/shellbeam-designs/v3/tokens.css src/styles/theme-palettes.css
+// Usage: node scripts/generate-theme-palettes.mjs docs/design/shellbeam-designs/v3/tokens.css src/styles/theme-palettes.css
 import { readFileSync, writeFileSync } from 'node:fs'
 
 const [, , src, out] = process.argv
