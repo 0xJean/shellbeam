@@ -1575,3 +1575,5 @@ html.dark[data-dark-palette="aqua-dark"][data-dark-accent="blue"] {
   --workspace-metric-cpu-glow: rgba(10, 132, 255, 0.14);
   --workspace-mobile-accent: #0a84ff;
 }
+
+/* scope proof: not for merge */
