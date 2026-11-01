@@ -29,6 +29,8 @@ interface BrowserWebviewLease {
   openPromise: Promise<void> | null
   closePromise: Promise<void> | null
   closeTimer: ReturnType<typeof setTimeout> | null
+  /** The mounted view currently showing this webview. A page and a workspace window can share one. */
+  shownBy: symbol | null
 }
 
 const browserWebviewLeases = new Map<string, BrowserWebviewLease>()
@@ -43,6 +45,7 @@ function getLease(browserId: string): BrowserWebviewLease {
       openPromise: null,
       closePromise: null,
       closeTimer: null,
+      shownBy: null,
     }
     browserWebviewLeases.set(browserId, lease)
   }
@@ -145,6 +148,10 @@ export function EmbeddedBrowserWebview({ browserId, sessionId, visible, source, 
   const containerRef = useRef<HTMLDivElement>(null)
   const createdRef = useRef(false)
   const shownRef = useRef(false)
+  const ownerRef = useRef(Symbol('browser-view'))
+  const lastBoundsRef = useRef<string | null>(null)
+  const pendingBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
+  const sendingBoundsRef = useRef(false)
   const visibleRef = useRef(visible)
   const pendingSourceRef = useRef<{ source: BrowserSource; revision: number } | null>(null)
   const loadedRevisionRef = useRef<number | undefined>(undefined)
@@ -188,29 +195,54 @@ export function EmbeddedBrowserWebview({ browserId, sessionId, visible, source, 
       console.log(LOG, 'syncBounds: container has zero size', sessionId, rect.width, rect.height)
       return false
     }
-    console.log(LOG, 'syncBounds: updating', sessionId, `${rect.x},${rect.y} ${rect.width}x${rect.height}`)
-    void updateBrowserBounds(browserId, {
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-    }).catch(() => {})
+    const key = `${rect.x},${rect.y} ${rect.width}x${rect.height}`
+    if (lastBoundsRef.current === key) return true
+    lastBoundsRef.current = key
+    console.log(LOG, 'syncBounds: updating', sessionId, key)
+    pendingBoundsRef.current = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    // One update at a time, always the newest, so an older rect can never land after a newer one.
+    if (!sendingBoundsRef.current) {
+      sendingBoundsRef.current = true
+      void (async () => {
+        while (pendingBoundsRef.current) {
+          const next = pendingBoundsRef.current
+          pendingBoundsRef.current = null
+          await updateBrowserBounds(browserId, next).catch(() => {})
+        }
+        sendingBoundsRef.current = false
+      })()
+    }
     return true
   }, [browserId, sessionId])
+
+  const showNative = useCallback(() => {
+    getLease(browserId).shownBy = ownerRef.current
+    void showBrowserWebview(browserId).catch(() => {})
+    shownRef.current = true
+  }, [browserId])
+
+  const hideNative = useCallback(() => {
+    shownRef.current = false
+    const lease = browserWebviewLeases.get(browserId)
+    if (lease?.shownBy && lease.shownBy !== ownerRef.current) return
+    if (lease) lease.shownBy = null
+    void hideBrowserWebview(browserId).catch(() => {})
+  }, [browserId])
 
   const showIfReady = useCallback(() => {
     if (!createdRef.current || !visibleRef.current) {
       console.log(LOG, 'showIfReady: skip', sessionId, 'created=', createdRef.current, 'visible=', visibleRef.current)
       return
     }
+    // Another view may have moved this webview while it was hidden here.
+    lastBoundsRef.current = null
     if (!syncBounds()) {
       console.log(LOG, 'showIfReady: syncBounds failed', sessionId)
       return
     }
     console.log(LOG, 'showIfReady: showing webview', sessionId)
-    void showBrowserWebview(browserId).catch(() => {})
-    shownRef.current = true
-  }, [browserId, sessionId, syncBounds])
+    showNative()
+  }, [sessionId, showNative, syncBounds])
 
   useEffect(() => {
     let cancelled = false
@@ -237,16 +269,14 @@ export function EmbeddedBrowserWebview({ browserId, sessionId, visible, source, 
     return () => {
       console.log(LOG, 'creation effect: cleanup', sessionId, 'created=', createdRef.current, 'shown=', shownRef.current)
       cancelled = true
-      if (shownRef.current) {
-        void hideBrowserWebview(browserId).catch(() => {})
-        shownRef.current = false
-      }
+      if (shownRef.current) hideNative()
+      lastBoundsRef.current = null
       if (createdRef.current) {
         createdRef.current = false
       }
       releaseLease(browserId, sessionId)
     }
-  }, [browserId, flushPendingSource, proxyUrl, sessionId, showIfReady])
+  }, [browserId, flushPendingSource, hideNative, proxyUrl, sessionId, showIfReady])
 
   useEffect(() => {
     if (!source) return
@@ -261,21 +291,15 @@ export function EmbeddedBrowserWebview({ browserId, sessionId, visible, source, 
     visibleRef.current = visible
     if (!createdRef.current) return
     if (visible) showIfReady()
-    else {
-      void hideBrowserWebview(browserId).catch(() => {})
-      shownRef.current = false
-    }
-  }, [browserId, sessionId, showIfReady, visible])
+    else hideNative()
+  }, [hideNative, sessionId, showIfReady, visible])
 
   useEffect(() => {
     if (!containerRef.current) return
     const handleBounds = () => {
-      if (!createdRef.current) return
+      if (!createdRef.current || !visibleRef.current) return
       const ok = syncBounds()
-      if (ok && visibleRef.current && !shownRef.current) {
-        void showBrowserWebview(browserId).catch(() => {})
-        shownRef.current = true
-      }
+      if (ok && !shownRef.current) showNative()
     }
     const observer = new ResizeObserver(handleBounds)
     observer.observe(containerRef.current)
@@ -284,7 +308,18 @@ export function EmbeddedBrowserWebview({ browserId, sessionId, visible, source, 
       observer.disconnect()
       window.removeEventListener('resize', handleBounds)
     }
-  }, [browserId, syncBounds])
+  }, [showNative, syncBounds])
+
+  // A resize observer misses a container that moves without changing size, which would leave the
+  // native webview covering the browser's own toolbar. Follow its position while it is showing.
+  useEffect(() => {
+    if (!visible) return
+    let frame = requestAnimationFrame(function follow() {
+      if (createdRef.current) syncBounds()
+      frame = requestAnimationFrame(follow)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [syncBounds, visible])
 
   return <div ref={containerRef} data-testid="embedded-browser-webview" className="h-full w-full min-h-0" />
 }

@@ -138,10 +138,16 @@ export function SessionTerminalView({
     return () => window.removeEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
   }, [sessionId])
   useEffect(() => { announceTerminalAiState(sessionId, showAI) }, [sessionId, showAI])
-  // The assistant works on the terminal, so asking for it from the workbench switches to the terminal.
+  // The assistant works on the terminal, so opening it from the workbench switches to the terminal.
+  // Only the moment it opens counts: with it already open, the user can still move to any other mode.
+  const prevShowAIRef = useRef(showAI)
   useEffect(() => {
-    if (showAI && chromeOnly && workspaceMode !== 'terminal') onWorkspaceModeChange?.('terminal')
+    const opened = showAI && !prevShowAIRef.current
+    prevShowAIRef.current = showAI
+    if (opened && chromeOnly && workspaceMode !== 'terminal') onWorkspaceModeChange?.('terminal')
   }, [showAI, chromeOnly, workspaceMode, onWorkspaceModeChange])
+  const chromeOnlyRef = useRef(chromeOnly)
+  chromeOnlyRef.current = chromeOnly
   const [currentInputLine, setCurrentInputLine] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [detectedLinks, setDetectedLinks] = useState<string[]>([])
@@ -232,7 +238,6 @@ export function SessionTerminalView({
   }, [scheduleInputUiSync])
 
   useEffect(() => {
-    if (chromeOnly) return
     if (!containerRef.current) return
 
     const term = new Terminal({
@@ -346,6 +351,8 @@ export function SessionTerminalView({
     const resizeObs = new ResizeObserver(() => {
       if (fitTimer) clearTimeout(fitTimer)
       fitTimer = setTimeout(() => {
+        // Hidden behind another mode: leave the remote size alone. Returning to the terminal refits it.
+        if (chromeOnlyRef.current) return
         try { fit.fit() } catch { /* teardown */ }
       }, 50)
     })
@@ -367,10 +374,9 @@ export function SessionTerminalView({
       termRef.current = null
       fitRef.current = null
     }
-  }, [sessionId, chunkEmitterRef, chromeOnly, outputThrottledText])
+  }, [sessionId, chunkEmitterRef, outputThrottledText])
 
   useEffect(() => {
-    if (chromeOnly) return
     const term = termRef.current
     if (!term || !terminalPrefs) return
     term.options.theme = terminalTheme
@@ -379,12 +385,14 @@ export function SessionTerminalView({
     term.options.cursorStyle = terminalPrefs.cursorStyle ?? DEFAULT_TERMINAL_PREFS.cursorStyle
     term.options.cursorBlink = terminalPrefs.cursorBlink ?? DEFAULT_TERMINAL_PREFS.cursorBlink
     try { fitRef.current?.fit() } catch { /* teardown */ }
-  }, [terminalTheme, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, terminalPrefs?.cursorStyle, terminalPrefs?.cursorBlink, chromeOnly])
+  }, [terminalTheme, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, terminalPrefs?.cursorStyle, terminalPrefs?.cursorBlink])
 
   const prevVisibleRef = useRef(visible)
+  const prevChromeOnlyRef = useRef(chromeOnly)
   useEffect(() => {
-    const wasHidden = !prevVisibleRef.current
+    const wasHidden = !prevVisibleRef.current || prevChromeOnlyRef.current
     prevVisibleRef.current = visible
+    prevChromeOnlyRef.current = chromeOnly
     if (!chromeOnly && visible && wasHidden) {
       requestAnimationFrame(() => {
         try { fitRef.current?.fit() } catch { /* teardown */ }
@@ -409,7 +417,7 @@ export function SessionTerminalView({
   return (
     <div
       data-testid="terminal-session" data-session-id={sessionId} data-host-name={hostName} data-host-id={session?.hostId} data-status={isConnected ? 'connected' : isDisconnected ? 'disconnected' : 'connecting'}
-      className={cn('relative flex flex-col', chromeOnly ? 'shrink-0' : 'h-full')}
+      className={cn('relative flex h-full flex-col', chromeOnly && 'pointer-events-none')}
       style={{
         ...(chromeOnly ? {} : { background: bg }),
         opacity: entered ? 1 : 0,
@@ -417,7 +425,7 @@ export function SessionTerminalView({
       }}
     >
       <div
-        className="hidden h-9 shrink-0 items-center gap-2 overflow-hidden px-4 md:flex"
+        className="pointer-events-auto hidden h-9 shrink-0 items-center gap-2 overflow-hidden px-4 md:flex"
         style={{ borderBottom: `1px solid ${fg}15`, background: bg }}
       >
         <span className={cn(
@@ -533,8 +541,8 @@ export function SessionTerminalView({
           onClose={() => { setShowSearch(false); termRef.current?.focus() }}
         />
       )}
-      {!chromeOnly && (
-        <>
+      {/* The terminal and assistant stay mounted while another mode is showing, so they keep their state. */}
+      <div className={cn('flex min-h-0 flex-1 flex-col', chromeOnly && 'invisible')}>
           <div className="flex min-h-0 flex-1">
           <div className="relative flex min-w-0 flex-1 flex-col">
           <div
@@ -605,8 +613,7 @@ export function SessionTerminalView({
           {isConnected && (
             <MobileTerminalToolbar onSend={onSendRaw} />
           )}
-        </>
-      )}
+      </div>
     </div>
   )
 }

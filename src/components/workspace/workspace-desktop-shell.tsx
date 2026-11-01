@@ -74,6 +74,7 @@ interface WorkspaceDesktopShellProps {
   onOpenProviderConsole?: (url: string, host: HostProfile) => void
   onEditHost?: (host: HostProfile) => void
   onBrowserCloseRequest?: () => void
+  surfaceVisible?: boolean
 }
 
 interface DesktopWindowState {
@@ -254,6 +255,7 @@ export function WorkspaceDesktopShell({
   onOpenProviderConsole,
   onEditHost,
   onBrowserCloseRequest,
+  surfaceVisible = true,
 }: WorkspaceDesktopShellProps) {
   const { layout, setLayout } = useWorkspaceLayout()
   const [diagnosticLogUnit, setDiagnosticLogUnit] = useState('')
@@ -362,7 +364,7 @@ export function WorkspaceDesktopShell({
       return <WorkspaceEmptyApp app={app} />
     }
     if (app === 'browser') {
-      return <WorkspaceBrowserApp sessionId={sessionId} onCloseRequest={onBrowserCloseRequest ?? (() => onSelectApp('overview'))} />
+      return <WorkspaceBrowserApp sessionId={sessionId} visible={surfaceVisible} onCloseRequest={onBrowserCloseRequest ?? (() => onSelectApp('overview'))} />
     }
     return <WorkspaceEmptyApp app={app} />
   }

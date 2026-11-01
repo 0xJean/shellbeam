@@ -18,10 +18,10 @@ jobs:
     name: Frontend test and build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           # npm ci uses the lockfile directly; npm cache restore can stall on egress limits.
@@ -57,13 +57,13 @@ jobs:
         os: [macos-latest, ubuntu-22.04, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           # npm ci uses the lockfile directly; npm cache restore can stall on egress limits.
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
       - name: Install Linux native dependencies and SSH fixture
@@ -97,7 +97,7 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml --locked --lib official_service_wire_contract -- --ignored
       - name: Retain native extension lifecycle evidence
         if: always() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: monitoring-extension-native-lifecycle
           path: ${{ runner.temp }}/monitoring-extension-lifecycle.json
@@ -128,7 +128,7 @@ jobs:
           sudo env PATH="$PATH" GITHUB_ACTIONS="$GITHUB_ACTIONS" GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" RUNNER_TEMP="$RUNNER_TEMP" SHELLBEAM_OPS_LIVE="$SHELLBEAM_OPS_LIVE" SHELLBEAM_OPS_LIVE_REPORT="$RUNNER_TEMP/shellbeam-ops-live-report.json" bash scripts/ci-ops-live.sh "$bridge_path"
       - name: Save the redacted real Ops acceptance result
         if: always() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-ops-live-result
           path: ${{ runner.temp }}/shellbeam-ops-live-report.json
@@ -142,8 +142,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           # npm ci uses the lockfile directly; npm cache restore can stall on egress limits.
@@ -165,7 +165,7 @@ jobs:
         run: node scripts/monitoring-extension-live.mjs --binary "$RUNNER_TEMP/komari-extension-contract"
       - name: Retain redacted contract evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: monitoring-extension-contract
           path: ${{ runner.temp }}/monitoring-extension-report.json
