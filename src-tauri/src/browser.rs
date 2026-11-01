@@ -966,11 +966,12 @@ pub async fn update_browser_bounds<R: Runtime>(
             .get("height")
             .and_then(|v| v.as_f64())
             .unwrap_or_default();
+        // One atomic update: separate position and size calls can interleave with the next update.
         webview
-            .set_position(LogicalPosition::new(x, y))
-            .map_err(|error| error.to_string())?;
-        webview
-            .set_size(LogicalSize::new(width, height))
+            .set_bounds(tauri::Rect {
+                position: LogicalPosition::new(x, y).into(),
+                size: LogicalSize::new(width, height).into(),
+            })
             .map_err(|error| error.to_string())?;
     }
     Ok(())
