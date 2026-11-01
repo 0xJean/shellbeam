@@ -1,3 +1,4 @@
+import { AppUpdateRuntime } from '@/components/app-update'
 import { InAppNotifications } from '@/components/in-app-notifications'
 import { WelcomePage } from '@/components/welcome-page'
 import { useWelcomePage } from '@/hooks/use-welcome-page'
@@ -106,6 +107,7 @@ function AppInnerWithVault() {
         <LocalOpsRuntime />
         <ScheduledOpsRuntime />
         <ShellbeamAgentRuntime />
+        <AppUpdateRuntime />
         <SessionsProvider setOutput={setOutput}>
           <AppInner />
         </SessionsProvider>

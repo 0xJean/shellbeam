@@ -2,6 +2,7 @@
 
 mod agent_release;
 mod ai_cli;
+mod app_update;
 mod biometric_store;
 mod browser;
 mod collection_limits;
@@ -87,6 +88,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             agent_release::download_shellbeam_agent_release,
+            app_update::app_update_info,
+            app_update::check_latest_app_release,
+            app_update::open_app_release_page,
             ai_cli::ai_cli_status,
             ai_cli::ai_cli_start,
             ai_cli::ai_cli_cancel,
