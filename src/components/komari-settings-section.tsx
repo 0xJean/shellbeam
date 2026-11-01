@@ -78,6 +78,7 @@ function VaultKomariSettingsSection({ vaultId, onOpenServiceConfiguration, onInt
   const [password, setPassword] = useState('')
   const [twoFactor, setTwoFactor] = useState('')
   const [metricDsn, setMetricDsn] = useState('./data/metrics.db')
+  const [installToken, setInstallToken] = useState('')
   const alive = useRef(true)
   const loadSequence = useRef(0)
   const selected = useRef<string | null>(null)
@@ -247,10 +248,10 @@ function VaultKomariSettingsSection({ vaultId, onOpenServiceConfiguration, onInt
         accessScope.current = scope
         try {
           if (!isCurrentVault() || !alive.current) return
-          await serviceRequest(scope, authMode, { username, password, twoFactor, metricDsn, confirmed: authMode === 'initialize' })
+          await serviceRequest(scope, authMode, { username, password, twoFactor, metricDsn, ...(authMode === 'initialize' && installToken.trim() ? { installToken: installToken.trim() } : {}), confirmed: authMode === 'initialize' })
         } finally { await closeServiceScope(scope).catch(() => {}); if (accessScope.current === scope) accessScope.current = null }
         if (!isCurrentVault()) return
-        setPassword(''); setTwoFactor('')
+        setPassword(''); setTwoFactor(''); setInstallToken('')
       } else if (apiKey.trim()) {
         try {
           await handleSaveSecret(credentialRef, apiKey.trim())
@@ -438,6 +439,7 @@ function VaultKomariSettingsSection({ vaultId, onOpenServiceConfiguration, onInt
               <label className={fieldLabel}>{access.pass}<Input className="mt-1" type="password" value={password} disabled={busy} autoComplete={authMode === 'initialize' ? 'new-password' : 'current-password'} onChange={e => { editForm(); setPassword(e.target.value) }} /></label>
               {authMode === 'authorize' && <label className={fieldLabel}>{access.twoFactor}<Input className="mt-1 font-mono text-xs" value={twoFactor} disabled={busy} autoComplete="one-time-code" onChange={e => setTwoFactor(e.target.value)} /></label>}
               {authMode === 'initialize' && <label className={fieldLabel}>{access.database}<Input className="mt-1 font-mono text-xs" value={metricDsn} disabled={busy} onChange={e => setMetricDsn(e.target.value)} /></label>}
+              {authMode === 'initialize' && <label className={fieldLabel}>{access.installToken}<Input className="mt-1 font-mono text-xs" type="password" value={installToken} disabled={busy} autoComplete="off" onChange={e => setInstallToken(e.target.value)} /></label>}
             </>}
             {authMode === 'key' && <div className="sm:col-span-2">
               <label className={fieldLabel} htmlFor="komari-api-key">{t('settings.komariApiKey')}</label>
