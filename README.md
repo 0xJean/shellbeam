@@ -171,7 +171,7 @@ You can install and run the app on your own iPhone without publishing to the App
    ```bash
    npx tauri ios dev --force-ip-prompt
    ```
-3. Enter your machine’s LAN IP (e.g. `192.168.10.6`) when prompted. Vite is configured to listen on all interfaces, so the device will load the dev server and the app will launch. Best for day-to-day development and debugging.
+3. Enter your machine’s LAN IP (e.g. `192.168.10.6`) when prompted. The Tauri CLI passes that IP to Vite as `TAURI_DEV_HOST`, so the dev server listens on it for this run (otherwise only on `127.0.0.1`), the device loads it, and the app launches. Best for day-to-day development and debugging.
 
 **Option 2: Standalone build (runs without a computer)**
 
