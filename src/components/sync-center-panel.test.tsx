@@ -14,6 +14,7 @@ vi.mock('@/lib/sync', () => ({
   getSystemHostname: vi.fn(async () => 'studio'),
   syncSendPairRequest: vi.fn(),
   syncAcceptPair: vi.fn(),
+  syncResolveOutgoingPair: vi.fn(),
 }))
 
 const base = {

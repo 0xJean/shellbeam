@@ -233,6 +233,7 @@ pub fn run() {
             sync::peer::mdns_diagnose,
             sync::peer_pairing::sync_send_pair_request,
             sync::peer_pairing::sync_accept_pair,
+            sync::peer_pairing::sync_resolve_outgoing_pair,
             sync::peer::sync_pull_from_peer,
             sync::peer::sync_push_to_peer,
             sync::peer::sync_claim_pending_from_peer,

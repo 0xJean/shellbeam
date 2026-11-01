@@ -23,7 +23,7 @@ pub(crate) fn handle_request(
     app: &tauri::AppHandle,
     method: &str,
     params: Option<serde_json::Value>,
-    remote_addr: Option<std::net::SocketAddr>,
+    peer_device_id: &str,
 ) -> Result<serde_json::Value, String> {
     match method {
         "get_bootstrap" => {
@@ -60,11 +60,6 @@ pub(crate) fn handle_request(
                     .unwrap_or(serde_json::json!([])),
             )
             .map_err(|e| format!("Invalid changes: {e}"))?;
-            let peer_device_id = params
-                .get("peer_device_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
             let mut state = super::load_sync_state_for_transport(app)?;
             let existing_ids: HashSet<String> =
                 state.changes.iter().map(|c| c.change_id.clone()).collect();
@@ -93,16 +88,11 @@ pub(crate) fn handle_request(
         }
         "upsert_cursor" => {
             let params = params.ok_or("params required")?;
-            let peer_device_id = params
-                .get("peer_device_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
             let last_pulled_version = params.get("last_pulled_version").and_then(|v| v.as_u64());
             let last_pushed_version = params.get("last_pushed_version").and_then(|v| v.as_u64());
             let mut state = super::load_sync_state_for_transport(app)?;
             let now = now_unix_ms();
-            let peer = peer_device_id.trim();
+            let peer = peer_device_id;
             let mut cursor = state
                 .cursors
                 .iter()
@@ -255,11 +245,6 @@ pub(crate) fn handle_request(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let peer_device_id = params
-                .get("device_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
             let inc_hosts = params
                 .get("includeHosts")
                 .and_then(|v| v.as_bool())
@@ -355,16 +340,8 @@ pub(crate) fn handle_request(
             Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
         }
         "check_pending_push" => {
-            let params = params.ok_or("params required")?;
-            let requester_device_id = params
-                .get("device_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if requester_device_id.is_empty() {
-                return Err("device_id is required".to_string());
-            }
-            let has_pending = super::pending_push_check(&requester_device_id);
+            let requester_device_id = peer_device_id;
+            let has_pending = super::pending_push_check(requester_device_id);
             log::info!(
                 "[sync] check_pending_push from {}: has_pending={}",
                 requester_device_id,
@@ -373,16 +350,8 @@ pub(crate) fn handle_request(
             Ok(serde_json::json!({ "hasPending": has_pending }))
         }
         "claim_pending_push" => {
-            let params = params.ok_or("params required")?;
-            let requester_device_id = params
-                .get("device_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if requester_device_id.is_empty() {
-                return Err("device_id is required".to_string());
-            }
-            match super::pending_push_claim(&requester_device_id) {
+            let requester_device_id = peer_device_id;
+            match super::pending_push_claim(requester_device_id) {
                 Some(pending) => {
                     log::info!("[sync] claim_pending_push from {}: delivering pending push payload (created_at={})",
                         requester_device_id, pending.created_at);
@@ -402,177 +371,6 @@ pub(crate) fn handle_request(
                     );
                     Ok(serde_json::json!({ "claimed": false }))
                 }
-            }
-        }
-        "pair_request" => {
-            let params = params.ok_or("params required")?;
-            let peer_device_id = params
-                .get("device_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let peer_device_name = params
-                .get("device_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let verification_code = params
-                .get("verification_code")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if peer_device_id.is_empty() || verification_code.is_empty() {
-                return Err("device_id and verification_code are required".to_string());
-            }
-            let now = now_unix_ms();
-            let session_id = uuid::Uuid::new_v4().to_string();
-            let session = super::SyncPairingSessionRecord {
-                session_id: session_id.clone(),
-                initiator_device_id: peer_device_id.clone(),
-                initiator_device_name: peer_device_name.clone(),
-                verification_code: verification_code.clone(),
-                status: "pending".to_string(),
-                created_at: now,
-                expires_at: now + 5 * 60 * 1000,
-                verified_at: None,
-            };
-            let mut state = super::load_sync_state_for_transport(app)?;
-            state.pairing_sessions.push(session);
-            state.last_sync_at = Some(now);
-            super::save_sync_state_for_transport(app, &state)?;
-
-            let peer_ip = remote_addr.map(|a| a.ip().to_string()).unwrap_or_default();
-            let _ = app.emit(
-                "pair-request-received",
-                serde_json::json!({
-                    "sessionId": session_id,
-                    "peerDeviceId": peer_device_id,
-                    "peerDeviceName": peer_device_name,
-                    "peerHost": peer_ip,
-                    "verificationCode": verification_code,
-                }),
-            );
-            log::info!(
-                "[pair] incoming pair_request from {} ({}) ip={}",
-                peer_device_name,
-                peer_device_id,
-                peer_ip
-            );
-            Ok(serde_json::json!({ "session_id": session_id, "status": "pending" }))
-        }
-        "pair_confirm" => {
-            let params = params.ok_or("params required")?;
-            let peer_device_id = params
-                .get("device_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let peer_device_name = params.get("device_name").and_then(|v| v.as_str());
-            let peer_sync_secret = params
-                .get("sync_secret")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if peer_device_id.is_empty() || peer_sync_secret.is_empty() {
-                return Err("device_id and sync_secret are required".to_string());
-            }
-            let mut state = super::load_sync_state_for_transport(app)?;
-            let now = now_unix_ms();
-            let peer_ip = remote_addr
-                .map(|a| format!("{}:9123", a.ip()))
-                .unwrap_or_default();
-
-            let peer = super::SyncTrustedPeer {
-                peer_device_id: peer_device_id.clone(),
-                peer_device_name: peer_device_name.map(|s| s.to_string()),
-                verified_at: now,
-                last_seen_at: now,
-                source: "network-pair".to_string(),
-                peer_endpoint: if peer_ip.is_empty() {
-                    None
-                } else {
-                    Some(peer_ip)
-                },
-                sync_secret: Some(peer_sync_secret),
-            };
-            if let Some(existing) = state
-                .trusted_peers
-                .iter_mut()
-                .find(|p| p.peer_device_id == peer_device_id)
-            {
-                *existing = peer.clone();
-            } else {
-                state.trusted_peers.push(peer.clone());
-            }
-            for s in state.pairing_sessions.iter_mut() {
-                if s.status == "pending" && s.expires_at > now {
-                    s.status = "verified".to_string();
-                    s.verified_at = Some(now);
-                }
-            }
-            state.last_sync_at = Some(now);
-            let local_device = state.local_device.clone();
-            super::save_sync_state_for_transport(app, &state)?;
-
-            let _ = app.emit(
-                "pair-confirmed",
-                serde_json::json!({
-                    "peerDeviceId": peer_device_id,
-                    "peerDeviceName": peer_device_name,
-                }),
-            );
-            log::info!(
-                "[pair] pair_confirm from {} — trusted peer added",
-                peer_device_id
-            );
-
-            let our_device_id = local_device
-                .as_ref()
-                .map(|d| d.device_id.as_str())
-                .unwrap_or("");
-            let our_device_name = local_device
-                .as_ref()
-                .map(|d| d.device_name.as_str())
-                .unwrap_or("");
-            Ok(serde_json::json!({
-                "status": "confirmed",
-                "device_id": our_device_id,
-                "device_name": our_device_name,
-            }))
-        }
-        "pair_check" => {
-            let params = params.ok_or("params required")?;
-            let initiator_device_id = params
-                .get("device_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if initiator_device_id.is_empty() {
-                return Err("device_id is required".to_string());
-            }
-            let state = super::load_sync_state_for_transport(app)?;
-            if let Some(peer) = state
-                .trusted_peers
-                .iter()
-                .find(|p| p.peer_device_id == initiator_device_id)
-            {
-                let local_device = state.local_device.clone();
-                let our_device_id = local_device
-                    .as_ref()
-                    .map(|d| d.device_id.as_str())
-                    .unwrap_or("");
-                let our_device_name = local_device
-                    .as_ref()
-                    .map(|d| d.device_name.as_str())
-                    .unwrap_or("");
-                Ok(serde_json::json!({
-                    "status": "confirmed",
-                    "device_id": our_device_id,
-                    "device_name": our_device_name,
-                    "sync_secret": peer.sync_secret,
-                }))
-            } else {
-                Ok(serde_json::json!({ "status": "pending" }))
             }
         }
         _ => Err(format!("Unknown method: {}", method)),

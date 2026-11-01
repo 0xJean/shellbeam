@@ -369,6 +369,7 @@ pub fn sync_confirm_pairing(
         source: "manual-code".to_string(),
         peer_endpoint: None,
         sync_secret: Some(sync_secret),
+        pairing_version: 0,
     };
     if let Some(existing) = state
         .trusted_peers
@@ -382,7 +383,10 @@ pub fn sync_confirm_pairing(
     state.last_sync_at = Some(now);
     save_sync_state(&app, &state)
         .map_err(|err| standard_error_from_raw("sync", "confirm pairing", err))?;
-    Ok(peer)
+    Ok(SyncTrustedPeer {
+        sync_secret: None,
+        ..peer
+    })
 }
 
 #[tauri::command]
@@ -391,5 +395,8 @@ pub fn sync_list_trusted_peers(app: tauri::AppHandle) -> Result<Vec<SyncTrustedP
         .map_err(|err| standard_error_from_raw("sync", "list trusted peers", err))?
         .trusted_peers;
     peers.sort_by(|a, b| a.peer_device_id.cmp(&b.peer_device_id));
+    for peer in &mut peers {
+        peer.sync_secret = None;
+    }
     Ok(peers)
 }
