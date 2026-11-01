@@ -89,7 +89,7 @@ impl Transport for Fixture {
         files.clear();
         for i in 0..zip.len() {
             let mut file = zip.by_index(i).unwrap();
-            let name = file.name().to_string();
+            let name = file.name().unwrap().to_string();
             let mut b = Vec::new();
             file.read_to_end(&mut b).unwrap();
             files.insert(name, b);
