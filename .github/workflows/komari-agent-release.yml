@@ -21,8 +21,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: Test signing, source pins and publication recovery
@@ -33,7 +33,7 @@ jobs:
           PROBE_REVISION: ${{ inputs.revision }}
         run: node scripts/prepare-komari-agent-release.mjs "$PROBE_VERSION" "$PROBE_REVISION" "$RUNNER_TEMP/compatible-probe-release"
       - name: Retain reviewable exact release inputs before environment approval
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: compatible-probe-reviewed-inputs
           path: ${{ runner.temp }}/compatible-probe-release/
@@ -48,12 +48,12 @@ jobs:
       contents: write
     environment: komari-agent-release
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: Restore the reviewed release inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: compatible-probe-reviewed-inputs
           path: ${{ runner.temp }}/compatible-probe-release

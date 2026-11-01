@@ -39,8 +39,8 @@ jobs:
             echo 'Agent release requires a manual dispatch from the default branch.' >&2
             exit 1
           fi
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: Test publisher without production signing keys
@@ -69,8 +69,8 @@ jobs:
             architecture: x86_64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.target }}
       - name: Check version, test native daemon and build
@@ -83,7 +83,7 @@ jobs:
           cargo build --manifest-path agent/Cargo.toml --release --locked --target ${{ matrix.target }}
           mkdir -p agent/dist
           cp agent/target/${{ matrix.target }}/release/shellbeam-agent agent/dist/shellbeam-agent-${{ matrix.platform }}-${{ matrix.architecture }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: agent-${{ matrix.platform }}-${{ matrix.architecture }}
           path: agent/dist/*
@@ -95,11 +95,11 @@ jobs:
       contents: write
     environment: agent-release
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: agent-*
           merge-multiple: true
