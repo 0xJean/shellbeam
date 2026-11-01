@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionTerminalView } from './session-terminal-view'
 
+import { TERMINAL_AI_TOGGLE_EVENT } from '@/lib/terminal-events'
 vi.mock('@/contexts/vault-context', () => ({ useVault: () => ({ activeVaultId: 'personal' }) }))
 
 vi.mock('@/lib/i18n', () => ({
@@ -243,5 +244,40 @@ describe('session terminal view', () => {
     expect(screen.queryByTestId('terminal-style-tip')).not.toBeInTheDocument()
     window.removeEventListener('shellbeam:terminal-sidebar-tab', listener)
   })
-})
 
+  describe('moving between modes', () => {
+    const props = {
+      sessionId: 'session-modes', session: { sessionId: 'session-modes', status: 'running', username: 'root' } as never,
+      hostName: 'web', hostAddress: '10.0.0.5', onSendRaw: () => {},
+    }
+    const toggleAI = () => act(() => {
+      window.dispatchEvent(new CustomEvent(TERMINAL_AI_TOGGLE_EVENT, { detail: { sessionId: 'session-modes' } }))
+    })
+
+    it('lets the user leave the terminal while the assistant is open', () => {
+      const onMode = vi.fn()
+      const chunkEmitterRef = { current: {} }
+      const view = render(<SessionTerminalView {...props} chunkEmitterRef={chunkEmitterRef} workspaceMode="terminal" onWorkspaceModeChange={onMode} />)
+      toggleAI()
+      view.rerender(<SessionTerminalView {...props} chunkEmitterRef={chunkEmitterRef} workspaceMode="browser" chromeOnly onWorkspaceModeChange={onMode} />)
+      expect(onMode).not.toHaveBeenCalled()
+      expect(screen.getByTestId('ai-command-bar')).toBeInTheDocument()
+    })
+
+    it('still moves to the terminal when the assistant is opened from another mode', () => {
+      const onMode = vi.fn()
+      render(<SessionTerminalView {...props} chunkEmitterRef={{ current: {} }} workspaceMode="browser" chromeOnly onWorkspaceModeChange={onMode} />)
+      toggleAI()
+      expect(onMode).toHaveBeenCalledWith('terminal')
+    })
+
+    it('keeps receiving terminal output while another mode is showing', () => {
+      const chunkEmitterRef = { current: {} as Record<string, unknown> }
+      const view = render(<SessionTerminalView {...props} chunkEmitterRef={chunkEmitterRef} workspaceMode="terminal" onWorkspaceModeChange={() => {}} />)
+      const emitter = chunkEmitterRef.current['session-modes']
+      expect(emitter).toBeTruthy()
+      view.rerender(<SessionTerminalView {...props} chunkEmitterRef={chunkEmitterRef} workspaceMode="browser" chromeOnly onWorkspaceModeChange={() => {}} />)
+      expect(chunkEmitterRef.current['session-modes']).toBe(emitter)
+    })
+  })
+})

@@ -146,6 +146,27 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [turns, streamingContent, isStreaming])
 
+  // Opening the panel shows the latest of the conversation, not the top of it. Parts of the panel
+  // render after it opens, so keep following the bottom until the user scrolls away from it.
+  useEffect(() => {
+    const scroller = scrollRef.current
+    if (!visible || !scroller) return
+    let following = true
+    const follow = () => { if (following) scroller.scrollTop = scroller.scrollHeight }
+    const onScroll = () => { following = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24 }
+    follow()
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    const mutations = new MutationObserver(follow)
+    mutations.observe(scroller, { childList: true, subtree: true, characterData: true })
+    const resizes = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(follow)
+    resizes?.observe(scroller)
+    return () => {
+      scroller.removeEventListener('scroll', onScroll)
+      mutations.disconnect()
+      resizes?.disconnect()
+    }
+  }, [visible])
+
   useEffect(() => () => { abortRef.current?.abort(); abortRef.current = null; stopCaptures() }, [stopCaptures])
 
   const changeSettings = useCallback((next: AISettings) => {

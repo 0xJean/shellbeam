@@ -2177,7 +2177,7 @@ describe('pc layout', () => {
     expect(setOutput).toHaveBeenCalledWith('browser.feedback.workspaceClosed')
   })
 
-  it('unmounts the browser view when desktop navigation leaves the terminal surface', () => {
+  it('hides the browser view without unmounting it when desktop navigation leaves the terminal surface', () => {
     useApp.mockReturnValue({
       setOutput: vi.fn(),
       pcSidebarNav: 'hosts',
@@ -2203,7 +2203,7 @@ describe('pc layout', () => {
 
     render(<PcLayout />)
 
-    expect(screen.queryByTestId('browser-view')).not.toBeInTheDocument()
+    expect(screen.getByTestId('browser-view')).toHaveAttribute('data-visible', 'false')
   })
 
   it('restores the browser view after switching from dashboard back to the active session surface', () => {
@@ -2238,10 +2238,27 @@ describe('pc layout', () => {
 
     pcSidebarNav = 'hosts'
     rerender(<PcLayout />)
-    expect(screen.queryByTestId('browser-view')).not.toBeInTheDocument()
+    expect(screen.getByTestId('browser-view')).toHaveAttribute('data-visible', 'false')
 
     pcSidebarNav = 'terminal'
     rerender(<PcLayout />)
     expect(screen.getByTestId('browser-view')).toHaveAttribute('data-visible', 'true')
+  })
+
+  it('keeps an opened browser mounted but hidden while the session shows the terminal', () => {
+    useApp.mockImplementation(() => ({
+      setOutput: vi.fn(), pcSidebarNav: 'terminal', setPcSidebarNav: vi.fn(), terminalPrefs: {}, updateTerminalPrefs: vi.fn(), setCommand: vi.fn(),
+    }))
+    useSessions.mockReturnValue({
+      ...useSessions.mock.results[0]?.value,
+      pcSessionTabs: [{ sessionId: 'session-1', hostName: 'Prod', hostAddress: '10.0.0.8', status: 'connected' }],
+      pcActiveSessionId: 'session-1',
+      workspaceBySession: { 'session-1': { mode: 'terminal', activeApp: 'overview' } },
+      browserBySession: { 'session-1': { presentation: 'embedded', source: { kind: 'url', url: 'https://example.com' } } },
+    })
+
+    render(<PcLayout />)
+
+    expect(screen.getByTestId('browser-view')).toHaveAttribute('data-visible', 'false')
   })
 })

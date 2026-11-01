@@ -27,6 +27,8 @@ interface WorkspaceShellProps {
   onOpenProviderConsole?: (url: string, host: HostProfile) => void
   onEditHost?: (host: HostProfile) => void
   onBrowserCloseRequest?: () => void
+  /** False while another mode covers the workspace; the native browser view must then stay hidden. */
+  surfaceVisible?: boolean
 }
 
 export function WorkspaceShell(props: WorkspaceShellProps) {
