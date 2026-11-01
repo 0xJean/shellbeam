@@ -66,6 +66,7 @@ interface WorkspaceMobileShellProps {
   onOpenProviderConsole?: (url: string, host: HostProfile) => void
   onEditHost?: (host: HostProfile) => void
   onBrowserCloseRequest?: () => void
+  surfaceVisible?: boolean
   /** Shows the v3 "‹ Hosts" pill on the home screen when the host list is reachable. */
   onBackToHosts?: () => void
 }
@@ -85,6 +86,7 @@ export function WorkspaceMobileShell({
   onOpenProviderConsole,
   onEditHost,
   onBrowserCloseRequest,
+  surfaceVisible = true,
   onBackToHosts,
 }: WorkspaceMobileShellProps) {
   const { t, locale } = useT()
@@ -170,7 +172,7 @@ export function WorkspaceMobileShell({
       return <WorkspaceEmptyApp app={activeApp} />
     }
     if (activeApp === 'browser') {
-      return <WorkspaceBrowserApp sessionId={sessionId} onCloseRequest={onBrowserCloseRequest ?? (() => onSelectApp('overview'))} />
+      return <WorkspaceBrowserApp sessionId={sessionId} visible={surfaceVisible} onCloseRequest={onBrowserCloseRequest ?? (() => onSelectApp('overview'))} />
     }
     return <WorkspaceEmptyApp app={activeApp} />
   })()

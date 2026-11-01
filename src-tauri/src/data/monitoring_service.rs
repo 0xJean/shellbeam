@@ -74,6 +74,7 @@ pub struct Request {
     pub password: Option<String>,
     pub two_factor: Option<String>,
     pub metric_dsn: Option<String>,
+    pub install_token: Option<String>,
     #[serde(default)]
     pub confirmed: bool,
 }
@@ -230,6 +231,18 @@ pub(super) fn exchange(
     token: Option<&str>,
     cookie: Option<&str>,
 ) -> Result<Value, String> {
+    exchange_with_install_token(client, endpoint, path, body, token, cookie, None)
+}
+
+fn exchange_with_install_token(
+    client: &Client,
+    endpoint: &str,
+    path: &str,
+    body: Option<&Value>,
+    token: Option<&str>,
+    cookie: Option<&str>,
+    install_token: Option<&str>,
+) -> Result<Value, String> {
     let url = format!("{}{path}", endpoint);
     let mut req = if body.is_some() {
         client.post(url)
@@ -242,6 +255,9 @@ pub(super) fn exchange(
     }
     if let Some(cookie) = cookie {
         req = req.header("Cookie", cookie);
+    }
+    if let Some(install_token) = install_token {
+        req = req.header("X-Install-Token", install_token);
     }
     if let Some(body) = body {
         req = req
@@ -309,6 +325,20 @@ impl<'a> Remote<'a> {
     ) -> Result<Value, String> {
         check(self.app, self.scope)?;
         let result = exchange(&self.client, &self.endpoint, path, body, token, cookie);
+        check(self.app, self.scope)?;
+        result
+    }
+    fn complete_install(&self, body: &Value, install_token: Option<&str>) -> Result<Value, String> {
+        check(self.app, self.scope)?;
+        let result = exchange_with_install_token(
+            &self.client,
+            &self.endpoint,
+            "/api/install/complete",
+            Some(body),
+            None,
+            None,
+            install_token,
+        );
         check(self.app, self.scope)?;
         result
     }
@@ -977,7 +1007,18 @@ fn authorize(app: &tauri::AppHandle, input: &Request, remote: &Remote) -> Result
             if dsn.trim().is_empty() || dsn.len() > 2048 {
                 return Err("MONITORING_INVALID_DATABASE".into());
             }
-            remote.call("/api/install/complete",Some(&json!({"username":username,"password":password,"sitename":check(app,scope)?.name,"description":"","metric_dsn":dsn})),None,None)?;
+            // Only needed when the server does not see a direct loopback peer.
+            let install_token = input
+                .install_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|token| !token.is_empty());
+            if install_token.is_some_and(|token| {
+                token.len() > 256 || !token.chars().all(|c| c.is_ascii_graphic())
+            }) {
+                return Err("MONITORING_INVALID_INSTALL_TOKEN".into());
+            }
+            remote.complete_install(&json!({"username":username,"password":password,"sitename":check(app,scope)?.name,"description":"","metric_dsn":dsn}),install_token)?;
             // A new service switches from its install router asynchronously.
             // Bounded reads are safe; installation itself is never replayed.
             for _ in 0..20 {
@@ -1580,6 +1621,41 @@ mod tests {
                 }
             );
             worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn install_token_is_sent_only_on_the_request_that_carries_it() {
+        use std::io::{Read, Write};
+        for (install_token, expected) in [(Some("synthetic-token"), true), (None, false)] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let worker = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = [0; 2048];
+                let size = socket.read(&mut request).unwrap();
+                write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{{}}").unwrap();
+                String::from_utf8_lossy(&request[..size]).to_lowercase()
+            });
+            let client = Client::builder()
+                .timeout(Duration::from_secs(2))
+                .build()
+                .unwrap();
+            exchange_with_install_token(
+                &client,
+                &format!("http://{address}"),
+                "/api/install/complete",
+                Some(&json!({})),
+                None,
+                None,
+                install_token,
+            )
+            .unwrap();
+            let request = worker.join().unwrap();
+            assert_eq!(
+                request.contains("x-install-token: synthetic-token"),
+                expected
+            );
         }
     }
 

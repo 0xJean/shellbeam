@@ -1004,7 +1004,7 @@ export function PcLayout() {
                         />
                       </div>
                     ) : (
-                      <div className={cn(showTerminalChrome ? 'absolute inset-x-0 top-0 z-10' : 'absolute inset-0')}>
+                      <div className={cn('absolute inset-0', showTerminalChrome && 'pointer-events-none z-10')}>
                         <SessionTerminalView
                           sessionId={tab.sessionId}
                           session={sessionInfo}
@@ -1043,16 +1043,19 @@ export function PcLayout() {
                         />
                       </div>
                     )}
-                    <div className={cn('absolute inset-0 flex', !showTerminalChrome && 'pointer-events-none invisible', showTerminalChrome && 'top-9')}>
-                      {browserPageMode && terminalSurfaceVisible ? (
-                        <div className="h-full min-h-0 w-full bg-[var(--workspace-surface-950)] p-3">
+                    <div className={cn('absolute inset-x-0 bottom-0 top-9', !showTerminalChrome && 'pointer-events-none invisible')}>
+                      {/* Both stay mounted once opened, so moving between modes keeps pages and windows as they were. */}
+                      {(browserPageMode || (sessions.browserBySession[tab.sessionId]?.presentation ?? 'closed') !== 'closed') && (
+                        <div className={cn('absolute inset-0 min-h-0 bg-[var(--workspace-surface-950)] p-3', !browserPageMode && 'pointer-events-none invisible')}>
                           <Suspense fallback={<SessionSurfaceFallback />}>
-                            <BrowserView sessionId={tab.sessionId} visible onCloseRequest={() => handleCloseBrowserContext(tab.sessionId)} />
+                            <BrowserView sessionId={tab.sessionId} visible={browserPageMode && terminalSurfaceVisible} onCloseRequest={() => handleCloseBrowserContext(tab.sessionId)} />
                           </Suspense>
                         </div>
-                      ) : browserPageMode ? null : (
+                      )}
+                      <div className={cn('absolute inset-0 flex', browserPageMode && 'pointer-events-none invisible')}>
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            surfaceVisible={workspaceMode && terminalSurfaceVisible}
                             onBackToHosts={() => app.setPcSidebarNav('hosts')}
                             sessionConnectionKey={sessionInfo?.connectionKey}
                             sessionVaultId={sessionInfo?.vaultId}
@@ -1072,7 +1075,7 @@ export function PcLayout() {
                             onBrowserCloseRequest={() => handleCloseBrowserContext(tab.sessionId)}
                           />
                         </Suspense>
-                      )}
+                      </div>
                     </div>
                   </div>
                 )
@@ -1162,7 +1165,7 @@ export function PcLayout() {
                         />
                       </div>
                     ) : (
-                      <div className={cn(showTerminalChrome ? 'absolute inset-x-0 top-0 z-10' : 'absolute inset-0')}>
+                      <div className={cn('absolute inset-0', showTerminalChrome && 'pointer-events-none z-10')}>
                         <SessionTerminalView
                           sessionId={tab.sessionId}
                           session={sessionInfo}
@@ -1201,16 +1204,19 @@ export function PcLayout() {
                         />
                       </div>
                     )}
-                    <div className={cn('absolute inset-0', !showTerminalChrome && 'pointer-events-none invisible', showTerminalChrome && 'top-9')}>
-                      {browserPageMode && terminalSurfaceVisible ? (
-                        <div className="h-full min-h-0 w-full bg-[var(--workspace-surface-950)] p-3">
+                    <div className={cn('absolute inset-x-0 bottom-0 top-9', !showTerminalChrome && 'pointer-events-none invisible')}>
+                      {/* Both stay mounted once opened, so moving between modes keeps pages and windows as they were. */}
+                      {(browserPageMode || (sessions.browserBySession[tab.sessionId]?.presentation ?? 'closed') !== 'closed') && (
+                        <div className={cn('absolute inset-0 min-h-0 bg-[var(--workspace-surface-950)] p-3', !browserPageMode && 'pointer-events-none invisible')}>
                           <Suspense fallback={<SessionSurfaceFallback />}>
-                            <BrowserView sessionId={tab.sessionId} visible onCloseRequest={() => handleCloseBrowserContext(tab.sessionId)} />
+                            <BrowserView sessionId={tab.sessionId} visible={browserPageMode && terminalSurfaceVisible} onCloseRequest={() => handleCloseBrowserContext(tab.sessionId)} />
                           </Suspense>
                         </div>
-                      ) : browserPageMode ? null : (
+                      )}
+                      <div className={cn('absolute inset-0', browserPageMode && 'pointer-events-none invisible')}>
                         <Suspense fallback={<SessionSurfaceFallback />}>
                           <WorkspaceShell
+                            surfaceVisible={workspaceMode && terminalSurfaceVisible}
                             sessionConnectionKey={sessionInfo?.connectionKey}
                             sessionVaultId={sessionInfo?.vaultId}
                             activeVaultId={vault.activeVaultId}
@@ -1229,7 +1235,7 @@ export function PcLayout() {
                             onBrowserCloseRequest={() => handleCloseBrowserContext(tab.sessionId)}
                           />
                         </Suspense>
-                      )}
+                      </div>
                     </div>
                   </div>
                 )

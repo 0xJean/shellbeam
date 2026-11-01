@@ -88,6 +88,30 @@ describe('AICommandBar', () => {
     expect(screen.getByText('pwd')).toBeInTheDocument()
   })
 
+  it('scrolls to the latest message when the panel opens', () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(900)
+    const view = render(<AICommandBar {...base} visible={false} />)
+    view.rerender(<AICommandBar {...base} />)
+    const scroller = [...view.container.querySelectorAll<HTMLElement>('.overflow-y-auto')].find((element) => element.scrollTop === 900)
+    expect(scroller).toBeTruthy()
+    height.mockRestore()
+  })
+
+  it('keeps following content that appears after opening, until the user scrolls up', async () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(900)
+    const view = render(<AICommandBar {...base} />)
+    const scroller = [...view.container.querySelectorAll<HTMLElement>('.overflow-y-auto')].find((element) => element.scrollTop === 900) as HTMLElement
+    height.mockReturnValue(1200)
+    await act(async () => { scroller.appendChild(document.createElement('div')); await Promise.resolve() })
+    expect(scroller.scrollTop).toBe(1200)
+    scroller.scrollTop = 100
+    fireEvent.scroll(scroller)
+    height.mockReturnValue(1500)
+    await act(async () => { scroller.appendChild(document.createElement('div')); await Promise.resolve() })
+    expect(scroller.scrollTop).toBe(100)
+    height.mockRestore()
+  })
+
   it('aborts when hidden or unmounted and never makes failed output executable', () => {
     const view = render(<AICommandBar {...base} />); ask()
     act(() => { callbacks.onToken('partial'); callbacks.onError('failed') })

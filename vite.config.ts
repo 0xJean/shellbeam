@@ -48,7 +48,9 @@ export default defineConfig({
   server: {
     port: 1421,
     strictPort: true,
-    host: '0.0.0.0', // listen on IPv4 so iOS device can reach dev server via LAN IP
+    // Loopback by default. `tauri ios dev --force-ip-prompt` and `tauri android dev`
+    // on a physical device set TAURI_DEV_HOST to the LAN IP the device connects to.
+    host: process.env.TAURI_DEV_HOST || '127.0.0.1',
   },
   envPrefix: ['VITE_', 'TAURI_ENV_*'],
 })
