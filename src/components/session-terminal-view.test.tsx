@@ -272,7 +272,7 @@ describe('session terminal view', () => {
     })
 
     it('keeps receiving terminal output while another mode is showing', () => {
-      const chunkEmitterRef = { current: {} as Record<string, unknown> }
+      const chunkEmitterRef = { current: {} as Record<string, () => void> }
       const view = render(<SessionTerminalView {...props} chunkEmitterRef={chunkEmitterRef} workspaceMode="terminal" onWorkspaceModeChange={() => {}} />)
       const emitter = chunkEmitterRef.current['session-modes']
       expect(emitter).toBeTruthy()
