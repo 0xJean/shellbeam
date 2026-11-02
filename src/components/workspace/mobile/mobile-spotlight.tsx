@@ -48,7 +48,7 @@ export function MobileSpotlight({ data, onOpenApp, onOpenLogs, onClose }: { data
 
   return <div data-testid="mobile-spotlight" role="dialog" aria-modal="true" aria-label={copy.search} className="absolute inset-0 z-50 flex flex-col">
     <button type="button" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 h-full w-full cursor-default bg-[var(--workspace-surface-950)] opacity-70 backdrop-blur-xl" />
-    <div className="relative flex min-h-0 flex-1 flex-col gap-2.5 px-3.5 pb-[max(env(safe-area-inset-bottom),12px)] pt-[max(env(safe-area-inset-top),16px)]">
+    <div className="relative flex min-h-0 flex-1 flex-col gap-2.5 px-3.5 pb-3 pt-4">
       <div className="flex items-center gap-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] pl-3">
         <Search className="h-[18px] w-[18px] shrink-0 text-[var(--workspace-text-subtle)]" aria-hidden="true" />
         <input data-testid="mobile-spotlight-input" autoFocus type="search" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') onClose() }}

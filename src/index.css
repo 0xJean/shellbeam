@@ -347,7 +347,8 @@
   }
 
   .mobile-safe-pb {
-    padding-bottom: calc(3.25rem + env(safe-area-inset-bottom, 0px));
+    /* The mobile bottom nav is 62px tall plus the home indicator inset. */
+    padding-bottom: calc(3.875rem + env(safe-area-inset-bottom, 0px));
   }
 
   @media (min-width: 768px) {

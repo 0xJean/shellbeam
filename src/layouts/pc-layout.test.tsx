@@ -653,6 +653,30 @@ describe('pc layout', () => {
     expect(screen.getByTestId('ssh-import-dialog')).toBeInTheDocument()
   })
 
+  it('gives phones one session surface with a terminal, workspace and browser switch', () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+    })
+    const setSessionMode = vi.fn()
+    const setSessionBrowserPresentation = vi.fn()
+    const sessionsValue = { ...defaultSessionsValue, setSessionMode, setSessionBrowserPresentation, workspaceBySession: { 'session-1': { mode: 'terminal', activeApp: 'overview' } } }
+    useSessions.mockReturnValue({ ...sessionsValue, pcSessionTabs: [] })
+    const view = render(<PcLayout />)
+    // A newly opened session becomes the phone's active session.
+    useSessions.mockReturnValue(sessionsValue)
+    view.rerender(<PcLayout />)
+
+    expect(screen.getAllByTestId('terminal-view')).toHaveLength(1)
+    const modeSwitch = screen.getByTestId('mobile-mode-switch')
+    fireEvent.click(within(modeSwitch).getByRole('button', { name: 'workspace.mode.workspace' }))
+    expect(setSessionMode).toHaveBeenCalledWith('session-1', 'workspace')
+    fireEvent.click(within(modeSwitch).getByRole('button', { name: 'workspace.mode.browser' }))
+    expect(setSessionMode).toHaveBeenCalledWith('session-1', 'browser')
+    expect(setSessionBrowserPresentation).toHaveBeenCalledWith('session-1', 'embedded')
+    expect(modeSwitch.parentElement).toHaveClass('mobile-safe-pb')
+  })
+
   it('keeps terminal views mounted while workspace mode is active', async () => {
     await act(async () => {
       render(<PcLayout />)

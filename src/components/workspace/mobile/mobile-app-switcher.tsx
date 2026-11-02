@@ -18,7 +18,7 @@ export function MobileAppSwitcher({ apps, activeApp, hostName, onOpen, onDismiss
   const copy = workspaceMobileV3Copy[locale]
   return <div data-testid="mobile-app-switcher" role="dialog" aria-modal="true" aria-label={copy.switcher} className="absolute inset-0 z-50 flex flex-col">
     <button type="button" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 h-full w-full cursor-default bg-[var(--workspace-surface-950)] opacity-80 backdrop-blur-xl" />
-    <div className="relative flex min-h-0 flex-1 snap-x snap-mandatory items-center gap-4 overflow-x-auto px-[12%] pt-[max(env(safe-area-inset-top),16px)]">
+    <div className="relative flex min-h-0 flex-1 snap-x snap-mandatory items-center gap-4 overflow-x-auto px-[12%] pt-4">
       {apps.length === 0 && <p role="status" className="w-full text-center text-sm text-[var(--workspace-text-muted)]">{copy.switcherEmpty}</p>}
       {apps.map((app) => {
         const label = t(`workspace.app.${app}`)
@@ -43,6 +43,6 @@ export function MobileAppSwitcher({ apps, activeApp, hostName, onOpen, onDismiss
         </motion.div>
       })}
     </div>
-    <p className="relative pb-[max(env(safe-area-inset-bottom),20px)] pt-3 text-center text-[13px] text-[var(--workspace-text-muted)]">{fill(copy.switcherHint, { host: hostName })}</p>
+    <p className="relative pb-5 pt-3 text-center text-[13px] text-[var(--workspace-text-muted)]">{fill(copy.switcherHint, { host: hostName })}</p>
   </div>
 }
