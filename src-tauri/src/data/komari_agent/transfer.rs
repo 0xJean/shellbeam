@@ -459,6 +459,14 @@ fn configuration(settings: &Value, endpoint: &str, token: String) -> Result<Valu
         .as_object()
         .cloned()
         .ok_or("KOMARI_AGENT_CONFIGURATION_CHANGED")?;
+    // The source host reports these, so it must not choose the target's resolver or
+    // reported addresses. show_warning would stop the target agent collecting at all.
+    for key in ["custom_dns", "custom_ipv4", "custom_ipv6"] {
+        c.remove(key);
+    }
+    if c.remove("show_warning").is_some_and(|v| v != json!(false)) {
+        return Err("KOMARI_AGENT_TRANSFER_SETTINGS_UNSUPPORTED".into());
+    }
     c.insert("endpoint".into(), json!(endpoint));
     c.insert("token".into(), json!(token));
     c.insert("disable_auto_update".into(), json!(true));
@@ -1235,6 +1243,19 @@ mod tests {
                 action: "move".into(),
             },
         )
+    }
+    #[test]
+    fn transfer_configuration_drops_source_network_overrides_and_refuses_show_warning() {
+        let settings = json!({"interval": 5, "custom_dns": "203.0.113.1", "custom_ipv4": "203.0.113.2", "custom_ipv6": "2001:db8::1", "show_warning": false});
+        let config = configuration(&settings, "https://target.test", "token".into()).unwrap();
+        assert_eq!(config["interval"], json!(5));
+        for key in ["custom_dns", "custom_ipv4", "custom_ipv6", "show_warning"] {
+            assert!(config.get(key).is_none(), "{key} must not reach the target");
+        }
+        assert_eq!(config["endpoint"], json!("https://target.test"));
+        assert!(
+            configuration(&json!({"show_warning": true}), "https://t.test", "t".into()).is_err()
+        );
     }
     #[test]
     fn two_host_locks_and_audit_are_atomic_and_stop_ordinary_lifecycle() {

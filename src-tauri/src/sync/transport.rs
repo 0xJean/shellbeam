@@ -324,6 +324,13 @@ pub fn sync_request_peer_encrypted(
 ) -> Result<serde_json::Value, String> {
     let key = secret.ok_or_else(|| REPAIR_REQUIRED.to_string())?;
     let stream = connect_peer(endpoint)?;
+    if method == "get_full_backup"
+        && params.get("includeVault").and_then(|v| v.as_bool()) == Some(true)
+    {
+        // The other device waits for a person to answer before it replies.
+        let wait = super::vault_approval::APPROVAL_TIMEOUT + Duration::from_secs(READ_TIMEOUT_SECS);
+        stream.set_read_timeout(Some(wait)).ok();
+    }
     let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
     let mut reader = BufReader::new(stream);
 

@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use tauri::{Emitter, Manager};
 
 use super::transport::{parse_sync_secret, sync_request_peer_encrypted};
+use super::vault_approval::{authorize_export, VAULT_EXPORT_DENIED};
 use super::vault_ref::{resolve_vault_param, VAULT_PARAM};
 use super::{SyncChangeRecord, SyncCursorRecord};
 use crate::storage::now_unix_ms;
@@ -142,6 +143,9 @@ pub(crate) fn handle_request(
                 .unwrap_or(false);
             // Serve from the vault the requester named; never create one here.
             let vault_id = resolve_vault_param(app, params.as_ref(), false)?;
+            if inc_vault && !authorize_export(app, peer_device_id, &vault_id) {
+                return Err(VAULT_EXPORT_DENIED.to_string());
+            }
 
             let payload = crate::data::backup::backup_create_in_memory(
                 app,

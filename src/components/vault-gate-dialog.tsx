@@ -172,7 +172,7 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn, h
       // Store or verify failed — roll back the flag
       await removeMasterPassword().catch(() => {})
       const msg = e instanceof Error ? e.message : String(e)
-      // macOS dev mode: unsigned binary can't access keychain
+      // A build without the keychain entitlement cannot hold a Touch ID item.
       if (msg.includes('-34018') || msg.includes('keychainError')) {
         setOptInError(t('vault.biometricKeychainError'))
       } else {

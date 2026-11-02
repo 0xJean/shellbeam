@@ -3,6 +3,8 @@
 mod agent_release;
 mod ai_cli;
 mod app_update;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod apple_keychain;
 mod biometric_store;
 mod browser;
 mod collection_limits;
@@ -219,6 +221,7 @@ pub fn run() {
             data::operation_jobs::operation_job_list,
             data::operation_jobs::operation_audit_list,
             data::ssh_config::parse_ssh_config,
+            sync::vault_approval::sync_resolve_vault_export,
             sync::commands::get_system_hostname,
             sync::commands::sync_get_bootstrap,
             sync::commands::sync_init_local_device,
@@ -301,6 +304,8 @@ pub fn run() {
             if let Err(error) = mcp::initialize(app.handle()) {
                 log::error!("MCP initialization failed: {error}");
             }
+            #[cfg(target_os = "macos")]
+            biometric_store::purge_legacy_store(app.handle());
             #[cfg(target_os = "macos")]
             set_macos_dock_icon();
 
