@@ -243,6 +243,22 @@ fn exchange_with_install_token(
     cookie: Option<&str>,
     install_token: Option<&str>,
 ) -> Result<Value, String> {
+    let headers: Vec<(&str, &str)> = install_token
+        .map(|value| ("X-Install-Token", value))
+        .into_iter()
+        .collect();
+    exchange_with_headers(client, endpoint, path, body, token, cookie, &headers)
+}
+
+fn exchange_with_headers(
+    client: &Client,
+    endpoint: &str,
+    path: &str,
+    body: Option<&Value>,
+    token: Option<&str>,
+    cookie: Option<&str>,
+    headers: &[(&str, &str)],
+) -> Result<Value, String> {
     let url = format!("{}{path}", endpoint);
     let mut req = if body.is_some() {
         client.post(url)
@@ -256,8 +272,8 @@ fn exchange_with_install_token(
     if let Some(cookie) = cookie {
         req = req.header("Cookie", cookie);
     }
-    if let Some(install_token) = install_token {
-        req = req.header("X-Install-Token", install_token);
+    for (name, value) in headers {
+        req = req.header(*name, *value);
     }
     if let Some(body) = body {
         req = req
@@ -341,6 +357,27 @@ impl<'a> Remote<'a> {
         );
         check(self.app, self.scope)?;
         result
+    }
+    /// A server with 2FA challenges an `api_key` change. The header is ignored
+    /// by servers without the check; a body field would be stored as a setting.
+    fn set_api_key(&self, key: &str, cookie: &str, two_factor: Option<&str>) -> Result<(), String> {
+        check(self.app, self.scope)?;
+        let headers: Vec<(&str, &str)> = two_factor
+            .filter(|code| !code.is_empty())
+            .map(|code| ("X-2FA-Code", code))
+            .into_iter()
+            .collect();
+        let result = exchange_with_headers(
+            &self.client,
+            &self.endpoint,
+            "/api/admin/settings/",
+            Some(&json!({"api_key":key})),
+            None,
+            Some(cookie),
+            &headers,
+        );
+        check(self.app, self.scope)?;
+        result.map(|_| ())
     }
     pub(crate) fn version(&self, token: Option<&str>) -> Result<(), String> {
         let v = self.call("/api/version", None, token, None)?;
@@ -1042,11 +1079,10 @@ fn authorize(app: &tauri::AppHandle, input: &Request, remote: &Remote) -> Result
         let existing = settings["api_key"].as_str().unwrap_or("");
         let key = if existing.is_empty() {
             let key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-            remote.call(
-                "/api/admin/settings/",
-                Some(&json!({"api_key":key})),
-                None,
-                cookie.as_deref(),
+            remote.set_api_key(
+                &key,
+                cookie.as_deref().unwrap_or(""),
+                input.two_factor.as_deref(),
             )?;
             key
         } else {
@@ -1657,6 +1693,37 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn extra_headers_are_sent_with_the_request() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0; 2048];
+            let size = socket.read(&mut request).unwrap();
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{{}}").unwrap();
+            String::from_utf8_lossy(&request[..size]).to_lowercase()
+        });
+        let client = Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        exchange_with_headers(
+            &client,
+            &format!("http://{address}"),
+            "/api/admin/settings/",
+            Some(&json!({"api_key":"synthetic"})),
+            None,
+            Some("session_token=synthetic"),
+            &[("X-2FA-Code", "123456")],
+        )
+        .unwrap();
+        let request = worker.join().unwrap();
+        assert!(request.contains("x-2fa-code: 123456"));
+        assert!(!request.contains("2fa_code"));
     }
 
     #[test]
