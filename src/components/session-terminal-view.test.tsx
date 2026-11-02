@@ -254,6 +254,27 @@ describe('session terminal view', () => {
       window.dispatchEvent(new CustomEvent(TERMINAL_AI_TOGGLE_EVENT, { detail: { sessionId: 'session-modes' } }))
     })
 
+    it('shows earlier output again when the terminal is mounted anew', async () => {
+      const { Terminal } = await import('@xterm/xterm')
+      const write = vi.spyOn(Terminal.prototype, 'write')
+      const chunk = (data: string) => ({ seq: 1, stream: 'stdout', data, timestamp: 0 }) as never
+      const chunkEmitterRef = { current: {} as Record<string, () => void> }
+      const outputReplayRef = { current: { 'session-modes': [chunk('first page\r\n')] } as Record<string, never[]> }
+      const onInitialChunksConsumed = vi.fn()
+
+      const first = render(<SessionTerminalView {...props} chunkEmitterRef={chunkEmitterRef} outputReplayRef={outputReplayRef} initialChunks={[chunk('first page\r\n')]} onInitialChunksConsumed={onInitialChunksConsumed} />)
+      expect(write).toHaveBeenCalledWith('first page\r\n', expect.any(Function))
+      expect(onInitialChunksConsumed).toHaveBeenCalledWith('session-modes')
+      first.unmount()
+
+      // The layout switched at the phone breakpoint: a fresh view has no initial chunks left, only the replay history.
+      write.mockClear()
+      outputReplayRef.current['session-modes'] = [chunk('first page\r\n'), chunk('$ ls\r\n')]
+      render(<SessionTerminalView {...props} chunkEmitterRef={chunkEmitterRef} outputReplayRef={outputReplayRef} />)
+      expect(write).toHaveBeenCalledWith('first page\r\n$ ls\r\n', expect.any(Function))
+      write.mockRestore()
+    })
+
     it('lets the user leave the terminal while the assistant is open', () => {
       const onMode = vi.fn()
       const chunkEmitterRef = { current: {} }

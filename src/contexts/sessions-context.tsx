@@ -231,6 +231,8 @@ interface SessionsContextValue {
   closeSessionBrowser: (sessionId: string) => void
   rebuildSessionBrowserTransport: (sessionId: string) => void
   pcChunkEmitterRef: React.MutableRefObject<Record<string, (chunks: InteractiveOutputChunk[]) => void>>
+  /** Recent output per session, so a terminal view that mounts again (the layout switching at the phone breakpoint) shows its history. */
+  pcOutputReplayRef: React.MutableRefObject<Record<string, InteractiveOutputChunk[]>>
   leftPaneSessionId: string | null
   setLeftPaneSessionId: (id: string | null) => void
   rightPaneSessionId: string | null
@@ -323,6 +325,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
   const closedSessionCleanupRef = useRef<Set<string>>(new Set())
   const sessionStatusCacheRef = useRef<Record<string, string>>({})
   const pcChunkEmitterRef = useRef<Record<string, (chunks: InteractiveOutputChunk[]) => void>>({})
+  const pcOutputReplayRef = useRef<Record<string, InteractiveOutputChunk[]>>({})
   const pcSessionTabsRef = useRef<SessionTab[]>([])
   // Pending tabs the user cancelled while their SSH connection was still being established.
   const cancelledConnectionsRef = useRef(new Set<string>())
@@ -703,6 +706,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       const outputListener = await listenToInteractiveOutputEvents(({ sessionId, chunks }) => {
         if (!chunks.length) return
         interactiveNextSeqRef.current[sessionId] = chunks[chunks.length - 1]?.seq ?? interactiveNextSeqRef.current[sessionId] ?? 0
+        pcOutputReplayRef.current[sessionId] = trimInteractiveOutputChunks([...(pcOutputReplayRef.current[sessionId] ?? []), ...chunks])
         const emitter = pcChunkEmitterRef.current[sessionId]
         if (emitter) {
           emitter(chunks)
@@ -799,6 +803,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     const routeMode = getStoredBrowserRouteMode(options ?? {})
     const restoredBrowserState = getStoredBrowserSessionState(options ?? {})
     setInteractiveChunksBySession((prev) => ({ ...prev, [sessionId]: [] }))
+    pcOutputReplayRef.current[sessionId] = []
     interactiveNextSeqRef.current[sessionId] = 0
     setInteractiveInputBySession((prev) => ({ ...prev, [sessionId]: '' }))
     setInteractiveHistoryBySession((prev) => ({ ...prev, [sessionId]: [] }))
@@ -1385,6 +1390,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       closedSessionCleanupRef.current.delete(sessionId)
       setInteractiveSessions((prev) => prev.filter((s) => s.sessionId !== sessionId))
       setInteractiveChunksBySession((prev) => { const n = { ...prev }; delete n[sessionId]; return n })
+      delete pcOutputReplayRef.current[sessionId]
       delete interactiveNextSeqRef.current[sessionId]
       setInteractiveInputBySession((prev) => { const n = { ...prev }; delete n[sessionId]; return n })
       setInteractiveHistoryBySession((prev) => { const n = { ...prev }; delete n[sessionId]; return n })
@@ -1474,10 +1480,9 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       if (cancelledConnectionsRef.current.delete(targetSessionId)) return undefined
       const msg = String(error instanceof Error ? error.message : error)
       setPcSessionTabs((prev) => prev.map((t) => t.sessionId === targetSessionId ? { ...t, status: 'error', errorMessage: msg, connectionStage: undefined } : t))
-      const emitter = pcChunkEmitterRef.current[targetSessionId]
-      if (emitter) {
-        emitter([{ seq: 0, stream: 'stderr', data: `\r\n\x1b[1;31m✖ Connection failed:\x1b[0m ${msg}\r\n\r\n\x1b[90mClose this tab and try again after resolving the issue.\x1b[0m\r\n`, timestamp: Date.now() }])
-      }
+      const failure: InteractiveOutputChunk[] = [{ seq: 0, stream: 'stderr', data: `\r\n\x1b[1;31m✖ Connection failed:\x1b[0m ${msg}\r\n\r\n\x1b[90mClose this tab and try again after resolving the issue.\x1b[0m\r\n`, timestamp: Date.now() }]
+      pcOutputReplayRef.current[targetSessionId] = trimInteractiveOutputChunks([...(pcOutputReplayRef.current[targetSessionId] ?? []), ...failure])
+      pcChunkEmitterRef.current[targetSessionId]?.(failure)
       appendPaneEvent('left', 'error', `Connection failed: ${msg}`, null)
       void appendActivity({
         vaultId: activeVaultId, event: 'auth_fail', hostId: host.id, hostName: host.name, hostAddress: host.address,
@@ -1644,7 +1649,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       setSessionBrowserPresentation, setSessionBrowserRouteMode, setSessionBrowserAddressInput, submitSessionBrowserAddress,
       reloadSessionBrowser, goSessionBrowserBack, goSessionBrowserForward,
       syncSessionBrowserUrl, setSessionBrowserLoading, setSessionBrowserError, setSessionBrowserNavigation, closeSessionBrowser, rebuildSessionBrowserTransport,
-      pcChunkEmitterRef, leftPaneSessionId, setLeftPaneSessionId,
+      pcChunkEmitterRef, pcOutputReplayRef, leftPaneSessionId, setLeftPaneSessionId,
       rightPaneSessionId, setRightPaneSessionId,
       handleConnectHost, openHostWorkspace, handleOpenLocalTerminal, handleCloseSessionTab, cancelSessionConnection, sendRaw, refreshInteractiveSessions,
       initializeInteractiveSessionState, cleanupClosedSession,

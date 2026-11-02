@@ -1027,6 +1027,7 @@ export function PcLayout() {
                           inventory={displayInventory}
                           host={displayHost ?? undefined}
                           chunkEmitterRef={sessions.pcChunkEmitterRef}
+                          outputReplayRef={sessions.pcOutputReplayRef}
                           onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
                           terminalPrefs={app.terminalPrefs}
                           isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
@@ -1193,6 +1194,7 @@ export function PcLayout() {
                           inventory={displayInventory}
                           host={displayHost ?? undefined}
                           chunkEmitterRef={sessions.pcChunkEmitterRef}
+                          outputReplayRef={sessions.pcOutputReplayRef}
                           onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
                           terminalPrefs={app.terminalPrefs}
                           isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
