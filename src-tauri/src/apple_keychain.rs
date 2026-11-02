@@ -24,7 +24,6 @@ type Pair<'a> = (&'a CFType, &'a CFType);
 /// protection keychain, which on macOS needs a keychain entitlement.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Keychain {
-    #[cfg_attr(target_os = "ios", allow(dead_code))]
     DataProtection,
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     Default,
