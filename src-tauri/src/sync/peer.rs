@@ -63,7 +63,8 @@ pub fn sync_update_peer_endpoint(
     peer.peer_endpoint = endpoint;
     peer.last_seen_at = now_unix_ms();
     state.last_sync_at = Some(now_unix_ms());
-    let peer_clone = peer.clone();
+    let mut peer_clone = peer.clone();
+    peer_clone.sync_secret = None;
     save_sync_state(&app, &state)
         .map_err(|err| standard_error_from_raw("sync", "update peer endpoint", err))?;
     Ok(peer_clone)
@@ -318,7 +319,15 @@ pub async fn sync_push_to_peer(
             )
         })?
         .to_string();
-    let enc_key = parse_sync_secret(&peer.sync_secret);
+    // Fail here: without a key the attempts below would all fail and queue the
+    // data as a pending push that no one can claim, while reporting success.
+    let enc_key = Some(parse_sync_secret(&peer.sync_secret).ok_or_else(|| {
+        standard_error_from_raw(
+            "sync",
+            "push",
+            super::transport::REPAIR_REQUIRED.to_string(),
+        )
+    })?);
     let (vault_id, vault_name) = local_vault_ref(&app, payload.vault_id.as_deref())
         .map_err(|e| standard_error_from_raw("sync", "push", e))?;
     let vault_param = vault_ref_json(&vault_id, &vault_name);
@@ -362,11 +371,6 @@ pub async fn sync_push_to_peer(
     push_payload[VAULT_PARAM] = vault_param.clone();
 
     let (server_running, server_port) = super::transport::sync_server_status();
-    let local_device_id = sync_state
-        .local_device
-        .as_ref()
-        .map(|d| d.device_id.clone())
-        .unwrap_or_default();
 
     if server_running && server_port > 0 {
         let our_host = get_local_ip_for_peer(&peer_endpoint);
@@ -380,14 +384,13 @@ pub async fn sync_push_to_peer(
         let ep = peer_endpoint.clone();
         let ek = enc_key;
         let oe = our_endpoint.clone();
-        let did = local_device_id.clone();
         let oo = opts.clone();
         let vp = vault_param.clone();
         let notify_result = tauri::async_runtime::spawn_blocking(move || {
             super::transport::sync_request_peer_encrypted(
                 &ep, "notify_pull",
                 serde_json::json!({
-                    "endpoint": oe, "device_id": did,
+                    "endpoint": oe,
                     "includeHosts": oo.include_hosts, "includeSnippets": oo.include_snippets, "includeVault": oo.include_vault,
                     VAULT_PARAM: vp,
                 }),
@@ -547,11 +550,6 @@ pub async fn sync_claim_pending_from_peer(
 ) -> Result<SyncClaimPendingResult, String> {
     let sync_state =
         load_sync_state(&app).map_err(|err| standard_error_from_raw("sync", "pending", err))?;
-    let local_device_id = sync_state
-        .local_device
-        .as_ref()
-        .map(|d| d.device_id.clone())
-        .unwrap_or_default();
     let peer = sync_state
         .trusted_peers
         .iter()
@@ -578,12 +576,11 @@ pub async fn sync_claim_pending_from_peer(
     // Step 1: check if peer has a pending push for us
     let ep = endpoint.clone();
     let ek = enc_key;
-    let did = local_device_id.clone();
     let check_resp = tauri::async_runtime::spawn_blocking(move || {
         super::transport::sync_request_peer_encrypted(
             &ep,
             "check_pending_push",
-            serde_json::json!({ "device_id": did }),
+            serde_json::json!({}),
             ek.as_ref(),
         )
     })
@@ -612,12 +609,11 @@ pub async fn sync_claim_pending_from_peer(
     );
     let ep = endpoint.clone();
     let ek = enc_key;
-    let did = local_device_id.clone();
     let claim_resp = tauri::async_runtime::spawn_blocking(move || {
         super::transport::sync_request_peer_encrypted(
             &ep,
             "claim_pending_push",
-            serde_json::json!({ "device_id": did }),
+            serde_json::json!({}),
             ek.as_ref(),
         )
     })

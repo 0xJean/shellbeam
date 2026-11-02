@@ -157,10 +157,12 @@ interface ConfirmingViewProps {
   selectedDevice: DiscoveredDevice | null
   generatedPin: string
   pairingError: string
+  codeConfirmed: boolean
+  onConfirmCode: () => void
   onCancel: () => void
 }
 
-export function ConfirmingView({ selectedDevice, generatedPin, pairingError, onCancel }: ConfirmingViewProps) {
+export function ConfirmingView({ selectedDevice, generatedPin, pairingError, codeConfirmed, onConfirmCode, onCancel }: ConfirmingViewProps) {
   const { t, copy } = usePairCopy()
   const name = selectedDevice?.name ?? t('sync.unknown')
   return (
@@ -170,14 +172,24 @@ export function ConfirmingView({ selectedDevice, generatedPin, pairingError, onC
         <h3 className="text-[15px] font-semibold text-[var(--workspace-text-strong)]">{copy.verifyTitle}</h3>
         <p className="max-w-md text-[12px] leading-relaxed text-[var(--workspace-text-muted)]">{fill(copy.verifyDesc, { name })}</p>
         {generatedPin && <CodeDigits code={generatedPin} label={t('sync.verificationCode')} />}
-        <p className="flex items-center gap-1.5 text-[12px] text-[var(--workspace-text-muted)]">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          {fill(copy.waitingAccept, { name })}
-        </p>
+        {codeConfirmed && (
+          <p className="flex items-center gap-1.5 text-[12px] text-[var(--workspace-text-muted)]">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {fill(copy.waitingAccept, { name })}
+          </p>
+        )}
         {selectedDevice && <p className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">{selectedDevice.host}:{selectedDevice.port}</p>}
         <ErrorLine message={pairingError} />
       </div>
-      <Footer><Button variant="outline" size="sm" onClick={onCancel}>{t('sync.cancel')}</Button></Footer>
+      <Footer>
+        <Button variant="outline" size="sm" onClick={onCancel}>{t('sync.cancel')}</Button>
+        {!codeConfirmed && (
+          <Button size="sm" className="gap-1.5" onClick={onConfirmCode}>
+            <ShieldCheck className="h-3.5 w-3.5" />
+            {copy.codeMatches}
+          </Button>
+        )}
+      </Footer>
     </>
   )
 }

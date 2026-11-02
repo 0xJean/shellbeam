@@ -157,6 +157,17 @@ export async function syncSendPairRequest(payload: {
   }
 }
 
+export async function syncResolveOutgoingPair(payload: {
+  sessionId: string
+  accepted: boolean
+}) {
+  try {
+    await invoke('sync_resolve_outgoing_pair', { payload })
+  } catch (error) {
+    throw new Error(toInvokeErrorMessage(error))
+  }
+}
+
 export async function syncAcceptPair(payload: {
   sessionId: string
   peerHost: string

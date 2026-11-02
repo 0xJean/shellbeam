@@ -1,4 +1,5 @@
 pub mod commands;
+pub(crate) mod pairing_crypto;
 pub mod peer;
 pub mod peer_pairing;
 pub(crate) mod transport;
@@ -96,7 +97,12 @@ pub struct SyncTrustedPeer {
     pub peer_endpoint: Option<String>,
     #[serde(default)]
     pub sync_secret: Option<String>,
+    #[serde(default)]
+    pub pairing_version: u32,
 }
+
+/// Before this version the key crossed the network in plaintext, so it cannot be trusted.
+pub(crate) const CURRENT_PAIRING_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -222,6 +228,11 @@ pub(crate) fn load_sync_state(app: &tauri::AppHandle) -> Result<SyncStateFile, S
     state
         .trusted_peers
         .retain(|item| !item.peer_device_id.trim().is_empty());
+    for peer in &mut state.trusted_peers {
+        if peer.pairing_version < CURRENT_PAIRING_VERSION {
+            peer.sync_secret = None;
+        }
+    }
     Ok(state)
 }
 

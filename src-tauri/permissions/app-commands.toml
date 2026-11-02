@@ -178,6 +178,7 @@ permissions = [
   "allow-sync-query-changes",
   "allow-sync-register-change",
   "allow-sync-remove-trusted-peer",
+  "allow-sync-resolve-outgoing-pair",
   "allow-sync-send-pair-request",
   "allow-sync-server-status",
   "allow-sync-start-pairing",

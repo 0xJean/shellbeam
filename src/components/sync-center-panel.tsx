@@ -19,7 +19,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { mdnsStartDiscover, mdnsStopDiscover, onMdnsDeviceFound, getAndroidDeviceName, type DiscoveredDevice } from '@/lib/mdns'
-import { getSystemHostname, syncSendPairRequest, syncAcceptPair } from '@/lib/sync'
+import { getSystemHostname, syncSendPairRequest, syncAcceptPair, syncResolveOutgoingPair } from '@/lib/sync'
 import { listen } from '@tauri-apps/api/event'
 import type {
   SyncChangeRecord,
@@ -97,6 +97,8 @@ export function SyncCenterPanel({
     verificationCode: string
   } | null>(null)
   const [generatedPin, setGeneratedPin] = useState('')
+  const [outgoingSessionId, setOutgoingSessionId] = useState('')
+  const [codeConfirmed, setCodeConfirmed] = useState(false)
   const scanCleanupRef = useRef<(() => void) | null>(null)
   const [onlinePeerEndpoints, setOnlinePeerEndpoints] = useState<Set<string>>(new Set())
   const probeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -233,6 +235,8 @@ export function SyncCenterPanel({
         peerName: device.name,
       })
       setGeneratedPin(session.verificationCode)
+      setOutgoingSessionId(session.sessionId)
+      setCodeConfirmed(false)
       setView('confirming')
       await onRefresh()
     } catch (err) {
@@ -259,7 +263,8 @@ export function SyncCenterPanel({
       verificationCode: string
     }>('pair-request-received', (event) => {
       console.log('[sync] pair-request-received event:', JSON.stringify(event.payload))
-      setIncomingPairRequest(event.payload)
+      // A request arriving later must not replace the one the user is reading.
+      setIncomingPairRequest((current) => current ?? event.payload)
       setView('incoming')
     }).then((fn) => { unlisten = fn })
     return () => { unlisten?.() }
@@ -271,6 +276,7 @@ export function SyncCenterPanel({
     listen<{ peerDeviceId: string; peerDeviceName: string }>('pair-confirmed', (event) => {
       console.log('[sync] pair-confirmed event:', JSON.stringify(event.payload))
       setGeneratedPin('')
+      setOutgoingSessionId('')
       setSelectedDevice(null)
       void onRefresh().then(() => {
         // Auto-navigate to the newly paired peer's detail view
@@ -319,8 +325,21 @@ export function SyncCenterPanel({
     }
   }
 
+  async function handleConfirmCode() {
+    try {
+      await syncResolveOutgoingPair({ sessionId: outgoingSessionId, accepted: true })
+      setCodeConfirmed(true)
+    } catch (err) {
+      setPairingError(String(err))
+    }
+  }
+
   function handleCancel() {
     stopScan()
+    if (outgoingSessionId) {
+      void syncResolveOutgoingPair({ sessionId: outgoingSessionId, accepted: false }).catch(() => {})
+      setOutgoingSessionId('')
+    }
     setSelectedDevice(null)
     setPairingError('')
     setIncomingPairRequest(null)
@@ -357,6 +376,8 @@ export function SyncCenterPanel({
           selectedDevice={selectedDevice}
           generatedPin={generatedPin}
           pairingError={pairingError}
+          codeConfirmed={codeConfirmed}
+          onConfirmCode={() => void handleConfirmCode()}
           onCancel={handleCancel}
         />
       )
