@@ -21,6 +21,8 @@ import {
   BookOpen,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { AppUpdateReminder } from '@/components/app-update'
+import { useAppUpdateReminderVersion } from '@/lib/app-update'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 import { isToolPage } from '@/lib/mobile-navigation'
@@ -177,6 +179,7 @@ export function PcNavSidebar({ activeNav, onNavChange, vault, counts, onOpenSear
       </nav>
 
       <div className="space-y-0.5 border-t border-[color:var(--workspace-border-soft)] px-2 py-2">{FOOTER_IDS.map(item)}</div>
+      <AppUpdateReminder className="mx-3 mb-2" />
       {vault && (
         <div data-testid="pc-nav-vault-status" className="mx-3 mb-3 flex items-center gap-2.5 rounded-lg bg-[var(--workspace-surface-800)] px-3 py-2">
           {vault.unlocked ? <LockOpen className="h-4 w-4 shrink-0 text-[color:var(--workspace-status-good)]" /> : <Lock className="h-4 w-4 shrink-0 text-[var(--workspace-text-muted)]" />}
@@ -199,6 +202,7 @@ interface MobileBottomNavProps {
 
 export function MobileBottomNav({ activeNav, onNavChange, sessionCount = 0 }: MobileBottomNavProps) {
   const { t } = useT()
+  const updateReminder = useAppUpdateReminderVersion()
   return (
     <nav data-testid="mobile-bottom-nav" className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] backdrop-blur-xl supports-[backdrop-filter]:bg-[var(--workspace-nav-translucent)] md:hidden">
       <div className="mx-auto grid max-w-xl grid-cols-5 px-1" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
@@ -209,6 +213,7 @@ export function MobileBottomNav({ activeNav, onNavChange, sessionCount = 0 }: Mo
               className={cn('relative flex flex-col items-center gap-1 pb-1.5 pt-2 text-[10px] font-medium transition-colors', isActive ? 'text-workspace-nav-active' : 'text-workspace-nav')}>
               <span className={cn('flex h-7 w-12 items-center justify-center rounded-full transition-colors', isActive && 'bg-[var(--workspace-nav-active-bg)]')}>{item.icon}</span>
               <span>{t(item.labelKey)}</span>
+              {item.id === 'settings' && updateReminder && <span data-testid="mobile-settings-update-dot" className="absolute right-[calc(50%-1.1rem)] top-2 h-2 w-2 rounded-full bg-[var(--workspace-accent-text)]" />}
               {item.id === 'terminal' && sessionCount > 0 && (
                 <span className="absolute right-[calc(50%-1.4rem)] top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[color:var(--workspace-status-bad)] px-1 text-[9px] font-bold text-white">{sessionCount}</span>
               )}

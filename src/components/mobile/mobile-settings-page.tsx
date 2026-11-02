@@ -1,11 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Activity, ChevronLeft, ChevronRight, Clock, Globe, Palette, Plug, ShieldCheck, TerminalSquare, Type, Wrench, ALargeSmall } from 'lucide-react'
+import { Activity, ArrowUpCircle, ChevronLeft, ChevronRight, Clock, Globe, Palette, Plug, ShieldCheck, TerminalSquare, Type, Wrench, ALargeSmall } from 'lucide-react'
 import logoUrl from '@/assets/logo.png'
+import { AppUpdateReminder } from '@/components/app-update'
 import { SettingsPanel, type SettingsPanelProps } from '@/components/settings-panel'
 import { useHosts } from '@/contexts/hosts-context'
 import { useVault } from '@/contexts/vault-context'
 import { useThemePreference } from '@/hooks/use-theme'
 import { LOCALE_OPTIONS, useT } from '@/lib/i18n'
+import { appUpdateCopy } from '@/lib/locales/app-update'
 import { mobileMiscV3Copy } from '@/lib/locales/mobile-misc-v3'
 import { fill } from '@/lib/locales/probe-install'
 import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
@@ -67,6 +69,7 @@ export function MobileSettingsPage(props: MobileSettingsPageProps) {
   return (
     <div data-testid="mobile-settings-page" className="mx-auto max-w-xl space-y-5 px-4 pb-[calc(2rem+env(safe-area-inset-bottom))] pt-4">
       <h2 className="px-1 text-[28px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{c.title}</h2>
+      <AppUpdateReminder />
       <button type="button" data-testid="mobile-settings-vault" onClick={() => setCategory('security')}
         className="sb-card flex min-h-[64px] w-full items-center gap-3 p-3 text-left active:bg-[var(--workspace-surface-800)]">
         <img src={logoUrl} alt="" className="h-12 w-12 shrink-0 rounded-xl" />
@@ -95,6 +98,7 @@ export function MobileSettingsPage(props: MobileSettingsPageProps) {
         row('monitoring', 'monitoring', <Activity />, nav.monitoring),
         row('integrations', 'integrations', <Plug />, nav.integrations),
         row('advanced', 'advanced', <Wrench />, nav.advanced),
+        row('updates', 'general', <ArrowUpCircle />, appUpdateCopy[locale].title),
       ])}
     </div>
   )
