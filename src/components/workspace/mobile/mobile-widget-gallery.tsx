@@ -23,7 +23,7 @@ export function MobileWidgetGallery({ selected, data, onSave, onClose }: { selec
   return <div data-testid="mobile-widget-gallery" role="dialog" aria-modal="true" aria-label={copy.addWidgets} className="absolute inset-0 z-50 flex flex-col justify-end">
     <button type="button" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 h-full w-full cursor-default bg-[var(--workspace-surface-950)] opacity-50 backdrop-blur-xl" />
     <motion.div initial={{ y: 60, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ type: 'spring', damping: 30, stiffness: 320 }}
-      className="relative flex max-h-[78%] min-h-0 flex-col rounded-t-[28px] border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] pb-[max(env(safe-area-inset-bottom),12px)] shadow-[var(--workspace-shadow-overlay)]">
+      className="relative flex max-h-[78%] min-h-0 flex-col rounded-t-[28px] border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] pb-3 shadow-[var(--workspace-shadow-overlay)]">
       <div aria-hidden="true" className="mx-auto mt-2 h-[5px] w-9 rounded-full bg-[var(--workspace-border-strong)]" />
       <div className="flex items-center justify-between px-2">
         <button type="button" onClick={onClose} className="h-11 px-3 text-[16px] text-[var(--workspace-accent-text)]">{copy.cancel}</button>

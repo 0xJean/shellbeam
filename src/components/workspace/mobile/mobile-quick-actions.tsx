@@ -31,7 +31,7 @@ export function MobileQuickActions({ app, data, onOpenApp, onOpenLogs, onTermina
   return <div data-testid="mobile-quick-actions" role="dialog" aria-modal="true" aria-label={label} className="absolute inset-0 z-50">
     <button type="button" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 h-full w-full cursor-default bg-[var(--workspace-surface-950)] opacity-50 backdrop-blur-xl" />
     <motion.div initial={{ opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: 'spring', damping: 26, stiffness: 320 }}
-      className="relative mx-6 mt-[max(calc(env(safe-area-inset-top)+96px),120px)] flex flex-col items-start gap-3.5">
+      className="relative mx-6 mt-[120px] flex flex-col items-start gap-3.5">
       {widget && <div className="pointer-events-none h-[172px] w-full"><MobileHomeWidget id={widget} data={data} preview /></div>}
       <div className="ml-2 flex flex-col items-center gap-1.5">
         <WorkspaceAppIcon app={app} />

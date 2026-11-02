@@ -20,6 +20,7 @@ import { SessionConnectPlaceholder } from '@/components/session-connect-placehol
 import { SessionTerminalView } from '@/components/session-terminal-view'
 import { TerminalRightSidebar } from '@/components/terminal-right-sidebar'
 import { WorkspaceAssetInventoryApp } from '@/components/workspace/workspace-asset-inventory-app'
+import { WorkspaceModeToggle } from '@/components/workspace/workspace-mode-toggle'
 import { HostCreateDialog } from '@/components/host-create-dialog'
 import { HostEditorDialog } from '@/components/host-editor-dialog'
 import { SshImportDialog } from '@/components/ssh-import-dialog'
@@ -39,6 +40,7 @@ import { TOUR_ROUTES, TOUR_SETTINGS_CATEGORY, type InteractiveTourId, type TourO
 import { cn } from '@/lib/utils'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
+import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { ChevronLeft, PanelTopOpen, X } from 'lucide-react'
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
@@ -224,6 +226,9 @@ export function PcLayout() {
     // Open by default; closing it is remembered.
     try { return localStorage.getItem('shellbeam.rightSidebar') !== 'false' } catch { return true }
   })
+  // On phones the same tools are a sheet over the terminal, so it starts closed and is not remembered.
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+  const toggleMobileDrawer = useCallback(() => setMobileDrawerOpen((open) => !open), [])
   const [lastDashboardNav, setLastDashboardNav] = useState(() => app.pcSidebarNav === 'terminal' ? 'hosts' : app.pcSidebarNav)
   const browserSwitcherInputRef = useRef<HTMLInputElement | null>(null)
   const observedActiveBrowserTabIdsRef = useRef<string[] | null>(null)
@@ -260,6 +265,7 @@ export function PcLayout() {
 
   useEffect(() => {
     const open = () => {
+      if (!getIsMd()) setMobileDrawerOpen(true)
       setRightSidebarOpen(true)
       try { localStorage.setItem('shellbeam.rightSidebar', 'true') } catch {}
     }
@@ -388,6 +394,11 @@ export function PcLayout() {
 
   const handleMobileCloseSession = (sessionId: string) => {
     requestCloseSession(sessionId)
+  }
+
+  const handleMobileModeChange = (sessionId: string, nextMode: SessionWorkspaceMode) => {
+    sessions.setSessionMode(sessionId, nextMode)
+    if (nextMode === 'browser') sessions.setSessionBrowserPresentation(sessionId, 'embedded')
   }
 
   const handleGoToDashboard = () => {
@@ -957,8 +968,9 @@ export function PcLayout() {
         />
       </div>
       <div className="relative min-h-0 flex-1">
-        {/* PC Terminal layer - all sessions stay mounted, only active is visible (hidden on mobile) */}
-        {sessions.pcSessionTabs.length > 0 && (
+        {/* PC Terminal layer - all sessions stay mounted, only active is visible. Phones get the mobile layer below instead,
+            so each session has one terminal, workspace and browser. */}
+        {isMd && sessions.pcSessionTabs.length > 0 && (
           <div className={cn('absolute inset-0 flex', sessions.pcActiveSessionId ? 'z-10' : 'pointer-events-none invisible')}>
             <div className="relative min-w-0 flex-1">
               {sessions.pcSessionTabs.map((tab) => {
@@ -1015,6 +1027,7 @@ export function PcLayout() {
                           inventory={displayInventory}
                           host={displayHost ?? undefined}
                           chunkEmitterRef={sessions.pcChunkEmitterRef}
+                          outputReplayRef={sessions.pcOutputReplayRef}
                           onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
                           terminalPrefs={app.terminalPrefs}
                           isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
@@ -1114,9 +1127,9 @@ export function PcLayout() {
 
         {/* Mobile Terminal layer - shown when nav is 'terminal' on small screens */}
         {!isMd && (
-        <div className={cn('absolute inset-0 flex flex-col md:hidden pb-14', app.pcSidebarNav === 'terminal' ? 'z-10' : 'pointer-events-none invisible')}>
+        <div className={cn('mobile-safe-pb absolute inset-0 flex flex-col md:hidden', app.pcSidebarNav === 'terminal' ? 'z-10' : 'pointer-events-none invisible')}>
           <MobileSessionHeader
-            onOpenDrawer={toggleRightSidebar}
+            onOpenDrawer={toggleMobileDrawer}
             onBack={() => app.setPcSidebarNav('hosts')}
             sessionTabs={sessions.pcSessionTabs}
             activeSessionId={mobileActiveSessionId}
@@ -1127,6 +1140,11 @@ export function PcLayout() {
             hosts={hostsCtx.hosts}
             onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
           />
+          {mobileActiveSessionId && sessions.interactiveSessions.some((s) => s.sessionId === mobileActiveSessionId) && (
+            <div data-testid="mobile-mode-switch" className="flex shrink-0 justify-center bg-[var(--workspace-surface-950)] pb-1.5">
+              <WorkspaceModeToggle mode={mobileWorkspaceMode} onChange={(nextMode) => handleMobileModeChange(mobileActiveSessionId, nextMode)} />
+            </div>
+          )}
           {sessions.pcSessionTabs.length > 0 && (
             <div className="relative min-h-0 flex-1 flex">
               <div className="relative min-w-0 flex-1">
@@ -1176,18 +1194,14 @@ export function PcLayout() {
                           inventory={displayInventory}
                           host={displayHost ?? undefined}
                           chunkEmitterRef={sessions.pcChunkEmitterRef}
+                          outputReplayRef={sessions.pcOutputReplayRef}
                           onSendRaw={(data: string) => sessions.sendRaw(tab.sessionId, data)}
                           terminalPrefs={app.terminalPrefs}
                           isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
                           onReconnect={() => sessions.manualReconnect(tab.sessionId)}
                           visible={isActive && app.pcSidebarNav === 'terminal'}
                           workspaceMode={mobileMode}
-                          onWorkspaceModeChange={(nextMode) => {
-                            sessions.setSessionMode(tab.sessionId, nextMode)
-                            if (nextMode === 'browser') {
-                              sessions.setSessionBrowserPresentation(tab.sessionId, 'embedded')
-                            }
-                          }}
+                          onWorkspaceModeChange={(nextMode) => handleMobileModeChange(tab.sessionId, nextMode)}
                           onOpenBrowser={!browserPageMode ? () => {
                             sessions.setSessionBrowserPresentation(tab.sessionId, 'embedded')
                             sessions.setSessionMode(tab.sessionId, 'browser')
@@ -1199,12 +1213,13 @@ export function PcLayout() {
                           chromeOnly={showTerminalChrome}
                           initialChunks={sessions.interactiveChunksBySession[tab.sessionId]}
                           onInitialChunksConsumed={handleInitialChunksConsumed}
-                          onToggleRightSidebar={isActive ? toggleRightSidebar : undefined}
-                          rightSidebarOpen={isActive ? rightSidebarOpen : undefined}
+                          onToggleRightSidebar={isActive ? toggleMobileDrawer : undefined}
+                          rightSidebarOpen={isActive ? mobileDrawerOpen : undefined}
                         />
                       </div>
                     )}
-                    <div className={cn('absolute inset-x-0 bottom-0 top-9', !showTerminalChrome && 'pointer-events-none invisible')}>
+                    {/* Phones have no terminal header row, so this layer fills the session area; the mode switch sits above it. */}
+                    <div className={cn('absolute inset-0', !showTerminalChrome && 'pointer-events-none invisible')}>
                       {/* Both stay mounted once opened, so moving between modes keeps pages and windows as they were. */}
                       {(browserPageMode || (sessions.browserBySession[tab.sessionId]?.presentation ?? 'closed') !== 'closed') && (
                         <div className={cn('absolute inset-0 min-h-0 bg-[var(--workspace-surface-950)] p-3', !browserPageMode && 'pointer-events-none invisible')}>
@@ -1243,8 +1258,8 @@ export function PcLayout() {
               </div>
               {mobileActiveSessionId && mobileWorkspaceMode === 'terminal' && (
                 <MobileTerminalDrawer
-                  visible={rightSidebarOpen}
-                  onClose={toggleRightSidebar}
+                  visible={mobileDrawerOpen}
+                  onClose={toggleMobileDrawer}
                   hostAddress={sessions.pcSessionTabs.find((t) => t.sessionId === mobileActiveSessionId)?.hostAddress ?? ''}
                   snippets={snippets.snippets}
                   onApplySnippet={(cmd) => {
@@ -1489,7 +1504,8 @@ export function PcLayout() {
               )}
               {app.pcSidebarNav === 'sftp' && (
                 <Suspense fallback={<DashboardSectionFallback fullHeight />}>
-                  <div className="absolute inset-0">
+                  {/* Positioned out of the scroll area's padding, so it reserves the phone's bottom nav itself. */}
+                  <div className="mobile-safe-pb absolute inset-0">
                     <SftpDualPane
                       vaultId={vault.activeVaultId}
                       hosts={hostsCtx.hosts}

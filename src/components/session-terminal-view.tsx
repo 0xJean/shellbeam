@@ -49,6 +49,8 @@ interface SessionTerminalViewProps {
   rightSidebarOpen?: boolean
   initialChunks?: InteractiveOutputChunk[]
   onInitialChunksConsumed?: (sessionId: string) => void
+  /** The session's recent output; when present a newly mounted view replays it in place of `initialChunks`. */
+  outputReplayRef?: MutableRefObject<Record<string, InteractiveOutputChunk[]>>
   workspaceMode?: SessionWorkspaceMode
   onWorkspaceModeChange?: (mode: SessionWorkspaceMode) => void
   chromeOnly?: boolean
@@ -83,6 +85,7 @@ export function SessionTerminalView({
   rightSidebarOpen,
   initialChunks,
   onInitialChunksConsumed,
+  outputReplayRef,
   workspaceMode = 'terminal',
   onWorkspaceModeChange,
   chromeOnly = false,
@@ -299,10 +302,12 @@ export function SessionTerminalView({
       })
     }
 
-    // Replay any chunks that were buffered before the emitter was registered
-    if (initialChunks && initialChunks.length > 0) {
+    // Replay the session's recent output, which covers chunks buffered before the emitter was
+    // registered and output this session already showed in a view that has since unmounted.
+    const replay = outputReplayRef?.current[sessionId] ?? initialChunks
+    if (replay && replay.length > 0) {
       let batch = ''
-      for (let i = 0; i < initialChunks.length; i++) batch += initialChunks[i].data
+      for (let i = 0; i < replay.length; i++) batch += replay[i].data
       if (batch) {
         detectLinks(batch)
         pendingWriteChars += batch.length
@@ -311,8 +316,8 @@ export function SessionTerminalView({
           writeThrottleNoticeIfIdle()
         })
       }
-      onInitialChunksConsumed?.(sessionId)
     }
+    if ((replay && replay.length > 0) || (initialChunks && initialChunks.length > 0)) onInitialChunksConsumed?.(sessionId)
 
     const onData = term.onData((data: string) => {
       onSendRawRef.current(data)
@@ -407,8 +412,9 @@ export function SessionTerminalView({
 
   const handleClearTerminalBuffer = useCallback(() => {
     termRef.current?.clear()
+    if (outputReplayRef) outputReplayRef.current[sessionId] = []
     termRef.current?.focus()
-  }, [])
+  }, [outputReplayRef, sessionId])
 
   const bg = terminalTheme.background ?? '#000000'
   const fg = terminalTheme.foreground ?? '#00ff41'

@@ -95,13 +95,18 @@ export function MobilePageDots({ pages, page, onSelect }: { pages: number; page:
   </div>
 }
 
-export function MobileDock({ data, onOpen, onQuickActions, onSearch }: { data: MobileHomeData; onOpen: (app: WorkspaceAppId) => void; onQuickActions: (app: WorkspaceAppId) => void; onSearch: () => void }) {
+export function MobileHomeSearch({ onSearch }: { onSearch: () => void }) {
   const { locale } = useT()
   const copy = workspaceMobileV3Copy[locale]
+  return <button type="button" data-testid="mobile-home-search" onClick={onSearch} className="flex h-11 items-center active:opacity-60" aria-label={copy.searchPlaceholder}>
+    <span className={cn('inline-flex h-[30px] items-center gap-1.5 rounded-full px-3.5 text-[13.5px] font-semibold text-[var(--workspace-text-strong)]', glass)}><Search className="h-3.5 w-3.5" aria-hidden="true" />{copy.search}</span>
+  </button>
+}
+
+/** The dock; with onSearch it also shows the search pill above it. */
+export function MobileDock({ data, onOpen, onQuickActions, onSearch }: { data: MobileHomeData; onOpen: (app: WorkspaceAppId) => void; onQuickActions: (app: WorkspaceAppId) => void; onSearch?: () => void }) {
   return <div className="flex flex-col items-center gap-2">
-    <button type="button" data-testid="mobile-home-search" onClick={onSearch} className="flex h-11 items-center active:opacity-60" aria-label={copy.searchPlaceholder}>
-      <span className={cn('inline-flex h-[30px] items-center gap-1.5 rounded-full px-3.5 text-[13.5px] font-semibold text-[var(--workspace-text-strong)]', glass)}><Search className="h-3.5 w-3.5" aria-hidden="true" />{copy.search}</span>
-    </button>
+    {onSearch && <MobileHomeSearch onSearch={onSearch} />}
     <div data-testid="mobile-home-dock" className={cn('flex w-full justify-around rounded-[32px] px-1.5 py-3.5 shadow-[var(--workspace-shadow-overlay)]', glass)}>
       {DOCK_APPS.map((app) => <SpringboardApp key={app} app={app} data={data} onOpen={onOpen} onQuickActions={onQuickActions} dock />)}
     </div>

@@ -553,7 +553,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
     </button>
   )
   const selectionBar = (
-    <div className="shrink-0 space-y-2 pb-[env(safe-area-inset-bottom)]">
+    <div className="shrink-0 space-y-2">
       {pathEdit && activeTab === 'remote' && (
         <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); submitPathEdit() }}>
           <input autoFocus aria-label={pathEdit.kind === 'move' ? m.moveTo : m.newName} value={pathEdit.value}
@@ -577,7 +577,8 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
   )
 
   return (
-    <div ref={containerRef} className={cn('flex h-full min-h-0 flex-col gap-3 p-4 text-[var(--workspace-text)]', className)}>
+    // On a short phone screen the list keeps a usable height and the whole page scrolls instead.
+    <div ref={containerRef} className={cn('flex h-full min-h-0 flex-col gap-3 p-4 text-[var(--workspace-text)]', isCompact && 'overflow-y-auto', className)}>
       <header className="flex shrink-0 flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="text-[22px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('sftp.title')}</h1>
@@ -672,7 +673,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
         </div>
       )}
 
-      <div className="min-h-0 flex-1">
+      <div className={cn('min-h-0 flex-1', isCompact && 'min-h-[22rem]')}>
         {isCompact ? (
           <div className="flex h-full flex-col gap-2">
             <div className="flex min-h-0 flex-1 flex-col">

@@ -26,6 +26,10 @@ function isPublicKey(key: string): boolean {
   return key.includes('publicKey') || key.endsWith('.pub')
 }
 
+function keyKindBadge(key: string): string {
+  return cn('inline-block rounded-md px-1.5 py-0.5 text-[11px] font-medium', isSshKey(key) ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]' : isPublicKey(key) ? 'bg-[var(--workspace-status-good-bg)] text-[var(--workspace-status-good-text)]' : 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]')
+}
+
 function maskSecretValue(value: string): string {
   if (!value.includes('\n')) return '••••••••'
   return value.split('\n').map((line) => (line ? '••••••••' : '')).join('\n')
@@ -461,7 +465,7 @@ export function KeychainTab({
         </DialogContent>
       </Dialog>
 
-      <div className="flex flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-3 px-4 pb-4 pt-5 sm:flex-row sm:px-6 sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('keychain.title')}</h2>
           <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">{fill(copy.summary, { n: vaultKeys.length })}</p>
@@ -476,7 +480,7 @@ export function KeychainTab({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-4 px-6 pb-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]">
+      <div className="grid min-h-0 flex-1 gap-4 px-4 pb-6 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]">
         <section data-tour="keychain-list" className="sb-card flex min-h-[200px] min-w-0 flex-col overflow-hidden">
           <div className="flex flex-wrap items-center gap-2 border-b border-[var(--workspace-border-soft)] p-3">
             <div className="relative w-full max-w-[260px] flex-1">
@@ -516,8 +520,8 @@ export function KeychainTab({
                 <thead>
                   <tr className="border-b border-[var(--workspace-border-soft)] text-left text-xs font-medium text-[var(--workspace-text-subtle)]">
                     <th className="px-4 py-2.5 font-medium">{copy.colName}</th>
-                    <th className="w-32 px-3 py-2.5 font-medium">{copy.colType}</th>
-                    <th className="w-24 px-3 py-2.5"><span className="sr-only">{t('common.delete')}</span></th>
+                    <th className="hidden w-32 px-3 py-2.5 font-medium sm:table-cell">{copy.colType}</th>
+                    <th className="w-[5.5rem] px-2 py-2.5 sm:w-24 sm:px-3"><span className="sr-only">{t('common.delete')}</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -535,11 +539,15 @@ export function KeychainTab({
                             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]">
                               <KeyRound className="h-4 w-4" />
                             </span>
-                            <span className="truncate font-medium text-[var(--workspace-text-strong)]" title={key}>{key}</span>
+                            {/* Phones show the type under the name, since a type column leaves no room for the name. */}
+                            <div className="min-w-0">
+                              <span className="block truncate font-medium text-[var(--workspace-text-strong)]" title={key}>{key}</span>
+                              <span className={cn('mt-0.5 sm:hidden', keyKindBadge(key))}>{kindLabel(key)}</span>
+                            </div>
                           </div>
                         </td>
-                        <td className="px-3 py-2.5">
-                          <span className={cn('inline-block rounded-md px-1.5 py-0.5 text-[11px] font-medium', isSshKey(key) ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]' : isPublicKey(key) ? 'bg-[var(--workspace-status-good-bg)] text-[var(--workspace-status-good-text)]' : 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]')}>
+                        <td className="hidden px-3 py-2.5 sm:table-cell">
+                          <span className={keyKindBadge(key)}>
                             {kindLabel(key)}
                           </span>
                         </td>

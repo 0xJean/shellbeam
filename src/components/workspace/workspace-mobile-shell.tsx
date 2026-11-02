@@ -6,8 +6,8 @@ import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
 import type { WorkspaceAppId } from '@/lib/workspace'
-import { BatteryFull, ChevronLeft, Copy, Signal, Wifi, Search } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { ChevronLeft, Copy, Search } from 'lucide-react'
+import { useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { WorkspaceAssetInventoryApp } from './workspace-asset-inventory-app'
 import { WorkspaceBrowserApp } from './workspace-browser-app'
@@ -29,7 +29,7 @@ import { WorkspaceStatusCards } from './workspace-status-cards'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 import { SessionVaultMismatchCard } from './session-state-card'
 import { loadMobileHomePrefs, saveMobileHomePrefs, FIRST_PAGE_WIDGETS, type MobileHomePrefs, type MobileWidgetId } from './mobile/mobile-home-prefs'
-import { MobileDock, MobileHomePage, MobileHomeTopBar, MobilePageDots, MobilePullIndicator } from './mobile/mobile-home-screen'
+import { MobileDock, MobileHomePage, MobileHomeSearch, MobileHomeTopBar, MobilePageDots, MobilePullIndicator } from './mobile/mobile-home-screen'
 import { MobileAppList } from './mobile/mobile-app-list'
 import { MobileSpotlight } from './mobile/mobile-spotlight'
 import { MobileQuickActions } from './mobile/mobile-quick-actions'
@@ -37,19 +37,6 @@ import { MobileAppSwitcher } from './mobile/mobile-app-switcher'
 import { MobileWidgetGallery } from './mobile/mobile-widget-gallery'
 import { useMobileHomeData } from './mobile/use-mobile-home-data'
 import { useHorizontalSwipe, usePullToRefresh } from './mobile/use-mobile-gestures'
-
-function LiveClock() {
-  const [time, setTime] = useState(() =>
-    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-  )
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
-    }, 10000)
-    return () => window.clearInterval(id)
-  }, [])
-  return <>{time}</>
-}
 
 interface WorkspaceMobileShellProps {
   activeVaultId?: string
@@ -215,17 +202,9 @@ export function WorkspaceMobileShell({
         <div className="absolute inset-0 bg-workspace-mobile-wallpaper" />
       </div>
 
-      <div className="relative z-10 flex items-center justify-between px-6 pb-1 pt-[max(env(safe-area-inset-top),16px)] text-[15px] font-semibold text-[var(--workspace-text-strong)]">
-        <span><LiveClock /></span>
-        <div className="flex items-center gap-1.5" aria-hidden="true">
-          <Signal className="h-[14px] w-[14px]" />
-          <Wifi className="h-[14px] w-[14px]" />
-          <BatteryFull className="h-[18px] w-[18px]" />
-        </div>
-      </div>
-
+      {/* The shell sits inside the app below the session header, so it has no status bar or screen-edge insets of its own. */}
       <motion.div
-        className="relative z-10 flex min-h-0 flex-1 flex-col"
+        className="relative z-10 flex min-h-0 flex-1 flex-col pt-3"
         initial={false}
         animate={{
           scale: isOverview ? 1 : 0.95,
@@ -238,7 +217,7 @@ export function WorkspaceMobileShell({
           onToggleLayout={() => updatePrefs({ layout: prefs.layout === 'grid' ? 'list' : 'grid' })} onAddWidgets={() => setOverlay('widgets')} />
         <div
           data-testid="workspace-mobile-home-scroll"
-          className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pb-56 pt-2"
+          className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pb-4 pt-2"
           {...pull.handlers}
           onTouchStart={(event) => { pull.handlers.onTouchStart(event); swipe.onTouchStart(event) }}
           onTouchEnd={(event) => { pull.handlers.onTouchEnd(); swipe.onTouchEnd(event) }}
@@ -257,6 +236,11 @@ export function WorkspaceMobileShell({
           {prefs.layout === 'list'
             ? <MobileAppList data={home} onOpen={openApp} onQuickActions={(app) => setOverlay({ quick: app })} />
             : <MobileHomePage page={currentPage} widgets={prefs.widgets} data={home} onOpen={openApp} onQuickActions={(app) => setOverlay({ quick: app })} onOpenWidgetApp={openApp} />}
+          {/* Page dots and search scroll with the home page; only the dock stays pinned. */}
+          <div className="mt-2 flex flex-col items-center gap-1">
+            {prefs.layout === 'grid' && <MobilePageDots pages={hasSecondPage ? 2 : 1} page={currentPage} onSelect={setPage} />}
+            <MobileHomeSearch onSearch={() => setOverlay('spot')} />
+          </div>
           {currentPage === 1 && <div ref={overviewRef} data-testid="workspace-mobile-overview" className="mt-6 scroll-mt-4 space-y-4 px-4">
             {isOverview && <>
               {sessionVaultMismatch ? <SessionVaultMismatchCard sessionId={sessionId} onContinueInTerminal={() => onSelectApp('terminal')} className="p-0" /> : <WorkspaceStatusCards activeVaultId={activeVaultId} hostAddress={hostAddress} selectedHostId={hostId} hosts={hosts} resolveAuthSecret={resolveAuthSecret} />}
@@ -267,8 +251,9 @@ export function WorkspaceMobileShell({
         </div>
       </motion.div>
 
+      {/* In the page flow under the scroll area rather than floating over it, so it never covers widgets on short screens. */}
       <motion.div
-        className="absolute bottom-0 left-3 right-3 z-20 pb-[max(env(safe-area-inset-bottom),12px)]"
+        className="relative z-20 mx-3 shrink-0 pb-3 pt-1"
         initial={false}
         animate={{
           y: isOverview ? 0 : 100,
@@ -277,8 +262,7 @@ export function WorkspaceMobileShell({
         }}
         transition={{ type: 'spring', damping: 26, stiffness: 260 }}
       >
-        {prefs.layout === 'grid' && <MobilePageDots pages={hasSecondPage ? 2 : 1} page={currentPage} onSelect={setPage} />}
-        <MobileDock data={home} onOpen={openApp} onQuickActions={(app) => setOverlay({ quick: app })} onSearch={() => setOverlay('spot')} />
+        <MobileDock data={home} onOpen={openApp} onQuickActions={(app) => setOverlay({ quick: app })} />
       </motion.div>
 
       <AnimatePresence>
@@ -292,7 +276,7 @@ export function WorkspaceMobileShell({
             transition={{ type: 'spring', damping: 28, stiffness: 300 }}
             className="absolute inset-0 z-30 flex flex-col overflow-hidden bg-[var(--workspace-surface-950)]"
           >
-            <div className="relative z-40 border-b border-[var(--workspace-border-soft)] bg-[var(--workspace-nav-translucent)] pt-[max(env(safe-area-inset-top),16px)] shadow-[var(--workspace-shadow-card)] backdrop-blur-xl">
+            <div className="relative z-40 border-b border-[var(--workspace-border-soft)] bg-[var(--workspace-nav-translucent)] pt-1 shadow-[var(--workspace-shadow-card)] backdrop-blur-xl">
               <div className="relative flex items-center justify-between px-2 pb-1">
                 <button
                   type="button"
@@ -342,8 +326,8 @@ export function WorkspaceMobileShell({
 
             <div
               className={activeApp === 'browser'
-                ? 'flex-1 overflow-hidden bg-workspace-shell pb-[env(safe-area-inset-bottom)]'
-                : 'flex-1 overflow-auto bg-workspace-shell pb-[env(safe-area-inset-bottom)]'}
+                ? 'flex-1 overflow-hidden bg-workspace-shell'
+                : 'flex-1 overflow-auto bg-workspace-shell px-3 py-3'}
             >
               {content}
             </div>
