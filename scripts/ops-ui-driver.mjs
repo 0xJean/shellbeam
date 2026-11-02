@@ -14,6 +14,24 @@ export class WebDriverError extends Error {
   }
 }
 
+function testControl(locator) {
+  return typeof locator === 'string' ? [...locator.matchAll(/data-testid=["']([a-z0-9-]{1,80})["']/g)].at(-1)?.[1] ?? null : null
+}
+
+// A timeout names what was awaited: the fixed control, the enumerated states
+// the selector required, and whether a match existed. Names and IDs stay out.
+const WAIT_STATES = Object.freeze({ alertStatus: 'data-alert-status', transport: 'data-transport', activeState: 'data-active-state', severity: 'data-severity' })
+function describeWait(locator) {
+  const wait = { control: testControl(locator) ?? 'native-control', observed: 'not-evaluated' }
+  if (typeof locator === 'string') {
+    for (const [key, attribute] of Object.entries(WAIT_STATES)) {
+      const value = new RegExp(`\\[${attribute}=["']([a-z-]{1,40})["']\\]`).exec(locator)?.[1]
+      if (value) wait[key] = value
+    }
+  }
+  return wait
+}
+
 export class UiElement {
   constructor(driver, id) { this.driver = driver; this.id = id }
   click() { return this.driver.click(this) }
@@ -34,6 +52,7 @@ export class OpsUiDriver {
     this.lastInteraction = null
     this.lastClickDiagnostics = null
     this.lastSelectionDiagnostics = null
+    this.lastTimeout = null
   }
   async request(method, path, body) {
     let response
@@ -97,8 +116,7 @@ export class OpsUiDriver {
   noteInteraction(kind, locator) {
     // Keep only a fixed test-control identifier. Never retain locator text,
     // input contents, error payloads or credential values in diagnostics.
-    const control = typeof locator === 'string' ? [...locator.matchAll(/data-testid=["']([a-z0-9-]{1,80})["']/g)].at(-1)?.[1] : null
-    this.lastInteraction = { kind, control: control ?? 'native-control' }
+    this.lastInteraction = { kind, control: testControl(locator) ?? 'native-control' }
   }
   async clickElement(element) {
     this.lastClickDiagnostics = null
@@ -339,20 +357,27 @@ export class OpsUiDriver {
     }
     throw new WebDriverError('no such element')
   }
-  async until(fn, { timeoutMs = 30_000 } = {}) {
-    const end = Date.now() + timeoutMs
+  async until(fn, { timeoutMs = 30_000, wait } = {}) {
+    const started = Date.now()
+    const end = started + timeoutMs
     while (Date.now() < end) {
       try { const result = await fn(); if (result) return result }
       catch (error) { if (!recoverable.has(error.code)) throw error }
       await delay(200)
     }
+    this.lastTimeout = { ...(wait ?? { control: 'unlabelled' }), timeoutMs, elapsedMs: Date.now() - started }
     throw new WebDriverError('timeout')
   }
   waitFor(locator, options) {
+    const wait = describeWait(locator)
     return this.until(async () => {
+      // "absent" and "hidden" need different fixes: the product never produced
+      // the state, or produced it on a surface that is not showing.
+      wait.observed = 'absent'
       const element = await this.find(locator)
+      wait.observed = 'hidden'
       return await this.isDisplayed(element) ? element : false
-    }, options)
+    }, { ...options, wait })
   }
   alertText() { return this.request('GET', this.route('/alert/text')) }
   acceptAlert() { return this.request('POST', this.route('/alert/accept'), {}) }

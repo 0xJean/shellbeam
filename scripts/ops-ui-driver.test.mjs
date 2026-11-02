@@ -371,3 +371,18 @@ for (const mode of ['visible', 'settling', 'outside-window', 'keyboard', 'keyboa
   assert.equal(menuReads, 2, 'selection waits until the closing portal is no longer displayed')
   assert.equal(calls.some(call => call.path.includes('/execute/')), false)
 })
+
+test('a timed-out wait names its control, required state and what it saw, without names', async () => {
+  const driver = new OpsUiDriver('http://127.0.0.1:9')
+  driver.find = async () => 'element'
+  driver.isDisplayed = async () => false
+  const selector = '[data-testid="local-alert-row"][data-alert-name="Private rule"][data-alert-status="resolved"][data-transport="proxy-jump"]'
+  await assert.rejects(driver.waitFor(selector, { timeoutMs: 1 }), { code: 'timeout' })
+  const { elapsedMs, ...wait } = driver.lastTimeout
+  assert(elapsedMs >= 1)
+  assert.deepEqual(wait, { control: 'local-alert-row', observed: 'hidden', alertStatus: 'resolved', transport: 'proxy-jump', timeoutMs: 1 })
+  driver.find = async () => { throw new WebDriverError('no such element') }
+  await assert.rejects(driver.waitFor(selector, { timeoutMs: 1 }), { code: 'timeout' })
+  assert.equal(driver.lastTimeout.observed, 'absent')
+  assert(!JSON.stringify(driver.lastTimeout).includes('Private rule'))
+})

@@ -628,7 +628,7 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await openDashboardPage(driver, 'hosts')
     await driver.waitFor(`${byHost(id)} ${testId('host-ops-local-alerts')}[data-severity="critical"]`, { timeoutMs: 120000 })
     check(Number(await driver.attr(`${byHost(id)} ${testId('host-ops-local-alerts')}`, 'data-open-count')) > 0, 'host_incident_not_visible')
-    await driver.until(async () => await driver.attr(byHost(id), 'data-host-health') === 'online', { timeoutMs: 150000 })
+    await driver.until(async () => await driver.attr(byHost(id), 'data-host-health') === 'online', { timeoutMs: 150000, wait: { control: 'host-health-online' } })
     // Count actual clicks after the anomaly is visible. The dedicated Services
     // button avoids hiding a native select's open + option choice in one step:
     // open Services (1), select this unit (2), request its real status (3).
@@ -644,7 +644,7 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await driver.until(async () => {
       const value = await driver.text(output)
       return value.includes(unit) && /Active:\s+failed\b/.test(value)
-    }, { timeoutMs: 30000 })
+    }, { timeoutMs: 30000, wait: { control: 'service-status-output' } })
     check(steps <= 3, 'diagnosis_step_budget_exceeded')
     await record(`ops-ui-${role}-diagnosis`, { passed: true, steps })
     const baseline = await checkpoint('before-cancel', { role, unit })
@@ -657,7 +657,7 @@ export async function runOpsUiIncidents({ driver, fixture, record, checkpoint, r
     await driver.waitFor(serviceRow(id, unit))
     await selectOpsUiServiceRow({ driver, fixture, state, role, record, checkpoint })
     await reviewOpsUiServiceConfirmation({ driver, css: `${serviceRoot(id)} ${testId('workspace-service-restart')}`, unit, hostName: fixture.hosts[role].name, hostId: id, vaultId: state.vaultId, accept: true, record, role })
-    await driver.until(async () => (await driver.text(output)).includes('status=completed'), { timeoutMs: 60000 })
+    await driver.until(async () => (await driver.text(output)).includes('status=completed'), { timeoutMs: 60000, wait: { control: 'service-restart-output' } })
     await driver.waitFor(`${serviceRow(id, unit)}[data-active-state="active"]`, { timeoutMs: 30000 })
     await checkpoint('after-confirm', { role, unit, baseline })
     const completed = await auditJob(driver, role, state, unit, 'completed')
@@ -706,10 +706,54 @@ export async function resumeOpsUiJourney({ driver, fixture, record, checkpoint, 
       const raw = await driver.attr(rule, 'data-sampled-at')
       const sampledAt = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : NaN
       return Number.isSafeInteger(sampledAt) && sampledAt >= restartedAfter && sampledAt <= Date.now()
-    }, { timeoutMs: 120000 })
+    }, { timeoutMs: 120000, wait: { control: 'rule-fresh-after-restart' } })
     await record(`ops-ui-${role}-restored`, { passed: true, auditJobs: 2, alertResolved: true, freshObservation: true })
   }
   return { passed: true, hosts: 3, incidents: 2, restoredJobs: 4, freshObservations: 2, maximumDiagnosisSteps: 3 }
+}
+
+// Failure-only and read-only: no click, scroll, focus or retry. Each role's
+// rule and alert rows say whether sampling stalled (old sampledAt), collection
+// failed (rule state unknown) or the row exists but its surface is not showing.
+// Only counts, enumerated attributes and an age leave this function.
+export async function readOpsUiFailureState({ driver, fixture, state }) {
+  const read = async (fn) => { try { return await fn() } catch { return null } }
+  const each = async (css, fn) => {
+    const rows = await read(() => driver.findAll(css)) ?? []
+    return Promise.all(rows.slice(0, 8).map((row) => read(() => fn(row))))
+  }
+  const result = { openDialogs: (await read(() => driver.findAll('dialog[open]')))?.length ?? null, roles: {} }
+  for (const role of incidentRoles) {
+    const id = state?.hostIds?.[role], name = state?.ruleNames?.[role], unit = fixture?.hosts?.[role]?.serviceUnit
+    if (!id || !name) continue
+    const age = (raw) => /^\d+$/.test(raw ?? '') ? Date.now() - Number(raw) : null
+    result.roles[role] = {
+      hostHealth: await read(() => driver.attr(byHost(id), 'data-host-health')),
+      networkPanels: await each(`${networkPanel(id)} ${testId('network-tab-health')}`, async (tab) => ({ healthTabSelected: await driver.attr(tab, 'aria-selected') === 'true', displayed: await driver.isDisplayed(tab) })),
+      rules: await each(`${ruleRoot(id)} ${testId('local-rule-row')}[data-rule-name=${q(name)}]`, async (row) => ({ state: await driver.attr(row, 'data-rule-state'), sampledAgeMs: age(await driver.attr(row, 'data-sampled-at')), displayed: await driver.isDisplayed(row) })),
+      alerts: await each(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(name)}]`, async (row) => ({ status: await driver.attr(row, 'data-alert-status'), transport: await driver.attr(row, 'data-transport'), displayed: await driver.isDisplayed(row) })),
+      persistenceErrors: (await read(() => driver.findAll(`${ruleRoot(id)} [role="alert"]`)))?.length ?? null,
+      serviceRoots: await each(serviceRoot(id), async (root) => ({ displayed: await driver.isDisplayed(root) })),
+      serviceRows: unit ? await each(serviceRow(id, unit), async (row) => ({ activeState: await driver.attr(row, 'data-active-state'), displayed: await driver.isDisplayed(row) })) : [],
+      serviceErrors: (await read(() => driver.findAll(`${serviceRoot(id)} ${testId('workspace-services-error')}`)))?.length ?? null,
+    }
+  }
+  return result
+}
+
+// Hosts are saved before this is reachable. Refuse any open modal or populated
+// secret-capable field, so a credential can never enter an uploaded screenshot.
+export async function captureOpsUiFailure({ driver, checkpoint, record }) {
+  try {
+    if ((await driver.findAll('dialog[open]')).length) return void await record('ops-ui-failure-capture', { captured: false, reason: 'dialog-open' })
+    for (const input of await driver.findAll('input[type="password"], textarea')) {
+      const value = await driver.attr(input, 'value')
+      if (value !== null && value !== undefined && value !== '') return void await record('ops-ui-failure-capture', { captured: false, reason: 'populated-field' })
+    }
+    const output = await checkpoint('failure-state')
+    await driver.screenshot(output)
+    await record('ops-ui-failure-capture', { captured: true, screenshot: basename(output) })
+  } catch { await record('ops-ui-failure-capture', { captured: false, reason: 'unavailable' }) }
 }
 
 export async function runOpsUiJourney(options) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { JSDOM } from 'jsdom'
-import { activateOpsUiRules, classifyOpsUiConnectionFailure, findOpsUiAuditRow, initializeOpsUiVault, OPS_UI_SELECTORS, readOpsUiServiceSelection, resumeOpsUiJourney, reviewOpsUiServiceConfirmation, revealOpsUiHostActions, runOpsUiIncidents, selectOpsUiServiceRow, validateOpsUiServiceRect } from './ops-ui-journey.mjs'
+import { activateOpsUiRules, classifyOpsUiConnectionFailure, findOpsUiAuditRow, initializeOpsUiVault, OPS_UI_SELECTORS, readOpsUiServiceSelection, resumeOpsUiJourney, reviewOpsUiServiceConfirmation, revealOpsUiHostActions, runOpsUiIncidents, selectOpsUiServiceRow, validateOpsUiServiceRect, readOpsUiFailureState, captureOpsUiFailure } from './ops-ui-journey.mjs'
 
 function confirmationUnit({ problem } = {}) {
   const dom = new JSDOM('<div data-testid="workspace-services-app" data-host-id="host"><button data-testid="workspace-service-restart">Restart</button><div data-testid="workspace-services-error">INVALID_OPERATION: private credential detail</div></div>')
@@ -723,4 +723,56 @@ test('host navigation rejects ambiguous controls and preserves a failed single r
   await assert.rejects(revealOpsUiHostActions({ ...driver, async horizontalScrollState() { return { width: 'private', contentWidth: 1184, left: 0 } } }, 'target'), /host_scroll_geometry_invalid/)
   await assert.rejects(revealOpsUiHostActions(driver), /host_navigation_target_missing/)
   assert.equal(clicks, 1); assert.equal(keys, 0)
+})
+
+function failureDriver({ elements = {}, attrs = {}, shot }) {
+  return {
+    findAll: async (css) => (Object.entries(elements).find(([part]) => css.includes(part))?.[1] ?? []),
+    attr: async (element, name) => attrs[`${element}:${name}`] ?? null,
+    isDisplayed: async (element) => !String(element).startsWith('hidden'),
+    screenshot: async (output) => shot?.(output),
+  }
+}
+
+test('failure state separates a stale sample from a row on a hidden surface', async () => {
+  const sampledAt = Date.now() - 95_000
+  const driver = failureDriver({
+    elements: { 'network-tab-health': ['tab'], 'local-rule-row': ['hidden-rule'], 'local-alert-row': ['hidden-alert'] },
+    attrs: { 'tab:aria-selected': 'false', 'hidden-rule:data-rule-state': 'firing', 'hidden-rule:data-sampled-at': String(sampledAt), 'hidden-alert:data-alert-status': 'active', 'hidden-alert:data-transport': 'proxy-jump' },
+  })
+  const { roles, openDialogs } = await readOpsUiFailureState({ driver, fixture: { hosts: { via: { serviceUnit: '00-shellbeam-ui-a-via.service' } } }, state: { hostIds: { via: 'via-id' }, ruleNames: { via: 'Via rule' } } })
+  assert.equal(openDialogs, 0)
+  assert.deepEqual(Object.keys(roles), ['via'])
+  assert.deepEqual(roles.via.networkPanels, [{ healthTabSelected: false, displayed: true }])
+  assert.equal(roles.via.rules[0].state, 'firing')
+  assert(roles.via.rules[0].sampledAgeMs >= 95_000)
+  assert.deepEqual(roles.via.alerts, [{ status: 'active', transport: 'proxy-jump', displayed: false }])
+})
+
+test('failure state survives a refused read and exposes no names', async () => {
+  const driver = { findAll: async () => { throw new Error('private message') }, attr: async () => { throw new Error('private message') }, isDisplayed: async () => false }
+  const result = await readOpsUiFailureState({ driver, fixture: { hosts: {} }, state: { hostIds: { direct: 'id' }, ruleNames: { direct: 'Secret rule name' } } })
+  assert.equal(result.openDialogs, null)
+  assert.equal(result.roles.direct.hostHealth, null)
+  assert(!JSON.stringify(result).includes('Secret rule name'))
+})
+
+for (const [name, setup, reason] of [
+  ['an open modal', { elements: { 'dialog[open]': ['modal'] } }, 'dialog-open'],
+  ['a populated secret field', { elements: { 'input[type="password"]': ['field'] }, attrs: { 'field:value': 'synthetic' } }, 'populated-field'],
+]) {
+  test(`failure screenshot is refused with ${name}`, async () => {
+    const events = []
+    let taken = false
+    await captureOpsUiFailure({ driver: failureDriver({ ...setup, shot: () => { taken = true } }), checkpoint: async () => { throw new Error('unexpected') }, record: async (event, details) => events.push({ event, ...details }) })
+    assert.equal(taken, false)
+    assert.deepEqual(events, [{ event: 'ops-ui-failure-capture', captured: false, reason }])
+  })
+}
+
+test('failure screenshot is taken once on a clear surface', async () => {
+  const events = [], outputs = []
+  await captureOpsUiFailure({ driver: failureDriver({ elements: { textarea: ['terminal'] }, attrs: { 'terminal:value': '' }, shot: (output) => outputs.push(output) }), checkpoint: async (name) => `/artifacts/${name}.png`, record: async (event, details) => events.push({ event, ...details }) })
+  assert.deepEqual(outputs, ['/artifacts/failure-state.png'])
+  assert.deepEqual(events, [{ event: 'ops-ui-failure-capture', captured: true, screenshot: 'failure-state.png' }])
 })
