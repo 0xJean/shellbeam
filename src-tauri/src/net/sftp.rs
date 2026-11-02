@@ -155,11 +155,12 @@ fn observed_path_state(
     }
 }
 
+/// The last component only. The server chooses these names, and the UI builds
+/// local download paths from them, so the rest of the path must never leak in.
 fn file_name_from_path(path: &Path) -> String {
     path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.to_string())
-        .unwrap_or_else(|| path.to_string_lossy().to_string())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn emit_sftp_progress(
@@ -330,7 +331,7 @@ fn sftp_list_dir_blocking(
                     modified_at: stat.mtime,
                 }
             })
-            .filter(|entry| entry.file_name != "." && entry.file_name != "..")
+            .filter(|entry| !matches!(entry.file_name.as_str(), "" | "." | ".."))
             .collect::<Vec<_>>();
         entries.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
         Ok(entries)
@@ -1013,6 +1014,28 @@ fn local_write_file_b64_blocking(path: String, content_b64: String) -> Result<()
         std::fs::create_dir_all(parent).ok();
     }
     std::fs::write(&path, &data).map_err(|e| format!("Write failed: {}", e))
+}
+
+#[cfg(all(test, unix))]
+mod file_name_tests {
+    use super::*;
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn a_name_that_is_not_utf8_keeps_only_its_last_component() {
+        let path = Path::new(OsStr::from_bytes(
+            b"/srv/../../Library/LaunchAgents/evil\xff.plist",
+        ));
+        let name = file_name_from_path(path);
+        assert!(!name.contains('/') && !name.contains(".."), "{name}");
+        assert!(name.ends_with(".plist"));
+    }
+
+    #[test]
+    fn a_path_without_a_name_gives_nothing() {
+        assert_eq!(file_name_from_path(Path::new("/srv/..")), "");
+    }
 }
 
 #[cfg(test)]

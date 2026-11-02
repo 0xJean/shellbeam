@@ -1,34 +1,41 @@
 //! Biometric password store — platform-specific implementations.
 //!
-//! macOS: a data protection Keychain item whose access control requires Touch ID
-//! for the currently enrolled fingers, so the OS enforces the check rather than this
-//! app. That keychain needs the `keychain-access-groups` entitlement, and a build
-//! without it gets errSecMissingEntitlement: biometric unlock is then unavailable
-//! and the master password remains the way in. Never fall back to weaker storage.
+//! macOS/iOS: a data protection Keychain item whose access control requires Touch ID
+//! or Face ID for the currently enrolled biometrics, so the OS enforces the check
+//! rather than this app. On macOS that keychain needs the `keychain-access-groups`
+//! entitlement, and a build without it gets errSecMissingEntitlement: biometric unlock
+//! is then unavailable and the master password remains the way in. Never fall back to
+//! weaker storage.
 //!
-//! The plugin's own macOS `setData` is not used: it asks for user presence (which a
-//! device password also satisfies) and does not select the data protection keychain.
+//! The plugin's own `setData` is not used on these platforms: it asks for user
+//! presence, which the device passcode also satisfies, and on macOS it does not
+//! select the data protection keychain.
 //!
-//! iOS/Android: The frontend uses the biometry plugin's native
-//! keychain/keystore (setData/getData) directly — these Rust commands
-//! are not called. We still register them so the invoke_handler compiles
-//! on all platforms, but they return errors on non-macOS.
+//! Android: The frontend uses the biometry plugin's native
+//! keystore (setData/getData) directly — these Rust commands are not called.
+//! We still register them so the invoke_handler compiles on all platforms, but
+//! they return errors there.
 
-#[cfg(target_os = "macos")]
-mod macos_impl {
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod apple_impl {
     use crate::apple_keychain::{self, Keychain};
+    #[cfg(target_os = "macos")]
     use crate::storage::data_file_path;
     use objc2_security::{
-        kSecAttrAccessControl, kSecAttrAccessible, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
-        kSecAttrAccessibleWhenUnlockedThisDeviceOnly, SecAccessControl,
+        kSecAttrAccessControl, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, SecAccessControl,
         SecAccessControlCreateFlags,
     };
+    #[cfg(target_os = "macos")]
+    use objc2_security::{kSecAttrAccessible, kSecAttrAccessibleWhenUnlockedThisDeviceOnly};
+    #[cfg(target_os = "macos")]
     use std::sync::OnceLock;
 
     /// The old AES file, keyed by the world-readable kern.uuid. Never migrated.
+    #[cfg(target_os = "macos")]
     const LEGACY_FILE: &str = "biometric_store.json";
     const SERVICE: &str = "app.shellbeam.vault-biometric";
     const ACCOUNT: &str = "vault-master-pw";
+    #[cfg(target_os = "macos")]
     const PROBE_ACCOUNT: &str = "entitlement-probe";
     /// errSecMissingEntitlement
     const MISSING_ENTITLEMENT: i32 = -34018;
@@ -43,10 +50,12 @@ mod macos_impl {
         }
     }
 
+    #[cfg(target_os = "macos")]
     pub fn purge_legacy(app: &tauri::AppHandle) -> Result<(), String> {
         remove_legacy_file(&data_file_path(app, LEGACY_FILE)?)
     }
 
+    #[cfg(target_os = "macos")]
     pub(super) fn remove_legacy_file(path: &std::path::Path) -> Result<(), String> {
         match std::fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -84,6 +93,7 @@ mod macos_impl {
 
     /// A plain query answers "not found" even without the entitlement; only a
     /// write reveals it, so write and remove a throwaway item once per run.
+    #[cfg(target_os = "macos")]
     fn require_entitlement() -> Result<(), String> {
         static PROBE: OnceLock<Result<(), i32>> = OnceLock::new();
         let probe = PROBE.get_or_init(|| {
@@ -107,6 +117,7 @@ mod macos_impl {
     }
 
     pub fn has_password() -> Result<bool, String> {
+        #[cfg(target_os = "macos")]
         require_entitlement()?;
         apple_keychain::exists(SERVICE, ACCOUNT, Keychain::DataProtection).map_err(keychain_error)
     }
@@ -119,13 +130,13 @@ mod macos_impl {
 /// Deletes the file left by earlier versions. Users enrol again from Settings.
 #[cfg(target_os = "macos")]
 pub fn purge_legacy_store(app: &tauri::AppHandle) {
-    if let Err(error) = macos_impl::purge_legacy(app) {
+    if let Err(error) = apple_impl::purge_legacy(app) {
         log::error!("{error}");
     }
 }
 
 /// Keychain calls can block on the system prompt, so they stay off the main thread.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 async fn off_main<T: Send + 'static>(
     call: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
@@ -138,11 +149,11 @@ async fn off_main<T: Send + 'static>(
 
 #[tauri::command]
 pub async fn biometric_store_password(password: String) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        off_main(move || macos_impl::store_password(&password)).await
+        off_main(move || apple_impl::store_password(&password)).await
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
         let _ = password;
         Err("Use native biometric plugin on this platform".into())
@@ -151,11 +162,11 @@ pub async fn biometric_store_password(password: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn biometric_retrieve_password(reason: String) -> Result<String, String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        off_main(move || macos_impl::retrieve_password(&reason)).await
+        off_main(move || apple_impl::retrieve_password(&reason)).await
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
         let _ = reason;
         Err("Use native biometric plugin on this platform".into())
@@ -164,11 +175,11 @@ pub async fn biometric_retrieve_password(reason: String) -> Result<String, Strin
 
 #[tauri::command]
 pub async fn biometric_has_password() -> Result<bool, String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        off_main(macos_impl::has_password).await
+        off_main(apple_impl::has_password).await
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
         Err("Use native biometric plugin on this platform".into())
     }
@@ -176,11 +187,11 @@ pub async fn biometric_has_password() -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn biometric_remove_password() -> Result<(), String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        off_main(macos_impl::remove_password).await
+        off_main(apple_impl::remove_password).await
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
         Err("Use native biometric plugin on this platform".into())
     }
@@ -188,7 +199,7 @@ pub async fn biometric_remove_password() -> Result<(), String> {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use super::macos_impl::{has_password, keychain_error, remove_legacy_file};
+    use super::apple_impl::{has_password, keychain_error, remove_legacy_file};
 
     #[test]
     fn legacy_store_is_deleted_and_absence_is_fine() {
@@ -222,7 +233,7 @@ mod tests {
     #[ignore = "touches the login keychain's data protection store"]
     fn unsigned_binary_cannot_store() {
         assert!(has_password().is_err(), "this binary has the entitlement");
-        let error = super::macos_impl::store_password("x").unwrap_err();
+        let error = super::apple_impl::store_password("x").unwrap_err();
         assert!(error.contains("-34018"), "{error}");
     }
 }

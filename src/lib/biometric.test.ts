@@ -6,6 +6,7 @@ const plugin = vi.hoisted(() => ({
   authenticate: vi.fn(),
   setData: vi.fn(),
   getData: vi.fn(),
+  removeData: vi.fn(),
 }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@choochmeque/tauri-plugin-biometry-api', () => plugin)
@@ -58,5 +59,29 @@ describe('macOS biometric store', () => {
     await storeMasterPassword('secret')
     expect(plugin.authenticate).not.toHaveBeenCalled()
     expect(plugin.setData).not.toHaveBeenCalled()
+  })
+})
+
+describe('iOS biometric store', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)')
+    plugin.checkStatus.mockResolvedValue({ isAvailable: true, biometryType: 3 })
+  })
+
+  it('reads the biometry-only Keychain item, not the plugin item the passcode opens', async () => {
+    invoke.mockResolvedValue('secret')
+    await expect(retrieveMasterPassword('why')).resolves.toBe('secret')
+    expect(invoke).toHaveBeenCalledWith('biometric_retrieve_password', { reason: 'why' })
+    expect(plugin.getData).not.toHaveBeenCalled()
+  })
+
+  it('removes the old plugin item and makes the user enrol again', async () => {
+    invoke.mockResolvedValue(false)
+    localStorage.setItem(ENABLED, 'true')
+    await checkBiometricStatus()
+    expect(plugin.removeData).toHaveBeenCalledWith({ domain: 'com.shellbeam', name: 'vault-master-pw' })
+    expect(isBiometricEnabled()).toBe(false)
   })
 })

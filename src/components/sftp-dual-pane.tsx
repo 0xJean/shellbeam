@@ -28,6 +28,7 @@ import {
   localListDir,
   localHomeDir,
   localReadFileB64,
+  localDownloadPath,
   localWriteFileB64,
 } from '@/lib/sftp'
 import { createRemoteFsClient } from '@/lib/remote-fs'
@@ -311,8 +312,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
         startTransfer(batch, batch[index])
         setTransferStatus(`Downloading ${entry.fileName}... (${done + 1}/${remoteSelected.size})`)
         const data = await remoteFs.readFile(remotePath, batch[index])
-        const targetPath = localDir.endsWith('/') ? `${localDir}${entry.fileName}` : `${localDir}/${entry.fileName}`
-        await localWriteFileB64(targetPath, data.contentB64)
+        await localWriteFileB64(localDownloadPath(localDir, entry.fileName), data.contentB64)
         done++
       }
       settleBatch(batch, 'done')

@@ -205,6 +205,18 @@ export async function localReadFileB64(path: string) {
   return invoke<string>('local_read_file_b64', { path })
 }
 
+/**
+ * Where a remote file lands in a local folder. The name comes from the server, so
+ * anything that could leave the folder is refused rather than cleaned up.
+ */
+export function localDownloadPath(localDir: string, remoteName: string) {
+  const unsafe = remoteName === '' || remoteName === '.' || remoteName === '..'
+    || /[/\\:]/.test(remoteName)
+    || [...remoteName].some((char) => char < ' ')
+  if (unsafe) throw new Error(`Refusing unsafe file name from the server: ${JSON.stringify(remoteName)}`)
+  return localDir.endsWith('/') ? `${localDir}${remoteName}` : `${localDir}/${remoteName}`
+}
+
 export async function localWriteFileB64(path: string, contentB64: string) {
   return invoke<void>('local_write_file_b64', { path, contentB64 })
 }
