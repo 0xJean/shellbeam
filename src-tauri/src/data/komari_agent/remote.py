@@ -447,15 +447,18 @@ def planned_configuration(root, observed, service, request):
 
 
 # Only collection settings cross the native boundary. Authentication, discovery,
-# filesystem indirection and server-controlled execution never do.
-TRANSFER_SETTINGS = set('memory_mode_available interval max_retries reconnect_interval info_report_interval include_nics exclude_nics include_mountpoints month_rotate memory_include_cache memory_report_raw_used custom_dns enable_gpu show_warning custom_ipv4 custom_ipv6 get_ip_addr_from_nic disable_compression prefer_ip_version'.split())
+# filesystem indirection and server-controlled execution never do. The source host
+# is not trusted to choose the target's resolver or reported addresses, so those
+# are left behind, and show_warning (which stops the agent collecting at all) is refused.
+TRANSFER_SETTINGS = set('memory_mode_available interval max_retries reconnect_interval info_report_interval include_nics exclude_nics include_mountpoints month_rotate memory_include_cache memory_report_raw_used enable_gpu get_ip_addr_from_nic disable_compression prefer_ip_version'.split())
+TRANSFER_DROPPED = {'custom_dns', 'custom_ipv4', 'custom_ipv6'}
 
 
 def transfer_settings(root, request):
     config = read_json(root / 'config.json')
     require(hmac.compare_digest(config.get('token', ''), request.get('agentToken', '')), 'legacy_node_mismatch')
-    require(set(config) <= TRANSFER_SETTINGS | {'token', 'endpoint', 'disable_auto_update', 'disable_web_ssh', 'auto_discovery_key', 'ignore_unsafe_cert', 'host_proc', 'config_file'}, 'transfer_settings_unsupported')
-    require(not any(config.get(k) for k in ('auto_discovery_key', 'ignore_unsafe_cert', 'host_proc', 'config_file')), 'transfer_settings_unsupported')
+    require(set(config) <= TRANSFER_SETTINGS | TRANSFER_DROPPED | {'token', 'endpoint', 'disable_auto_update', 'disable_web_ssh', 'auto_discovery_key', 'ignore_unsafe_cert', 'host_proc', 'config_file', 'show_warning'}, 'transfer_settings_unsupported')
+    require(not any(config.get(k) for k in ('auto_discovery_key', 'ignore_unsafe_cert', 'host_proc', 'config_file', 'show_warning')), 'transfer_settings_unsupported')
     require(config.get('disable_auto_update') is True and config.get('disable_web_ssh') is True, 'unsafe_configuration')
     return {k: v for k, v in config.items() if k in TRANSFER_SETTINGS}
 

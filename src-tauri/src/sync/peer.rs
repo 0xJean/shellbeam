@@ -386,6 +386,9 @@ pub async fn sync_push_to_peer(
         let oe = our_endpoint.clone();
         let oo = opts.clone();
         let vp = vault_param.clone();
+        if opts.include_vault {
+            super::vault_approval::grant_for_local_push(&payload.peer_device_id, &vault_id);
+        }
         let notify_result = tauri::async_runtime::spawn_blocking(move || {
             super::transport::sync_request_peer_encrypted(
                 &ep, "notify_pull",
@@ -397,6 +400,7 @@ pub async fn sync_push_to_peer(
                 ek.as_ref(),
             )
         }).await;
+        super::vault_approval::revoke_local_push(&payload.peer_device_id, &vault_id);
 
         match notify_result {
             Ok(Ok(resp)) => {

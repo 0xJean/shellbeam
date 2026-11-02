@@ -3,9 +3,9 @@
  *
  * Uses `tauri-plugin-biometry` when available (iOS / Android / macOS / Windows).
  *
- * On macOS: keychain-access-groups entitlement causes app launch failure on
- * macOS 26 Tahoe (provenance mechanism). So we use authenticate() for Touch ID
- * verification + encrypted file storage for the password (no keychain needed).
+ * On macOS: the Rust side keeps the password in a data protection Keychain item
+ * that requires Touch ID, so the OS enforces the check. That needs the
+ * keychain-access-groups entitlement; a build without it reports unavailable.
  *
  * On iOS/Android: uses the plugin's native keychain/keystore via setData/getData.
  */
@@ -31,7 +31,6 @@ export interface BiometricStatus {
 
 async function getPlugin() {
   try {
-    // @ts-ignore — package may not be installed
     return await import('@choochmeque/tauri-plugin-biometry-api')
   } catch {
     return null
@@ -91,19 +90,15 @@ function correctTypeForPlatform(type: BiometryType): BiometryType {
 const isMacOS = () => detectPlatform() === 'macos'
 
 // ---------------------------------------------------------------------------
-// macOS file-based secure storage (avoids keychain entitlement requirement)
-//
-// On macOS 26+, keychain-access-groups entitlement causes app launch failure.
-// Instead we: authenticate() with Touch ID + store password in an encrypted
-// file via Rust backend (AES-256-GCM, same encryption as vault secrets).
+// macOS Keychain storage, in Rust (see biometric_store.rs)
 // ---------------------------------------------------------------------------
 
 async function macosStorePassword(password: string): Promise<void> {
   await invoke<void>('biometric_store_password', { password })
 }
 
-async function macosRetrievePassword(): Promise<string> {
-  return await invoke<string>('biometric_retrieve_password')
+async function macosRetrievePassword(reason: string): Promise<string> {
+  return await invoke<string>('biometric_retrieve_password', { reason })
 }
 
 async function macosHasPassword(): Promise<boolean> {
@@ -121,37 +116,25 @@ async function macosRemovePassword(): Promise<void> {
 /**
  * Check whether biometric auth is available on this device.
  *
- * On macOS: the plugin's checkStatus() may return isAvailable=false when the
- * app lacks keychain entitlements (macOS 26 provenance). However authenticate()
- * still works fine via LocalAuthentication. So on macOS we optimistically
- * report available=true with type=touchId if the plugin is loaded, and let
- * actual authenticate() calls handle any real failures.
+ * On macOS the answer also needs the Keychain: a build without the entitlement,
+ * or a Mac without enrolled Touch ID, cannot use biometric unlock. An enrolment
+ * that no longer exists (such as one from the old file store) clears the enabled
+ * flag, so the user enrols again from Settings rather than being re-enrolled silently.
  */
 export async function checkBiometricStatus(): Promise<BiometricStatus> {
   const plugin = await getPlugin()
   if (!plugin) return { available: false, type: 'none', error: 'Plugin not installed' }
   try {
+    if (isMacOS() && !(await macosHasPassword())) localStorage.removeItem(LS_ENABLED_KEY)
     const status = await plugin.checkStatus()
-    const rawType = mapType(status.biometryType)
-    const type = correctTypeForPlatform(rawType)
-
-    // On macOS, checkStatus may falsely report unavailable due to missing
-    // keychain entitlements. authenticate() works without them, so we
-    // optimistically mark as available when the plugin loaded successfully.
-    if (isMacOS() && !status.isAvailable) {
-      return { available: true, type: 'touchId' }
-    }
-
+    const type = correctTypeForPlatform(mapType(status.biometryType))
     return {
       available: status.isAvailable,
       type,
       error: status.error,
     }
   } catch (e) {
-    // On macOS, even if checkStatus throws, Touch ID may still work
-    if (isMacOS()) {
-      return { available: true, type: 'touchId' }
-    }
+    if (isMacOS()) localStorage.removeItem(LS_ENABLED_KEY)
     return { available: false, type: 'none', error: String(e) }
   }
 }
@@ -172,20 +155,16 @@ export function biometryLabel(type: BiometryType): string {
  * Store the vault master password in secure storage,
  * protected by biometric authentication.
  *
- * macOS: authenticate() + encrypted file (no keychain entitlement needed)
+ * macOS: Keychain item requiring Touch ID. Writing does not prompt; callers read
+ * it back, and that read is what asks for Touch ID.
  * iOS/Android: plugin keychain/keystore via setData()
  */
 export async function storeMasterPassword(password: string): Promise<void> {
-  const plugin = await getPlugin()
-  if (!plugin) throw new Error('Biometric plugin not available')
-
   if (isMacOS()) {
-    // Touch ID verify first, then store to encrypted file.
-    // allowDeviceCredential lets the user fall back to Mac password,
-    // which is equally valid as Touch ID for identity verification.
-    await plugin.authenticate(t('biometric.enablePrompt'), { allowDeviceCredential: true })
     await macosStorePassword(password)
   } else {
+    const plugin = await getPlugin()
+    if (!plugin) throw new Error('Biometric plugin not available')
     await plugin.setData({ domain: DOMAIN, name: KEY_NAME, data: password })
   }
   localStorage.setItem(LS_ENABLED_KEY, 'true')
@@ -195,17 +174,13 @@ export async function storeMasterPassword(password: string): Promise<void> {
  * Retrieve the vault master password from secure storage.
  * This will trigger a biometric prompt (Face ID / Touch ID / etc.).
  *
- * macOS: authenticate() + read encrypted file
+ * macOS: Keychain read; the OS shows Touch ID before releasing the item
  * iOS/Android: plugin getData() (triggers biometric natively)
  */
 export async function retrieveMasterPassword(reason: string): Promise<string> {
+  if (isMacOS()) return await macosRetrievePassword(reason)
   const plugin = await getPlugin()
   if (!plugin) throw new Error('Biometric plugin not available')
-
-  if (isMacOS()) {
-    await plugin.authenticate(reason, { allowDeviceCredential: true })
-    return await macosRetrievePassword()
-  }
   const resp = await plugin.getData({ domain: DOMAIN, name: KEY_NAME, reason })
   return resp.data
 }

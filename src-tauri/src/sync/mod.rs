@@ -2,9 +2,11 @@ pub mod commands;
 pub(crate) mod pairing_crypto;
 pub mod peer;
 pub mod peer_pairing;
+mod secret_store;
 pub(crate) mod transport;
 pub(crate) mod transport_handler;
 pub(crate) mod transport_mdns;
+pub mod vault_approval;
 pub(crate) mod vault_ref;
 
 pub use commands::*;
@@ -233,10 +235,22 @@ pub(crate) fn load_sync_state(app: &tauri::AppHandle) -> Result<SyncStateFile, S
             peer.sync_secret = None;
         }
     }
+    if secret_store::hydrate(&mut state) {
+        write_json(&path, &secret_store::without_stored_secrets(&state))?;
+    }
     Ok(state)
 }
 
 pub(crate) fn save_sync_state(app: &tauri::AppHandle, state: &SyncStateFile) -> Result<(), String> {
     let path = data_file_path(app, SYNC_STATE_FILE)?;
-    write_json(&path, state)
+    let previous: Vec<String> = if path.exists() {
+        read_json_or_default::<SyncStateFile>(&path)?
+            .trusted_peers
+            .into_iter()
+            .map(|peer| peer.peer_device_id)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    write_json(&path, &secret_store::persist(state, &previous)?)
 }

@@ -280,7 +280,7 @@ function BiometricToggle() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    void checkBiometricStatus().then(setBioStatus)
+    void checkBiometricStatus().then((status) => { setBioStatus(status); setEnabled(isBiometricEnabled()) })
   }, [])
 
   if (!bioStatus || !bioStatus.available) {

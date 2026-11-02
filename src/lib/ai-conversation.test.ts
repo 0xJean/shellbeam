@@ -78,6 +78,14 @@ describe('ai conversation', () => {
     expect(autoRunAllowed('read-only', 'sudo systemctl restart nginx')).toBe(false)
     expect(autoRunAllowed('auto', 'sudo systemctl restart nginx')).toBe(true)
     expect(autoRunAllowed('auto', 'rm -rf /var/www')).toBe(false)
+    expect(autoRunAllowed('read-only', 'tail -n 50 f')).toBe(true)
+  })
+
+  it('never auto-runs a command carrying a carriage return', () => {
+    for (const mode of ['read-only', 'auto'] as const) {
+      expect(autoRunAllowed(mode, 'echo a\rrm -rf /tmp/x')).toBe(false)
+      expect(autoRunAllowed(mode, 'ls -l\rtouch /tmp/x')).toBe(false)
+    }
   })
 
   it('stores the run mode per host and defaults to confirm', () => {
