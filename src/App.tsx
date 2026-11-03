@@ -54,7 +54,7 @@ function AppInner() {
   }
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden" style={{ paddingTop: 'env(safe-area-inset-top)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
+    <div className="flex h-full w-full flex-col overflow-hidden" style={{ paddingTop: 'env(safe-area-inset-top)', paddingLeft: 'var(--app-safe-left)', paddingRight: 'var(--app-safe-right)', paddingBottom: 'var(--app-safe-bottom)' }}>
       <PcLayout />
       {app.commandPaletteOpen && (
         <Suspense fallback={null}>

@@ -1,5 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { applyBarLayout } from '@/lib/bar-layout'
 import { MobileBottomNav, PcNavSidebar } from './pc-nav-sidebar'
 
 vi.mock('@/lib/i18n', () => ({
@@ -26,6 +27,31 @@ describe('pc nav sidebar', () => {
     rerender(<MobileBottomNav activeNav="port-forwarding" onNavChange={onNavChange} />)
     expect(screen.getByRole('button', { name: 'nav.tools' })).toHaveAttribute('aria-current', 'page')
   })
+  describe('where iOS asks for a vertical bar', () => {
+    afterEach(() => act(() => applyBarLayout({ verticalBarEdge: 'none', horizontalSizeClass: 'unspecified' })))
+
+    it('stands the tabs up on that edge with icons only', () => {
+      const onNavChange = vi.fn()
+      render(<MobileBottomNav activeNav="hosts" onNavChange={onNavChange} />)
+      act(() => applyBarLayout({ verticalBarEdge: 'trailing', horizontalSizeClass: 'compact' }))
+      const nav = screen.getByTestId('mobile-bottom-nav')
+      expect(nav).toHaveAttribute('data-axis', 'vertical')
+      expect(nav).toHaveClass('right-0')
+      expect(document.documentElement.dataset.verticalBarEdge).toBe('trailing')
+      expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['', '', '', '', ''])
+      fireEvent.click(screen.getByRole('button', { name: 'nav.files' }))
+      expect(onNavChange).toHaveBeenCalledWith('sftp')
+      expect(screen.getByRole('button', { name: 'nav.hosts' })).toHaveAttribute('aria-current', 'page')
+
+      act(() => applyBarLayout({ verticalBarEdge: 'leading', horizontalSizeClass: 'compact' }))
+      expect(screen.getByTestId('mobile-bottom-nav')).toHaveClass('left-0')
+
+      act(() => applyBarLayout({ verticalBarEdge: 'none', horizontalSizeClass: 'regular' }))
+      expect(screen.getByTestId('mobile-bottom-nav')).not.toHaveAttribute('data-axis')
+      expect(document.documentElement.dataset.verticalBarEdge).toBeUndefined()
+    })
+  })
+
   it('shows the VPS asset inventory top-level entry', () => {
     const onNavChange = vi.fn()
     render(<PcNavSidebar activeNav="hosts" onNavChange={onNavChange} />)

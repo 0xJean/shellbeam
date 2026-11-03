@@ -2,7 +2,7 @@ name: app
 options:
   bundleIdPrefix: app.shellbeam
   deploymentTarget:
-    iOS: 14.0
+    iOS: 15.0
 fileGroups: [../../src]
 # Disable script sandboxing so Tauri's Rust/Swift build can run (avoids sandbox-exec: Operation not permitted).
 settings:
@@ -44,6 +44,9 @@ targets:
       path: app_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
+        # Adopt the UIScene lifecycle: apps built with the iOS 27 SDK without it are stopped at launch.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:

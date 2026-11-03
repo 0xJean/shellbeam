@@ -222,6 +222,40 @@
     text-rendering: geometricPrecision;
   }
 
+  /* The phone tab bar is 62px tall at the bottom. Where iOS reports a vertical bar edge
+     (iPhone Duo outside inner-display portrait), it moves into a strip on that edge instead,
+     at least as wide as the system strip there, and content keeps clear of it. */
+  :root {
+    --mobile-tabbar-height: 3.875rem;
+    --vertical-bar-width: 0px;
+    --app-safe-left: env(safe-area-inset-left, 0px);
+    --app-safe-right: env(safe-area-inset-right, 0px);
+    /* The phone layout clears the home indicator inside its own pages; the wider layout has no tab bar to do it. */
+    --app-safe-bottom: 0px;
+  }
+
+  @media (min-width: 768px) {
+    :root {
+      --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+  }
+
+  @media (max-width: 767px) {
+    :root[data-vertical-bar-edge] {
+      --mobile-tabbar-height: 0px;
+    }
+
+    :root[data-vertical-bar-edge='trailing'] {
+      --vertical-bar-width: max(env(safe-area-inset-right, 0px), 4.5rem);
+      --app-safe-right: var(--vertical-bar-width);
+    }
+
+    :root[data-vertical-bar-edge='leading'] {
+      --vertical-bar-width: max(env(safe-area-inset-left, 0px), 4.5rem);
+      --app-safe-left: var(--vertical-bar-width);
+    }
+  }
+
   /* Prevent iOS Safari auto-zoom on input focus (requires font-size >= 16px) */
   @media screen and (max-width: 767px) {
     input, select, textarea {
@@ -347,8 +381,8 @@
   }
 
   .mobile-safe-pb {
-    /* The mobile bottom nav is 62px tall plus the home indicator inset. */
-    padding-bottom: calc(3.875rem + env(safe-area-inset-bottom, 0px));
+    /* Room for the mobile tab bar plus the home indicator inset. */
+    padding-bottom: calc(var(--mobile-tabbar-height) + env(safe-area-inset-bottom, 0px));
   }
 
   @media (min-width: 768px) {

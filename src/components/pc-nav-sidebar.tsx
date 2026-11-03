@@ -26,6 +26,7 @@ import { useAppUpdateReminderVersion } from '@/lib/app-update'
 import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 import { isToolPage } from '@/lib/mobile-navigation'
+import { useBarLayout } from '@/lib/bar-layout'
 import { syncBackupCopy } from '@/lib/locales/sync-backup-v3'
 import logoSrc from '@/assets/logo.png'
 
@@ -203,6 +204,30 @@ interface MobileBottomNavProps {
 export function MobileBottomNav({ activeNav, onNavChange, sessionCount = 0 }: MobileBottomNavProps) {
   const { t } = useT()
   const updateReminder = useAppUpdateReminderVersion()
+  const { verticalBarEdge } = useBarLayout()
+  // iPhone Duo puts bars in a vertical strip on the outer display and in inner landscape.
+  // There, like the system's own vertical bars, tabs stack at the foot of the strip and show only icons.
+  if (verticalBarEdge !== 'none') {
+    return (
+      <nav data-testid="mobile-bottom-nav" data-axis="vertical"
+        className={cn('fixed bottom-0 top-0 z-50 flex w-[var(--vertical-bar-width)] flex-col items-center justify-end gap-1 md:hidden', verticalBarEdge === 'trailing' ? 'right-0' : 'left-0')}
+        style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 0.75rem)' }}>
+        {MOBILE_TABS.map((item) => {
+          const isActive = item.id === 'tools' ? isToolPage(activeNav) : activeNav === item.id
+          return (
+            <button key={item.id} type="button" aria-current={isActive ? 'page' : undefined} aria-label={t(item.labelKey)} title={t(item.labelKey)} onClick={() => onNavChange(item.id)}
+              className={cn('relative flex h-11 w-11 items-center justify-center rounded-full transition-colors', isActive ? 'bg-[var(--workspace-nav-active-bg)] text-workspace-nav-active' : 'text-workspace-nav')}>
+              {item.icon}
+              {item.id === 'settings' && updateReminder && <span data-testid="mobile-settings-update-dot" className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--workspace-accent-text)]" />}
+              {item.id === 'terminal' && sessionCount > 0 && (
+                <span className="absolute -right-0.5 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-[color:var(--workspace-status-bad)] px-1 text-[9px] font-bold text-white">{sessionCount}</span>
+              )}
+            </button>
+          )
+        })}
+      </nav>
+    )
+  }
   return (
     <nav data-testid="mobile-bottom-nav" className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] backdrop-blur-xl supports-[backdrop-filter]:bg-[var(--workspace-nav-translucent)] md:hidden">
       <div className="mx-auto grid max-w-xl grid-cols-5 px-1" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>

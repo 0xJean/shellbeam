@@ -5,6 +5,7 @@ mod ai_cli;
 mod app_update;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod apple_keychain;
+mod bar_layout;
 mod biometric_store;
 mod browser;
 mod collection_limits;
@@ -296,6 +297,7 @@ pub fn run() {
             browser::stop_browser_http_proxy,
             browser::start_browser_socks_proxy,
             browser::stop_browser_socks_proxy,
+            bar_layout::bar_layout,
         ])
         .setup(|app| {
             if let Err(error) = data::operation_jobs::recover(app.handle()) {
@@ -314,7 +316,9 @@ pub fn run() {
                 use tauri::Manager;
                 let main_window = app.get_webview_window("main");
                 if let Some(window) = main_window {
+                    let bar_app = app.handle().clone();
                     let _ = window.with_webview(move |webview| {
+                        bar_layout::observe(bar_app, webview.inner());
                         #[cfg(target_os = "ios")]
                         unsafe {
                             use objc::runtime::Object;

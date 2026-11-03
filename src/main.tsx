@@ -7,6 +7,7 @@ import './styles/theme-palettes.css'
 import './styles/ui-styles.css'
 import App from './App.tsx'
 import { initAppearance } from '@/lib/appearance'
+import { startBarLayout } from '@/lib/bar-layout'
 import {
   DEFAULT_MAIN_WINDOW_STATE,
   getMainWindowStateStorageKey,
@@ -119,6 +120,7 @@ async function setupMainWindowState() {
 
 async function bootstrap() {
   initAppearance()
+  void startBarLayout()
   await setupMainWindowState()
 
   createRoot(document.getElementById('root')!).render(
