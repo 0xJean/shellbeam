@@ -3,9 +3,9 @@
 mod agent_release;
 mod ai_cli;
 mod app_update;
-mod bar_layout;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod apple_keychain;
+mod bar_layout;
 mod biometric_store;
 mod browser;
 mod collection_limits;
