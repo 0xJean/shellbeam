@@ -44,6 +44,9 @@ targets:
       path: app_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
+        # Adopt the UIScene lifecycle: apps built with the iOS 27 SDK without it are stopped at launch.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
