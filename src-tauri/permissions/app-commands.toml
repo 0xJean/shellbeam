@@ -12,6 +12,7 @@ permissions = [
   "allow-append-provider-history-page",
   "allow-append-provider-metric-history",
   "allow-backup-create",
+  "allow-bar-layout",
   "allow-backup-restore",
   "allow-biometric-has-password",
   "allow-biometric-remove-password",

@@ -207,7 +207,7 @@ export function MobileHostsPage({
       {android && (
         <button type="button" data-testid="mobile-hosts-fab" onClick={() => setCreating(true)}
           className="fixed right-4 z-40 flex h-14 items-center gap-2 rounded-2xl bg-[color:var(--workspace-primary-500)] px-5 text-[15px] font-semibold text-white shadow-lg md:hidden"
-          style={{ bottom: 'calc(3.25rem + env(safe-area-inset-bottom, 0px) + 16px)' }}>
+          style={{ bottom: 'calc(var(--mobile-tabbar-height) + env(safe-area-inset-bottom, 0px) + 6px)' }}>
           <Plus className="h-5 w-5" />{c.newHost}
         </button>
       )}
