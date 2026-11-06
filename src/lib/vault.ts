@@ -81,3 +81,23 @@ export class VaultUnavailableError extends Error {
     this.reason = reason
   }
 }
+
+/**
+ * Encrypt app data kept outside the Vault file with a key only this unlocked Vault can derive.
+ * `purpose` separates features; `context` binds the value to where it is stored, so it cannot be moved.
+ */
+export async function vaultSealData(purpose: string, context: string, plaintext: string, vaultId?: string | null) {
+  try {
+    return await invoke<string>('vault_seal_data', { payload: { purpose, context, plaintext, vaultId: vaultId ?? undefined } })
+  } catch (error) {
+    throw new Error(toInvokeErrorMessage(error))
+  }
+}
+
+export async function vaultOpenData(purpose: string, context: string, sealed: string, vaultId?: string | null) {
+  try {
+    return await invoke<string>('vault_open_data', { payload: { purpose, context, sealed, vaultId: vaultId ?? undefined } })
+  } catch (error) {
+    throw new Error(toInvokeErrorMessage(error))
+  }
+}

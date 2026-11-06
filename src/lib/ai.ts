@@ -1,5 +1,6 @@
 import { streamCliCommand } from './ai-cli'
 import { historyToMessages, type AIHistoryItem } from './ai-conversation'
+import { aiKeysMayLiveInStorage, cachedAIKey, isAIKeyProvider, onAIKeysSecured, rememberAIKeys, type AIKeyProvider } from './ai-secrets'
 
 const AI_SETTINGS_KEY = 'shellbeam.aiSettings'
 
@@ -92,7 +93,7 @@ export const DEFAULT_AI_SETTINGS: AISettings = {
   customModel: '',
 }
 
-export function loadAISettings(): AISettings {
+function readStoredAISettings(): AISettings {
   try {
     const raw = localStorage.getItem(AI_SETTINGS_KEY)
     if (raw) return { ...DEFAULT_AI_SETTINGS, ...JSON.parse(raw) }
@@ -100,13 +101,68 @@ export function loadAISettings(): AISettings {
   return { ...DEFAULT_AI_SETTINGS }
 }
 
+/** Keys older releases kept in plain text with the settings, by provider. */
+export function legacyAIKeys(): Partial<Record<AIKeyProvider, string>> {
+  const stored = readStoredAISettings()
+  const found: Partial<Record<AIKeyProvider, string>> = {}
+  for (const [provider, profile] of Object.entries(stored.providerProfiles ?? {})) {
+    if (isAIKeyProvider(provider) && profile?.apiKey) found[provider] = profile.apiKey
+  }
+  if (isAIKeyProvider(stored.provider) && stored.apiKey) found[stored.provider] = stored.apiKey
+  return found
+}
+
+function keysOf(settings: AISettings): Partial<Record<AIKeyProvider, string>> {
+  const found: Partial<Record<AIKeyProvider, string>> = {}
+  for (const [provider, profile] of Object.entries(settings.providerProfiles ?? {})) {
+    if (isAIKeyProvider(provider) && profile) found[provider] = profile.apiKey ?? ''
+  }
+  if (isAIKeyProvider(settings.provider)) found[settings.provider] = settings.apiKey ?? ''
+  return found
+}
+
+function withoutKeys(settings: AISettings): AISettings {
+  const providerProfiles = settings.providerProfiles && Object.fromEntries(
+    Object.entries(settings.providerProfiles).map(([provider, profile]) => [provider, profile && { ...profile, apiKey: '' }]),
+  ) as AISettings['providerProfiles']
+  return { ...settings, apiKey: '', ...(providerProfiles ? { providerProfiles } : {}) }
+}
+
+/** Settings with this session's keys: from the unlocked Vault, or, before any Vault took them, from storage. */
+export function loadAISettings(): AISettings {
+  const stored = readStoredAISettings()
+  const keyFor = (provider: string, fallback: string) => {
+    if (!isAIKeyProvider(provider)) return fallback
+    const cached = cachedAIKey(provider)
+    if (cached !== undefined) return cached
+    return aiKeysMayLiveInStorage() ? fallback : ''
+  }
+  const providerProfiles = stored.providerProfiles && Object.fromEntries(
+    Object.entries(stored.providerProfiles).map(([provider, profile]) => [provider, profile && { ...profile, apiKey: keyFor(provider, profile.apiKey ?? '') }]),
+  ) as AISettings['providerProfiles']
+  return { ...stored, apiKey: keyFor(stored.provider, stored.apiKey ?? ''), ...(providerProfiles ? { providerProfiles } : {}) }
+}
+
 /** Fired on window after every save, so open AI panels and Settings show the same model. */
 export const AI_SETTINGS_EVENT = 'shellbeam:ai-settings'
 
+/** Keys go to the Vault; storage keeps the rest. Before any Vault took the keys, they stay in storage. */
 export function saveAISettings(settings: AISettings) {
-  localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(settings))
+  rememberAIKeys(keysOf(settings))
+  const stored = aiKeysMayLiveInStorage() ? settings : withoutKeys(settings)
+  localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(stored))
   window.dispatchEvent(new Event(AI_SETTINGS_EVENT))
 }
+
+/** Remove keys from stored settings once a Vault holds them. */
+export function stripStoredAIKeys() {
+  try {
+    const raw = localStorage.getItem(AI_SETTINGS_KEY)
+    if (!raw) return
+    localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(withoutKeys({ ...DEFAULT_AI_SETTINGS, ...JSON.parse(raw) })))
+  } catch { /* unreadable settings are left as they are */ }
+}
+onAIKeysSecured(stripStoredAIKeys)
 
 export function isAIConfigured(settings: AISettings): boolean {
   if (settings.backend === 'claude-code' || settings.backend === 'codex-cli') return true

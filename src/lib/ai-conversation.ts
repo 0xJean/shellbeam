@@ -185,27 +185,19 @@ export function withModel(settings: AISettings, model: string): AISettings {
   return settings.provider === 'custom' ? { ...settings, customModel: model } : { ...settings, model }
 }
 
-const MEMORY_PREFIX = 'shellbeam.aiConversation.'
 const MEMORY_TURN_LIMIT = 30
 export interface StoredConversation { savedAt: number; turns: AITurn[] }
 
-/** One conversation per vault and host, so returning to a server picks up where it left off. */
-export function loadConversation(key: string): StoredConversation | null {
-  try {
-    const raw = localStorage.getItem(MEMORY_PREFIX + key)
-    if (!raw) return null
-    const value = JSON.parse(raw) as StoredConversation
-    return Array.isArray(value.turns) && typeof value.savedAt === 'number' ? value : null
-  } catch { return null }
+/** The turns worth restoring later; unfinished runs and errors are dropped. */
+export function turnsToRemember(turns: AITurn[]): AITurn[] {
+  return turns.filter((turn) => turn.kind === 'user' || turn.kind === 'ai' || (turn.kind === 'run' && turn.state === 'captured')).slice(-MEMORY_TURN_LIMIT)
 }
 
-export function saveConversation(key: string, turns: AITurn[]) {
-  // Unfinished runs and errors are not worth restoring.
-  const kept = turns.filter((turn) => turn.kind === 'user' || turn.kind === 'ai' || (turn.kind === 'run' && turn.state === 'captured')).slice(-MEMORY_TURN_LIMIT)
+export function parseStoredConversation(raw: string): StoredConversation | null {
   try {
-    if (kept.length) localStorage.setItem(MEMORY_PREFIX + key, JSON.stringify({ savedAt: Date.now(), turns: kept }))
-    else localStorage.removeItem(MEMORY_PREFIX + key)
-  } catch { /* storage full or unavailable: memory is best effort */ }
+    const value = JSON.parse(raw) as StoredConversation
+    return value && Array.isArray(value.turns) && typeof value.savedAt === 'number' ? value : null
+  } catch { return null }
 }
 
 /**

@@ -1,13 +1,23 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AICommandBar } from './ai-command-bar'
 import { streamAICommand, type AISettings, type AIStreamCallbacks } from '@/lib/ai'
 import type { TerminalAiBridge } from '@/lib/ai-conversation'
+import { vaultSealData } from '@/lib/vault'
 
 vi.mock('@/lib/ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/ai')>()
   return { ...actual, streamAICommand: vi.fn(), isAIConfigured: () => true }
 })
+vi.mock('@/lib/vault', () => ({
+  // A reversible stand-in for the Vault seal: opaque text, bound to its Vault and context.
+  vaultSealData: vi.fn(async (_purpose: string, context: string, plaintext: string, vaultId?: string | null) => `sealed:${btoa(encodeURIComponent(JSON.stringify([vaultId, context, plaintext])))}`),
+  vaultOpenData: vi.fn(async (_purpose: string, context: string, sealed: string, vaultId?: string | null) => {
+    const [sealedVault, sealedContext, plaintext] = JSON.parse(decodeURIComponent(atob(sealed.slice('sealed:'.length)))) as string[]
+    if (sealedVault !== vaultId || sealedContext !== context) throw new Error('does not open')
+    return plaintext
+  }),
+}))
 let callbacks!: AIStreamCallbacks; let signal: AbortSignal | undefined
 let lastHistory: unknown[] = []; let lastHost = ''
 const codex: AISettings = { backend: 'codex-cli', provider: 'openai', apiKey: '', model: '', customBaseUrl: '', customModel: '' }
@@ -148,21 +158,43 @@ describe('AICommandBar', () => {
     expect(bridge.run).toHaveBeenCalledExactlyOnceWith('ss -tlnp')
   })
 
-  it('remembers the conversation per host and sends host facts', () => {
-    const first = render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.5" hostFacts={[{ key: 'os', value: 'Ubuntu 24.04' }]} />)
+  it('remembers the conversation per host, sealed by its Vault, and sends host facts', async () => {
+    const first = render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.5" memoryVaultId="v1" hostFacts={[{ key: 'os', value: 'Ubuntu 24.04' }]} />)
+    await act(async () => { await Promise.resolve() })
     ask('disk usage'); act(() => { callbacks.onToken('df -h'); callbacks.onDone() })
     expect(lastHost).toBe('os: Ubuntu 24.04')
+    await waitFor(() => expect(localStorage.getItem('shellbeam.aiConversationSealed.v1:root@10.0.0.5')).toMatch(/^sealed:/))
+    expect(localStorage.getItem('shellbeam.aiConversationSealed.v1:root@10.0.0.5')).not.toContain('df -h')
+    expect(localStorage.getItem('shellbeam.aiConversation.v1:root@10.0.0.5')).toBeNull()
     first.unmount()
-    render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.5" />)
-    expect(screen.getByText('df -h')).toBeInTheDocument()
+    render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.5" memoryVaultId="v1" />)
+    expect(await screen.findByText('df -h')).toBeInTheDocument()
     expect(screen.getByText(/Continued from/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Clear conversation' }))
     expect(screen.queryByText('df -h')).not.toBeInTheDocument()
-    expect(localStorage.getItem('shellbeam.aiConversation.v1:root@10.0.0.5')).toBeNull()
+    await waitFor(() => expect(localStorage.getItem('shellbeam.aiConversationSealed.v1:root@10.0.0.5')).toBeNull())
     cleanup()
-    render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.6" />)
+    render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.6" memoryVaultId="v1" />)
+    await act(async () => { await Promise.resolve() })
     expect(screen.queryByText('df -h')).not.toBeInTheDocument()
+  })
+
+  it('moves a plain-text conversation from an older release under the Vault seal', async () => {
+    const legacy = { savedAt: 1_700_000_000_000, turns: [{ kind: 'user', id: 'u1', text: 'who is logged in' }, { kind: 'ai', id: 'a1', text: 'who', model: 'm' }] }
+    localStorage.setItem('shellbeam.aiConversation.v1:root@10.0.0.9', JSON.stringify(legacy))
+    render(<AICommandBar {...base} memoryKey="v1:root@10.0.0.9" memoryVaultId="v1" />)
+    expect(await screen.findByText('who is logged in')).toBeInTheDocument()
+    await waitFor(() => expect(localStorage.getItem('shellbeam.aiConversation.v1:root@10.0.0.9')).toBeNull())
+    expect(localStorage.getItem('shellbeam.aiConversationSealed.v1:root@10.0.0.9')).toMatch(/^sealed:/)
+  })
+
+  it('keeps nothing without a Vault to seal the conversation', async () => {
+    render(<AICommandBar {...base} memoryKey="none:root@10.0.0.5" memoryVaultId={null} />)
+    ask('disk usage'); act(() => { callbacks.onToken('df -h'); callbacks.onDone() })
+    await act(async () => { await Promise.resolve() })
+    expect(vi.mocked(vaultSealData)).not.toHaveBeenCalled()
+    expect(Object.keys(localStorage).filter((name) => name.includes('aiConversation'))).toEqual([])
   })
 
   it('offers the suggested next step in the empty input and fills it with Tab', () => {

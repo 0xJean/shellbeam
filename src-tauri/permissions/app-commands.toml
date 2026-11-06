@@ -208,6 +208,8 @@ permissions = [
   "allow-vault-initialize",
   "allow-vault-list-secret-keys",
   "allow-vault-lock",
+  "allow-vault-open-data",
+  "allow-vault-seal-data",
   "allow-vault-set-secret",
   "allow-vault-status",
   "allow-vault-unlock",

@@ -258,6 +258,8 @@ pub fn run() {
             vault::secrets::vault_get_secret,
             vault::secrets::vault_delete_secret,
             vault::secrets::vault_list_secret_keys,
+            vault::seal::vault_seal_data,
+            vault::seal::vault_open_data,
             keys::generate_ssh_key,
             keys::import_private_key_from_file,
             ssh::interactive::create_interactive_session,
