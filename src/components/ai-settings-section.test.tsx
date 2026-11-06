@@ -20,6 +20,15 @@ describe('AI model settings', () => {
   })
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+  it('masks secrets by default and lets the user turn it off', () => {
+    render(<AISettingsSection />)
+    const toggle = screen.getByRole('switch', { name: 'Mask secrets' })
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+    expect(toggle).not.toBeChecked()
+    expect(loadAISettings().redactSecrets).toBe(false)
+  })
+
   it('refreshes suggestions only on request and keeps the selected model', async () => {
     vi.mocked(fetch).mockResolvedValue(response('gpt-new-example'))
     render(<AISettingsSection />)

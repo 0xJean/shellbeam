@@ -1,5 +1,6 @@
 import { streamCliCommand } from './ai-cli'
 import { historyToMessages, type AIHistoryItem } from './ai-conversation'
+import { redactSecrets } from './ai-redact'
 import { aiKeysMayLiveInStorage, cachedAIKey, isAIKeyProvider, onAIKeysSecured, rememberAIKeys, type AIKeyProvider } from './ai-secrets'
 
 const AI_SETTINGS_KEY = 'shellbeam.aiSettings'
@@ -69,6 +70,8 @@ export interface AISettings {
   customBaseUrl: string
   customModel: string
   providerProfiles?: Partial<Record<AIProviderId, { apiKey: string; model: string }>>
+  /** Mask secrets in everything sent to the model. On unless turned off. */
+  redactSecrets?: boolean
 }
 
 export function switchAIProvider(settings: AISettings, provider: AIProviderId): AISettings {
@@ -229,6 +232,12 @@ export async function streamAICommand(
   host = '',
   mode: AIRequestMode = 'confirm',
 ) {
+  if (settings.redactSecrets !== false) {
+    userPrompt = redactSecrets(userPrompt)
+    terminalContext = redactSecrets(terminalContext)
+    host = redactSecrets(host)
+    history = history.map((item) => ({ ...item, content: redactSecrets(item.content) }))
+  }
   if (settings.backend === 'claude-code' || settings.backend === 'codex-cli') {
     await streamCliCommand(settings.backend, settings.cliProfiles?.[settings.backend], userPrompt, terminalContext, callbacks, signal, history, host, mode)
     return
