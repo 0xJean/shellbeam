@@ -32,9 +32,15 @@ export interface SftpRenameRequest extends Omit<SftpRequest, 'remotePath'> {
 export interface SftpEntry {
   path: string
   fileName: string
+  /** For a symbolic link, whether its target is a directory. */
   isDir: boolean
   size?: number
   modifiedAt?: number
+  isSymlink?: boolean
+  /** Where the link points, as stored in the link. */
+  linkTarget?: string
+  /** The link's target does not exist. */
+  linkBroken?: boolean
 }
 
 export interface SftpFileData {
@@ -188,9 +194,15 @@ export async function sftpChmod(payload: SftpChmodRequest) {
 export interface LocalEntry {
   path: string
   fileName: string
+  /** For a symbolic link, whether its target is a directory. */
   isDir: boolean
   size?: number
   modifiedAt?: number
+  isSymlink?: boolean
+  /** Where the link points, as stored in the link. */
+  linkTarget?: string
+  /** The link's target does not exist. */
+  linkBroken?: boolean
 }
 
 export async function localListDir(dirPath: string) {

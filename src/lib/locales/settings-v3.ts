@@ -1,6 +1,6 @@
 export const settingsV3Copy = {
   en: {
-    cursorStyle: 'Cursor', cursorBlock: 'Block', cursorBar: 'Bar', cursorUnderline: 'Underline', cursorBlink: 'Blinking cursor',
+    cursorStyle: 'Cursor', cursorBlock: 'Block', cursorBar: 'Bar', cursorUnderline: 'Underline', cursorBlink: 'Blinking cursor', keywordHighlight: 'Highlight keywords', keywordHighlightDesc: 'Colour errors, warnings, successes and IP addresses in output a program printed without colours of its own.',
     decrease: 'Decrease {label}', increase: 'Increase {label}',
     seconds: 's', times: '×', minutesUnit: 'min',
     terminalTitle: 'Terminal & connections', terminalDesc: 'Applies to every new SSH session; open terminals pick up appearance changes live',
@@ -16,7 +16,7 @@ export const settingsV3Copy = {
     rolloutPercent: '{label} (%)',
   },
   'zh-CN': {
-    cursorStyle: '光标', cursorBlock: '方块', cursorBar: '竖线', cursorUnderline: '下划线', cursorBlink: '光标闪烁',
+    cursorStyle: '光标', cursorBlock: '方块', cursorBar: '竖线', cursorUnderline: '下划线', cursorBlink: '光标闪烁', keywordHighlight: '关键词高亮', keywordHighlightDesc: '在程序没有自带颜色的输出里，给错误、警告、成功和 IP 地址上色。',
     decrease: '减少{label}', increase: '增加{label}',
     seconds: '秒', times: '次', minutesUnit: '分钟',
     terminalTitle: '终端与连接', terminalDesc: '影响所有新建的 SSH 会话；已打开的终端会实时应用外观变化',

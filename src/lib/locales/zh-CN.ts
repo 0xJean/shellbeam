@@ -2014,6 +2014,7 @@ const zhCN: Record<string, string> = {
   'sftpPane.name': '名称',
   'sftpPane.size': '大小',
   'sftpPane.modified': '修改时间',
+  'sftpPane.linkBroken': '已失效',
   'sftpPane.folderName': '文件夹名称...',
   'sftpPane.emptyDir': '空目录',
   'sftpPane.selected': '已选 {n}',

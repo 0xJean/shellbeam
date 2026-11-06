@@ -11,6 +11,8 @@ export interface TerminalPrefs {
   themeId: string
   cursorStyle: TerminalCursorStyle
   cursorBlink: boolean
+  /** Colour failures, warnings, successes and addresses in uncoloured output. */
+  keywordHighlight?: boolean
 }
 
 export const DEFAULT_TERMINAL_PREFS: TerminalPrefs = {
@@ -19,6 +21,7 @@ export const DEFAULT_TERMINAL_PREFS: TerminalPrefs = {
   themeId: 'app',
   cursorStyle: 'block',
   cursorBlink: true,
+  keywordHighlight: true,
 }
 
 export interface TerminalThemeDef {

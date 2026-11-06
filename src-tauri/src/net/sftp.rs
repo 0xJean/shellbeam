@@ -104,10 +104,23 @@ struct SftpTransferProgressEvent {
 pub struct SftpEntry {
     path: String,
     file_name: String,
+    /// For a symbolic link, whether its target is a directory, so it opens like one.
     is_dir: bool,
     size: Option<u64>,
     modified_at: Option<u64>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    is_symlink: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link_target: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    link_broken: bool,
 }
+
+/// Links resolved per listing; a directory full of links still lists quickly.
+const MAX_RESOLVED_LINKS: usize = 256;
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFLNK: u32 = 0o120000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -318,18 +331,36 @@ fn sftp_list_dir_blocking(
             .readdir(Path::new(remote_path))
             .map_err(|err| sftp_error_from_raw("sftp", "list directory", err.to_string()))?;
 
+        let mut resolved = 0usize;
         let mut entries = items
             .into_iter()
             .map(|(path, stat)| {
                 let perm = stat.perm.unwrap_or_default();
-                let is_dir = (perm & 0o170000) == 0o040000;
-                SftpEntry {
+                let is_symlink = (perm & S_IFMT) == S_IFLNK;
+                let mut entry = SftpEntry {
                     path: path.to_string_lossy().to_string(),
                     file_name: file_name_from_path(&path),
-                    is_dir,
+                    is_dir: (perm & S_IFMT) == S_IFDIR,
                     size: stat.size,
                     modified_at: stat.mtime,
+                    is_symlink,
+                    link_target: None,
+                    link_broken: false,
+                };
+                if is_symlink && resolved < MAX_RESOLVED_LINKS {
+                    resolved += 1;
+                    entry.link_target = sftp
+                        .readlink(&path)
+                        .ok()
+                        .map(|target| target.to_string_lossy().to_string());
+                    match sftp.stat(&path) {
+                        Ok(target) => {
+                            entry.is_dir = target.perm.unwrap_or_default() & S_IFMT == S_IFDIR;
+                        }
+                        Err(_) => entry.link_broken = true,
+                    }
                 }
+                entry
             })
             .filter(|entry| !matches!(entry.file_name.as_str(), "" | "." | ".."))
             .collect::<Vec<_>>();
@@ -919,9 +950,16 @@ fn sftp_chmod_blocking(app: tauri::AppHandle, payload: SftpChmodRequest) -> Resu
 pub struct LocalEntry {
     pub path: String,
     pub file_name: String,
+    /// For a symbolic link, whether its target is a directory, so it opens like one.
     pub is_dir: bool,
     pub size: Option<u64>,
     pub modified_at: Option<u64>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_symlink: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_target: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub link_broken: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -947,8 +985,20 @@ fn local_list_dir_blocking(payload: LocalListRequest) -> Result<Vec<LocalEntry>,
             Ok(i) => i,
             Err(_) => continue,
         };
-        let metadata = item.metadata().ok();
-        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let is_symlink = item.file_type().map(|t| t.is_symlink()).unwrap_or(false);
+        let (metadata, link_target, link_broken) = if is_symlink {
+            // A link shows its target's kind and size; a broken one keeps its own.
+            let target = std::fs::read_link(item.path())
+                .ok()
+                .map(|t| t.to_string_lossy().to_string());
+            match std::fs::metadata(item.path()) {
+                Ok(m) => (Some(m), target, false),
+                Err(_) => (item.metadata().ok(), target, true),
+            }
+        } else {
+            (item.metadata().ok(), None, false)
+        };
+        let is_dir = !link_broken && metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
         let size = metadata
             .as_ref()
             .and_then(|m| if !m.is_dir() { Some(m.len()) } else { None });
@@ -963,6 +1013,9 @@ fn local_list_dir_blocking(payload: LocalListRequest) -> Result<Vec<LocalEntry>,
             is_dir,
             size,
             modified_at,
+            is_symlink,
+            link_target,
+            link_broken,
         });
     }
     entries.sort_by(|a, b| {
@@ -1178,5 +1231,40 @@ mod nonblocking_io_tests {
             assert_eq!(entries[0].size, Some(6));
             std::fs::remove_dir_all(directory).unwrap();
         });
+    }
+}
+
+#[cfg(all(test, unix))]
+mod local_symlink_tests {
+    use super::*;
+
+    #[test]
+    fn links_open_like_their_targets_and_broken_ones_are_marked() {
+        let root = std::env::temp_dir().join(format!("shellbeam-links-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("releases/v2")).unwrap();
+        std::fs::write(root.join("app.log"), "x").unwrap();
+        std::os::unix::fs::symlink("releases/v2", root.join("current")).unwrap();
+        std::os::unix::fs::symlink("app.log", root.join("latest.log")).unwrap();
+        std::os::unix::fs::symlink("missing", root.join("gone")).unwrap();
+
+        let entries = local_list_dir_blocking(LocalListRequest {
+            dir_path: root.to_string_lossy().to_string(),
+        })
+        .unwrap();
+        let find = |name: &str| entries.iter().find(|e| e.file_name == name).unwrap();
+
+        let current = find("current");
+        assert!(current.is_symlink && current.is_dir && !current.link_broken);
+        assert_eq!(current.link_target.as_deref(), Some("releases/v2"));
+        let latest = find("latest.log");
+        assert!(latest.is_symlink && !latest.is_dir && !latest.link_broken);
+        assert_eq!(latest.size, Some(1));
+        let gone = find("gone");
+        assert!(gone.is_symlink && !gone.is_dir && gone.link_broken);
+        assert_eq!(gone.link_target.as_deref(), Some("missing"));
+        let plain = find("app.log");
+        assert!(!plain.is_symlink && plain.link_target.is_none());
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
