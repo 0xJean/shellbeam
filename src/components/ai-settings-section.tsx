@@ -3,6 +3,7 @@ import { Asterisk, Cloud, Cpu, Eye, EyeOff, Lock, Plug, Route, ShieldCheck, Spar
 import { AICliSettings } from '@/components/ai-cli-settings'
 import { AIModelPicker } from '@/components/ai-model-picker'
 import { Input } from '@/components/ui/input'
+import { SettingSwitch } from '@/components/settings-controls'
 import { AI_PROVIDERS, AI_SETTINGS_EVENT, loadAISettings, saveAISettings, switchAIProvider, type AIBackend, type AIProviderId, type AISettings } from '@/lib/ai'
 import { useT } from '@/lib/i18n'
 import { aiMcpSettingsCopy } from '@/lib/locales/ai-mcp-settings-v3'
@@ -108,6 +109,13 @@ export function AISettingsSection() {
             settings={settings} onChange={(model) => setSettings((s) => isCustom ? { ...s, customModel: model } : { ...s, model })} />
         </div>
       </>}
+      <div className="sb-card">
+        <label className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <span className="min-w-0"><span className="block text-sm font-medium text-[var(--workspace-text-strong)]">{copy.redactTitle}</span><span className="mt-0.5 block text-xs text-[var(--workspace-text-muted)]">{copy.redactHint}</span></span>
+          <SettingSwitch aria-label={copy.redactTitle} checked={settings.redactSecrets !== false}
+            onChange={(e) => { const on = e.target.checked; setSettings((s) => ({ ...s, redactSecrets: on })) }} />
+        </label>
+      </div>
     </section>
   )
 }

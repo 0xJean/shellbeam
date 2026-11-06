@@ -13,7 +13,7 @@ use crate::error::{standard_error_from_raw, standard_error_payload};
 use crate::storage::{data_file_path, now_unix_ms, write_json};
 use crate::vaults_meta::DEFAULT_VAULT_ID;
 
-const VAULT_KEY_SIZE: usize = 32;
+pub(crate) const VAULT_KEY_SIZE: usize = 32;
 const VAULT_SALT_SIZE: usize = 16;
 const VAULT_NONCE_SIZE: usize = 12;
 const VAULT_PBKDF2_ITERATIONS: u32 = 120_000;
@@ -436,7 +436,7 @@ fn save_vault_file(
     write_json(&path, vault)
 }
 
-fn ensure_vault_id(vault_id: Option<&str>) -> String {
+pub(super) fn ensure_vault_id(vault_id: Option<&str>) -> String {
     vault_id
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
@@ -444,7 +444,7 @@ fn ensure_vault_id(vault_id: Option<&str>) -> String {
         .to_string()
 }
 
-fn read_unlocked_vault_key(
+pub(super) fn read_unlocked_vault_key(
     state: &VaultState,
     vault_id: &str,
 ) -> Result<[u8; VAULT_KEY_SIZE], String> {

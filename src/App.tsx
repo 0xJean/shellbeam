@@ -8,6 +8,7 @@ import { SessionsProvider, useSessions } from '@/contexts/sessions-context'
 import { VaultProvider, useVault } from '@/contexts/vault-context'
 import { ScheduledOpsRuntime } from '@/components/scheduled-ops-runtime'
 import { LocalOpsRuntime } from '@/components/local-ops-runtime'
+import { SealedDataRuntime } from '@/components/sealed-data-runtime'
 import { ServerMonitorRuntime } from '@/components/server-monitor-runtime'
 import { ProbeAlertRuntime } from '@/components/probe-alert-runtime'
 import { ShellbeamAgentRuntime } from '@/components/shellbeam-agent-runtime'
@@ -110,6 +111,7 @@ function AppInnerWithVault() {
         <ScheduledOpsRuntime />
         <ShellbeamAgentRuntime />
         <AppUpdateRuntime />
+        <SealedDataRuntime />
         <SessionsProvider setOutput={setOutput}>
           <AppInner />
         </SessionsProvider>

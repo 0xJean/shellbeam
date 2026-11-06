@@ -4,9 +4,10 @@ import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AI_SETTINGS_EVENT, streamAICommand, loadAISettings, saveAISettings, isAIConfigured, createAbortController, type AISettings } from '@/lib/ai'
 import {
-  AI_RUN_MODES, MAX_AUTO_STEPS, autoRunAllowed, buildHistory, currentModelTarget, extractSuggestion, isNoteReply, loadRunMode, nextStepTip, loadConversation, noteText, outputLooksFailed, parseQuestion, saveConversation, saveRunMode, splitReply, trimCapturedOutput,
+  AI_RUN_MODES, MAX_AUTO_STEPS, autoRunAllowed, buildHistory, currentModelTarget, extractSuggestion, isNoteReply, loadRunMode, nextStepTip, noteText, outputLooksFailed, parseQuestion, saveRunMode, splitReply, trimCapturedOutput,
   type AIRunMode, type AITurn, type RunOutcome, type TerminalAiBridge, type TerminalCapture,
 } from '@/lib/ai-conversation'
+import { loadConversation, saveConversation } from '@/lib/ai-conversation-store'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
 import { hostFactsText, type HostFact } from '@/lib/ai-host-facts'
 import { suggestPrompts } from '@/lib/ai-suggestions'
@@ -29,6 +30,8 @@ interface AICommandBarProps {
   contextLabel?: string
   /** Vault and host the conversation is remembered under; without it nothing is kept. */
   memoryKey?: string
+  /** The Vault that seals the remembered conversation; without it nothing is kept. */
+  memoryVaultId?: string | null
   /** What ShellBeam knows about the server, sent so commands fit the machine. */
   hostFacts?: HostFact[]
   /** The host's last asset scan, used to suggest requests that fit this server. */
@@ -57,15 +60,17 @@ type RunOptions = { source?: string; auto?: boolean }
 let turnSeq = 0
 const nextId = (prefix: string) => `${prefix}-${Date.now()}-${++turnSeq}`
 
-export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, hostFacts, inventory, probe }: AICommandBarProps) {
+export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, memoryVaultId, hostFacts, inventory, probe }: AICommandBarProps) {
   const { t, locale } = useT()
   const copy = aiAssistantCopy[locale]
   const narrow = useNarrowViewport()
   const asSheet = presentation === 'sheet' || (presentation === 'auto' && narrow)
   const [settings, setSettings] = useState<AISettings>(loadAISettings)
-  const [restored] = useState(() => (memoryKey ? loadConversation(memoryKey) : null))
-  const [restoredAt, setRestoredAt] = useState(restored?.savedAt ?? null)
-  const [turns, setTurns] = useState<AITurn[]>(() => restored?.turns ?? [])
+  const remembers = !!memoryKey && !!memoryVaultId
+  const [restoredAt, setRestoredAt] = useState<number | null>(null)
+  const [turns, setTurns] = useState<AITurn[]>([])
+  /** Saving waits until the sealed conversation has been read, so an empty panel never overwrites it. */
+  const [memoryLoaded, setMemoryLoaded] = useState(!remembers)
   const [input, setInput] = useState('')
   const [streamingContent, setStreamingContent] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -115,7 +120,23 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const captures = useRef(new Map<string, { capture: TerminalCapture; stop: () => void; finish?: () => void }>())
   const turnsRef = useRef(turns)
   useEffect(() => { turnsRef.current = turns }, [turns])
-  useEffect(() => { if (memoryKey) saveConversation(memoryKey, turns) }, [memoryKey, turns])
+  useEffect(() => {
+    if (!memoryKey || !memoryVaultId) return
+    let active = true
+    void loadConversation(memoryVaultId, memoryKey).then((restored) => {
+      if (!active) return
+      // Anything asked while the conversation was loading comes after what was restored.
+      if (restored?.turns.length) {
+        setTurns((current) => [...restored.turns, ...current])
+        setRestoredAt(restored.savedAt)
+      }
+      setMemoryLoaded(true)
+    })
+    return () => { active = false }
+  }, [memoryKey, memoryVaultId])
+  useEffect(() => {
+    if (memoryLoaded && memoryKey && memoryVaultId) void saveConversation(memoryVaultId, memoryKey, turns)
+  }, [memoryLoaded, memoryKey, memoryVaultId, turns])
 
   useEffect(() => {
     const sync = () => setSettings(loadAISettings())

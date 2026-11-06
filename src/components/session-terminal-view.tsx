@@ -605,6 +605,7 @@ export function SessionTerminalView({
               visible={showAI && visible}
               bridge={aiBridge}
               memoryKey={`${historyVaultId ?? 'none'}:${session?.username ?? ''}@${hostAddress}`}
+              memoryVaultId={historyVaultId}
               hostFacts={hostFacts}
               inventory={inventory}
               probe={probeOffered ? { onInstall: () => setProbeDialogOpen(true) } : undefined}
