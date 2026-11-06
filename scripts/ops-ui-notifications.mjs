@@ -507,6 +507,7 @@ export async function runOpsUiNotifications({ driver, record, checkpoint, fixtur
     return { passed: true, daemonVersion: version, checks, scope: 'explicit-test-button-linux-x11', actualAlertLifecycleVerified: false }
   } catch (cause) {
     if (cause instanceof Error && /^ops_ui_notifications_[a-z0-9_]+$/.test(cause.message)) throw cause
+    await record('notification-stage-failure', { code: /^[a-z ]{1,64}$/.test(cause?.code ?? '') ? cause.code : 'unclassified' })
     throw fail('stage_failed')
   } finally {
     if (daemon) {

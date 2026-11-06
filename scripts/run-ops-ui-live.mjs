@@ -149,10 +149,12 @@ export async function main(env = process.env) {
   const report = { schemaVersion: 1, success: false, cleanup: 'pending', runId: env.GITHUB_RUN_ID,
     checkedOutCommit: env.GITHUB_SHA, headCommit: env.SHELLBEAM_OPS_UI_HEAD_SHA ?? env.GITHUB_SHA,
     sharedKernel: true, productionIpc: false, realVault: false, events: [] }
+  const startedAt = Date.now()
+  let failureEvidence
   const record = (name, details = {}) => {
     if (typeof name === 'object') { details = name; name = details.case ?? details.name ?? 'checkpoint' }
     assert(safeToken(name), 'fixed event name')
-    report.events.push({ name, ...safeDetails(details) })
+    report.events.push({ name, ...safeDetails(details), atMs: Date.now() - startedAt })
     if (report.events.length > 300) throw new Error('bounded acceptance report')
   }
   let stage = 'initialization'
@@ -234,7 +236,7 @@ export async function main(env = process.env) {
   try {
     const { stdout: commit } = await exec('git', ['rev-parse', 'HEAD'], { timeout: 5000 })
     assert(commit.trim() === env.GITHUB_SHA, 'exact checked-out commit')
-    const { setupOpsUiJourney, activateOpsUiRules, runOpsUiIncidents, resumeOpsUiJourney } = await import('./ops-ui-journey.mjs')
+    const { setupOpsUiJourney, activateOpsUiRules, runOpsUiIncidents, resumeOpsUiJourney, readOpsUiFailureState, captureOpsUiFailure } = await import('./ops-ui-journey.mjs')
     const { runOpsUiNotifications, startOpsUiAlertNotifications } = await import('./ops-ui-notifications.mjs')
     const { createOpsUiProbeFixture } = await import('./ops-ui-probe-fixture.mjs')
     const { runOpsUiProbeJourney, resumeOpsUiProbeJourney, settleOpsUiProbeInventory } = await import('./ops-ui-probe-journey.mjs')
@@ -246,6 +248,12 @@ export async function main(env = process.env) {
     await launch()
     stage = 'vault-and-host-setup'
     const resumeState = await setupOpsUiJourney({ driver, fixture, record, checkpoint })
+    failureEvidence = async () => {
+      // A wedged application must not stall the failure path or its cleanup.
+      driver.requestTimeoutMs = 5000
+      report.failureState = safeDetails(await readOpsUiFailureState({ driver, fixture, state: resumeState }))
+      await captureOpsUiFailure({ driver, checkpoint, record })
+    }
     report.productionIpc = true
     report.realVault = true
     stage = 'notifications'
@@ -317,6 +325,9 @@ export async function main(env = process.env) {
     report.clickGeometry = safeDetails(driver?.lastClickDiagnostics)
     report.hostNavigation = safeDetails(driver?.lastHostNavigation)
     report.selectNavigation = safeDetails(driver?.lastSelectionDiagnostics)
+    report.lastTimeout = safeDetails(driver?.lastTimeout)
+    report.failure.elapsedMs = Date.now() - startedAt
+    if (failureEvidence) await failureEvidence().catch(() => { report.failureState = { available: false } })
     console.error(`ShellBeam UI: ${stage} failed`)
   } finally {
     if (probeNotifications) {
