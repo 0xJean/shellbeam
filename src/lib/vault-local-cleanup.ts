@@ -19,7 +19,13 @@ const ENCODED_HOST_PREFIXES = [
 /** Keys of the form `<base>:<vaultId>`. */
 const VAULT_SUFFIX_BASES = [
   'shellbeam:host-monitoring-summary', // hosts-dashboard.tsx monitoring summary toggle
-  'shellbeam.interactiveHistory', // interactive-history.ts, per Vault as `<base>:<vaultId>`
+  'shellbeam.interactiveHistory', // interactive-history.ts, plain text from older releases
+  'shellbeam.interactiveHistorySealed', // interactive-history.ts sealedKey
+]
+/** Keys of the form `<base><vaultId>:<user@host>`. */
+const CONVERSATION_PREFIXES = [
+  'shellbeam.aiConversationSealed.', // ai-conversation-store.ts
+  'shellbeam.aiConversation.', // ai-conversation-store.ts LEGACY_CONVERSATION_PREFIX
 ]
 const CERTIFICATE_PREFIX = 'shellbeam.certificates.' // certificate-cache.ts
 /** One JSON object whose entries are keyed by observation key (`vault:["<id>","<host>"]`). */
@@ -29,6 +35,7 @@ export function isVaultLocalStorageKey(key: string, vaultId: string): boolean {
   if (!vaultId) return false
   if (key === `${CERTIFICATE_PREFIX}${vaultId}`) return true
   if (VAULT_SUFFIX_BASES.some((base) => key === `${base}:${vaultId}`)) return true
+  if (CONVERSATION_PREFIXES.some((base) => key.startsWith(`${base}${vaultId}:`))) return true
   if (RAW_HOST_PREFIXES.some((base) => key.startsWith(`${base}:${vaultId}:`))) return true
   const encoded = encodeURIComponent(vaultId)
   return ENCODED_HOST_PREFIXES.some((base) => key.startsWith(`${base}:${encoded}:`))

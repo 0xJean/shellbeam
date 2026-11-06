@@ -20,6 +20,9 @@ describe('vault local cleanup', () => {
         `shellbeam.certificates.${vaultId}`,
         `shellbeam:host-monitoring-summary:${vaultId}`,
         `shellbeam.interactiveHistory:${vaultId}`,
+        `shellbeam.interactiveHistorySealed:${vaultId}`,
+        `shellbeam.aiConversationSealed.${vaultId}:root@10.0.0.5`,
+        `shellbeam.aiConversation.${vaultId}:root@10.0.0.5`,
       ]) expect(isVaultLocalStorageKey(key, vaultId), key).toBe(true)
     }
     for (const key of [
@@ -30,6 +33,9 @@ describe('vault local cleanup', () => {
       'shellbeam.certificates.team2',
       'shellbeam.interactiveHistory',
       'shellbeam.interactiveHistory:team2',
+      'shellbeam.interactiveHistorySealed:team2',
+      'shellbeam.aiConversationSealed.team2:root@10.0.0.5',
+      'shellbeam.aiConversation.none:root@10.0.0.5',
       'shellbeam.locale',
     ]) expect(isVaultLocalStorageKey(key, 'team'), key).toBe(false)
     expect(isVaultLocalStorageKey('shellbeam.certificates.', '')).toBe(false)
