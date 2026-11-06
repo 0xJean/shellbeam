@@ -1,6 +1,7 @@
 import { getInteractiveHistory, isInteractiveHistoryEvent, subscribeInteractiveHistory } from '@/lib/interactive-history'
 import { announceTerminalAiState, announceTerminalSearchState, requestTerminalSidebarTab, TERMINAL_AI_TOGGLE_EVENT, TERMINAL_SEARCH_TOGGLE_EVENT } from '@/lib/terminal-events'
 import { normalizeBrowserUrl } from '@/contexts/session-browser-state'
+import { attachKeywordHighlight, type KeywordHighlighter } from '@/lib/terminal-highlight'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import { useVault } from '@/contexts/vault-context'
 import { useT } from '@/lib/i18n'
@@ -160,6 +161,7 @@ export function SessionTerminalView({
   const showSuggestionsRef = useRef(false)
   const uiSyncFrameRef = useRef<number | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
+  const highlighterRef = useRef<KeywordHighlighter | null>(null)
 
   onSendRawRef.current = onSendRaw
 
@@ -257,6 +259,8 @@ export function SessionTerminalView({
       fastScrollSensitivity: 10,
       smoothScrollDuration: 0,
       rescaleOverlappingGlyphs: true,
+      // Decorations colour highlighted keywords.
+      allowProposedApi: true,
       theme: terminalTheme,
     })
 
@@ -268,6 +272,8 @@ export function SessionTerminalView({
     const search = new SearchAddon()
     term.loadAddon(search)
     searchAddonRef.current = search
+    const highlighter = attachKeywordHighlight(term, { enabled: prefsRef.current?.keywordHighlight ?? true })
+    highlighterRef.current = highlighter
 
     termRef.current = term
     fitRef.current = fit
@@ -375,6 +381,8 @@ export function SessionTerminalView({
         uiSyncFrameRef.current = null
       }
       searchAddonRef.current = null
+      highlighter.dispose()
+      highlighterRef.current = null
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -391,6 +399,7 @@ export function SessionTerminalView({
     term.options.cursorBlink = terminalPrefs.cursorBlink ?? DEFAULT_TERMINAL_PREFS.cursorBlink
     try { fitRef.current?.fit() } catch { /* teardown */ }
   }, [terminalTheme, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, terminalPrefs?.cursorStyle, terminalPrefs?.cursorBlink])
+  useEffect(() => { highlighterRef.current?.setEnabled(terminalPrefs?.keywordHighlight ?? true) }, [terminalPrefs?.keywordHighlight])
 
   const prevVisibleRef = useRef(visible)
   const prevChromeOnlyRef = useRef(chromeOnly)

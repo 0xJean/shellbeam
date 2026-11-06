@@ -238,6 +238,9 @@ export function SettingsPanel({
               <SettingRow label={v3.cursorBlink} htmlFor="settings-cursor-blink">
                 <SettingSwitch id="settings-cursor-blink" aria-label={v3.cursorBlink} checked={terminalPrefs.cursorBlink ?? true} onChange={(event) => onTerminalPrefsChange({ cursorBlink: event.target.checked })} />
               </SettingRow>
+              <SettingRow label={v3.keywordHighlight} description={v3.keywordHighlightDesc} htmlFor="settings-keyword-highlight">
+                <SettingSwitch id="settings-keyword-highlight" aria-label={v3.keywordHighlight} checked={terminalPrefs.keywordHighlight ?? true} onChange={(event) => onTerminalPrefsChange({ keywordHighlight: event.target.checked })} />
+              </SettingRow>
             </SettingsGroup>
             <SettingsNote>{v3.sharedNote}</SettingsNote>
           </div>

@@ -54,6 +54,7 @@ vi.mock('@xterm/xterm', () => {
     onData() { return { dispose() {} } }
     onBinary() { return { dispose() {} } }
     onResize() { return { dispose() {} } }
+    onWriteParsed() { return { dispose() {} } }
   }
 
   return { Terminal: MockTerminal }
