@@ -25,6 +25,9 @@ const OPERATION_STAGE: Record<string, RemoteConnectStage> = {
   handshake_failed: 'secure_session',
   host_key_failed: 'verify_host',
   auth_failed: 'authenticate',
+  auth_needs_code: 'authenticate',
+  auth_cancelled: 'authenticate',
+  agent_unavailable: 'authenticate',
 }
 
 function failure(stage: RemoteConnectStage, reason: string, viaJump: boolean, hostKeyMismatch = false): ConnectFailure {
@@ -57,8 +60,9 @@ export function parseConnectFailure(message: string | undefined): ConnectFailure
     return failure('verify_host', mismatch ? 'host_key_mismatch' : 'host_key_failed', routeStage(message) === 'jump', mismatch)
   }
   if (message.includes('host key not accepted')) return failure('verify_host', 'host_key_rejected', false)
-  const ssh = message.match(/\bSSH (target|jump) (unreachable|timeout|tunnel_failed|session_failed|handshake_failed|host_key_failed|auth_failed)\b/)
-    ?? message.match(/\b(target|jump)_(unreachable|timeout|tunnel_failed|session_failed|handshake_failed|host_key_failed|auth_failed)\b/)
+  const operations = 'unreachable|timeout|tunnel_failed|session_failed|handshake_failed|host_key_failed|auth_failed|auth_needs_code|auth_cancelled|agent_unavailable'
+  const ssh = message.match(new RegExp(`\\bSSH (target|jump) (${operations})\\b`))
+    ?? message.match(new RegExp(`\\b(target|jump)_(${operations})\\b`))
   if (ssh) return failure(OPERATION_STAGE[ssh[2]], ssh[2], ssh[1] === 'jump' || ssh[2] === 'tunnel_failed')
   if (/\binteractive (open channel|request PTY|start shell) failed\b/.test(message)) return failure('prepare_workspace', 'workspace_failed', false)
   return null

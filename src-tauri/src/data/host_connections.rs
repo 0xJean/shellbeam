@@ -122,7 +122,7 @@ pub(crate) fn normalize(host: &mut HostProfile) -> Result<(), String> {
             || c.address.is_empty()
             || c.username.is_empty()
             || c.port == 0
-            || !["password", "privateKey"].contains(&c.auth_type.as_str())
+            || !["password", "privateKey", "agent"].contains(&c.auth_type.as_str())
             || c.jump_host_id.as_ref() == Some(&host.id)
         {
             return Err("HOST_CONNECTION_INVALID".into());
