@@ -99,6 +99,17 @@ fn endpoint_for(
     let key = match host.auth_type.as_str() {
         "password" => host.password_key_ref.as_deref(),
         "privateKey" => host.private_key_ref.as_deref(),
+        // The agent holds the keys; nothing comes from the Vault.
+        "agent" => {
+            return Ok(Endpoint {
+                host: host.address.clone(),
+                port: host.port,
+                username: host.username.clone(),
+                auth_type: host.auth_type.clone(),
+                secret: String::new(),
+                passphrase: None,
+            })
+        }
         _ => return Err("UNSUPPORTED_AUTH_TYPE".into()),
     }
     .filter(|key| !key.trim().is_empty())
@@ -312,8 +323,21 @@ fn handshake(
         (endpoint.auth_type == "password").then_some(endpoint.secret.as_str()),
         (endpoint.auth_type == "privateKey").then_some(endpoint.secret.as_str()),
         endpoint.passphrase.as_deref(),
+        &super::AuthContext {
+            stage,
+            host: &endpoint.host,
+            port: endpoint.port,
+        },
     )
-    .map_err(|error| failure(stage, "auth_failed", error))?;
+    .map_err(|error| {
+        let operation = match error.as_str() {
+            super::AUTH_NEEDS_CODE => "auth_needs_code",
+            super::AUTH_CANCELLED => "auth_cancelled",
+            super::AGENT_UNAVAILABLE => "agent_unavailable",
+            _ => "auth_failed",
+        };
+        failure(stage, operation, error)
+    })?;
     Ok(session)
 }
 

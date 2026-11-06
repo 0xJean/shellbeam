@@ -628,11 +628,18 @@ pub async fn create_interactive_session(
                 )
             };
             emit_progress(&app, &session_id, "secure_session");
-            let connection = crate::ssh::transport::connect_accepting_fingerprint(
-                &app,
-                &route,
-                payload.accepted_host_key.as_ref(),
-            )?;
+            // The user is waiting on this tab, so a server's one-time-code question goes to them.
+            let prompter = std::rc::Rc::new(crate::ssh::auth_prompt::UiPrompter {
+                app: app.clone(),
+                session_id: session_id.clone(),
+            });
+            let connection = crate::ssh::auth_prompt::with_prompter(prompter, || {
+                crate::ssh::transport::connect_accepting_fingerprint(
+                    &app,
+                    &route,
+                    payload.accepted_host_key.as_ref(),
+                )
+            })?;
             crate::ssh::transport::ensure_vault_unlocked(&app, payload.vault_id.as_deref())?;
             let verified_host_keys = connection.verified_host_keys;
             let session = connection.session;

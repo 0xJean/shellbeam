@@ -158,6 +158,7 @@ permissions = [
   "allow-sftp-upload-file",
   "allow-sftp-write-file",
   "allow-show-browser-webview",
+  "allow-ssh-auth-prompt-respond",
   "allow-start-browser-http-proxy",
   "allow-start-browser-port-forward",
   "allow-start-browser-socks-proxy",

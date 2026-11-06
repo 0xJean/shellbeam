@@ -13,6 +13,7 @@ import { ServerMonitorRuntime } from '@/components/server-monitor-runtime'
 import { ProbeAlertRuntime } from '@/components/probe-alert-runtime'
 import { ShellbeamAgentRuntime } from '@/components/shellbeam-agent-runtime'
 import { UserConfirmationRuntime } from '@/components/user-confirmation-dialog'
+import { SshAuthPromptRuntime } from '@/components/ssh-auth-prompt-dialog'
 import { SyncVaultExportApproval } from '@/components/sync-vault-export-approval'
 import { PcLayout } from '@/layouts/pc-layout'
 import { listCommandHistory } from '@/lib/history'
@@ -103,6 +104,7 @@ function AppInnerWithVault() {
     <VaultProvider setOutput={setOutput}>
       <HostsProvider>
         <UserConfirmationRuntime />
+        <SshAuthPromptRuntime />
         <SyncVaultExportApproval />
         <InAppNotifications />
         <ProbeAlertRuntime />

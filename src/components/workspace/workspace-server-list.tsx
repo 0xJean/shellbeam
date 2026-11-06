@@ -96,6 +96,7 @@ function formatHostUpdatedAt(updatedAt: number) {
 }
 
 function getHostAuthMeta(host: HostProfile, t: ReturnType<typeof useT>['t']) {
+  if (host.authType === 'agent') return { label: t('workspace.serverIndex.agentAuth'), Icon: KeyRound }
   return host.authType === 'privateKey'
     ? { label: t('workspace.serverIndex.keyAuth'), Icon: KeyRound }
     : { label: t('workspace.serverIndex.passwordAuth'), Icon: LockKeyhole }

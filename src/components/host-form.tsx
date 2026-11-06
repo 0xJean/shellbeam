@@ -10,9 +10,9 @@ import { useT } from '@/lib/i18n'
 import { probeInstallCopy } from '@/lib/locales/probe-install'
 import { identityBaseName, type ParsedSshCommand } from '@/lib/ssh-command-parse'
 import { testSshConnection } from '@/lib/sessions'
-import type { AuthType } from '@/lib/ssh'
+import { sshAgentAvailable, type AuthType } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
-import { Archive, CircleAlert, CircleCheck, Eye, EyeOff, Key, Lock, PlugZap, RefreshCw, Server, User, X } from 'lucide-react'
+import { Archive, CircleAlert, CircleCheck, Eye, EyeOff, Key, KeyRound, Lock, PlugZap, RefreshCw, Server, User, X } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 
 interface HostFormProps {
@@ -143,7 +143,10 @@ export function HostForm({
     let passwordKeyRef = initial?.passwordKeyRef
     let privateKeyRef = initial?.privateKeyRef
 
-    if (useInlineSecret) {
+    if (authType === 'agent') {
+      passwordKeyRef = undefined
+      privateKeyRef = undefined
+    } else if (useInlineSecret) {
       const suffix = authType === 'password' ? 'password' : 'key'
       const existingRef = authType === 'password' ? initial?.passwordKeyRef : initial?.privateKeyRef
       const saveName = vaultSaveName.trim() || existingRef || `${addrSlug}-${connectionOnly ? `${username}-${connectionSecretId}-` : ''}${suffix}`
@@ -174,7 +177,7 @@ export function HostForm({
       tags,
       passwordKeyRef: authType === 'password' ? passwordKeyRef : undefined,
       privateKeyRef: authType === 'privateKey' ? privateKeyRef : undefined,
-      secretKeyRef: initial?.secretKeyRef,
+      secretKeyRef: authType === 'agent' ? undefined : initial?.secretKeyRef,
       jumpHostId: jumpHostId || undefined,
       jumpHost: jumpHost.trim() || undefined,
       jumpPort: jumpPort.trim() ? parseInt(jumpPort, 10) || undefined : undefined,
@@ -305,11 +308,17 @@ export function HostForm({
                 className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md text-[13px] font-medium transition-colors', authType === 'password' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
                 <Lock className="h-3.5 w-3.5" />{t('hostForm.password')}
               </button>
+              {(sshAgentAvailable() || authType === 'agent') && <button data-testid="host-auth-agent" type="button" onClick={() => setAuthType('agent')}
+                className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md text-[13px] font-medium transition-colors', authType === 'agent' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                <KeyRound className="h-3.5 w-3.5" />{t('hostForm.agent')}
+              </button>}
             </div>
           </div>
         </div>
 
-        {!vaultUnlocked ? (
+        {authType === 'agent' ? (
+          <p data-testid="host-auth-agent-hint" className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">{t('hostForm.agentHint')}</p>
+        ) : !vaultUnlocked ? (
           <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">{t('hostForm.vaultLocked')}</p>
         ) : (
           <CredentialInput
