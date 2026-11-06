@@ -1,8 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useT } from '@/lib/i18n'
 import {
-  Folder,
-  FileText,
   RefreshCw,
   ArrowUp,
   CornerLeftUp,
@@ -20,13 +18,18 @@ import { fill } from '@/lib/locales/probe-install'
 import { sftpCopyFor } from '@/lib/locales/sftp-v3'
 import { formatBytes } from '@/lib/sftp-transfers'
 import { cn } from '@/lib/utils'
+import { FileTypeIcon } from './file-type-icon'
 
 export type UnifiedEntry = {
   path: string
   fileName: string
+  /** For a symbolic link, whether its target is a directory. */
   isDir: boolean
   size?: number
   modifiedAt?: number
+  isSymlink?: boolean
+  linkTarget?: string
+  linkBroken?: boolean
 }
 
 const entryTimeFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -295,7 +298,7 @@ export function FilePane({
                 />
                 {renamingPath === entry.path ? (
                   <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                    {entry.isDir ? <Folder className="h-4 w-4 shrink-0 text-[var(--workspace-accent-text)] md:h-3.5 md:w-3.5" /> : <FileText className="h-4 w-4 shrink-0 text-[var(--workspace-text-subtle)] md:h-3.5 md:w-3.5" />}
+                    <FileTypeIcon fileName={entry.fileName} isDir={entry.isDir} isSymlink={entry.isSymlink} linkBroken={entry.linkBroken} />
                     <input type="text" value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') confirmRename(); if (e.key === 'Escape') setRenamingPath(null) }}
                       autoFocus className="min-w-0 flex-1 rounded bg-[var(--workspace-surface-800)] px-1 text-xs outline-none focus:ring-1 focus:ring-[hsl(var(--primary)/0.4)]" />
@@ -315,12 +318,11 @@ export function FilePane({
                     }}
                     onDoubleClick={() => { if (entry.isDir && !selectionMode) onEnterDir(entry.path) }}
                   >
-                    {entry.isDir ? (
-                      <Folder className="h-4 w-4 shrink-0 text-[var(--workspace-accent-text)] md:h-3.5 md:w-3.5" />
-                    ) : (
-                      <FileText className="h-4 w-4 shrink-0 text-[var(--workspace-text-subtle)] md:h-3.5 md:w-3.5" />
-                    )}
-                    <span className="truncate text-[var(--workspace-text-strong)]">{entry.fileName}</span>
+                    <FileTypeIcon fileName={entry.fileName} isDir={entry.isDir} isSymlink={entry.isSymlink} linkBroken={entry.linkBroken} />
+                    <span className={cn('truncate', entry.linkBroken ? 'text-[var(--workspace-text-muted)] line-through decoration-[var(--workspace-status-bad)]' : 'text-[var(--workspace-text-strong)]')}>{entry.fileName}</span>
+                    {entry.isSymlink && entry.linkTarget && <span className="min-w-0 shrink truncate text-[var(--workspace-text-subtle)]" title={entry.linkBroken ? `${entry.linkTarget} (${t('sftpPane.linkBroken')})` : entry.linkTarget}>
+                      → {entry.linkTarget}{entry.linkBroken && <span className="ml-1 text-[var(--workspace-status-bad)]">({t('sftpPane.linkBroken')})</span>}
+                    </span>}
                   </button>
                 )}
                 <span className="hidden w-16 shrink-0 text-right font-mono text-[var(--workspace-text-muted)] sm:block">{entry.isDir ? '—' : formatBytes(entry.size)}</span>

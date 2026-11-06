@@ -2014,6 +2014,7 @@ const en: Record<string, string> = {
   'sftpPane.name': 'Name',
   'sftpPane.size': 'Size',
   'sftpPane.modified': 'Modified',
+  'sftpPane.linkBroken': 'broken link',
   'sftpPane.folderName': 'Folder name...',
   'sftpPane.emptyDir': 'Empty directory',
   'sftpPane.selected': '{n} sel',

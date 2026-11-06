@@ -230,6 +230,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
       setRemoteEntries(entries.map((e: SftpEntry) => ({
         path: e.path, fileName: e.fileName, isDir: e.isDir,
         size: e.size, modifiedAt: e.modifiedAt,
+        isSymlink: e.isSymlink, linkTarget: e.linkTarget, linkBroken: e.linkBroken,
       })))
       setRemoteConnected(true)
     } catch (err) {

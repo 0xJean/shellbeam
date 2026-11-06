@@ -50,4 +50,25 @@ describe('sftp file pane', () => {
     expect(onDeletePaths).toHaveBeenCalledWith(['/tmp/a', '/tmp/b'])
     expect(onDelete).not.toHaveBeenCalled()
   })
+  it('shows type icons and where links point, marking broken ones', () => {
+    const onEnterDir = vi.fn()
+    render(
+      <FilePane
+        title="Remote" icon={<HardDrive className="h-3.5 w-3.5" />} currentDir="/srv/app" loading={false} selectedPaths={new Set()}
+        entries={[
+          { path: '/srv/app/current', fileName: 'current', isDir: true, isSymlink: true, linkTarget: 'releases/2026-10-23' },
+          { path: '/srv/app/gone', fileName: 'gone', isDir: false, isSymlink: true, linkTarget: 'missing', linkBroken: true },
+          { path: '/srv/app/deploy.sh', fileName: 'deploy.sh', isDir: false, size: 10 },
+        ]}
+        onDirChange={() => {}} onRefresh={() => {}} onGoUp={() => {}} onEnterDir={onEnterDir} onToggleSelect={() => {}}
+        onSelectAll={() => {}} onClearSelection={() => {}} filter="" onFilterChange={() => {}}
+      />,
+    )
+    expect(screen.getByText('→ releases/2026-10-23')).toBeInTheDocument()
+    expect(screen.getByText('sftpPane.linkBroken', { exact: false })).toBeInTheDocument()
+    const icons = Array.from(document.querySelectorAll('[data-file-icon]')).map((node) => node.getAttribute('data-file-icon'))
+    expect(icons).toEqual(expect.arrayContaining(['folder', 'console']))
+    fireEvent.doubleClick(screen.getByText('current'))
+    expect(onEnterDir).toHaveBeenCalledWith('/srv/app/current')
+  })
 })
