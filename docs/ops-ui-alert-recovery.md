@@ -53,3 +53,18 @@ The before/after native component reports and screenshots are retained at
 fixture is under ignored `.tmp/ops-recovery-check`; the temporary container
 is removed after testing. A complete packaged Ops UI run on the resulting
 commit remains required; these component results do not replace it.
+
+## Connection test ordering found by the first PR run
+
+PR run `44219727093` failed one pre-existing English connection-flow test:
+it asserted `getKomariMappingState` immediately after the verified-connection
+banner appeared. The child mapping panel first awaits `listKomariIntegrations`,
+so the banner does not imply that the mapping call has started. The same file
+passed all 40 cases in isolation, consistent with the missing asynchronous
+boundary rather than a deterministic connection error.
+
+The bilingual test now holds that catalog promise, verifies that completion
+is disabled and mapping has not started, then resolves it and awaits the real
+node row before checking the original scoped call and completion assertions.
+No production connection code or timeout changes. The revised 40 cases and
+full macOS frontend suite (2219 passed, 17 skipped), ESLint and diff checks pass.

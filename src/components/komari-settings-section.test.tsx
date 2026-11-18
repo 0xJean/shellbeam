@@ -139,14 +139,24 @@ describe('native Komari connection flow', () => {
   it.each(['en', 'zh-CN'] as const)('verifies the saved custom credential, discovers nodes, and completes without opening a console (%s)', async (locale) => {
     localStorage.setItem('shellbeam.locale', locale)
     const text = komariOnboardingCopy[locale]
+    let finishMappingCatalog!: (rows: KomariIntegration[]) => void
+    vi.mocked(listKomariIntegrations)
+      .mockResolvedValueOnce([integration()])
+      .mockImplementationOnce(() => new Promise(resolve => { finishMappingCatalog = resolve }))
     await renderEditor()
     await waitFor(() => expect(screen.getByRole('button', { name: text.verify })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: text.verify }))
     expect(await screen.findByText(`${text.verified} · ${text.nodes}: 1`)).toBeVisible()
     expect(vault.revealSecret).toHaveBeenCalledExactlyOnceWith('custom.saved.key')
     expect(verifyKomariConnection).toHaveBeenCalledExactlyOnceWith({ endpoint: integration().endpoint, token: 'synthetic-stored-key' })
-    expect(getKomariMappingState).toHaveBeenCalledWith('vault-a', 'same-id')
+    // Connection success renders before the mapping panel's catalog request
+    // finishes. Hold that request to exercise the actual asynchronous boundary.
+    await waitFor(() => expect(listKomariIntegrations).toHaveBeenCalledTimes(2))
+    expect(getKomariMappingState).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: text.finish })).toBeDisabled()
+    await act(async () => { finishMappingCatalog([integration()]) })
     expect(await screen.findByTestId('komari-mapping-node-1')).toHaveTextContent('Node One')
+    expect(getKomariMappingState).toHaveBeenCalledWith('vault-a', 'same-id')
     await waitFor(() => expect(screen.getByRole('button', { name: text.finish })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: text.finish }))
     expect(screen.getByRole('status')).toHaveTextContent(text.ready)
