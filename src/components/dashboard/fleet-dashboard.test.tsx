@@ -46,4 +46,15 @@ describe('fleet dashboard', () => {
     expect(screen.getByTestId('fleet-certs')).toHaveTextContent('Run a Sites & SSL scan')
     expect(screen.getByTestId('fleet-os')).not.toHaveTextContent('No samples')
   })
+
+  it('exposes the unified Server bar and Probes management tab across all hosts', async () => {
+    render(<I18nProvider><FleetDashboard hosts={hosts} vaultId="v" unlocked /></I18nProvider>)
+    expect(await screen.findByTestId('fleet-server-bar')).toBeInTheDocument()
+    expect(screen.getByTestId('fleet-connect-server')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Probes' }))
+    const table = await screen.findByTestId('fleet-probes-manager')
+    expect(within(table).getAllByTestId('fleet-probe-row')).toHaveLength(2)
+    expect(within(table).getAllByTestId('fleet-row-install')).toHaveLength(2)
+  })
 })

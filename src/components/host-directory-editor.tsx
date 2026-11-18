@@ -1,19 +1,24 @@
 import { useState, type ComponentProps } from 'react'
 import { hostConnections, validateHostDraft, withHostConnections, type ConnectionProfile, type HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { connectShellbeamServer, formatServerConnectError } from '@/lib/server-quick-connect'
 import { HostForm } from './host-form'
+import { INITIAL_SERVER_DRAFT, type InlineServerConnectDraft } from './inline-server-connect'
+import { MonitoringModeField } from './monitoring-mode-field'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
-import { MonitoringModeField } from './monitoring-mode-field'
 
 type Props = Omit<ComponentProps<typeof HostForm>, 'initial'> & { host: HostProfile }
 
 /** One host save owns its metadata and connection set. Editing/removing a
  * connection never creates/deletes a host, monitoring binding or Vault secret. */
 export function HostDirectoryEditor({ host, onSubmit, onCancel, metadataControls, ...form }: Props) {
-  const { t } = useT()
+  const { t, locale } = useT()
   const [name, setName] = useState(host.name)
   const [monitoringMode, setMonitoringMode] = useState(host.monitoringMode)
+  const [installProbe, setInstallProbe] = useState(host.monitoringMode !== 'server')
+  const [serverDraft, setServerDraft] = useState<InlineServerConnectDraft>(INITIAL_SERVER_DRAFT)
+  const [selectedServerId, setSelectedServerId] = useState<string>('')
   const [group, setGroup] = useState(host.group)
   const [tags, setTags] = useState(host.tags.join(', '))
   const [connections, setConnections] = useState(() => hostConnections(host))
@@ -43,7 +48,42 @@ export function HostDirectoryEditor({ host, onSubmit, onCancel, metadataControls
     const validation = validateHostDraft(draft)
     if (!validation.isValid) { setError(validation.errors[0]); return }
     setSaving(true)
-    try { await onSubmit(draft) } catch { setError(t('hostDirectory.saveFailed')) } finally { setSaving(false) }
+    try {
+      const targetVaultId = host.vaultId ?? form.vaultId
+      if (monitoringMode === 'server' && serverDraft.endpoint.trim() && targetVaultId && form.onSaveToVault) {
+        try {
+          await connectShellbeamServer({
+            vaultId: targetVaultId,
+            name: serverDraft.name,
+            endpoint: serverDraft.endpoint,
+            authMode: serverDraft.authMode,
+            apiKey: serverDraft.apiKey,
+            username: serverDraft.username,
+            password: serverDraft.password,
+            twoFactor: serverDraft.twoFactor,
+            installToken: serverDraft.installToken,
+            metricDsn: serverDraft.metricDsn,
+            saveSecret: form.onSaveToVault,
+            loadSecret: form.onLoadVaultSecret,
+          })
+          setServerDraft(INITIAL_SERVER_DRAFT)
+        } catch (serverErr) {
+          setError(formatServerConnectError(serverErr, locale))
+          setSaving(false)
+          return
+        }
+      }
+      const shouldInstall = monitoringMode === 'server' && host.monitoringMode !== 'server' && installProbe
+      if (shouldInstall) {
+        await onSubmit(draft, { installProbe: true })
+      } else {
+        await onSubmit(draft)
+      }
+    } catch {
+      setError(t('hostDirectory.saveFailed'))
+    } finally {
+      setSaving(false)
+    }
   }
 
   return <div className="space-y-4 p-4" data-testid="host-directory-editor">
@@ -51,7 +91,23 @@ export function HostDirectoryEditor({ host, onSubmit, onCancel, metadataControls
     <label className="block space-y-1 text-sm">{t('hostForm.label')}<Input aria-label={t('hostForm.label')} value={name} onChange={e => setName(e.target.value)} /></label>
     <label className="block space-y-1 text-sm">{t('hostForm.parentGroup')}<Input aria-label={t('hostForm.parentGroup')} value={group} onChange={e => setGroup(e.target.value)} /></label>
     <label className="block space-y-1 text-sm">{t('hostForm.tags')}<Input aria-label={t('hostForm.tags')} value={tags} onChange={e => setTags(e.target.value)} /></label>
-    <MonitoringModeField retainedServer={host.monitoringMode === 'server'} value={monitoringMode ?? 'ssh'} onChange={setMonitoringMode} disabled={saving || form.vaultUnlocked === false} scopeKey={`${host.vaultId}:${host.id}:${host.createdAt}:${host.updatedAt}`} vaultId={host.vaultId} />
+    <MonitoringModeField
+      host={host}
+      retainedServer={host.monitoringMode === 'server'}
+      value={monitoringMode ?? 'ssh'}
+      onChange={setMonitoringMode}
+      disabled={saving || form.vaultUnlocked === false}
+      scopeKey={`${host.vaultId}:${host.id}:${host.createdAt}:${host.updatedAt}`}
+      vaultId={host.vaultId ?? form.vaultId}
+      installProbe={installProbe}
+      onInstallProbeChange={host.monitoringMode !== 'server' ? setInstallProbe : undefined}
+      serverDraft={serverDraft}
+      onServerDraftChange={setServerDraft}
+      selectedServerId={selectedServerId}
+      onSelectedServerIdChange={setSelectedServerId}
+      onSaveToVault={form.onSaveToVault}
+      onLoadVaultSecret={form.onLoadVaultSecret}
+    />
     {metadataControls}
     <section className="space-y-3 border-t pt-3" aria-label={t('hostDirectory.connections')}>
       <h3 className="text-sm font-medium">{t('hostDirectory.connections')}</h3>

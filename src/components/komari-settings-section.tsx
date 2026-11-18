@@ -17,6 +17,7 @@ import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
 import { MonitoringServicePanel } from './monitoring-service-panel'
 import { monitoringServiceCopy } from '@/lib/locales/monitoring-service'
 import { closeServiceScope, serviceRequest, serviceScope, serviceErrorCode, type ServiceScope } from '@/lib/monitoring-service'
+import { notifyServerIntegrationsChanged } from '@/lib/server-quick-connect'
 import { requestUserDecision } from '@/lib/user-confirmation'
 import { KomariMappingsPanel } from './komari-mappings-panel'
 import { monitorSettingsCopy } from '@/lib/locales/monitor-settings-v3'
@@ -281,6 +282,7 @@ function VaultKomariSettingsSection({ vaultId, onOpenServiceConfiguration, onInt
       setShowApiKey(false)
       setApiKey('')
       const reloaded = await load()
+      notifyServerIntegrationsChanged(vaultId, saved.id)
       if (reloaded && alive.current && isCurrentVault()) {
         setSavedNotice(true); setDirty(false)
         if (authMode !== 'key') {
@@ -346,6 +348,7 @@ function VaultKomariSettingsSection({ vaultId, onOpenServiceConfiguration, onInt
     setError('')
     try {
       await deleteKomariIntegration(selectedId, vaultId)
+      notifyServerIntegrationsChanged(vaultId)
       if (!alive.current) return
       resetForm()
       await load()

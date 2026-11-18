@@ -15,7 +15,7 @@ interface HostEditorDialogProps {
   existingGroups?: string[]
   existingTags?: string[]
   availableHosts?: HostProfile[]
-  onSubmit: (host: HostProfile, draft: HostProfileDraft) => Promise<void>
+  onSubmit: (host: HostProfile, draft: HostProfileDraft, options?: { installProbe?: boolean }) => Promise<void>
   onCancel: () => void
 }
 
@@ -50,7 +50,7 @@ export function HostEditorDialog({
             existingTags={existingTags}
             availableHosts={availableHosts}
             metadataControls={host.monitoringMode !== 'ssh' ? <><HostMetadataSyncPanel host={host} unlocked={!!vaultUnlocked} /><HostNotificationRulesPanel host={host} unlocked={!!vaultUnlocked} /></> : undefined}
-            onSubmit={(draft) => onSubmit(host, draft)}
+            onSubmit={(draft, options) => (options ? onSubmit(host, draft, options) : onSubmit(host, draft))}
             onCancel={onCancel}
           />
         )}

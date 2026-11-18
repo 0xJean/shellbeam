@@ -1317,7 +1317,11 @@ export function HostsDashboard({
             vaultName={vaultName}
             existingGroups={allExistingGroups}
             existingTags={allExistingTags}
-            onSubmit={async (host, draft) => { await onUpdateHost(host, draft); setEditingHost(null) }}
+            onSubmit={async (host, draft, options) => {
+              await onUpdateHost(host, draft)
+              setEditingHost(null)
+              if (options?.installProbe) setProbeInstallHost({ ...host, ...draft })
+            }}
             onCancel={() => setEditingHost(null)}
           />
 

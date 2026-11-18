@@ -117,7 +117,11 @@ export function MobileHostsPage({
       <HostEditorDialog availableHosts={scoped.filter((host) => host.id !== editing?.id)} host={editing} defaultUsername={defaultUsername} vaultKeys={vaultKeys}
         vaultUnlocked={vaultUnlocked} onSaveToVault={onSaveToVault} onLoadVaultSecret={onLoadVaultSecret} vaultName={vaultName}
         existingGroups={existingGroups} existingTags={existingTags}
-        onSubmit={async (host, draft) => { await onUpdateHost(host, draft); setEditing(null) }} onCancel={() => setEditing(null)} />
+        onSubmit={async (host, draft, options) => {
+          await onUpdateHost(host, draft)
+          setEditing(null)
+          if (options?.installProbe) setProbeHost({ ...host, ...draft })
+        }} onCancel={() => setEditing(null)} />
       {probeHost && <ProbeInstallDialog host={scoped.find((host) => host.id === probeHost.id) ?? probeHost} open onOpenChange={(open) => { if (!open) setProbeHost(null) }} />}
     </>
   )

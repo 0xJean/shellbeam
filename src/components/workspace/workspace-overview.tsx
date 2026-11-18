@@ -14,6 +14,7 @@ import { DockerOpsPanel } from './docker-ops-panel'
 import { ScheduledTasksPanel } from './scheduled-tasks-panel'
 import SitesSslPanel from '../sites-ssl-panel'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
+import { HostProbeBadge } from '../probe-install-entry'
 import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
 
 interface WorkspaceOverviewProps {
@@ -48,7 +49,10 @@ export function WorkspaceOverview({
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-border/60 bg-card px-6 py-5">
-        <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">{t('workspace.mode.workspace')}</div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">{t('workspace.mode.workspace')}</div>
+          {activeHost && <HostProbeBadge host={activeHost} os={getHostInventoryResource(activeHost, inventoryStates)?.os} />}
+        </div>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{hostName}</h1>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
           <span>{hostAddress}</span>

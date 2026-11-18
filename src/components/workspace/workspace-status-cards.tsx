@@ -8,7 +8,7 @@ import { workspaceOverviewCopy } from '@/lib/locales/workspace-overview'
 import { Sparkline } from '@/components/charts/chart-primitives'
 import { formatBytes } from '@/lib/metric-series'
 import { useHostMetricHistory } from '@/hooks/use-host-metric-history'
-import { ShellbeamAgentPanel } from './shellbeam-agent-panel'
+import { WorkspaceProbeCard } from './workspace-probe-card'
 import { WorkspaceProviderSummary } from './workspace-provider-summary'
 
 interface WorkspaceStatusCardsProps {
@@ -147,7 +147,7 @@ export function WorkspaceStatusCards(props: WorkspaceStatusCardsProps) {
         <p className="mt-1 text-xs text-[var(--workspace-text-subtle)]">{copy.noMetricsHint}</p>
       </section>}
       {showAgent && <div className="mt-4">
-        <ShellbeamAgentPanel host={host ?? null} vaultId={props.activeVaultId} resolveAuthSecret={props.resolveAuthSecret} />
+        <WorkspaceProbeCard host={host ?? null} />
       </div>}
     </>
   )

@@ -9,11 +9,12 @@ import { useWorkspaceProviderState } from '@/lib/workspace-provider-state'
 import { FolderOpen, RotateCw, SquareTerminal } from 'lucide-react'
 import { Button } from '../ui/button'
 import { HostMetadataLine } from '../host-display-meta'
+import { HostProbeBadge } from '../probe-install-entry'
 import { healthDotClass, serviceRows, type ServiceTone } from '@/lib/workspace-overview-display'
 import { WorkspaceStatusCards } from './workspace-status-cards'
 import { WorkspaceDataSourcesCard } from './workspace-provider-summary'
 import { ProviderHistoryPanel } from './provider-history-panel'
-import { ShellbeamAgentPanel } from './shellbeam-agent-panel'
+import { WorkspaceProbeCard } from './workspace-probe-card'
 import { WorkspaceRecommendationsPanel } from './workspace-recommendations-panel'
 import { WorkspaceOperationRecoveryNotice } from './workspace-operation-recovery-notice'
 
@@ -87,6 +88,7 @@ export function WorkspaceListOverview({ activeVaultId, hostName, hostAddress, ho
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {host && <HostProbeBadge host={host} os={inventory?.resource.os} />}
           <Button type="button" size="sm" variant="ghost" className="gap-1.5" disabled={provider.loading} onClick={() => void provider.refresh()}><RotateCw className={cn('h-3.5 w-3.5', provider.loading && 'animate-spin')} />{copy.refresh}</Button>
           <Button type="button" size="sm" variant="outline" className="gap-1.5" onClick={() => onSelectApp('fileTransfer')}><FolderOpen className="h-3.5 w-3.5" />{copy.sftp}</Button>
           <Button type="button" size="sm" className="gap-1.5" onClick={() => onSelectApp('terminal')}><SquareTerminal className="h-3.5 w-3.5" />{t('workspace.action.openTerminal')}</Button>
@@ -104,7 +106,7 @@ export function WorkspaceListOverview({ activeVaultId, hostName, hostAddress, ho
 
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16.5rem),1fr))] gap-3.5">
         <ServicesCard inventory={inventory} onOpenServices={() => onSelectApp('services')} className="max-h-[300px] min-h-[220px]" />
-        <ShellbeamAgentPanel variant="card" host={host} vaultId={activeVaultId} resolveAuthSecret={resolveAuthSecret} className="min-h-[220px]" />
+        <WorkspaceProbeCard variant="card" host={host} className="min-h-[220px]" />
         <WorkspaceRecommendationsPanel host={host} hosts={hosts} vaultId={activeVaultId} onSelectApp={onSelectApp} className="flex max-h-[300px] min-h-[220px] flex-col" />
       </div>
     </div>

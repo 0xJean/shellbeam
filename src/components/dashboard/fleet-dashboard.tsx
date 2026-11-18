@@ -1,17 +1,70 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { Activity, ArrowDownUp, Cpu, RefreshCw, Server, Siren } from 'lucide-react'
-import { BarList, CHART_COLORS, ChartCard, ChartLegend, DonutChart, DonutLegend, Heatmap, ScatterChart, SegmentedTabs, Sparkline, StackedBarChart, STATUS_COLORS, TimeSeriesChart } from '@/components/charts/chart-primitives'
+import {
+  Activity,
+  ArrowDownUp,
+  CheckCircle2,
+  CircleAlert,
+  Cpu,
+  Layers,
+  PlugZap,
+  Radar,
+  RefreshCw,
+  Server,
+  Settings2,
+  Siren,
+  Wrench,
+  X,
+} from 'lucide-react'
+import {
+  BarList,
+  CHART_COLORS,
+  ChartCard,
+  ChartLegend,
+  DonutChart,
+  DonutLegend,
+  Heatmap,
+  ScatterChart,
+  SegmentedTabs,
+  Sparkline,
+  StackedBarChart,
+  STATUS_COLORS,
+  TimeSeriesChart,
+} from '@/components/charts/chart-primitives'
 import { HostRegionMeta } from '@/components/host-display-meta'
+import { HostProbeManageDialog } from '@/components/host-probe-manage-dialog'
+import { InlineServerConnect } from '@/components/inline-server-connect'
+import { MonitorSettingsSection } from '@/components/monitor-settings-section'
+import { ProbeBatchInstallDialog } from '@/components/probe-batch-install'
+import { ProbeInstallDialog } from '@/components/probe-install-dialog'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useFleetMetrics, isOpenAlert, type FleetHost } from '@/hooks/use-fleet-metrics'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
-import type { HostProfile } from '@/lib/hosts'
+import { hasSshConnection, type HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { fleetDashboardCopy } from '@/lib/locales/fleet-dashboard'
 import { fill } from '@/lib/locales/probe-install'
-import { averageBuckets, bucketize, bucketTimes, dailyAlertCounts, DAY_MS, formatBytes, formatBytesRate, latestValue, mean, peak, seriesOf, sumBuckets, type NumericMetric } from '@/lib/metric-series'
+import { unifiedProbeCopy } from '@/lib/locales/unified-probe'
+import {
+  averageBuckets,
+  bucketize,
+  bucketTimes,
+  dailyAlertCounts,
+  DAY_MS,
+  formatBytes,
+  formatBytesRate,
+  latestValue,
+  mean,
+  peak,
+  seriesOf,
+  sumBuckets,
+  type NumericMetric,
+} from '@/lib/metric-series'
+import { isProbeInstalled, isProbeSupportedOs } from '@/lib/probe-install'
 import { cn } from '@/lib/utils'
+import { vaultGetSecret, vaultSetSecret } from '@/lib/vault'
 
-type Tab = 'resources' | 'ops' | 'assets'
+type Tab = 'resources' | 'probes' | 'ops' | 'assets'
 type Range = 1 | 24 | 168
 const RANGE_BUCKETS: Record<Range, number> = { 1: 60, 24: 48, 168: 84 }
 const HEAT_COLUMNS: Record<Range, number> = { 1: 12, 24: 24, 168: 28 }
@@ -20,6 +73,8 @@ interface FleetDashboardProps {
   hosts: HostProfile[]
   vaultId?: string | null
   unlocked: boolean
+  onSaveToVault?: (key: string, value: string) => Promise<void>
+  onLoadVaultSecret?: (key: string) => Promise<string | null>
   /** Opens the host's workspace on its monitoring charts. */
   onOpenHost?: (hostId: string) => void
   onOpenAlerts?: () => void
@@ -43,13 +98,34 @@ const osFamily = (os: string | null | undefined) => {
   return name ? name.charAt(0).toUpperCase() + name.slice(1) : ''
 }
 
-export function FleetDashboard({ hosts, vaultId, unlocked, onOpenHost, onOpenAlerts }: FleetDashboardProps) {
+const hostOsString = (item: FleetHost) =>
+  item.view?.resource?.os || item.view?.metrics?.os || item.history[item.history.length - 1]?.metrics.os || ''
+
+export function FleetDashboard({
+  hosts,
+  vaultId,
+  unlocked,
+  onSaveToVault,
+  onLoadVaultSecret,
+  onOpenHost,
+  onOpenAlerts,
+}: FleetDashboardProps) {
   const { locale } = useT()
   const c = fleetDashboardCopy[locale]
+  const u = unifiedProbeCopy[locale]
   const [tab, setTab] = useState<Tab>('resources')
   const [range, setRange] = useState<Range>(24)
+  const [connectServerOpen, setConnectServerOpen] = useState(false)
+  const [serverSettingsOpen, setServerSettingsOpen] = useState(false)
+  const [batchInstallOpen, setBatchInstallOpen] = useState(false)
+  const [installTarget, setInstallTarget] = useState<HostProfile | null>(null)
+  const [manageTarget, setManageTarget] = useState<HostProfile | null>(null)
+
   const fleet = useFleetMetrics({ hosts, vaultId, unlocked, rangeHours: range })
   const network = useHostNetworkMetadata(hosts.map((host) => host.address))
+
+  const saveSecret = onSaveToVault ?? (async (key: string, value: string) => { await vaultSetSecret(key, value, vaultId ?? undefined) })
+  const loadSecret = onLoadVaultSecret ?? (async (key: string) => vaultGetSecret(key, vaultId ?? undefined))
 
   const buckets = RANGE_BUCKETS[range]
   const times = useMemo(() => bucketTimes(fleet.from, fleet.to, buckets), [fleet.from, fleet.to, buckets])
@@ -80,6 +156,16 @@ export function FleetDashboard({ hosts, vaultId, unlocked, onOpenHost, onOpenAle
   const txNow = fleet.hosts.reduce((sum, item) => sum + (latestMetric(item, 'networkTxBytesPerSec') ?? 0), 0)
   const hasNet = fleet.hosts.some((item) => latestMetric(item, 'networkRxBytesPerSec') != null)
 
+  const probedCount = fleet.hosts.filter((item) => isProbeInstalled(item.probeRecord)).length
+  const upgradeableHosts = useMemo(
+    () =>
+      fleet.hosts
+        .filter((item) => !isProbeInstalled(item.probeRecord) && hasSshConnection(item.host) && isProbeSupportedOs(hostOsString(item)))
+        .map((item) => item.host),
+    [fleet.hosts],
+  )
+  const primaryServer = fleet.servers[0] ?? null
+
   return (
     <div data-testid="fleet-dashboard" className="flex min-w-0 flex-col gap-4 text-[var(--workspace-text)]">
       <header className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -91,13 +177,137 @@ export function FleetDashboard({ hosts, vaultId, unlocked, onOpenHost, onOpenAle
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <SegmentedTabs size="md" label={c.title} value={tab} onChange={setTab} options={[{ value: 'resources', label: c.tabResources }, { value: 'ops', label: c.tabOps }, { value: 'assets', label: c.tabAssets }]} />
-          <SegmentedTabs size="md" label={c.range} value={String(range) as `${Range}`} onChange={(value) => setRange(Number(value) as Range)} options={([1, 24, 168] as Range[]).map((value) => ({ value: String(value) as `${Range}`, label: c.rangeLabel[value] }))} />
-          <button type="button" aria-label={c.refresh} title={c.refresh} onClick={fleet.refresh} className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]">
+          <SegmentedTabs
+            size="md"
+            label={c.title}
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: 'resources', label: c.tabResources },
+              { value: 'probes', label: u.tabProbes },
+              { value: 'ops', label: c.tabOps },
+              { value: 'assets', label: c.tabAssets },
+            ]}
+          />
+          {tab !== 'probes' && (
+            <SegmentedTabs
+              size="md"
+              label={c.range}
+              value={String(range) as `${Range}`}
+              onChange={(value) => setRange(Number(value) as Range)}
+              options={([1, 24, 168] as Range[]).map((value) => ({ value: String(value) as `${Range}`, label: c.rangeLabel[value] }))}
+            />
+          )}
+          <button
+            type="button"
+            aria-label={c.refresh}
+            title={c.refresh}
+            onClick={fleet.refresh}
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-700)] hover:text-[var(--workspace-text-strong)]"
+          >
             <RefreshCw className={cn('h-4 w-4', fleet.loading && 'animate-spin')} />
           </button>
         </div>
       </header>
+
+      {/* Unified Server & Probe Control Center Bar */}
+      {unlocked && vaultId && (
+        <section
+          data-testid="fleet-server-bar"
+          className={cn(
+            'sb-card flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between',
+            primaryServer ? 'border-[color:var(--workspace-border-soft)]' : 'border-dashed border-primary/40 bg-primary/5',
+          )}
+        >
+          {primaryServer ? (
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]">
+                <CheckCircle2 className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--workspace-text-strong)]">
+                  <span>{primaryServer.name}</span>
+                  <span className="truncate font-mono text-xs font-normal text-[var(--workspace-text-muted)]">
+                    {primaryServer.endpoint}
+                  </span>
+                  {fleet.servers.length > 1 && (
+                    <span className="rounded bg-[var(--workspace-surface-800)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--workspace-text-muted)]">
+                      +{fleet.servers.length - 1}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">
+                  {fill(u.barCoverage, {
+                    probed: probedCount,
+                    total: fleet.hosts.length,
+                    native: Math.max(0, fleet.hosts.length - probedCount),
+                  })}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
+                <Radar className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-[var(--workspace-text-strong)]">{u.barNoServerTitle}</div>
+                <p className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{u.barNoServerDesc}</p>
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {!primaryServer ? (
+              <Button
+                size="sm"
+                data-testid="fleet-connect-server"
+                onClick={() => setConnectServerOpen(true)}
+                className="h-8 gap-1.5 text-xs"
+              >
+                <PlugZap className="h-3.5 w-3.5" />
+                {u.barConnectServer}
+              </Button>
+            ) : (
+              <>
+                {tab !== 'probes' && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    data-testid="fleet-open-probes-tab"
+                    onClick={() => setTab('probes')}
+                    className="h-8 gap-1.5 text-xs"
+                  >
+                    <Radar className="h-3.5 w-3.5" />
+                    {fill(u.barManageProbes, { probed: probedCount, total: fleet.hosts.length })}
+                  </Button>
+                )}
+                {upgradeableHosts.length > 0 && (
+                  <Button
+                    size="sm"
+                    data-testid="fleet-batch-install"
+                    onClick={() => setBatchInstallOpen(true)}
+                    className="h-8 gap-1.5 text-xs"
+                  >
+                    <Layers className="h-3.5 w-3.5" />
+                    {fill(u.barBatchInstall, { count: upgradeableHosts.length })}
+                  </Button>
+                )}
+              </>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="fleet-server-settings"
+              onClick={() => setServerSettingsOpen(true)}
+              className="h-8 gap-1.5 text-xs"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              {u.barServerSettings}
+            </Button>
+          </div>
+        </section>
+      )}
 
       <div data-testid="fleet-kpis" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi icon={<Server />} label={c.kpiOnline} value={<>{reachable}<small className="text-base font-medium text-[var(--workspace-text-muted)]"> / {fleet.hosts.length}</small></>}
@@ -115,9 +325,289 @@ export function FleetDashboard({ hosts, vaultId, unlocked, onOpenHost, onOpenAle
       </div>
 
       {tab === 'resources' && <ResourcesTab perHost={perHost} times={times} formatTime={formatTime} range={range} counts={counts} fleet={fleet.hosts} onOpenHost={onOpenHost} />}
+      {tab === 'probes' && (
+        <ProbesTab
+          fleet={fleet.hosts}
+          upgradeableCount={upgradeableHosts.length}
+          onOpenHost={onOpenHost}
+          onInstall={(host) => setInstallTarget(host)}
+          onManage={(host) => setManageTarget(host)}
+          onBatchInstall={() => setBatchInstallOpen(true)}
+        />
+      )}
       {tab === 'ops' && <OpsTab fleetMetrics={fleet} times={times} formatTime={formatTime} rx={rxSum} tx={txSum} />}
       {tab === 'assets' && <AssetsTab fleetMetrics={fleet} network={network} />}
+
+      {/* Quick Connect Server Dialog */}
+      {connectServerOpen && vaultId && (
+        <Dialog open={connectServerOpen} onOpenChange={setConnectServerOpen} labelledBy="fleet-connect-server-title">
+          <DialogContent className="max-w-lg p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 id="fleet-connect-server-title" className="text-base font-semibold">{u.serverBoxTitle}</h2>
+              <button type="button" aria-label="Close" onClick={() => setConnectServerOpen(false)} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <InlineServerConnect
+              vaultId={vaultId}
+              saveSecret={saveSecret}
+              loadSecret={loadSecret}
+              onConnected={() => {
+                setConnectServerOpen(false)
+                fleet.refresh()
+              }}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Unified Server & Alerts Configuration Dialog */}
+      {serverSettingsOpen && (
+        <Dialog open={serverSettingsOpen} onOpenChange={setServerSettingsOpen} labelledBy="fleet-server-settings-title">
+          <DialogContent className="flex max-h-[88vh] flex-col overflow-hidden p-0 md:w-[880px] md:max-w-[95vw]">
+            <header className="flex items-center justify-between border-b border-border px-5 py-3.5">
+              <h2 id="fleet-server-settings-title" className="text-base font-semibold">{u.serverDialogTitle}</h2>
+              <button type="button" aria-label="Close" onClick={() => setServerSettingsOpen(false)} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+                <X className="h-4 w-4" />
+              </button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              <MonitorSettingsSection />
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {batchInstallOpen && upgradeableHosts.length > 0 && (
+        <ProbeBatchInstallDialog
+          hosts={upgradeableHosts}
+          open={batchInstallOpen}
+          onOpenChange={(open) => {
+            setBatchInstallOpen(open)
+            if (!open) fleet.refresh()
+          }}
+        />
+      )}
+
+      {installTarget && (
+        <ProbeInstallDialog
+          host={hosts.find((h) => h.id === installTarget.id) ?? installTarget}
+          open={!!installTarget}
+          onOpenChange={(open) => {
+            if (!open) {
+              setInstallTarget(null)
+              fleet.refresh()
+            }
+          }}
+        />
+      )}
+
+      {manageTarget && (
+        <HostProbeManageDialog
+          host={hosts.find((h) => h.id === manageTarget.id) ?? manageTarget}
+          open={!!manageTarget}
+          onOpenChange={(open) => {
+            if (!open) {
+              setManageTarget(null)
+              fleet.refresh()
+            }
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+function ProbesTab({
+  fleet,
+  upgradeableCount,
+  onOpenHost,
+  onInstall,
+  onManage,
+  onBatchInstall,
+}: {
+  fleet: FleetHost[]
+  upgradeableCount: number
+  onOpenHost?: (hostId: string) => void
+  onInstall: (host: HostProfile) => void
+  onManage: (host: HostProfile) => void
+  onBatchInstall: () => void
+}) {
+  const { locale } = useT()
+  const u = unifiedProbeCopy[locale]
+  const [filter, setFilter] = useState<'all' | 'probed' | 'native' | 'attention'>('all')
+
+  const classify = (item: FleetHost): 'probed' | 'attention' | 'native' => {
+    const rec = item.probeRecord
+    if (isProbeInstalled(rec)) {
+      return rec?.status === 'active' && item.status !== 'offline' ? 'probed' : 'attention'
+    }
+    if (rec && ['prepared', 'dispatched', 'unknown', 'failed', 'migrated'].includes(rec.status)) {
+      return 'attention'
+    }
+    return 'native'
+  }
+
+  const filterCounts = { all: fleet.length, probed: 0, native: 0, attention: 0 }
+  for (const item of fleet) filterCounts[classify(item)] += 1
+
+  const visible = fleet.filter((item) => filter === 'all' || classify(item) === filter)
+  const fmtPct = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v)}%`)
+
+  return (
+    <section data-testid="fleet-probes-manager" className="sb-card overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-[color:var(--workspace-border-soft)] p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-[var(--workspace-text-strong)]">{u.probeTableTitle}</h2>
+          <p className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{u.probeTableSub}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap gap-1 rounded-lg bg-[var(--workspace-surface-800)] p-1">
+            {([
+              ['all', fill(u.filterAll, { count: filterCounts.all })],
+              ['probed', fill(u.filterProbed, { count: filterCounts.probed })],
+              ['native', fill(u.filterNative, { count: filterCounts.native })],
+              ['attention', fill(u.filterAttention, { count: filterCounts.attention })],
+            ] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                data-testid={`fleet-probes-filter-${id}`}
+                onClick={() => setFilter(id)}
+                className={cn(
+                  'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                  filter === id
+                    ? 'bg-[var(--workspace-surface-950)] text-[var(--workspace-text-strong)] shadow-sm'
+                    : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {upgradeableCount > 0 && (
+            <Button size="sm" onClick={onBatchInstall} className="h-8 gap-1.5 text-xs">
+              <Layers className="h-3.5 w-3.5" />
+              {fill(u.barBatchInstall, { count: upgradeableCount })}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {visible.length === 0 ? (
+        <div className="px-6 py-12 text-center text-xs text-[var(--workspace-text-muted)]">
+          {u.emptyHostsForProbes}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] border-collapse text-left text-xs">
+            <thead>
+              <tr className="border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)]/50 text-[11px] font-medium text-[var(--workspace-text-muted)]">
+                <th className="px-4 py-2.5">{u.colHost}</th>
+                <th className="px-4 py-2.5">{u.colTier}</th>
+                <th className="px-4 py-2.5">{u.colMetrics}</th>
+                <th className="px-4 py-2.5 text-right">{u.colActions}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[color:var(--workspace-border-soft)]">
+              {visible.map((item) => {
+                const { host, probeRecord } = item
+                const installed = isProbeInstalled(probeRecord)
+                const version = probeRecord?.current?.manifest.version
+                const kind = classify(item)
+                const canSsh = hasSshConnection(host)
+                const os = osFamily(hostOsString(item))
+                const cpu = latestMetric(item, 'cpuPercent')
+                const mem = latestMetric(item, 'memoryPercent')
+                const disk = latestMetric(item, 'diskPercent')
+
+                return (
+                  <tr key={host.id} data-testid="fleet-probe-row" data-host-id={host.id} className="hover:bg-[var(--workspace-surface-800)]/40">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        {onOpenHost ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenHost(host.id)}
+                            className="font-semibold text-[var(--workspace-text-strong)] hover:underline"
+                          >
+                            {host.name}
+                          </button>
+                        ) : (
+                          <span className="font-semibold text-[var(--workspace-text-strong)]">{host.name}</span>
+                        )}
+                        {os && (
+                          <span className="rounded bg-[var(--workspace-surface-700)] px-1.5 py-0.5 text-[10px] text-[var(--workspace-text-muted)]">
+                            {os}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 font-mono text-[11px] text-[var(--workspace-text-subtle)]">
+                        {canSsh ? `${host.username}@${host.address}:${host.port}` : host.address || u.tierPillNoSsh}
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      {kind === 'probed' ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] px-2.5 py-0.5 text-[11px] font-medium text-[color:var(--workspace-status-good-text)]">
+                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--workspace-status-good)]" />
+                          {fill(u.tierPillProbed, { version: version ? `v${version}` : '' }).trim()}
+                        </span>
+                      ) : kind === 'attention' ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] px-2.5 py-0.5 text-[11px] font-medium text-[color:var(--workspace-status-warn-text)]">
+                          <CircleAlert className="h-3 w-3" />
+                          {u.badgeAttention}
+                        </span>
+                      ) : host.monitoringMode === 'server' ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
+                          {u.tierPillServerPending}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--workspace-text-muted)]">
+                          {canSsh ? u.tierPillNative : u.tierPillNoSsh}
+                        </span>
+                      )}
+                    </td>
+
+                    <td className="px-4 py-3 font-mono text-[11.5px] text-[var(--workspace-text)]">
+                      CPU {fmtPct(cpu)} · MEM {fmtPct(mem)} · DISK {fmtPct(disk)}
+                    </td>
+
+                    <td className="px-4 py-3 text-right">
+                      {installed || kind === 'attention' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid="fleet-row-manage"
+                          onClick={() => onManage(host)}
+                          className="h-7 gap-1.5 text-xs"
+                        >
+                          <Wrench className="h-3 w-3" />
+                          {u.btnManageProbe}
+                        </Button>
+                      ) : canSsh && isProbeSupportedOs(hostOsString(item)) ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid="fleet-row-install"
+                          onClick={() => onInstall(host)}
+                          className="h-7 gap-1.5 border-dashed border-primary/50 text-xs text-[var(--workspace-accent-text)] hover:border-solid hover:bg-primary/10"
+                        >
+                          <Radar className="h-3 w-3" />
+                          {u.btnInstallProbe}
+                        </Button>
+                      ) : (
+                        <span className="text-[11px] text-[var(--workspace-text-subtle)]">—</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -151,7 +641,7 @@ function ResourcesTab({ perHost, times, formatTime, range, counts, fleet, onOpen
     const metrics = item.view?.metrics
     return { item, value: latestMetric(item, 'diskPercent'), used: metrics?.diskUsedBytes ?? null, total: metrics?.diskTotalBytes ?? null }
   }).filter((row): row is typeof row & { value: number } => row.value != null).sort((a, b) => b.value - a.value).slice(0, 5)
-  const serverCount = fleet.filter((item) => item.host.monitoringMode === 'server').length
+  const serverCount = fleet.filter((item) => item.host.monitoringMode === 'server' || isProbeInstalled(item.probeRecord)).length
   const bucketWidth = (to - from) / columns
   const bucketLabel = bucketWidth >= DAY_MS / 4 ? `${Math.round(bucketWidth / 3_600_000)} h` : bucketWidth >= 3_600_000 ? '1 h' : `${Math.round(bucketWidth / 60_000)} min`
   const metricLabel = { cpuPercent: 'CPU', memoryPercent: c.metricMemory, diskPercent: c.metricDisk }
@@ -218,27 +708,28 @@ function OpsTab({ fleetMetrics, times, formatTime, rx, tx }: { fleetMetrics: Ret
     <ChartCard testId="fleet-alert-sources" title={c.alertSources} subtitle={c.alertSourcesSub}>
       <div className="flex items-center gap-6 py-2">
         <DonutChart size={150} center={week.length} sub={c.thisWeek} segments={[{ label: c.monitoring, value: monitoringCount, color: CHART_COLORS[0] }, { label: c.localRules, value: week.length - monitoringCount, color: STATUS_COLORS.good }]} />
-        <DonutLegend segments={[{ label: c.monitoring, value: monitoringCount, color: CHART_COLORS[0] }, { label: c.localRules, value: week.length - monitoringCount, color: STATUS_COLORS.good }]} />
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <Tile label={c.ackTime} value={ack ?? '—'} unit={ack == null ? undefined : c.minuteUnit} />
-        <Tile label={c.recoverTime} value={recover ?? '—'} unit={recover == null ? undefined : c.minuteUnit} />
+        <div className="min-w-0 flex-1 space-y-2.5">
+          <DonutLegend segments={[{ label: c.monitoring, value: monitoringCount, color: CHART_COLORS[0] }, { label: c.localRules, value: week.length - monitoringCount, color: STATUS_COLORS.good }]} />
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <Tile label={c.ackTime} value={ack ?? '—'} unit={ack == null ? undefined : c.minuteUnit} />
+            <Tile label={c.recoverTime} value={recover ?? '—'} unit={recover == null ? undefined : c.minuteUnit} />
+          </div>
+        </div>
       </div>
     </ChartCard>
     <ChartCard testId="fleet-network" title={c.network} subtitle={c.networkSub}>
-      <TimeSeriesChart times={times} formatTime={formatTime} formatValue={(v) => formatBytesRate(v).replace(/\/s$/, '')} emptyLabel={c.noData} height={240}
-        series={[{ key: 'rx', label: c.inbound, color: CHART_COLORS[4], values: rx, area: true }, { key: 'tx', label: c.outbound, color: CHART_COLORS[0], values: tx, area: true }]} />
-      <ChartLegend className="mt-2" items={[
-        { label: c.inbound, color: CHART_COLORS[4], value: formatBytesRate(latestValue(rx.map((v, i) => ({ t: i, v })))) },
-        { label: c.outbound, color: CHART_COLORS[0], value: formatBytesRate(latestValue(tx.map((v, i) => ({ t: i, v })))) },
-        ...(rxPeak != null ? [{ label: c.peak, color: 'var(--workspace-text-subtle)', value: `${formatBytesRate(rxPeak)} · ${formatTime(times[peakIndex])}` }] : []),
-      ]} />
+      <TimeSeriesChart times={times} formatTime={formatTime} formatValue={formatBytesRate} emptyLabel={c.noData}
+        series={[{ key: 'rx', label: c.inbound, color: CHART_COLORS[0], values: rx, area: true }, { key: 'tx', label: c.outbound, color: CHART_COLORS[4], values: tx }]} />
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <ChartLegend items={[{ label: c.inbound, color: CHART_COLORS[0] }, { label: c.outbound, color: CHART_COLORS[4] }]} />
+        {rxPeak != null && <span className="font-mono text-xs text-[var(--workspace-text-muted)]">{c.peak} {formatBytesRate(rxPeak)}{peakIndex >= 0 ? ` · ${formatTime(times[peakIndex])}` : ''}</span>}
+      </div>
     </ChartCard>
     <ChartCard testId="fleet-latency" title={c.latency} subtitle={c.latencySub}>
-      {latency.length ? <BarList max={latencyMax} format={(v) => String(Math.round(v))} rows={latency.map((row) => ({
-        key: row.item.host.id, label: row.item.host.name, value: row.value,
-        color: row.value >= 150 ? STATUS_COLORS.warn : STATUS_COLORS.good,
-        hint: row.item.view?.route.jumpHostName || row.item.view?.route.jumpHost ? fill(c.viaJump, { name: row.item.view?.route.jumpHostName || row.item.view?.route.jumpHost || '' }) : undefined,
+      {latency.length ? <BarList max={latencyMax} format={(v) => `${Math.round(v)}`} rows={latency.slice(0, 6).map(({ item, value }) => ({
+        key: item.host.id, label: item.host.name, value,
+        color: value >= 180 ? STATUS_COLORS.bad : value >= 90 ? STATUS_COLORS.warn : STATUS_COLORS.good,
+        hint: item.host.jumpHost ? fill(c.viaJump, { name: item.host.jumpHost }) : undefined,
       }))} /> : <Empty>{c.noSamples}</Empty>}
     </ChartCard>
   </div>
@@ -254,10 +745,24 @@ function AssetsTab({ fleetMetrics, network }: { fleetMetrics: ReturnType<typeof 
     const disk = latestMetric(item, 'diskPercent') ?? 0
     return [{ key: item.host.id, label: item.host.name, x: cpu, y: memory, size: disk, color: cpu >= 85 || memory >= 85 ? STATUS_COLORS.warn : CHART_COLORS[(index % 4) === 1 ? 3 : 0] }]
   })
-  const installed = fleetMetrics.agents.filter((agent) => agent.status !== 'retired' && hosts.some((item) => item.host.id === agent.hostId))
+
   const versions = new Map<string, number>()
-  for (const agent of installed) versions.set(agent.version || c.unknownVersion, (versions.get(agent.version || c.unknownVersion) ?? 0) + 1)
-  const probeHosts = new Set(installed.map((agent) => agent.hostId))
+  const probeHosts = new Set<string>()
+  for (const item of hosts) {
+    if (isProbeInstalled(item.probeRecord)) {
+      probeHosts.add(item.host.id)
+      const ver = item.probeRecord?.current?.manifest.version || c.unknownVersion
+      versions.set(ver, (versions.get(ver) ?? 0) + 1)
+    }
+  }
+  for (const agent of fleetMetrics.agents) {
+    if (agent.status !== 'retired' && !probeHosts.has(agent.hostId) && hosts.some((item) => item.host.id === agent.hostId)) {
+      probeHosts.add(agent.hostId)
+      const ver = agent.version || c.unknownVersion
+      versions.set(ver, (versions.get(ver) ?? 0) + 1)
+    }
+  }
+
   const sshOnly = hosts.filter((item) => !probeHosts.has(item.host.id) && item.host.monitoringMode !== 'server').length
   const serverOnly = hosts.filter((item) => !probeHosts.has(item.host.id) && item.host.monitoringMode === 'server').length
   const probeSegments = [
@@ -270,7 +775,7 @@ function AssetsTab({ fleetMetrics, network }: { fleetMetrics: ReturnType<typeof 
     .map((cert) => ({ cert, days: Math.ceil((cert.notAfter! - fleetMetrics.to) / DAY_MS) })).sort((a, b) => a.days - b.days).slice(0, 8)
   const os = new Map<string, number>()
   for (const item of hosts) {
-    const family = osFamily(item.view?.resource?.os || item.view?.metrics?.os || item.history[item.history.length - 1]?.metrics.os)
+    const family = osFamily(hostOsString(item))
     if (family) os.set(family, (os.get(family) ?? 0) + 1)
   }
   const osRows = [...os.entries()].sort((a, b) => b[1] - a[1])

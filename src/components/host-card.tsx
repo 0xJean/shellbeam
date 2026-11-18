@@ -347,7 +347,10 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
               {hostConnections(host).length > 1 && <span className="shrink-0">· {t('hostDirectory.connectionCount', { count: hostConnections(host).length })}</span>}
             </p>
           </div>
-          {host.group && <span className={cn('shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium', envTone(host.group))}>{groupLabel}</span>}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <ProbeInstallEntry host={host} os={resource?.os} enabled={monitoring} onOpenDetails={operations ? () => setDisclosure({ owner, expanded: true }) : undefined} />
+            {host.group && <span className={cn('shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium', envTone(host.group))}>{groupLabel}</span>}
+          </div>
         </div>
 
         {attention && (
@@ -393,7 +396,6 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
             {agentDeploymentCount > 0 && <span className="truncate text-[color:var(--workspace-status-info-text)]">{t('workspace.agentDeployments.summary', { count: agentDeploymentCount })}{agentDeploymentStatus ? ` · ${t(`workspace.agentDeployments.status.${['deployed', 'deploying', 'planned', 'failed', 'unknown', 'retired'].includes(agentDeploymentStatus) ? agentDeploymentStatus : 'unknown'}`)}` : ''}</span>}
             {!jumpHost && agentDeploymentCount === 0 && host.updatedAt > 0 && <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{formatRelativeTime(host.updatedAt, t)}</span>}
             <span className="flex-1" />
-            <ProbeInstallEntry host={host} os={resource?.os} enabled={monitoring} onOpenDetails={operations ? () => setDisclosure({ owner, expanded: true }) : undefined} />
           </div>
           <div className={cn('flex items-center gap-1.5 transition-opacity', 'sm:absolute sm:inset-x-4 sm:top-1/2 sm:-translate-y-1/2', 'sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100', isSelected && 'sm:pointer-events-auto sm:opacity-100')}>
             <Button data-testid="host-connect" size="sm" className="h-10 gap-1.5 text-sm md:h-8 md:text-xs" onClick={() => ssh ? onConnect(host.id) : onEdit(host.id)}>
@@ -1058,7 +1060,10 @@ export function HostListItem({ resources, index, host, isSelected, status, resou
         {monitoring && <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} onToggle={() => setDetailsState({ owner: detailsOwner, expanded: !detailsOpen })} />}
 
         <div className="flex flex-col items-start gap-2">
-          <HostStatusPill status={status} sc={sc} t={t} />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <HostStatusPill status={status} sc={sc} t={t} />
+            <ProbeInstallEntry host={host} os={resource?.os} enabled={monitoring} onOpenDetails={operations ? () => setDetailsState({ owner: detailsOwner, expanded: true }) : undefined} />
+          </div>
           {!monitoring && operations && <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} compactOnly onToggle={() => setDetailsState({ owner: detailsOwner, expanded: !detailsOpen })} />}
         </div>
 

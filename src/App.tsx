@@ -11,7 +11,6 @@ import { LocalOpsRuntime } from '@/components/local-ops-runtime'
 import { SealedDataRuntime } from '@/components/sealed-data-runtime'
 import { ServerMonitorRuntime } from '@/components/server-monitor-runtime'
 import { ProbeAlertRuntime } from '@/components/probe-alert-runtime'
-import { ShellbeamAgentRuntime } from '@/components/shellbeam-agent-runtime'
 import { UserConfirmationRuntime } from '@/components/user-confirmation-dialog'
 import { SshAuthPromptRuntime } from '@/components/ssh-auth-prompt-dialog'
 import { SyncVaultExportApproval } from '@/components/sync-vault-export-approval'
@@ -111,7 +110,6 @@ function AppInnerWithVault() {
         <ServerMonitorRuntime />
         <LocalOpsRuntime />
         <ScheduledOpsRuntime />
-        <ShellbeamAgentRuntime />
         <AppUpdateRuntime />
         <SealedDataRuntime />
         <SessionsProvider setOutput={setOutput}>
