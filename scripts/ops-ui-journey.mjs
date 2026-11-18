@@ -256,11 +256,20 @@ async function configureRule(driver, fixture, role, state) {
   await driver.select(`${root} ${testId('local-rule-metric')}`, 'service')
   await driver.fill(`${root} ${testId('local-rule-name')}`, state.ruleNames[role])
   await driver.fill(`${root} ${testId('local-rule-service')}`, fixture.hosts[role].serviceUnit)
-  await driver.fill(`${root} ${testId('local-rule-duration')}`, '0')
-  await driver.fill(`${root} ${testId('local-rule-recovery-duration')}`, '0')
+  // WebDriver clear does not update React's controlled state. A background
+  // local-ops render between clear and typing can restore 30, then append 0.
+  // Real key events replace the value without that stale-state interval.
+  const durations = ['local-rule-duration', 'local-rule-recovery-duration']
+  for (const control of durations) await driver.fill(`${root} ${testId(control)}`, '0', { keyboardClear: true })
   await driver.select(`${root} ${testId('local-rule-severity')}`, 'critical')
+  for (const control of durations) check(await driver.attr(`${root} ${testId(control)}`, 'value') === '0', 'rule_duration_input_mismatch')
   await driver.click(`${root} ${testId('local-rule-add')}`)
-  await driver.waitFor(`${root} ${testId('local-rule-row')}[data-rule-name=${q(state.ruleNames[role])}]`)
+  const savedRule = `${root} ${testId('local-rule-row')}[data-rule-name=${q(state.ruleNames[role])}]`
+  await driver.waitFor(savedRule)
+  // Check the stored rule, not just the DOM input; a wrong duration must fail
+  // here rather than look like a collector/recovery timeout two minutes later.
+  check(await driver.attr(savedRule, 'data-duration-ms') === '0'
+    && await driver.attr(savedRule, 'data-recovery-duration-ms') === '0', 'saved_rule_duration_mismatch')
   await driver.waitFor(`${root} ${testId('local-alert-row')}[data-alert-name=${q(state.ruleNames[role])}][data-alert-status="active"][data-transport=${q(role === 'via' ? 'proxy-jump' : 'direct')}]`, { timeoutMs: 120000 })
 }
 
@@ -365,7 +374,7 @@ export async function activateOpsUiRules({ driver, fixture, record, resumeState:
   check(onOpened === undefined || typeof onOpened === 'function', 'opened_callback_invalid')
   for (const role of incidentRoles) {
     await configureRule(driver, fixture, role, state)
-    await record(`ops-ui-${role}-rule-opened`, { passed: true, routeVerified: true })
+    await record(`ops-ui-${role}-rule-opened`, { passed: true, routeVerified: true, durationMs: 0, recoveryDurationMs: 0 })
     if (onOpened) await onOpened(role)
   }
   await record('ops-ui-rules-active', { count: 2, independentSecretReferences: 3, nativeCollectors: true })
@@ -715,12 +724,18 @@ export async function resumeOpsUiJourney({ driver, fixture, record, checkpoint, 
 // Failure-only and read-only: no click, scroll, focus or retry. Each role's
 // rule and alert rows say whether sampling stalled (old sampledAt), collection
 // failed (rule state unknown) or the row exists but its surface is not showing.
-// Only counts, enumerated attributes and an age leave this function.
+// Only counts, enumerated attributes and bounded numeric rule/evaluation data
+// leave this function. No input values or rule names are included.
 export async function readOpsUiFailureState({ driver, fixture, state }) {
   const read = async (fn) => { try { return await fn() } catch { return null } }
   const each = async (css, fn) => {
     const rows = await read(() => driver.findAll(css)) ?? []
     return Promise.all(rows.slice(0, 8).map((row) => read(() => fn(row))))
+  }
+  const number = (raw, max = Number.MAX_SAFE_INTEGER) => {
+    if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null
+    const value = Number(raw)
+    return Number.isSafeInteger(value) && value <= max ? value : null
   }
   const result = { openDialogs: (await read(() => driver.findAll('dialog[open]')))?.length ?? null, roles: {} }
   for (const role of incidentRoles) {
@@ -730,7 +745,7 @@ export async function readOpsUiFailureState({ driver, fixture, state }) {
     result.roles[role] = {
       hostHealth: await read(() => driver.attr(byHost(id), 'data-host-health')),
       networkPanels: await each(`${networkPanel(id)} ${testId('network-tab-health')}`, async (tab) => ({ healthTabSelected: await driver.attr(tab, 'aria-selected') === 'true', displayed: await driver.isDisplayed(tab) })),
-      rules: await each(`${ruleRoot(id)} ${testId('local-rule-row')}[data-rule-name=${q(name)}]`, async (row) => ({ state: await driver.attr(row, 'data-rule-state'), sampledAgeMs: age(await driver.attr(row, 'data-sampled-at')), displayed: await driver.isDisplayed(row) })),
+      rules: await each(`${ruleRoot(id)} ${testId('local-rule-row')}[data-rule-name=${q(name)}]`, async (row) => ({ state: await driver.attr(row, 'data-rule-state'), sampledAgeMs: age(await driver.attr(row, 'data-sampled-at')), durationMs: number(await driver.attr(row, 'data-duration-ms'), 86_400_000), recoveryDurationMs: number(await driver.attr(row, 'data-recovery-duration-ms'), 86_400_000), recoverySince: number(await driver.attr(row, 'data-recovery-since'), Date.now()), observationValue: number(await driver.attr(row, 'data-observation-value'), 1), displayed: await driver.isDisplayed(row) })),
       alerts: await each(`${ruleRoot(id)} ${testId('local-alert-row')}[data-alert-name=${q(name)}]`, async (row) => ({ status: await driver.attr(row, 'data-alert-status'), transport: await driver.attr(row, 'data-transport'), displayed: await driver.isDisplayed(row) })),
       persistenceErrors: (await read(() => driver.findAll(`${ruleRoot(id)} [role="alert"]`)))?.length ?? null,
       serviceRoots: await each(serviceRoot(id), async (root) => ({ displayed: await driver.isDisplayed(root) })),

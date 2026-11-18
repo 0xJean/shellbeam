@@ -425,11 +425,11 @@ test('a clipped row, zero-size or malformed rectangle still permits safe failure
 })
 
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
-function ruleActivationDriver() {
+function ruleActivationDriver({ inputValue = '0', savedDuration = '0', savedRecovery = '0', fillFailure = false } = {}) {
   let selected = null
-  const events = []
+  const events = [], fills = []
   return {
-    events,
+    events, fills,
     async horizontalScrollState() { return { width: 1054, contentWidth: 1054, left: 0 } },
     async until(fn) { assert(await fn()) },
     async findAll(css) {
@@ -446,8 +446,17 @@ function ruleActivationDriver() {
     },
     async click(css) { if (css.includes('local-rule-add')) events.push(`created-${selected}`) },
     async select(css) { if (css.includes('host-ops-open')) selected = css.includes('direct-host') ? 'direct' : 'via' },
-    async fill() {},
-    async attr() { return 'vault' },
+    async fill(css, value, options) {
+      fills.push({ css, value, options })
+      if (fillFailure && css.includes('local-rule-recovery-duration')) throw new Error('keyboard_input_failed')
+    },
+    async attr(css, name) {
+      if (name === 'data-vault-id') return 'vault'
+      if (name === 'value') return inputValue
+      if (name === 'data-duration-ms') return savedDuration
+      if (name === 'data-recovery-duration-ms') return savedRecovery
+      throw new Error('unexpected rule attribute')
+    },
   }
 }
 
@@ -468,6 +477,28 @@ test('rule activation observes each real UI route and awaits its notification ho
   release.resolve()
   assert.deepEqual(await work, { passed: true, rules: 2 })
   assert.deepEqual(callbacks, ['direct', 'via'])
+  const durations = driver.fills.filter(row => row.css.includes('duration'))
+  assert.equal(durations.length, 4)
+  assert(durations.every(row => row.value === '0' && row.options.keyboardClear === true))
+})
+
+test('a duration restored by a background render or a failed key action never submits a rule', async () => {
+  for (const options of [{ inputValue: '30' }, { inputValue: '300' }, { inputValue: null }, { inputValue: 'PRIVATE_FIELD' }, { fillFailure: true }]) {
+    const { fixture, state } = journeyContext()
+    const driver = ruleActivationDriver(options)
+    await assert.rejects(activateOpsUiRules({ driver, fixture, resumeState: state, record: async () => assert.fail('not verified') }), /rule_duration_input_mismatch|keyboard_input_failed/)
+    assert.deepEqual(driver.events, [])
+    assert.equal(driver.fills.filter(row => row.css.includes('recovery-duration')).length, 1, 'no retry')
+  }
+})
+
+test('correct input text cannot hide a nonzero or missing stored duration', async () => {
+  for (const options of [{ savedDuration: '600000' }, { savedRecovery: '300000' }, { savedRecovery: null }, { savedRecovery: 'PRIVATE_FIELD' }]) {
+    const { fixture, state } = journeyContext()
+    const driver = ruleActivationDriver(options)
+    await assert.rejects(activateOpsUiRules({ driver, fixture, resumeState: state, record: async () => assert.fail('not verified'), onOpened: async () => assert.fail('no notification hook') }), /saved_rule_duration_mismatch/)
+    assert.deepEqual(driver.events, ['created-direct'], 'no re-save, alert polling or second host')
+  }
 })
 
 test('failed opened notification evidence stops activation before creating another rule', async () => {
@@ -755,6 +786,19 @@ test('failure state survives a refused read and exposes no names', async () => {
   assert.equal(result.openDialogs, null)
   assert.equal(result.roles.direct.hostHealth, null)
   assert(!JSON.stringify(result).includes('Secret rule name'))
+})
+
+test('failure state reports stored recovery duration and raw evaluation without field values or writes', async () => {
+  const recoverySince = Date.now() - 120_000
+  const attrs = { 'rule:data-rule-state': 'recovering', 'rule:data-duration-ms': '0', 'rule:data-recovery-duration-ms': '300000', 'rule:data-recovery-since': String(recoverySince), 'rule:data-observation-value': '0' }
+  const driver = failureDriver({ elements: { 'local-rule-row': ['rule'] }, attrs })
+  const options = { driver, fixture: { hosts: {} }, state: { hostIds: { direct: 'host' }, ruleNames: { direct: 'PRIVATE_NAME' } } }
+  const rule = (await readOpsUiFailureState(options)).roles.direct.rules[0]
+  assert.deepEqual(rule, { state: 'recovering', sampledAgeMs: null, durationMs: 0, recoveryDurationMs: 300000, recoverySince, observationValue: 0, displayed: true })
+  Object.assign(attrs, { 'rule:data-duration-ms': '-1', 'rule:data-recovery-duration-ms': '86400001', 'rule:data-recovery-since': 'PRIVATE_FIELD', 'rule:data-observation-value': '2' })
+  const invalid = (await readOpsUiFailureState(options)).roles.direct.rules[0]
+  for (const key of ['durationMs', 'recoveryDurationMs', 'recoverySince', 'observationValue']) assert.equal(invalid[key], null)
+  assert(!JSON.stringify(invalid).includes('PRIVATE'))
 })
 
 for (const [name, setup, reason] of [
