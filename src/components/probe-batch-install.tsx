@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CircleAlert, CircleCheck, CircleDashed, CircleMinus, Info, Layers, Loader2, Radar, ShieldAlert, X } from 'lucide-react'
+import { InlineServerConnect } from '@/components/inline-server-connect'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useHosts } from '@/contexts/hosts-context'
@@ -52,9 +53,10 @@ export function ProbeBatchInstallDialog({ hosts, open, onOpenChange }: { hosts: 
   const { locale } = useT()
   const c = probeInstallCopy[locale]
   const { handleUpdateHost } = useHosts()
-  const { activeVaultId, captureVaultScope } = useVault()
+  const { activeVaultId, handleSaveSecret, handleRevealSecret, captureVaultScope } = useVault()
   const [rows, setRows] = useState<Row[]>(() => hosts.map((host) => ({ host, state: { kind: 'checking' } })))
   const [phase, setPhase] = useState<'checking' | 'review' | 'running' | 'finished'>('checking')
+  const [recheckEpoch, setRecheckEpoch] = useState(0)
   const live = useRef(true)
   const stop = useRef(false)
   const plans = useRef(new Set<string>())
@@ -102,9 +104,9 @@ export function ProbeBatchInstallDialog({ hosts, open, onOpenChange }: { hosts: 
       if (!cancelled && live.current) setPhase('review')
     })()
     return () => { cancelled = true }
-  // Preflight runs once per opened dialog; later host refreshes must not restart it.
+  // Preflight runs once per opened dialog (and when inline server connects); later host refreshes must not restart it.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [recheckEpoch])
 
   const install = async () => {
     const targets = rows.filter((row) => installable(row.state))
@@ -201,6 +203,18 @@ export function ProbeBatchInstallDialog({ hosts, open, onOpenChange }: { hosts: 
           <button type="button" aria-label={c.close} className="rounded-md p-1 text-muted-foreground hover:bg-muted" onClick={() => onOpenChange(false)}><X className="h-4 w-4" /></button>
         </header>
         <div className="space-y-3 overflow-y-auto p-5" data-testid="probe-batch-dialog" data-phase={phase}>
+          {phase === 'review' && rows.some((r) => r.state.kind === 'blocked' && r.state.reason === 'no-server') && activeVaultId && handleSaveSecret && (
+            <InlineServerConnect
+              compact
+              vaultId={activeVaultId}
+              saveSecret={handleSaveSecret}
+              loadSecret={handleRevealSecret}
+              onConnected={() => {
+                setPhase('checking')
+                setRecheckEpoch((v) => v + 1)
+              }}
+            />
+          )}
           <div className="overflow-hidden rounded-lg border border-border">
             {rows.map(({ host, state }) => {
               const l = label(state)

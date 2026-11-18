@@ -1,4 +1,5 @@
 import { NativeSelect } from '@/components/ui/select'
+import { INITIAL_SERVER_DRAFT, type InlineServerConnectDraft } from './inline-server-connect'
 import { MonitoringModeField } from './monitoring-mode-field'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -7,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { hasSshConnection, validateHostDraft } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
-import { probeInstallCopy } from '@/lib/locales/probe-install'
+import { connectShellbeamServer, formatServerConnectError } from '@/lib/server-quick-connect'
 import { identityBaseName, type ParsedSshCommand } from '@/lib/ssh-command-parse'
 import { testSshConnection } from '@/lib/sessions'
 import { sshAgentAvailable, type AuthType } from '@/lib/ssh'
@@ -57,6 +58,8 @@ export function HostForm({
   const [connectionSecretId] = useState(() => crypto.randomUUID())
   const [monitoringMode, setMonitoringMode] = useState(initial?.monitoringMode ?? 'ssh')
   const [installProbe, setInstallProbe] = useState(true)
+  const [serverDraft, setServerDraft] = useState<InlineServerConnectDraft>(INITIAL_SERVER_DRAFT)
+  const [selectedServerId, setSelectedServerId] = useState<string>('')
   const [address, setAddress] = useState(initial?.address ?? '')
   const [name, setName] = useState(initial?.name ?? '')
   const [group, setGroup] = useState(initial?.group ?? 'Custom')
@@ -80,7 +83,6 @@ export function HostForm({
   const [showAdvanced, setShowAdvanced] = useState(false)
 
   const { t, locale } = useT()
-  const probeCopy = probeInstallCopy[locale]
 
   const tags = tagsInput.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean)
   const addrSlug = (address || 'host').replace(/[^a-zA-Z0-9.-]/g, '-')
@@ -192,6 +194,29 @@ export function HostForm({
 
     setSubmitting(true)
     try {
+      if (!connectionOnly && monitoringMode === 'server' && serverDraft.endpoint.trim() && vaultId && onSaveToVault) {
+        try {
+          await connectShellbeamServer({
+            vaultId,
+            name: serverDraft.name,
+            endpoint: serverDraft.endpoint,
+            authMode: serverDraft.authMode,
+            apiKey: serverDraft.apiKey,
+            username: serverDraft.username,
+            password: serverDraft.password,
+            twoFactor: serverDraft.twoFactor,
+            installToken: serverDraft.installToken,
+            metricDsn: serverDraft.metricDsn,
+            saveSecret: onSaveToVault,
+            loadSecret: onLoadVaultSecret,
+          })
+          setServerDraft(INITIAL_SERVER_DRAFT)
+        } catch (serverErr) {
+          setError(formatServerConnectError(serverErr, locale))
+          setSubmitting(false)
+          return
+        }
+      }
       await onSubmit(draft, { installProbe: monitoringMode === 'server' && installProbe })
     } catch (e) {
       setError(String(e))
@@ -417,13 +442,21 @@ export function HostForm({
           </div>
 
         </div>
-        <MonitoringModeField value={monitoringMode} onChange={setMonitoringMode} disabled={submitting || !vaultUnlocked} scopeKey={`${vaultId}:${connectionSecretId}`} vaultId={vaultId} />
-        {monitoringMode === 'server' && (
-          <label data-testid="host-form-install-probe" className={cn('flex cursor-pointer items-start gap-2.5 rounded-lg border p-3', installProbe ? 'border-primary/40 bg-primary/5' : 'border-border')}>
-            <input type="checkbox" className="mt-0.5 accent-[hsl(var(--primary))]" checked={installProbe} disabled={submitting} onChange={(e) => setInstallProbe(e.target.checked)} />
-            <span className="min-w-0"><span className="block text-sm font-medium">{probeCopy.newHostInstall}</span><span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{probeCopy.newHostInstallHint}</span></span>
-          </label>
-        )}
+        <MonitoringModeField
+          value={monitoringMode}
+          onChange={setMonitoringMode}
+          disabled={submitting || !vaultUnlocked}
+          scopeKey={`${vaultId}:${connectionSecretId}`}
+          vaultId={vaultId}
+          installProbe={installProbe}
+          onInstallProbeChange={setInstallProbe}
+          serverDraft={serverDraft}
+          onServerDraftChange={setServerDraft}
+          selectedServerId={selectedServerId}
+          onSelectedServerIdChange={setSelectedServerId}
+          onSaveToVault={onSaveToVault}
+          onLoadVaultSecret={onLoadVaultSecret}
+        />
 
         {metadataControls}
         </>}

@@ -6,6 +6,7 @@ import { loadCurrentKomariSources, type CurrentKomariSource } from '@/lib/komari
 import { probeInstallReadiness, type ProbeInstallReadiness } from '@/lib/probe-install'
 
 export const PROBE_DEPLOYMENT_CHANGED_EVENT = 'shellbeam:probe-deployment-changed'
+export const KOMARI_INTEGRATIONS_CHANGED_EVENT = 'shellbeam:komari-integrations-changed'
 const CACHE_TTL_MS = 30_000
 
 // Host cards and the host page banner ask for the same data; share one read
@@ -61,12 +62,14 @@ export function useProbeInstallReadiness(host: HostProfile, enabled = true) {
     const onMapping = (event: Event) => { const detail = (event as CustomEvent<{ vaultId?: string }>).detail; if (!detail?.vaultId || detail.vaultId === host.vaultId) reload() }
     const onDeployment = (event: Event) => { const detail = (event as CustomEvent<{ vaultId: string; hostIds: string[] }>).detail; if (detail?.vaultId === host.vaultId && detail.hostIds.includes(host.id)) reload() }
     window.addEventListener(KOMARI_MAPPING_CHANGED_EVENT, onMapping)
+    window.addEventListener(KOMARI_INTEGRATIONS_CHANGED_EVENT, onMapping)
     window.addEventListener(PROBE_DEPLOYMENT_CHANGED_EVENT, onDeployment)
     // Focus only re-reads; the shared TTL decides whether data is fetched again.
     const onFocus = () => setEpoch((value) => value + 1)
     window.addEventListener('focus', onFocus)
     return () => {
       window.removeEventListener(KOMARI_MAPPING_CHANGED_EVENT, onMapping)
+      window.removeEventListener(KOMARI_INTEGRATIONS_CHANGED_EVENT, onMapping)
       window.removeEventListener(PROBE_DEPLOYMENT_CHANGED_EVENT, onDeployment)
       window.removeEventListener('focus', onFocus)
     }

@@ -3,7 +3,6 @@ import { TerminalThemeGrid } from '@/components/terminal-widgets'
 import { McpSettingsSection } from '@/components/mcp-settings-section'
 import { AISettingsSection } from '@/components/ai-settings-section'
 import { MonitorSettingsSection } from '@/components/monitor-settings-section'
-import { ShellbeamAgentReleaseSettingsSection } from '@/components/shellbeam-agent-release-settings-section'
 import { ProbeRetrySettingsSection } from '@/components/probe-retry-settings-section'
 import { AppearancePicker } from '@/components/appearance-picker'
 import { SegmentedChoice, SettingRow, SettingsGroup, SettingsHead, SettingsNote, SettingStepper, SettingSwitch } from '@/components/settings-controls'
@@ -259,13 +258,10 @@ export function SettingsPanel({
         {category === 'advanced' && <>
           <McpSettingsSection />
           <SettingsHead title={v3.advancedTitle} description={v3.advancedDesc} />
-          <div className="grid gap-4 lg:grid-cols-2">
-            <ShellbeamAgentReleaseSettingsSection />
-            <div className="min-w-0 space-y-4">
-              <ProbeRetrySettingsSection />
-              <SettingsNote>{v3.advancedNote}</SettingsNote>
-              <ClearDataSection />
-            </div>
+          <div className="space-y-4">
+            <ProbeRetrySettingsSection />
+            <SettingsNote>{v3.advancedNote}</SettingsNote>
+            <ClearDataSection />
           </div>
         </>}
       </div>

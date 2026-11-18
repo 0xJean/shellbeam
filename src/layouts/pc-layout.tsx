@@ -1353,9 +1353,15 @@ export function PcLayout() {
               )}
               {app.pcSidebarNav === 'dashboard' && (
                 <div className="min-h-full p-4 md:p-6">
-                  <FleetDashboard hosts={hostsCtx.hosts} vaultId={vault.activeVaultId} unlocked={vault.vaultStatusState?.unlocked ?? false}
+                  <FleetDashboard
+                    hosts={hostsCtx.hosts}
+                    vaultId={vault.activeVaultId}
+                    unlocked={vault.vaultStatusState?.unlocked ?? false}
+                    onSaveToVault={vault.handleSaveSecret}
+                    onLoadVaultSecret={vault.handleRevealSecret}
                     onOpenHost={(hostId) => { void sessions.openHostWorkspace(hostId, 'charts'); app.setPcSidebarNav('terminal') }}
-                    onOpenAlerts={() => app.setPcSidebarNav('hosts')} />
+                    onOpenAlerts={() => app.setPcSidebarNav('hosts')}
+                  />
                 </div>
               )}
               {app.pcSidebarNav === 'hosts' && (isMd ? (
