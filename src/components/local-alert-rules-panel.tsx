@@ -44,13 +44,15 @@ export function LocalAlertRulesPanel({ activeVaultId, hostId, host }: { activeVa
   return <section className="space-y-3 border-t border-border/60 pt-4" data-testid="local-alert-rules" data-host-id={hostId} data-vault-id={activeVaultId}>
     <h3 className="text-sm font-semibold">{t('localOps.title')}</h3>
     <p className="text-xs text-muted-foreground">{t('localOps.description')}</p>
-    {rules.map((rule) => <div key={rule.id} data-testid="local-rule-row" data-rule-id={rule.id} data-rule-name={rule.name} data-rule-state={state.evaluations.find((row) => row.ruleId === rule.id)?.state ?? 'unknown'} data-sampled-at={state.evaluations.find((row) => row.ruleId === rule.id)?.sampledAt} className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-xs">
+    {rules.map((rule) => {
+      const evaluation = state.evaluations.find((row) => row.ruleId === rule.id)
+      return <div key={rule.id} data-testid="local-rule-row" data-rule-id={rule.id} data-rule-name={rule.name} data-rule-state={evaluation?.state ?? 'unknown'} data-sampled-at={evaluation?.sampledAt} data-duration-ms={rule.durationMs} data-recovery-duration-ms={rule.recoveryDurationMs} data-recovery-since={evaluation?.recoverySince ?? undefined} data-observation-value={evaluation?.value ?? undefined} className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-xs">
       <span className="min-w-24 flex-1">{rule.name} · {t(`localOps.metric.${rule.metric}`)}{rule.target ? ` · ${rule.target}` : ''}</span>
       <span>{rule.metric === 'service' ? t('localOps.serviceFailure') : `≥ ${rule.threshold}% / ≤ ${rule.recoveryThreshold}%`} · {rule.durationMs / 1_000}s / {rule.recoveryDurationMs / 1_000}s</span>
-      <span>{t(`localOps.state.${state.evaluations.find((e) => e.ruleId === rule.id)?.state ?? 'unknown'}`)}</span>
+      <span>{t(`localOps.state.${evaluation?.state ?? 'unknown'}`)}</span>
       <label><input type="checkbox" checked={rule.enabled} onChange={(e) => saveLocalAlertRules(activeVaultId, hostId, rules.map((r) => r.id === rule.id ? { ...r, enabled: e.target.checked } : r))} /> {t('localOps.enabled')}</label>
       <Button size="sm" variant="ghost" onClick={() => saveLocalAlertRules(activeVaultId, hostId, rules.filter((r) => r.id !== rule.id))}>{t('localOps.remove')}</Button>
-    </div>)}
+    </div>})}
     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
       <label className="text-xs">{t('localOps.metric')}<NativeSelect data-testid="local-rule-metric" aria-label={t('localOps.metric')} className="mt-1 h-9 w-full rounded-md border bg-background px-2" value={metric} onChange={(e) => setMetric(e.target.value as LocalAlertMetric)}>{(['cpu', 'memory', 'disk', 'service'] as const).map((key) => <option key={key} value={key}>{t(`localOps.metric.${key}`)}</option>)}</NativeSelect></label>
       <label className="text-xs">{t('localOps.name')}<Input data-testid="local-rule-name" aria-label={t('localOps.name')} value={name} onChange={(e) => setName(e.target.value)} /></label>
