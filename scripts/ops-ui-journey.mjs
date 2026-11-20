@@ -165,10 +165,10 @@ async function createHost(driver, fixture, role, state, record) {
   await openDashboardPage(driver, 'hosts')
   await driver.click(S.create)
   await driver.waitFor(S.hostForm)
-  await driver.fill(testId('host-address'), host.address)
-  await driver.fill(testId('host-port'), String(host.port))
-  await driver.fill(testId('host-username'), host.user)
-  await driver.fill(testId('host-name'), host.name)
+  await driver.fill(testId('host-address'), host.address, { keyboardClear: true })
+  await driver.fill(testId('host-port'), String(host.port), { keyboardClear: true })
+  await driver.fill(testId('host-username'), host.user, { keyboardClear: true })
+  await driver.fill(testId('host-name'), host.name, { keyboardClear: true })
   check(await driver.attr(testId('host-address'), 'value') === host.address
     && Number(await driver.attr(testId('host-port'), 'value')) === host.port
     && await driver.attr(testId('host-username'), 'value') === host.user
@@ -181,7 +181,7 @@ async function createHost(driver, fixture, role, state, record) {
   check(privateKey.length > 100 && privateKey.length <= 65536 && /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(privateKey), 'invalid_fixture_key')
   await driver.fill(testId('host-private-key'), privateKey, { tabFrom: [testId('host-auth-private-key'), testId('host-auth-password'), testId('host-auth-agent')] })
   check(String(await driver.attr(testId('host-private-key'), 'value')).replaceAll('\r\n', '\n') === privateKey.replaceAll('\r\n', '\n'), 'private_key_ui_roundtrip_failed')
-  await driver.fill(testId('host-secret-name'), `ops-ui-${role}-private-key`)
+  await driver.fill(testId('host-secret-name'), `ops-ui-${role}-private-key`, { keyboardClear: true })
   check(await driver.attr(testId('host-secret-name'), 'value') === `ops-ui-${role}-private-key`, 'secret_reference_not_explicit')
   if (role === 'via') {
     await driver.click(testId('host-jump-toggle'))
@@ -254,8 +254,8 @@ async function configureRule(driver, fixture, role, state) {
   check(typeof vaultId === 'string' && vaultId.length > 0 && (!state.vaultId || state.vaultId === vaultId), 'rule_vault_scope_mismatch')
   state.vaultId = vaultId
   await driver.select(`${root} ${testId('local-rule-metric')}`, 'service')
-  await driver.fill(`${root} ${testId('local-rule-name')}`, state.ruleNames[role])
-  await driver.fill(`${root} ${testId('local-rule-service')}`, fixture.hosts[role].serviceUnit)
+  await driver.fill(`${root} ${testId('local-rule-name')}`, state.ruleNames[role], { keyboardClear: true })
+  await driver.fill(`${root} ${testId('local-rule-service')}`, fixture.hosts[role].serviceUnit, { keyboardClear: true })
   // WebDriver clear does not update React's controlled state. A background
   // local-ops render between clear and typing can restore 30, then append 0.
   // Real key events replace the value without that stale-state interval.
