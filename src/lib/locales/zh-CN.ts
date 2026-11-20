@@ -1081,7 +1081,7 @@ const zhCN: Record<string, string> = {
   'hostForm.pickKeyFile': '从本地文件选择私钥',
   'hostForm.pickingKeyFile': '选择中…',
   'hostForm.publicKeyError': '检测到粘贴的是公钥（.pub），无法用于 SSH 登录。请粘贴或选择对应的私钥文件（不含 .pub 后缀，以 -----BEGIN ... PRIVATE KEY----- 开头）。',
-  'hostForm.saveAsName': '保存到保险库的名称（可自定义）',
+  'hostForm.saveAsName': '凭据名称',
   'hostForm.orEnterNew': '+ 输入新凭证',
   'hostForm.orSelectExisting': '从保险库选择已有凭证',
   'hostForm.vaultLocked': '请先解锁保险库以管理凭证',

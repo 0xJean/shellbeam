@@ -126,4 +126,24 @@ describe('HostForm credentials UX', () => {
       expect.anything(),
     )
   })
+
+  it('keeps host-private-key immediately after auth tabs in keyboard tab order', () => {
+    const { container } = render(
+      <HostForm
+        vaultUnlocked
+        onSaveToVault={vi.fn().mockResolvedValue(undefined)}
+        onSubmit={vi.fn().mockResolvedValue(undefined)}
+        onCancel={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId('host-auth-private-key'))
+    const focusables = Array.from(
+      container.querySelectorAll<HTMLElement>('button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), textarea:not([disabled]), select:not([disabled])'),
+    )
+    const agentIndex = focusables.indexOf(screen.getByTestId('host-auth-agent'))
+    const privateKeyIndex = focusables.indexOf(screen.getByTestId('host-private-key'))
+    expect(agentIndex).toBeGreaterThanOrEqual(0)
+    expect(privateKeyIndex).toBe(agentIndex + 1)
+  })
 })

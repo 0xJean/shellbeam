@@ -1081,7 +1081,7 @@ const en: Record<string, string> = {
   'hostForm.pickKeyFile': 'Choose key file',
   'hostForm.pickingKeyFile': 'Choosing…',
   'hostForm.publicKeyError': 'This looks like a public key (.pub), which cannot be used to sign in. Paste or pick the matching private key file (without .pub, starting with -----BEGIN ... PRIVATE KEY-----).',
-  'hostForm.saveAsName': 'Save to Vault as (customizable)',
+  'hostForm.saveAsName': 'Vault name',
   'hostForm.orEnterNew': '+ Enter new',
   'hostForm.orSelectExisting': 'Select existing from Vault',
   'hostForm.vaultLocked': 'Unlock Vault to manage credentials',

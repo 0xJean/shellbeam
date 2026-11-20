@@ -656,8 +656,11 @@ function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password
             </div>
           ) : (
             <div className="space-y-1.5">
+              <Textarea data-testid="host-private-key" aria-label={t('hostForm.privateKeyLabel')} value={privateKey}
+                onChange={(e) => { onPrivateKey(e.target.value); onUseInline(true); if (pickError) setPickError('') }}
+                placeholder={t('hostForm.privateKeyPlaceholder')} className={cn('min-h-[72px] font-mono text-sm', pastedPublicKey && 'border-destructive focus-visible:ring-destructive')} />
               <div className="flex items-center justify-between gap-2">
-                <label className="text-xs font-medium text-muted-foreground">{t('hostForm.privateKeyLabel')}</label>
+                <span className="text-[11px] text-muted-foreground">{t('hostForm.privateKeyLabel')}</span>
                 <button
                   type="button"
                   data-testid="host-pick-private-key"
@@ -669,9 +672,6 @@ function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password
                   {pickingFile ? t('hostForm.pickingKeyFile') : t('hostForm.pickKeyFile')}
                 </button>
               </div>
-              <Textarea data-testid="host-private-key" aria-label={t('hostForm.privateKeyLabel')} value={privateKey}
-                onChange={(e) => { onPrivateKey(e.target.value); onUseInline(true); if (pickError) setPickError('') }}
-                placeholder={t('hostForm.privateKeyPlaceholder')} className={cn('min-h-[80px] font-mono text-sm', pastedPublicKey && 'border-destructive focus-visible:ring-destructive')} />
               {pastedPublicKey && (
                 <p data-testid="host-public-key-warning" role="alert" className="flex items-start gap-1.5 text-xs text-destructive">
                   <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -686,13 +686,13 @@ function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password
               )}
             </div>
           )}
-          <div className="space-y-1">
-            <label htmlFor="host-secret-name-input" className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <label htmlFor="host-secret-name-input" className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
               <Archive className="h-3.5 w-3.5 shrink-0" />
               <span>{t('hostForm.saveAsName')}</span>
             </label>
             <Input id="host-secret-name-input" data-testid="host-secret-name" aria-label={t('hostForm.saveAsName')} value={vaultSaveName} onChange={(e) => onVaultSaveName(e.target.value)}
-              placeholder={defaultVaultSaveName || `${addrSlug}-${isPassword ? 'password' : 'key'}`} className="h-8 text-xs" />
+              placeholder={defaultVaultSaveName || `${addrSlug}-${isPassword ? 'password' : 'key'}`} className="h-7 min-w-0 flex-1 text-xs" />
           </div>
           {hasVaultKeys && (
             <button type="button" onClick={() => { onUseInline(false); onPassword(''); onPrivateKey('') }}
