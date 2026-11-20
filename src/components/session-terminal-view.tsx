@@ -30,6 +30,7 @@ import { SuggestBar } from './suggest-bar'
 import { SessionConnectionLostOverlay } from './session-connection-lost-overlay'
 import { TerminalSearchBar } from './terminal-search-bar'
 import { HostMetadataLine } from './host-display-meta'
+import { isMobileDevice } from '@/lib/mobile-back'
 import { WorkspaceModeToggle } from './workspace/workspace-mode-toggle'
 
 const TERMINAL_SCROLLBACK_ROWS = 10000
@@ -427,6 +428,51 @@ export function SessionTerminalView({
 
   const bg = terminalTheme.background ?? '#000000'
   const fg = terminalTheme.foreground ?? '#00ff41'
+  const pinchRef = useRef<{ distance: number; fontSize: number } | null>(null)
+
+  const handleTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 2 || !termRef.current) return
+    const [a, b] = [event.touches[0], event.touches[1]]
+    const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+    if (distance <= 0) return
+    pinchRef.current = {
+      distance,
+      fontSize: termRef.current.options.fontSize ?? DEFAULT_TERMINAL_PREFS.fontSize,
+    }
+  }, [])
+
+  const handleTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 2 || !pinchRef.current || !termRef.current) return
+    const [a, b] = [event.touches[0], event.touches[1]]
+    const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+    const nextSize = Math.min(24, Math.max(9, Math.round(pinchRef.current.fontSize * (distance / pinchRef.current.distance))))
+    if (termRef.current.options.fontSize !== nextSize) {
+      termRef.current.options.fontSize = nextSize
+      fitRef.current?.fit()
+      if (termRef.current.cols > 0 && termRef.current.rows > 0) {
+        void resizeInteractiveTerminal(sessionId, termRef.current.cols, termRef.current.rows).catch(() => {})
+      }
+    }
+  }, [sessionId])
+
+  const handleTouchEnd = useCallback(() => {
+    pinchRef.current = null
+  }, [])
+
+  const handleMobilePaste = useCallback(() => {
+    void navigator.clipboard?.readText?.().then((text) => {
+      if (text) onSendRawRef.current(text)
+      termRef.current?.focus()
+    }).catch(() => {})
+  }, [])
+
+  const handleDismissKeyboard = useCallback(() => {
+    termRef.current?.textarea?.blur()
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+  }, [])
+
   const showBrowserShortcuts = !onWorkspaceModeChange
 
   return (
@@ -516,7 +562,7 @@ export function SessionTerminalView({
           )}
           {onWorkspaceModeChange && (
             <div className="shrink-0">
-              <WorkspaceModeToggle mode={workspaceMode} onChange={onWorkspaceModeChange} compact />
+              <WorkspaceModeToggle mode={workspaceMode} onChange={onWorkspaceModeChange} compact hideBrowser={isMobileDevice()} />
             </div>
           )}
           {!chromeOnly && (
@@ -564,6 +610,9 @@ export function SessionTerminalView({
             ref={containerRef}
             className="terminal-surface min-h-0 flex-1"
             onClick={handleContainerClick}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
           />
           <SuggestBar
             key={sessionId}
@@ -627,7 +676,11 @@ export function SessionTerminalView({
           </div>
 
           {isConnected && (
-            <MobileTerminalToolbar onSend={onSendRaw} />
+            <MobileTerminalToolbar
+              onSend={onSendRaw}
+              onPaste={handleMobilePaste}
+              onDismissKeyboard={handleDismissKeyboard}
+            />
           )}
       </div>
     </div>

@@ -827,7 +827,7 @@ pub fn close_interactive_session(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(mobile)))]
 fn open_local_pty(
     shell: &str,
     cols: u32,
@@ -907,7 +907,7 @@ fn open_local_pty(
 }
 
 #[tauri::command]
-#[cfg(unix)]
+#[cfg(all(unix, not(mobile)))]
 pub fn create_local_terminal(
     app: tauri::AppHandle,
     state: tauri::State<'_, InteractiveSessionState>,
@@ -1045,7 +1045,7 @@ pub fn create_local_terminal(
 }
 
 #[tauri::command]
-#[cfg(not(unix))]
+#[cfg(not(all(unix, not(mobile))))]
 pub fn create_local_terminal(
     app: tauri::AppHandle,
     state: tauri::State<'_, InteractiveSessionState>,

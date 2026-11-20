@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import { ArrowDownWideNarrow, ArrowUpWideNarrow, ChevronRight, Plus, Search, TriangleAlert, X } from 'lucide-react'
+import { ArrowDownWideNarrow, ArrowUpWideNarrow, ChevronRight, Lock, Plus, Search, TriangleAlert, X } from 'lucide-react'
 import { HostEditorDialog } from '@/components/host-editor-dialog'
+import { HostProbeManageDialog } from '@/components/host-probe-manage-dialog'
 import { ProbeCoverageBanner } from '@/components/hosts-overview'
 import { ProbeInstallDialog } from '@/components/probe-install-dialog'
 import { PullToRefresh } from '@/components/pull-to-refresh'
@@ -29,10 +30,13 @@ const ATTENTION_PREVIEW = 2
 export interface MobileHostsPageProps {
   hosts: HostProfile[]
   activeVaultId?: string
+  vaults?: Array<{ id: string; name: string }>
   vaultUnlocked: boolean
   vaultKeys?: string[]
   vaultName?: string
   defaultUsername?: string
+  onSwitchVault?: (vaultId: string) => void
+  onLockVault?: () => void
   onSaveToVault?: (key: string, value: string) => Promise<void>
   onLoadVaultSecret?: (key: string) => Promise<string | null>
   onCreateHost: (draft: HostProfileDraft) => Promise<HostProfile | void>
@@ -50,7 +54,7 @@ export interface MobileHostsPageProps {
 
 /** v3 mobile hosts tab: m:hosts list, m:host detail and the m:newhost sheet. */
 export function MobileHostsPage({
-  hosts, activeVaultId, vaultUnlocked, vaultKeys, vaultName, defaultUsername, onSaveToVault, onLoadVaultSecret,
+  hosts, activeVaultId, vaults, vaultUnlocked, vaultKeys, vaultName, defaultUsername, onSwitchVault, onLockVault, onSaveToVault, onLoadVaultSecret,
   onCreateHost, onUpdateHost, onDeleteHost, onRefreshHosts, onSelectHost, onConnectHost, onOpenWorkspace, onOpenPortForwarding,
   openAddForm = false, onAddFormClose,
 }: MobileHostsPageProps) {
@@ -63,6 +67,7 @@ export function MobileHostsPage({
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<HostProfile | null>(null)
   const [probeHost, setProbeHost] = useState<HostProfile | null>(null)
+  const [manageProbeHost, setManageProbeHost] = useState<HostProfile | null>(null)
 
   const scoped = useMemo(() => hosts.filter((host) => !host.vaultId || !activeVaultId || host.vaultId === activeVaultId), [hosts, activeVaultId])
   const fleet = useFleetMetrics({ hosts: scoped, vaultId: activeVaultId, unlocked: vaultUnlocked, rangeHours: 1 })
@@ -123,6 +128,7 @@ export function MobileHostsPage({
           if (options?.installProbe) setProbeHost({ ...host, ...draft })
         }} onCancel={() => setEditing(null)} />
       {probeHost && <ProbeInstallDialog host={scoped.find((host) => host.id === probeHost.id) ?? probeHost} open onOpenChange={(open) => { if (!open) setProbeHost(null) }} />}
+      {manageProbeHost && <HostProbeManageDialog host={scoped.find((host) => host.id === manageProbeHost.id) ?? manageProbeHost} open onOpenChange={(open) => { if (!open) setManageProbeHost(null) }} />}
     </>
   )
 
@@ -130,10 +136,13 @@ export function MobileHostsPage({
     return (
       <>
         <MobileHostDetail host={detailHost} entry={entries.get(detailHost.id)} loading={fleet.loading} network={networkByAddress[detailHost.address]}
+          vaultId={activeVaultId}
+          vaultUnlocked={vaultUnlocked}
           onBack={() => setDetailId(null)}
           onConnect={() => onConnectHost(detailHost.id)}
           onOpenWorkspace={(app) => onOpenWorkspace(detailHost.id, app)}
           onOpenPortForwarding={onOpenPortForwarding}
+          onManageProbe={() => setManageProbeHost(detailHost)}
           onEdit={() => setEditing(detailHost)}
           onDelete={() => { setDetailId(null); void onDeleteHost(detailHost.id) }} />
         {overlays}
@@ -144,15 +153,35 @@ export function MobileHostsPage({
   const iconButton = 'flex h-11 w-11 items-center justify-center rounded-lg text-[var(--workspace-accent-text)]'
   return (
     <div data-testid="mobile-hosts-page" className="mx-auto max-w-xl">
-      <div className="flex h-12 items-center justify-between px-1.5">
+      <div className="flex h-12 items-center justify-between gap-1 px-1.5">
         <button type="button" data-testid="mobile-hosts-sort" aria-label={`${c.sort} · ${descending ? c.sortZa : c.sortAz}`} onClick={() => setDescending((value) => !value)} className={iconButton}>
           {descending ? <ArrowUpWideNarrow className="h-5 w-5" /> : <ArrowDownWideNarrow className="h-5 w-5" />}
         </button>
-        {!android && (
-          <button type="button" data-testid="mobile-hosts-add" aria-label={c.newHost} onClick={() => setCreating(true)} className={iconButton}>
-            <Plus className="h-6 w-6" />
-          </button>
-        )}
+        {vaults && vaults.length > 1 && onSwitchVault ? (
+          <select
+            data-testid="mobile-hosts-vault-switch"
+            aria-label={c.switchVault}
+            value={activeVaultId ?? ''}
+            onChange={(event) => onSwitchVault(event.target.value)}
+            className="h-8 max-w-[160px] truncate rounded-full border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-[13px] font-medium text-[var(--workspace-text-strong)] outline-none"
+          >
+            {vaults.map((vault) => <option key={vault.id} value={vault.id}>{vault.name}</option>)}
+          </select>
+        ) : vaultName ? (
+          <span className="truncate rounded-full bg-[var(--workspace-surface-800)] px-3 py-1 text-[12.5px] font-medium text-[var(--workspace-text-muted)]">{vaultName}</span>
+        ) : <span className="flex-1" />}
+        <div className="flex items-center">
+          {vaultUnlocked && onLockVault && (
+            <button type="button" data-testid="mobile-hosts-lock" aria-label={c.lockVault} title={c.lockVault} onClick={onLockVault} className={iconButton}>
+              <Lock className="h-4 w-4" />
+            </button>
+          )}
+          {!android && (
+            <button type="button" data-testid="mobile-hosts-add" aria-label={c.newHost} onClick={() => setCreating(true)} className={iconButton}>
+              <Plus className="h-6 w-6" />
+            </button>
+          )}
+        </div>
       </div>
       <h1 className="px-4 text-[32px] font-bold leading-tight tracking-tight text-[var(--workspace-text-strong)]">{c.title}</h1>
 

@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowLeftRight, Boxes, CalendarClock, ChevronLeft, Container, Cpu, Ellipsis, Globe, LayoutGrid, LockKeyhole, Pencil, ScrollText, SquareTerminal, Trash2, Wrench } from 'lucide-react'
+import { ArrowLeftRight, Boxes, CalendarClock, ChevronLeft, Container, Cpu, Ellipsis, Globe, LayoutGrid, LockKeyhole, Pencil, Radar, ScrollText, SquareTerminal, Trash2, TriangleAlert, Wrench } from 'lucide-react'
 import { Sparkline } from '@/components/charts/chart-primitives'
 import { HostRegionMeta } from '@/components/host-display-meta'
 import type { FleetHost } from '@/hooks/use-fleet-metrics'
 import type { HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
 import { hasSshConnection, type HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { runLocalAlertAction } from '@/lib/local-alert-actions'
+import type { LocalAlertRecord } from '@/lib/local-alert-rules'
+import { LOCAL_OPS_PERSISTENCE_EVENT } from '@/lib/local-ops-persistence'
+import { loadLocalAlertState, LOCAL_OPS_CHANGED_EVENT } from '@/lib/local-ops-store'
 import { mobileHostsCopy } from '@/lib/locales/mobile-hosts-v3'
 import { fill } from '@/lib/locales/probe-install'
+import { useMobileBackHandler } from '@/lib/mobile-back'
 import { getResourceUsageTone } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
 import type { WorkspaceAppId } from '@/lib/workspace'
@@ -73,22 +78,57 @@ export interface MobileHostDetailProps {
   entry?: FleetHost
   loading: boolean
   network?: HostNetworkDisplay
+  vaultId?: string
+  vaultUnlocked?: boolean
   onBack: () => void
   onConnect: () => void
   onOpenWorkspace: (app: WorkspaceAppId) => void
   onOpenPortForwarding?: () => void
+  onManageProbe?: () => void
   onEdit: () => void
   onDelete: () => void
 }
 
-/** v3 m:host — header, primary actions, live 2×2 status and the workspace app grid. */
-export function MobileHostDetail({ host, entry, loading, network, onBack, onConnect, onOpenWorkspace, onOpenPortForwarding, onEdit, onDelete }: MobileHostDetailProps) {
-  const { locale } = useT()
+/** v3 m:host — header, primary actions, live 2×2 status, alerts and the workspace app grid. */
+export function MobileHostDetail({ host, entry, loading, network, vaultId, vaultUnlocked = false, onBack, onConnect, onOpenWorkspace, onOpenPortForwarding, onManageProbe, onEdit, onDelete }: MobileHostDetailProps) {
+  const { t, locale } = useT()
   const c = mobileHostsCopy[locale]
   const now = useNow(5_000)
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => { rootRef.current?.scrollIntoView?.({ block: 'start' }) }, [host.id])
+  useMobileBackHandler(true, onBack)
   const [menu, setMenu] = useState<'closed' | 'open' | 'confirm'>('closed')
+  const [alertRevision, setAlertRevision] = useState(0)
+  const [actingRuleId, setActingRuleId] = useState<string | null>(null)
+  useEffect(() => {
+    const bump = () => setAlertRevision((value) => value + 1)
+    window.addEventListener(LOCAL_OPS_CHANGED_EVENT, bump)
+    window.addEventListener(LOCAL_OPS_PERSISTENCE_EVENT, bump)
+    return () => {
+      window.removeEventListener(LOCAL_OPS_CHANGED_EVENT, bump)
+      window.removeEventListener(LOCAL_OPS_PERSISTENCE_EVENT, bump)
+    }
+  }, [])
+  void alertRevision
+  const localAlerts: LocalAlertRecord[] = vaultUnlocked
+    ? loadLocalAlertState(vaultId, host.id).alerts.filter((row) => row.status !== 'closed')
+    : []
+  async function handleAlertAction(alert: LocalAlertRecord, action: 'acknowledge' | 'close') {
+    if (!vaultUnlocked || actingRuleId) return
+    setActingRuleId(alert.ruleId)
+    try {
+      await runLocalAlertAction({
+        vaultId,
+        host,
+        ruleId: alert.ruleId,
+        action,
+        confirmMessage: t(action === 'acknowledge' ? 'localOps.confirmAcknowledge' : 'localOps.confirmClose', { host: host.name, alert: alert.name }),
+      })
+    } catch { /* Handled by canonical audit/store */ } finally {
+      setActingRuleId(null)
+      setAlertRevision((value) => value + 1)
+    }
+  }
   const status = mobileHostStatus(entry, loading)
   const ssh = hasSshConnection(host)
   const metrics = entry?.view?.metrics ?? null
@@ -138,6 +178,11 @@ export function MobileHostDetail({ host, entry, loading, network, onBack, onConn
       </div>
       {menu !== 'closed' && (
         <div data-testid="mobile-host-menu" className="sb-card mx-4 mb-3 divide-y divide-[color:var(--workspace-border-soft)] overflow-hidden p-0">
+          {onManageProbe && (
+            <button type="button" data-testid="mobile-host-manage-probe" onClick={() => { setMenu('closed'); onManageProbe() }} className="flex min-h-11 w-full items-center gap-3 px-4 text-left text-[15px] text-[var(--workspace-text-strong)]">
+              <Radar className="h-4 w-4 text-[var(--workspace-accent-text)]" />{c.manageProbe}
+            </button>
+          )}
           <button type="button" onClick={() => { setMenu('closed'); onEdit() }} className="flex min-h-11 w-full items-center gap-3 px-4 text-left text-[15px] text-[var(--workspace-text-strong)]">
             <Pencil className="h-4 w-4 text-[var(--workspace-text-muted)]" />{c.edit}
           </button>
@@ -177,6 +222,45 @@ export function MobileHostDetail({ host, entry, loading, network, onBack, onConn
         )}
       </div>
 
+      {localAlerts.length > 0 && (
+        <section data-testid="mobile-host-alerts" className="mt-5 px-4">
+          <h3 className="mb-2 flex items-center justify-between px-1 text-[13px] text-[var(--workspace-text-muted)]">
+            <span className="inline-flex items-center gap-1.5"><TriangleAlert className="h-3.5 w-3.5 text-[color:var(--workspace-status-warn-text)]" />{c.alerts}</span>
+            <span className="tabular-nums">{localAlerts.length}</span>
+          </h3>
+          <div className="sb-card divide-y divide-[color:var(--workspace-border-soft)] overflow-hidden p-0">
+            {localAlerts.map((alert) => {
+              const busy = actingRuleId === alert.ruleId
+              return (
+                <div key={alert.ruleId} data-testid={`mobile-host-alert-${alert.ruleId}`} className="flex flex-col gap-2 px-3.5 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0 flex-1 text-[14px] font-medium text-[var(--workspace-text-strong)]">{alert.name}</span>
+                    <span className={cn('shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium',
+                      alert.status === 'resolved' ? STATUS_PILL.online : alert.severity === 'critical' ? STATUS_PILL.offline : STATUS_PILL.attention)}>
+                      {c.alertStatus[alert.status] ?? alert.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {alert.status === 'active' && (
+                      <button type="button" data-testid={`mobile-host-alert-ack-${alert.ruleId}`} disabled={busy || actingRuleId !== null}
+                        onClick={() => void handleAlertAction(alert, 'acknowledge')}
+                        className="flex h-9 flex-1 items-center justify-center rounded-lg bg-[var(--workspace-accent-subtle)] px-3 text-[13px] font-medium text-[var(--workspace-accent-text)] disabled:opacity-50">
+                        {c.acknowledge}
+                      </button>
+                    )}
+                    <button type="button" data-testid={`mobile-host-alert-close-${alert.ruleId}`} disabled={busy || actingRuleId !== null}
+                      onClick={() => void handleAlertAction(alert, 'close')}
+                      className="flex h-9 flex-1 items-center justify-center rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-[13px] font-medium text-[var(--workspace-text-strong)] disabled:opacity-50">
+                      {c.closeAlert}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
       <section className="mt-5 px-4">
         <h3 className="mb-2 flex items-center justify-between px-1 text-[13px] text-[var(--workspace-text-muted)]">
           <span>{c.live}</span>
@@ -188,6 +272,12 @@ export function MobileHostDetail({ host, entry, loading, network, onBack, onConn
             <div data-testid="mobile-host-no-live" className="sb-card p-4">
               <p className="text-sm font-medium text-[var(--workspace-text-strong)]">{c.noLive}</p>
               <p className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{c.noLiveHint}</p>
+              {onManageProbe && (
+                <button type="button" data-testid="mobile-host-no-live-probe" onClick={onManageProbe}
+                  className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-[var(--workspace-accent-subtle)] px-3 text-[13px] font-medium text-[var(--workspace-accent-text)]">
+                  <Radar className="h-4 w-4" />{c.manageProbe}
+                </button>
+              )}
             </div>
           )}
       </section>

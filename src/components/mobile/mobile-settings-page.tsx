@@ -11,6 +11,7 @@ import { appUpdateCopy } from '@/lib/locales/app-update'
 import { mobileMiscV3Copy } from '@/lib/locales/mobile-misc-v3'
 import { fill } from '@/lib/locales/probe-install'
 import { settingsNavigationCopy } from '@/lib/locales/settings-navigation'
+import { useMobileBackHandler } from '@/lib/mobile-back'
 import { consumeSettingsCategoryRequest, SETTINGS_CATEGORY_REQUEST_EVENT, type SettingsCategory } from '@/lib/settings-request'
 
 type MobileSettingsPageProps = Omit<SettingsPanelProps, 'category' | 'hideNavigation'>
@@ -26,6 +27,7 @@ export function MobileSettingsPage(props: MobileSettingsPageProps) {
   const { hosts } = useHosts()
   const [themePreference] = useThemePreference()
   const [category, setCategory] = useState<SettingsCategory | null>(consumeSettingsCategoryRequest)
+  useMobileBackHandler(category !== null, () => setCategory(null))
 
   useEffect(() => {
     const onRequest = () => { const next = consumeSettingsCategoryRequest(); if (next) setCategory(next) }

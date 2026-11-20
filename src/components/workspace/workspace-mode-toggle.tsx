@@ -6,9 +6,10 @@ interface WorkspaceModeToggleProps {
   mode: SessionWorkspaceMode
   onChange: (mode: SessionWorkspaceMode) => void
   compact?: boolean
+  hideBrowser?: boolean
 }
 
-export function WorkspaceModeToggle({ mode, onChange, compact = false }: WorkspaceModeToggleProps) {
+export function WorkspaceModeToggle({ mode, onChange, compact = false, hideBrowser = false }: WorkspaceModeToggleProps) {
   return (
     <div className={cn('inline-flex rounded-lg border border-border/60 bg-muted/30 p-1', compact && 'rounded-md p-0.5')}>
       <button
@@ -33,17 +34,19 @@ export function WorkspaceModeToggle({ mode, onChange, compact = false }: Workspa
       >
         {t('workspace.mode.workspace')}
       </button>
-      <button
-        type="button"
-        onClick={() => onChange('browser')}
-        className={cn(
-          'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-          compact && 'px-2.5 py-1 text-[11px]',
-          mode === 'browser' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-        )}
-      >
-        {t('workspace.mode.browser')}
-      </button>
+      {!hideBrowser && (
+        <button
+          type="button"
+          onClick={() => onChange('browser')}
+          className={cn(
+            'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+            compact && 'px-2.5 py-1 text-[11px]',
+            mode === 'browser' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {t('workspace.mode.browser')}
+        </button>
+      )}
     </div>
   )
 }

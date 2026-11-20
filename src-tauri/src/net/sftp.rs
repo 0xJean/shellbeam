@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ssh2::{Session, Sftp};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use uuid::Uuid;
 
 use crate::error::{sftp_error_from_raw, sftp_error_payload};
@@ -1032,10 +1032,26 @@ fn local_list_dir_blocking(payload: LocalListRequest) -> Result<Vec<LocalEntry>,
 }
 
 #[tauri::command]
-pub fn local_home_dir() -> Result<String, String> {
-    dirs::home_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| "Cannot determine home directory".to_string())
+pub fn local_home_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let resolved = if cfg!(mobile) {
+        // On Android `dirs::home_dir()` returns None; on iOS the sandbox root
+        // is not user-browsable. Prefer the platform Documents/AppData folder.
+        app.path()
+            .document_dir()
+            .ok()
+            .or_else(|| app.path().app_data_dir().ok())
+            .or_else(|| app.path().cache_dir().ok())
+            .or_else(dirs::home_dir)
+    } else {
+        dirs::home_dir()
+            .or_else(|| app.path().document_dir().ok())
+            .or_else(|| app.path().app_data_dir().ok())
+    };
+    let dir = resolved.ok_or_else(|| "Cannot determine home directory".to_string())?;
+    if cfg!(mobile) {
+        let _ = std::fs::create_dir_all(&dir);
+    }
+    Ok(dir.to_string_lossy().to_string())
 }
 
 #[tauri::command]

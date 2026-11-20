@@ -2,6 +2,7 @@ import { X } from 'lucide-react'
 import { HostForm } from '@/components/host-form'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { useMobileBackHandler } from '@/lib/mobile-back'
 import { mobileHostsCopy } from '@/lib/locales/mobile-hosts-v3'
 import { ClipboardSshChip } from './clipboard-ssh-chip'
 
@@ -24,6 +25,7 @@ export interface MobileNewHostProps {
 export function MobileNewHost({ onCancel, ...formProps }: MobileNewHostProps) {
   const { locale } = useT()
   const c = mobileHostsCopy[locale]
+  useMobileBackHandler(true, onCancel)
   return (
     <div data-testid="mobile-new-host" role="dialog" aria-modal="true" aria-label={c.newHost}
       className="fixed inset-0 z-[60] flex flex-col bg-[var(--workspace-surface-950)]"

@@ -7,7 +7,10 @@ import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
     companion object {
@@ -25,6 +28,27 @@ class MainActivity : TauriActivity() {
         super.onCreate(savedInstanceState)
         acquireMulticastLock()
         setupNsd()
+        setupBackNavigation()
+    }
+
+    private fun setupBackNavigation() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val webView = webViewRef
+                if (webView == null) {
+                    moveTaskToBack(true)
+                    return
+                }
+                webView.evaluateJavascript(
+                    "(function(){try{return typeof window.__shellbeamHandleAndroidBack==='function'?Boolean(window.__shellbeamHandleAndroidBack()):false;}catch(e){return false;}})()"
+                ) { result ->
+                    if (result != "true") {
+                        // Keep SSH sessions alive in the background when at the root screen.
+                        moveTaskToBack(true)
+                    }
+                }
+            }
+        })
     }
 
     /**
@@ -37,6 +61,16 @@ class MainActivity : TauriActivity() {
         Log.i(TAG, "onWebViewCreate: installing NSD bridge on ${webView.javaClass.name}")
         webViewRef = webView
         webView.addJavascriptInterface(nsdBridge, "ShellBeamNSD")
+        // Android 15+ enforces edge-to-edge; apply systemBars + IME insets on the
+        // WebView so status bar, nav bar and soft keyboard never overlap the terminal toolbar.
+        ViewCompat.setOnApplyWindowInsetsListener(webView) { view, windowInsets ->
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
+            )
+            view.setPadding(insets.left, insets.top, insets.right, insets.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
+        ViewCompat.requestApplyInsets(webView)
 
         // Notify the frontend once the page is ready.
         // The bridge is available immediately after addJavascriptInterface,

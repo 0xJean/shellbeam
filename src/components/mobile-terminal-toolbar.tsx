@@ -1,11 +1,13 @@
 import { useT } from '@/lib/i18n'
 import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
 import { cn } from '@/lib/utils'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronsLeftRight, X } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronsLeftRight, ClipboardPaste, KeyboardOff, X } from 'lucide-react'
 import { useCallback, useRef, useState, type ReactNode } from 'react'
 
 interface MobileTerminalToolbarProps {
   onSend: (data: string) => void
+  onPaste?: () => void
+  onDismissKeyboard?: () => void
 }
 
 type Modifier = 'ctrl' | 'alt'
@@ -69,13 +71,23 @@ function applyModifier(seq: string, mod: Set<Modifier>): string {
   return seq
 }
 
-export function MobileTerminalToolbar({ onSend }: MobileTerminalToolbarProps) {
+export function MobileTerminalToolbar({ onSend, onPaste, onDismissKeyboard }: MobileTerminalToolbarProps) {
   const { locale } = useT()
   const copy = mobileTerminalV3Copy[locale]
   const [activeModifiers, setActiveModifiers] = useState<Set<Modifier>>(new Set())
   const [lockedModifiers, setLockedModifiers] = useState<Set<Modifier>>(new Set())
   const [panel, setPanel] = useState<Panel>('none')
   const lastModTap = useRef<Record<string, number>>({})
+
+  const handlePaste = useCallback(() => {
+    if (onPaste) {
+      onPaste()
+      return
+    }
+    void navigator.clipboard?.readText?.().then((text) => {
+      if (text) onSend(text)
+    }).catch(() => {})
+  }, [onPaste, onSend])
 
   const toggleModifier = useCallback((mod: Modifier) => {
     const now = Date.now()
@@ -131,6 +143,10 @@ export function MobileTerminalToolbar({ onSend }: MobileTerminalToolbarProps) {
         <ToolbarToggle label={copy.ctrlKeys} text="^·" active={panel === 'ctrl'} onPress={() => togglePanel('ctrl')} />
         <ToolbarToggle label={copy.symbols} icon={<ChevronsLeftRight className="h-4 w-4" />} active={panel === 'symbols'} onPress={() => togglePanel('symbols')} />
         <ToolbarToggle label={copy.fnKeys} text="Fn" active={panel === 'fkeys'} onPress={() => togglePanel('fkeys')} />
+        <ToolbarKey label={copy.paste} testId="mobile-toolbar-paste" icon={<ClipboardPaste className="h-4 w-4" />} onPress={handlePaste} />
+        {onDismissKeyboard && (
+          <ToolbarKey label={copy.dismissKeyboard} testId="mobile-toolbar-dismiss-keyboard" icon={<KeyboardOff className="h-4 w-4" />} onPress={onDismissKeyboard} />
+        )}
         {QUICK_SYMBOLS.map((ch) => <ToolbarKey key={ch} label={ch} onPress={() => send(ch)} />)}
       </div>
 
@@ -197,9 +213,9 @@ function pressHandlers(onPress: () => void) {
 }
 
 /** 44px key — meets the minimum touch target and keeps focus on the terminal. */
-function ToolbarKey({ label, icon, onPress }: { label: string; icon?: ReactNode; onPress: () => void }) {
+function ToolbarKey({ label, icon, testId, onPress }: { label: string; icon?: ReactNode; testId?: string; onPress: () => void }) {
   return (
-    <button type="button" aria-label={label} {...pressHandlers(onPress)} className={cn(keyBase, keyIdle, 'min-w-11 px-2.5')}>
+    <button type="button" data-testid={testId} aria-label={label} {...pressHandlers(onPress)} className={cn(keyBase, keyIdle, 'min-w-11 px-2.5')}>
       {icon ?? label}
     </button>
   )
