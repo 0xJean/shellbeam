@@ -72,7 +72,10 @@ fn is_git_hosting_entry(alias: &str, fields: &HashMap<String, String>) -> bool {
     }
 
     // 2. Git user pattern with git repository service indicators
-    let user = fields.get("user").map(|s| s.trim().to_ascii_lowercase()).unwrap_or_default();
+    let user = fields
+        .get("user")
+        .map(|s| s.trim().to_ascii_lowercase())
+        .unwrap_or_default();
     if user == "git" || user == "git-lfs" || user == "gitolite" {
         let host_lower = hostname.to_ascii_lowercase();
         let alias_lower = alias.to_ascii_lowercase();
@@ -118,7 +121,10 @@ fn parse_config_content(content: &str) -> Vec<SshConfigEntry> {
         if key == "host" {
             if let Some(fields) = current.take() {
                 for alias in current_alias.split_whitespace() {
-                    if !alias.contains('*') && !alias.contains('?') && !is_git_hosting_entry(alias, &fields) {
+                    if !alias.contains('*')
+                        && !alias.contains('?')
+                        && !is_git_hosting_entry(alias, &fields)
+                    {
                         entries.push(build_entry(alias, &fields));
                     }
                 }
@@ -132,7 +138,8 @@ fn parse_config_content(content: &str) -> Vec<SshConfigEntry> {
 
     if let Some(fields) = current {
         for alias in current_alias.split_whitespace() {
-            if !alias.contains('*') && !alias.contains('?') && !is_git_hosting_entry(alias, &fields) {
+            if !alias.contains('*') && !alias.contains('?') && !is_git_hosting_entry(alias, &fields)
+            {
                 entries.push(build_entry(alias, &fields));
             }
         }
