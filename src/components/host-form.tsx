@@ -8,12 +8,13 @@ import { Textarea } from '@/components/ui/textarea'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { hasSshConnection, validateHostDraft } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { isSshPublicKeyText, pickPrivateKeyFile } from '@/lib/keys'
 import { connectShellbeamServer, formatServerConnectError } from '@/lib/server-quick-connect'
 import { identityBaseName, type ParsedSshCommand } from '@/lib/ssh-command-parse'
 import { testSshConnection } from '@/lib/sessions'
 import { sshAgentAvailable, type AuthType } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
-import { Archive, CircleAlert, CircleCheck, Eye, EyeOff, Key, KeyRound, Lock, PlugZap, RefreshCw, Server, User, X } from 'lucide-react'
+import { Archive, CircleAlert, CircleCheck, Eye, EyeOff, FolderOpen, Key, KeyRound, Lock, PlugZap, RefreshCw, Server, User, X } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 
 interface HostFormProps {
@@ -149,6 +150,10 @@ export function HostForm({
       passwordKeyRef = undefined
       privateKeyRef = undefined
     } else if (useInlineSecret) {
+      if (authType === 'privateKey' && isSshPublicKeyText(privateKey)) {
+        setError(t('hostForm.publicKeyError'))
+        return
+      }
       const suffix = authType === 'password' ? 'password' : 'key'
       const existingRef = authType === 'password' ? initial?.passwordKeyRef : initial?.privateKeyRef
       const saveName = vaultSaveName.trim() || existingRef || `${addrSlug}-${connectionOnly ? `${username}-${connectionSecretId}-` : ''}${suffix}`
@@ -510,12 +515,34 @@ function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password
   const [showRevealedSecret, setShowRevealedSecret] = useState(false)
   const [loadingSecret, setLoadingSecret] = useState(false)
   const [loadError, setLoadError] = useState('')
+  const [pickingFile, setPickingFile] = useState(false)
+  const [pickError, setPickError] = useState('')
+  const pastedPublicKey = !isPassword && isSshPublicKeyText(privateKey)
 
   useEffect(() => {
     setRevealedSecret(null)
     setShowRevealedSecret(false)
     setLoadError('')
+    setPickError('')
   }, [vaultKeyRef, authType])
+
+  async function handlePickKeyFile() {
+    setPickingFile(true)
+    setPickError('')
+    try {
+      const picked = await pickPrivateKeyFile()
+      if (!picked) return
+      onPrivateKey(picked.content)
+      onUseInline(true)
+      if (!vaultSaveName.trim() && picked.fileName) {
+        onVaultSaveName(picked.fileName)
+      }
+    } catch (e) {
+      setPickError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPickingFile(false)
+    }
+  }
 
   async function handleToggleSavedSecret() {
     if (showRevealedSecret) {
@@ -614,7 +641,7 @@ function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password
         <div className="space-y-2">
           {isPassword ? (
             <div className="relative">
-              <Input type={showManualPassword ? 'text' : 'password'} value={password}
+              <Input data-testid="host-password" type={showManualPassword ? 'text' : 'password'} value={password}
                 onChange={(e) => { onPassword(e.target.value); onUseInline(true) }}
                 placeholder={t('hostForm.passwordPlaceholder')} className="pr-9 font-mono" />
               <button
@@ -628,14 +655,44 @@ function CredentialInput({ authType, vaultKeys, vaultKeyRef, useInline, password
               </button>
             </div>
           ) : (
-            <Textarea data-testid="host-private-key" aria-label={t('hostForm.privateKeyLabel')} value={privateKey}
-              onChange={(e) => { onPrivateKey(e.target.value); onUseInline(true) }}
-              placeholder={t('hostForm.privateKeyPlaceholder')} className="min-h-[80px] font-mono text-sm" />
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs font-medium text-muted-foreground">{t('hostForm.privateKeyLabel')}</label>
+                <button
+                  type="button"
+                  data-testid="host-pick-private-key"
+                  disabled={pickingFile}
+                  onClick={() => void handlePickKeyFile()}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:border-primary/50 hover:bg-muted disabled:opacity-50"
+                >
+                  <FolderOpen className="h-3.5 w-3.5 text-primary" />
+                  {pickingFile ? t('hostForm.pickingKeyFile') : t('hostForm.pickKeyFile')}
+                </button>
+              </div>
+              <Textarea data-testid="host-private-key" aria-label={t('hostForm.privateKeyLabel')} value={privateKey}
+                onChange={(e) => { onPrivateKey(e.target.value); onUseInline(true); if (pickError) setPickError('') }}
+                placeholder={t('hostForm.privateKeyPlaceholder')} className={cn('min-h-[80px] font-mono text-sm', pastedPublicKey && 'border-destructive focus-visible:ring-destructive')} />
+              {pastedPublicKey && (
+                <p data-testid="host-public-key-warning" role="alert" className="flex items-start gap-1.5 text-xs text-destructive">
+                  <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{t('hostForm.publicKeyError')}</span>
+                </p>
+              )}
+              {pickError && (
+                <p data-testid="host-pick-key-error" role="alert" className="flex items-start gap-1.5 text-xs text-destructive">
+                  <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{pickError}</span>
+                </p>
+              )}
+            </div>
           )}
-          <div className="flex items-center gap-2">
-            <Archive className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <Input data-testid="host-secret-name" aria-label={t('hostForm.saveAsName')} value={vaultSaveName} onChange={(e) => onVaultSaveName(e.target.value)}
-              placeholder={defaultVaultSaveName || `${addrSlug}-${isPassword ? 'password' : 'key'}`} className="h-7 text-xs" />
+          <div className="space-y-1">
+            <label htmlFor="host-secret-name-input" className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Archive className="h-3.5 w-3.5 shrink-0" />
+              <span>{t('hostForm.saveAsName')}</span>
+            </label>
+            <Input id="host-secret-name-input" data-testid="host-secret-name" aria-label={t('hostForm.saveAsName')} value={vaultSaveName} onChange={(e) => onVaultSaveName(e.target.value)}
+              placeholder={defaultVaultSaveName || `${addrSlug}-${isPassword ? 'password' : 'key'}`} className="h-8 text-xs" />
           </div>
           {hasVaultKeys && (
             <button type="button" onClick={() => { onUseInline(false); onPassword(''); onPrivateKey('') }}
