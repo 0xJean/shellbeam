@@ -143,4 +143,14 @@ describe('MobileHostsPage', () => {
     await waitFor(() => expect(screen.queryByTestId('clipboard-ssh-chip')).toBeNull())
     expect(screen.getByTestId('host-address')).toHaveValue('')
   })
+
+  it('shows a cross-device SSH Agent notice on mobile host detail with an edit shortcut', async () => {
+    const agentHost: HostProfile = { ...hosts[0], id: 'h-agent', name: 'mac-agent-box', authType: 'agent' }
+    fleet.hosts = [entry(agentHost, 'online', null)]
+    renderPage({ hosts: [agentHost] })
+    fireEvent.click(screen.getByTestId('mobile-host-row'))
+    expect(screen.getByTestId('mobile-host-agent-notice')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('mobile-host-agent-edit'))
+    expect(await screen.findByTestId('host-directory-editor')).toBeInTheDocument()
+  })
 })

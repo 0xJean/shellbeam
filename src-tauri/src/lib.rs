@@ -263,6 +263,8 @@ pub fn run() {
             vault::seal::vault_open_data,
             keys::generate_ssh_key,
             keys::import_private_key_from_file,
+            keys::default_ssh_dir,
+            keys::pick_ssh_private_key_file,
             ssh::interactive::create_interactive_session,
             ssh::auth_prompt::ssh_auth_prompt_respond,
             ssh::interactive::send_interactive_input,

@@ -222,6 +222,21 @@ export function MobileHostDetail({ host, entry, loading, network, vaultId, vault
         )}
       </div>
 
+      {host.authType === 'agent' && (
+        <section data-testid="mobile-host-agent-notice" className="mt-4 px-4">
+          <div className="flex flex-col gap-2.5 rounded-2xl bg-[var(--workspace-status-warn-bg)] px-3.5 py-3 text-[color:var(--workspace-status-warn-text)]">
+            <div className="flex items-start gap-2 text-[13px] leading-relaxed">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{c.agentSyncNotice}</span>
+            </div>
+            <button type="button" data-testid="mobile-host-agent-edit" onClick={onEdit}
+              className="inline-flex h-9 items-center justify-center gap-1.5 self-start rounded-lg bg-[var(--workspace-surface-950)]/20 px-3 text-[13px] font-semibold text-current">
+              <Pencil className="h-3.5 w-3.5" />{c.edit}
+            </button>
+          </div>
+        </section>
+      )}
+
       {localAlerts.length > 0 && (
         <section data-testid="mobile-host-alerts" className="mt-5 px-4">
           <h3 className="mb-2 flex items-center justify-between px-1 text-[13px] text-[var(--workspace-text-muted)]">
