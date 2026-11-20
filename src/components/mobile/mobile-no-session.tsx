@@ -4,6 +4,7 @@ import { useT } from '@/lib/i18n'
 import { fill } from '@/lib/locales/probe-install'
 import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
 import type { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { isMobileDevice } from '@/lib/mobile-back'
 import { Plus, Server, SquareTerminal } from 'lucide-react'
 import { getHostInventoryResource, HostMetadataLine } from '../host-display-meta'
 import { WorkspaceOsIcon } from '../workspace/workspace-os-icon'
@@ -14,13 +15,14 @@ interface MobileNoSessionProps {
   networkByAddress: ReturnType<typeof useHostNetworkMetadata>
   inventoryStates: ReturnType<typeof useWorkspaceInventoryStates>
   onNewConnection: () => void
-  onOpenLocalTerminal: () => void
+  onOpenLocalTerminal?: () => void
   onConnectHost?: (hostId: string) => void
 }
 
 export function MobileNoSession({ hosts, networkByAddress, inventoryStates, onNewConnection, onOpenLocalTerminal, onConnectHost }: MobileNoSessionProps) {
   const { t, locale } = useT()
   const copy = mobileTerminalV3Copy[locale]
+  const showLocalTerminal = !!onOpenLocalTerminal && !isMobileDevice()
   const recentHosts = [...hosts]
     .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
     .slice(0, 5)
@@ -37,7 +39,9 @@ export function MobileNoSession({ hosts, networkByAddress, inventoryStates, onNe
         <p className="mt-1 text-sm text-[var(--workspace-text-muted)]">{t('mobile.noSessionsHint')}</p>
         <div className="mt-4 flex w-full gap-3">
           <button type="button" onClick={onNewConnection} className={sheetPrimaryButton}><Plus className="h-4 w-4" />{t('mobile.newConnection')}</button>
-          <button type="button" onClick={onOpenLocalTerminal} className={sheetTintedButton}><SquareTerminal className="h-4 w-4" />{t('mobile.localTerminal')}</button>
+          {showLocalTerminal && (
+            <button type="button" onClick={onOpenLocalTerminal} className={sheetTintedButton}><SquareTerminal className="h-4 w-4" />{t('mobile.localTerminal')}</button>
+          )}
         </div>
       </section>
 

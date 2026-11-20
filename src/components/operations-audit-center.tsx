@@ -1,6 +1,6 @@
 import { monitoringDiagnostic, monitoringOperationTarget, monitoringProviderLabel } from '@/lib/monitoring-presentation'
 import { NativeSelect } from '@/components/ui/select'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   ChevronLeft,
   ChevronRight,
@@ -143,9 +143,23 @@ export function OperationsAuditCenter({ hostId, limit = 100, onRetry, source, va
   return <ScopedOperationsAuditCenter key={JSON.stringify([hostId, vaultId, source, limit])} hostId={hostId} limit={limit} onRetry={onRetry} source={source} vaultId={vaultId} className={className} />
 }
 
+function getIsMd() {
+  return typeof window === 'undefined' || typeof window.matchMedia !== 'function'
+    ? true
+    : window.matchMedia('(min-width: 768px)').matches
+}
+
+function subscribeMd(callback: () => void) {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {}
+  const mql = window.matchMedia('(min-width: 768px)')
+  mql.addEventListener('change', callback)
+  return () => mql.removeEventListener('change', callback)
+}
+
 function ScopedOperationsAuditCenter({ hostId, limit = 100, onRetry, source, vaultId, className }: OperationsAuditCenterProps) {
   const { t, locale } = useT()
   const copy = guideAuditCopy[locale]
+  const isMd = useSyncExternalStore(subscribeMd, getIsMd, () => true)
   const [view, setView] = useState<OperationsAuditView>('operations')
   const [status, setStatus] = useState<OperationStatusFilter>('all')
   const [sourceFilter, setSourceFilter] = useState<(typeof SOURCE_FILTERS)[number]>('all')
@@ -360,33 +374,63 @@ function ScopedOperationsAuditCenter({ hostId, limit = 100, onRetry, source, vau
         })}
       </div>}
 
-      {view === 'audit' && filteredAudits.length > 0 && <div className="sb-card overflow-x-auto">
-        <table className="w-full text-[12.5px]">
-          <thead className="border-b border-[color:var(--workspace-border-soft)]">
-            <tr><th className={th}>{copy.colTime}</th><th className={th}>{copy.colEvent}</th><th className={th}>{copy.colAction}</th><th className={th}>{copy.colHost}</th><th className={th}>{copy.colRequest}</th><th className={th}>{copy.colStatus}</th><th className={th}>{copy.colSummary}</th></tr>
-          </thead>
-          <tbody>
-            {filteredAudits.map((entry) => {
-              const job = jobsById.get(entry.jobId)
-              const summary = entry.errorSummary ?? entry.resultSummary
-              return (
-                <tr key={entry.auditId} data-testid="operation-audit-row" data-job-id={entry.jobId} data-host-id={entry.hostId} data-vault-id={entry.vaultId} data-action={entry.action} data-target={entry.target} data-status={entry.status} data-confirmation={entry.confirmationStatus} data-transport={entry.transport} className="border-b border-[color:var(--workspace-border-soft)] align-top last:border-b-0">
-                  <td className="whitespace-nowrap px-3 py-2 font-mono text-[11.5px] text-[var(--workspace-text)]">{formatTime(entry.createdAt, locale)}</td>
-                  <td className="px-3 py-2"><div className="font-mono text-[11.5px] text-[var(--workspace-text-strong)]">{entry.event}</div><div className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">audit={entry.auditId}</div></td>
-                  <td className="px-3 py-2 text-[var(--workspace-text-strong)]">{entry.action} · {monitoringOperationTarget(entry.target, entry.action, locale)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-[var(--workspace-text-strong)]">{entry.hostName || entry.hostAddress || t('operations.unknownHost')}</td>
-                  <td className="whitespace-nowrap px-3 py-2 font-mono text-[11.5px] text-[var(--workspace-text)]">{job?.requestId ? t('operations.requestId', { id: job.requestId }) : '—'}</td>
-                  <td className="px-3 py-2"><StatusBadge status={entry.status} /></td>
-                  <td className="min-w-[200px] px-3 py-2 text-[var(--workspace-text-muted)]">
-                    {summary && <div className={cn('line-clamp-2', entry.errorSummary && 'text-[var(--workspace-status-bad-text)]')}>{monitoringDiagnostic(summary, locale)}</div>}
-                    <div className="text-[11px] text-[var(--workspace-text-subtle)]">{t(`operations.source.${entry.source}`)} · {monitoringProviderLabel(entry.provider, locale)} · {entry.transport}</div>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>}
+      {view === 'audit' && filteredAudits.length > 0 && (isMd ? (
+        <div className="sb-card overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead className="border-b border-[color:var(--workspace-border-soft)]">
+              <tr><th className={th}>{copy.colTime}</th><th className={th}>{copy.colEvent}</th><th className={th}>{copy.colAction}</th><th className={th}>{copy.colHost}</th><th className={th}>{copy.colRequest}</th><th className={th}>{copy.colStatus}</th><th className={th}>{copy.colSummary}</th></tr>
+            </thead>
+            <tbody>
+              {filteredAudits.map((entry) => {
+                const job = jobsById.get(entry.jobId)
+                const summary = entry.errorSummary ?? entry.resultSummary
+                return (
+                  <tr key={entry.auditId} data-testid="operation-audit-row" data-job-id={entry.jobId} data-host-id={entry.hostId} data-vault-id={entry.vaultId} data-action={entry.action} data-target={entry.target} data-status={entry.status} data-confirmation={entry.confirmationStatus} data-transport={entry.transport} className="border-b border-[color:var(--workspace-border-soft)] align-top last:border-b-0">
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-[11.5px] text-[var(--workspace-text)]">{formatTime(entry.createdAt, locale)}</td>
+                    <td className="px-3 py-2"><div className="font-mono text-[11.5px] text-[var(--workspace-text-strong)]">{entry.event}</div><div className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">audit={entry.auditId}</div></td>
+                    <td className="px-3 py-2 text-[var(--workspace-text-strong)]">{entry.action} · {monitoringOperationTarget(entry.target, entry.action, locale)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-[var(--workspace-text-strong)]">{entry.hostName || entry.hostAddress || t('operations.unknownHost')}</td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-[11.5px] text-[var(--workspace-text)]">{job?.requestId ? t('operations.requestId', { id: job.requestId }) : '—'}</td>
+                    <td className="px-3 py-2"><StatusBadge status={entry.status} /></td>
+                    <td className="min-w-[200px] px-3 py-2 text-[var(--workspace-text-muted)]">
+                      {summary && <div className={cn('line-clamp-2', entry.errorSummary && 'text-[var(--workspace-status-bad-text)]')}>{monitoringDiagnostic(summary, locale)}</div>}
+                      <div className="text-[11px] text-[var(--workspace-text-subtle)]">{t(`operations.source.${entry.source}`)} · {monitoringProviderLabel(entry.provider, locale)} · {entry.transport}</div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div data-testid="operations-audit-cards" className="sb-card divide-y divide-[color:var(--workspace-border-soft)] overflow-hidden">
+          {filteredAudits.map((entry) => {
+            const job = jobsById.get(entry.jobId)
+            const summary = entry.errorSummary ?? entry.resultSummary
+            return (
+              <article key={entry.auditId} data-testid="operation-audit-row" data-job-id={entry.jobId} data-host-id={entry.hostId} data-vault-id={entry.vaultId} data-action={entry.action} data-target={entry.target} data-status={entry.status} data-confirmation={entry.confirmationStatus} data-transport={entry.transport} className="space-y-1.5 px-3.5 py-3 text-[13px]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-semibold text-[var(--workspace-text-strong)]">{entry.action}</span>
+                  <StatusBadge status={entry.status} />
+                </div>
+                <div className="truncate text-xs text-[var(--workspace-text)]">
+                  {entry.hostName || entry.hostAddress || t('operations.unknownHost')} · {monitoringOperationTarget(entry.target, entry.action, locale)}
+                </div>
+                {summary && <div className={cn('line-clamp-2 text-xs', entry.errorSummary ? 'text-[var(--workspace-status-bad-text)]' : 'text-[var(--workspace-text-muted)]')}>{monitoringDiagnostic(summary, locale)}</div>}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-[var(--workspace-text-subtle)]">
+                  <span>{formatTime(entry.createdAt, locale)}</span>
+                  <span>·</span>
+                  <span>{entry.event}</span>
+                  <span>·</span>
+                  <span>audit={entry.auditId}</span>
+                  {job?.requestId && <><span>·</span><span>{t('operations.requestId', { id: job.requestId })}</span></>}
+                </div>
+                <div className="text-[11px] text-[var(--workspace-text-subtle)]">{t(`operations.source.${entry.source}`)} · {monitoringProviderLabel(entry.provider, locale)} · {entry.transport}</div>
+              </article>
+            )
+          })}
+        </div>
+      ))}
 
       <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--workspace-text-subtle)]">
         <span data-testid="operations-page" className="inline-flex items-center gap-1.5"><Info aria-hidden className="h-3.5 w-3.5" />{fill(copy.page, { page: boundaries[view].length, size: pageSize })}</span>

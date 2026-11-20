@@ -6,6 +6,7 @@ import { fill } from '@/lib/locales/probe-install'
 import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
 import type { SnippetEntry } from '@/lib/snippets'
 import { useTerminalThemes, type TerminalPrefs } from '@/lib/terminal-themes'
+import { useMobileBackHandler } from '@/lib/mobile-back'
 import { cn } from '@/lib/utils'
 import { ClipboardPaste, CodeXml, Copy, History, Minus, Palette, Play, Plus, Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -41,6 +42,7 @@ export function MobileTerminalDrawer({
   const { locale } = useT()
   const copy = mobileTerminalV3Copy[locale]
   const [tab, setTab] = useState<DrawerTab>('snippets')
+  useMobileBackHandler(visible, onClose)
   if (!visible) return null
   const hostName = hosts?.find((host) => host.address === hostAddress)?.name || hostAddress
   const tabs: { id: DrawerTab; label: string; Icon: typeof CodeXml }[] = [

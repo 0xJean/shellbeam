@@ -18,7 +18,7 @@ interface MobileSessionHeaderProps {
   onSelectSession: (sessionId: string) => void
   onCloseSession: (sessionId: string) => void
   onNewConnection: () => void
-  onOpenLocalTerminal: () => void
+  onOpenLocalTerminal?: () => void
   hosts?: HostProfile[]
   onConnectHost?: (hostId: string) => void
   onBack?: () => void

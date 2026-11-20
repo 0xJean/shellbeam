@@ -6,6 +6,7 @@ import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
 import type { SessionTab } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import type { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
+import { isMobileDevice, useMobileBackHandler } from '@/lib/mobile-back'
 import { Plus, SquareTerminal, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
@@ -20,7 +21,7 @@ interface MobileSessionSheetProps {
   onSelectSession: (sessionId: string) => void
   onCloseSession: (sessionId: string) => void
   onNewConnection: () => void
-  onOpenLocalTerminal: () => void
+  onOpenLocalTerminal?: () => void
   onClose: () => void
 }
 
@@ -29,6 +30,8 @@ export function MobileSessionSheet({
 }: MobileSessionSheetProps) {
   const { t, locale } = useT()
   const copy = mobileTerminalV3Copy[locale]
+  const showLocalTerminal = !!onOpenLocalTerminal && !isMobileDevice()
+  useMobileBackHandler(true, onClose)
   const statusText = (status: SessionTab['status']) => status === 'connecting' ? copy.connecting : status === 'reconnecting' ? copy.reconnecting : status === 'error' ? copy.failed : status === 'closed' ? copy.disconnected : null
 
   return createPortal(
@@ -80,7 +83,9 @@ export function MobileSessionSheet({
         </ul>
         <div className="flex shrink-0 gap-3">
           <button type="button" onClick={() => { onNewConnection(); onClose() }} className={sheetPrimaryButton}><Plus className="h-4 w-4" />{t('mobile.newConnection')}</button>
-          <button type="button" onClick={() => { onOpenLocalTerminal(); onClose() }} className={sheetTintedButton}><SquareTerminal className="h-4 w-4" />{t('mobile.localTerminal')}</button>
+          {showLocalTerminal && (
+            <button type="button" onClick={() => { onOpenLocalTerminal(); onClose() }} className={sheetTintedButton}><SquareTerminal className="h-4 w-4" />{t('mobile.localTerminal')}</button>
+          )}
         </div>
       </section>
     </div>,

@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import type { HostProfile } from './hosts'
 import { clearLocalOpsMemory, loadLocalAlertState, saveLocalAlertState } from './local-ops-store'
-import { EMPTY_LOCAL_ALERT_STATE, evaluateLocalAlertRules, normalizeLocalAlertRule } from './local-alert-rules'
+import { EMPTY_LOCAL_ALERT_STATE, actOnLocalAlert, evaluateLocalAlertRules, normalizeLocalAlertRule } from './local-alert-rules'
+import { flushLocalOpsHost, localOpsPersistenceError, resetLocalOpsPersistenceMemory, type LocalOpsDocument } from './local-ops-persistence'
 import { runLocalAlertAction } from './local-alert-actions'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 const host: HostProfile = { id: 'host', name: 'edge', address: '10.0.0.1', port: 22, username: 'ops', authType: 'password', jumpHost: 'bastion', group: 'Custom', tags: [], createdAt: 1, updatedAt: 1 }
@@ -84,4 +85,62 @@ it('does not claim a lifecycle change when the native confirmed transaction fail
     expect(job).toMatchObject({ status: 'failed', confirmationStatus: 'confirmed' })
     expect(loadLocalAlertState('vault', host.id).audit).toHaveLength(1)
   } finally { Reflect.deleteProperty(window, '__TAURI_INTERNALS__') }
+})
+
+it('completes audit before updating UI cache and survives concurrent background alert-state writes without REVISION_CONFLICT', async () => {
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  resetLocalOpsPersistenceMemory()
+  Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
+  const original = vi.mocked(invoke).mockImplementation(vi.mocked(invoke).getMockImplementation()!).getMockImplementation()!
+  const initialState = loadLocalAlertState('vault', host.id)
+  let stored: LocalOpsDocument = { vaultId: 'vault', hostId: host.id, kind: 'alert-state', payload: structuredClone(initialState), revision: 1, updatedAt: 1_000 }
+  const order: string[] = []
+  let upsertCalls = 0
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    const request = args as { payload?: Record<string, unknown>; query?: { kind?: string } }
+    if (command === 'local_ops_list') {
+      return request.query?.kind && request.query.kind !== 'alert-state' ? [] : [structuredClone(stored)]
+    }
+    if (command === 'local_ops_upsert') {
+      upsertCalls++
+      const payload = request.payload as unknown as LocalOpsDocument & { expectedRevision: number }
+      if (payload.expectedRevision !== stored.revision) throw new Error('LOCAL_OPS_REVISION_CONFLICT')
+      stored = { ...stored, payload: structuredClone(payload.payload), revision: stored.revision + 1, updatedAt: 2_000 }
+      return structuredClone(stored)
+    }
+    if (command === 'local_ops_alert_action') {
+      // Simulate LocalOpsRuntime.scanRules() calling saveLocalAlertState with
+      // stale pre-close observations while local_ops_alert_action is in flight.
+      saveLocalAlertState('vault', host.id, initialState)
+      stored = {
+        ...stored,
+        payload: actOnLocalAlert(stored.payload as typeof initialState, rule.id, 'close', 3_000, String(request.payload?.operationJobId)),
+        revision: stored.revision + 1,
+        updatedAt: 3_000,
+      }
+      order.push('native-alert-action')
+      return structuredClone(stored)
+    }
+    if (command === 'operation_job_update' && ((args as { request?: Record<string, unknown> }).request?.status === 'completed')) {
+      // At the moment the audit row transitions to completed, the UI cache must
+      // not have already announced `closed` ahead of the audit write.
+      expect(loadLocalAlertState('vault', host.id).alerts[0].status).not.toBe('closed')
+      order.push('job-completed')
+    }
+    return original(command, args)
+  })
+  try {
+    const result = await runLocalAlertAction({ vaultId: 'vault', host, ruleId: rule.id, action: 'close', confirmMessage: 'Confirm?' })
+    await flushLocalOpsHost('vault', host.id)
+    expect(result?.job).toMatchObject({ action: 'local-alert.close', status: 'completed', confirmationStatus: 'confirmed' })
+    expect(job).toMatchObject({ action: 'local-alert.close', status: 'completed' })
+    expect(loadLocalAlertState('vault', host.id).alerts[0]).toMatchObject({ status: 'closed', operationJobId: 'canonical-job' })
+    expect((stored.payload as typeof initialState).alerts[0]).toMatchObject({ status: 'closed', operationJobId: 'canonical-job' })
+    expect(localOpsPersistenceError('vault', host.id)).toBeNull()
+    expect(upsertCalls).toBe(0)
+    expect(order).toEqual(['native-alert-action', 'job-completed'])
+  } finally {
+    Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
+    resetLocalOpsPersistenceMemory()
+  }
 })

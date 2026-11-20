@@ -4,6 +4,7 @@ import { MobileHostsPage } from '@/components/mobile/mobile-hosts-page'
 import { FleetDashboard } from '@/components/dashboard/fleet-dashboard'
 import { requestSettingsCategory } from '@/lib/settings-request'
 import { MobileToolsPage } from '@/components/mobile-tools-page'
+import { isMobileDevice, useMobileBackHandler } from '@/lib/mobile-back'
 import { isToolPage } from '@/lib/mobile-navigation'
 import { requestTerminalAiToggle, requestTerminalSearchToggle, TERMINAL_AI_STATE_EVENT, TERMINAL_SEARCH_STATE_EVENT, TERMINAL_SIDEBAR_TAB_EVENT } from '@/lib/terminal-events'
 import { CLOSE_SESSION_REQUEST_EVENT, OPEN_KNOWN_HOSTS_REQUEST_EVENT, OPEN_SFTP_REQUEST_EVENT, OPEN_TERMINAL_REQUEST_EVENT, type HostDirectoryRequest } from '@/lib/navigation-request'
@@ -459,6 +460,8 @@ export function PcLayout() {
 
   const isMd = useSyncExternalStore(subscribeMediaQuery, getIsMd, () => true)
   const SettingsScreen = isMd ? SettingsPanel : MobileSettingsPage
+  const mobileDevice = isMobileDevice()
+  useMobileBackHandler(!isMd && isToolPage(app.pcSidebarNav) && app.pcSidebarNav !== 'tools', () => app.setPcSidebarNav('tools'))
   const browserMetaBySession = useMemo(() => {
     return sessions.pcSessionTabs.reduce<Record<string, SessionBrowserTabMeta>>((acc, tab) => {
       const browserState = sessions.browserBySession[tab.sessionId]
@@ -1136,13 +1139,13 @@ export function PcLayout() {
             onSelectSession={setMobileActiveSessionId}
             onCloseSession={handleMobileCloseSession}
             onNewConnection={handleMobileNewConnection}
-            onOpenLocalTerminal={() => sessions.handleOpenLocalTerminal()}
+            onOpenLocalTerminal={mobileDevice ? undefined : () => sessions.handleOpenLocalTerminal()}
             hosts={hostsCtx.hosts}
             onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
           />
           {mobileActiveSessionId && sessions.interactiveSessions.some((s) => s.sessionId === mobileActiveSessionId) && (
             <div data-testid="mobile-mode-switch" className="flex shrink-0 justify-center bg-[var(--workspace-surface-950)] pb-1.5">
-              <WorkspaceModeToggle mode={mobileWorkspaceMode} onChange={(nextMode) => handleMobileModeChange(mobileActiveSessionId, nextMode)} />
+              <WorkspaceModeToggle mode={mobileWorkspaceMode} onChange={(nextMode) => handleMobileModeChange(mobileActiveSessionId, nextMode)} hideBrowser={mobileDevice} />
             </div>
           )}
           {sessions.pcSessionTabs.length > 0 && (
@@ -1402,10 +1405,13 @@ export function PcLayout() {
                 <MobileHostsPage
                   hosts={hostsCtx.hosts}
                   activeVaultId={vault.activeVaultId}
+                  vaults={vault.vaults}
                   vaultUnlocked={vault.vaultStatusState?.unlocked ?? false}
                   vaultKeys={vault.vaultKeys}
                   vaultName={vault.vaults.find((v) => v.id === vault.activeVaultId)?.name ?? 'Vault'}
                   defaultUsername={hostsCtx.defaultUsername}
+                  onSwitchVault={vault.setActiveVaultId}
+                  onLockVault={() => void vault.handleLock()}
                   onSaveToVault={hostsCtx.handleSaveToVault}
                   onLoadVaultSecret={vault.handleRevealSecret}
                   onCreateHost={hostsCtx.handleCreateHost}

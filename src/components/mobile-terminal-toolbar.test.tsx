@@ -48,4 +48,15 @@ describe('MobileTerminalToolbar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close key panel' }))
     expect(screen.queryByTestId('mobile-key-panel')).not.toBeInTheDocument()
   })
+
+  it('triggers paste and dismiss-keyboard actions from the toolbar', () => {
+    const onSend = vi.fn()
+    const onPaste = vi.fn()
+    const onDismissKeyboard = vi.fn()
+    render(<MobileTerminalToolbar onSend={onSend} onPaste={onPaste} onDismissKeyboard={onDismissKeyboard} />)
+    fireEvent.mouseDown(screen.getByTestId('mobile-toolbar-paste'))
+    expect(onPaste).toHaveBeenCalledTimes(1)
+    fireEvent.mouseDown(screen.getByTestId('mobile-toolbar-dismiss-keyboard'))
+    expect(onDismissKeyboard).toHaveBeenCalledTimes(1)
+  })
 })
