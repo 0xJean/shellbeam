@@ -186,3 +186,38 @@ export interface SshConfigEntry {
 export async function parseSshConfig() {
   return invoke<SshConfigEntry[]>('parse_ssh_config')
 }
+
+const KNOWN_GIT_DOMAINS = [
+  'github.com',
+  'gitlab.com',
+  'gitee.com',
+  'bitbucket.org',
+  'codeberg.org',
+  'git.sr.ht',
+  'sr.ht',
+  'ssh.dev.azure.com',
+  'vs-ssh.visualstudio.com',
+  'hf.co',
+  'huggingface.co',
+]
+
+export function isGitHostingHost(entry: SshConfigEntry): boolean {
+  const target = (entry.hostName || entry.alias).trim().toLowerCase()
+  const alias = entry.alias.trim().toLowerCase()
+  const user = (entry.user || '').trim().toLowerCase()
+
+  const matchesDomain = (d: string) =>
+    KNOWN_GIT_DOMAINS.some((known) => d === known || d.endsWith(`.${known}`)) ||
+    (d.startsWith('git-codecommit.') && d.endsWith('.amazonaws.com'))
+
+  if (matchesDomain(target) || matchesDomain(alias)) return true
+
+  if (user === 'git' || user === 'git-lfs' || user === 'gitolite') {
+    const gitIndicators = ['github', 'gitlab', 'gitee', 'bitbucket', 'codeberg', 'gitea', 'gogs', 'git-codecommit']
+    if (gitIndicators.some((sub) => target.includes(sub) || alias.includes(sub)) || target.startsWith('git.')) {
+      return true
+    }
+  }
+
+  return false
+}

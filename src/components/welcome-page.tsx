@@ -9,7 +9,7 @@ import { fill } from '@/lib/locales/probe-install'
 import { useApp } from '@/contexts/app-context'
 import { useHosts } from '@/contexts/hosts-context'
 import { useVault } from '@/contexts/vault-context'
-import { parseSshConfig, type SshConfigEntry } from '@/lib/hosts'
+import { parseSshConfig, isGitHostingHost, type SshConfigEntry } from '@/lib/hosts'
 import { updateVault } from '@/lib/vaults'
 import { claimVaultSetup, useVaultSetupSubmit } from '@/lib/vault-setup-handoff'
 import { SshImportDialog } from '@/components/ssh-import-dialog'
@@ -285,7 +285,7 @@ function HostStep({ c, notice, onBack, onDismiss, footer }: {
   useEffect(() => {
     let alive = true
     parseSshConfig()
-      .then((res) => { if (alive) setEntries(res) })
+      .then((res) => { if (alive) setEntries(res.filter((e) => !isGitHostingHost(e))) })
       .catch(() => { if (alive) setEntries([]) })
     return () => { alive = false }
   }, [])

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useT } from '@/lib/i18n'
-import { parseSshConfig, createHost, type SshConfigEntry } from '@/lib/hosts'
+import { parseSshConfig, createHost, isGitHostingHost, type SshConfigEntry } from '@/lib/hosts'
 import { CircleCheck, Loader2, AlertCircle, Info, Route, X } from 'lucide-react'
 import { hostOverlaysCopy } from '@/lib/locales/host-overlays-v3'
 import { fill } from '@/lib/locales/probe-install'
@@ -24,8 +24,9 @@ export function SshImportDialog({ vaultId, onClose, onImported }: SshImportDialo
 
   useEffect(() => {
     parseSshConfig().then((res) => {
-      setEntries(res)
-      setSelected(new Set(res.map((_, i) => i)))
+      const filtered = res.filter((e) => !isGitHostingHost(e))
+      setEntries(filtered)
+      setSelected(new Set(filtered.map((_, i) => i)))
     }).catch((e) => setError(String(e instanceof Error ? e.message : e)))
       .finally(() => setLoading(false))
   }, [])

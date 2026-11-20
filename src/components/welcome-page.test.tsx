@@ -20,7 +20,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/contexts/vault-context', () => ({ useVault: () => mocks.vault }))
 vi.mock('@/contexts/app-context', () => ({ useApp: () => mocks.app }))
 vi.mock('@/contexts/hosts-context', () => ({ useHosts: () => mocks.hosts }))
-vi.mock('@/lib/hosts', () => ({ parseSshConfig: vi.fn() }))
+vi.mock('@/lib/hosts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/hosts')>()
+  return {
+    ...actual,
+    parseSshConfig: vi.fn(),
+  }
+})
 vi.mock('@/lib/vaults', () => ({ updateVault: vi.fn(async () => ({})) }))
 vi.mock('@/components/ssh-import-dialog', () => ({
   SshImportDialog: ({ onImported }: { onImported: () => void }) => <button type="button" data-testid="ssh-import-dialog" onClick={onImported} />,
