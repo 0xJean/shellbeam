@@ -272,38 +272,73 @@ fn keyboard_interactive(
     result.map_err(|err| format!("Keyboard-interactive auth failed: {err}"))
 }
 
+fn pubkey_path_for(private_key_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut os = private_key_path.as_os_str().to_os_string();
+    os.push(".pub");
+    let pub_path = std::path::PathBuf::from(os);
+    pub_path.is_file().then_some(pub_path)
+}
+
+fn default_local_ssh_keys_in(ssh_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    ["id_ed25519", "id_ecdsa", "id_rsa"]
+        .into_iter()
+        .map(|name| ssh_dir.join(name))
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+fn default_local_ssh_keys() -> Vec<std::path::PathBuf> {
+    dirs::home_dir()
+        .map(|home| default_local_ssh_keys_in(&home.join(".ssh")))
+        .unwrap_or_default()
+}
+
 fn agent_auth(session: &Session, username: &str) -> Result<(), String> {
     if cfg!(any(target_os = "ios", target_os = "android")) {
         return Err(AGENT_UNAVAILABLE.into());
     }
-    let mut agent = session.agent().map_err(|_| AGENT_UNAVAILABLE.to_string())?;
-    agent.connect().map_err(|_| AGENT_UNAVAILABLE.to_string())?;
-    agent
-        .list_identities()
-        .map_err(|_| AGENT_UNAVAILABLE.to_string())?;
-    let identities = agent
-        .identities()
-        .map_err(|_| AGENT_UNAVAILABLE.to_string())?;
-    if identities.is_empty() {
-        let _ = agent.disconnect();
-        return Err("The SSH agent holds no keys".into());
-    }
-    let mut last_error = None;
-    for identity in &identities {
-        // Ok without being authenticated is partial success: the server wants another method next.
-        match agent.userauth(username, identity) {
-            Ok(()) => break,
-            Err(err) => last_error = Some(err),
+    let mut agent_connected = false;
+    let mut last_error: Option<String> = None;
+
+    if let Ok(mut agent) = session.agent() {
+        if agent.connect().is_ok() {
+            agent_connected = true;
+            if agent.list_identities().is_ok() {
+                if let Ok(identities) = agent.identities() {
+                    for identity in &identities {
+                        // Ok without being authenticated is partial success: the server wants another method next.
+                        match agent.userauth(username, identity) {
+                            Ok(()) => {
+                                let _ = agent.disconnect();
+                                return Ok(());
+                            }
+                            Err(err) => last_error = Some(err.to_string()),
+                        }
+                    }
+                }
+            }
+            let _ = agent.disconnect();
         }
     }
-    let _ = agent.disconnect();
-    if session.authenticated() || last_error.is_none() {
-        Ok(())
+
+    // Match native OpenSSH behavior: when ssh-agent is empty, unavailable, or
+    // holds no matching key, try standard default local keys under ~/.ssh/.
+    let local_keys = default_local_ssh_keys();
+    for key_path in &local_keys {
+        let pub_opt = pubkey_path_for(key_path);
+        match session.userauth_pubkey_file(username, pub_opt.as_deref(), key_path, None) {
+            Ok(()) => return Ok(()),
+            Err(err) => last_error = Some(err.to_string()),
+        }
+    }
+
+    if !agent_connected && local_keys.is_empty() {
+        return Err(AGENT_UNAVAILABLE.into());
+    }
+    if let Some(err) = last_error {
+        Err(format!("Agent auth failed: {err}"))
     } else {
-        Err(format!(
-            "Agent auth failed: {}",
-            last_error.map(|e| e.to_string()).unwrap_or_default()
-        ))
+        Err("The SSH agent holds no keys and no default keys were found in ~/.ssh".into())
     }
 }
 
@@ -541,5 +576,30 @@ mod keyboard_interactive_tests {
         assert_eq!(request.prompts.len(), 8);
         assert_eq!(request.instruction.chars().count(), 512);
         assert_eq!(request.prompts[0].text.chars().count(), 512);
+    }
+
+    #[test]
+    fn discovers_default_local_keys_in_openssh_order_and_companion_pubkeys() {
+        let dir =
+            std::env::temp_dir().join(format!("shellbeam-ssh-keys-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rsa = dir.join("id_rsa");
+        let rsa_pub = dir.join("id_rsa.pub");
+        let ed = dir.join("id_ed25519");
+        let dotted = dir.join("corp.key");
+        let dotted_pub = dir.join("corp.key.pub");
+        std::fs::write(&rsa, "dummy").unwrap();
+        std::fs::write(&rsa_pub, "dummy-pub").unwrap();
+        std::fs::write(&ed, "dummy").unwrap();
+        std::fs::write(&dotted, "dummy").unwrap();
+        std::fs::write(&dotted_pub, "dummy-pub").unwrap();
+
+        let discovered = default_local_ssh_keys_in(&dir);
+        assert_eq!(discovered, vec![ed.clone(), rsa.clone()]);
+        assert_eq!(pubkey_path_for(&rsa), Some(rsa_pub));
+        assert_eq!(pubkey_path_for(&ed), None);
+        assert_eq!(pubkey_path_for(&dotted), Some(dotted_pub));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

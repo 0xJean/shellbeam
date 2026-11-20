@@ -1064,7 +1064,7 @@ const zhCN: Record<string, string> = {
   'hostForm.password': '密码',
   'hostForm.key': '密钥',
   'hostForm.agent': 'Agent',
-  'hostForm.agentHint': '用本机 SSH agent 里的密钥登录（ssh-agent、1Password、Pageant 或 Windows OpenSSH agent），保险库里不保存任何内容。',
+  'hostForm.agentHint': '优先使用本机 SSH agent（ssh-agent、1Password、Pageant 或 Windows OpenSSH agent）里的密钥，未加载时自动尝试 ~/.ssh 下的默认私钥（id_ed25519、id_ecdsa、id_rsa），保险库里不保存任何内容。',
   'hostForm.jumpHost': '跳板机（ProxyJump）',
   'hostForm.jumpHostDesc': '通过中间堡垒机/跳板机路由',
   'hostForm.jumpAddress': '跳板机地址',

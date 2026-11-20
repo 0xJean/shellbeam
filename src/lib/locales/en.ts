@@ -1064,7 +1064,7 @@ const en: Record<string, string> = {
   'hostForm.password': 'Password',
   'hostForm.key': 'Key',
   'hostForm.agent': 'Agent',
-  'hostForm.agentHint': 'Signs in with a key held by the SSH agent on this computer (ssh-agent, 1Password, Pageant or the Windows OpenSSH agent). Nothing is saved in the Vault.',
+  'hostForm.agentHint': 'Signs in with keys from your local SSH agent (ssh-agent, 1Password, Pageant or the Windows OpenSSH agent), falling back to default keys in ~/.ssh (id_ed25519, id_ecdsa, id_rsa). Nothing is saved in the Vault.',
   'hostForm.jumpHost': 'Jump Host (ProxyJump)',
   'hostForm.jumpHostDesc': 'Route through an intermediate bastion/jump server',
   'hostForm.jumpAddress': 'Jump Address',
