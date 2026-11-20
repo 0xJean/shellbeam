@@ -242,7 +242,7 @@ export function HostForm({
           </div>
         </div>
 
-        <div className="max-h-[min(68dvh,40rem)] space-y-4 overflow-y-auto px-5 py-4 max-md:max-h-none">
+        <div className="max-h-[min(82dvh,48rem)] space-y-4 overflow-y-auto px-5 py-4 max-md:max-h-none">
         {renderPrefill?.(applySshCommand)}
         {error && (
           <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
@@ -356,6 +356,22 @@ export function HostForm({
           />
         )}
 
+        <MonitoringModeField
+          value={monitoringMode}
+          onChange={setMonitoringMode}
+          disabled={submitting || !vaultUnlocked}
+          scopeKey={`${vaultId}:${connectionSecretId}`}
+          vaultId={vaultId}
+          installProbe={installProbe}
+          onInstallProbeChange={setInstallProbe}
+          serverDraft={serverDraft}
+          onServerDraftChange={setServerDraft}
+          selectedServerId={selectedServerId}
+          onSelectedServerIdChange={setSelectedServerId}
+          onSaveToVault={onSaveToVault}
+          onLoadVaultSecret={onLoadVaultSecret}
+        />
+
         {!connectionOnly && <>
         <div className="grid gap-4 sm:grid-cols-2">
           {/* Group selector */}
@@ -442,21 +458,6 @@ export function HostForm({
           </div>
 
         </div>
-        <MonitoringModeField
-          value={monitoringMode}
-          onChange={setMonitoringMode}
-          disabled={submitting || !vaultUnlocked}
-          scopeKey={`${vaultId}:${connectionSecretId}`}
-          vaultId={vaultId}
-          installProbe={installProbe}
-          onInstallProbeChange={setInstallProbe}
-          serverDraft={serverDraft}
-          onServerDraftChange={setServerDraft}
-          selectedServerId={selectedServerId}
-          onSelectedServerIdChange={setSelectedServerId}
-          onSaveToVault={onSaveToVault}
-          onLoadVaultSecret={onLoadVaultSecret}
-        />
 
         {metadataControls}
         </>}
