@@ -5,6 +5,7 @@ export interface LocalOpsDocument { vaultId: string; hostId: string; kind: Local
 interface Adapter { readCache: (vaultId: string, hostId: string) => unknown | null; writeCache: (vaultId: string, hostId: string, payload: unknown) => void }
 const adapters = new Map<LocalOpsDocumentKind, Adapter>()
 const revisions = new Map<string, number>()
+const authorityVersions = new Map<string, number>()
 const hydrated = new Set<string>()
 const queues = new Map<string, Promise<void>>()
 const errors = new Map<string, string>()
@@ -22,10 +23,39 @@ export function isLocalOpsHydrated(vaultId: string, hostId: string) { return !ha
 export function applyLocalOpsDocument(row: LocalOpsDocument) {
   const id = key(row.vaultId, row.hostId, row.kind)
   if (row.revision < (revisions.get(id) ?? 0)) return
-  if (row.revision !== revisions.get(id)) adapters.get(row.kind)?.writeCache(row.vaultId, row.hostId, row.payload)
+  if (row.revision !== revisions.get(id)) {
+    adapters.get(row.kind)?.writeCache(row.vaultId, row.hostId, row.payload)
+    authorityVersions.set(id, (authorityVersions.get(id) ?? 0) + 1)
+  }
   revisions.set(id, row.revision)
   errors.delete(id)
   emit()
+}
+/** Serialize an authoritative native document mutation (such as `local_ops_alert_action`)
+ * on the same per-document queue as `queueLocalOpsDocument`, preventing in-process
+ * background scans from racing it into a self-inflicted `REVISION_CONFLICT`. */
+export function queueLocalOpsMutation(
+  vaultId: string | undefined,
+  hostId: string,
+  kind: LocalOpsDocumentKind,
+  mutate: () => Promise<LocalOpsDocument>,
+): Promise<LocalOpsDocument> {
+  if (!hasNativeLocalOps()) return mutate()
+  const vault = vaultId?.trim() || ''
+  const id = key(vault, hostId, kind)
+  const previous = queues.get(id) ?? Promise.resolve()
+  const operation = previous.catch(() => undefined).then(async () => {
+    const row = await mutate()
+    if (row.revision > (revisions.get(id) ?? 0)) {
+      authorityVersions.set(id, (authorityVersions.get(id) ?? 0) + 1)
+      errors.delete(id)
+    }
+    return row
+  })
+  const settled = operation.then(() => undefined, () => undefined)
+  queues.set(id, settled)
+  void settled.finally(() => { if (queues.get(id) === settled) queues.delete(id) })
+  return operation
 }
 /** Mirror a credential-free renderer cache into the canonical scoped DB. A
  * stale renderer is rehydrated and rejected, never silently overwriting an
@@ -34,9 +64,11 @@ export function queueLocalOpsDocument(vaultId: string | undefined, hostId: strin
   if (!hasNativeLocalOps()) return Promise.resolve(null)
   const vault = vaultId?.trim() || ''
   const id = key(vault, hostId, kind)
+  const expectedAuthority = authorityVersions.get(id) ?? 0
   const previous = queues.get(id) ?? Promise.resolve()
   const operation = previous.catch(() => undefined).then(async () => {
     if (!vault) throw new Error('LOCAL_OPS_VAULT_REQUIRED')
+    if ((authorityVersions.get(id) ?? 0) !== expectedAuthority) return null
     if (!revisions.has(id)) {
       const rows = await invoke<LocalOpsDocument[]>('local_ops_list', { query: { vaultId: vault, hostId, kind } })
       const existing = rows.find((row) => row.vaultId === vault && row.hostId === hostId && row.kind === kind)
@@ -100,4 +132,4 @@ export function hydrateLocalOpsHost(vaultId: string | undefined, hostId: string,
   void work.catch(() => undefined).finally(() => { if (hydrations.get(id) === work) hydrations.delete(id) })
   return work
 }
-export function resetLocalOpsPersistenceMemory() { revisions.clear(); hydrated.clear(); queues.clear(); errors.clear(); hydrations.clear() }
+export function resetLocalOpsPersistenceMemory() { revisions.clear(); authorityVersions.clear(); hydrated.clear(); queues.clear(); errors.clear(); hydrations.clear() }
