@@ -429,6 +429,13 @@ impl Drop for Scratch {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+/// OpenCode auto-approves tools by default and only reports them after they ran, so deny every tool up front.
+fn cli_env(backend: Backend) -> &'static [(&'static str, &'static str)] {
+    match backend {
+        Backend::OpencodeCli => &[("OPENCODE_PERMISSION", r#"{"*":"deny"}"#)],
+        Backend::ClaudeCode | Backend::CodexCli | Backend::GeminiCli => &[],
+    }
+}
 fn cli_args(backend: Backend, model: &str, effort: &str) -> Vec<String> {
     let effort = effort.trim();
     let mut args: Vec<String> = match backend {
@@ -581,6 +588,7 @@ fn validate_cli(
     run_process(
         executable,
         &["--version".into()],
+        &[],
         &scratch.0,
         None,
         cancel,
@@ -605,6 +613,7 @@ fn validate_cli(
     run_process(
         executable,
         &args,
+        &[],
         &scratch.0,
         None,
         cancel,
@@ -674,6 +683,7 @@ fn generate(
     run_process(
         &executable,
         &cli_args(request.backend, &request.model, &request.effort),
+        cli_env(request.backend),
         &scratch.0,
         stdin_bytes,
         cancel,
@@ -908,9 +918,11 @@ impl Drop for Process {
     }
 }
 /// Bounded line reader; stderr is drained without retaining or forwarding it.
+#[allow(clippy::too_many_arguments)]
 fn run_process(
     executable: &Path,
     args: &[String],
+    env: &[(&str, &str)],
     cwd: &Path,
     input: Option<Vec<u8>>,
     cancel: &AtomicBool,
@@ -930,7 +942,8 @@ fn run_process(
     cmd.env_remove("RUST_LOG")
         .env_remove("DEBUG")
         .env_remove("NODE_OPTIONS")
-        .env("NO_COLOR", "1");
+        .env("NO_COLOR", "1")
+        .envs(env.iter().copied());
     if let Some(path) = child_path(executable) {
         cmd.env("PATH", path);
     }

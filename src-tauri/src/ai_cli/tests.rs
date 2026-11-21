@@ -205,6 +205,16 @@ fn generation_arguments_never_include_user_input_and_keep_isolation() {
         .any(|a| a == ["--model", "openai/gpt-5.4"]));
 }
 #[test]
+fn opencode_denies_every_tool_before_it_can_run() {
+    assert_eq!(
+        cli_env(Backend::OpencodeCli),
+        &[("OPENCODE_PERMISSION", r#"{"*":"deny"}"#)]
+    );
+    for backend in [Backend::ClaudeCode, Backend::CodexCli, Backend::GeminiCli] {
+        assert!(cli_env(backend).is_empty());
+    }
+}
+#[test]
 fn gemini_and_opencode_parsers_stream_text_and_reject_tools() {
     let mut g = Parser::new(Backend::GeminiCli);
     assert!(g
@@ -271,6 +281,7 @@ fn real_child_uses_stdin_without_shell_interpolation_or_stderr_leak() {
     run_process(
         &path,
         &["echo-stdin".into()],
+        &[],
         &dir.0,
         Some(input.to_vec()),
         &AtomicBool::new(false),
@@ -300,6 +311,7 @@ fn cancellation_and_timeout_kill_the_entire_process_group() {
         let result = run_process(
             &path,
             &["descendants".into()],
+            &[],
             &dir.0,
             None,
             &cancel,
@@ -328,6 +340,7 @@ fn malformed_and_excessive_output_terminate_and_fail_closed() {
         run_process(
             &path,
             &["malformed".into()],
+            &[],
             &dir.0,
             None,
             &AtomicBool::new(false),
@@ -343,6 +356,7 @@ fn malformed_and_excessive_output_terminate_and_fail_closed() {
         run_process(
             &path,
             &["excessive".into()],
+            &[],
             &dir.0,
             None,
             &AtomicBool::new(false),

@@ -217,11 +217,8 @@ function stripAwkLiterals(program: string): string | null {
   let prevToken = ''
   for (let i = 0; i < normalized.length; i += 1) {
     const ch = normalized[i]
-    if (ch === '#') {
-      while (i < normalized.length && normalized[i] !== '\n') i += 1
-      out += '\n'
-      continue
-    }
+    // A `#` here may be inside a regex this scanner read as division; treating it as a comment could hide code.
+    if (ch === '#') return null
     if (ch === '"') {
       i += 1
       while (i < normalized.length && normalized[i] !== '"') {
@@ -248,6 +245,13 @@ function stripAwkLiterals(program: string): string | null {
       if (i >= normalized.length) return null
       out += ' // '
       prevToken = '//'
+      continue
+    }
+    // Postfix `++` / `--` end a value, so a following `/` is division, not a regex.
+    if ((ch === '+' || ch === '-') && normalized[i + 1] === ch) {
+      out += ch + ch
+      prevToken = ch + ch
+      i += 1
       continue
     }
     if (/[A-Za-z_]/.test(ch)) {
