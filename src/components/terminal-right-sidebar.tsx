@@ -19,7 +19,7 @@ import { terminalSidebarCopy } from '@/lib/locales/terminal-sidebar'
 import { formatBytes, formatBytesRate } from '@/lib/metric-series'
 import { resolveWorkspaceMetricsHost } from '@/lib/workspace-metrics'
 import { useWorkspaceProviderState } from '@/lib/workspace-provider-state'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { TERMINAL_SIDEBAR_TAB_EVENT } from '@/lib/terminal-events'
 import { HistoryEntryRow } from '@/components/history-panel'
 import { useCommandHistory } from '@/hooks/use-command-history'
@@ -296,18 +296,25 @@ function TypedHistory({ vaultId, hostAddress, onRunCommand }: {
   onRunCommand: (cmd: string) => void
 }) {
   const { t } = useT()
-  const [commands, setCommands] = useState<InteractiveCommand[]>([])
-
-  const refresh = useCallback(() => {
-    setCommands(getInteractiveHistory(vaultId, hostAddress).slice().reverse())
-  }, [vaultId, hostAddress])
+  const historyKey = `${vaultId ?? ''}\0${hostAddress}`
+  const [state, setState] = useState<{ key: string; commands: InteractiveCommand[] }>(() => ({
+    key: historyKey,
+    commands: getInteractiveHistory(vaultId, hostAddress).slice().reverse(),
+  }))
+  const commands = state.key === historyKey
+    ? state.commands
+    : getInteractiveHistory(vaultId, hostAddress).slice().reverse()
 
   useEffect(() => {
-    refresh()
     return subscribeInteractiveHistory((vault, host) => {
-      if (isInteractiveHistoryEvent(vaultId, hostAddress, vault, host)) refresh()
+      if (isInteractiveHistoryEvent(vaultId, hostAddress, vault, host)) {
+        setState({
+          key: historyKey,
+          commands: getInteractiveHistory(vaultId, hostAddress).slice().reverse(),
+        })
+      }
     })
-  }, [refresh, vaultId, hostAddress])
+  }, [historyKey, vaultId, hostAddress])
 
   if (commands.length === 0) {
     return (

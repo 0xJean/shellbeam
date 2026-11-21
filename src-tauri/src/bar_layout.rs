@@ -10,6 +10,7 @@
 use serde::Serialize;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
+#[cfg(target_os = "ios")]
 pub const BAR_LAYOUT_EVENT: &str = "bar-layout";
 
 // UIVerticalBarEdge: 0 unspecified, 1 leading, 2 trailing.

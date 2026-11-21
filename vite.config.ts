@@ -10,27 +10,37 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules/react') || id.includes('node_modules/scheduler')) {
+          const normalizedId = id.replace(/\\/g, '/')
+          if (normalizedId.includes('node_modules/react') || normalizedId.includes('node_modules/scheduler')) {
             return 'vendor-react'
           }
-          if (id.includes('node_modules/@tauri-apps') || id.includes('node_modules/@choochmeque')) {
+          if (normalizedId.includes('node_modules/@tauri-apps') || normalizedId.includes('node_modules/@choochmeque')) {
             return 'vendor-tauri'
           }
-          if (id.includes('node_modules/@xterm')) {
+          if (normalizedId.includes('node_modules/@xterm')) {
             return 'vendor-terminal'
           }
-          if (id.includes('node_modules/framer-motion')) {
+          if (normalizedId.includes('node_modules/framer-motion')) {
             return 'vendor-motion'
           }
-          if (id.includes('node_modules/lucide-react')) {
+          if (normalizedId.includes('node_modules/lucide-react')) {
             return 'vendor-icons'
           }
-          if (id.includes('node_modules/jszip')) {
+          if (normalizedId.includes('node_modules/jszip')) {
             return 'vendor-jszip'
+          }
+          if (normalizedId.includes('/src/lib/locales/en.ts')) {
+            return 'locale-en'
+          }
+          if (normalizedId.includes('/src/lib/locales/zh-CN.ts')) {
+            return 'locale-zh'
           }
         },
       },
     },
+    // Local Tauri webview asset bundle; keep a realistic ceiling after splitting
+    // vendor and locale chunks so Vite warns only on unexpected bundle spikes.
+    chunkSizeWarningLimit: 1500,
   },
   test: {
     // Node's native test runner owns scripts/*.test.mjs and Agent publisher

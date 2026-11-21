@@ -157,26 +157,28 @@ export function SessionTerminalView({
     if (opened && chromeOnly && workspaceMode !== 'terminal') onWorkspaceModeChange?.('terminal')
   }, [showAI, chromeOnly, workspaceMode, onWorkspaceModeChange])
   const chromeOnlyRef = useRef(chromeOnly)
-  chromeOnlyRef.current = chromeOnly
   const [currentInputLine, setCurrentInputLine] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [suggestionContext, setSuggestionContext] = useState('')
   const [detectedLinks, setDetectedLinks] = useState<string[]>([])
   const [showLinkMenu, setShowLinkMenu] = useState(false)
   const [entered, setEntered] = useState(false)
   const inputLineRef = useRef('')
   const showSuggestionsRef = useRef(false)
   const uiSyncFrameRef = useRef<number | null>(null)
-  const searchAddonRef = useRef<SearchAddon | null>(null)
+  const [searchAddon, setSearchAddon] = useState<SearchAddon | null>(null)
   const highlighterRef = useRef<KeywordHighlighter | null>(null)
-
-  onSendRawRef.current = onSendRaw
 
   const isConnected = session?.status?.startsWith('running') ?? false
   const isDisconnected = session?.status?.startsWith('closed') ?? false
   const outputThrottledText = t('terminal.outputThrottled')
 
   const prefsRef = useRef(terminalPrefs)
-  prefsRef.current = terminalPrefs
+  useEffect(() => {
+    chromeOnlyRef.current = chromeOnly
+    onSendRawRef.current = onSendRaw
+    prefsRef.current = terminalPrefs
+  }, [chromeOnly, onSendRaw, terminalPrefs])
 
   const getTerminalContext = useCallback((rows = 20) => {
     const term = termRef.current
@@ -252,8 +254,9 @@ export function SessionTerminalView({
       uiSyncFrameRef.current = null
       setCurrentInputLine(inputLineRef.current)
       setShowSuggestions(showSuggestionsRef.current)
+      setSuggestionContext(showSuggestionsRef.current ? getTerminalContext() : '')
     })
-  }, [])
+  }, [getTerminalContext])
 
   useEffect(() => {
     setEntered(false)
@@ -310,7 +313,7 @@ export function SessionTerminalView({
 
     const search = new SearchAddon()
     term.loadAddon(search)
-    searchAddonRef.current = search
+    setSearchAddon(search)
     const highlighter = attachKeywordHighlight(term, { enabled: prefsRef.current?.keywordHighlight ?? true })
     highlighterRef.current = highlighter
 
@@ -334,7 +337,8 @@ export function SessionTerminalView({
       })
     }
 
-    chunkEmitterRef.current[sessionId] = (chunks) => {
+    const chunkEmitters = chunkEmitterRef.current
+    chunkEmitters[sessionId] = (chunks) => {
       let batch = ''
       for (let i = 0; i < chunks.length; i++) batch += chunks[i].data
 
@@ -413,7 +417,7 @@ export function SessionTerminalView({
     resizeObs.observe(containerRef.current)
 
     return () => {
-      delete chunkEmitterRef.current[sessionId]
+      delete chunkEmitters[sessionId]
       onData.dispose()
       onBinary.dispose()
       onResize.dispose()
@@ -423,7 +427,7 @@ export function SessionTerminalView({
         window.cancelAnimationFrame(uiSyncFrameRef.current)
         uiSyncFrameRef.current = null
       }
-      searchAddonRef.current = null
+      setSearchAddon(null)
       highlighter.dispose()
       selectionDisposable?.dispose()
       highlighterRef.current = null
@@ -431,6 +435,8 @@ export function SessionTerminalView({
       termRef.current = null
       fitRef.current = null
     }
+    // Terminal instance lifecycle is intentionally scoped to sessionId; theme/prefs updates apply in the effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, chunkEmitterRef, outputThrottledText])
 
   useEffect(() => {
@@ -442,7 +448,7 @@ export function SessionTerminalView({
     term.options.cursorStyle = terminalPrefs.cursorStyle ?? DEFAULT_TERMINAL_PREFS.cursorStyle
     term.options.cursorBlink = terminalPrefs.cursorBlink ?? DEFAULT_TERMINAL_PREFS.cursorBlink
     try { fitRef.current?.fit() } catch { /* teardown */ }
-  }, [terminalTheme, terminalPrefs?.fontSize, terminalPrefs?.fontFamily, terminalPrefs?.cursorStyle, terminalPrefs?.cursorBlink])
+  }, [terminalTheme, terminalPrefs])
   useEffect(() => { highlighterRef.current?.setEnabled(terminalPrefs?.keywordHighlight ?? true) }, [terminalPrefs?.keywordHighlight])
 
   const prevVisibleRef = useRef(visible)
@@ -641,7 +647,7 @@ export function SessionTerminalView({
       </div>
       {!chromeOnly && showSearch && (
         <TerminalSearchBar
-          searchAddon={searchAddonRef.current}
+          searchAddon={searchAddon}
           onClose={() => { setShowSearch(false); termRef.current?.focus() }}
         />
       )}
@@ -662,7 +668,7 @@ export function SessionTerminalView({
             visible={showSuggestions && isConnected && visible}
             inputLine={currentInputLine}
             historyEntries={historyEntries}
-            terminalContext={showSuggestions ? getTerminalContext() : ''}
+            terminalContext={showSuggestions ? suggestionContext : ''}
             onAccept={(cmd) => {
               const remaining = cmd.slice(currentInputLine.length)
               if (remaining) onSendRawRef.current(remaining)
