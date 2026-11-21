@@ -27,7 +27,7 @@ export interface StoredThreadBook {
   threads: AIConversationThread[]
 }
 
-const writes = new Map<string, Promise<void>>()
+const writes = new Map<string, Promise<unknown>>()
 
 function read(name: string): string | null {
   try { return localStorage.getItem(name) } catch { return null }
@@ -73,11 +73,25 @@ async function writeSealedBook(vaultId: string, key: string, book: StoredThreadB
 }
 
 /** Each key's writes run in order, so an older save never lands after a newer one. */
-function queue(key: string, task: () => Promise<void>): Promise<void> {
-  const next = (writes.get(key) ?? Promise.resolve()).then(task).catch(() => { /* memory is best effort */ })
+function queue<T>(key: string, task: () => Promise<T>): Promise<T | undefined> {
+  const next = (writes.get(key) ?? Promise.resolve()).then(task).catch(() => undefined)
   writes.set(key, next)
   void next.then(() => { if (writes.get(key) === next) writes.delete(key) })
   return next
+}
+
+/**
+ * Read the latest stored book inside a queued write.
+ * Errors from `vaultOpenData` propagate so a locked or unreadable Vault never causes a write to wipe existing threads.
+ */
+async function readStoredBook(vaultId: string, key: string): Promise<{ book: StoredThreadBook | null; fromLegacy: boolean }> {
+  const sealed = read(SEALED_PREFIX + key)
+  if (sealed) {
+    return { book: parseThreadBook(await vaultOpenData(PURPOSE, key, sealed, vaultId)), fromLegacy: false }
+  }
+  const legacy = read(LEGACY_CONVERSATION_PREFIX + key)
+  if (!legacy) return { book: null, fromLegacy: false }
+  return { book: parseThreadBook(legacy), fromLegacy: true }
 }
 
 /** Load all saved threads for this Vault and host, migrating legacy plain-text or v1 sealed data. */
@@ -93,7 +107,7 @@ export async function loadConversationBook(vaultId: string, key: string): Promis
   if (!legacy) return null
   const book = parseThreadBook(legacy)
   await queue(key, async () => {
-    if (book) await writeSealedBook(vaultId, key, book)
+    if (book && !read(SEALED_PREFIX + key)) await writeSealedBook(vaultId, key, book)
     remove(LEGACY_CONVERSATION_PREFIX + key)
   })
   return book
@@ -107,27 +121,44 @@ export async function loadConversation(vaultId: string, key: string): Promise<St
   return active ? { savedAt: active.savedAt, turns: active.turns } : null
 }
 
-/** Save or remove a specific thread inside the host's Vault-sealed thread book. */
+/** Save or remove a specific thread inside the host's Vault-sealed thread book without clobbering sibling terminals. */
 export function saveConversationThread(
   vaultId: string,
   key: string,
   threadId: string,
   turns: AITurn[],
-  existingThreads: AIConversationThread[] = [],
-): Promise<void> {
+): Promise<StoredThreadBook | null | undefined> {
   const kept = turnsToRemember(turns)
   return queue(key, async () => {
+    const { book: latest, fromLegacy } = await readStoredBook(vaultId, key)
+    const existing = latest?.threads ?? []
+    const hadThread = existing.some((t) => t.id === threadId)
+    const others = existing.filter((t) => t.id !== threadId)
+
+    if (!kept.length && !hadThread) {
+      if (fromLegacy) {
+        if (latest) await writeSealedBook(vaultId, key, latest)
+        remove(LEGACY_CONVERSATION_PREFIX + key)
+      }
+      return latest
+    }
+
     remove(LEGACY_CONVERSATION_PREFIX + key)
-    const others = existingThreads.filter((t) => t.id !== threadId)
     const nextThreads = kept.length
       ? [{ id: threadId, title: deriveThreadTitle(kept), savedAt: Date.now(), turns: kept }, ...others].slice(0, MAX_THREADS_PER_HOST)
       : others
     if (nextThreads.length) {
-      const activeId = kept.length ? threadId : nextThreads[0].id
-      await writeSealedBook(vaultId, key, { version: 2, activeId, threads: nextThreads })
-    } else {
-      remove(SEALED_PREFIX + key)
+      const activeId = kept.length
+        ? threadId
+        : (latest?.activeId && latest.activeId !== threadId && nextThreads.some((t) => t.id === latest.activeId)
+            ? latest.activeId
+            : nextThreads[0].id)
+      const nextBook: StoredThreadBook = { version: 2, activeId, threads: nextThreads }
+      await writeSealedBook(vaultId, key, nextBook)
+      return nextBook
     }
+    remove(SEALED_PREFIX + key)
+    return null
   })
 }
 
@@ -135,22 +166,27 @@ export function deleteConversationThread(
   vaultId: string,
   key: string,
   threadId: string,
-  existingThreads: AIConversationThread[],
-): Promise<void> {
+): Promise<StoredThreadBook | null | undefined> {
   return queue(key, async () => {
+    const { book: latest } = await readStoredBook(vaultId, key)
     remove(LEGACY_CONVERSATION_PREFIX + key)
-    const remaining = existingThreads.filter((t) => t.id !== threadId)
+    const remaining = (latest?.threads ?? []).filter((t) => t.id !== threadId)
     if (remaining.length) {
-      await writeSealedBook(vaultId, key, { version: 2, activeId: remaining[0].id, threads: remaining })
-    } else {
-      remove(SEALED_PREFIX + key)
+      const activeId = latest?.activeId && latest.activeId !== threadId && remaining.some((t) => t.id === latest.activeId)
+        ? latest.activeId
+        : remaining[0].id
+      const nextBook: StoredThreadBook = { version: 2, activeId, threads: remaining }
+      await writeSealedBook(vaultId, key, nextBook)
+      return nextBook
     }
+    remove(SEALED_PREFIX + key)
+    return null
   })
 }
 
 /** Backwards-compatible single-thread save. */
-export function saveConversation(vaultId: string, key: string, turns: AITurn[]): Promise<void> {
-  return saveConversationThread(vaultId, key, 'default', turns, [])
+export async function saveConversation(vaultId: string, key: string, turns: AITurn[]): Promise<void> {
+  await saveConversationThread(vaultId, key, 'default', turns)
 }
 
 /**
