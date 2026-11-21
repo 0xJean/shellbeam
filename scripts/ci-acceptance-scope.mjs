@@ -52,6 +52,27 @@ export function selectSuites(paths) {
   return Object.fromEntries(SUITES.map((suite) => [suite, selected.has(suite)]))
 }
 
+const RELEASE_METADATA_PATTERNS = [
+  /^package(-lock)?[.]json$/,
+  /^src-tauri\/Cargo[.](toml|lock)$/,
+  /^src-tauri\/tauri[.]conf[.]json$/,
+  /^src-tauri\/gen\/apple\/app_iOS\/Info[.]plist$/,
+  /^docs\/releases\/[^/]+[.]md$/,
+]
+
+export function isReleaseMetadataOnly(paths) {
+  return paths.length > 0 && paths.every((path) => RELEASE_METADATA_PATTERNS.some((pattern) => pattern.test(path)))
+}
+
+export function selectSuitesForReleasePr(paths) {
+  // Pure version-bump + release-notes PRs defer full acceptance to the `v*` tag Release run in build.yml.
+  // If any code or config outside release metadata changed, run all four suites before merge.
+  if (isReleaseMetadataOnly(paths)) {
+    return Object.fromEntries(SUITES.map((suite) => [suite, false]))
+  }
+  return Object.fromEntries(SUITES.map((suite) => [suite, true]))
+}
+
 export function formatOutputs(selection) {
   const lines = SUITES.map((suite) => `${suite}=${selection[suite]}`)
   return [...lines, `build=${SUITES.some((suite) => selection[suite])}`].join('\n')
@@ -59,5 +80,7 @@ export function formatOutputs(selection) {
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const paths = readFileSync(0, 'utf8').split('\n').filter(Boolean)
-  console.log(formatOutputs(selectSuites(paths)))
+  const releasePr = process.argv.includes('--release-pr')
+  const selection = releasePr ? selectSuitesForReleasePr(paths) : selectSuites(paths)
+  console.log(formatOutputs(selection))
 }
