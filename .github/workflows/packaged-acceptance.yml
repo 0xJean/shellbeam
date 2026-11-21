@@ -2,14 +2,14 @@ name: Packaged acceptance
 
 # One package and one WebDriver are built per run and shared by the suites below,
 # so a failing suite stays its own red check. `scope` picks the suites: a pull
-# request or main push runs only those its changed paths need, and everything
-# else runs all four. scripts/ci-acceptance-scope.mjs holds the path rules.
+# request runs only those its changed paths need, a pure version-bump `release/*`
+# pull request skips duplicate acceptance because `build.yml` runs all four suites
+# on the `v*` tag before publishing, and everything else runs all four.
+# scripts/ci-acceptance-scope.mjs holds the path rules.
 # Workflow-level `paths` could only start or skip all four together.
 # build.yml calls this workflow for `v*` tags and holds the release until it passes.
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_call:
   workflow_dispatch:
 
@@ -40,23 +40,20 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
-          BEFORE: ${{ github.event.before }}
         run: |
           changed=
+          scope_flag=
           # Anything that cannot name its changes runs in full.
-          if [[ $EVENT_NAME == pull_request && $HEAD_REF != release/* ]]; then
+          if [[ $EVENT_NAME == pull_request ]]; then
             changed=$(git diff --name-only HEAD^1 HEAD) || changed=unknown-diff
-          elif [[ $EVENT_NAME == push && $GITHUB_REF == refs/heads/main ]]; then
-            if git fetch --depth=1 origin "$BEFORE"; then
-              changed=$(git diff --name-only "$BEFORE" HEAD) || changed=unknown-diff
-            else
-              changed=unknown-diff
+            if [[ $HEAD_REF == release/* ]]; then
+              scope_flag=--release-pr
             fi
           else
             changed=full-acceptance-run
           fi
           printf '%s\n' "$changed"
-          printf '%s\n' "$changed" | node scripts/ci-acceptance-scope.mjs | tee -a "$GITHUB_OUTPUT"
+          printf '%s\n' "$changed" | node scripts/ci-acceptance-scope.mjs $scope_flag | tee -a "$GITHUB_OUTPUT"
 
   build:
     name: Build acceptance package

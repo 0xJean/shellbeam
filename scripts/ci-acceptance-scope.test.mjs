@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
-import { formatOutputs, selectSuites, suitesForPath, SUITES } from './ci-acceptance-scope.mjs'
+import { formatOutputs, isReleaseMetadataOnly, selectSuites, selectSuitesForReleasePr, suitesForPath, SUITES } from './ci-acceptance-scope.mjs'
 
 const names = (paths) => Object.entries(selectSuites(paths)).filter(([, on]) => on).map(([suite]) => suite)
 
@@ -74,4 +74,28 @@ test('each journey shell entry selects its suite', () => {
   assert.ok(suitesForPath('scripts/ci-monitoring-agent-ui.sh').includes('agent'))
   assert.ok(suitesForPath('scripts/ci-probe-transfer-ui.sh').includes('probe'))
   assert.ok(suitesForPath('scripts/ci-extension-ui.sh').includes('extension'))
+})
+
+test('release/* PRs with only version metadata defer acceptance to the v* tag run, while code changes still run all suites', () => {
+  const releaseMetadata = [
+    'package.json',
+    'package-lock.json',
+    'src-tauri/Cargo.toml',
+    'src-tauri/Cargo.lock',
+    'src-tauri/tauri.conf.json',
+    'src-tauri/gen/apple/app_iOS/Info.plist',
+    'docs/releases/v0.1.15.md',
+  ]
+  assert.equal(isReleaseMetadataOnly(releaseMetadata), true)
+  assert.match(formatOutputs(selectSuitesForReleasePr(releaseMetadata)), /build=false/)
+
+  assert.equal(isReleaseMetadataOnly([]), false)
+  assert.match(formatOutputs(selectSuitesForReleasePr([])), /build=true/)
+
+  const releaseWithCode = [...releaseMetadata, 'src/App.tsx']
+  assert.equal(isReleaseMetadataOnly(releaseWithCode), false)
+  assert.deepEqual(
+    Object.entries(selectSuitesForReleasePr(releaseWithCode)).filter(([, on]) => on).map(([s]) => s),
+    SUITES,
+  )
 })

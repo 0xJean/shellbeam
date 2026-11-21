@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AICommandBar } from './ai-command-bar'
 import { streamAICommand, type AISettings, type AIStreamCallbacks } from '@/lib/ai'
@@ -524,6 +524,142 @@ describe('AICommandBar', () => {
       expect(dialog).toHaveTextContent('check postgres locks')
       expect(dialog).toHaveTextContent('check nginx upstream')
     })
+  })
+
+  it('forks shared-thread follow-ups across two terminals, preserves >30-turn in-session history, and clears deleted sole threads on refresh', async () => {
+    const memoryKey = 'v1:root@10.0.0.99'
+    render(
+      <div>
+        <div data-testid="shared-a"><AICommandBar {...base} memoryKey={memoryKey} memoryVaultId="v1" /></div>
+        <div data-testid="shared-b"><AICommandBar {...base} memoryKey={memoryKey} memoryVaultId="v1" /></div>
+      </div>,
+    )
+    await act(async () => { await Promise.resolve() })
+
+    const inputs = screen.getAllByRole('textbox', { name: 'Describe what you want to do…' })
+    const submitButtons = screen.getAllByRole('button', { name: 'Generate command' })
+    const historyButtons = screen.getAllByTestId('ai-thread-history')
+
+    // 1. Start a conversation in Terminal A, then select that exact conversation in Terminal B.
+    fireEvent.change(inputs[0], { target: { value: 'shared incident' } })
+    fireEvent.click(submitButtons[0])
+    act(() => { callbacks.onToken('# Initial triage complete.'); callbacks.onDone() })
+
+    fireEvent.click(historyButtons[1])
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Conversations' })).toHaveTextContent('shared incident'))
+    fireEvent.click(screen.getByRole('button', { name: /shared incident/ }))
+
+    // 2. Ask sequential follow-ups in Terminal A and Terminal B on the same thread; both branches survive.
+    fireEvent.change(inputs[0], { target: { value: 'follow-up from A' } })
+    fireEvent.click(submitButtons[0])
+    act(() => { callbacks.onToken('# Reply A preserved.'); callbacks.onDone() })
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)) })
+
+    fireEvent.change(inputs[1], { target: { value: 'follow-up from B' } })
+    fireEvent.click(submitButtons[1])
+    act(() => { callbacks.onToken('# Reply B preserved.'); callbacks.onDone() })
+
+    fireEvent.click(historyButtons[0])
+    await waitFor(() => {
+      const dialog = screen.getByRole('dialog', { name: 'Conversations' })
+      expect(dialog.querySelectorAll('button[aria-label="Delete conversation"]').length).toBe(2)
+    })
+
+    // 3. Delete all threads from Terminal A -> reopening History in Terminal B clears stale entries.
+    const deleteButtons = screen.getAllByRole('button', { name: 'Delete conversation' })
+    for (const btn of deleteButtons) fireEvent.click(btn)
+    fireEvent.click(historyButtons[0])
+    await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+
+    fireEvent.click(historyButtons[1])
+    await waitFor(() => {
+      const dialogB = within(screen.getByTestId('shared-b')).getByRole('dialog', { name: 'Conversations' })
+      expect(dialogB).toHaveTextContent('No saved conversations yet')
+    })
+  })
+
+  it('retains full >30-turn transcript when switching threads and returning in the same session', async () => {
+    const memoryKey = 'v1:root@10.0.0.100'
+    render(<AICommandBar {...base} memoryKey={memoryKey} memoryVaultId="v1" />)
+    await act(async () => { await Promise.resolve() })
+
+    for (let i = 1; i <= 16; i += 1) {
+      ask(`prompt number ${i}`)
+      act(() => { callbacks.onToken(`# reply number ${i}`); callbacks.onDone() })
+    }
+    await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+
+    fireEvent.click(screen.getByTestId('ai-new-thread'))
+    expect(screen.queryByText('prompt number 1')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('ai-thread-history'))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Conversations' })).toHaveTextContent('prompt number 1'))
+    fireEvent.click(screen.getByRole('button', { name: /prompt number 1/ }))
+
+    expect(screen.getByText('prompt number 1')).toBeInTheDocument()
+    expect(screen.getByText('reply number 16')).toBeInTheDocument()
+  })
+
+  it('moves a panel to a fresh thread after a rejected stale clear and never restores stuck running commands from local cache', async () => {
+    const memoryKey = 'v1:root@10.0.0.101'
+    render(
+      <div>
+        <div data-testid="clear-a"><AICommandBar {...base} memoryKey={memoryKey} memoryVaultId="v1" /></div>
+        <div data-testid="clear-b"><AICommandBar {...base} memoryKey={memoryKey} memoryVaultId="v1" /></div>
+      </div>,
+    )
+    await act(async () => { await Promise.resolve() })
+
+    const panelA = screen.getByTestId('clear-a')
+    const panelB = screen.getByTestId('clear-b')
+
+    // Panel A starts thread, Panel B opens it from History.
+    fireEvent.change(within(panelA).getByRole('textbox', { name: 'Describe what you want to do…' }), { target: { value: 'original incident' } })
+    fireEvent.click(within(panelA).getByRole('button', { name: 'Generate command' }))
+    act(() => { callbacks.onToken('# First finding.'); callbacks.onDone() })
+
+    fireEvent.click(within(panelB).getByTestId('ai-thread-history'))
+    await waitFor(() => expect(within(panelB).getByRole('dialog', { name: 'Conversations' })).toHaveTextContent('original incident'))
+    fireEvent.click(within(panelB).getByRole('button', { name: /original incident/ }))
+
+    // Panel A adds a newer reply, then Panel B clears chat (rejected clear) and asks a new prompt.
+    fireEvent.change(within(panelA).getByRole('textbox', { name: 'Describe what you want to do…' }), { target: { value: 'newer reply from A' } })
+    fireEvent.click(within(panelA).getByRole('button', { name: 'Generate command' }))
+    act(() => { callbacks.onToken('# Must survive.'); callbacks.onDone() })
+    await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+
+    fireEvent.click(within(panelB).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(within(panelB).getByRole('menuitem', { name: 'Clear conversation' }))
+    await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+
+    fireEvent.change(within(panelB).getByRole('textbox', { name: 'Describe what you want to do…' }), { target: { value: 'disk usage check' } })
+    fireEvent.click(within(panelB).getByRole('button', { name: 'Generate command' }))
+    act(() => { callbacks.onToken('# Disk is healthy.'); callbacks.onDone() })
+
+    fireEvent.click(within(panelA).getByTestId('ai-thread-history'))
+    await waitFor(() => {
+      const dialog = within(panelA).getByRole('dialog', { name: 'Conversations' })
+      expect(dialog).toHaveTextContent('original incident')
+      expect(dialog).toHaveTextContent('disk usage check')
+    })
+
+    // Switching away during an in-flight command and returning must not leave a stuck running entry.
+    cleanup()
+    const bridge = fakeBridge('still running')
+    render(<AICommandBar {...base} bridge={bridge} memoryKey="v1:root@10.0.0.102" memoryVaultId="v1" />)
+    await act(async () => { await Promise.resolve() })
+    ask('check uptime')
+    act(() => { callbacks.onToken('uptime'); callbacks.onDone() })
+    await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+    expect(screen.getByTestId('ai-run')).toHaveAttribute('data-state', 'running')
+
+    fireEvent.click(screen.getByTestId('ai-new-thread'))
+    fireEvent.click(screen.getByTestId('ai-thread-history'))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Conversations' })).toHaveTextContent('check uptime'))
+    fireEvent.click(screen.getByRole('button', { name: /check uptime/ }))
+    expect(screen.queryByTestId('ai-run')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Run' })).toBeInTheDocument()
   })
 
   it('collapses 2+ consecutive completed automatic check steps into an expandable step timeline', async () => {

@@ -4,9 +4,9 @@ ShellBeam has eight GitHub Actions workflows.
 
 | Workflow | File | Runs on | Purpose |
 |---|---|---|---|
-| CI | `ci.yml` | every pull request, pushes to `main` | Frontend tests and build, Rust and real SSH on three platforms, monitoring extension contract |
+| CI | `ci.yml` | every pull request, manual | Frontend tests and build, Rust and real SSH on three platforms, monitoring extension contract |
 | Packaged acceptance | `packaged-acceptance.yml` | see below | Installs the real Linux package and drives four UI journeys |
-| Release | `build.yml` | `v*` tags, manual | Builds all platforms, runs packaged acceptance on `v*` tags, and creates a draft GitHub Release once it passes. iOS goes to TestFlight instead of being attached as an IPA |
+| Release | `build.yml` | `v*` tags, manual | Builds all platforms, runs packaged acceptance on `v*` tags, and publishes the GitHub Release once it passes. iOS goes to TestFlight instead of being attached as an IPA |
 | Optional agent CI | `agent-ci.yml` | pull requests and `main` pushes touching `agent/` | Builds and tests the optional agent |
 | Build signed optional agent | `agent-release.yml` | manual, default branch | Signs an optional agent release |
 | Compatible monitoring probe lifecycle | `komari-agent-ci.yml` | pull requests touching probe code, manual | Probe install and upgrade lifecycle |
@@ -28,10 +28,9 @@ Which suites run depends on the trigger:
 
 | Trigger | Suites |
 |---|---|
-| Pull request, push to `main` | Those whose paths changed |
-| Pull request from a `release/*` branch | All four |
+| Pull request | Those whose paths changed |
+| Pull request from a `release/*` branch | Skipped when only version manifests & `docs/releases/*.md` changed (full acceptance runs on the `v*` tag); otherwise all four |
 | `Release` on a `v*` tag, pushed or manual | All four, inside the `Release` run |
-| Nightly at 19:17 UTC, on `main` | All four |
 | Manual **Run workflow**, on any branch | All four |
 
 The path rules live in `scripts/ci-acceptance-scope.mjs` and are tested by `scripts/ci-acceptance-scope.test.mjs`. A path no rule names runs every suite. When no suite is needed, only `Select acceptance suites` does any work and the others show as skipped. Skipped jobs count as passing, so these checks can be made required without blocking such a pull request.
