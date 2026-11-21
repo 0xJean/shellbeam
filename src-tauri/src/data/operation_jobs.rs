@@ -570,7 +570,7 @@ pub(crate) fn create_on_with_id(
         ],
     )
     .map_err(|e| format!("Create operation job failed: {e}"))?;
-    let job = load_job(db, &job_id)?;
+    let job = load_job(db, job_id)?;
     db.execute(
         "INSERT INTO operation_audit
          (audit_id,job_id,event,status,confirmation_status,source,actor,host_id,host_name,host_address,
@@ -702,14 +702,12 @@ pub(crate) fn update_on(
     let result_summary = request
         .result_summary
         .as_deref()
-        .map(|value| sanitize_summary(Some(value)))
-        .flatten()
+        .and_then(|value| sanitize_summary(Some(value)))
         .or(current.result_summary.clone());
     let error_summary = request
         .error_summary
         .as_deref()
-        .map(|value| sanitize_summary(Some(value)))
-        .flatten()
+        .and_then(|value| sanitize_summary(Some(value)))
         .or(current.error_summary.clone());
     db.execute(
         "UPDATE operation_jobs SET status=?1,confirmation_status=?2,confirmed_at=?3,confirmed_by=?4,

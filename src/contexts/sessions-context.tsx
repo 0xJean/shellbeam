@@ -380,23 +380,11 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     } catch { /* ignore corrupted data */ }
   }, [])
 
-  useEffect(() => {
-    for (const [sessionId, browserState] of Object.entries(browserBySession)) {
-      const session = interactiveSessions.find((item) => item.sessionId === sessionId)
-      const connectionKind = session?.hostId ? 'host' : 'local'
-      persistBrowserSessionState({
-        browserState,
-        hostId: session?.hostId,
-        connectionKind,
-      })
-    }
-  }, [browserBySession, interactiveSessions])
-
-  function getBrowserRoutePrefKey(params: { hostId?: string | null; connectionKind?: 'host' | 'local' | null }) {
+  const getBrowserRoutePrefKey = useCallback((params: { hostId?: string | null; connectionKind?: 'host' | 'local' | null }) => {
     if (params.connectionKind === 'local') return 'local'
     if (params.hostId) return `host:${params.hostId}`
     return null
-  }
+  }, [])
 
   function getStoredBrowserRouteMode(params: { hostId?: string | null; connectionKind?: 'host' | 'local' | null }) {
     const key = getBrowserRoutePrefKey(params)
@@ -452,7 +440,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
   }
 
-  function getManagedBrowserIdsForSession(sessionId: string, state?: SessionBrowserState | null) {
+  const getManagedBrowserIdsForSession = useCallback((sessionId: string, state?: SessionBrowserState | null) => {
     const ids = new Set<string>()
     if (state) {
       ids.add(getManagedBrowserId(sessionId, state))
@@ -470,13 +458,13 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       if (browserId === sessionId || browserId.startsWith(`${sessionId}::`)) ids.add(browserId)
     }
     return [...ids]
-  }
+  }, [])
 
-  function stopManagedBrowserPortForwards(sessionId: string, state?: SessionBrowserState | null) {
+  const stopManagedBrowserPortForwards = useCallback((sessionId: string, state?: SessionBrowserState | null) => {
     for (const browserId of getManagedBrowserIdsForSession(sessionId, state)) {
       void stopBrowserPortForward(browserId).catch(() => {})
     }
-  }
+  }, [getManagedBrowserIdsForSession])
 
   function closeManagedBrowserWindows(sessionId: string, state?: SessionBrowserState | null) {
     for (const browserId of getManagedBrowserIdsForSession(sessionId, state)) {
@@ -484,24 +472,24 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
     }
   }
 
-  function persistBrowserRouteMode(params: {
+  const persistBrowserRouteMode = useCallback((params: {
     sessionId: string
     routeMode: BrowserRouteMode
     hostId?: string | null
     connectionKind?: 'host' | 'local' | null
-  }) {
+  }) => {
     const prefKey = getBrowserRoutePrefKey(params)
     if (!prefKey) return
     if (params.routeMode === 'auto') delete browserRouteModePrefsRef.current[prefKey]
     else browserRouteModePrefsRef.current[prefKey] = params.routeMode
     localStorage.setItem(BROWSER_ROUTE_MODE_KEY, JSON.stringify(browserRouteModePrefsRef.current))
-  }
+  }, [getBrowserRoutePrefKey])
 
-  function persistBrowserSessionState(params: {
+  const persistBrowserSessionState = useCallback((params: {
     browserState: SessionBrowserState
     hostId?: string | null
     connectionKind?: 'host' | 'local' | null
-  }) {
+  }) => {
     const prefKey = getBrowserRoutePrefKey(params)
     if (!prefKey) return
     const sanitized = stripSessionBrowserRuntimeState(params.browserState)
@@ -512,7 +500,19 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       browserSessionStatePrefsRef.current[prefKey] = sanitized
     }
     localStorage.setItem(BROWSER_SESSION_STATE_KEY, JSON.stringify(browserSessionStatePrefsRef.current))
-  }
+  }, [getBrowserRoutePrefKey])
+
+  useEffect(() => {
+    for (const [sessionId, browserState] of Object.entries(browserBySession)) {
+      const session = interactiveSessions.find((item) => item.sessionId === sessionId)
+      const connectionKind = session?.hostId ? 'host' : 'local'
+      persistBrowserSessionState({
+        browserState,
+        hostId: session?.hostId,
+        connectionKind,
+      })
+    }
+  }, [browserBySession, interactiveSessions, persistBrowserSessionState])
 
   function acceptPendingHostKey() {
     pendingHostKeyResolveRef.current?.(true)
@@ -747,7 +747,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
             const hasRemoteSession = Boolean(session?.hostId)
             const effectiveRouteMode = resolveBrowserRouteMode(browserState?.routeMode ?? 'auto', hasRemoteSession)
             if (browserState?.presentation !== 'closed' && browserState?.source?.kind === 'url' && effectiveRouteMode === 'remote') {
-              rebuildSessionBrowserTransport(sessionId)
+              rebuildSessionBrowserTransportRef.current(sessionId)
             }
           }
           return
@@ -923,7 +923,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       connectionKind: session?.hostId ? 'host' : 'local',
     })
     setBrowserBySession((prev) => setSessionBrowserRouteModeState(prev, sessionId, routeMode))
-  }, [])
+  }, [persistBrowserRouteMode])
 
   const setSessionBrowserAddressInput = useCallback((sessionId: string, addressInput: string) => {
     setBrowserBySession((prev) => setSessionBrowserAddressInputState(prev, sessionId, addressInput))
@@ -1000,7 +1000,12 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
       sessionId,
       'recovering',
     ))
-  }, [hosts, setOutput])
+  }, [hosts, setOutput, stopManagedBrowserPortForwards])
+
+  const rebuildSessionBrowserTransportRef = useRef(rebuildSessionBrowserTransport)
+  useEffect(() => {
+    rebuildSessionBrowserTransportRef.current = rebuildSessionBrowserTransport
+  }, [rebuildSessionBrowserTransport])
 
   useEffect(() => {
     let disposed = false
@@ -1329,7 +1334,7 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
 
       clearManagedBrowserRuntimeEntry(browserId)
     }
-  }, [activeVaultId, browserSyncRevision, defaultUsername, hosts, workspaceAuthBySession])
+  }, [activeVaultId, browserSyncRevision, defaultUsername, hosts, setOutput, stopManagedBrowserPortForwards, workspaceAuthBySession])
 
   async function refreshInteractiveSessions() {
     const sessions = await listInteractiveSessions()
@@ -1353,8 +1358,9 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
   useEffect(() => { void refreshInteractiveSessions() }, [])
 
   useEffect(() => {
+    const timers = sendRawTimerRef.current
     return () => {
-      for (const timer of Object.values(sendRawTimerRef.current)) {
+      for (const timer of Object.values(timers)) {
         if (timer) clearTimeout(timer)
       }
       for (const session of interactiveSessionsRef.current) {

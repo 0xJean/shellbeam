@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -100,7 +100,8 @@ export function BrowserChrome({
 }: BrowserChromeProps) {
   const { t, locale } = useT()
   const copy = browserV3Copy[locale]
-  const [value, setValue] = useState(state.addressInput)
+  const [addressDraft, setAddressDraft] = useState<{ base: string; value: string } | null>(null)
+  const value = addressDraft?.base === state.addressInput ? addressDraft.value : state.addressInput
   const [tabMenu, setTabMenu] = useState<{ tabId: string; top: number; left: number } | null>(null)
   const [tabSwitcherOpen, setTabSwitcherOpen] = useState(false)
   const [tabSwitcherQuery, setTabSwitcherQuery] = useState('')
@@ -115,20 +116,21 @@ export function BrowserChrome({
   const rootRef = useRef<HTMLDivElement | null>(null)
   const overlayOpen = tabMenu !== null || tabSwitcherOpen
 
-  useEffect(() => {
-    setValue(state.addressInput)
-  }, [state.addressInput])
+  const closeTabSwitcher = useCallback(() => {
+    setTabSwitcherOpen(false)
+    setTabSwitcherQuery('')
+  }, [])
 
   useEffect(() => {
     const handler = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
         setTabMenu(null)
-        setTabSwitcherOpen(false)
+        closeTabSwitcher()
       }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [])
+  }, [closeTabSwitcher])
 
   useEffect(() => {
     onOverlayOpenChange?.(overlayOpen)
@@ -218,7 +220,7 @@ export function BrowserChrome({
     const rootLeft = rootRect?.left ?? 0
     const rootWidth = rootRect?.width ?? 0
     const left = Math.max(8, Math.min(anchorRect.right - rootLeft - 210, rootWidth - 218))
-    setTabSwitcherOpen(false)
+    closeTabSwitcher()
     setTabMenu({ tabId, top: anchorRect.bottom - (rootRect?.top ?? 0) + 4, left })
   }
 
@@ -243,24 +245,24 @@ export function BrowserChrome({
       ? { tab: 'min-w-[100px] max-w-[176px] gap-1.5 pl-2 pr-1', title: 'text-[11.5px]', chip: 'hidden xl:inline-flex' }
       : { tab: 'min-w-[120px] max-w-[220px] gap-[7px] pl-2.5 pr-1.5', title: 'text-xs', chip: 'inline-flex' }
 
-  function openTabSwitcher() {
+  const effectiveHighlightedTabId = filteredTabs.some((tab) => tab.id === highlightedTabId)
+    ? highlightedTabId
+    : (filteredTabs[0]?.id ?? null)
+
+  const openTabSwitcher = useCallback(() => {
     setTabMenu(null)
     setTabSwitcherOpen(true)
     setHighlightedTabId((current) => current ?? tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? null)
-  }
+  }, [tabs])
 
   useEffect(() => {
-    if (!tabSwitcherOpen) {
-      setTabSwitcherQuery('')
-      return
-    }
-    setHighlightedTabId(filteredTabs[0]?.id ?? null)
+    if (!tabSwitcherOpen) return
     const frame = window.requestAnimationFrame(() => {
       tabSwitcherInputRef.current?.focus()
       tabSwitcherInputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [filteredTabs, tabSwitcherOpen])
+  }, [tabSwitcherOpen])
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -272,7 +274,7 @@ export function BrowserChrome({
 
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [tabs])
+  }, [openTabSwitcher])
 
   return (
     <div ref={rootRef} className="relative flex shrink-0 flex-col">
@@ -454,7 +456,7 @@ export function BrowserChrome({
               value={value}
               onChange={(event) => {
                 const nextValue = event.target.value
-                setValue(nextValue)
+                setAddressDraft({ base: state.addressInput, value: nextValue })
                 onAddressInputChange(nextValue)
               }}
               placeholder={t('browser.address.placeholder')}
@@ -582,7 +584,7 @@ export function BrowserChrome({
         <div
           className="fixed inset-0 z-50 flex items-start justify-center bg-black/45 px-4 pt-[18vh] backdrop-blur-[2px]"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setTabSwitcherOpen(false)
+            if (event.target === event.currentTarget) closeTabSwitcher()
           }}
         >
           <div className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] shadow-[var(--workspace-shadow-overlay)]">
@@ -595,13 +597,13 @@ export function BrowserChrome({
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') {
                     event.preventDefault()
-                    setTabSwitcherOpen(false)
+                    closeTabSwitcher()
                     return
                   }
                   if (event.key === 'ArrowDown') {
                     event.preventDefault()
                     if (filteredTabs.length === 0) return
-                    const index = filteredTabs.findIndex((tab) => tab.id === highlightedTabId)
+                    const index = filteredTabs.findIndex((tab) => tab.id === effectiveHighlightedTabId)
                     const nextIndex = index < 0 ? 0 : Math.min(index + 1, filteredTabs.length - 1)
                     setHighlightedTabId(filteredTabs[nextIndex]!.id)
                     return
@@ -609,30 +611,30 @@ export function BrowserChrome({
                   if (event.key === 'ArrowUp') {
                     event.preventDefault()
                     if (filteredTabs.length === 0) return
-                    const index = filteredTabs.findIndex((tab) => tab.id === highlightedTabId)
+                    const index = filteredTabs.findIndex((tab) => tab.id === effectiveHighlightedTabId)
                     const nextIndex = index < 0 ? 0 : Math.max(index - 1, 0)
                     setHighlightedTabId(filteredTabs[nextIndex]!.id)
                     return
                   }
                   if (event.key === 'Enter') {
                     event.preventDefault()
-                    const nextTab = filteredTabs.find((tab) => tab.id === highlightedTabId) ?? filteredTabs[0]
+                    const nextTab = filteredTabs.find((tab) => tab.id === effectiveHighlightedTabId) ?? filteredTabs[0]
                     if (!nextTab) return
                     onSelectTab(nextTab.id)
-                    setTabSwitcherOpen(false)
+                    closeTabSwitcher()
                   }
                 }}
                 placeholder={t('browser.tab.searchPlaceholder')}
                 className="min-w-0 flex-1 border-none bg-transparent text-[15px] text-[var(--workspace-text-strong)] outline-none placeholder:text-[var(--workspace-text-subtle)]"
               />
-              <button type="button" className="shrink-0" onClick={() => setTabSwitcherOpen(false)} aria-label={t('browser.tab.closeOverview')}>
+              <button type="button" className="shrink-0" onClick={closeTabSwitcher} aria-label={t('browser.tab.closeOverview')}>
                 <BrowserKbd>esc</BrowserKbd>
               </button>
             </div>
             <div className="max-h-[340px] overflow-y-auto px-1.5 pb-2 pt-1">
               {filteredTabs.length > 0 ? (
                 filteredTabs.map((tab) => {
-                  const isHighlighted = tab.id === highlightedTabId
+                  const isHighlighted = tab.id === effectiveHighlightedTabId
                   const tone = getBrowserRouteTone(tab.routeIndicator?.scope, tab.sourceKind)
                   const sideLabel = tab.routeIndicator?.scope === 'pending'
                     ? tab.routeIndicator.detail
@@ -648,7 +650,7 @@ export function BrowserChrome({
                       onMouseEnter={() => setHighlightedTabId(tab.id)}
                       onClick={() => {
                         onSelectTab(tab.id)
-                        setTabSwitcherOpen(false)
+                        closeTabSwitcher()
                       }}
                     >
                       <span className={cn('h-2 w-2 rounded-full', tone === 'preview' ? 'bg-[var(--workspace-text-subtle)]' : getBrowserRouteDotClass(tab.routeIndicator?.scope))} />

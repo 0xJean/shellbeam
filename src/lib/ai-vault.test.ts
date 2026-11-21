@@ -118,7 +118,16 @@ describe('AI conversations from an older release', () => {
     expect(localStorage.getItem('shellbeam.aiConversation.v1:root@a')).toBeNull()
     expect(localStorage.getItem('shellbeam.aiConversationSealed.v1:root@a')).toMatch(/^sealed:/)
     expect(localStorage.getItem('shellbeam.aiConversationSealed.v1:root@a')).not.toContain('shadow')
-    expect(vaultSealData).toHaveBeenCalledWith('ai.conversation', 'v1:root@a', conversation, 'v1')
+    expect(vaultSealData).toHaveBeenCalledWith(
+      'ai.conversation',
+      'v1:root@a',
+      JSON.stringify({
+        version: 2,
+        activeId: 'default',
+        threads: [{ id: 'default', title: 'cat /etc/shadow', savedAt: 1, turns: [{ id: 'u', kind: 'user', text: 'cat /etc/shadow' }] }],
+      }),
+      'v1',
+    )
     expect(localStorage.getItem('shellbeam.aiConversation.none:root@b')).toBeNull()
     expect(localStorage.getItem('shellbeam.aiConversation.v2:root@c')).toBe(conversation)
   })

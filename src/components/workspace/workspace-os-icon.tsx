@@ -43,12 +43,14 @@ const fallbackPalette: Record<string, { bg: string; fg: string; accent?: string 
   oracle: { bg: '#C74634', fg: '#fff' },
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located icon helper exported alongside WorkspaceOsIcon.
 export function getWorkspaceOsIconConfig(os: string | null | undefined) {
   const value = os?.trim()
   if (!value) return undefined
   return OS_ICON_CONFIGS.find(([pattern]) => pattern.test(value))?.[1] ?? { slug: 'linux', iconUrl: linuxIconUrl }
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located icon helper exported alongside WorkspaceOsIcon.
 export function getWorkspaceOsIconSlug(os: string | null | undefined) {
   return getWorkspaceOsIconConfig(os)?.slug
 }

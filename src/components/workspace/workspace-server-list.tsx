@@ -214,6 +214,7 @@ function ServerResourceMetrics({ metrics, t }: { metrics: WorkspaceServerResourc
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located search helper exported alongside WorkspaceServerList.
 export function getWorkspaceServerSearchText(host: HostProfile, searchData?: WorkspaceServerSearchData, t?: ReturnType<typeof useT>['t']) {
   const authLabel = t ? getHostAuthMeta(host, t).label : host.authType
   return [
@@ -238,6 +239,7 @@ export function getWorkspaceServerSearchText(host: HostProfile, searchData?: Wor
   ].map(normalizeSearchValue).filter(Boolean).join(' ').toLowerCase()
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located search helper exported alongside WorkspaceServerList.
 export function workspaceServerMatchesSearch(host: HostProfile, query: string, searchData?: WorkspaceServerSearchData, t?: ReturnType<typeof useT>['t']) {
   const normalizedQuery = query.trim().toLowerCase()
   if (!normalizedQuery) return true

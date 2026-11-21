@@ -2,6 +2,7 @@
 //! Desktop backends await the OS API result; acceptance never means presentation.
 use tauri::{AppHandle, Webview};
 
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NotificationPermission {
     Granted,

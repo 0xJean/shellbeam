@@ -1137,6 +1137,7 @@ const en: Record<string, string> = {
   'terminal.openLatestLink': 'Open latest detected link in browser',
   'terminal.openLink': 'Open Link',
   'terminal.showRecentLinks': 'Show recent terminal links',
+  'panel.resizeHint': 'Drag to resize · Double-click to reset',
   'terminalConnect.loadingEyebrow': 'Establishing Session',
   'terminalConnect.loadingTitle': 'Connecting to {host}',
   'terminalConnect.remoteSubtitle': 'We are opening the transport, negotiating a secure SSH session, and preparing your terminal workspace before the shell appears.',

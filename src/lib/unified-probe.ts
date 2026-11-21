@@ -1,8 +1,8 @@
 import { COLLECTION_LIMITS, renderProbeCollector } from './collection-limits'
 import type { VerifiedHostKey } from './sessions'
 import collectorScript from '../../shared/probe-collector.sh?raw'
-import type { ServerMonitorSnapshot } from './server-monitor'
-import type { WorkspaceInventory } from './workspace-inventory'
+import { parseServerMonitorOutput, type ServerMonitorSnapshot } from './server-monitor'
+import { parseWorkspaceInventory, type WorkspaceInventory } from './workspace-inventory'
 import type { HostProfile } from './hosts'
 import { runWorkspaceRemoteCommand } from './workspace-remote'
 import { normalizeWorkspaceInventory } from './workspace-projects'
@@ -117,7 +117,6 @@ export async function fetchUnifiedProbe(options: { vaultId?: string; host: HostP
   if (!result.stdout.includes('__SB_PROBE_') && /__SB_(?:MON_|HOSTNAME=|TOOL=|PROJECT=)/.test(result.stdout)) {
     // Older exported collector responses remain readable during migration;
     // a truncated versioned frame never enters this compatibility path.
-    const [{ parseServerMonitorOutput }, { parseWorkspaceInventory }] = await Promise.all([import('./server-monitor'), import('./workspace-inventory')])
     const metrics = parseServerMonitorOutput(result.stdout)
     const inventory = parseWorkspaceInventory(result.stdout)
     if (!result.stdout.includes('__SB_MON_')) {

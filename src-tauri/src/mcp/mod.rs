@@ -9,7 +9,7 @@ mod remote;
 mod snippets;
 mod store;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use remote::browse as test_remote_browse;
 #[cfg(all(test, target_os = "linux"))]
 pub(crate) use remote::diagnostics as test_remote_diagnostics;
@@ -626,9 +626,7 @@ pub(super) fn dispatch(app: &tauri::AppHandle, client: &Client, request: Value) 
     if let Err(message) = protocol::validate_request(&request) {
         return Some(protocol::error(id, -32600, &message));
     }
-    if request.get("id").is_none() {
-        return None;
-    }
+    request.get("id")?;
     let result = match request["method"].as_str().unwrap() {
         "initialize" => json!({"protocolVersion":protocol::VERSION,"capabilities":{"tools":{}},
             "serverInfo":{"name":"shellbeam","version":env!("CARGO_PKG_VERSION")},
@@ -1211,7 +1209,7 @@ fn mutate_komari_alert(
                 alert["alertId"].as_str() == Some(alert_id)
                     && alert["integrationId"]
                         .as_str()
-                        .map_or(true, |value| value == integration_id)
+                        .is_none_or(|value| value == integration_id)
                     && (alert["hostId"].as_str() == Some(host.id.as_str())
                         || alert["nodeId"]
                             .as_str()

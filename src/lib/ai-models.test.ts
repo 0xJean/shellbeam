@@ -128,9 +128,17 @@ describe('model discovery', () => {
     vi.mocked(fetch).mockImplementation(async () => new Response('data: [DONE]\n\n'))
     const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
     await streamAICommand(settings, 'list files', '', callbacks)
-    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)).toMatchObject({ max_completion_tokens: 1024 })
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)).toMatchObject({ max_completion_tokens: 2048 })
     expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)).not.toHaveProperty('max_tokens')
     await streamAICommand({ ...settings, provider: 'openrouter' }, 'list files', '', callbacks)
-    expect(JSON.parse(vi.mocked(fetch).mock.calls[1][1]?.body as string)).toMatchObject({ max_tokens: 1024 })
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[1][1]?.body as string)).toMatchObject({ max_tokens: 2048 })
+  })
+
+  it('preserves versioned provider endpoints without duplicating /v1', () => {
+    expect(openAIEndpoint('https://generativelanguage.googleapis.com/v1beta/openai', 'models')).toBe('https://generativelanguage.googleapis.com/v1beta/openai/models')
+    expect(openAIEndpoint('https://open.bigmodel.cn/api/paas/v4', 'models')).toBe('https://open.bigmodel.cn/api/paas/v4/models')
+    expect(openAIEndpoint('https://ark.cn-beijing.volces.com/api/v3', 'models')).toBe('https://ark.cn-beijing.volces.com/api/v3/models')
+    expect(openAIEndpoint('https://dashscope.aliyuncs.com/compatible-mode/v1', 'models')).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/models')
+    expect(aiBaseUrl({ ...settings, provider: 'deepseek', providerProfiles: { deepseek: { apiKey: 'k', model: 'deepseek-chat', baseUrl: 'https://relay.example.com/v1' } } })).toBe('https://relay.example.com/v1')
   })
 })

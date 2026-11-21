@@ -95,46 +95,30 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
     }
   }, [sessionId, setSessionBrowserLoading, state?.isLoading])
 
-  if (!state) return null
-
-  const tabs = useMemo(() => getSessionBrowserTabs(state).map((tab) => ({
-    id: tab.id,
-    pinned: tab.pinned,
-    title: tab.title || tab.currentUrl || tab.addressInput || t('browser.tab.newTitle'),
-    active: tab.id === state.activeTabId,
-    isLoading: tab.isLoading,
-    sourceKind: tab.source?.kind ?? null,
-    url: tab.currentUrl || (tab.source?.kind === 'url' ? tab.source.url : tab.addressInput || ''),
-    routeIndicator: getBrowserTabRouteIndicator({
-      source: tab.source,
-      requestedRouteMode: state.routeMode,
-      effectiveRouteMode,
-      hasRemoteSession,
-      isActiveTab: tab.id === state.activeTabId,
-      resolvedUrl: tab.resolvedUrl,
-      proxyUrl: tab.proxyUrl,
-    }),
-  })), [effectiveRouteMode, hasRemoteSession, state, t])
-  const hasClosedTabs = state.closedTabs.length > 0
-  const canRebuildTransport = hasRemoteSession && state.source?.kind === 'url' && effectiveRouteMode === 'remote'
-  const showTransportRecovering = canRebuildTransport && state.transportStatus === 'recovering'
-  const showTransportFailure = canRebuildTransport && state.transportStatus === 'failed'
-  const showErrorPanel = showTransportFailure || (!waitingForRemoteTransport && !showTransportRecovering && !!state.error)
-  const missingRemoteTransport = canRebuildTransport && !state.resolvedUrl && !state.proxyUrl
-  const activeBrowserId = `${sessionId}::${state.activeTabId ?? 'tab'}`
-  const transportInstanceKey = `${activeBrowserId}:${state.proxyUrl ?? state.resolvedUrl ?? effectiveRouteMode}`
-  const routeTarget = (() => {
-    const url = state.currentUrl || (state.source?.kind === 'url' ? state.source.url : '')
-    try {
-      return url ? new URL(url).host : ''
-    } catch {
-      return ''
-    }
-  })()
-  const routeLine = [t('browser.status.activeRoute', { detail: localizedRouteIndicator.detail }), routeTarget].filter(Boolean).join(' · ')
+  const tabs = useMemo(() => {
+    if (!state) return []
+    return getSessionBrowserTabs(state).map((tab) => ({
+      id: tab.id,
+      pinned: tab.pinned,
+      title: tab.title || tab.currentUrl || tab.addressInput || t('browser.tab.newTitle'),
+      active: tab.id === state.activeTabId,
+      isLoading: tab.isLoading,
+      sourceKind: tab.source?.kind ?? null,
+      url: tab.currentUrl || (tab.source?.kind === 'url' ? tab.source.url : tab.addressInput || ''),
+      routeIndicator: getBrowserTabRouteIndicator({
+        source: tab.source,
+        requestedRouteMode: state.routeMode,
+        effectiveRouteMode,
+        hasRemoteSession,
+        isActiveTab: tab.id === state.activeTabId,
+        resolvedUrl: tab.resolvedUrl,
+        proxyUrl: tab.proxyUrl,
+      }),
+    }))
+  }, [effectiveRouteMode, hasRemoteSession, state, t])
 
   useEffect(() => {
-    if (!visible || state.presentation === 'closed') return
+    if (!state || !visible || state.presentation === 'closed') return
 
     const activeIndex = tabs.findIndex((tab) => tab.active)
     const selectTabAt = (index: number) => {
@@ -184,7 +168,27 @@ export function BrowserView({ sessionId, visible = true, onCloseRequest }: Brows
 
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [sessionId, sessions, state.presentation, tabs, visible])
+  }, [sessionId, sessions, state, tabs, visible])
+
+  if (!state) return null
+
+  const hasClosedTabs = state.closedTabs.length > 0
+  const canRebuildTransport = hasRemoteSession && state.source?.kind === 'url' && effectiveRouteMode === 'remote'
+  const showTransportRecovering = canRebuildTransport && state.transportStatus === 'recovering'
+  const showTransportFailure = canRebuildTransport && state.transportStatus === 'failed'
+  const showErrorPanel = showTransportFailure || (!waitingForRemoteTransport && !showTransportRecovering && !!state.error)
+  const missingRemoteTransport = canRebuildTransport && !state.resolvedUrl && !state.proxyUrl
+  const activeBrowserId = `${sessionId}::${state.activeTabId ?? 'tab'}`
+  const transportInstanceKey = `${activeBrowserId}:${state.proxyUrl ?? state.resolvedUrl ?? effectiveRouteMode}`
+  const routeTarget = (() => {
+    const url = state.currentUrl || (state.source?.kind === 'url' ? state.source.url : '')
+    try {
+      return url ? new URL(url).host : ''
+    } catch {
+      return ''
+    }
+  })()
+  const routeLine = [t('browser.status.activeRoute', { detail: localizedRouteIndicator.detail }), routeTarget].filter(Boolean).join(' · ')
 
   const browserSource = waitingForRemoteTransport || showTransportRecovering || missingRemoteTransport
     ? null

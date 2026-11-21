@@ -198,7 +198,7 @@ pub(crate) fn initialize(conn: &Connection) -> Result<(), String> {
         tx.commit()
             .map_err(|_| "Commit Komari sync provenance migration failed")?;
     }
-    super::probe_persistence::initialize(&conn)?;
+    super::probe_persistence::initialize(conn)?;
     Ok(())
 }
 

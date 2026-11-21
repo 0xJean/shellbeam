@@ -58,6 +58,7 @@ interface VaultContextValue {
 
 const VaultContext = createContext<VaultContextValue | null>(null)
 
+// eslint-disable-next-line react-refresh/only-export-components -- The context hook accompanies its provider.
 export function useVault() {
   const ctx = useContext(VaultContext)
   if (!ctx) throw new Error('useVault must be used within VaultProvider')
@@ -167,8 +168,8 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
     setShowBiometricOptIn(false)
   }, [])
 
-  useEffect(() => { void refreshVaults() }, [])
-  useEffect(() => { void refreshVault() }, [activeVaultId])
+  useEffect(() => { void refreshVaults() }, [refreshVaults])
+  useEffect(() => { void refreshVault() }, [refreshVault])
 
   useEffect(() => {
     localStorage.setItem(VAULT_AUTO_LOCK_MINUTES_KEY, String(vaultAutoLockMinutes))
@@ -218,7 +219,7 @@ export function VaultProvider({ children, setOutput }: { children: ReactNode; se
       })()
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [vaultStatusState?.unlocked, vaultLastActivityAt, vaultAutoLockMinutes, activeVaultId])
+  }, [vaultStatusState?.unlocked, vaultLastActivityAt, vaultAutoLockMinutes, activeVaultId, appendSecurityEvent, refreshVault, setOutput])
 
   const handleInitialize = useCallback(async (masterPassword: string) => {
     setVaultBusy(true)

@@ -747,7 +747,7 @@ fn normalized_tool_status(status: &Value) -> Result<Value, String> {
         }
     }
     if let Some(value) = object.get("checkedAtMs") {
-        if value.as_i64().map_or(true, |at| at < 0) {
+        if value.as_i64().is_none_or(|at| at < 0) {
             return Err("tool_status_invalid".into());
         }
         safe.insert("checkedAtMs".into(), value.clone());

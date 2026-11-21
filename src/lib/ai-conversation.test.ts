@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { autoRunAllowed, classifyTerminalTail, loadRunMode, parseQuestion, saveRunMode, extractSuggestion, nextStepTip, splitReply, buildHistory, currentModelTarget, historyToMessages, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput, withModel, type AITurn } from './ai-conversation'
+import { autoRunAllowed, canRunSilently, classifyTerminalTail, formatExecOutput, loadRunMode, parseQuestion, saveRunMode, extractSuggestion, nextStepTip, splitReply, buildHistory, currentModelTarget, historyToMessages, isNoteReply, noteText, outputLooksFailed, trimCapturedOutput, withModel, type AITurn } from './ai-conversation'
 import { DEFAULT_AI_SETTINGS } from './ai'
 
 describe('ai conversation', () => {
-  it('keeps the tail of long output and counts every line', () => {
-    const raw = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n') + '\n\n'
+  it('keeps both the head and tail of long output and counts every line', () => {
+    const raw = Array.from({ length: 300 }, (_, i) => `line ${i}`).join('\n') + '\n\n'
     const { text, lineCount } = trimCapturedOutput(raw)
-    expect(lineCount).toBe(200)
-    expect(text.startsWith('… (120 earlier lines omitted)')).toBe(true)
-    expect(text.endsWith('line 199')).toBe(true)
+    expect(lineCount).toBe(300)
+    expect(text.startsWith('line 0\nline 1')).toBe(true)
+    expect(text).toContain('… (100 middle lines omitted; showing first 30 and last 170 of 300 lines)')
+    expect(text.endsWith('line 299')).toBe(true)
+
+    const longChars = `${'H'.repeat(5000)}\n${'M'.repeat(10000)}\n${'T'.repeat(5000)}`
+    const trimmed = trimCapturedOutput(longChars)
+    expect(trimmed.text.startsWith('HHH')).toBe(true)
+    expect(trimmed.text).toContain('chars omitted')
+    expect(trimmed.text.endsWith('TTT')).toBe(true)
   })
 
   it('builds history from finished turns only and keeps the newest when over budget', () => {
@@ -53,9 +60,10 @@ describe('ai conversation', () => {
   })
 
   it('reports and changes the model for API and CLI backends', () => {
-    expect(currentModelTarget(DEFAULT_AI_SETTINGS)).toEqual({ backend: 'api', providerName: 'OpenAI', model: 'gpt-4o-mini' })
+    expect(currentModelTarget(DEFAULT_AI_SETTINGS)).toEqual({ backend: 'api', providerName: 'OpenAI', model: 'gpt-4o-mini', effort: '', bucketKey: 'api:openai' })
     const claude = withModel({ ...DEFAULT_AI_SETTINGS, backend: 'claude-code' }, 'opus')
-    expect(currentModelTarget(claude)).toEqual({ backend: 'claude-code', providerName: 'Claude Code', model: 'opus' })
+    expect(currentModelTarget(claude)).toEqual({ backend: 'claude-code', providerName: 'Claude Code', model: 'opus', effort: '', bucketKey: 'claude-code' })
+    expect(claude.recentModels?.['claude-code']).toEqual(['opus'])
     expect(withModel({ ...DEFAULT_AI_SETTINGS, provider: 'custom' }, 'x').customModel).toBe('x')
   })
 
@@ -111,5 +119,39 @@ describe('ai conversation', () => {
     expect(classifyTerminalTail('deploy@web:~$ ', '[sudo] password for deploy:', true)).toBe('input')
     expect(classifyTerminalTail('deploy@web:~$ ', 'Unpacking nginx (1.24) ...', true)).toBe('busy')
     expect(classifyTerminalTail('', 'anything', true)).toBe('unknown')
+  })
+
+  it('decides which commands are safe and bounded for silent SSH exec', () => {
+    expect(canRunSilently('df -h')).toBe(true)
+    expect(canRunSilently('grep error /var/log/syslog | tail -n 50')).toBe(true)
+    expect(canRunSilently('top -bn1')).toBe(true)
+    expect(canRunSilently('docker stats --no-stream')).toBe(true)
+    expect(canRunSilently('docker logs --since 24h pg 2>&1 | awk \'{c++} END{print c}\'')).toBe(true)
+
+    expect(canRunSilently('cd /var/log')).toBe(false)
+    expect(canRunSilently('pwd')).toBe(false)
+    expect(canRunSilently('sudo nginx -t')).toBe(false)
+    expect(canRunSilently('tail -f /var/log/syslog')).toBe(false)
+    expect(canRunSilently('journalctl -f')).toBe(false)
+    expect(canRunSilently('docker logs -f api')).toBe(false)
+    expect(canRunSilently('docker stats')).toBe(false)
+    expect(canRunSilently('htop')).toBe(false)
+    expect(canRunSilently('top')).toBe(false)
+    expect(canRunSilently('systemctl restart nginx')).toBe(false)
+    expect(canRunSilently('rm -rf /tmp/x')).toBe(false)
+  })
+
+  it('includes real exit codes for silent exec in history and respects explicit outcome in nextStepTip', () => {
+    expect(formatExecOutput({ stdout: 'ok\n', stderr: 'warn\n' })).toBe('ok\n[stderr]\nwarn')
+    const turns: AITurn[] = [
+      { id: 'u1', kind: 'user', text: 'check errors' },
+      { id: 'a1', kind: 'ai', text: 'grep error app.log', model: 'm' },
+      { id: 'r1', kind: 'run', command: 'grep error app.log', state: 'captured', via: 'exec', exitCode: 0, outcome: 'ok', output: '2026 error timeout', lineCount: 1 },
+    ]
+    expect(buildHistory(turns)).toContainEqual({
+      role: 'output',
+      content: '$ grep error app.log\n[exit code: 0]\n2026 error timeout',
+    })
+    expect(nextStepTip(turns, { next: 'NEXT', fix: 'FIX' })).toBe('NEXT')
   })
 })

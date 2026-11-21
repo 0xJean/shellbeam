@@ -49,7 +49,18 @@ export async function streamCliCommand(
   signal?.addEventListener('abort', abort, { once: true })
   try {
     await invoke('ai_cli_start', {
-      request: { requestId, backend, executable: profile?.executable ?? '', model: profile?.model ?? '', prompt, context, history, host, mode },
+      request: {
+        requestId,
+        backend,
+        executable: profile?.executable ?? '',
+        model: profile?.model ?? '',
+        effort: profile?.effort ?? '',
+        prompt,
+        context,
+        history,
+        host,
+        mode,
+      },
       channel,
     })
     started = true

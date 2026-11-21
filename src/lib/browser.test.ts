@@ -12,8 +12,8 @@ import {
   rewriteBrowserUrlToLocalForward,
 } from '@/lib/browser'
 
-const invokeMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined as unknown))
-const listenMock = vi.hoisted(() => vi.fn(async (_event, _handler) => () => {}))
+const invokeMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => undefined))
+const listenMock = vi.hoisted(() => vi.fn<(event: string, handler: unknown) => Promise<() => void>>(async () => () => {}))
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,

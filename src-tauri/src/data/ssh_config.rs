@@ -15,9 +15,9 @@ pub struct SshConfigEntry {
 }
 
 fn expand_home(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
+    if let Some(rest) = path.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
-            return home.join(&path[2..]);
+            return home.join(rest);
         }
     }
     PathBuf::from(path)
@@ -56,11 +56,7 @@ fn is_git_hosting_domain(domain: &str) -> bool {
         }
     }
 
-    if d.starts_with("git-codecommit.") && d.ends_with(".amazonaws.com") {
-        return true;
-    }
-
-    false
+    d.starts_with("git-codecommit.") && d.ends_with(".amazonaws.com")
 }
 
 fn is_git_hosting_entry(alias: &str, fields: &HashMap<String, String>) -> bool {

@@ -78,8 +78,10 @@ pub struct SessionResizeRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalTerminalRequest {
+    #[cfg_attr(not(unix), allow(dead_code))]
     #[serde(default = "default_cols")]
     cols: u32,
+    #[cfg_attr(not(unix), allow(dead_code))]
     #[serde(default = "default_rows")]
     rows: u32,
 }
@@ -309,6 +311,7 @@ fn make_info(session_id: &str, p: &InteractiveSessionCreateRequest) -> Interacti
     }
 }
 
+#[cfg(unix)]
 fn spawn_pipe_reader(
     app: tauri::AppHandle,
     session_id: String,
@@ -384,6 +387,7 @@ fn close_channel_nonblocking(channel: &mut Channel) -> i32 {
     channel.exit_status().unwrap_or(-1)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn session_io_loop(
     app: tauri::AppHandle,
     session_id: String,
@@ -846,7 +850,8 @@ fn open_local_pty(
         ws_ypixel: 0,
     };
 
-    if unsafe {
+    #[allow(clippy::unnecessary_mut_passed)]
+    let openpty_result = unsafe {
         libc::openpty(
             &mut master_fd,
             &mut slave_fd,
@@ -854,8 +859,8 @@ fn open_local_pty(
             std::ptr::null_mut(),
             &mut ws,
         )
-    } != 0
-    {
+    };
+    if openpty_result != 0 {
         return Err(standard_error_from_raw(
             "interactive",
             "openpty",

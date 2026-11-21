@@ -76,4 +76,14 @@ describe('terminal AI bridge on a real xterm buffer', () => {
     expect(sent).toEqual(['\x03'])
     expect(clear).toHaveBeenCalled()
   })
+
+  it('skips wrapped rows of a long echoed command and rejoins wrapped output lines', async () => {
+    const { term, bridge } = await shell('deploy@web:~$ ')
+    const longCmd = `docker logs --since 24h ustarpay-postgres 2>&1 | grep -E "LOG:  duration: [0-9.]+ ms" | tail -n 20`
+    const longOut = '2026-11-21 10:00:00 LOG:  duration: 2150.123 ms  statement: SELECT id, status, amount FROM orders WHERE merchant_id = 42'
+    const capture = bridge.run(longCmd)
+    await write(term, `${longCmd}\r\n${longOut}\r\nsecond line\r\ndeploy@web:~$ `)
+    expect(capture.status!()).toBe('prompt')
+    expect(capture.read()).toBe(`${longOut}\nsecond line`)
+  })
 })

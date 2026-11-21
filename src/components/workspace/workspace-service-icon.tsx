@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { Database, Globe, Layers3, Server, Shield, SquareTerminal, Wrench } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -105,6 +105,7 @@ function getServiceFallbackIcon(name: string) {
   return SERVICE_FALLBACK_ICONS.find(([pattern]) => pattern.test(name))?.[1] ?? Server
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located icon helper exported alongside WorkspaceServiceIcon.
 export function getServiceIconConfig(name: string) {
   const slug = getServiceIconSlug(name)
   const FallbackIcon = getServiceFallbackIcon(name)
@@ -118,15 +119,13 @@ interface WorkspaceServiceIconProps {
 }
 
 export function WorkspaceServiceIcon({ name, slug: overrideSlug, className }: WorkspaceServiceIconProps) {
-  const [failed, setFailed] = useState(false)
+  const [failedSlug, setFailedSlug] = useState<string | null>(null)
   const { slug, FallbackIcon } = useMemo(() => {
     const config = getServiceIconConfig(name)
     return { ...config, slug: overrideSlug ?? config.slug }
   }, [name, overrideSlug])
 
-  useEffect(() => {
-    setFailed(false)
-  }, [name, slug, overrideSlug])
+  const failed = Boolean(slug && failedSlug === slug)
 
   if (slug && !failed) {
     return (
@@ -136,7 +135,7 @@ export function WorkspaceServiceIcon({ name, slug: overrideSlug, className }: Wo
         className={cn('h-4 w-4 shrink-0 object-contain', className)}
         loading="lazy"
         decoding="async"
-        onError={() => setFailed(true)}
+        onError={() => setFailedSlug(slug)}
       />
     )
   }

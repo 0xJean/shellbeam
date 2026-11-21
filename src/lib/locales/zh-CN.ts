@@ -1137,6 +1137,7 @@ const zhCN: Record<string, string> = {
   'terminal.openLatestLink': '在浏览器中打开最近检测到的链接',
   'terminal.openLink': '打开链接',
   'terminal.showRecentLinks': '显示最近的终端链接',
+  'panel.resizeHint': '拖动调整宽度 · 双击恢复默认',
   'terminalConnect.loadingEyebrow': '正在建立会话',
   'terminalConnect.loadingTitle': '正在连接 {host}',
   'terminalConnect.remoteSubtitle': '我们正在建立网络链路、协商安全 SSH 会话，并准备终端工作区。待这些步骤完成后，Shell 才会出现。',

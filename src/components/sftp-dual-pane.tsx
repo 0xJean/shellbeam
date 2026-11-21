@@ -51,6 +51,8 @@ import { SftpConnectPlaceholder } from './sftp-connect-placeholder'
 import { SftpTransferQueue } from './sftp-transfer-queue'
 import { getHostInventoryResource, HostMetadataLine } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
+import { PanelResizeHandle } from '@/components/ui/panel-resize-handle'
+import { useResizablePanel } from '@/hooks/use-resizable-panel'
 
 const COMPACT_BREAKPOINT = 700
 
@@ -88,6 +90,16 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
   const c = sftpCopyFor(locale)
   const m = mobileMiscV3Copy[locale]?.files ?? mobileMiscV3Copy['zh-CN'].files
   const containerRef = useRef<HTMLDivElement>(null)
+  const splitContainerRef = useRef<HTMLDivElement>(null)
+  const splitResize = useResizablePanel({
+    storageKey: 'sftpDualPane',
+    defaultSize: 50,
+    minSize: 25,
+    maxSize: 75,
+    edge: 'right',
+    unit: 'percent',
+    containerRef: splitContainerRef,
+  })
   const containerWidth = useContainerWidth(containerRef)
   const isCompact = containerWidth < COMPACT_BREAKPOINT
   const inventoryStates = useWorkspaceInventoryStates()
@@ -704,15 +716,22 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
             </div>}
           </div>
         ) : (
-          <div className="flex h-full min-h-0">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div ref={splitContainerRef} className="flex h-full min-h-0">
+            <div style={{ flexBasis: `calc(${splitResize.size}% - 22px)` }} className="flex min-h-0 min-w-0 shrink-0 grow-0 flex-col">
               {localPaneEl}
             </div>
-            <div className="flex w-11 shrink-0 flex-col items-center justify-center gap-2">
+            <div className="relative flex w-11 shrink-0 flex-col items-center justify-center gap-2">
+              <PanelResizeHandle
+                testId="sftp-split-resize-handle"
+                label={t('panel.resizeHint')}
+                dragging={splitResize.dragging}
+                className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-3"
+                {...splitResize.handleProps}
+              />
               <Button
                 variant="outline"
                 size="sm"
-                className={roundButton}
+                className={cn(roundButton, 'relative z-30 bg-[var(--workspace-surface-950)]')}
                 disabled={!canUpload}
                 onClick={() => void transferToRemote()}
                 title={t('sftp.uploadToRemote')}
@@ -722,7 +741,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
               <Button
                 variant="outline"
                 size="sm"
-                className={roundButton}
+                className={cn(roundButton, 'relative z-30 bg-[var(--workspace-surface-950)]')}
                 disabled={!canDownload}
                 onClick={() => void transferToLocal()}
                 title={t('sftp.downloadToLocal')}

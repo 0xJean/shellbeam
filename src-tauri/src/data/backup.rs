@@ -327,6 +327,7 @@ pub fn backup_create_in_memory(
 
 /// Restore from an in-memory backup payload.
 /// Used by both the file-based backup restore command and P2P sync.
+#[allow(clippy::too_many_arguments)]
 pub fn backup_restore_in_memory(
     app: &tauri::AppHandle,
     payload: &BackupPayload,

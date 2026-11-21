@@ -10,6 +10,7 @@ import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 
 type ResourceLike = Pick<WorkspaceInventoryResource, 'os'> | null | undefined
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located display helper exported alongside HostRegionMeta.
 export function resolveHostForDisplay(hosts: HostProfile[], hostId?: string | null, hostAddress?: string | null) {
   if (hostId) {
     const byId = hosts.find((host) => host.id === hostId)
@@ -22,6 +23,7 @@ export function resolveHostForDisplay(hosts: HostProfile[], hostId?: string | nu
   return null
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located display helper exported alongside HostRegionMeta.
 export function getHostInventoryResource(
   host: HostProfile | null | undefined,
   states: Record<string, WorkspaceInventoryHostState>,
@@ -29,6 +31,7 @@ export function getHostInventoryResource(
   return host ? states[getWorkspaceInventoryHostKey(host)]?.inventory?.resource : undefined
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located display helper exported alongside HostRegionMeta.
 export function getHostRegionFlagName(network: HostNetworkDisplay | undefined) {
   return network?.countryName ?? network?.resolvedLocationLabel
 }

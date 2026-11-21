@@ -108,6 +108,7 @@ function inferCountryCode(countryName: string | undefined) {
   return [...candidates, ...prefixes].map((candidate) => COUNTRY_NAME_TO_CODE[candidate]).find(Boolean)
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located helper exported alongside CountryFlag.
 export function getCountryFlagCode(countryCode: string | undefined, countryName: string | undefined) {
   return (normalizeCountryCode(countryCode) ?? inferCountryCode(countryName))?.toLowerCase()
 }

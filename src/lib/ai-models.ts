@@ -16,22 +16,29 @@ export class ModelDiscoveryError extends Error {
 }
 
 export function aiBaseUrl(settings: AISettings): string {
-  const base = settings.provider === 'custom' ? settings.customBaseUrl : AI_PROVIDERS.find((p) => p.id === settings.provider)?.baseUrl
+  const override = settings.provider === 'custom'
+    ? settings.customBaseUrl
+    : (settings.providerProfiles?.[settings.provider]?.baseUrl?.trim() || AI_PROVIDERS.find((p) => p.id === settings.provider)?.baseUrl)
   try {
-    const url = new URL(base?.trim() ?? '')
+    const url = new URL(override?.trim() ?? '')
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error()
     return url.href.replace(/\/$/, '')
   } catch { throw new ModelDiscoveryError('endpoint') }
 }
 
+/** Append an OpenAI-compatible resource path without duplicating version segments like `/v1`, `/v3`, `/v4`, or `/v1beta/openai`. */
 export function openAIEndpoint(base: string, resource: string): string {
   const normalized = base.replace(/\/+$/, '')
-  return `${normalized.endsWith('/v1') ? normalized : `${normalized}/v1`}/${resource}`
+  if (/\/(v\d+(?:beta\d*)?(?:\/openai)?|compatible-mode\/v\d+)$/i.test(normalized)) {
+    return `${normalized}/${resource}`
+  }
+  return `${normalized}/v1/${resource}`
 }
 
 // Scope the cache to the account and endpoint without persisting credentials in it.
 export async function modelCacheKey(settings: AISettings): Promise<string> {
-  const identity = JSON.stringify([settings.provider, aiBaseUrl(settings), settings.provider === 'ollama' ? '' : settings.apiKey.trim()])
+  const localNoKey = settings.provider === 'ollama' || settings.provider === 'lmstudio'
+  const identity = JSON.stringify([settings.provider, aiBaseUrl(settings), localNoKey ? '' : settings.apiKey.trim()])
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity))
   return `shellbeam.aiModels.v1.${Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('')}`
 }
@@ -86,7 +93,8 @@ export function parseModels(provider: AIProviderId, payload: unknown): AIModel[]
 export async function discoverModels(settings: AISettings, signal?: AbortSignal): Promise<AIModelCatalog> {
   const base = aiBaseUrl(settings)
   const key = settings.apiKey.trim()
-  if (['openai', 'anthropic'].includes(settings.provider) && !key) throw new ModelDiscoveryError('credentials')
+  const localNoKey = settings.provider === 'ollama' || settings.provider === 'lmstudio'
+  if (!localNoKey && settings.provider !== 'custom' && settings.provider !== 'openrouter' && !key) throw new ModelDiscoveryError('credentials')
   const controller = new AbortController()
   const abort = () => controller.abort()
   signal?.addEventListener('abort', abort, { once: true })
@@ -98,7 +106,7 @@ export async function discoverModels(settings: AISettings, signal?: AbortSignal)
     headers['x-api-key'] = key
     headers['anthropic-version'] = '2023-06-01'
     headers['anthropic-dangerous-direct-browser-access'] = 'true'
-  } else if (settings.provider !== 'ollama' && key) headers.Authorization = `Bearer ${key}`
+  } else if (!localNoKey && key) headers.Authorization = `Bearer ${key}`
   const endpoint = settings.provider === 'ollama' ? `${base}/api/tags` : openAIEndpoint(base, 'models')
   const models = new Map<string, AIModel>()
   const cursors = new Set<string>()

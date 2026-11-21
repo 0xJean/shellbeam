@@ -106,7 +106,13 @@ export function ActivityLogPanel({ hosts = [] }: ActivityLogPanelProps) {
       .finally(() => { if (request === requestRef.current) setLoading(false) })
   }, [activeVaultId, locale])
 
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => {
+    let cancelled = false
+    Promise.resolve().then(() => {
+      if (!cancelled) refresh()
+    })
+    return () => { cancelled = true }
+  }, [refresh])
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()

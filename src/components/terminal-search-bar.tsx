@@ -24,12 +24,17 @@ export function TerminalSearchBar({ searchAddon, onClose }: TerminalSearchBarPro
       ? searchAddon.findNext(q, { caseSensitive: false, regex: false })
       : searchAddon.findPrevious(q, { caseSensitive: false, regex: false })
     setMatchCount(found ? '' : t('searchBar.noResults'))
-  }, [searchAddon])
+  }, [searchAddon, t])
 
-  useEffect(() => {
-    if (query) doSearch(query, 'next')
-    else { searchAddon?.clearDecorations(); setMatchCount('') }
-  }, [query, searchAddon, doSearch])
+  const handleQueryChange = (nextQuery: string) => {
+    setQuery(nextQuery)
+    if (nextQuery) {
+      doSearch(nextQuery, 'next')
+    } else {
+      searchAddon?.clearDecorations()
+      setMatchCount('')
+    }
+  }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') { onClose(); return }
@@ -45,7 +50,7 @@ export function TerminalSearchBar({ searchAddon, onClose }: TerminalSearchBarPro
         ref={inputRef}
         type="text"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => handleQueryChange(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={t('searchBar.search')}
         className="h-6 w-40 bg-transparent px-1 text-xs text-foreground outline-none placeholder:text-muted-foreground"

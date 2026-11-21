@@ -28,6 +28,8 @@ import { useT } from '@/lib/i18n'
 import { isToolPage } from '@/lib/mobile-navigation'
 import { useBarLayout } from '@/lib/bar-layout'
 import { syncBackupCopy } from '@/lib/locales/sync-backup-v3'
+import { PanelResizeHandle } from '@/components/ui/panel-resize-handle'
+import { useResizablePanel } from '@/hooks/use-resizable-panel'
 import logoSrc from '@/assets/logo.png'
 
 export type SidebarNavId =
@@ -111,6 +113,13 @@ const itemById = (id: SidebarNavId) => [...NAV_ITEMS, ...SYSTEM_ITEMS].find((ite
 export function PcNavSidebar({ activeNav, onNavChange, vault, counts, onOpenSearch }: PcNavSidebarProps) {
   const { t, locale } = useT()
   const [vaultMenuOpen, setVaultMenuOpen] = useState(false)
+  const navResize = useResizablePanel({
+    storageKey: 'pcNavSidebar',
+    defaultSize: 224,
+    minSize: 172,
+    maxSize: 340,
+    edge: 'right',
+  })
   const meta = (id: SidebarNavId): ReactNode => {
     if (id === 'hosts' && counts?.hosts) return <span className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">{counts.hosts}</span>
     if (id === 'snippets' && counts?.snippets) return <span className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">{counts.snippets}</span>
@@ -138,7 +147,8 @@ export function PcNavSidebar({ activeNav, onNavChange, vault, counts, onOpenSear
   )
 
   return (
-    <aside data-testid="pc-nav-sidebar" className="hidden w-56 shrink-0 flex-col border-r border-[color:var(--workspace-border-soft)] bg-[var(--workspace-nav-translucent)] md:flex">
+    <>
+    <aside data-testid="pc-nav-sidebar" style={{ width: `${navResize.size}px` }} className="hidden shrink-0 flex-col bg-[var(--workspace-nav-translucent)] md:flex">
       <div className="relative px-3 pb-2 pt-3">
         <button type="button" data-testid="pc-nav-vault" aria-haspopup="menu" aria-expanded={vaultMenuOpen} disabled={!vault} onClick={() => setVaultMenuOpen((open) => !open)}
           className="flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left transition-colors enabled:hover:bg-[var(--workspace-nav-hover-bg)]">
@@ -192,6 +202,14 @@ export function PcNavSidebar({ activeNav, onNavChange, vault, counts, onOpenSear
         </div>
       )}
     </aside>
+    <PanelResizeHandle
+      testId="pc-nav-resize-handle"
+      label={t('panel.resizeHint')}
+      dragging={navResize.dragging}
+      className="hidden md:flex"
+      {...navResize.handleProps}
+    />
+    </>
   )
 }
 
