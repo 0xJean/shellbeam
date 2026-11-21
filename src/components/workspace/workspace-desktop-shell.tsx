@@ -36,6 +36,8 @@ import { healthDotClass } from '@/lib/workspace-overview-display'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
 import { HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 import { SessionVaultMismatchCard } from './session-state-card'
+import { PanelResizeHandle } from '@/components/ui/panel-resize-handle'
+import { useResizablePanel } from '@/hooks/use-resizable-panel'
 
 const APP_LABEL_KEYS: Record<WorkspaceAppId, string> = {
   overview: 'workspace.app.overview',
@@ -258,6 +260,13 @@ export function WorkspaceDesktopShell({
   surfaceVisible = true,
 }: WorkspaceDesktopShellProps) {
   const { layout, setLayout } = useWorkspaceLayout()
+  const listSidebarResize = useResizablePanel({
+    storageKey: 'workspaceListSidebar',
+    defaultSize: 200,
+    minSize: 168,
+    maxSize: 360,
+    edge: 'right',
+  })
   const [diagnosticLogUnit, setDiagnosticLogUnit] = useState('')
   function openDiagnosticLogs(serviceName: string) { setDiagnosticLogUnit(serviceName); onSelectApp('logs') }
   function openDiagnosticTerminal(command: string) {
@@ -458,12 +467,18 @@ export function WorkspaceDesktopShell({
   if (layout === 'list') {
     return (
       <div data-testid="workspace-list-shell" className="flex h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-[var(--workspace-content-bg)] text-foreground">
-        <aside className="flex w-[200px] shrink-0 flex-col overflow-y-auto border-r border-[color:var(--workspace-border-soft)] px-2.5 py-3.5">
+        <aside style={{ width: `${listSidebarResize.size}px` }} className="flex shrink-0 flex-col overflow-y-auto px-2.5 py-3.5">
           <WorkspaceHostCard hostName={hostName} hostAddress={hostAddress} host={activeHost ?? null} network={activeNetwork} resource={activeInventory?.resource} health={health}>
             <WorkspaceLayoutToggle layout={layout} onChange={setLayout} full />
           </WorkspaceHostCard>
           <WorkspaceAppList activeApp={activeApp} onSelectApp={onSelectApp} />
         </aside>
+        <PanelResizeHandle
+          testId="workspace-sidebar-resize-handle"
+          label={t('panel.resizeHint')}
+          dragging={listSidebarResize.dragging}
+          {...listSidebarResize.handleProps}
+        />
         <main className="min-h-0 min-w-0 flex-1 overflow-auto p-5">
           {isOverview ? (
             sessionVaultMismatch

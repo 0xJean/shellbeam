@@ -23,6 +23,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { TERMINAL_SIDEBAR_TAB_EVENT } from '@/lib/terminal-events'
 import { HistoryEntryRow } from '@/components/history-panel'
 import { useCommandHistory } from '@/hooks/use-command-history'
+import { PanelResizeHandle } from '@/components/ui/panel-resize-handle'
+import { useResizablePanel } from '@/hooks/use-resizable-panel'
 
 type TabId = 'status' | 'terminal' | 'snippets' | 'history' | 'appearance'
 
@@ -66,6 +68,13 @@ export function TerminalRightSidebar({
 }: TerminalRightSidebarProps) {
   const { t } = useT()
   const [activeTab, setActiveTab] = useState<TabId>(hosts ? 'status' : 'terminal')
+  const sidebarResize = useResizablePanel({
+    storageKey: 'terminalRightSidebar',
+    defaultSize: 288,
+    minSize: 180,
+    maxSize: () => Math.max(360, Math.min(560, Math.floor((typeof window === 'undefined' ? 1440 : window.innerWidth) * 0.45))),
+    edge: 'left',
+  })
   const tabs = hosts ? TABS : TABS.filter((tab) => tab.id !== 'status')
   useEffect(() => {
     const select = (event: Event) => {
@@ -126,8 +135,19 @@ export function TerminalRightSidebar({
         {tabBar}
         {content}
       </div>
-      {/* PC: inline sidebar */}
-      <div className="hidden h-full w-72 shrink-0 flex-col border-l border-border/50 bg-background md:flex 2xl:w-80">
+      {/* PC: inline resizable sidebar */}
+      <PanelResizeHandle
+        testId="terminal-sidebar-resize-handle"
+        label={t('panel.resizeHint')}
+        dragging={sidebarResize.dragging}
+        className="hidden md:flex"
+        {...sidebarResize.handleProps}
+      />
+      <div
+        data-testid="terminal-right-sidebar"
+        style={{ width: `${sidebarResize.size}px` }}
+        className="hidden h-full shrink-0 flex-col bg-background md:flex"
+      >
         {tabBar}
         {content}
       </div>
