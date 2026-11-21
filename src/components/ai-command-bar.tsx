@@ -65,6 +65,8 @@ type AutoStatusKind = 'running' | 'waiting' | 'limit' | 'unsettled' | 'input'
 type RunOptions = { source?: string; auto?: boolean; forceTerminal?: boolean }
 let turnSeq = 0
 const nextId = (prefix: string) => `${prefix}-${Date.now()}-${++turnSeq}`
+/** Excludes in-flight running captures from local transcript cache so switching away and back never restores a stuck spinner. */
+const cacheableTurns = (list: AITurn[]) => list.filter((turn) => turn.kind !== 'run' || turn.state !== 'running')
 
 export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, memoryVaultId, hostFacts, inventory, probe, attachedSnippet, onClearAttachedSnippet }: AICommandBarProps) {
   const { t, locale } = useT()
@@ -186,10 +188,19 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       clientId: panelClientId,
     }).then((result) => {
       if (!mountedRef.current || !result) return
+      if (result.rejectedClear) {
+        localTranscriptsRef.current.delete(result.threadId)
+        if (snapshotThreadId === activeThreadIdRef.current && turnsRef.current.length === 0) {
+          setActiveThreadId(nextId('thread'))
+          threadRevisionRef.current = 0
+        }
+        if (latestForKey) setThreads(result.book?.threads ?? [])
+        return
+      }
       if (snapshotTurns.length && result.revision > 0) {
         const cached = localTranscriptsRef.current.get(result.threadId)
         if (!cached || result.revision >= cached.revision) {
-          localTranscriptsRef.current.set(result.threadId, { revision: result.revision, turns: snapshotTurns })
+          localTranscriptsRef.current.set(result.threadId, { revision: result.revision, turns: cacheableTurns(snapshotTurns) })
         }
       } else if (!snapshotTurns.length) {
         localTranscriptsRef.current.delete(result.threadId)
@@ -532,7 +543,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     if (turnsRef.current.length > 0 && threadRevisionRef.current > 0) {
       localTranscriptsRef.current.set(activeThreadIdRef.current, {
         revision: threadRevisionRef.current,
-        turns: turnsRef.current,
+        turns: cacheableTurns(turnsRef.current),
       })
     }
     setActiveThreadId(nextId('thread'))
@@ -551,7 +562,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     if (turnsRef.current.length > 0 && threadRevisionRef.current > 0 && activeThreadIdRef.current !== thread.id) {
       localTranscriptsRef.current.set(activeThreadIdRef.current, {
         revision: threadRevisionRef.current,
-        turns: turnsRef.current,
+        turns: cacheableTurns(turnsRef.current),
       })
     }
     setActiveThreadId(thread.id)

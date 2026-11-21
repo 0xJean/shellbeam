@@ -600,6 +600,68 @@ describe('AICommandBar', () => {
     expect(screen.getByText('reply number 16')).toBeInTheDocument()
   })
 
+  it('moves a panel to a fresh thread after a rejected stale clear and never restores stuck running commands from local cache', async () => {
+    const memoryKey = 'v1:root@10.0.0.101'
+    render(
+      <div>
+        <div data-testid="clear-a"><AICommandBar {...base} memoryKey={memoryKey} memoryVaultId="v1" /></div>
+        <div data-testid="clear-b"><AICommandBar {...base} memoryKey={memoryKey} memoryVaultId="v1" /></div>
+      </div>,
+    )
+    await act(async () => { await Promise.resolve() })
+
+    const panelA = screen.getByTestId('clear-a')
+    const panelB = screen.getByTestId('clear-b')
+
+    // Panel A starts thread, Panel B opens it from History.
+    fireEvent.change(within(panelA).getByRole('textbox', { name: 'Describe what you want to do…' }), { target: { value: 'original incident' } })
+    fireEvent.click(within(panelA).getByRole('button', { name: 'Generate command' }))
+    act(() => { callbacks.onToken('# First finding.'); callbacks.onDone() })
+
+    fireEvent.click(within(panelB).getByTestId('ai-thread-history'))
+    await waitFor(() => expect(within(panelB).getByRole('dialog', { name: 'Conversations' })).toHaveTextContent('original incident'))
+    fireEvent.click(within(panelB).getByRole('button', { name: /original incident/ }))
+
+    // Panel A adds a newer reply, then Panel B clears chat (rejected clear) and asks a new prompt.
+    fireEvent.change(within(panelA).getByRole('textbox', { name: 'Describe what you want to do…' }), { target: { value: 'newer reply from A' } })
+    fireEvent.click(within(panelA).getByRole('button', { name: 'Generate command' }))
+    act(() => { callbacks.onToken('# Must survive.'); callbacks.onDone() })
+    await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+
+    fireEvent.click(within(panelB).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(within(panelB).getByRole('menuitem', { name: 'Clear conversation' }))
+    await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+
+    fireEvent.change(within(panelB).getByRole('textbox', { name: 'Describe what you want to do…' }), { target: { value: 'disk usage check' } })
+    fireEvent.click(within(panelB).getByRole('button', { name: 'Generate command' }))
+    act(() => { callbacks.onToken('# Disk is healthy.'); callbacks.onDone() })
+
+    fireEvent.click(within(panelA).getByTestId('ai-thread-history'))
+    await waitFor(() => {
+      const dialog = within(panelA).getByRole('dialog', { name: 'Conversations' })
+      expect(dialog).toHaveTextContent('original incident')
+      expect(dialog).toHaveTextContent('disk usage check')
+    })
+
+    // Switching away during an in-flight command and returning must not leave a stuck running entry.
+    cleanup()
+    const bridge = fakeBridge('still running')
+    render(<AICommandBar {...base} bridge={bridge} memoryKey="v1:root@10.0.0.102" memoryVaultId="v1" />)
+    await act(async () => { await Promise.resolve() })
+    ask('check uptime')
+    act(() => { callbacks.onToken('uptime'); callbacks.onDone() })
+    await act(async () => { await new Promise((r) => setTimeout(r, 15)) })
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+    expect(screen.getByTestId('ai-run')).toHaveAttribute('data-state', 'running')
+
+    fireEvent.click(screen.getByTestId('ai-new-thread'))
+    fireEvent.click(screen.getByTestId('ai-thread-history'))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Conversations' })).toHaveTextContent('check uptime'))
+    fireEvent.click(screen.getByRole('button', { name: /check uptime/ }))
+    expect(screen.queryByTestId('ai-run')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Run' })).toBeInTheDocument()
+  })
+
   it('collapses 2+ consecutive completed automatic check steps into an expandable step timeline', async () => {
     localStorage.setItem('shellbeam.aiRunMode.k-steps', 'read-only')
     const exec = vi.fn(async () => ({ stdout: 'ok\n', stderr: '', exitCode: 0, durationMs: 20 }))

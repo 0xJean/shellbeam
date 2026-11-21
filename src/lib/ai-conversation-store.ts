@@ -48,11 +48,14 @@ export interface SaveThreadResult {
   threadId: string
   revision: number
   forked: boolean
+  /** Set when a stale clear was rejected to protect newer sibling turns; caller should move to a fresh thread ID. */
+  rejectedClear?: boolean
 }
 
 const writes = new Map<string, Promise<unknown>>()
 /** Maps a diverged `(key, clientId, baseThreadId, expectedRevision)` write to its forked thread ID so rapid follow-ups land in the same fork. */
 const activeForks = new Map<string, string>()
+let forkSeq = 0
 
 export function threadRevision(thread: Pick<AIConversationThread, 'revision'> | null | undefined): number {
   return typeof thread?.revision === 'number' && Number.isFinite(thread.revision) && thread.revision >= 1
@@ -61,13 +64,13 @@ export function threadRevision(thread: Pick<AIConversationThread, 'revision'> | 
 }
 
 function nextForkId(baseId: string, existing: AIConversationThread[]): string {
-  const stem = baseId.replace(/-fork-\d+$/, '')
+  const stem = baseId.replace(/-fork-[^-]+(?:-[^-]+)?$/, '')
   const used = new Set(existing.map((t) => t.id))
-  for (let i = 1; i <= 1000; i += 1) {
-    const candidate = `${stem}-fork-${i}`
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const candidate = `${stem}-fork-${Date.now()}-${++forkSeq}`
     if (!used.has(candidate)) return candidate
   }
-  return `${stem}-fork-${Date.now()}`
+  return `${stem}-fork-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 function read(name: string): string | null {
@@ -204,7 +207,7 @@ export function saveConversationThread(
       if (modifiedBySibling) {
         if (!kept.length) {
           // Do not let a stale clear wipe replies added by a sibling terminal.
-          return { book: latest, threadId: targetId, revision: currentRev, forked: false }
+          return { book: latest, threadId: targetId, revision: currentRev, forked: false, rejectedClear: true }
         }
         targetId = nextForkId(threadId, existing)
         forked = true

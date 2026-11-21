@@ -92,16 +92,25 @@ describe('ai-conversation-store dual-terminal concurrency', () => {
     expect(threadB?.turns.map((t) => t.kind === 'user' || t.kind === 'ai' ? t.text : '')).toContain('# 3 slow queries.')
   })
 
-  it('prevents a stale clear from wiping newer replies added by a sibling terminal', async () => {
+  it('prevents a stale clear from wiping newer replies added by a sibling terminal and allocates non-reusable fork IDs after deletion', async () => {
     const key = 'v1:root@10.0.0.15'
     await saveConversationThread('v1', key, 'thread-1', [userTurn('u1', 'first')], { expectedRevision: 0, clientId: 'panel-a' })
     await saveConversationThread('v1', key, 'thread-1', [userTurn('u1', 'first'), userTurn('u2', 'second')], { expectedRevision: 1, clientId: 'panel-a' })
 
-    // Panel B (still at revision 1) clears; Panel A's revision 2 must survive.
-    await saveConversationThread('v1', key, 'thread-1', [], { expectedRevision: 1, clientId: 'panel-b' })
+    // Panel B (still at revision 1) clears; store rejects the clear and preserves Panel A's revision 2.
+    const rejected = await saveConversationThread('v1', key, 'thread-1', [], { expectedRevision: 1, clientId: 'panel-b' })
+    expect(rejected?.rejectedClear).toBe(true)
     const book = await loadConversationBook('v1', key)
     expect(book?.threads).toHaveLength(1)
     expect(book?.threads[0].turns).toHaveLength(2)
+
+    // Fork, delete that fork, then fork again -> must allocate a brand-new, non-reusable fork ID.
+    const fork1 = await saveConversationThread('v1', key, 'thread-1', [userTurn('u1', 'first'), userTurn('ub1', 'branch 1')], { expectedRevision: 1, clientId: 'panel-b' })
+    expect(fork1?.forked).toBe(true)
+    await deleteConversationThread('v1', key, fork1!.threadId)
+    const fork2 = await saveConversationThread('v1', key, 'thread-1', [userTurn('u1', 'first'), userTurn('uc1', 'branch 2')], { expectedRevision: 1, clientId: 'panel-c' })
+    expect(fork2?.forked).toBe(true)
+    expect(fork2?.threadId).not.toBe(fork1?.threadId)
   })
 
   it('preserves a sibling terminal thread when another terminal deletes an older thread', async () => {
