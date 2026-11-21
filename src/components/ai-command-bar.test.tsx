@@ -464,10 +464,10 @@ describe('AICommandBar', () => {
     fireEvent.click(screen.getByTestId('ai-model-switcher'))
     expect(screen.getByRole('menuitemradio', { name: 'Gemini CLI' })).toBeInTheDocument()
     expect(screen.getByRole('menuitemradio', { name: 'OpenCode' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'gpt-5.4' }))
+    fireEvent.click(screen.getByRole('button', { name: 'gpt-6.2-sol' }))
     fireEvent.click(screen.getByRole('button', { name: 'High' }))
     const saved = JSON.parse(localStorage.getItem('shellbeam.aiSettings')!) as AISettings
-    expect(saved.cliProfiles?.['codex-cli']?.model).toBe('gpt-5.4')
+    expect(saved.cliProfiles?.['codex-cli']?.model).toBe('gpt-6.2-sol')
     expect(saved.cliProfiles?.['codex-cli']?.effort).toBe('high')
     fireEvent.keyDown(window, { key: 'Escape' })
 
