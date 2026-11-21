@@ -7,7 +7,7 @@ import {
   AI_RUN_MODES, MAX_AUTO_STEPS, autoRunAllowed, buildHistory, canRunSilently, currentModelTarget, extractSuggestion, formatExecOutput, isNoteReply, loadRunMode, nextStepTip, noteText, outputLooksFailed, parseQuestion, saveRunMode, splitReply, trimCapturedOutput,
   type AIRunMode, type AITurn, type RunOutcome, type TerminalAiBridge, type TerminalCapture,
 } from '@/lib/ai-conversation'
-import { deleteConversationThread, loadConversationBook, saveConversationThread, type AIConversationThread } from '@/lib/ai-conversation-store'
+import { deleteConversationThread, loadConversationBookState, saveConversationThread, threadRevision, type AIConversationThread } from '@/lib/ai-conversation-store'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
 import { hostFactsText, type HostFact } from '@/lib/ai-host-facts'
 import { suggestPrompts } from '@/lib/ai-suggestions'
@@ -81,11 +81,28 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const [settings, setSettings] = useState<AISettings>(loadAISettings)
   const remembers = !!memoryKey && !!memoryVaultId
   const [restoredAt, setRestoredAt] = useState<number | null>(null)
+  const [panelClientId] = useState(() => nextId('panel'))
   const [threads, setThreads] = useState<AIConversationThread[]>([])
   const [activeThreadId, setActiveThreadId] = useState<string>(() => nextId('thread'))
+  const activeThreadIdRef = useRef(activeThreadId)
+  useLayoutEffect(() => { activeThreadIdRef.current = activeThreadId }, [activeThreadId])
+  const threadRevisionRef = useRef(0)
+  /** Retains full in-session transcripts (beyond the 30-turn storage cap), invalidated on revision change or deletion. */
+  const localTranscriptsRef = useRef(new Map<string, { revision: number; turns: AITurn[] }>())
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
   const threadsRef = useRef(threads)
   useLayoutEffect(() => { threadsRef.current = threads }, [threads])
   const [turns, setTurns] = useState<AITurn[]>([])
+  /** Incremented only on real edits (never on load or thread selection) so selection never writes back stale threads. */
+  const [editSeq, setEditSeq] = useState(0)
+  const mutateTurns = useCallback((updater: (prev: AITurn[]) => AITurn[]) => {
+    setTurns(updater)
+    setEditSeq((seq) => seq + 1)
+  }, [])
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
   /** Saving waits until the sealed conversation has been read, so an empty panel never overwrites it. */
   const [memoryLoaded, setMemoryLoaded] = useState(!remembers)
@@ -141,13 +158,14 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   useEffect(() => {
     if (!memoryKey || !memoryVaultId) return
     let active = true
-    void loadConversationBook(memoryVaultId, memoryKey).then((book) => {
+    void loadConversationBookState(memoryVaultId, memoryKey).then((result) => {
       if (!active) return
       // Anything asked while the conversation was loading comes after what was restored.
-      if (book && book.threads.length > 0) {
-        const currentThread = book.threads.find((entry) => entry.id === book.activeId) ?? book.threads[0]
-        setThreads(book.threads)
+      if (result.status === 'ok' && result.book.threads.length > 0) {
+        const currentThread = result.book.threads.find((entry) => entry.id === result.book.activeId) ?? result.book.threads[0]
+        setThreads(result.book.threads)
         setActiveThreadId(currentThread.id)
+        threadRevisionRef.current = threadRevision(currentThread)
         if (currentThread.turns.length) {
           setTurns((current) => [...currentThread.turns, ...current])
           setRestoredAt(currentThread.savedAt)
@@ -158,13 +176,34 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     return () => { active = false }
   }, [memoryKey, memoryVaultId])
   useEffect(() => {
-    if (!memoryLoaded || !memoryKey || !memoryVaultId) return
-    let active = true
-    void saveConversationThread(memoryVaultId, memoryKey, activeThreadId, turns).then((book) => {
-      if (active && book !== undefined) setThreads(book?.threads ?? [])
+    if (!memoryLoaded || !memoryKey || !memoryVaultId || editSeq === 0) return
+    const snapshotThreadId = activeThreadIdRef.current
+    const snapshotTurns = turnsRef.current
+    const expectedRevision = threadRevisionRef.current
+    let latestForKey = true
+    void saveConversationThread(memoryVaultId, memoryKey, snapshotThreadId, snapshotTurns, {
+      expectedRevision,
+      clientId: panelClientId,
+    }).then((result) => {
+      if (!mountedRef.current || !result) return
+      if (snapshotTurns.length && result.revision > 0) {
+        const cached = localTranscriptsRef.current.get(result.threadId)
+        if (!cached || result.revision >= cached.revision) {
+          localTranscriptsRef.current.set(result.threadId, { revision: result.revision, turns: snapshotTurns })
+        }
+      } else if (!snapshotTurns.length) {
+        localTranscriptsRef.current.delete(result.threadId)
+      }
+      if (snapshotThreadId === activeThreadIdRef.current || result.threadId === activeThreadIdRef.current) {
+        if (result.revision > 0 || !snapshotTurns.length) threadRevisionRef.current = result.revision
+        if (result.threadId !== activeThreadIdRef.current && snapshotThreadId === activeThreadIdRef.current) {
+          setActiveThreadId(result.threadId)
+        }
+      }
+      if (latestForKey) setThreads(result.book?.threads ?? [])
     })
-    return () => { active = false }
-  }, [memoryLoaded, memoryKey, memoryVaultId, activeThreadId, turns])
+    return () => { latestForKey = false }
+  }, [memoryLoaded, memoryKey, memoryVaultId, editSeq, panelClientId])
 
   useEffect(() => {
     const sync = () => setSettings(loadAISettings())
@@ -240,7 +279,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     }
     const snippet = !options.auto ? attachedSnippet?.trim() ?? '' : ''
     const displayPrompt = snippet ? `${prompt}\n\n\`\`\`\n${snippet.slice(0, 4000)}\n\`\`\`` : prompt
-    setTurns((prev) => [...prev, { id: nextId('u'), kind: 'user', text: displayPrompt, ...(options.auto ? { auto: true } : {}) }])
+    mutateTurns((prev) => [...prev, { id: nextId('u'), kind: 'user', text: displayPrompt, ...(options.auto ? { auto: true } : {}) }])
     if (snippet) onClearAttachedSnippet?.()
     setInput('')
     setIsStreaming(true)
@@ -279,7 +318,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         const replyId = nextId('a')
         if (content) {
           const model = served || target.model || target.providerName
-          setTurns((prev) => [...prev, { id: replyId, kind: 'ai', text: content, model, durationMs: Date.now() - started, ...(suggestion ? { suggestion } : {}) }])
+          mutateTurns((prev) => [...prev, { id: replyId, kind: 'ai', text: content, model, durationMs: Date.now() - started, ...(suggestion ? { suggestion } : {}) }])
         }
         setStreamingContent('')
         setIsStreaming(false)
@@ -297,7 +336,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         stopChain()
       },
     }, ac.signal, history, includeFacts ? factsText : '', runModeRef.current)
-  }, [includeContext, includeFacts, bridge, getTerminalContext, factsText, t, advanceChain, stopChain, attachedSnippet, onClearAttachedSnippet])
+  }, [includeContext, includeFacts, bridge, getTerminalContext, factsText, t, advanceChain, stopChain, attachedSnippet, onClearAttachedSnippet, mutateTurns])
 
   const handleCancel = useCallback(() => {
     stopChain()
@@ -309,8 +348,8 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   }, [stopChain])
 
   const updateRun = useCallback((id: string, patch: Partial<Extract<AITurn, { kind: 'run' }>>) => {
-    setTurns((prev) => prev.map((turn) => (turn.id === id && turn.kind === 'run' ? { ...turn, ...patch } : turn)))
-  }, [])
+    mutateTurns((prev) => prev.map((turn) => (turn.id === id && turn.kind === 'run' ? { ...turn, ...patch } : turn)))
+  }, [mutateTurns])
 
   const readCapture = useCallback((id: string) => {
     const entry = captures.current.get(id)
@@ -364,12 +403,12 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     if (!options.auto && chainRef.current) chainRef.current.steps = 0
     if (!bridge) {
       onExecuteCommand(command + '\n')
-      setTurns((prev) => [...prev, { ...base, via: 'terminal', state: 'sent' }])
+      mutateTurns((prev) => [...prev, { ...base, via: 'terminal', state: 'sent' }])
       return
     }
     const useSilentExec = Boolean(bridge.exec && !options.forceTerminal && canRunSilently(command))
     if (useSilentExec && bridge.exec) {
-      setTurns((prev) => [...prev, { ...base, via: 'exec', state: 'running' }])
+      mutateTurns((prev) => [...prev, { ...base, via: 'exec', state: 'running' }])
       let settled = false
       const noopCapture: TerminalCapture = { read: () => '', onOutput: () => () => {}, dispose: () => {} }
       const stop = () => { settled = true }
@@ -412,9 +451,9 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       })
       return
     }
-    setTurns((prev) => [...prev, { ...base, via: 'terminal', state: 'running' }])
+    mutateTurns((prev) => [...prev, { ...base, via: 'terminal', state: 'running' }])
     runInTerminal(id, command, startedAt)
-  }, [bridge, onExecuteCommand, runInTerminal, stopChain, updateRun])
+  }, [bridge, mutateTurns, onExecuteCommand, runInTerminal, stopChain, updateRun])
   useLayoutEffect(() => { runRef.current = handleRun }, [handleRun])
 
   // Sends the captured output back once it is in the conversation, so the next request carries it.
@@ -463,22 +502,41 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     } catch { /* clipboard not available */ }
   }, [])
 
+  const resolveThreadTurns = useCallback((thread: AIConversationThread): AITurn[] => {
+    const rev = threadRevision(thread)
+    const cached = localTranscriptsRef.current.get(thread.id)
+    if (cached && cached.revision === rev && cached.turns.length > thread.turns.length) {
+      return cached.turns
+    }
+    if (cached && cached.revision !== rev) localTranscriptsRef.current.delete(thread.id)
+    return thread.turns
+  }, [])
+
   const handleNewChat = useCallback(() => {
     handleCancel()
     stopCaptures()
-    setTurns([])
+    localTranscriptsRef.current.delete(activeThreadIdRef.current)
+    if (turnsRef.current.length > 0) mutateTurns(() => [])
+    else setTurns([])
     setRestoredAt(null)
     setExpandedGroups({})
     setInput('')
     setReportedModel('')
     setTimeout(() => inputRef.current?.focus(), 50)
-  }, [handleCancel, stopCaptures])
+  }, [handleCancel, mutateTurns, stopCaptures])
 
   /** Start a fresh thread while preserving earlier conversations in the host's Vault history. */
   const handleStartNewThread = useCallback(() => {
     handleCancel()
     stopCaptures()
+    if (turnsRef.current.length > 0 && threadRevisionRef.current > 0) {
+      localTranscriptsRef.current.set(activeThreadIdRef.current, {
+        revision: threadRevisionRef.current,
+        turns: turnsRef.current,
+      })
+    }
     setActiveThreadId(nextId('thread'))
+    threadRevisionRef.current = 0
     setTurns([])
     setRestoredAt(null)
     setExpandedGroups({})
@@ -490,19 +548,27 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const handleSelectThread = useCallback((thread: AIConversationThread) => {
     handleCancel()
     stopCaptures()
+    if (turnsRef.current.length > 0 && threadRevisionRef.current > 0 && activeThreadIdRef.current !== thread.id) {
+      localTranscriptsRef.current.set(activeThreadIdRef.current, {
+        revision: threadRevisionRef.current,
+        turns: turnsRef.current,
+      })
+    }
     setActiveThreadId(thread.id)
-    setTurns(thread.turns)
+    threadRevisionRef.current = threadRevision(thread)
+    setTurns(resolveThreadTurns(thread))
     setRestoredAt(thread.savedAt)
     setExpandedGroups({})
     setInput('')
-  }, [handleCancel, stopCaptures])
+  }, [handleCancel, resolveThreadTurns, stopCaptures])
 
   const handleDeleteThread = useCallback((threadId: string) => {
+    localTranscriptsRef.current.delete(threadId)
     const remaining = threadsRef.current.filter((entry) => entry.id !== threadId)
     setThreads(remaining)
     if (memoryKey && memoryVaultId) {
       void deleteConversationThread(memoryVaultId, memoryKey, threadId).then((book) => {
-        if (book !== undefined) setThreads(book?.threads ?? [])
+        if (mountedRef.current && book !== undefined) setThreads(book?.threads ?? [])
       })
     }
     if (threadId === activeThreadId) {
@@ -510,21 +576,33 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       stopCaptures()
       if (remaining[0]) {
         setActiveThreadId(remaining[0].id)
-        setTurns(remaining[0].turns)
+        threadRevisionRef.current = threadRevision(remaining[0])
+        setTurns(resolveThreadTurns(remaining[0]))
         setRestoredAt(remaining[0].savedAt)
       } else {
         setActiveThreadId(nextId('thread'))
+        threadRevisionRef.current = 0
         setTurns([])
         setRestoredAt(null)
       }
       setExpandedGroups({})
     }
-  }, [activeThreadId, handleCancel, memoryKey, memoryVaultId, stopCaptures])
+  }, [activeThreadId, handleCancel, memoryKey, memoryVaultId, resolveThreadTurns, stopCaptures])
 
   const handleRefreshThreads = useCallback(() => {
     if (!memoryKey || !memoryVaultId) return
-    void loadConversationBook(memoryVaultId, memoryKey).then((book) => {
-      if (book) setThreads(book.threads)
+    void loadConversationBookState(memoryVaultId, memoryKey).then((result) => {
+      if (!mountedRef.current) return
+      if (result.status === 'ok') {
+        const liveIds = new Set(result.book.threads.map((entry) => entry.id))
+        for (const id of localTranscriptsRef.current.keys()) {
+          if (!liveIds.has(id)) localTranscriptsRef.current.delete(id)
+        }
+        setThreads(result.book.threads)
+      } else if (result.status === 'empty') {
+        localTranscriptsRef.current.clear()
+        setThreads([])
+      }
     })
   }, [memoryKey, memoryVaultId])
 

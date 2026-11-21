@@ -18,6 +18,10 @@ export interface AIConversationThread {
   id: string
   title: string
   savedAt: number
+  /** Monotonic revision incremented on every saved mutation of this thread. */
+  revision?: number
+  /** Ephemeral panel/client token identifying the last writer to avoid self-conflicts during rapid saves. */
+  lastWriterId?: string
   turns: AITurn[]
 }
 
@@ -27,7 +31,44 @@ export interface StoredThreadBook {
   threads: AIConversationThread[]
 }
 
+export type LoadBookResult =
+  | { status: 'ok'; book: StoredThreadBook }
+  | { status: 'empty' }
+  | { status: 'error' }
+
+export interface SaveThreadOptions {
+  /** Revision this panel last loaded or saved; a mismatch from another writer forks instead of overwriting. */
+  expectedRevision?: number
+  /** Per-panel writer identity so back-to-back saves from the same panel do not conflict with themselves. */
+  clientId?: string
+}
+
+export interface SaveThreadResult {
+  book: StoredThreadBook | null
+  threadId: string
+  revision: number
+  forked: boolean
+}
+
 const writes = new Map<string, Promise<unknown>>()
+/** Maps a diverged `(key, clientId, baseThreadId, expectedRevision)` write to its forked thread ID so rapid follow-ups land in the same fork. */
+const activeForks = new Map<string, string>()
+
+export function threadRevision(thread: Pick<AIConversationThread, 'revision'> | null | undefined): number {
+  return typeof thread?.revision === 'number' && Number.isFinite(thread.revision) && thread.revision >= 1
+    ? thread.revision
+    : 1
+}
+
+function nextForkId(baseId: string, existing: AIConversationThread[]): string {
+  const stem = baseId.replace(/-fork-\d+$/, '')
+  const used = new Set(existing.map((t) => t.id))
+  for (let i = 1; i <= 1000; i += 1) {
+    const candidate = `${stem}-fork-${i}`
+    if (!used.has(candidate)) return candidate
+  }
+  return `${stem}-fork-${Date.now()}`
+}
 
 function read(name: string): string | null {
   try { return localStorage.getItem(name) } catch { return null }
@@ -94,23 +135,33 @@ async function readStoredBook(vaultId: string, key: string): Promise<{ book: Sto
   return { book: parseThreadBook(legacy), fromLegacy: true }
 }
 
-/** Load all saved threads for this Vault and host, migrating legacy plain-text or v1 sealed data. */
-export async function loadConversationBook(vaultId: string, key: string): Promise<StoredThreadBook | null> {
+/**
+ * Load all saved threads for this Vault and host, distinguishing confirmed absence (`empty`)
+ * from an unreadable/locked Vault (`error`) so callers never clear cached UI on transient errors.
+ */
+export async function loadConversationBookState(vaultId: string, key: string): Promise<LoadBookResult> {
   await writes.get(key)
   const sealed = read(SEALED_PREFIX + key)
   if (sealed) {
     try {
-      return parseThreadBook(await vaultOpenData(PURPOSE, key, sealed, vaultId))
-    } catch { return null }
+      const book = parseThreadBook(await vaultOpenData(PURPOSE, key, sealed, vaultId))
+      return book ? { status: 'ok', book } : { status: 'empty' }
+    } catch { return { status: 'error' } }
   }
   const legacy = read(LEGACY_CONVERSATION_PREFIX + key)
-  if (!legacy) return null
+  if (!legacy) return { status: 'empty' }
   const book = parseThreadBook(legacy)
   await queue(key, async () => {
     if (book && !read(SEALED_PREFIX + key)) await writeSealedBook(vaultId, key, book)
     remove(LEGACY_CONVERSATION_PREFIX + key)
   })
-  return book
+  return book ? { status: 'ok', book } : { status: 'empty' }
+}
+
+/** Load all saved threads for this Vault and host, migrating legacy plain-text or v1 sealed data. */
+export async function loadConversationBook(vaultId: string, key: string): Promise<StoredThreadBook | null> {
+  const result = await loadConversationBookState(vaultId, key)
+  return result.status === 'ok' ? result.book : null
 }
 
 /** Backwards-compatible helper returning the active thread's turns. */
@@ -121,44 +172,85 @@ export async function loadConversation(vaultId: string, key: string): Promise<St
   return active ? { savedAt: active.savedAt, turns: active.turns } : null
 }
 
-/** Save or remove a specific thread inside the host's Vault-sealed thread book without clobbering sibling terminals. */
+/**
+ * Save or remove a specific thread inside the host's Vault-sealed thread book without clobbering
+ * sibling terminals. If another panel modified the same thread since `expectedRevision`, the write
+ * forks into a new thread ID so neither terminal loses replies.
+ */
 export function saveConversationThread(
   vaultId: string,
   key: string,
   threadId: string,
   turns: AITurn[],
-): Promise<StoredThreadBook | null | undefined> {
+  options: SaveThreadOptions = {},
+): Promise<SaveThreadResult | undefined> {
   const kept = turnsToRemember(turns)
+  const { expectedRevision, clientId } = options
   return queue(key, async () => {
     const { book: latest, fromLegacy } = await readStoredBook(vaultId, key)
     const existing = latest?.threads ?? []
-    const hadThread = existing.some((t) => t.id === threadId)
-    const others = existing.filter((t) => t.id !== threadId)
 
-    if (!kept.length && !hadThread) {
+    const forkLookupKey = clientId && expectedRevision !== undefined
+      ? `${key}\0${clientId}\0${threadId}\0${expectedRevision}`
+      : null
+    let targetId = (forkLookupKey && activeForks.get(forkLookupKey)) || threadId
+    let forked = targetId !== threadId
+    const prev = existing.find((t) => t.id === targetId)
+
+    // Detect sibling-panel divergence on the same thread and preserve both branches.
+    if (!forked && prev && expectedRevision !== undefined) {
+      const currentRev = threadRevision(prev)
+      const modifiedBySibling = currentRev !== expectedRevision && (!clientId || prev.lastWriterId !== clientId)
+      if (modifiedBySibling) {
+        if (!kept.length) {
+          // Do not let a stale clear wipe replies added by a sibling terminal.
+          return { book: latest, threadId: targetId, revision: currentRev, forked: false }
+        }
+        targetId = nextForkId(threadId, existing)
+        forked = true
+        if (forkLookupKey) activeForks.set(forkLookupKey, targetId)
+      }
+    }
+
+    const targetPrev = existing.find((t) => t.id === targetId)
+    const others = existing.filter((t) => t.id !== targetId)
+
+    if (!kept.length && !targetPrev) {
       if (fromLegacy) {
         if (latest) await writeSealedBook(vaultId, key, latest)
         remove(LEGACY_CONVERSATION_PREFIX + key)
       }
-      return latest
+      return { book: latest, threadId: targetId, revision: 0, forked: false }
     }
 
     remove(LEGACY_CONVERSATION_PREFIX + key)
+    const nextRevision = targetPrev ? threadRevision(targetPrev) + 1 : 1
     const nextThreads = kept.length
-      ? [{ id: threadId, title: deriveThreadTitle(kept), savedAt: Date.now(), turns: kept }, ...others].slice(0, MAX_THREADS_PER_HOST)
+      ? [
+          {
+            id: targetId,
+            title: deriveThreadTitle(turns),
+            savedAt: Date.now(),
+            revision: nextRevision,
+            ...(clientId ? { lastWriterId: clientId } : {}),
+            turns: kept,
+          },
+          ...others,
+        ].slice(0, MAX_THREADS_PER_HOST)
       : others
+
     if (nextThreads.length) {
       const activeId = kept.length
-        ? threadId
-        : (latest?.activeId && latest.activeId !== threadId && nextThreads.some((t) => t.id === latest.activeId)
+        ? targetId
+        : (latest?.activeId && latest.activeId !== targetId && nextThreads.some((t) => t.id === latest.activeId)
             ? latest.activeId
             : nextThreads[0].id)
       const nextBook: StoredThreadBook = { version: 2, activeId, threads: nextThreads }
       await writeSealedBook(vaultId, key, nextBook)
-      return nextBook
+      return { book: nextBook, threadId: targetId, revision: kept.length ? nextRevision : 0, forked }
     }
     remove(SEALED_PREFIX + key)
-    return null
+    return { book: null, threadId: targetId, revision: 0, forked: false }
   })
 }
 
