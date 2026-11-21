@@ -414,12 +414,15 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn create() -> Result<Self, String> {
         let path = std::env::temp_dir().join(format!("shellbeam-ai-{}", uuid::Uuid::new_v4()));
-        let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::DirBuilderExt;
+            let mut builder = std::fs::DirBuilder::new();
             builder.mode(0o700);
-        }
+            builder
+        };
+        #[cfg(not(unix))]
+        let builder = std::fs::DirBuilder::new();
         builder.create(&path).map_err(|_| "failed")?;
         Ok(Self(path))
     }
