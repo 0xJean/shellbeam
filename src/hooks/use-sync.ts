@@ -148,14 +148,14 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
     return () => { cancelled = true; clearInterval(timer) }
   }, [backgroundRefresh, serverRunning])
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setLoading(true)
     try {
       await fetchAll()
     } finally {
       setLoading(false)
     }
-  }
+  }, [fetchAll])
 
   async function handleInitDevice(deviceName?: string) {
     setLoading(true)

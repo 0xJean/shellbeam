@@ -78,8 +78,10 @@ pub struct SessionResizeRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalTerminalRequest {
+    #[cfg_attr(not(unix), allow(dead_code))]
     #[serde(default = "default_cols")]
     cols: u32,
+    #[cfg_attr(not(unix), allow(dead_code))]
     #[serde(default = "default_rows")]
     rows: u32,
 }
@@ -309,6 +311,7 @@ fn make_info(session_id: &str, p: &InteractiveSessionCreateRequest) -> Interacti
     }
 }
 
+#[cfg(unix)]
 fn spawn_pipe_reader(
     app: tauri::AppHandle,
     session_id: String,

@@ -9,7 +9,7 @@ mod remote;
 mod snippets;
 mod store;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use remote::browse as test_remote_browse;
 #[cfg(all(test, target_os = "linux"))]
 pub(crate) use remote::diagnostics as test_remote_diagnostics;

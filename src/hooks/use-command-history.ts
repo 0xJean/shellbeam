@@ -5,13 +5,20 @@ export function useCommandHistory(vaultId: string | undefined, filter?: HistoryF
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(true)
 
+  const filterHost = filter?.host
+  const filterStatus = filter?.status
+
   const refresh = useCallback(() => {
     setLoading(true)
-    listCommandHistory(vaultId, filter)
+    const activeFilter: HistoryFilter | undefined =
+      filterHost !== undefined || filterStatus !== undefined
+        ? { host: filterHost, status: filterStatus }
+        : undefined
+    listCommandHistory(vaultId, activeFilter)
       .then((res) => setEntries(res.reverse()))
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [vaultId, filter])
+  }, [vaultId, filterHost, filterStatus])
 
   useEffect(() => {
     let cancelled = false

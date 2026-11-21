@@ -56,11 +56,7 @@ fn is_git_hosting_domain(domain: &str) -> bool {
         }
     }
 
-    if d.starts_with("git-codecommit.") && d.ends_with(".amazonaws.com") {
-        return true;
-    }
-
-    false
+    d.starts_with("git-codecommit.") && d.ends_with(".amazonaws.com")
 }
 
 fn is_git_hosting_entry(alias: &str, fields: &HashMap<String, String>) -> bool {

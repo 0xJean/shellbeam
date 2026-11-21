@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
   createSnippet,
   deleteSnippet,
@@ -14,14 +14,14 @@ export function useSnippets(activeVaultId: string, setOutput: (msg: string) => v
   const [saving, setSaving] = useState(false)
   const [running, setRunning] = useState(false)
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const items = await listSnippets(activeVaultId)
     setSnippets(items)
     setSelectedSnippetId((current) => {
       if (current && items.some((item) => item.id === current)) return current
       return items[0]?.id ?? null
     })
-  }
+  }, [activeVaultId])
 
   async function handleCreate(payload: SnippetDraft) {
     setSaving(true)

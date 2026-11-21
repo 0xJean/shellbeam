@@ -360,16 +360,16 @@ fn peer_fixture(
                 "Live Ops peer Docker endpoint must be a socket owned by the fixture runner".into(),
             );
         }
+        Ok((
+            json!({"containerId":container_id,"containerName":container_name}),
+            docker_host.into(),
+        ))
     }
     #[cfg(not(unix))]
     {
-        let _ = metadata;
-        return Err("Live Ops peer Docker socket requires Unix".into());
+        let _ = (metadata, container_id, container_name, docker_host);
+        Err("Live Ops peer Docker socket requires Unix".into())
     }
-    Ok((
-        json!({"containerId":container_id,"containerName":container_name}),
-        docker_host.into(),
-    ))
 }
 
 fn command_kind(command: &str) -> (&'static str, bool) {
