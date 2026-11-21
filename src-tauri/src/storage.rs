@@ -255,7 +255,7 @@ pub fn write_json<T: Serialize + ?Sized>(path: &PathBuf, value: &T) -> Result<()
     })
 }
 
-fn corrupt_backup_path(path: &PathBuf) -> PathBuf {
+fn corrupt_backup_path(path: &Path) -> PathBuf {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())

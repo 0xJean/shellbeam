@@ -5,6 +5,7 @@ import zhCN from './locales/zh-CN'
 export type Locale = 'en' | 'zh-CN'
 /** A fixed language, or 'system' to follow the OS language. */
 export type LocalePreference = Locale | 'system'
+// eslint-disable-next-line react-refresh/only-export-components -- Locale metadata accompanies I18nProvider.
 export const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
   { value: 'en', label: 'English' },
   { value: 'zh-CN', label: '简体中文' },
@@ -49,6 +50,7 @@ function translate(locale: Locale, key: string, params?: Record<string, string |
 }
 
 /** Standalone t() for non-component code (reads locale from localStorage, non-reactive) */
+// eslint-disable-next-line react-refresh/only-export-components -- Standalone translator accompanies I18nProvider.
 export function t(key: string, params?: Record<string, string | number>): string {
   const locale = detectLocale()
   return translate(locale, key, params)
@@ -89,6 +91,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- The context hook accompanies its provider.
 export function useT() {
   const context = useContext(I18nContext)
   if (context) return context

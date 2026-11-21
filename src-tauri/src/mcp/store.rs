@@ -404,6 +404,7 @@ pub fn existing(
         .map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_job(
     app: &tauri::AppHandle,
     id: &str,

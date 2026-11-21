@@ -197,6 +197,7 @@ fn emit_sftp_progress(
 }
 
 /// Every SFTP handshake uses the same verified route as terminal/commands.
+#[allow(clippy::too_many_arguments)]
 fn checkout_with_sftp(
     app: &tauri::AppHandle,
     host_id: Option<&str>,
@@ -364,7 +365,7 @@ fn sftp_list_dir_blocking(
             })
             .filter(|entry| !matches!(entry.file_name.as_str(), "" | "." | ".."))
             .collect::<Vec<_>>();
-        entries.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+        entries.sort_by_key(|a| a.file_name.to_lowercase());
         Ok(entries)
     })();
 
@@ -396,11 +397,10 @@ fn sftp_home_dir_blocking(app: tauri::AppHandle, payload: SftpRequest) -> Result
         payload.jump_user.as_deref(),
     )?;
 
-    let result = (|| -> Result<String, String> {
-        sftp.realpath(Path::new("."))
-            .map(|path| path.to_string_lossy().to_string())
-            .map_err(|err| sftp_error_from_raw("sftp", "resolve home directory", err.to_string()))
-    })();
+    let result = sftp
+        .realpath(Path::new("."))
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|err| sftp_error_from_raw("sftp", "resolve home directory", err.to_string()));
 
     drop(sftp);
     drop(session);
@@ -656,19 +656,17 @@ fn sftp_delete_path_blocking(app: tauri::AppHandle, payload: SftpRequest) -> Res
         payload.jump_user.as_deref(),
     )?;
 
-    let result = (|| -> Result<(), String> {
-        let target = Path::new(payload.remote_path.trim());
-        match sftp.unlink(target) {
-            Ok(_) => Ok(()),
-            Err(file_err) => sftp.rmdir(target).map_err(|dir_err| {
-                sftp_error_from_raw(
-                    "sftp",
-                    "delete path",
-                    format!("Delete path failed (file: {file_err}; dir: {dir_err})"),
-                )
-            }),
-        }
-    })();
+    let target = Path::new(payload.remote_path.trim());
+    let result = match sftp.unlink(target) {
+        Ok(_) => Ok(()),
+        Err(file_err) => sftp.rmdir(target).map_err(|dir_err| {
+            sftp_error_from_raw(
+                "sftp",
+                "delete path",
+                format!("Delete path failed (file: {file_err}; dir: {dir_err})"),
+            )
+        }),
+    };
 
     drop(sftp);
     drop(session);
@@ -713,14 +711,13 @@ fn sftp_rename_path_blocking(
         payload.jump_user.as_deref(),
     )?;
 
-    let result = (|| -> Result<(), String> {
-        sftp.rename(
+    let result = sftp
+        .rename(
             Path::new(payload.old_remote_path.trim()),
             Path::new(payload.new_remote_path.trim()),
             None,
         )
-        .map_err(|err| sftp_error_from_raw("sftp", "rename path", err.to_string()))
-    })();
+        .map_err(|err| sftp_error_from_raw("sftp", "rename path", err.to_string()));
 
     drop(sftp);
     drop(session);
@@ -759,10 +756,9 @@ fn sftp_create_dir_blocking(app: tauri::AppHandle, payload: SftpRequest) -> Resu
         payload.jump_user.as_deref(),
     )?;
 
-    let result = (|| -> Result<(), String> {
-        sftp.mkdir(Path::new(payload.remote_path.trim()), 0o755)
-            .map_err(|err| sftp_error_from_raw("sftp", "create directory", err.to_string()))
-    })();
+    let result = sftp
+        .mkdir(Path::new(payload.remote_path.trim()), 0o755)
+        .map_err(|err| sftp_error_from_raw("sftp", "create directory", err.to_string()));
 
     drop(sftp);
     drop(session);
@@ -1196,14 +1192,9 @@ mod nonblocking_io_tests {
     use super::*;
     use std::{
         future::Future,
-        sync::{mpsc, Arc},
-        task::{Context, Poll, Wake, Waker},
+        sync::mpsc,
+        task::{Context, Poll, Waker},
     };
-
-    struct NoopWake;
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
 
     #[test]
     fn slow_file_io_yields_to_the_caller_and_runs_on_a_worker() {
@@ -1215,9 +1206,9 @@ mod nonblocking_io_tests {
                 .map_err(|_| "worker blocked caller".to_string())?;
             Ok(std::thread::current().id())
         }));
-        let waker = Waker::from(Arc::new(NoopWake));
+        let waker = Waker::noop();
         assert!(matches!(
-            request.as_mut().poll(&mut Context::from_waker(&waker)),
+            request.as_mut().poll(&mut Context::from_waker(waker)),
             Poll::Pending
         ));
         release.send(()).unwrap();

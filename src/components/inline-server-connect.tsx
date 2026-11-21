@@ -25,6 +25,7 @@ export interface InlineServerConnectDraft {
   metricDsn: string
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Initial draft value accompanies InlineServerConnect.
 export const INITIAL_SERVER_DRAFT: InlineServerConnectDraft = {
   name: '',
   endpoint: '',

@@ -43,12 +43,8 @@ jobs:
       - name: Packaged acceptance path rules
         run: node --test scripts/ci-acceptance-scope.test.mjs
 
-      - name: CI lint and clippy gate guards
-        run: node --test scripts/ci-quality-gates.test.mjs
-
-      - name: Lint changed TypeScript/React files
-        if: github.event_name == 'pull_request'
-        run: node scripts/ci-lint-changed.mjs --base "${{ github.event.pull_request.base.sha }}"
+      - name: Lint TypeScript/React files
+        run: npm run lint -- --max-warnings=0
 
       - name: Verify bundled monitoring extension and policy runtime
         run: |
@@ -149,9 +145,8 @@ jobs:
           retention-days: 7
       - name: Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-      - name: Clippy on changed Rust files
-        if: github.event_name == 'pull_request'
-        run: node scripts/ci-clippy-changed.mjs --base "${{ github.event.pull_request.base.sha }}"
+      - name: Rust Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
 
   monitoring-extension:
     name: Monitoring extension server contract

@@ -284,7 +284,7 @@ export function EmbeddedBrowserWebview({ browserId, sessionId, visible, source, 
     console.log(LOG, 'source effect: queuing source', sessionId, 'rev=', sourceRevision)
     pendingSourceRef.current = { source, revision: sourceRevision }
     flushPendingSource()
-  }, [flushPendingSource, source, sourceRevision])
+  }, [flushPendingSource, sessionId, source, sourceRevision])
 
   useEffect(() => {
     console.log(LOG, 'visibility effect:', sessionId, 'visible=', visible)

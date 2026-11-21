@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Vault, Plus, Pencil, Trash2, Check, X, Server, FileCode, ChevronDown, KeyRound, Network, Bot } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -120,17 +120,26 @@ export function VaultsDashboardPanel({
     }
   }
 
-  async function refresh() {
+  const onErrorRef = useRef(onError)
+  useEffect(() => { onErrorRef.current = onError }, [onError])
+
+  const refresh = useCallback(async () => {
     setStatsLoading(true)
     try {
       const stats: Record<string, VaultStats> = {}
       for (const v of vaults) stats[v.id] = await loadStats(v.id)
       setStatsByVault(stats)
-    } catch (e) { onError?.(String(e)) }
+    } catch (e) { onErrorRef.current?.(String(e)) }
     finally { setStatsLoading(false) }
-  }
+  }, [vaults])
 
-  useEffect(() => { void refresh() }, [vaults])
+  useEffect(() => {
+    let cancelled = false
+    Promise.resolve().then(() => {
+      if (!cancelled) void refresh()
+    })
+    return () => { cancelled = true }
+  }, [refresh])
 
   async function handleCreate() {
     const name = newVaultName.trim()

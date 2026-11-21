@@ -100,7 +100,7 @@ fn object(value: &Value, keys: &[&str], required: &[&str]) -> Result<(), String>
     }
     Ok(())
 }
-fn rows<'a>(value: &'a Value, max: usize) -> Result<&'a Vec<Value>, String> {
+fn rows(value: &Value, max: usize) -> Result<&Vec<Value>, String> {
     let rows = value.as_array().ok_or("LOCAL_OPS_INVALID_DOCUMENT")?;
     if rows.len() > max {
         return Err("LOCAL_OPS_DOCUMENT_TOO_LARGE".into());
@@ -299,7 +299,7 @@ fn validate_document(kind: &str, payload: &Value, host: &str) -> Result<(), Stri
                 if row["metric"] == "probe-provider"
                     && row["target"]
                         .as_str()
-                        .map_or(true, |target| target.trim().is_empty())
+                        .is_none_or(|target| target.trim().is_empty())
                 {
                     return Err("LOCAL_OPS_INVALID_DOCUMENT".into());
                 }
@@ -518,7 +518,7 @@ pub(crate) fn apply_authorized_mcp_alert_action_on(
         || job.status != "running"
         || job.confirmation_required
         || job.confirmation_status != "not_required"
-        || job.request_id.as_deref().map_or(true, str::is_empty)
+        || job.request_id.as_deref().is_none_or(str::is_empty)
     {
         return Err("LOCAL_OPS_AUTHORIZED_MCP_JOB_REQUIRED".into());
     }

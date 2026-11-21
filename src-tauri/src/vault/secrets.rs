@@ -1036,7 +1036,7 @@ mod host_move_secret_tests {
         );
         assert_eq!(value(&target, &tk, "key").as_deref(), Some("beta"));
         assert_eq!(value(&target, &tk, "pw").as_deref(), Some("other"));
-        assert!(target.secrets.get("gone").is_none());
+        assert!(!target.secrets.contains_key("gone"));
     }
 
     #[test]
@@ -1064,7 +1064,7 @@ mod host_move_secret_tests {
         )
         .unwrap();
         assert_eq!(deleted, 1);
-        assert!(source.secrets.get("a").is_none());
+        assert!(!source.secrets.contains_key("a"));
         assert_eq!(value(&source, &sk, "b").as_deref(), Some("2"));
         assert_eq!(value(&source, &sk, "c").as_deref(), Some("3"));
     }

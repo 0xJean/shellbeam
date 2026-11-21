@@ -45,9 +45,15 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
 
   const pendingRefreshRef = useRef<Promise<void> | null>(null)
   const onSyncCompleteRef = useRef(onSyncComplete)
-  onSyncCompleteRef.current = onSyncComplete
+  const setOutputRef = useRef(setOutput)
   const activeVaultIdRef = useRef(activeVaultId)
-  activeVaultIdRef.current = activeVaultId
+  const trustedPeersRef = useRef(trustedPeers)
+  useEffect(() => {
+    onSyncCompleteRef.current = onSyncComplete
+    setOutputRef.current = setOutput
+    activeVaultIdRef.current = activeVaultId
+    trustedPeersRef.current = trustedPeers
+  }, [activeVaultId, onSyncComplete, setOutput, trustedPeers])
   const isActiveVault = (vaultId?: string) => !vaultId || !activeVaultIdRef.current || vaultId === activeVaultIdRef.current
 
   const fetchAll = useCallback(async () => {
@@ -81,11 +87,11 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
     }
   }, [])
 
-  function backgroundRefresh() {
+  const backgroundRefresh = useCallback(() => {
     if (pendingRefreshRef.current) return
     const p = fetchAll().finally(() => { pendingRefreshRef.current = null })
     pendingRefreshRef.current = p
-  }
+  }, [fetchAll])
 
   // Listen for push_full_backup received from a peer — refresh local data
   useEffect(() => {
@@ -95,7 +101,7 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
       backgroundRefresh()
     })
     return () => { void unlisten.then((fn) => fn()) }
-  }, [])
+  }, [backgroundRefresh])
 
   // Listen for pending push stored event (macOS couldn't reach Android directly)
   // and also poll trusted peers for pending pushes periodically
@@ -103,15 +109,12 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
     const unlisten = listen('sync-pending-push-stored', (event) => {
       const data = event.payload as { peerDeviceId?: string }
       console.log('[sync] pending push stored for peer:', data?.peerDeviceId)
-      setOutput('Sync push queued — data will be delivered when peer connects')
+      setOutputRef.current('Sync push queued — data will be delivered when peer connects')
     })
     return () => { void unlisten.then((fn) => fn()) }
   }, [])
 
   // Periodically check all trusted peers for pending pushes (Android → macOS polling)
-  const trustedPeersRef = useRef(trustedPeers)
-  trustedPeersRef.current = trustedPeers
-
   useEffect(() => {
     if (!serverRunning) return
 
@@ -129,7 +132,7 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
             if (result.hostsRestored) parts.push(`${result.hostsRestored} hosts`)
             if (result.snippetsRestored) parts.push(`${result.snippetsRestored} snippets`)
             if (result.vaultRestored) parts.push('vault/keychain')
-            setOutput(`Received pending push from ${peer.peerDeviceName ?? peer.peerDeviceId}: ${parts.join(', ')}`)
+            setOutputRef.current(`Received pending push from ${peer.peerDeviceName ?? peer.peerDeviceId}: ${parts.join(', ')}`)
             if (isActiveVault(result.vaultId)) onSyncCompleteRef.current?.()
             backgroundRefresh()
           }
@@ -143,7 +146,7 @@ export function useSync(setOutput: (msg: string) => void, onSyncComplete?: () =>
     pollPending()
     const timer = setInterval(pollPending, 30_000)
     return () => { cancelled = true; clearInterval(timer) }
-  }, [serverRunning])
+  }, [backgroundRefresh, serverRunning])
 
   async function refresh() {
     setLoading(true)

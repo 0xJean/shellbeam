@@ -11,9 +11,15 @@ export function useCommandHistory(vaultId: string | undefined, filter?: HistoryF
       .then((res) => setEntries(res.reverse()))
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [vaultId, filter?.host, filter?.status])
+  }, [vaultId, filter])
 
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => {
+    let cancelled = false
+    Promise.resolve().then(() => {
+      if (!cancelled) refresh()
+    })
+    return () => { cancelled = true }
+  }, [refresh])
 
   return { entries, loading, refresh }
 }

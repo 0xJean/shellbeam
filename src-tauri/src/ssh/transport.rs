@@ -232,6 +232,7 @@ pub fn route_for_host(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn legacy_route(
     vault_id: Option<&str>,
     host: &str,

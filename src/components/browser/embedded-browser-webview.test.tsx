@@ -8,7 +8,7 @@ const native = vi.hoisted(() => ({
   load: vi.fn(async () => {}),
   show: vi.fn(async () => {}),
   hide: vi.fn(async () => {}),
-  bounds: vi.fn(async (_id: string, _rect: { y: number }) => {}),
+  bounds: vi.fn<(id: string, rect: { y: number }) => Promise<void>>(async () => {}),
 }))
 
 vi.mock('@/lib/browser', () => ({

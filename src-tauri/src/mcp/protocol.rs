@@ -401,8 +401,10 @@ mod tests {
             .iter()
             .any(|tool| tool["name"] == "record_project_deployment"));
 
-        let mut permissions = super::super::policy::Permissions::default();
-        permissions.record_deployments = true;
+        let permissions = super::super::policy::Permissions {
+            record_deployments: true,
+            ..Default::default()
+        };
         let recording = tools(&client_with_permissions(permissions));
         assert!(recording["tools"]
             .as_array()

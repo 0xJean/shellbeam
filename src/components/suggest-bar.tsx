@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useT } from '@/lib/i18n'
 import { Clock, Sparkles, Loader2 } from 'lucide-react'
 import { isAIConfigured, loadAISettings, streamAICommand, createAbortController } from '@/lib/ai'
@@ -20,11 +20,15 @@ export function SuggestBar({ visible, inputLine, historyEntries, terminalContext
   const [aiLoading, setAiLoading] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
-  const historyMatches = inputLine.length >= 2
-    ? [...new Set(historyEntries)].filter((h) => h.startsWith(inputLine) && h !== inputLine).slice(0, 5)
-    : []
-
-  const allSuggestions = [...historyMatches.map((h) => ({ type: 'history' as const, text: h })), ...aiSuggestions.map((a) => ({ type: 'ai' as const, text: a }))]
+  const allSuggestions = useMemo(() => {
+    const historyMatches = inputLine.length >= 2
+      ? [...new Set(historyEntries)].filter((h) => h.startsWith(inputLine) && h !== inputLine).slice(0, 5)
+      : []
+    return [
+      ...historyMatches.map((h) => ({ type: 'history' as const, text: h })),
+      ...aiSuggestions.map((a) => ({ type: 'ai' as const, text: a })),
+    ]
+  }, [aiSuggestions, historyEntries, inputLine])
 
   const [scope, setScope] = useState({ inputLine, visible })
   if (scope.inputLine !== inputLine || scope.visible !== visible) {

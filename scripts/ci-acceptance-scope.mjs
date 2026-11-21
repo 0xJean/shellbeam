@@ -17,7 +17,7 @@ const RULES = [
   [/^scripts\/(ci-extension-ui|run-extension-ui|extension-ui-(observer|report))[.]/, ['extension']],
   [/^scripts\/extension-ui/, ['agent', 'extension']],
   // Scripts that no suite runs.
-  [/^scripts\/(build-|ios-|ci-ops-acme|ci-ops-live|ci-lint-changed|ci-clippy-changed|ci-quality-gates|run-ops-live|mcp-readonly|generate-theme-palettes|monitoring-extension)/, NONE],
+  [/^scripts\/(build-|ios-|ci-ops-acme|ci-ops-live|run-ops-live|mcp-readonly|generate-theme-palettes|monitoring-extension)/, NONE],
 
   // Tests, docs and files that cannot change how the app behaves on screen.
   [/^src\/.*[.]test[.]tsx?$|^src\/test\//, NONE],

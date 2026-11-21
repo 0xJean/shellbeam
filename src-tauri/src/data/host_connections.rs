@@ -286,7 +286,7 @@ mod tests {
             normalize(&mut rich).unwrap();
             super::super::hosts::insert_host_row(&db, "a", &rich).unwrap();
             assert_eq!(
-                validate_registry_import(&db, "a", &[old.clone()]).unwrap_err(),
+                validate_registry_import(&db, "a", std::slice::from_ref(&old)).unwrap_err(),
                 "HOST_DIRECTORY_CLIENT_UPGRADE_REQUIRED"
             );
             assert_eq!(

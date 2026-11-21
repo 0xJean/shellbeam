@@ -90,27 +90,26 @@ mod desktop {
         let mut devices: HashMap<String, DiscoveredDevice> = HashMap::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(4);
         while std::time::Instant::now() < deadline {
-            match receiver.recv_timeout(Duration::from_millis(500)) {
-                Ok(ServiceEvent::ServiceResolved(resolved)) => {
-                    if let Some(addr) = best_lan_ipv4(&resolved.addresses) {
-                        let name = instance_name_from_fullname(&resolved.fullname);
-                        let dt = resolved
-                            .get_properties()
-                            .get_property_val_str("dt")
-                            .unwrap_or("computer")
-                            .to_string();
-                        devices.insert(
-                            format!("{}:{}", addr, resolved.port),
-                            DiscoveredDevice {
-                                name,
-                                host: addr,
-                                port: resolved.port,
-                                device_type: dt,
-                            },
-                        );
-                    }
+            if let Ok(ServiceEvent::ServiceResolved(resolved)) =
+                receiver.recv_timeout(Duration::from_millis(500))
+            {
+                if let Some(addr) = best_lan_ipv4(&resolved.addresses) {
+                    let name = instance_name_from_fullname(&resolved.fullname);
+                    let dt = resolved
+                        .get_properties()
+                        .get_property_val_str("dt")
+                        .unwrap_or("computer")
+                        .to_string();
+                    devices.insert(
+                        format!("{}:{}", addr, resolved.port),
+                        DiscoveredDevice {
+                            name,
+                            host: addr,
+                            port: resolved.port,
+                            device_type: dt,
+                        },
+                    );
                 }
-                _ => {}
             }
         }
         daemon.shutdown().ok();

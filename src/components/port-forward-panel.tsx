@@ -1,5 +1,5 @@
 import { hasSshConnection } from '@/lib/hosts'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowLeftFromLine,
   ArrowRight,
@@ -92,7 +92,14 @@ export function PortForwardPanel({
     { in: 0, out: 0, any: false }
   )
 
-  async function refresh() {
+  const onErrorRef = useRef(onError)
+  const reloadTrafficRef = useRef(traffic.reload)
+  useEffect(() => {
+    onErrorRef.current = onError
+    reloadTrafficRef.current = traffic.reload
+  }, [onError, traffic.reload])
+
+  const refresh = useCallback(async () => {
     setLoading(true)
     try {
       const items = await listPortForwardRules(vaultId)
@@ -101,27 +108,34 @@ export function PortForwardPanel({
         items.map(async (r) => ({ id: r.id, running: await portForwardTunnelStatus(r.id) }))
       )
       setRunningIds(new Set(statuses.filter((s) => s.running).map((s) => s.id)))
-      traffic.reload()
+      reloadTrafficRef.current()
     } catch (e) {
-      onError?.(String(e))
+      onErrorRef.current?.(String(e))
     } finally {
       setLoading(false)
     }
-  }
+  }, [vaultId])
 
   useEffect(() => {
-    void refresh()
-  }, [vaultId])
+    let cancelled = false
+    Promise.resolve().then(() => {
+      if (!cancelled) void refresh()
+    })
+    return () => { cancelled = true }
+  }, [refresh])
 
   const filteredRules = useMemo(() => {
     let result = rules
     if (search.trim()) {
       const q = search.toLowerCase()
-      result = result.filter((r) => r.name.toLowerCase().includes(q) || hostName(r.hostId).toLowerCase().includes(q))
+      result = result.filter((r) => {
+        const resolvedHostName = hosts.find((h) => h.id === r.hostId)?.name ?? r.hostId
+        return r.name.toLowerCase().includes(q) || resolvedHostName.toLowerCase().includes(q)
+      })
     }
     if (filterType !== 'all') result = result.filter((r) => r.type === filterType)
     return result
-  }, [rules, search, filterType])
+  }, [rules, search, filterType, hosts])
 
   async function handleAdd() {
     const payload = toPortForwardRuleDraft(draft)

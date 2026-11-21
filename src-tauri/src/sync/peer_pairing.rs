@@ -599,6 +599,6 @@ pub fn sync_list_pairing_sessions(
             expires_at: item.expires_at,
         })
         .collect();
-    sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    sessions.sort_by_key(|b| std::cmp::Reverse(b.created_at));
     Ok(sessions)
 }

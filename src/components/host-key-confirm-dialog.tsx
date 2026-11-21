@@ -151,6 +151,7 @@ export function HostKeyConfirmDialog({ info, onAccept, onReject }: HostKeyConfir
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located parser exported alongside HostKeyConfirmDialog.
 export function parseHostKeyError(errorMessage: string): HostKeyInfo | null {
   try {
     const parsed = JSON.parse(errorMessage)

@@ -185,20 +185,34 @@ export function PcLayout() {
       })
     ) ?? ''
   }, [resolveVaultAuthSecret])
+  const {
+    hosts: allHosts,
+    setSelectedHostId,
+    handleUpdateHost,
+    handleCreateHost,
+  } = hostsCtx
+  const {
+    pcActiveSessionId,
+    pcSessionTabs,
+    workspaceAuthBySession,
+    setRightPaneSessionId,
+    setInteractiveChunksBySession,
+  } = sessions
+  const { pcSidebarNav, setPcSidebarNav } = app
   const workspaceAuthResolvers = useMemo(() => {
-    const resolvers: Record<string, (host: (typeof hostsCtx.hosts)[number]) => Promise<string>> = {}
+    const resolvers: Record<string, (host: HostProfile) => Promise<string>> = {}
 
-    for (const tab of sessions.pcSessionTabs) {
+    for (const tab of pcSessionTabs) {
       const sessionId = tab.sessionId
       resolvers[sessionId] = async (host) => {
-        const cachedSecret = sessions.workspaceAuthBySession[sessionId]
+        const cachedSecret = workspaceAuthBySession[sessionId]
         if (cachedSecret) return cachedSecret
         return resolveWorkspaceAuthSecret(host)
       }
     }
 
     return resolvers
-  }, [resolveWorkspaceAuthSecret, sessions.pcSessionTabs, sessions.workspaceAuthBySession])
+  }, [pcSessionTabs, resolveWorkspaceAuthSecret, workspaceAuthBySession])
   const snippets = useSnippets(vault.activeVaultId, app.setOutput)
   const forwardSummary = usePortForwardSummary(vault.activeVaultId, !!vault.vaultStatusState?.unlocked)
   const sync = useSync(app.setOutput, () => {
@@ -230,45 +244,49 @@ export function PcLayout() {
   // On phones the same tools are a sheet over the terminal, so it starts closed and is not remembered.
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
   const toggleMobileDrawer = useCallback(() => setMobileDrawerOpen((open) => !open), [])
-  const [lastDashboardNav, setLastDashboardNav] = useState(() => app.pcSidebarNav === 'terminal' ? 'hosts' : app.pcSidebarNav)
+  const lastDashboardNavRef = useRef(pcSidebarNav === 'terminal' ? 'hosts' : pcSidebarNav)
   const browserSwitcherInputRef = useRef<HTMLInputElement | null>(null)
   const observedActiveBrowserTabIdsRef = useRef<string[] | null>(null)
 
   useEffect(() => {
-    if (app.pcSidebarNav !== 'terminal') setLastDashboardNav(app.pcSidebarNav)
-  }, [app.pcSidebarNav])
+    if (pcSidebarNav !== 'terminal') lastDashboardNavRef.current = pcSidebarNav
+  }, [pcSidebarNav])
 
   // Auto-switch to terminal tab on mobile when a new session is created
-  const prevTabCountRef = useRef(sessions.pcSessionTabs.length)
-  useEffect(() => {
-    const newCount = sessions.pcSessionTabs.length
-    if (newCount > prevTabCountRef.current) {
-      // A new session was added — switch mobile to terminal tab and select it
-      const newest = sessions.pcSessionTabs[sessions.pcSessionTabs.length - 1]
+  const [prevTabCount, setPrevTabCount] = useState(pcSessionTabs.length)
+  if (pcSessionTabs.length !== prevTabCount) {
+    const grew = pcSessionTabs.length > prevTabCount
+    setPrevTabCount(pcSessionTabs.length)
+    if (grew) {
+      const newest = pcSessionTabs[pcSessionTabs.length - 1]
       if (newest) {
         setMobileActiveSessionId(newest.sessionId)
-        app.setPcSidebarNav('terminal')
         setShowQuickConnect(false)
       }
+    } else if (mobileActiveSessionId && !pcSessionTabs.find((t) => t.sessionId === mobileActiveSessionId)) {
+      setMobileActiveSessionId(pcSessionTabs[0]?.sessionId ?? null)
     }
-    // If the active mobile session was closed, pick another
-    if (mobileActiveSessionId && !sessions.pcSessionTabs.find((t) => t.sessionId === mobileActiveSessionId)) {
-      setMobileActiveSessionId(sessions.pcSessionTabs[0]?.sessionId ?? null)
+  }
+  const prevNavTabCountRef = useRef(pcSessionTabs.length)
+  useEffect(() => {
+    const newCount = pcSessionTabs.length
+    if (newCount > prevNavTabCountRef.current && pcSessionTabs.length > 0) {
+      setPcSidebarNav('terminal')
     }
-    prevTabCountRef.current = newCount
-  }, [app.setPcSidebarNav, mobileActiveSessionId, sessions.pcSessionTabs])
+    prevNavTabCountRef.current = newCount
+  }, [pcSessionTabs.length, setPcSidebarNav])
 
   useEffect(() => {
-    if (sessions.pcSessionTabs.length === 0 && !sessions.pcActiveSessionId && app.pcSidebarNav === 'terminal' && !showQuickConnect) {
-      app.setPcSidebarNav('hosts')
+    if (pcSessionTabs.length === 0 && !pcActiveSessionId && pcSidebarNav === 'terminal' && !showQuickConnect) {
+      setPcSidebarNav('hosts')
     }
-  }, [app.pcSidebarNav, app.setPcSidebarNav, sessions.pcActiveSessionId, sessions.pcSessionTabs.length, showQuickConnect])
+  }, [pcActiveSessionId, pcSessionTabs.length, pcSidebarNav, setPcSidebarNav, showQuickConnect])
 
   useEffect(() => {
     const open = () => {
       if (!getIsMd()) setMobileDrawerOpen(true)
       setRightSidebarOpen(true)
-      try { localStorage.setItem('shellbeam.rightSidebar', 'true') } catch {}
+      try { localStorage.setItem('shellbeam.rightSidebar', 'true') } catch { /* ignore */ }
     }
     window.addEventListener(TERMINAL_SIDEBAR_TAB_EVENT, open)
     return () => window.removeEventListener(TERMINAL_SIDEBAR_TAB_EVENT, open)
@@ -277,7 +295,7 @@ export function PcLayout() {
   const toggleRightSidebar = useCallback(() => {
     setRightSidebarOpen((v) => {
       const next = !v
-      try { localStorage.setItem('shellbeam.rightSidebar', String(next)) } catch {}
+      try { localStorage.setItem('shellbeam.rightSidebar', String(next)) } catch { /* ignore */ }
       return next
     })
   }, [])
@@ -355,32 +373,32 @@ export function PcLayout() {
   }
 
   const handleEditHostFromAssetInventory = useCallback((host: HostProfile) => {
-    const latestHost = hostsCtx.hosts.find((entry) => entry.id === host.id) ?? host
-    hostsCtx.setSelectedHostId(latestHost.id)
+    const latestHost = allHosts.find((entry) => entry.id === host.id) ?? host
+    setSelectedHostId(latestHost.id)
     setAssetEditingHost(latestHost)
-  }, [hostsCtx.hosts, hostsCtx.setSelectedHostId])
+  }, [allHosts, setSelectedHostId])
 
   const allExistingGroups = useMemo(() => {
     const set = new Set<string>([...DEFAULT_GROUPS])
-    hostsCtx.hosts.forEach((host) => { if (host.group) set.add(host.group) })
+    allHosts.forEach((host) => { if (host.group) set.add(host.group) })
     return Array.from(set)
-  }, [hostsCtx.hosts])
+  }, [allHosts])
 
   const allExistingTags = useMemo(() => {
     const set = new Set<string>()
-    hostsCtx.hosts.forEach((host) => host.tags?.forEach((tag) => set.add(tag)))
+    allHosts.forEach((host) => host.tags?.forEach((tag) => set.add(tag)))
     return Array.from(set).sort()
-  }, [hostsCtx.hosts])
+  }, [allHosts])
 
-  const handleSubmitAssetHostEdit = useCallback(async (...args: Parameters<typeof hostsCtx.handleUpdateHost>) => {
-    await hostsCtx.handleUpdateHost(...args)
+  const handleSubmitAssetHostEdit = useCallback(async (...args: Parameters<typeof handleUpdateHost>) => {
+    await handleUpdateHost(...args)
     setAssetEditingHost(null)
-  }, [hostsCtx.handleUpdateHost])
+  }, [handleUpdateHost])
 
-  const handleSubmitAssetHostCreate = useCallback(async (...args: Parameters<typeof hostsCtx.handleCreateHost>) => {
-    await hostsCtx.handleCreateHost(...args)
+  const handleSubmitAssetHostCreate = useCallback(async (...args: Parameters<typeof handleCreateHost>) => {
+    await handleCreateHost(...args)
     setAssetCreateHostOpen(false)
-  }, [hostsCtx.handleCreateHost])
+  }, [handleCreateHost])
 
   const handleQuickConnectNewHost = () => {
     setShowQuickConnect(false)
@@ -405,7 +423,7 @@ export function PcLayout() {
   const handleGoToDashboard = () => {
     sessions.setPcActiveSessionId(null)
     setShowQuickConnect(false)
-    app.setPcSidebarNav(lastDashboardNav)
+    setPcSidebarNav(lastDashboardNavRef.current)
   }
 
   const validRightPaneSessionId =
@@ -435,28 +453,30 @@ export function PcLayout() {
 
   const handleToggleSplit = useCallback(() => {
     if (isSplit) {
-      sessions.setRightPaneSessionId(null)
+      setRightPaneSessionId(null)
     } else {
-      const other = sessions.pcSessionTabs.find((t) => (
-        t.sessionId !== sessions.pcActiveSessionId
+      const other = pcSessionTabs.find((t) => (
+        t.sessionId !== pcActiveSessionId
         && getWorkspaceMode(t.sessionId) === 'terminal'
       ))
-      if (other) sessions.setRightPaneSessionId(other.sessionId)
+      if (other) setRightPaneSessionId(other.sessionId)
     }
-  }, [getWorkspaceMode, isSplit, sessions.pcActiveSessionId, sessions.pcSessionTabs, sessions.setRightPaneSessionId])
+  }, [getWorkspaceMode, isSplit, pcActiveSessionId, pcSessionTabs, setRightPaneSessionId])
 
   const handleInitialChunksConsumed = useCallback((sessionId: string) => {
-    sessions.setInteractiveChunksBySession((prev) => {
+    setInteractiveChunksBySession((prev) => {
       const next = { ...prev }
       delete next[sessionId]
       return next
     })
-  }, [sessions.setInteractiveChunksBySession])
+  }, [setInteractiveChunksBySession])
 
+  const { refresh: refreshSnippets } = snippets
+  const { refresh: refreshSync } = sync
   useEffect(() => {
-    void snippets.refresh()
-    void sync.refresh()
-  }, [])
+    void refreshSnippets()
+    void refreshSync()
+  }, [refreshSnippets, refreshSync])
 
   const isMd = useSyncExternalStore(subscribeMediaQuery, getIsMd, () => true)
   const SettingsScreen = isMd ? SettingsPanel : MobileSettingsPage
@@ -775,22 +795,35 @@ export function PcLayout() {
     </button>
   ) : null
 
-  useEffect(() => {
-    if (!browserSwitcherOpen) return
-    setBrowserSwitcherQuery('')
+  const handleBrowserSwitcherOpenChange = useCallback((open: boolean) => {
+    setBrowserSwitcherOpen(open)
+    if (open) {
+      setBrowserSwitcherQuery('')
+      setBrowserSwitcherActiveIndex(0)
+    } else {
+      setBrowserSwitcherActiveIndex(0)
+    }
+  }, [])
+
+  const handleBrowserSwitcherQueryChange = useCallback((value: string) => {
+    setBrowserSwitcherQuery(value)
     setBrowserSwitcherActiveIndex(0)
+  }, [])
+
+  const effectiveBrowserSwitcherOpen = browserSwitcherOpen && browserSwitcherEntries.length > 0
+  const effectiveBrowserSwitcherActiveIndex = effectiveBrowserSwitcherOpen ? browserSwitcherActiveIndex : 0
+
+  useEffect(() => {
+    if (!effectiveBrowserSwitcherOpen) return
     const frame = window.requestAnimationFrame(() => {
       browserSwitcherInputRef.current?.focus()
       browserSwitcherInputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [browserSwitcherOpen])
+  }, [effectiveBrowserSwitcherOpen])
 
   useEffect(() => {
-    setBrowserSwitcherActiveIndex(0)
-  }, [browserSwitcherQuery])
-
-  useEffect(() => {
+    let cancelled = false
     const activeBrowserTabIds = sessions.pcSessionTabs.flatMap((tab) => {
       const browserState = sessions.browserBySession[tab.sessionId]
       if (!browserState) return []
@@ -803,50 +836,47 @@ export function PcLayout() {
     observedActiveBrowserTabIdsRef.current = activeBrowserTabIds
     if (activeBrowserTabIds.length === 0) return
 
-    setBrowserSwitcherRecentTabIds((current) => {
-      const changedActiveBrowserTabIds = previousActiveBrowserTabIds == null
-        ? (current.length === 0 ? activeBrowserTabIds : [])
-        : activeBrowserTabIds.filter((id) => !previousActiveBrowserTabIds.includes(id))
-      if (changedActiveBrowserTabIds.length === 0) return current
+    Promise.resolve().then(() => {
+      if (cancelled) return
+      setBrowserSwitcherRecentTabIds((current) => {
+        const changedActiveBrowserTabIds = previousActiveBrowserTabIds == null
+          ? (current.length === 0 ? activeBrowserTabIds : [])
+          : activeBrowserTabIds.filter((id) => !previousActiveBrowserTabIds.includes(id))
+        if (changedActiveBrowserTabIds.length === 0) return current
 
-      const next = [
-        ...changedActiveBrowserTabIds,
-        ...current.filter((id) => !changedActiveBrowserTabIds.includes(id)),
-      ].slice(0, MAX_BROWSER_SWITCHER_RECENTS)
+        const next = [
+          ...changedActiveBrowserTabIds,
+          ...current.filter((id) => !changedActiveBrowserTabIds.includes(id)),
+        ].slice(0, MAX_BROWSER_SWITCHER_RECENTS)
 
-      if (next.length === current.length && next.every((value, index) => value === current[index])) {
-        return current
-      }
-      return next
+        if (next.length === current.length && next.every((value, index) => value === current[index])) {
+          return current
+        }
+        return next
+      })
     })
+    return () => { cancelled = true }
   }, [sessions.browserBySession, sessions.pcSessionTabs])
 
   useEffect(() => {
+    let cancelled = false
     const validIds = new Set(browserSwitcherEntries.map((entry) => entry.id))
-    setBrowserSwitcherRecentTabIds((current) => {
-      const next = current.filter((id) => validIds.has(id))
-      if (next.length === current.length) return current
-      return next
+    Promise.resolve().then(() => {
+      if (cancelled) return
+      setBrowserSwitcherRecentTabIds((current) => {
+        const next = current.filter((id) => validIds.has(id))
+        if (next.length === current.length) return current
+        return next
+      })
     })
+    return () => { cancelled = true }
   }, [browserSwitcherEntries])
-
-  useEffect(() => {
-    if (browserSwitcherOpen && browserSwitcherEntries.length === 0) {
-      setBrowserSwitcherOpen(false)
-    }
-  }, [browserSwitcherEntries.length, browserSwitcherOpen])
 
   useEffect(() => {
     try {
       localStorage.setItem(BROWSER_SWITCHER_RECENTS_KEY, JSON.stringify(browserSwitcherRecentTabIds))
-    } catch {}
+    } catch { /* ignore */ }
   }, [browserSwitcherRecentTabIds])
-
-  useEffect(() => {
-    if (!browserSwitcherOpen && browserSwitcherActiveIndex > 0) {
-      setBrowserSwitcherActiveIndex(0)
-    }
-  }, [browserSwitcherActiveIndex, browserSwitcherOpen])
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -854,12 +884,12 @@ export function PcLayout() {
       if (event.key.toLowerCase() !== 'b') return
       if (browserSwitcherEntries.length === 0) return
       event.preventDefault()
-      setBrowserSwitcherOpen(true)
+      handleBrowserSwitcherOpenChange(true)
     }
 
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [browserSwitcherEntries.length])
+  }, [browserSwitcherEntries.length, handleBrowserSwitcherOpenChange])
 
   return (
     <div className="flex h-full flex-col">
@@ -925,13 +955,13 @@ export function PcLayout() {
         }}
       />
       <BrowserSwitcherDialog
-        open={browserSwitcherOpen}
-        onOpenChange={setBrowserSwitcherOpen}
+        open={effectiveBrowserSwitcherOpen}
+        onOpenChange={handleBrowserSwitcherOpenChange}
         inputRef={browserSwitcherInputRef}
         query={browserSwitcherQuery}
-        onQueryChange={setBrowserSwitcherQuery}
+        onQueryChange={handleBrowserSwitcherQueryChange}
         entries={filteredBrowserSwitcherEntries}
-        activeIndex={browserSwitcherActiveIndex}
+        activeIndex={effectiveBrowserSwitcherActiveIndex}
         onActiveIndexChange={setBrowserSwitcherActiveIndex}
         onCommit={handleCommitBrowserSwitcherEntry}
         onCloseTab={handleCloseBrowserSwitcherTab}

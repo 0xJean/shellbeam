@@ -118,8 +118,8 @@ fn initialize(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS monitoring_service_scope ON monitoring_service_intents(vault_id,integration_id,updated_at);").map_err(err)?;
     Ok(())
 }
-static CONTEXTS: OnceLock<Mutex<HashMap<String, (String, String, i64, u64, i64, String)>>> =
-    OnceLock::new();
+type MonitoringContextEntry = (String, String, i64, u64, i64, String);
+static CONTEXTS: OnceLock<Mutex<HashMap<String, MonitoringContextEntry>>> = OnceLock::new();
 #[tauri::command]
 pub fn monitoring_service_context(
     app: tauri::AppHandle,
@@ -1629,7 +1629,7 @@ mod tests {
             let worker = std::thread::spawn(move || {
                 let (mut socket, _) = listener.accept().unwrap();
                 let mut request = [0; 2048];
-                socket.read(&mut request).unwrap();
+                let _ = socket.read(&mut request).unwrap();
                 let body = "synthetic-private-response";
                 write!(socket,"HTTP/1.1 {status} Error\r\nLocation: http://127.0.0.1:1/secret\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
             });

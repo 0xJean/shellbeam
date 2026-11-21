@@ -583,7 +583,7 @@ fn build_embedded_browser<R: Runtime>(
         .zoom_hotkeys_enabled(true)
         .on_document_title_changed(move |webview, title| {
             let _ = emit_browser_state(
-                &webview.app_handle(),
+                webview.app_handle(),
                 BrowserStatePayload {
                     browser_id: browser_id_for_title.clone(),
                     session_id: session_id_for_title.clone(),
@@ -594,7 +594,7 @@ fn build_embedded_browser<R: Runtime>(
                 },
             );
             let _ = emit_navigation_capabilities(
-                &webview.app_handle(),
+                webview.app_handle(),
                 &webview,
                 browser_id_for_title.clone(),
                 session_id_for_title.clone(),
@@ -639,9 +639,9 @@ fn build_embedded_browser<R: Runtime>(
                     error: None,
                 },
             };
-            let _ = emit_browser_state(&webview.app_handle(), event);
+            let _ = emit_browser_state(webview.app_handle(), event);
             let _ = emit_navigation_capabilities(
-                &webview.app_handle(),
+                webview.app_handle(),
                 &webview,
                 browser_id_for_load.clone(),
                 session_id_for_load.clone(),
@@ -688,7 +688,7 @@ fn build_browser_window<R: Runtime>(
         .visible(true)
         .on_document_title_changed(move |webview_window, title| {
             let _ = emit_browser_state(
-                &webview_window.app_handle(),
+                webview_window.app_handle(),
                 BrowserStatePayload {
                     browser_id: browser_id_for_title.clone(),
                     session_id: session_id_for_title.clone(),
@@ -699,10 +699,10 @@ fn build_browser_window<R: Runtime>(
                 },
             );
             if let Some(webview) =
-                browser_webview(&webview_window.app_handle(), &browser_id_for_title)
+                browser_webview(webview_window.app_handle(), &browser_id_for_title)
             {
                 let _ = emit_navigation_capabilities(
-                    &webview_window.app_handle(),
+                    webview_window.app_handle(),
                     &webview,
                     browser_id_for_title.clone(),
                     session_id_for_title.clone(),
@@ -743,12 +743,12 @@ fn build_browser_window<R: Runtime>(
                     error: None,
                 },
             };
-            let _ = emit_browser_state(&webview_window.app_handle(), event);
+            let _ = emit_browser_state(webview_window.app_handle(), event);
             if let Some(webview) =
-                browser_webview(&webview_window.app_handle(), &browser_id_for_load)
+                browser_webview(webview_window.app_handle(), &browser_id_for_load)
             {
                 let _ = emit_navigation_capabilities(
-                    &webview_window.app_handle(),
+                    webview_window.app_handle(),
                     &webview,
                     browser_id_for_load.clone(),
                     session_id_for_load.clone(),
@@ -1322,6 +1322,7 @@ fn stop_browser_port_forward_inner(browser_id: &str) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn verified_browser_connection(
     app: &AppHandle,
     session_id: &str,

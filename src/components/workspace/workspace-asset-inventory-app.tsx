@@ -1,5 +1,5 @@
 import { hasSshConnection } from '@/lib/hosts'
-import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { useHostNetworkMetadata, type HostNetworkDisplay } from '@/hooks/use-host-network-metadata'
@@ -403,8 +403,8 @@ function MonitorTrendChart({
             })}
           </svg>
           <div className="flex items-center justify-between text-[10px] text-[var(--workspace-text-subtle)]">
-            <span>{new Date(history[0]?.sampledAt ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-            <span>{new Date(history.at(-1)?.sampledAt ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            <span>{history[0] ? new Date(history[0].sampledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+            <span>{history.at(-1) ? new Date(history.at(-1)!.sampledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
           </div>
         </>
       ) : (
@@ -798,8 +798,13 @@ function AssetInventoryHeader({
   onTabChange?: (tab: string) => void
 }) {
   const { t } = useT()
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
   if (hosts.length === 0) return null
-  const minutesAgo = lastScanAt ? Math.max(0, Math.round((Date.now() - lastScanAt) / 60_000)) : null
+  const minutesAgo = lastScanAt ? Math.max(0, Math.round((nowMs - lastScanAt) / 60_000)) : null
   const ghost = 'inline-flex h-9 items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 text-[13px] font-medium text-[var(--workspace-text)] transition-colors hover:bg-[var(--workspace-surface-700)] disabled:cursor-not-allowed disabled:opacity-60'
   const stat = (value: number, label: string, warn = false) => <span className="inline-flex items-baseline gap-1">
     <b className={cn('text-xl font-bold tabular-nums', warn ? 'text-[color:var(--workspace-status-warn-text)]' : 'text-[var(--workspace-text-strong)]')}>{value}</b>
@@ -873,44 +878,59 @@ export function WorkspaceAssetInventoryApp({
   const [view, setView] = useState<'assets' | 'tools' | 'deployments'>(initialView)
   const [selectedKey, setSelectedKey] = useState(() => (initialHost ? hostKey(initialHost) : ''))
   const [managedToolHostId, setManagedToolHostId] = useState(() => initialHost?.id ?? selectedHostId ?? null)
+  const effectiveSelectedKey = selectedKey || (initialHost ? hostKey(initialHost) : '')
+  const effectiveManagedToolHostId = managedToolHostId ?? initialHost?.id ?? selectedHostId ?? null
   const [query, setQuery] = useState('')
   const [groupFilter, setGroupFilter] = useState('All')
   const [tagFilter, setTagFilter] = useState<Set<string>>(() => new Set())
   const [sortMode, setSortMode] = useState<AssetSortMode>('recent')
   const sharedStates = useWorkspaceInventoryStates()
   const monitorStates = useServerMonitorStates()
-  const [agentDeployments, setAgentDeployments] = useState<McpDeploymentRecord[]>([])
-  const [agentDeploymentsObservedAt, setAgentDeploymentsObservedAt] = useState<number | null>(null)
-  const [states, setStates] = useState<Record<string, HostInventoryState>>(() => {
+  const [agentDeploymentsState, setAgentDeploymentsState] = useState<{
+    vaultId: string
+    projects: McpDeploymentRecord[]
+    observedAt: number | null
+  } | null>(null)
+  const agentDeployments = useMemo(
+    () => (activeVaultId && agentDeploymentsState?.vaultId === activeVaultId ? agentDeploymentsState.projects : []),
+    [activeVaultId, agentDeploymentsState],
+  )
+  const agentDeploymentsObservedAt = activeVaultId && agentDeploymentsState?.vaultId === activeVaultId
+    ? agentDeploymentsState.observedAt
+    : null
+  const [localStates, setLocalStates] = useState<Record<string, HostInventoryState>>(() => {
     const shared = selectWorkspaceInventoryStatesForHosts(hosts)
     return Object.entries(loadWorkspaceInventoryCache(hosts)).reduce<Record<string, HostInventoryState>>((next, [key, entry]) => {
       next[key] = { status: 'ready', inventory: entry.inventory }
       return next
     }, { ...shared })
   })
+  const states = useMemo(
+    () => ({ ...selectWorkspaceInventoryStatesForHosts(hosts, localStates), ...selectWorkspaceInventoryStatesForHosts(hosts, sharedStates) }),
+    [hosts, localStates, sharedStates],
+  )
   const [lastScanAt, setLastScanAt] = useState<number | null>(() => {
     const cachedEntries = Object.values(loadWorkspaceInventoryCache(hosts))
     return cachedEntries.reduce<number | null>((latest, entry) => Math.max(latest ?? 0, entry.updatedAt), null)
   })
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
   const scanRunIdRef = useRef(0)
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
   const { t } = useT()
 
   useEffect(() => {
     let cancelled = false
-    if (!activeVaultId) {
-      setAgentDeployments([])
-      setAgentDeploymentsObservedAt(null)
-      return
-    }
+    if (!activeVaultId) return
     void listMcpDeploymentRecords(activeVaultId).then((result) => {
       if (cancelled) return
-      setAgentDeployments(result.projects)
-      setAgentDeploymentsObservedAt(result.observedAt)
+      setAgentDeploymentsState({ vaultId: activeVaultId, projects: result.projects, observedAt: result.observedAt })
     }).catch(() => {
       if (cancelled) return
-      setAgentDeployments([])
-      setAgentDeploymentsObservedAt(null)
+      setAgentDeploymentsState({ vaultId: activeVaultId, projects: [], observedAt: null })
     })
     return () => { cancelled = true }
   }, [activeVaultId])
@@ -924,18 +944,6 @@ export function WorkspaceAssetInventoryApp({
     })
     return grouped
   }, [agentDeployments])
-
-  useEffect(() => {
-    if (!selectedKey && initialHost) setSelectedKey(hostKey(initialHost))
-  }, [initialHost, selectedKey])
-
-  useEffect(() => {
-    if (!managedToolHostId && initialHost) setManagedToolHostId(initialHost.id)
-  }, [initialHost, managedToolHostId])
-
-  useEffect(() => {
-    setStates((prev) => ({ ...selectWorkspaceInventoryStatesForHosts(hosts, prev), ...selectWorkspaceInventoryStatesForHosts(hosts, sharedStates) }))
-  }, [hosts, sharedStates])
 
   const hostRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -995,8 +1003,8 @@ export function WorkspaceAssetInventoryApp({
   }, [agentDeploymentsByHost, groupFilter, hosts, monitorStates, networkByAddress, query, sortMode, states, tagFilter])
 
   const selectedHost = useMemo(() => {
-    return hostRows.find((host) => hostKey(host) === selectedKey) ?? hostRows[0] ?? hosts.find((host) => hostKey(host) === selectedKey) ?? hosts[0]
-  }, [hostRows, hosts, selectedKey])
+    return hostRows.find((host) => hostKey(host) === effectiveSelectedKey) ?? hostRows[0] ?? hosts.find((host) => hostKey(host) === effectiveSelectedKey) ?? hosts[0]
+  }, [effectiveSelectedKey, hostRows, hosts])
 
   const selectedState = selectedHost ? states[hostKey(selectedHost)] : undefined
   const selectedInventory = selectedState?.inventory
@@ -1035,21 +1043,28 @@ export function WorkspaceAssetInventoryApp({
     setView('tools')
   }
 
-  async function scanHosts(targetHosts: HostProfile[], options: { force?: boolean } = {}) {
+  const statesRef = useRef(states)
+  useEffect(() => {
+    statesRef.current = states
+  }, [states])
+
+  const scanHosts = useCallback(async (targetHosts: HostProfile[], options: { force?: boolean } = {}) => {
     const runId = ++scanRunIdRef.current
     const result = await scanWorkspaceInventoryHosts({
       hosts: targetHosts,
       vaultId: activeVaultId,
       resolveAuthSecret,
       concurrency: SCAN_CONCURRENCY,
-      currentStates: states,
+      currentStates: statesRef.current,
       isCurrent: () => scanRunIdRef.current === runId,
       refreshIntervalMs: options.force ? 0 : undefined,
     })
     if (scanRunIdRef.current === runId && result.scannedHosts.length > 0) {
-      setLastScanAt(Date.now())
+      const now = Date.now()
+      setLastScanAt(now)
+      setNowMs(now)
     }
-  }
+  }, [activeVaultId, resolveAuthSecret])
 
   useEffect(() => {
     let cancelled = false
@@ -1057,7 +1072,7 @@ export function WorkspaceAssetInventoryApp({
       if (cancelled) return
       const sharedReadyStates = createReadyWorkspaceInventoryStates(cache)
       mergeWorkspaceInventoryStates(sharedReadyStates)
-      setStates((prev) => {
+      setLocalStates((prev) => {
         const next = { ...prev }
         Object.entries(cache).forEach(([key, entry]) => {
           if (next[key]?.status !== 'error' && !next[key]?.inventory) next[key] = { status: 'ready', inventory: entry.inventory, updatedAt: entry.updatedAt }
@@ -1071,13 +1086,15 @@ export function WorkspaceAssetInventoryApp({
     })
 
     if (hosts.length > 0) {
-      void scanHosts(hosts)
+      void Promise.resolve().then(() => {
+        if (!cancelled) void scanHosts(hosts)
+      })
     }
     return () => {
       cancelled = true
       scanRunIdRef.current += 1
     }
-  }, [hosts, resolveAuthSecret])
+  }, [hosts, scanHosts])
 
   if (hosts.length === 0) {
     return (
@@ -1154,7 +1171,7 @@ export function WorkspaceAssetInventoryApp({
             onGroupFilter={setGroupFilter} onTagFilter={setTagFilter} onSortMode={setSortMode} onQueryChange={setQuery} />}
           hosts={hostRows}
           totalCount={hosts.length}
-          selectedKey={selectedHost ? hostKey(selectedHost) : selectedKey}
+          selectedKey={selectedHost ? hostKey(selectedHost) : effectiveSelectedKey}
           getHostKey={hostKey}
           onSelect={handleServerSelect}
           emptyText={t('workspace.asset.noMatch')}
@@ -1245,7 +1262,7 @@ export function WorkspaceAssetInventoryApp({
           {view === 'tools' ? (
             <WorkspaceToolManagerApp
               vaultId={activeVaultId}
-              selectedHostId={selectedHost?.id ?? managedToolHostId ?? selectedHostId}
+              selectedHostId={selectedHost?.id ?? effectiveManagedToolHostId ?? selectedHostId}
               hostAddress={hostAddress}
               hosts={hosts}
               resolveAuthSecret={resolveAuthSecret}
@@ -1315,7 +1332,7 @@ export function WorkspaceAssetInventoryApp({
                       {selectedNetwork && <span className="inline-flex items-center"><HostRegionMeta network={selectedNetwork} /></span>}
                       <span>{selectedMonitorSnapshot?.os || <HostSystemMeta resource={selectedInventory?.resource} fallbackKey="workspace.asset.versionPending" />}</span>
                       {(selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel) && <span className="font-mono">{selectedMonitorSnapshot?.kernel || selectedInventory?.resource.kernel}</span>}
-                      {selectedState?.updatedAt ? <span>{t('workspace.asset.scannedAgo', { minutes: Math.max(0, Math.round((Date.now() - selectedState.updatedAt) / 60_000)) })}</span> : null}
+                      {selectedState?.updatedAt ? <span>{t('workspace.asset.scannedAgo', { minutes: Math.max(0, Math.round((nowMs - selectedState.updatedAt) / 60_000)) })}</span> : null}
                     </div>
                   </div>
                   {(selectedHost.tags ?? []).length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{(selectedHost.tags ?? []).map((tag) => <Badge key={tag}>{tag}</Badge>)}</div>}

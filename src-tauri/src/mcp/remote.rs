@@ -296,7 +296,7 @@ pub fn run(
             )
         }
         "run_command" => command(
-            &session,
+            session,
             args["command"].as_str().unwrap(),
             args["timeoutSeconds"]
                 .as_u64()
@@ -307,7 +307,7 @@ pub fn run(
                 ),
         ),
         "refresh_server_info" => command(
-            &session,
+            session,
             &format!("/bin/sh -c {}", quote(&render_probe_collector())),
             limits().remote.collector_timeout_ms / 1000,
         )
@@ -322,7 +322,7 @@ pub fn run(
             }
             parse_probe(output["stdout"].as_str().unwrap_or(""))
         }),
-        _ => file_operation(&session, tool, args, &secrets),
+        _ => file_operation(session, tool, args, &secrets),
     };
     // Mask known credential values; arbitrary application output is not a secret-free sandbox.
     result

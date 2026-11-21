@@ -121,6 +121,7 @@ pub(crate) fn move_vault_activity(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn append_activity(
     app: tauri::AppHandle,
     vault_id: Option<String>,

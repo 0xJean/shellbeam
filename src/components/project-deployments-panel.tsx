@@ -78,6 +78,7 @@ export type AgentDeploymentVerification = 'verified' | 'stale' | 'unverified'
 
 const AGENT_DEPLOYMENT_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located helper exported for callers and tests.
 export function getAgentDeploymentVerification(
   deployment: Pick<McpDeploymentRecord, 'lastVerifiedAt'>,
   now = Date.now(),
@@ -224,6 +225,7 @@ function projectNeedle(project: WorkspaceInventoryProject) {
   return normalizeSignal(project.name || project.path.split('/').filter(Boolean).at(-1) || project.kind)
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located helper exported for callers and tests.
 export function getProjectDeploymentSignals(project: WorkspaceInventoryProject, inventory: WorkspaceInventory, t?: TFunction) {
   const needle = projectNeedle(project)
   const pathParts = project.path.split('/').filter(Boolean).map(normalizeSignal)
@@ -263,6 +265,7 @@ function getProjectStatus(project: WorkspaceInventoryProject, inventory: Workspa
   return 'detected'
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located helper exported for callers and tests.
 export function buildProjectDeploymentRows(hosts: HostProfile[], cache: WorkspaceInventoryCache, t?: TFunction): ProjectDeploymentRow[] {
   return hosts.flatMap((host) => {
     const entry = cache[hostKey(host)]
@@ -308,15 +311,28 @@ export function ProjectDeploymentsPanel({
     const selectedHost = selectedHostId ? hosts.find((host) => host.id === selectedHostId) : null
     return selectedHost ? hostKey(selectedHost) : hideHostList && hosts[0] ? hostKey(hosts[0]) : 'all'
   })
+  const effectiveSelectedKey = useMemo(() => {
+    const selectedHost = selectedHostId ? hosts.find((host) => host.id === selectedHostId) : null
+    const selectedHostKey = selectedHost ? hostKey(selectedHost) : null
+    if (hideHostList) return selectedHostKey ?? (hosts[0] ? hostKey(hosts[0]) : 'all')
+    if (selectedHostKey && selectedKey === 'all') return selectedHostKey
+    if (selectedKey !== 'all' && !hosts.some((host) => hostKey(host) === selectedKey)) return selectedHostKey ?? 'all'
+    return selectedKey
+  }, [hideHostList, hosts, selectedHostId, selectedKey])
   const sharedStates = useWorkspaceInventoryStates()
-  const [states, setStates] = useState<Record<string, HostInventoryState>>(() => {
+  const [localStates, setLocalStates] = useState<Record<string, HostInventoryState>>(() => {
     const shared = selectWorkspaceInventoryStatesForHosts(hosts)
     return Object.entries(loadWorkspaceInventoryCache(hosts)).reduce<Record<string, HostInventoryState>>((next, [key, entry]) => {
       next[key] = { status: 'ready', inventory: entry.inventory, updatedAt: entry.updatedAt }
       return next
     }, { ...shared })
   })
-  const [loadingCache, setLoadingCache] = useState(true)
+  const states = useMemo(
+    () => ({ ...selectWorkspaceInventoryStatesForHosts(hosts, localStates), ...selectWorkspaceInventoryStatesForHosts(hosts, sharedStates) }),
+    [hosts, localStates, sharedStates],
+  )
+  const [loadedHosts, setLoadedHosts] = useState<HostProfile[] | null>(null)
+  const loadingCache = loadedHosts !== hosts
   const runIdRef = useRef(0)
 
   const cache = useMemo(() => {
@@ -341,15 +357,11 @@ export function ProjectDeploymentsPanel({
   ), 0)
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
-  useEffect(() => {
-    setStates((prev) => ({ ...selectWorkspaceInventoryStatesForHosts(hosts, prev), ...selectWorkspaceInventoryStatesForHosts(hosts, sharedStates) }))
-  }, [hosts, sharedStates])
-
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     return deploymentViewRows.filter((row) => {
       const network = networkByAddress[row.host.address]
-      if (selectedKey !== 'all' && hostKey(row.host) !== selectedKey) return false
+      if (effectiveSelectedKey !== 'all' && hostKey(row.host) !== effectiveSelectedKey) return false
       if (statusFilter !== 'all' && row.displayStatus !== statusFilter) return false
       if (!normalizedQuery) return true
       return [
@@ -366,14 +378,14 @@ export function ProjectDeploymentsPanel({
         row.signals.join(' '),
       ].join(' ').toLowerCase().includes(normalizedQuery)
     })
-  }, [deploymentViewRows, networkByAddress, query, selectedKey, statusFilter])
+  }, [deploymentViewRows, effectiveSelectedKey, networkByAddress, query, statusFilter])
 
   const filteredAgentDeployments = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     return agentDeployments.filter((deployment) => {
       const host = hosts.find((item) => item.id === deployment.hostId)
       if (!host) return false
-      if (selectedKey !== 'all' && hostKey(host) !== selectedKey) return false
+      if (effectiveSelectedKey !== 'all' && hostKey(host) !== effectiveSelectedKey) return false
       if (!normalizedQuery) return true
       return [
         deployment.name,
@@ -389,7 +401,7 @@ export function ProjectDeploymentsPanel({
         host.address,
       ].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery)
     })
-  }, [agentDeployments, hosts, query, selectedKey])
+  }, [agentDeployments, effectiveSelectedKey, hosts, query])
 
   async function scanHosts(targetHosts: HostProfile[], options: { force?: boolean } = {}) {
     const runId = runIdRef.current + 1
@@ -407,19 +419,18 @@ export function ProjectDeploymentsPanel({
 
   useEffect(() => {
     let cancelled = false
-    setLoadingCache(true)
     void loadWorkspaceInventoryPersistedCache(hosts).then((persistedCache) => {
       if (cancelled) return
       const sharedReadyStates = createReadyWorkspaceInventoryStates(persistedCache)
       mergeWorkspaceInventoryStates(sharedReadyStates)
-      setStates((prev) => {
+      setLocalStates((prev) => {
         const next = { ...prev }
         Object.entries(persistedCache).forEach(([key, entry]) => {
           if (next[key]?.status !== 'error') next[key] = { status: next[key]?.status ?? 'ready', inventory: entry.inventory, updatedAt: entry.updatedAt }
         })
         return next
       })
-      setLoadingCache(false)
+      setLoadedHosts(hosts)
     })
 
     return () => {
@@ -427,18 +438,6 @@ export function ProjectDeploymentsPanel({
       runIdRef.current += 1
     }
   }, [hosts])
-
-  useEffect(() => {
-    setSelectedKey((current) => {
-      const selectedHost = selectedHostId ? hosts.find((host) => host.id === selectedHostId) : null
-      const selectedHostKey = selectedHost ? hostKey(selectedHost) : null
-
-      if (hideHostList) return selectedHostKey ?? (hosts[0] ? hostKey(hosts[0]) : 'all')
-      if (selectedHostKey && current === 'all') return selectedHostKey
-      if (current !== 'all' && !hosts.some((host) => hostKey(host) === current)) return selectedHostKey ?? 'all'
-      return current
-    })
-  }, [hideHostList, hosts, selectedHostId])
 
   const statusOptions = [
     { key: 'all' as const, label: t('workspace.deployments.statusLabelAll') },
@@ -461,12 +460,12 @@ export function ProjectDeploymentsPanel({
   const scanDeploymentsButton = (
     <button
       type="button"
-      onClick={() => void scanHosts(selectedKey === 'all' ? hosts : hosts.filter((host) => hostKey(host) === selectedKey), { force: true })}
+      onClick={() => void scanHosts(effectiveSelectedKey === 'all' ? hosts : hosts.filter((host) => hostKey(host) === effectiveSelectedKey), { force: true })}
       disabled={scanningCount > 0}
       className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[color:var(--workspace-border-glow)] bg-[var(--workspace-accent-soft)] px-3 text-xs font-semibold text-[var(--workspace-accent-text)] transition-colors hover:bg-[var(--workspace-accent-muted)] disabled:cursor-not-allowed disabled:opacity-60"
     >
       {scanningCount > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-      {selectedKey === 'all' ? t('workspace.deployments.scanAll') : t('workspace.deployments.scanCurrent')}
+      {effectiveSelectedKey === 'all' ? t('workspace.deployments.scanAll') : t('workspace.deployments.scanCurrent')}
     </button>
   )
   const statusFilterControls = (
@@ -499,7 +498,7 @@ export function ProjectDeploymentsPanel({
   }
 
   return (
-    <div data-testid="project-deployments-panel" data-selected-host-key={selectedKey} className="flex min-h-[34rem] min-w-0 flex-col text-[var(--workspace-text)]">
+    <div data-testid="project-deployments-panel" data-selected-host-key={effectiveSelectedKey} className="flex min-h-[34rem] min-w-0 flex-col text-[var(--workspace-text)]">
       {!hideHeader && (
         <WorkspaceResourceOverviewHeader
           preheader={preheader}
@@ -546,7 +545,7 @@ export function ProjectDeploymentsPanel({
           <WorkspaceServerList
             hosts={hosts}
             totalCount={hosts.length}
-            selectedKey={selectedKey}
+            selectedKey={effectiveSelectedKey}
             getHostKey={hostKey}
             onSelect={(key) => setSelectedKey(key)}
             allOption={{

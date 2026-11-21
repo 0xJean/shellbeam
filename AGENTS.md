@@ -22,29 +22,23 @@ Run the checks matching the areas you touched:
 
 ```bash
 npm ci
+npm run lint -- --max-warnings=0
 npm test
 npm run build
-# Incremental ESLint gate (0 errors, 0 warnings on changed TS/TSX files; also enforced in CI):
-node scripts/ci-lint-changed.mjs --base origin/main
 ```
 
-- `npm run lint` runs `eslint .` across the full repository. Every file added or modified in a PR must pass ESLint with `--max-warnings=0`.
-- `npm run build` (`tsc -b && vite build`) must succeed without TypeScript errors or new Vite/Rollup mixed-import or chunk-size warnings.
+- `npm run lint -- --max-warnings=0` runs `eslint .` across the full repository and is enforced in CI with zero errors and zero warnings.
+- `npm run build` (`tsc -b && vite build`) must succeed without TypeScript errors or Vite/Rollup mixed-import or chunk-size warnings.
 
 ### Rust Backend (`src-tauri/`)
 
 ```bash
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo test --manifest-path src-tauri/Cargo.toml --locked --lib
-RUSTFLAGS="-D warnings" cargo check --manifest-path src-tauri/Cargo.toml --locked --lib --tests
-# Incremental Clippy gate (0 warnings/errors on changed src-tauri/**/*.rs files; also enforced in CI):
-node scripts/ci-clippy-changed.mjs --base origin/main
+cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
 ```
 
-- Full crate Clippy command (use when paying down baseline debt):
-  ```bash
-  cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
-  ```
+- Full-crate `cargo clippy --all-targets -- -D warnings` is enforced in CI across Linux, macOS, and Windows.
 
 ### Standalone Agent (`agent/`)
 

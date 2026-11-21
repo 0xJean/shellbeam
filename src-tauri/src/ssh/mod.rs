@@ -12,9 +12,7 @@ mod test_fixture;
 
 pub(crate) use commands::run_ssh_command_sync;
 
-use base64;
 use serde::{Deserialize, Serialize};
-use sha2;
 use ssh2::Session;
 use std::time::Instant;
 

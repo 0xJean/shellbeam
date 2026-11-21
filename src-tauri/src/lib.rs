@@ -80,7 +80,7 @@ pub fn run() {
         .manage(InteractiveSessionState::default())
         .manage(VaultState::default())
         .manage(komari_console::KomariConsoleState::default())
-        .manage(SshSessionPool::default())
+        .manage(SshSessionPool)
         .manage(ssh::auth_prompt::AuthPromptState::default())
         .manage(mcp::McpState::default())
         .manage(ai_cli::AiCliState::default())
