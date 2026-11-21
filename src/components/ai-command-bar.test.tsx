@@ -486,7 +486,44 @@ describe('AICommandBar', () => {
     fireEvent.click(screen.getByTestId('ai-new-thread'))
     expect(screen.queryByTestId('ai-note')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('ai-thread-history'))
-    expect(screen.getByRole('dialog', { name: 'Conversations' })).toHaveTextContent('summarize slow sql')
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Conversations' })).toHaveTextContent('summarize slow sql'))
+  })
+
+  it('preserves conversations from two open terminals on the same host without overwriting each other', async () => {
+    const memoryKey = 'v1:root@10.0.0.88'
+    render(
+      <div>
+        <div data-testid="terminal-panel-a">
+          <AICommandBar {...base} memoryKey={memoryKey} memoryVaultId="v1" />
+        </div>
+        <div data-testid="terminal-panel-b">
+          <AICommandBar {...base} memoryKey={memoryKey} memoryVaultId="v1" />
+        </div>
+      </div>,
+    )
+    await act(async () => { await Promise.resolve() })
+
+    const inputs = screen.getAllByRole('textbox', { name: 'Describe what you want to do…' })
+    const submitButtons = screen.getAllByRole('button', { name: 'Generate command' })
+
+    // Terminal A saves its thread first
+    fireEvent.change(inputs[0], { target: { value: 'check postgres locks' } })
+    fireEvent.click(submitButtons[0])
+    act(() => { callbacks.onToken('# No deadlocks found.'); callbacks.onDone() })
+
+    // Terminal B still only knew about its own empty state when mounted, then saves its own thread
+    fireEvent.change(inputs[1], { target: { value: 'check nginx upstream' } })
+    fireEvent.click(submitButtons[1])
+    act(() => { callbacks.onToken('# Upstream healthy.'); callbacks.onDone() })
+
+    // Opening History in Terminal B must show BOTH Terminal A's and Terminal B's threads
+    const historyButtons = screen.getAllByTestId('ai-thread-history')
+    fireEvent.click(historyButtons[1])
+    await waitFor(() => {
+      const dialog = screen.getByRole('dialog', { name: 'Conversations' })
+      expect(dialog).toHaveTextContent('check postgres locks')
+      expect(dialog).toHaveTextContent('check nginx upstream')
+    })
   })
 
   it('collapses 2+ consecutive completed automatic check steps into an expandable step timeline', async () => {
@@ -498,11 +535,11 @@ describe('AICommandBar', () => {
     ask('diagnose server')
     act(() => { callbacks.onToken('df -h'); callbacks.onDone() })
     await waitFor(() => expect(exec).toHaveBeenCalledTimes(1))
-    await act(async () => { await new Promise((r) => setTimeout(r, 10)) })
+    await waitFor(() => expect(streamAICommand).toHaveBeenCalledTimes(2))
 
     act(() => { callbacks.onToken('free -m'); callbacks.onDone() })
     await waitFor(() => expect(exec).toHaveBeenCalledTimes(2))
-    await act(async () => { await new Promise((r) => setTimeout(r, 10)) })
+    await waitFor(() => expect(streamAICommand).toHaveBeenCalledTimes(3))
 
     act(() => { callbacks.onToken('# All healthy.'); callbacks.onDone() })
     expect(screen.getByTestId('ai-step-group')).toHaveTextContent('Ran 2 read-only check steps')

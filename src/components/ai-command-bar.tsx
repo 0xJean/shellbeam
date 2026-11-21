@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { AlertCircle, ArrowUp, FastForward, HelpCircle, History, Lightbulb, Plus, ShieldCheck, Trash2, TriangleAlert, Zap, Server, Check, ChevronDown, Copy, CornerDownLeft, Eraser, Loader2, MessageSquareText, MoreHorizontal, Pencil, Play, Radar, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -7,7 +7,7 @@ import {
   AI_RUN_MODES, MAX_AUTO_STEPS, autoRunAllowed, buildHistory, canRunSilently, currentModelTarget, extractSuggestion, formatExecOutput, isNoteReply, loadRunMode, nextStepTip, noteText, outputLooksFailed, parseQuestion, saveRunMode, splitReply, trimCapturedOutput,
   type AIRunMode, type AITurn, type RunOutcome, type TerminalAiBridge, type TerminalCapture,
 } from '@/lib/ai-conversation'
-import { deleteConversationThread, deriveThreadTitle, loadConversationBook, saveConversationThread, type AIConversationThread } from '@/lib/ai-conversation-store'
+import { deleteConversationThread, loadConversationBook, saveConversationThread, type AIConversationThread } from '@/lib/ai-conversation-store'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
 import { hostFactsText, type HostFact } from '@/lib/ai-host-facts'
 import { suggestPrompts } from '@/lib/ai-suggestions'
@@ -84,7 +84,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const [threads, setThreads] = useState<AIConversationThread[]>([])
   const [activeThreadId, setActiveThreadId] = useState<string>(() => nextId('thread'))
   const threadsRef = useRef(threads)
-  useEffect(() => { threadsRef.current = threads }, [threads])
+  useLayoutEffect(() => { threadsRef.current = threads }, [threads])
   const [turns, setTurns] = useState<AITurn[]>([])
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
   /** Saving waits until the sealed conversation has been read, so an empty panel never overwrites it. */
@@ -104,7 +104,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const runModeKey = memoryKey ?? ''
   const [runMode, setRunMode] = useState<AIRunMode>(() => loadRunMode(runModeKey))
   const runModeRef = useRef(runMode)
-  useEffect(() => { runModeRef.current = runMode }, [runMode])
+  useLayoutEffect(() => { runModeRef.current = runMode }, [runMode])
   const [confirmAuto, setConfirmAuto] = useState(false)
   /** The automatic run of the current request; null when every step waits for a click. */
   const chainRef = useRef<{ steps: number } | null>(null)
@@ -137,7 +137,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const streamBuf = useRef('')
   const captures = useRef(new Map<string, { capture: TerminalCapture; stop: () => void; finish?: () => void }>())
   const turnsRef = useRef(turns)
-  useEffect(() => { turnsRef.current = turns }, [turns])
+  useLayoutEffect(() => { turnsRef.current = turns }, [turns])
   useEffect(() => {
     if (!memoryKey || !memoryVaultId) return
     let active = true
@@ -159,12 +159,11 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   }, [memoryKey, memoryVaultId])
   useEffect(() => {
     if (!memoryLoaded || !memoryKey || !memoryVaultId) return
-    void saveConversationThread(memoryVaultId, memoryKey, activeThreadId, turns, threadsRef.current)
-    setThreads((prev) => {
-      const others = prev.filter((entry) => entry.id !== activeThreadId)
-      if (!turns.length) return others
-      return [{ id: activeThreadId, title: deriveThreadTitle(turns), savedAt: Date.now(), turns }, ...others].slice(0, 20)
+    let active = true
+    void saveConversationThread(memoryVaultId, memoryKey, activeThreadId, turns).then((book) => {
+      if (active && book !== undefined) setThreads(book?.threads ?? [])
     })
+    return () => { active = false }
   }, [memoryLoaded, memoryKey, memoryVaultId, activeThreadId, turns])
 
   useEffect(() => {
@@ -416,7 +415,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     setTurns((prev) => [...prev, { ...base, via: 'terminal', state: 'running' }])
     runInTerminal(id, command, startedAt)
   }, [bridge, onExecuteCommand, runInTerminal, stopChain, updateRun])
-  useEffect(() => { runRef.current = handleRun }, [handleRun])
+  useLayoutEffect(() => { runRef.current = handleRun }, [handleRun])
 
   // Sends the captured output back once it is in the conversation, so the next request carries it.
   useEffect(() => {
@@ -502,7 +501,9 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     const remaining = threadsRef.current.filter((entry) => entry.id !== threadId)
     setThreads(remaining)
     if (memoryKey && memoryVaultId) {
-      void deleteConversationThread(memoryVaultId, memoryKey, threadId, threadsRef.current)
+      void deleteConversationThread(memoryVaultId, memoryKey, threadId).then((book) => {
+        if (book !== undefined) setThreads(book?.threads ?? [])
+      })
     }
     if (threadId === activeThreadId) {
       handleCancel()
@@ -519,6 +520,13 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       setExpandedGroups({})
     }
   }, [activeThreadId, handleCancel, memoryKey, memoryVaultId, stopCaptures])
+
+  const handleRefreshThreads = useCallback(() => {
+    if (!memoryKey || !memoryVaultId) return
+    void loadConversationBook(memoryVaultId, memoryKey).then((book) => {
+      if (book) setThreads(book.threads)
+    })
+  }, [memoryKey, memoryVaultId])
 
   const tip = useMemo(() => (isStreaming ? '' : nextStepTip(turns, { next: copy.nextPrompt, fix: copy.fixPrompt })), [turns, isStreaming, copy])
 
@@ -610,6 +618,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
             onNew={handleStartNewThread}
             onSelect={handleSelectThread}
             onDelete={handleDeleteThread}
+            onOpenHistory={handleRefreshThreads}
           />
         )}
         <AIModelSwitcher settings={settings} reportedModel={reportedModel} onChange={changeSettings} />
@@ -1254,13 +1263,14 @@ function groupDisplayTurns(turns: AITurn[]): DisplayTurnEntry[] {
   return result
 }
 
-function AIThreadMenu({ threads, activeId, hasCurrentTurns, onNew, onSelect, onDelete }: {
+function AIThreadMenu({ threads, activeId, hasCurrentTurns, onNew, onSelect, onDelete, onOpenHistory }: {
   threads: AIConversationThread[]
   activeId: string
   hasCurrentTurns: boolean
   onNew: () => void
   onSelect: (thread: AIConversationThread) => void
   onDelete: (threadId: string) => void
+  onOpenHistory?: () => void
 }) {
   const { locale } = useT()
   const copy = aiAssistantCopy[locale]
@@ -1293,7 +1303,10 @@ function AIThreadMenu({ threads, activeId, hasCurrentTurns, onNew, onSelect, onD
         data-testid="ai-thread-history"
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          if (!open) onOpenHistory?.()
+          setOpen((value) => !value)
+        }}
         title={copy.historyMenu}
         aria-label={copy.historyMenu}
         className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]"
