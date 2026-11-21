@@ -1,4 +1,4 @@
-import { AI_PROVIDERS, type AISettings } from './ai'
+import { AI_PROVIDERS, isCliBackend, recordRecentModel, type AICliBackend, type AIReasoningEffort, type AISettings } from './ai'
 import { classifyCommandRisk } from './command-risk'
 
 /** One entry the model sees: the user's request, its own reply, or output captured after a run. */
@@ -13,6 +13,10 @@ export type AITurn =
       id: string; kind: 'run'; command: string; state: 'running' | 'captured' | 'sent'; output: string; lineCount: number
       /** How the run ended, once captured. */
       outcome?: RunOutcome
+      /** Whether this command ran via silent SSH exec or inside the interactive terminal. */
+      via?: 'exec' | 'terminal'
+      /** Real process exit code reported by silent SSH exec. */
+      exitCode?: number
       /** The AI reply the command came from, and whether ShellBeam ran it without a click. */
       source?: string; auto?: boolean
       startedAt?: number; durationMs?: number
@@ -21,10 +25,24 @@ export type AITurn =
 /** `input`: the command stopped at a question; `timeout`: it never finished; `stopped`: the user stopped waiting. */
 export type RunOutcome = 'ok' | 'failed' | 'input' | 'timeout' | 'stopped'
 
+export interface SilentExecResult {
+  stdout: string
+  stderr: string
+  exitCode: number
+  durationMs: number
+  errorType?: string
+  errorCode?: string
+}
+
 /** Lets the assistant run a command in the session and read back what the terminal printed. */
 export interface TerminalAiBridge {
   /** Sends the command with Enter and starts capturing from the current line. */
   run: (command: string) => TerminalCapture
+  /**
+   * Optional silent non-interactive SSH exec channel for bounded read-only checks.
+   * Returns clean stdout/stderr and real exitCode without interrupting the interactive terminal.
+   */
+  exec?: (command: string, options?: { timeoutMs?: number }) => Promise<SilentExecResult>
   /** Types the command at the prompt without running it. */
   insert: (command: string) => void
   recentOutput: (lines: number) => string
@@ -58,21 +76,45 @@ export function classifyTerminalTail(prompt: string, cursorLine: string, cursorM
   return PROMPT_ENDS.has(end) ? 'busy' : 'unknown'
 }
 
-export const OUTPUT_LINE_LIMIT = 80
-const OUTPUT_CHAR_LIMIT = 6000
+export const OUTPUT_LINE_LIMIT = 200
+export const OUTPUT_HEAD_LINES = 30
+const OUTPUT_CHAR_LIMIT = 16_000
+const OUTPUT_HEAD_CHARS = 3_500
+const OUTPUT_TAIL_CHARS = 12_000
 const HISTORY_CHAR_LIMIT = 60_000
 const HISTORY_ITEM_LIMIT = 40
 
-/** Keeps the tail of long output, where errors and results usually are. */
+/** Keeps both the head (headers/columns) and tail (latest lines/errors) of long output. */
 export function trimCapturedOutput(raw: string): { text: string; lineCount: number } {
   const lines = raw.replace(/\r/g, '').split('\n')
   while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
   const lineCount = lines.length
-  const kept = lines.slice(-OUTPUT_LINE_LIMIT)
-  let text = kept.join('\n')
-  if (text.length > OUTPUT_CHAR_LIMIT) text = text.slice(-OUTPUT_CHAR_LIMIT)
-  if (kept.length < lineCount) text = `… (${lineCount - kept.length} earlier lines omitted)\n${text}`
+  let text: string
+  if (lineCount > OUTPUT_LINE_LIMIT) {
+    const tailCount = OUTPUT_LINE_LIMIT - OUTPUT_HEAD_LINES
+    const omitted = lineCount - OUTPUT_LINE_LIMIT
+    text = [
+      ...lines.slice(0, OUTPUT_HEAD_LINES),
+      `… (${omitted} middle lines omitted; showing first ${OUTPUT_HEAD_LINES} and last ${tailCount} of ${lineCount} lines)`,
+      ...lines.slice(-tailCount),
+    ].join('\n')
+  } else {
+    text = lines.join('\n')
+  }
+  if (text.length > OUTPUT_CHAR_LIMIT) {
+    const omittedChars = text.length - OUTPUT_HEAD_CHARS - OUTPUT_TAIL_CHARS
+    text = `${text.slice(0, OUTPUT_HEAD_CHARS)}\n… (${omittedChars} chars omitted)\n${text.slice(-OUTPUT_TAIL_CHARS)}`
+  }
   return { text, lineCount }
+}
+
+/** Combine stdout and stderr from a silent SSH exec into clean captured output. */
+export function formatExecOutput(result: Pick<SilentExecResult, 'stdout' | 'stderr'>): string {
+  const stdout = result.stdout.replace(/\r/g, '').replace(/\n+$/, '')
+  const stderr = result.stderr.replace(/\r/g, '').replace(/\n+$/, '')
+  if (stdout && stderr) return `${stdout}\n[stderr]\n${stderr}`
+  if (stderr) return `[stderr]\n${stderr}`
+  return stdout
 }
 
 /** A reply made only of `# ` lines is an answer, not something to run. */
@@ -98,7 +140,8 @@ export function nextStepTip(turns: AITurn[], prompts: { next: string; fix: strin
     if (turn.kind === 'run' && turn.state === 'captured' && i === turns.length - 1) {
       const earlier = turns.slice(0, i).reverse().find((item) => item.kind !== 'run')
       if (earlier?.kind === 'ai' && earlier.suggestion) return earlier.suggestion
-      return outputLooksFailed(turn.output) ? prompts.fix : prompts.next
+      const failed = turn.outcome !== undefined ? turn.outcome === 'failed' : outputLooksFailed(turn.output)
+      return failed ? prompts.fix : prompts.next
     }
   }
   return ''
@@ -128,7 +171,8 @@ export function buildHistory(turns: AITurn[]): AIHistoryItem[] {
     if (turn.kind === 'user') items.push({ role: 'user', content: turn.text })
     else if (turn.kind === 'ai') items.push({ role: 'assistant', content: turn.text })
     else if (turn.kind === 'run' && turn.state === 'captured') {
-      items.push({ role: 'output', content: `$ ${turn.command}\n${turn.output || '(no output)'}` })
+      const exitLine = turn.via === 'exec' && turn.exitCode !== undefined ? `\n[exit code: ${turn.exitCode}]` : ''
+      items.push({ role: 'output', content: `$ ${turn.command}${exitLine}\n${turn.output || '(no output)'}` })
     }
   }
   const kept: AIHistoryItem[] = []
@@ -158,31 +202,77 @@ export function historyToMessages(history: AIHistoryItem[]): { role: 'user' | 'a
   return messages
 }
 
-export interface AIModelTarget { backend: 'api' | 'claude-code' | 'codex-cli'; providerName: string; model: string }
+export interface AIModelTarget {
+  backend: 'api' | AICliBackend
+  providerName: string
+  model: string
+  effort: AIReasoningEffort
+  bucketKey: string
+}
+
+export const CLI_BACKEND_LABELS: Record<AICliBackend, string> = {
+  'claude-code': 'Claude Code',
+  'codex-cli': 'Codex CLI',
+  'gemini-cli': 'Gemini CLI',
+  'opencode-cli': 'OpenCode',
+}
 
 /** What the next request will use; an empty model means the CLI's own default. */
 export function currentModelTarget(settings: AISettings): AIModelTarget {
   const backend = settings.backend ?? 'api'
-  if (backend === 'claude-code') return { backend, providerName: 'Claude Code', model: settings.cliProfiles?.['claude-code']?.model?.trim() ?? '' }
-  if (backend === 'codex-cli') return { backend, providerName: 'Codex CLI', model: settings.cliProfiles?.['codex-cli']?.model?.trim() ?? '' }
+  if (isCliBackend(backend)) {
+    const profile = settings.cliProfiles?.[backend]
+    return {
+      backend,
+      providerName: CLI_BACKEND_LABELS[backend],
+      model: profile?.model?.trim() ?? '',
+      effort: profile?.effort ?? settings.reasoningEffort ?? '',
+      bucketKey: backend,
+    }
+  }
   const provider = AI_PROVIDERS.find((entry) => entry.id === settings.provider)
   const model = settings.provider === 'custom' ? settings.customModel : settings.model || provider?.defaultModel || ''
-  return { backend, providerName: provider?.name ?? settings.provider, model }
+  return {
+    backend: 'api',
+    providerName: provider?.name ?? settings.provider,
+    model,
+    effort: settings.reasoningEffort ?? '',
+    bucketKey: `api:${settings.provider}`,
+  }
 }
 
-/** Short model names the CLIs accept; '' keeps the CLI's configured default. */
-export const CLI_MODEL_PRESETS: Record<'claude-code' | 'codex-cli', string[]> = {
+/** Curated model presets each CLI accepts; '' keeps the CLI's configured default. */
+export const CLI_MODEL_PRESETS: Record<AICliBackend, string[]> = {
   'claude-code': ['', 'sonnet', 'opus', 'haiku'],
-  'codex-cli': [''],
+  'codex-cli': ['', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'o4-mini', 'o3'],
+  'gemini-cli': ['', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+  'opencode-cli': [''],
 }
 
 export function withModel(settings: AISettings, model: string): AISettings {
   const backend = settings.backend ?? 'api'
-  if (backend === 'claude-code' || backend === 'codex-cli') {
+  if (isCliBackend(backend)) {
     const profile = settings.cliProfiles?.[backend] ?? { executable: '', model: '' }
-    return { ...settings, cliProfiles: { ...settings.cliProfiles, [backend]: { ...profile, model } } }
+    const next: AISettings = { ...settings, cliProfiles: { ...settings.cliProfiles, [backend]: { ...profile, model } } }
+    return recordRecentModel(next, backend, model)
   }
-  return settings.provider === 'custom' ? { ...settings, customModel: model } : { ...settings, model }
+  const next: AISettings = settings.provider === 'custom'
+    ? { ...settings, customModel: model }
+    : { ...settings, model }
+  return recordRecentModel(next, `api:${settings.provider}`, model)
+}
+
+export function withEffort(settings: AISettings, effort: AIReasoningEffort): AISettings {
+  const backend = settings.backend ?? 'api'
+  if (isCliBackend(backend)) {
+    const profile = settings.cliProfiles?.[backend] ?? { executable: '', model: '' }
+    return {
+      ...settings,
+      reasoningEffort: effort,
+      cliProfiles: { ...settings.cliProfiles, [backend]: { ...profile, effort } },
+    }
+  }
+  return { ...settings, reasoningEffort: effort }
 }
 
 const MEMORY_TURN_LIMIT = 30
@@ -230,6 +320,81 @@ export function autoRunAllowed(mode: AIRunMode, command: string): boolean {
   if (mode === 'confirm') return false
   const risk = classifyCommandRisk(command)
   return mode === 'auto' ? risk !== 'destructive' : risk === 'read-only'
+}
+
+const SHELL_STATE_OR_TTY = new Set([
+  'cd', 'pwd', 'export', 'unset', 'alias', 'unalias', 'source', '.', 'history', 'jobs', 'fg', 'bg',
+  'sudo', 'doas', 'su', 'htop', 'watch', 'less', 'more', 'vi', 'vim', 'nano',
+])
+
+function splitCommandSegments(command: string): string[][] {
+  const segments: string[][] = []
+  let current: string[] = []
+  let word = ''
+  let quote: '"' | "'" | null = null
+  const flushWord = () => { if (word) { current.push(word); word = '' } }
+  const flushSeg = () => { flushWord(); if (current.length) { segments.push(current); current = [] } }
+  const normalized = command.replace(/\\\n/g, ' ')
+  for (let i = 0; i < normalized.length; i += 1) {
+    const ch = normalized[i]
+    if (quote) {
+      if (ch === quote) quote = null
+      else {
+        if (quote === '"' && ch === '\\' && i + 1 < normalized.length) { i += 1; word += normalized[i]; continue }
+        word += ch
+      }
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === '\\' && i + 1 < normalized.length) { i += 1; word += normalized[i]; continue }
+    if (ch === '#' && !word && current.length === 0) { while (i < normalized.length && normalized[i] !== '\n') i += 1; continue }
+    if (ch === ' ' || ch === '\t') { flushWord(); continue }
+    if (ch === '\n' || ch === ';') { flushSeg(); continue }
+    if (ch === '|' || ch === '&') {
+      if (normalized[i + 1] === ch) i += 1
+      flushSeg()
+      continue
+    }
+    word += ch
+  }
+  flushSeg()
+  return segments
+}
+
+function hasShortFlag(args: string[], flag: string): boolean {
+  return args.some((arg) => /^-[^-]/.test(arg) && arg.slice(1).includes(flag))
+}
+
+/**
+ * Whether a command is safe and bounded for silent non-interactive SSH exec:
+ * strictly read-only, independent of interactive shell state (cd/pwd/history),
+ * needs no TTY password prompt (sudo), and terminates on its own (no follow/watch/htop).
+ */
+export function canRunSilently(command: string): boolean {
+  if (classifyCommandRisk(command) !== 'read-only') return false
+  const segments = splitCommandSegments(command)
+  if (segments.length === 0) return false
+  for (const words of segments) {
+    const prog = (words[0] ?? '').split('/').pop() ?? ''
+    const args = words.slice(1)
+    if (!prog || SHELL_STATE_OR_TTY.has(prog)) return false
+    if (prog === 'top' && !hasShortFlag(args, 'b') && !hasShortFlag(args, 'l')) return false
+    if (prog === 'tail' && (hasShortFlag(args, 'f') || hasShortFlag(args, 'F') || args.some((a) => a === '--follow' || a.startsWith('--follow=')))) return false
+    if (prog === 'journalctl' && (hasShortFlag(args, 'f') || args.includes('--follow'))) return false
+    if (prog === 'docker' || prog === 'podman' || prog === 'docker-compose') {
+      const pos = args.filter((a) => !a.startsWith('-'))
+      const sub = prog === 'docker-compose' ? pos[0] : (pos[0] === 'compose' ? pos[1] : pos[0])
+      if (sub === 'events') return false
+      if (sub === 'stats' && !args.includes('--no-stream')) return false
+      if (sub === 'logs' && (hasShortFlag(args, 'f') || args.includes('--follow'))) return false
+    }
+    if (prog === 'kubectl') {
+      const sub = args.find((a) => !a.startsWith('-'))
+      if (sub === 'logs' && (hasShortFlag(args, 'f') || args.includes('--follow'))) return false
+      if (hasShortFlag(args, 'w') || args.includes('--watch')) return false
+    }
+  }
+  return true
 }
 
 /** A reply with `#? ` lines asks the user; `#- ` lines are the choices it offers. */

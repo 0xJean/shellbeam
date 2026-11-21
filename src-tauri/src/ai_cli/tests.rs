@@ -5,6 +5,7 @@ fn request() -> Request {
         backend: Backend::CodexCli,
         executable: String::new(),
         model: String::new(),
+        effort: String::new(),
         prompt: "find large files".into(),
         context: "remote Linux".into(),
         history: Vec::new(),
@@ -159,14 +160,15 @@ fn codex_only_final_message_is_a_candidate() {
 }
 #[test]
 fn generation_arguments_never_include_user_input_and_keep_isolation() {
-    let args = cli_args(Backend::ClaudeCode, "model with spaces");
+    let args = cli_args(Backend::ClaudeCode, "model with spaces", "high");
     assert!(args.windows(2).any(|a| a == ["--tools", ""]));
     assert!(args.contains(&"--safe-mode".into()));
     assert!(!args.contains(&"--bare".into()));
+    assert!(args.windows(2).any(|a| a == ["--effort", "high"]));
     assert!(args
         .windows(2)
         .any(|a| a == ["--model", "model with spaces"]));
-    let args = cli_args(Backend::CodexCli, "");
+    let args = cli_args(Backend::CodexCli, "", "medium");
     for required in [
         "--ignore-user-config",
         "--ignore-rules",
@@ -176,11 +178,75 @@ fn generation_arguments_never_include_user_input_and_keep_isolation() {
         "features.plugins=false",
         "features.shell_snapshot=false",
         "mcp_servers={}",
+        "model_reasoning_effort=\"medium\"",
     ] {
         assert!(args.contains(&required.into()));
     }
     assert!(args.windows(2).any(|a| a == ["--sandbox", "read-only"]));
     assert_eq!(args.last().unwrap(), "-");
+
+    let gemini_args = cli_args(Backend::GeminiCli, "gemini-2.5-pro", "");
+    assert!(gemini_args
+        .windows(2)
+        .any(|a| a == ["--output-format", "stream-json"]));
+    assert!(gemini_args
+        .windows(2)
+        .any(|a| a == ["--approval-mode", "plan"]));
+    assert!(gemini_args
+        .windows(2)
+        .any(|a| a == ["--model", "gemini-2.5-pro"]));
+
+    let opencode_args = cli_args(Backend::OpencodeCli, "openai/gpt-5.4", "low");
+    assert!(opencode_args.windows(2).any(|a| a == ["--format", "json"]));
+    assert!(opencode_args.contains(&"--pure".into()));
+    assert!(opencode_args.windows(2).any(|a| a == ["--variant", "low"]));
+    assert!(opencode_args
+        .windows(2)
+        .any(|a| a == ["--model", "openai/gpt-5.4"]));
+}
+#[test]
+fn gemini_and_opencode_parsers_stream_text_and_reject_tools() {
+    let mut g = Parser::new(Backend::GeminiCli);
+    assert!(g
+        .line(r#"{"type":"init","model":"gemini-2.5-flash"}"#)
+        .unwrap()
+        .is_none());
+    assert_eq!(g.model.take().as_deref(), Some("gemini-2.5-flash"));
+    assert_eq!(
+        g.line(r#"{"type":"message","role":"assistant","content":"df -h"}"#)
+            .unwrap(),
+        Some("df -h".into())
+    );
+    assert!(g
+        .line(r#"{"type":"result","status":"success"}"#)
+        .unwrap()
+        .is_none());
+    assert!(g.done);
+    assert_eq!(
+        Parser::new(Backend::GeminiCli)
+            .line(r#"{"type":"tool_use","name":"shell"}"#)
+            .unwrap_err(),
+        "tool_use"
+    );
+
+    let mut o = Parser::new(Backend::OpencodeCli);
+    assert!(o.line(r#"{"type":"step_start"}"#).unwrap().is_none());
+    assert_eq!(
+        o.line(r#"{"type":"text","part":{"type":"text","text":"free -m"}}"#)
+            .unwrap(),
+        Some("free -m".into())
+    );
+    assert!(o
+        .line(r#"{"type":"step_finish","part":{"reason":"stop"}}"#)
+        .unwrap()
+        .is_none());
+    assert!(o.done);
+    assert_eq!(
+        Parser::new(Backend::OpencodeCli)
+            .line(r#"{"type":"tool_use","part":{"tool":"bash"}}"#)
+            .unwrap_err(),
+        "tool_use"
+    );
 }
 #[cfg(unix)]
 fn fixture() -> (Scratch, PathBuf) {

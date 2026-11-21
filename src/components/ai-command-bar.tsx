@@ -1,13 +1,13 @@
 import { useState, useRef, useCallback, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { AlertCircle, ArrowUp, FastForward, HelpCircle, Lightbulb, ShieldCheck, TriangleAlert, Zap, Server, Check, ChevronDown, Copy, CornerDownLeft, Eraser, Loader2, MessageSquareText, MoreHorizontal, Pencil, Play, Radar, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
+import { AlertCircle, ArrowUp, FastForward, HelpCircle, History, Lightbulb, Plus, ShieldCheck, Trash2, TriangleAlert, Zap, Server, Check, ChevronDown, Copy, CornerDownLeft, Eraser, Loader2, MessageSquareText, MoreHorizontal, Pencil, Play, Radar, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AI_SETTINGS_EVENT, streamAICommand, loadAISettings, saveAISettings, isAIConfigured, createAbortController, type AISettings } from '@/lib/ai'
 import {
-  AI_RUN_MODES, MAX_AUTO_STEPS, autoRunAllowed, buildHistory, currentModelTarget, extractSuggestion, isNoteReply, loadRunMode, nextStepTip, noteText, outputLooksFailed, parseQuestion, saveRunMode, splitReply, trimCapturedOutput,
+  AI_RUN_MODES, MAX_AUTO_STEPS, autoRunAllowed, buildHistory, canRunSilently, currentModelTarget, extractSuggestion, formatExecOutput, isNoteReply, loadRunMode, nextStepTip, noteText, outputLooksFailed, parseQuestion, saveRunMode, splitReply, trimCapturedOutput,
   type AIRunMode, type AITurn, type RunOutcome, type TerminalAiBridge, type TerminalCapture,
 } from '@/lib/ai-conversation'
-import { loadConversation, saveConversation } from '@/lib/ai-conversation-store'
+import { deleteConversationThread, deriveThreadTitle, loadConversationBook, saveConversationThread, type AIConversationThread } from '@/lib/ai-conversation-store'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
 import { hostFactsText, type HostFact } from '@/lib/ai-host-facts'
 import { suggestPrompts } from '@/lib/ai-suggestions'
@@ -16,6 +16,9 @@ import { AiAssistantSheet, type AiSheetMessage } from './mobile/ai-assistant-she
 import { CommandRiskChip } from './mobile/command-risk-chip'
 import { useNarrowViewport } from './mobile/use-narrow-viewport'
 import { AIModelSwitcher } from './ai-model-switcher'
+import { AIMarkdown } from './ai-markdown'
+import { PanelResizeHandle } from './ui/panel-resize-handle'
+import { useResizablePanel } from '@/hooks/use-resizable-panel'
 
 interface AICommandBarProps {
   /** Fallback when no bridge is available: sends raw input to the session. */
@@ -38,13 +41,16 @@ interface AICommandBarProps {
   inventory?: WorkspaceInventory
   /** Present while the host can still get a ShellBeam probe. */
   probe?: { onInstall: () => void }
+  /** Optional text selected in the terminal to attach as quoted context on the next message. */
+  attachedSnippet?: string
+  onClearAttachedSnippet?: () => void
 }
 
 const PROBE_TIP_KEY = 'shellbeam.aiProbeTipDismissed.'
 const readFlag = (key: string) => { try { return localStorage.getItem(key) === '1' } catch { return false } }
 const writeFlag = (key: string) => { try { localStorage.setItem(key, '1') } catch { /* private mode */ } }
 
-const CONTEXT_LINES = 30
+const CONTEXT_LINES = 60
 /** Output counts as finished once the terminal has been quiet this long. */
 const SETTLE_MS = 1200
 /** Without a known prompt there is no way to tell a slow command from a stuck one. */
@@ -56,19 +62,31 @@ const INPUT_IDLE_MS = 1500
 const POLL_MS = 250
 const LIVE_MS = 400
 type AutoStatusKind = 'running' | 'waiting' | 'limit' | 'unsettled' | 'input'
-type RunOptions = { source?: string; auto?: boolean }
+type RunOptions = { source?: string; auto?: boolean; forceTerminal?: boolean }
 let turnSeq = 0
 const nextId = (prefix: string) => `${prefix}-${Date.now()}-${++turnSeq}`
 
-export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, memoryVaultId, hostFacts, inventory, probe }: AICommandBarProps) {
+export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, memoryVaultId, hostFacts, inventory, probe, attachedSnippet, onClearAttachedSnippet }: AICommandBarProps) {
   const { t, locale } = useT()
   const copy = aiAssistantCopy[locale]
   const narrow = useNarrowViewport()
   const asSheet = presentation === 'sheet' || (presentation === 'auto' && narrow)
+  const panelResize = useResizablePanel({
+    storageKey: 'aiAssistant',
+    defaultSize: 400,
+    minSize: 280,
+    maxSize: () => Math.max(480, Math.min(820, Math.floor((typeof window === 'undefined' ? 1440 : window.innerWidth) * 0.65))),
+    edge: 'left',
+  })
   const [settings, setSettings] = useState<AISettings>(loadAISettings)
   const remembers = !!memoryKey && !!memoryVaultId
   const [restoredAt, setRestoredAt] = useState<number | null>(null)
+  const [threads, setThreads] = useState<AIConversationThread[]>([])
+  const [activeThreadId, setActiveThreadId] = useState<string>(() => nextId('thread'))
+  const threadsRef = useRef(threads)
+  useEffect(() => { threadsRef.current = threads }, [threads])
   const [turns, setTurns] = useState<AITurn[]>([])
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
   /** Saving waits until the sealed conversation has been read, so an empty panel never overwrites it. */
   const [memoryLoaded, setMemoryLoaded] = useState(!remembers)
   const [input, setInput] = useState('')
@@ -123,20 +141,31 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   useEffect(() => {
     if (!memoryKey || !memoryVaultId) return
     let active = true
-    void loadConversation(memoryVaultId, memoryKey).then((restored) => {
+    void loadConversationBook(memoryVaultId, memoryKey).then((book) => {
       if (!active) return
       // Anything asked while the conversation was loading comes after what was restored.
-      if (restored?.turns.length) {
-        setTurns((current) => [...restored.turns, ...current])
-        setRestoredAt(restored.savedAt)
+      if (book && book.threads.length > 0) {
+        const currentThread = book.threads.find((entry) => entry.id === book.activeId) ?? book.threads[0]
+        setThreads(book.threads)
+        setActiveThreadId(currentThread.id)
+        if (currentThread.turns.length) {
+          setTurns((current) => [...currentThread.turns, ...current])
+          setRestoredAt(currentThread.savedAt)
+        }
       }
       setMemoryLoaded(true)
     })
     return () => { active = false }
   }, [memoryKey, memoryVaultId])
   useEffect(() => {
-    if (memoryLoaded && memoryKey && memoryVaultId) void saveConversation(memoryVaultId, memoryKey, turns)
-  }, [memoryLoaded, memoryKey, memoryVaultId, turns])
+    if (!memoryLoaded || !memoryKey || !memoryVaultId) return
+    void saveConversationThread(memoryVaultId, memoryKey, activeThreadId, turns, threadsRef.current)
+    setThreads((prev) => {
+      const others = prev.filter((entry) => entry.id !== activeThreadId)
+      if (!turns.length) return others
+      return [{ id: activeThreadId, title: deriveThreadTitle(turns), savedAt: Date.now(), turns }, ...others].slice(0, 20)
+    })
+  }, [memoryLoaded, memoryKey, memoryVaultId, activeThreadId, turns])
 
   useEffect(() => {
     const sync = () => setSettings(loadAISettings())
@@ -210,7 +239,10 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       continueAfterRef.current = null
       setAutoState(chainRef.current ? { status: 'running', steps: 0 } : null)
     }
-    setTurns((prev) => [...prev, { id: nextId('u'), kind: 'user', text: prompt, ...(options.auto ? { auto: true } : {}) }])
+    const snippet = !options.auto ? attachedSnippet?.trim() ?? '' : ''
+    const displayPrompt = snippet ? `${prompt}\n\n\`\`\`\n${snippet.slice(0, 4000)}\n\`\`\`` : prompt
+    setTurns((prev) => [...prev, { id: nextId('u'), kind: 'user', text: displayPrompt, ...(options.auto ? { auto: true } : {}) }])
+    if (snippet) onClearAttachedSnippet?.()
     setInput('')
     setIsStreaming(true)
     setStreamingContent('')
@@ -225,7 +257,10 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       if (abortRef.current !== ac) return
       setStreamingContent(''); setIsStreaming(false)
     }, { once: true })
-    const context = includeContext ? (bridge?.recentOutput(CONTEXT_LINES) ?? getTerminalContext()) : ''
+    const recent = includeContext ? (bridge?.recentOutput(CONTEXT_LINES) ?? getTerminalContext()) : ''
+    const context = snippet
+      ? `${recent ? `${recent}\n\n` : ''}[User-selected terminal excerpt]\n${snippet.slice(0, 4000)}`
+      : recent
     const live = () => !ac.signal.aborted && abortRef.current === ac
 
     await streamAICommand(current, prompt, context, {
@@ -263,7 +298,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         stopChain()
       },
     }, ac.signal, history, includeFacts ? factsText : '', runModeRef.current)
-  }, [includeContext, includeFacts, bridge, getTerminalContext, factsText, t, advanceChain, stopChain])
+  }, [includeContext, includeFacts, bridge, getTerminalContext, factsText, t, advanceChain, stopChain, attachedSnippet, onClearAttachedSnippet])
 
   const handleCancel = useCallback(() => {
     stopChain()
@@ -285,19 +320,10 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     updateRun(id, { output: text, lineCount })
   }, [updateRun])
 
-  const handleRun = useCallback((command: string, options: RunOptions = {}) => {
-    const id = nextId('r')
-    const startedAt = Date.now()
-    const base = { id, kind: 'run' as const, command, output: '', lineCount: 0, startedAt, ...(options.source ? { source: options.source } : {}), ...(options.auto ? { auto: true } : {}) }
-    // A click during an automatic run is the user taking part, so the step budget starts over.
-    if (!options.auto && chainRef.current) chainRef.current.steps = 0
-    if (!bridge) {
-      onExecuteCommand(command + '\n')
-      setTurns((prev) => [...prev, { ...base, state: 'sent' }])
-      return
-    }
+  const runInTerminal = useCallback((id: string, command: string, startedAt: number) => {
+    if (!bridge) return
     const capture = bridge.run(command)
-    setTurns((prev) => [...prev, { ...base, state: 'running' }])
+    updateRun(id, { via: 'terminal', state: 'running' })
     const promptKnown = capture.status?.() === 'busy'
     const limitMs = promptKnown ? PROMPT_LIMIT_MS : CAPTURE_LIMIT_MS
     let lastOutput = Date.now()
@@ -312,7 +338,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       stop()
       const { text, lineCount } = trimCapturedOutput(capture.read())
       const outcome: RunOutcome = how === 'done' ? (outputLooksFailed(text) ? 'failed' : 'ok') : how
-      updateRun(id, { state: 'captured', output: text, lineCount, outcome, durationMs: Date.now() - startedAt })
+      updateRun(id, { state: 'captured', via: 'terminal', output: text, lineCount, outcome, durationMs: Date.now() - startedAt })
       if (!chainRef.current) return
       // Never type the next command into something that is still running or asking a question.
       if (how === 'done') { continueAfterRef.current = id; setAutoState({ status: 'running', steps: chainRef.current.steps }) }
@@ -329,7 +355,67 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       else if (Date.now() - startedAt >= limitMs) finish('timeout')
     }, POLL_MS)
     captures.current.set(id, { capture, stop, finish: () => finish('stopped') })
-  }, [bridge, onExecuteCommand, readCapture, stopChain, updateRun])
+  }, [bridge, readCapture, stopChain, updateRun])
+
+  const handleRun = useCallback((command: string, options: RunOptions = {}) => {
+    const id = nextId('r')
+    const startedAt = Date.now()
+    const base = { id, kind: 'run' as const, command, output: '', lineCount: 0, startedAt, ...(options.source ? { source: options.source } : {}), ...(options.auto ? { auto: true } : {}) }
+    // A click during an automatic run is the user taking part, so the step budget starts over.
+    if (!options.auto && chainRef.current) chainRef.current.steps = 0
+    if (!bridge) {
+      onExecuteCommand(command + '\n')
+      setTurns((prev) => [...prev, { ...base, via: 'terminal', state: 'sent' }])
+      return
+    }
+    const useSilentExec = Boolean(bridge.exec && !options.forceTerminal && canRunSilently(command))
+    if (useSilentExec && bridge.exec) {
+      setTurns((prev) => [...prev, { ...base, via: 'exec', state: 'running' }])
+      let settled = false
+      const noopCapture: TerminalCapture = { read: () => '', onOutput: () => () => {}, dispose: () => {} }
+      const stop = () => { settled = true }
+      const stopWaiting = () => {
+        if (settled) return
+        settled = true
+        captures.current.delete(id)
+        updateRun(id, { state: 'captured', via: 'exec', outcome: 'stopped', durationMs: Date.now() - startedAt })
+        if (chainRef.current) stopChain()
+      }
+      captures.current.set(id, { capture: noopCapture, stop, finish: stopWaiting })
+      void bridge.exec(command).then((result) => {
+        if (settled) return
+        // If silent exec cannot authenticate or resolve the host from Vault, fall back cleanly to the active terminal.
+        if (result.errorType === 'auth' || result.errorType === 'validation') {
+          captures.current.delete(id)
+          runInTerminal(id, command, startedAt)
+          return
+        }
+        settled = true
+        captures.current.delete(id)
+        const { text, lineCount } = trimCapturedOutput(formatExecOutput(result))
+        const outcome: RunOutcome = result.errorCode === 'target_timeout' ? 'timeout' : (result.exitCode === 0 ? 'ok' : 'failed')
+        updateRun(id, {
+          state: 'captured',
+          via: 'exec',
+          exitCode: result.exitCode,
+          output: text,
+          lineCount,
+          outcome,
+          durationMs: result.durationMs ?? (Date.now() - startedAt),
+        })
+        if (!chainRef.current) return
+        if (outcome === 'timeout') stopChain('unsettled')
+        else { continueAfterRef.current = id; setAutoState({ status: 'running', steps: chainRef.current.steps }) }
+      }).catch(() => {
+        if (settled) return
+        captures.current.delete(id)
+        runInTerminal(id, command, startedAt)
+      })
+      return
+    }
+    setTurns((prev) => [...prev, { ...base, via: 'terminal', state: 'running' }])
+    runInTerminal(id, command, startedAt)
+  }, [bridge, onExecuteCommand, runInTerminal, stopChain, updateRun])
   useEffect(() => { runRef.current = handleRun }, [handleRun])
 
   // Sends the captured output back once it is in the conversation, so the next request carries it.
@@ -383,10 +469,56 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     stopCaptures()
     setTurns([])
     setRestoredAt(null)
+    setExpandedGroups({})
     setInput('')
     setReportedModel('')
     setTimeout(() => inputRef.current?.focus(), 50)
   }, [handleCancel, stopCaptures])
+
+  /** Start a fresh thread while preserving earlier conversations in the host's Vault history. */
+  const handleStartNewThread = useCallback(() => {
+    handleCancel()
+    stopCaptures()
+    setActiveThreadId(nextId('thread'))
+    setTurns([])
+    setRestoredAt(null)
+    setExpandedGroups({})
+    setInput('')
+    setReportedModel('')
+    setTimeout(() => inputRef.current?.focus(), 50)
+  }, [handleCancel, stopCaptures])
+
+  const handleSelectThread = useCallback((thread: AIConversationThread) => {
+    handleCancel()
+    stopCaptures()
+    setActiveThreadId(thread.id)
+    setTurns(thread.turns)
+    setRestoredAt(thread.savedAt)
+    setExpandedGroups({})
+    setInput('')
+  }, [handleCancel, stopCaptures])
+
+  const handleDeleteThread = useCallback((threadId: string) => {
+    const remaining = threadsRef.current.filter((entry) => entry.id !== threadId)
+    setThreads(remaining)
+    if (memoryKey && memoryVaultId) {
+      void deleteConversationThread(memoryVaultId, memoryKey, threadId, threadsRef.current)
+    }
+    if (threadId === activeThreadId) {
+      handleCancel()
+      stopCaptures()
+      if (remaining[0]) {
+        setActiveThreadId(remaining[0].id)
+        setTurns(remaining[0].turns)
+        setRestoredAt(remaining[0].savedAt)
+      } else {
+        setActiveThreadId(nextId('thread'))
+        setTurns([])
+        setRestoredAt(null)
+      }
+      setExpandedGroups({})
+    }
+  }, [activeThreadId, handleCancel, memoryKey, memoryVaultId, stopCaptures])
 
   const tip = useMemo(() => (isStreaming ? '' : nextStepTip(turns, { next: copy.nextPrompt, fix: copy.fixPrompt })), [turns, isStreaming, copy])
 
@@ -410,9 +542,12 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const lastPrompt = [...turns].reverse().find((turn): turn is Extract<AITurn, { kind: 'user' }> => turn.kind === 'user' && !turn.auto)?.text ?? ''
   const lastRunBySource = new Map<string, Extract<AITurn, { kind: 'run' }>>()
   for (const turn of turns) if (turn.kind === 'run' && turn.source) lastRunBySource.set(turn.source, turn)
+  const lastTurnFailed = lastTurn?.kind === 'run' && lastTurn.state === 'captured'
+    ? (lastTurn.outcome !== undefined ? lastTurn.outcome === 'failed' : outputLooksFailed(lastTurn.output))
+    : false
   const followUps = !isStreaming && lastTurn?.kind === 'run' && lastTurn.state === 'captured'
     ? [
-        ...(outputLooksFailed(lastTurn.output) ? [{ label: copy.fix, prompt: copy.fixPrompt }] : []),
+        ...(lastTurnFailed ? [{ label: copy.fix, prompt: copy.fixPrompt }] : []),
         { label: copy.explain, prompt: copy.explainPrompt },
         { label: copy.next, prompt: copy.nextPrompt },
       ]
@@ -453,12 +588,30 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const sharedOutputs = history.filter((item) => item.role === 'output').length
 
   return (
-    <aside data-testid="ai-assistant-panel" aria-label={copy.title}
-      className="flex h-full w-[400px] min-w-[300px] max-w-[45%] shrink-0 flex-col border-l border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] text-[var(--workspace-text)]">
-      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-[color:var(--workspace-border-soft)] px-3">
+    <>
+      <PanelResizeHandle
+        testId="ai-panel-resize-handle"
+        label={t('panel.resizeHint')}
+        dragging={panelResize.dragging}
+        {...panelResize.handleProps}
+      />
+      <aside data-testid="ai-assistant-panel" aria-label={copy.title}
+        style={{ width: `${panelResize.size}px` }}
+        className="flex h-full shrink-0 flex-col bg-[var(--workspace-surface-950)] text-[var(--workspace-text)]">
+      <header className="flex h-10 shrink-0 items-center gap-1.5 border-b border-[color:var(--workspace-border-soft)] px-3">
         <Sparkles className={cn('h-4 w-4 shrink-0 text-[var(--workspace-accent-text)]', isStreaming && 'animate-pulse')} aria-hidden="true" />
         <h2 className="shrink-0 text-[13px] font-semibold text-[var(--workspace-text-strong)]">{copy.title}</h2>
         <span className="flex-1" />
+        {remembers && (
+          <AIThreadMenu
+            threads={threads}
+            activeId={activeThreadId}
+            hasCurrentTurns={turns.length > 0}
+            onNew={handleStartNewThread}
+            onSelect={handleSelectThread}
+            onDelete={handleDeleteThread}
+          />
+        )}
         <AIModelSwitcher settings={settings} reportedModel={reportedModel} onChange={changeSettings} />
         <AIPanelMenu items={[
           { key: 'chat', label: copy.clearChat, icon: RotateCcw, disabled: turns.length === 0 && !isStreaming, onSelect: handleNewChat },
@@ -531,38 +684,61 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
             <span className="h-px flex-1 bg-[var(--workspace-border-soft)]" />
           </p>
         )}
-        {turns.map((turn) => {
-          if (turn.kind === 'user' && turn.auto) return (
-            <p key={turn.id} data-testid="ai-auto-continue" className="flex items-center gap-2 text-[11px] text-[var(--workspace-text-subtle)]">
-              <span className="h-px flex-1 bg-[var(--workspace-border-soft)]" />
-              <FastForward className="h-3 w-3" aria-hidden="true" />{copy.autoContinued}
-              <span className="h-px flex-1 bg-[var(--workspace-border-soft)]" />
-            </p>
-          )
-          if (turn.kind === 'user') return (
-            <div key={turn.id} className="flex justify-end">
-              <p className="max-w-[88%] whitespace-pre-wrap break-words rounded-lg rounded-br-sm bg-[var(--workspace-accent-subtle)] px-3 py-2 text-[13px] text-[var(--workspace-text-strong)]">{turn.text}</p>
-            </div>
-          )
-          if (turn.kind === 'error') return (
-            <div key={turn.id} role="alert" className="flex items-start gap-2 rounded-lg border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[var(--workspace-status-bad-text)]">
-              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1 break-words">{turn.text}</span>
-              {lastPrompt && turn.id === lastTurn?.id && !isStreaming && (
-                <button type="button" onClick={() => void submit(lastPrompt)}
-                  className="flex h-6 shrink-0 items-center gap-1 rounded-md border border-current px-2 text-[11px] font-medium hover:opacity-80">
-                  <RotateCcw className="h-3 w-3" aria-hidden="true" />{copy.retry}
-                </button>
-              )}
-            </div>
-          )
-          if (turn.kind === 'run') return (
-            <RunBlock key={turn.id} turn={turn} onRefresh={() => readCapture(turn.id)}
-              onInterrupt={bridge?.interrupt} onStopWaiting={() => captures.current.get(turn.id)?.finish?.()} />
-          )
+        {groupDisplayTurns(turns).map((entry) => {
+          const renderTurn = (turn: AITurn) => {
+            if (turn.kind === 'user' && turn.auto) return (
+              <p key={turn.id} data-testid="ai-auto-continue" className="flex items-center gap-2 text-[11px] text-[var(--workspace-text-subtle)]">
+                <span className="h-px flex-1 bg-[var(--workspace-border-soft)]" />
+                <FastForward className="h-3 w-3" aria-hidden="true" />{copy.autoContinued}
+                <span className="h-px flex-1 bg-[var(--workspace-border-soft)]" />
+              </p>
+            )
+            if (turn.kind === 'user') return (
+              <div key={turn.id} className="flex justify-end">
+                <p className="max-w-[88%] whitespace-pre-wrap break-words rounded-lg rounded-br-sm bg-[var(--workspace-accent-subtle)] px-3 py-2 text-[13px] text-[var(--workspace-text-strong)]">{turn.text}</p>
+              </div>
+            )
+            if (turn.kind === 'error') return (
+              <div key={turn.id} role="alert" className="flex items-start gap-2 rounded-lg border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[var(--workspace-status-bad-text)]">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 flex-1 break-words">{turn.text}</span>
+                {lastPrompt && turn.id === lastTurn?.id && !isStreaming && (
+                  <button type="button" onClick={() => void submit(lastPrompt)}
+                    className="flex h-6 shrink-0 items-center gap-1 rounded-md border border-current px-2 text-[11px] font-medium hover:opacity-80">
+                    <RotateCcw className="h-3 w-3" aria-hidden="true" />{copy.retry}
+                  </button>
+                )}
+              </div>
+            )
+            if (turn.kind === 'run') return (
+              <RunBlock key={turn.id} turn={turn} onRefresh={() => readCapture(turn.id)}
+                onInterrupt={bridge?.interrupt} onStopWaiting={() => captures.current.get(turn.id)?.finish?.()} />
+            )
+            return (
+              <CommandCard key={turn.id} turn={turn} copied={copiedId === turn.id} run={lastRunBySource.get(turn.id)} hasSilentExec={Boolean(bridge?.exec)}
+                onRun={(command) => handleRun(command, { source: turn.id })}
+                onRunInTerminal={(command) => handleRun(command, { source: turn.id, forceTerminal: true })}
+                onInsert={handleInsert} onCopy={(command) => void handleCopy(turn.id, command)} onAnswer={(text) => void submit(text)} />
+            )
+          }
+
+          if (entry.kind === 'single') return renderTurn(entry.turn)
+          const open = Boolean(expandedGroups[entry.id])
           return (
-            <CommandCard key={turn.id} turn={turn} copied={copiedId === turn.id} run={lastRunBySource.get(turn.id)}
-              onRun={(command) => handleRun(command, { source: turn.id })} onInsert={handleInsert} onCopy={(command) => void handleCopy(turn.id, command)} onAnswer={(text) => void submit(text)} />
+            <div key={entry.id} data-testid="ai-step-group" className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]/60 px-2.5 py-2">
+              <button
+                type="button"
+                aria-expanded={open}
+                onClick={() => setExpandedGroups((prev) => ({ ...prev, [entry.id]: !open }))}
+                className="flex w-full items-center gap-2 text-left text-xs text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]"
+              >
+                <Zap className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-accent-text)]" aria-hidden="true" />
+                <span className="min-w-0 flex-1 font-medium">{fillCopy(copy.stepSummary, { count: entry.stepCount })}</span>
+                <span className="shrink-0 text-[11px] text-[var(--workspace-text-subtle)]">{open ? copy.stepHide : copy.stepShow}</span>
+                <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', !open && '-rotate-90')} aria-hidden="true" />
+              </button>
+              {open && <div className="mt-2.5 space-y-2.5 border-t border-[color:var(--workspace-border-soft)] pt-2.5">{entry.turns.map(renderTurn)}</div>}
+            </div>
           )
         })}
 
@@ -591,6 +767,23 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
           <AutoStatus state={autoState} onStop={handleCancel} onKeepGoing={keepGoing} onDismiss={() => stopChain()} />
         )}
         {confirmAuto && <AutoWarning onConfirm={enableAuto} onCancel={() => setConfirmAuto(false)} />}
+        {attachedSnippet?.trim() && (
+          <div data-testid="ai-attached-snippet" className="mb-2 flex items-start gap-2 rounded-md border border-[color:var(--workspace-primary-500)]/40 bg-[var(--workspace-accent-subtle)] px-2.5 py-1.5 text-xs">
+            <SquareTerminal className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--workspace-accent-text)]" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-[var(--workspace-accent-text)]">
+                {fillCopy(copy.selectionAttached, { lines: attachedSnippet.trim().split('\n').length })}
+              </p>
+              <p className="truncate font-mono text-[11px] text-[var(--workspace-text-muted)]">{attachedSnippet.trim().split('\n')[0]}</p>
+            </div>
+            {onClearAttachedSnippet && (
+              <button type="button" onClick={onClearAttachedSnippet} aria-label={copy.removeSelection} title={copy.removeSelection}
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        )}
         <div className="relative rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] focus-within:border-[color:var(--workspace-primary-500)]">
           {tip && !input && (
             <div data-testid="ai-next-tip" aria-hidden="true" className="pointer-events-none absolute inset-x-3 top-2 flex items-start gap-1.5 text-[13px] text-[var(--workspace-text-muted)]">
@@ -634,15 +827,18 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         <p className="mt-1.5 px-1 text-[10.5px] text-[var(--workspace-text-subtle)]">{copy.hint}</p>
       </div>
     </aside>
+    </>
   )
 }
 
-function CommandCard({ turn, copied, run, onRun, onInsert, onCopy, onAnswer }: {
+function CommandCard({ turn, copied, run, hasSilentExec, onRun, onRunInTerminal, onInsert, onCopy, onAnswer }: {
   turn: Extract<AITurn, { kind: 'ai' }>
   copied: boolean
   /** The latest run of this command, by the user or by AI. */
   run?: Extract<AITurn, { kind: 'run' }>
+  hasSilentExec?: boolean
   onRun: (command: string) => void
+  onRunInTerminal: (command: string) => void
   onInsert: (command: string) => void
   onCopy: (command: string) => void
   onAnswer: (text: string) => void
@@ -676,13 +872,14 @@ function CommandCard({ turn, copied, run, onRun, onInsert, onCopy, onAnswer }: {
 
   if (isNoteReply(turn.text)) return (
     <div data-testid="ai-note" className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2.5">
-      <p className="mb-1 text-[11px] font-medium text-[var(--workspace-text-subtle)]">{copy.answer}</p>
-      <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-[var(--workspace-text-strong)]">{noteText(turn.text)}</p>
+      <p className="mb-1.5 text-[11px] font-medium text-[var(--workspace-text-subtle)]">{copy.answer}</p>
+      <AIMarkdown content={noteText(turn.text)} />
       {meta && <p className="mt-1.5 font-mono text-[10.5px] text-[var(--workspace-text-subtle)]">{meta}</p>}
     </div>
   )
 
   const command = draft.trim()
+  const runsSilently = Boolean(hasSilentExec && command && canRunSilently(command))
   const button = 'flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-medium transition-colors'
   return (
     <div className="overflow-hidden rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]">
@@ -690,17 +887,25 @@ function CommandCard({ turn, copied, run, onRun, onInsert, onCopy, onAnswer }: {
       {editing
         ? <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={Math.min(8, draft.split('\n').length + 1)} spellCheck={false} aria-label={copy.edit}
             className="block w-full resize-y bg-[var(--workspace-surface-950)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--workspace-text-strong)] outline-none" />
-        : <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--workspace-text-strong)]">{command}</pre>}
+        : <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--workspace-text-strong)]">{command}</pre>}
       <div className="flex flex-wrap items-center gap-1 border-t border-[color:var(--workspace-border-soft)] px-2 py-1.5">
         {run?.state === 'running' ? (
           <span data-testid="ai-card-run" data-state="running" className={cn(button, 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]')}>
             <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />{copy.runStatus.running}
           </span>
         ) : (
-          <button type="button" disabled={!command} onClick={() => { setEditing(false); onRun(command) }} title={copy.runHint}
-            className={cn(button, run ? 'border border-[color:var(--workspace-border-soft)] text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]' : 'bg-[var(--workspace-primary-500)] text-white hover:opacity-90', 'disabled:opacity-40')}>
-            {run ? <RotateCcw className="h-3 w-3" aria-hidden="true" /> : <Play className="h-3 w-3" aria-hidden="true" />}{run ? copy.runAgain : copy.run}
-          </button>
+          <>
+            <button type="button" disabled={!command} onClick={() => { setEditing(false); onRun(command) }} title={runsSilently ? copy.runSilentHint : copy.runHint}
+              className={cn(button, run ? 'border border-[color:var(--workspace-border-soft)] text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]' : 'bg-[var(--workspace-primary-500)] text-white hover:opacity-90', 'disabled:opacity-40')}>
+              {run ? <RotateCcw className="h-3 w-3" aria-hidden="true" /> : <Play className="h-3 w-3" aria-hidden="true" />}{run ? copy.runAgain : copy.run}
+            </button>
+            {runsSilently && (
+              <button type="button" data-testid="ai-run-in-terminal" disabled={!command} onClick={() => { setEditing(false); onRunInTerminal(command) }} title={copy.runInTerminalHint}
+                className={cn(button, 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]')}>
+                <SquareTerminal className="h-3 w-3" aria-hidden="true" />{copy.runInTerminal}
+              </button>
+            )}
+          </>
         )}
         <button type="button" disabled={!command} onClick={() => onInsert(command)} title={copy.insertHint}
           className={cn(button, 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]')}>
@@ -716,9 +921,11 @@ function CommandCard({ turn, copied, run, onRun, onInsert, onCopy, onAnswer }: {
         <CommandRiskChip command={command} compact />
       </div>
       {run && run.state !== 'running' && (
-        <div data-testid="ai-card-run" data-state={run.outcome ?? run.state} className="flex items-center gap-1.5 border-t border-[color:var(--workspace-border-soft)] px-3 py-1 text-[10.5px] text-[var(--workspace-text-subtle)]">
+        <div data-testid="ai-card-run" data-state={run.outcome ?? run.state} className="flex flex-wrap items-center gap-1.5 border-t border-[color:var(--workspace-border-soft)] px-3 py-1 text-[10.5px] text-[var(--workspace-text-subtle)]">
           {run.outcome && <RunOutcomeChip outcome={run.outcome} />}
           <span>{run.auto ? copy.byAI : copy.byYou}</span>
+          {run.via === 'exec' && <span>· {copy.viaExec}</span>}
+          {run.via === 'exec' && run.exitCode !== undefined && <span className="font-mono">· {fillCopy(copy.exitCode, { code: run.exitCode })}</span>}
           {run.durationMs !== undefined && <span>· {fillCopy(copy.duration, { seconds: (run.durationMs / 1000).toFixed(1) })}</span>}
         </div>
       )}
@@ -757,22 +964,24 @@ function RunBlock({ turn, onRefresh, onInterrupt, onStopWaiting }: {
   const copy = aiAssistantCopy[locale]
   const [expanded, setExpanded] = useState(false)
   const running = turn.state === 'running'
+  const isExec = turn.via === 'exec'
   const small = 'flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]'
   return (
-    <div data-testid="ai-run" data-state={turn.state} data-outcome={turn.outcome}
+    <div data-testid="ai-run" data-state={turn.state} data-outcome={turn.outcome} data-via={turn.via ?? 'terminal'}
       className={cn('rounded-lg border border-dashed px-3 py-2', running ? 'border-[color:var(--workspace-primary-500)]' : 'border-[color:var(--workspace-border-soft)]')}>
       <div className="flex items-center gap-2 text-[11.5px]">
         {running ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--workspace-accent-text)]" aria-hidden="true" />
+          : isExec ? <Zap className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-accent-text)]" aria-hidden="true" />
           : <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-subtle)]" aria-hidden="true" />}
         <code className="min-w-0 flex-1 truncate font-mono text-[var(--workspace-text)]" title={turn.command}>$ {turn.command}</code>
         {turn.outcome && <RunOutcomeChip outcome={turn.outcome} />}
-        {running && onInterrupt && (
+        {running && !isExec && onInterrupt && (
           <button type="button" onClick={onInterrupt} title={copy.interruptHint} className={small}>
             <Square className="h-2.5 w-2.5 fill-current" aria-hidden="true" />{copy.interrupt}
           </button>
         )}
         {running && <button type="button" onClick={onStopWaiting} title={copy.stopWaitingHint} className={small}>{copy.stopWaiting}</button>}
-        {turn.state === 'captured' && (
+        {turn.state === 'captured' && !isExec && (
           <button type="button" onClick={onRefresh} title={copy.refreshHint} aria-label={copy.refresh}
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
             <RefreshCw className="h-3 w-3" />
@@ -781,7 +990,9 @@ function RunBlock({ turn, onRefresh, onInterrupt, onStopWaiting }: {
       </div>
       {running && (
         <>
-          <p className="mt-1.5 text-[11px] text-[var(--workspace-text-muted)]">{turn.auto ? `${copy.byAI} · ` : ''}{copy.running}</p>
+          <p className="mt-1.5 text-[11px] text-[var(--workspace-text-muted)]">
+            {turn.auto ? `${copy.byAI} · ` : ''}{isExec ? `${copy.viaExec} · ` : ''}{copy.running}
+          </p>
           {turn.output && (
             <pre className="mt-1.5 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded-md bg-[var(--workspace-surface-900)] px-2.5 py-2 font-mono text-[11px] leading-relaxed text-[var(--workspace-text)]">{turn.output.split('\n').slice(-8).join('\n')}</pre>
           )}
@@ -792,9 +1003,11 @@ function RunBlock({ turn, onRefresh, onInterrupt, onStopWaiting }: {
         <>
           {turn.outcome === 'input' && <p className="mt-1.5 text-[11px] text-[var(--workspace-status-warn-text)]">{copy.inputHint}</p>}
           <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}
-            className="mt-1.5 flex items-center gap-1 text-[11px] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]">
+            className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]">
             <ChevronDown className={cn('h-3 w-3 transition-transform', !expanded && '-rotate-90')} aria-hidden="true" />
             {turn.lineCount ? fillCopy(copy.output, { count: turn.lineCount }) : copy.noOutput}
+            {isExec && <span className="text-[var(--workspace-text-subtle)]">· {copy.viaExec}</span>}
+            {isExec && turn.exitCode !== undefined && <span className="font-mono text-[var(--workspace-text-subtle)]">· {fillCopy(copy.exitCode, { code: turn.exitCode })}</span>}
             {turn.durationMs !== undefined && <span className="text-[var(--workspace-text-subtle)]">· {fillCopy(copy.duration, { seconds: (turn.durationMs / 1000).toFixed(1) })}</span>}
             <span className="text-[var(--workspace-text-subtle)]">· {copy.sharedNext}</span>
           </button>
@@ -990,6 +1203,134 @@ function ContextChip({ icon: Icon, label, on, onToggle, hint, preview }: {
           <pre className={cn('mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-[var(--workspace-surface-900)] px-2 py-1.5 font-mono text-[10.5px] leading-relaxed text-[var(--workspace-text)]', !on && 'opacity-50')}>
             {content || copy.contextEmpty}
           </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+type DisplayTurnEntry =
+  | { kind: 'single'; turn: AITurn }
+  | { kind: 'step-group'; id: string; stepCount: number; turns: AITurn[] }
+
+/**
+ * Collapses runs of >= 2 completed automatic read-only steps (`ai` + `run(auto, ok)` + `auto-continue`)
+ * that precede a newer turn into a compact expandable timeline, keeping active/failed/manual turns visible.
+ */
+function groupDisplayTurns(turns: AITurn[]): DisplayTurnEntry[] {
+  const result: DisplayTurnEntry[] = []
+  let i = 0
+  while (i < turns.length) {
+    const stepTriples: AITurn[][] = []
+    let cursor = i
+    while (cursor + 2 < turns.length) {
+      const a = turns[cursor]
+      const r = turns[cursor + 1]
+      const u = turns[cursor + 2]
+      const isCompletedAutoStep =
+        a.kind === 'ai'
+        && !isNoteReply(a.text)
+        && r.kind === 'run'
+        && r.source === a.id
+        && r.auto === true
+        && r.state === 'captured'
+        && r.outcome === 'ok'
+        && u.kind === 'user'
+        && u.auto === true
+      if (!isCompletedAutoStep) break
+      stepTriples.push([a, r, u])
+      cursor += 3
+    }
+    // Only collapse when >= 2 consecutive auto steps exist AND at least one subsequent turn follows.
+    if (stepTriples.length >= 2 && cursor < turns.length) {
+      const grouped = stepTriples.flat()
+      result.push({ kind: 'step-group', id: `group-${grouped[0].id}`, stepCount: stepTriples.length, turns: grouped })
+      i = cursor
+    } else {
+      result.push({ kind: 'single', turn: turns[i] })
+      i += 1
+    }
+  }
+  return result
+}
+
+function AIThreadMenu({ threads, activeId, hasCurrentTurns, onNew, onSelect, onDelete }: {
+  threads: AIConversationThread[]
+  activeId: string
+  hasCurrentTurns: boolean
+  onNew: () => void
+  onSelect: (thread: AIConversationThread) => void
+  onDelete: (threadId: string) => void
+}) {
+  const { locale } = useT()
+  const copy = aiAssistantCopy[locale]
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false) }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false) } }
+    window.addEventListener('pointerdown', onPointer)
+    window.addEventListener('keydown', onKey, true)
+    return () => { window.removeEventListener('pointerdown', onPointer); window.removeEventListener('keydown', onKey, true) }
+  }, [open])
+
+  return (
+    <div ref={root} className="relative flex shrink-0 items-center gap-0.5">
+      <button
+        type="button"
+        data-testid="ai-new-thread"
+        disabled={!hasCurrentTurns}
+        onClick={() => { setOpen(false); onNew() }}
+        title={copy.newChat}
+        aria-label={copy.newChat}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)] disabled:opacity-35"
+      >
+        <Plus className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        data-testid="ai-thread-history"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        title={copy.historyMenu}
+        aria-label={copy.historyMenu}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]"
+      >
+        <History className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div role="dialog" aria-label={copy.historyMenu}
+          className="absolute right-0 top-full z-30 mt-1 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1.5 text-xs shadow-[var(--workspace-shadow-overlay)]">
+          <div className="flex items-center justify-between px-2 pb-1 pt-1">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--workspace-text-subtle)]">{copy.historyMenu}</span>
+            <button type="button" onClick={() => { setOpen(false); onNew() }}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-[var(--workspace-accent-text)] hover:bg-[var(--workspace-surface-800)]">
+              <Plus className="h-3 w-3" />{copy.newChat}
+            </button>
+          </div>
+          {threads.length === 0 ? (
+            <p className="px-2 py-3 text-center text-[11px] text-[var(--workspace-text-subtle)]">{copy.historyEmpty}</p>
+          ) : (
+            <div className="max-h-60 space-y-0.5 overflow-y-auto">
+              {threads.map((thread) => {
+                const active = thread.id === activeId
+                return (
+                  <div key={thread.id} className={cn('group flex items-center gap-1 rounded-md px-2 py-1.5 transition-colors', active ? 'bg-[var(--workspace-accent-subtle)]' : 'hover:bg-[var(--workspace-surface-800)]')}>
+                    <button type="button" onClick={() => { setOpen(false); onSelect(thread) }} className="min-w-0 flex-1 text-left">
+                      <span className={cn('block truncate text-xs', active ? 'font-medium text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text)]')}>{thread.title}</span>
+                      <span className="block text-[10px] text-[var(--workspace-text-subtle)]">{new Date(thread.savedAt).toLocaleString(locale)}</span>
+                    </button>
+                    <button type="button" onClick={() => onDelete(thread.id)} aria-label={copy.deleteThread} title={copy.deleteThread}
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--workspace-text-subtle)] opacity-0 transition-opacity hover:text-[var(--workspace-status-bad-text)] group-hover:opacity-100 focus-visible:opacity-100">
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

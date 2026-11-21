@@ -26,7 +26,12 @@ function samePromptLine(a: string, b: string): boolean {
 }
 
 /** Runs AI commands in an xterm session and reads back what the terminal printed after them. */
-export function createTerminalAiBridge(getTerm: () => Terminal | null, send: (data: string) => void, recentOutput: (rows: number) => string): TerminalAiBridge {
+export function createTerminalAiBridge(
+  getTerm: () => Terminal | null,
+  send: (data: string) => void,
+  recentOutput: (rows: number) => string,
+  exec?: TerminalAiBridge['exec'],
+): TerminalAiBridge {
   return {
     run(command) {
       const term = getTerm()
@@ -68,8 +73,19 @@ export function createTerminalAiBridge(getTerm: () => Terminal | null, send: (da
               before = prevStart
             }
           }
+          // Skip wrapped continuation rows of the echoed command line itself.
+          let start = marker.line + 1
+          while (start < end && active.getLine(start)?.isWrapped) start++
+          // Rejoin wrapped terminal rows into logical lines without losing spaces at wrap boundaries.
           const lines: string[] = []
-          for (let i = marker.line + 1; i < end; i++) lines.push(active.getLine(i)?.translateToString(true) ?? '')
+          for (let i = start; i < end; i++) {
+            const line = active.getLine(i)
+            if (!line) continue
+            const nextWrapped = i + 1 < end && Boolean(active.getLine(i + 1)?.isWrapped)
+            const chunk = line.translateToString(!nextWrapped)
+            if (line.isWrapped && lines.length > 0) lines[lines.length - 1] += chunk
+            else lines.push(chunk)
+          }
           return lines.join('\n').replace(/\n+$/, '')
         },
         onOutput(listener) {
@@ -80,6 +96,7 @@ export function createTerminalAiBridge(getTerm: () => Terminal | null, send: (da
         dispose: () => marker?.dispose(),
       }
     },
+    ...(exec ? { exec } : {}),
     insert: (command) => send(toTerminalInput(command)),
     recentOutput,
     clear: () => getTerm()?.clear(),

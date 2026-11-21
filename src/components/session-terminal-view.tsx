@@ -9,6 +9,7 @@ import { recordInteractiveCommand } from '@/lib/interactive-history'
 import type { InteractiveOutputChunk, InteractiveSessionInfo } from '@/lib/interactive-session'
 import type { SessionWorkspaceMode } from '@/lib/workspace'
 import { resizeInteractiveTerminal } from '@/lib/interactive-session'
+import { runSshCommand } from '@/lib/sessions'
 import { DEFAULT_TERMINAL_PREFS, useResolvedTerminalTheme, type TerminalPrefs } from '@/lib/terminal-themes'
 import { cn } from '@/lib/utils'
 import { createTerminalAiBridge } from '@/lib/terminal-ai-bridge'
@@ -22,7 +23,8 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { Eraser, PanelRightClose, PanelRightOpen, ExternalLink, Globe, Palette, X } from 'lucide-react'
+import { Eraser, PanelRightClose, PanelRightOpen, ExternalLink, Globe, Palette, Sparkles, X } from 'lucide-react'
+import { aiAssistantCopy } from '@/lib/locales/ai-assistant'
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { AICommandBar } from './ai-command-bar'
 import { MobileTerminalToolbar } from './mobile-terminal-toolbar'
@@ -98,12 +100,15 @@ export function SessionTerminalView({
   inventory,
   host,
 }: SessionTerminalViewProps) {
-  const { t } = useT()
+  const { t, locale } = useT()
+  const aiCopy = aiAssistantCopy[locale] ?? aiAssistantCopy['zh-CN']
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const onSendRawRef = useRef(onSendRaw)
   const [showAI, setShowAI] = useState(false)
+  const [selectedTerminalText, setSelectedTerminalText] = useState('')
+  const [attachedAiSnippet, setAttachedAiSnippet] = useState('')
   const { readiness: probeReadiness } = useProbeInstallReadiness(host ?? NO_HOST, Boolean(host?.vaultId) && showAI)
   const probeOffered = Boolean(host && probeReadiness && offersProbeInstall(probeReadiness, inventory?.resource.os ?? resource?.os))
   const [probeDialogOpen, setProbeDialogOpen] = useState(false)
@@ -178,13 +183,19 @@ export function SessionTerminalView({
     if (!term) return ''
     const buf = term.buffer.active
     const totalRows = buf.length
-    const startRow = Math.max(0, totalRows - rows)
+    // Scan enough physical rows to assemble up to `rows` logical lines (rejoining wrapped rows).
+    let startRow = Math.max(0, totalRows - rows * 4)
+    while (startRow > 0 && buf.getLine(startRow)?.isWrapped) startRow--
     const lines: string[] = []
     for (let i = startRow; i < totalRows; i++) {
       const line = buf.getLine(i)
-      if (line) lines.push(line.translateToString(true))
+      if (!line) continue
+      const nextWrapped = i + 1 < totalRows && Boolean(buf.getLine(i + 1)?.isWrapped)
+      const chunk = line.translateToString(!nextWrapped)
+      if (line.isWrapped && lines.length > 0) lines[lines.length - 1] += chunk
+      else lines.push(chunk)
     }
-    return lines.join('\n').trim()
+    return lines.slice(-rows).join('\n').trim()
   }, [])
 
   const detectLinks = useCallback((text: string) => {
@@ -205,8 +216,35 @@ export function SessionTerminalView({
     region: network?.countryName ?? network?.resolvedLocationLabel, resource, inventory,
   }), [hostName, session?.username, hostAddress, network?.countryName, network?.resolvedLocationLabel, resource, inventory])
 
-  // The AI panel runs commands here and reads back what the terminal printed after them.
-  const aiBridge = useMemo(() => createTerminalAiBridge(() => termRef.current, (data) => onSendRawRef.current(data), getTerminalContext), [getTerminalContext])
+  const silentExec = useMemo(() => {
+    const execVaultId = host?.vaultId ?? historyVaultId
+    if (!host?.id || !execVaultId || !session) return undefined
+    if (session.host === 'local' || session.hostId === 'local') return undefined
+    const hostPort = host.port || 22
+    const sameEndpoint =
+      (!session.hostId || session.hostId === host.id) &&
+      (!session.host || session.host === host.address) &&
+      (!session.port || session.port === hostPort) &&
+      (!session.username || session.username === (host.username || 'root'))
+    if (!sameEndpoint) return undefined
+    return (command: string, options?: { timeoutMs?: number }) =>
+      runSshCommand({
+        vaultId: execVaultId,
+        hostId: host.id,
+        host: '',
+        port: 22,
+        username: '',
+        authType: host.authType,
+        command,
+        ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      })
+  }, [host, historyVaultId, session])
+
+  // The AI panel runs read-only checks silently via SSH exec when possible, and falls back to the terminal.
+  const aiBridge = useMemo(
+    () => createTerminalAiBridge(() => termRef.current, (data) => onSendRawRef.current(data), getTerminalContext, silentExec),
+    [getTerminalContext, silentExec],
+  )
 
   const scheduleInputUiSync = useCallback(() => {
     if (uiSyncFrameRef.current !== null) return
@@ -278,6 +316,10 @@ export function SessionTerminalView({
 
     termRef.current = term
     fitRef.current = fit
+    const selectionDisposable = term.onSelectionChange?.(() => {
+      const text = term.getSelection?.()?.trim() ?? ''
+      setSelectedTerminalText(text)
+    })
 
     let pendingWriteChars = 0
     let droppedOutput = false
@@ -383,6 +425,7 @@ export function SessionTerminalView({
       }
       searchAddonRef.current = null
       highlighter.dispose()
+      selectionDisposable?.dispose()
       highlighterRef.current = null
       term.dispose()
       termRef.current = null
@@ -654,6 +697,22 @@ export function SessionTerminalView({
               </div>
             </div>
           )}
+          {isConnected && visible && selectedTerminalText && (
+            <button
+              type="button"
+              data-testid="terminal-ask-ai-selection"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                setAttachedAiSnippet(selectedTerminalText)
+                setSelectedTerminalText('')
+                setShowAI(true)
+              }}
+              className="absolute bottom-3 right-3 z-20 inline-flex items-center gap-1.5 rounded-full border border-[color:var(--workspace-primary-500)]/60 bg-[var(--workspace-surface-950)]/95 px-3 py-1.5 text-xs font-medium text-[var(--workspace-accent-text)] shadow-[var(--workspace-shadow-overlay)] backdrop-blur transition-colors hover:bg-[var(--workspace-accent-subtle)]"
+            >
+              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{aiCopy.askWithSelection}</span>
+            </button>
+          )}
           <SessionConnectionLostOverlay sessionId={sessionId} hostName={hostName || hostAddress} backdrop={bg} isDisconnected={isDisconnected} isReconnecting={isReconnecting} onReconnect={onReconnect} />
           </div>
           {isConnected && (
@@ -667,6 +726,8 @@ export function SessionTerminalView({
               hostFacts={hostFacts}
               inventory={inventory}
               probe={probeOffered ? { onInstall: () => setProbeDialogOpen(true) } : undefined}
+              attachedSnippet={attachedAiSnippet}
+              onClearAttachedSnippet={() => setAttachedAiSnippet('')}
               onExecuteCommand={handleExecuteCommand}
               getTerminalContext={getTerminalContext}
               onClose={() => { setShowAI(false); termRef.current?.focus() }}

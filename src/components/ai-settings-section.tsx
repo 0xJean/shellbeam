@@ -1,16 +1,36 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Asterisk, Cloud, Cpu, Eye, EyeOff, Lock, Plug, Route, ShieldCheck, Sparkles, SquareTerminal, type LucideIcon } from 'lucide-react'
+import { Asterisk, Bot, Cloud, Cpu, Eye, EyeOff, Flame, Globe, Layers, Lock, Moon, Plug, Route, ShieldCheck, Sparkles, SquareTerminal, Zap, type LucideIcon } from 'lucide-react'
 import { AICliSettings } from '@/components/ai-cli-settings'
 import { AIModelPicker } from '@/components/ai-model-picker'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { SettingSwitch } from '@/components/settings-controls'
-import { AI_PROVIDERS, AI_SETTINGS_EVENT, loadAISettings, saveAISettings, switchAIProvider, type AIBackend, type AIProviderId, type AISettings } from '@/lib/ai'
+import { AI_PROVIDERS, AI_SETTINGS_EVENT, isCliBackend, loadAISettings, saveAISettings, switchAIProvider, type AIBackend, type AIProviderGroup, type AIProviderId, type AISettings } from '@/lib/ai'
+import { CLI_BACKEND_LABELS } from '@/lib/ai-conversation'
 import { useT } from '@/lib/i18n'
 import { aiMcpSettingsCopy } from '@/lib/locales/ai-mcp-settings-v3'
 import { cn } from '@/lib/utils'
 
-const PROVIDER_ICONS: Record<AIProviderId, LucideIcon> = { openai: Sparkles, anthropic: Asterisk, openrouter: Route, ollama: Cpu, custom: Plug }
-const BACKENDS = ['api', 'claude-code', 'codex-cli'] as const
+const PROVIDER_ICONS: Record<AIProviderId, LucideIcon> = {
+  openai: Sparkles,
+  anthropic: Asterisk,
+  gemini: Globe,
+  openrouter: Route,
+  xai: Zap,
+  groq: Flame,
+  deepseek: Bot,
+  qwen: Cloud,
+  zhipu: Layers,
+  moonshot: Moon,
+  siliconflow: Cpu,
+  volcengine: Flame,
+  minimax: Sparkles,
+  ollama: Cpu,
+  lmstudio: Cpu,
+  custom: Plug,
+}
+const BACKENDS: readonly AIBackend[] = ['api', 'claude-code', 'codex-cli', 'gemini-cli', 'opencode-cli']
+const PROVIDER_GROUPS: readonly AIProviderGroup[] = ['global', 'china', 'local']
 
 const choiceCardClass = (active: boolean) => cn('rounded-lg border text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
   active ? 'border-[color:var(--workspace-primary-500)] bg-[var(--workspace-accent-subtle)]' : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] hover:border-[color:var(--workspace-border-strong)]')
@@ -31,9 +51,10 @@ export function AISettingsSection() {
     return () => window.removeEventListener(AI_SETTINGS_EVENT, sync)
   }, [])
   const providerDef = AI_PROVIDERS.find((p) => p.id === settings.provider)
-  const isOllama = settings.provider === 'ollama'
+  const isLocalNoKey = Boolean(providerDef?.localNoKey)
   const isCustom = settings.provider === 'custom'
   const backend: AIBackend = settings.backend ?? 'api'
+  const providerBaseUrlOverride = settings.providerProfiles?.[settings.provider]?.baseUrl ?? ''
 
   const secret = (label: string, placeholder: string) => <div className="relative">
     <Lock aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--workspace-text-subtle)]" />
@@ -54,43 +75,70 @@ export function AISettingsSection() {
       </header>
       <div>
         <p className="mb-2 text-sm font-medium text-[var(--workspace-text)]">{t('ai.backend')}</p>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
           {BACKENDS.map((item) => {
-            const label = item === 'api' ? t('ai.backendApi') : item === 'claude-code' ? 'Claude Code' : 'Codex CLI'
+            const label = item === 'api' ? t('ai.backendApi') : CLI_BACKEND_LABELS[item]
             const Icon = item === 'api' ? Cloud : SquareTerminal
             return <button key={item} type="button" aria-label={label} aria-pressed={backend === item}
               onClick={() => { setShowKey(false); setSettings((s) => ({ ...s, backend: item })) }}
-              className={cn(choiceCardClass(backend === item), 'flex min-w-0 items-center gap-3 px-3 py-3')}>
+              className={cn(choiceCardClass(backend === item), 'flex min-w-0 items-center gap-2.5 px-3 py-2.5')}>
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]"><Icon aria-hidden className="h-4 w-4" /></span>
-              <span className="min-w-0"><span className="block text-sm font-medium text-[var(--workspace-text-strong)]">{label}</span><span className="block truncate text-xs text-[var(--workspace-text-muted)]">{copy.backendDesc[item]}</span></span>
+              <span className="min-w-0"><span className="block truncate text-sm font-medium text-[var(--workspace-text-strong)]">{label}</span><span className="block truncate text-xs text-[var(--workspace-text-muted)]">{copy.backendDesc[item]}</span></span>
             </button>
           })}
         </div>
       </div>
-      {settings.backend === 'claude-code' || settings.backend === 'codex-cli' ? (
+      {isCliBackend(settings.backend) ? (
         <AICliSettings key={settings.backend} backend={settings.backend}
           profile={settings.cliProfiles?.[settings.backend] ?? { executable: '', model: '' }}
-          onChange={(profile) => setSettings((s) => ({ ...s, cliProfiles: { ...s.cliProfiles, [settings.backend!]: profile } }))} />
+          onChange={(profile) => setSettings((s) => ({ ...s, cliProfiles: { ...s.cliProfiles, [settings.backend as Exclude<AIBackend, 'api'>]: profile } }))} />
       ) : <>
-        <div>
-          <p className="mb-2 text-sm font-medium text-[var(--workspace-text)]">{t('settings.provider')}</p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-            {AI_PROVIDERS.map((p) => {
-              const Icon = PROVIDER_ICONS[p.id]
-              const active = settings.provider === p.id
-              return <button key={p.id} type="button" aria-pressed={active}
-                onClick={() => { setShowKey(false); setSettings((s) => switchAIProvider(s, p.id)) }}
-                className={cn(choiceCardClass(active), 'flex flex-col items-center gap-2 px-2 py-4')}>
-                <span className={cn('flex h-8 w-8 items-center justify-center rounded-md', active ? 'bg-[var(--workspace-surface-800)] text-[var(--workspace-accent-text)]' : 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]')}><Icon aria-hidden className="h-4 w-4" /></span>
-                <span className={cn('text-center text-xs', active ? 'font-semibold text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text)]')}>{p.name}</span>
-              </button>
-            })}
-          </div>
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-[var(--workspace-text)]">{t('settings.provider')}</p>
+          {PROVIDER_GROUPS.map((group) => {
+            const items = AI_PROVIDERS.filter((p) => p.group === group)
+            return (
+              <div key={group} className="space-y-1.5">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--workspace-text-subtle)]">{copy.providerGroups[group]}</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                  {items.map((p) => {
+                    const Icon = PROVIDER_ICONS[p.id]
+                    const active = settings.provider === p.id
+                    return <button key={p.id} type="button" aria-pressed={active}
+                      onClick={() => { setShowKey(false); setSettings((s) => switchAIProvider(s, p.id)) }}
+                      className={cn(choiceCardClass(active), 'flex flex-col items-center gap-1.5 px-2 py-3')}>
+                      <span className={cn('flex h-7 w-7 items-center justify-center rounded-md bg-[var(--workspace-surface-800)]', active ? 'text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text-muted)]')}><Icon aria-hidden className="h-3.5 w-3.5" /></span>
+                      <span className={cn('w-full truncate text-center text-xs', active ? 'font-semibold text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text)]')}>{p.name}</span>
+                    </button>
+                  })}
+                </div>
+              </div>
+            )
+          })}
         </div>
         <div className="grid items-start gap-4 lg:grid-cols-2">
           <div className="sb-card divide-y divide-[color:var(--workspace-border-soft)]">
-            {!isOllama && !isCustom && <SettingRow label={t('settings.apiKey')} hint={copy.apiKeyHint}>
+            {!isLocalNoKey && !isCustom && <SettingRow label={t('settings.apiKey')} hint={copy.apiKeyHint}>
               {secret(t('settings.apiKey'), t('settings.apiKeyPlaceholder', { provider: providerDef?.name ?? '' }))}
+            </SettingRow>}
+            {!isCustom && <SettingRow label={copy.baseUrlOverride} hint={copy.baseUrlOverrideHint}>
+              <Input aria-label={copy.baseUrlOverride} value={providerBaseUrlOverride} className="font-mono text-xs"
+                onChange={(e) => {
+                  const baseUrl = e.target.value
+                  setSettings((s) => ({
+                    ...s,
+                    providerProfiles: {
+                      ...s.providerProfiles,
+                      [s.provider]: {
+                        apiKey: s.apiKey,
+                        model: s.model,
+                        ...(s.providerProfiles?.[s.provider] ?? {}),
+                        baseUrl,
+                      },
+                    },
+                  }))
+                }}
+                placeholder={providerDef?.baseUrl || 'https://api.example.com/v1'} />
             </SettingRow>}
             {isCustom && <SettingRow label={t('settings.baseUrl')} hint={copy.baseUrlHint}>
               <Input aria-label={t('settings.baseUrl')} value={settings.customBaseUrl} className="font-mono"
@@ -101,20 +149,32 @@ export function AISettingsSection() {
               {secret(t('settings.apiKeyOptional'), 'Bearer token (if required)')}
             </SettingRow>}
             <div className="space-y-2 p-4 text-xs text-[var(--workspace-text-muted)]">
-              <p>{isOllama ? t('settings.ollamaHelper') : isCustom ? t('settings.customHelper') : t('settings.apiKeyHelper')}</p>
+              <p>{isLocalNoKey ? t('settings.ollamaHelper') : isCustom ? t('settings.customHelper') : t('settings.apiKeyHelper')}</p>
               <p className="flex items-start gap-2"><ShieldCheck aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--workspace-status-good-text)]" /><span><span className="font-medium text-[var(--workspace-text)]">{copy.privacyTitle} · </span>{copy.privacy}</span></p>
             </div>
           </div>
-          <AIModelPicker key={JSON.stringify([settings.provider, settings.apiKey, settings.customBaseUrl])}
+          <AIModelPicker key={JSON.stringify([settings.provider, settings.apiKey, settings.customBaseUrl, providerBaseUrlOverride])}
             settings={settings} onChange={(model) => setSettings((s) => isCustom ? { ...s, customModel: model } : { ...s, model })} />
         </div>
       </>}
-      <div className="sb-card">
+      <div className="sb-card divide-y divide-[color:var(--workspace-border-soft)]">
         <label className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
           <span className="min-w-0"><span className="block text-sm font-medium text-[var(--workspace-text-strong)]">{copy.redactTitle}</span><span className="mt-0.5 block text-xs text-[var(--workspace-text-muted)]">{copy.redactHint}</span></span>
           <SettingSwitch aria-label={copy.redactTitle} checked={settings.redactSecrets !== false}
             onChange={(e) => { const on = e.target.checked; setSettings((s) => ({ ...s, redactSecrets: on })) }} />
         </label>
+        <div className="space-y-2 p-4">
+          <label htmlFor="ai-custom-rules" className="block text-sm font-medium text-[var(--workspace-text-strong)]">{copy.customRulesTitle}</label>
+          <p className="text-xs text-[var(--workspace-text-muted)]">{copy.customRulesHint}</p>
+          <Textarea
+            id="ai-custom-rules"
+            data-testid="ai-custom-rules"
+            value={settings.customInstructions ?? ''}
+            onChange={(e) => setSettings((s) => ({ ...s, customInstructions: e.target.value }))}
+            placeholder={copy.customRulesPlaceholder}
+            className="min-h-[72px] text-xs"
+          />
+        </div>
       </div>
     </section>
   )

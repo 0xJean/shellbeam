@@ -11,7 +11,22 @@ import { vaultDeleteSecret, vaultGetSecret, vaultSetSecret } from './vault'
  * from storage for good.
  */
 
-export const AI_KEY_PROVIDERS = ['openai', 'anthropic', 'openrouter', 'custom'] as const
+export const AI_KEY_PROVIDERS = [
+  'openai',
+  'anthropic',
+  'gemini',
+  'deepseek',
+  'openrouter',
+  'qwen',
+  'zhipu',
+  'moonshot',
+  'siliconflow',
+  'volcengine',
+  'minimax',
+  'xai',
+  'groq',
+  'custom',
+] as const
 export type AIKeyProvider = typeof AI_KEY_PROVIDERS[number]
 
 /** Set once keys have moved into a Vault; from then on keys are never written to storage again. */

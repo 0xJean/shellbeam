@@ -203,10 +203,89 @@ function sedIsReadOnly(args: string[]) {
   return /^(\d+|\$)(,(\d+|\$))?p$/.test(positionals[0] ?? '')
 }
 
-/** Only `awk '{print $1, $2}'`: awk reaches the shell, files and indirect calls in too many ways to denylist. */
+/**
+ * Pure filtering / aggregation awk scripts with no side effects.
+ * Fail-closed against every awk/gawk execution or file-write vector:
+ * - only `-F` flag is allowed (blocks `-f`, `-e`, `-i`, `-l`, `--include`, `--load`, `--file`, `--source`)
+ * - blocks `@` (gawk indirect function calls & directives), `system`, `getline`, `close`, `extension`
+ * - blocks `>>`, `|&`, and any single `|` outside regex literals and `||` (pipes / coprocesses)
+ * - blocks any `>` inside a `print` / `printf` statement (file redirection), while still allowing `>` / `>=` in comparisons
+ */
+function stripAwkLiterals(program: string): string | null {
+  const normalized = program.replace(/\\\n/g, ' ')
+  let out = ''
+  let prevToken = ''
+  for (let i = 0; i < normalized.length; i += 1) {
+    const ch = normalized[i]
+    if (ch === '#') {
+      while (i < normalized.length && normalized[i] !== '\n') i += 1
+      out += '\n'
+      continue
+    }
+    if (ch === '"') {
+      i += 1
+      while (i < normalized.length && normalized[i] !== '"') {
+        if (normalized[i] === '\\') i += 1
+        i += 1
+      }
+      if (i >= normalized.length) return null
+      out += ' "" '
+      prevToken = '""'
+      continue
+    }
+    // Regex literal `/.../` appears after regex/control/statement tokens, not after values (where `/` is division).
+    const regexAllowed = prevToken === '' || /^[~!(,;{[?:=+\-*%&|^<>]$/.test(prevToken) || /^(return|print|printf|if|while|else|do|in|and|or)$/.test(prevToken)
+    if (ch === '/' && regexAllowed) {
+      i += 1
+      let inClass = false
+      while (i < normalized.length) {
+        if (normalized[i] === '\\') { i += 2; continue }
+        if (normalized[i] === '[') inClass = true
+        else if (normalized[i] === ']') inClass = false
+        else if (normalized[i] === '/' && !inClass) break
+        i += 1
+      }
+      if (i >= normalized.length) return null
+      out += ' // '
+      prevToken = '//'
+      continue
+    }
+    if (/[A-Za-z_]/.test(ch)) {
+      let end = i + 1
+      while (end < normalized.length && /[A-Za-z0-9_]/.test(normalized[end])) end += 1
+      const word = normalized.slice(i, end)
+      out += word
+      prevToken = word
+      i = end - 1
+      continue
+    }
+    if (!/\s/.test(ch)) prevToken = ch
+    out += ch
+  }
+  return out
+}
+
 function awkIsReadOnly(args: string[]) {
   const positionals = parseArgs(args, { value: 'F' })
-  return !!positionals && /^\{\s*print(\s+\$\d+(\s*,\s*\$\d+)*)?\s*\}$/.test(positionals[0] ?? '')
+  if (!positionals || positionals.length === 0) return false
+  const program = positionals[0]
+  if (!program || program.includes('@')) return false
+  const stripped = stripAwkLiterals(program)
+  if (!stripped) return false
+  if (/\b(system|getline|close|extension|BEGINFILE|ENDFILE)\b/.test(stripped)) return false
+  if (stripped.includes('>>') || stripped.includes('|&')) return false
+  // Reject any single `|` (pipe to external command) while allowing logical OR `||`.
+  if (/(^|[^|])\|([^|]|$)/.test(stripped)) return false
+  // Reject any `>` inside a `print` / `printf` clause (file output redirection).
+  for (const match of stripped.matchAll(/\bprintf?\b/g)) {
+    const start = (match.index ?? 0) + match[0].length
+    for (let i = start; i < stripped.length; i += 1) {
+      const ch = stripped[i]
+      if (ch === ';' || ch === '}' || ch === '\n') break
+      if (ch === '>') return false
+    }
+  }
+  return true
 }
 
 const GIT_INSPECT: FlagSpec = { short: 'psbunzSGLl', value: '', digits: true, long: 'oneline graph stat shortstat numstat all decorate no-decorate abbrev-commit first-parent merges no-merges name-only name-status no-color color reverse follow patch cached staged porcelain short branch ignored untracked-files tags long always show-toplevel abbrev-ref git-dir is-inside-work-tree verify others modified deleted exclude-standard heads summary show-signature no-patch pretty format date', longValue: 'since until after before author committer grep max-count skip' }

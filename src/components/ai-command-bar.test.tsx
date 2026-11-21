@@ -380,4 +380,135 @@ describe('AICommandBar', () => {
     expect(streamAICommand).toHaveBeenCalledTimes(2)
     expect(vi.mocked(streamAICommand).mock.calls[1][1]).toBe('disk usage')
   })
+
+  it('runs bounded read-only checks silently via SSH exec with real exit codes and no false error on grep output', async () => {
+    const exec = vi.fn(async () => ({ stdout: '2026-11-21 error connection reset\n', stderr: '', exitCode: 0, durationMs: 42 }))
+    const bridge = { ...fakeBridge('terminal-output'), exec }
+    render(<AICommandBar {...base} bridge={bridge} />)
+    ask('check app errors'); act(() => { callbacks.onToken('grep error /var/log/app.log'); callbacks.onDone() })
+
+    expect(screen.getByTestId('ai-run-in-terminal')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+
+    await waitFor(() => expect(screen.getByTestId('ai-run')).toHaveAttribute('data-state', 'captured'))
+    expect(exec).toHaveBeenCalledExactlyOnceWith('grep error /var/log/app.log')
+    expect(bridge.run).not.toHaveBeenCalled()
+    expect(screen.getByTestId('ai-run')).toHaveAttribute('data-via', 'exec')
+    expect(screen.getByTestId('ai-run')).toHaveAttribute('data-outcome', 'ok')
+    expect(screen.getByTestId('ai-run')).toHaveTextContent('exit 0')
+    expect(screen.queryByRole('button', { name: 'Fix the error' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Explain the output' }))
+    expect(lastHistory).toContainEqual({
+      role: 'output',
+      content: '$ grep error /var/log/app.log\n[exit code: 0]\n2026-11-21 error connection reset',
+    })
+  })
+
+  it('auto-continues read-only checks silently, supports explicit Run in terminal, and falls back on auth errors', async () => {
+    localStorage.setItem('shellbeam.aiRunMode.k', 'read-only')
+    const exec = vi.fn()
+      .mockResolvedValueOnce({ stdout: 'COMMIT count=12 max_ms=820.5\n', stderr: '', exitCode: 0, durationMs: 35 })
+      .mockResolvedValueOnce({ stdout: '', stderr: 'vault locked', exitCode: -1, durationMs: 5, errorType: 'auth' })
+    const bridge = { ...fakeBridge('from-terminal'), exec }
+    render(<AICommandBar {...base} bridge={bridge} memoryKey="k" />)
+
+    ask('check slow sql')
+    act(() => {
+      callbacks.onToken(`docker logs --since 24h pg 2>&1 | awk '{c++} END{print c}'`)
+      callbacks.onDone()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('ai-auto-continue')).toBeInTheDocument())
+    expect(exec).toHaveBeenCalledTimes(1)
+    expect(bridge.run).not.toHaveBeenCalled()
+    expect(lastHistory).toContainEqual({
+      role: 'output',
+      content: "$ docker logs --since 24h pg 2>&1 | awk '{c++} END{print c}'\n[exit code: 0]\nCOMMIT count=12 max_ms=820.5",
+    })
+
+    // Second read-only step returns auth error from exec -> falls back seamlessly to interactive terminal
+    act(() => { callbacks.onToken('df -h'); callbacks.onDone() })
+    await waitFor(() => expect(bridge.run).toHaveBeenCalledWith('df -h'))
+
+    // Explicit Terminal button on the first card forces interactive terminal execution
+    fireEvent.click(screen.getAllByTestId('ai-run-in-terminal')[0])
+    expect(bridge.run).toHaveBeenLastCalledWith(`docker logs --since 24h pg 2>&1 | awk '{c++} END{print c}'`)
+  })
+
+  it('routes sudo and state-changing commands to the interactive terminal even when exec is available', () => {
+    const exec = vi.fn()
+    const bridge = { ...fakeBridge('ok'), exec }
+    render(<AICommandBar {...base} bridge={bridge} />)
+    ask('test nginx'); act(() => { callbacks.onToken('sudo nginx -t'); callbacks.onDone() })
+    expect(screen.queryByTestId('ai-run-in-terminal')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+    expect(exec).not.toHaveBeenCalled()
+    expect(bridge.run).toHaveBeenCalledExactlyOnceWith('sudo nginx -t')
+  })
+
+  it('renders Markdown tables in note replies, lets Codex pick preset models & reasoning effort, and supports multi-thread history & attached excerpts', async () => {
+    const onClearAttachedSnippet = vi.fn()
+    render(
+      <AICommandBar
+        {...base}
+        memoryKey="v1:root@10.0.0.50"
+        memoryVaultId="v1"
+        attachedSnippet={'LOG: duration: 920 ms\nSELECT * FROM orders'}
+        onClearAttachedSnippet={onClearAttachedSnippet}
+      />,
+    )
+    await act(async () => { await Promise.resolve() })
+
+    // Codex CLI switcher now exposes preset models, Gemini CLI / OpenCode backends, and reasoning effort
+    fireEvent.click(screen.getByTestId('ai-model-switcher'))
+    expect(screen.getByRole('menuitemradio', { name: 'Gemini CLI' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitemradio', { name: 'OpenCode' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'gpt-5.4' }))
+    fireEvent.click(screen.getByRole('button', { name: 'High' }))
+    const saved = JSON.parse(localStorage.getItem('shellbeam.aiSettings')!) as AISettings
+    expect(saved.cliProfiles?.['codex-cli']?.model).toBe('gpt-5.4')
+    expect(saved.cliProfiles?.['codex-cli']?.effort).toBe('high')
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    // Attached terminal selection appears as a chip and is sent with the request
+    expect(screen.getByTestId('ai-attached-snippet')).toHaveTextContent('Selected 2 lines')
+    ask('summarize slow sql')
+    expect(onClearAttachedSnippet).toHaveBeenCalledOnce()
+    act(() => {
+      callbacks.onToken('# ## Slow SQL Summary\n# | Type | Count |\n# | --- | --- |\n# | COMMIT | 12 |')
+      callbacks.onDone()
+    })
+    expect(screen.getByTestId('ai-note').querySelector('table')).not.toBeNull()
+    expect(screen.getByTestId('ai-note')).toHaveTextContent('COMMIT')
+
+    // Start a new thread while preserving the first conversation in History
+    fireEvent.click(screen.getByTestId('ai-new-thread'))
+    expect(screen.queryByTestId('ai-note')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('ai-thread-history'))
+    expect(screen.getByRole('dialog', { name: 'Conversations' })).toHaveTextContent('summarize slow sql')
+  })
+
+  it('collapses 2+ consecutive completed automatic check steps into an expandable step timeline', async () => {
+    localStorage.setItem('shellbeam.aiRunMode.k-steps', 'read-only')
+    const exec = vi.fn(async () => ({ stdout: 'ok\n', stderr: '', exitCode: 0, durationMs: 20 }))
+    const bridge = { ...fakeBridge('ok'), exec }
+    render(<AICommandBar {...base} bridge={bridge} memoryKey="k-steps" />)
+
+    ask('diagnose server')
+    act(() => { callbacks.onToken('df -h'); callbacks.onDone() })
+    await waitFor(() => expect(exec).toHaveBeenCalledTimes(1))
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)) })
+
+    act(() => { callbacks.onToken('free -m'); callbacks.onDone() })
+    await waitFor(() => expect(exec).toHaveBeenCalledTimes(2))
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)) })
+
+    act(() => { callbacks.onToken('# All healthy.'); callbacks.onDone() })
+    expect(screen.getByTestId('ai-step-group')).toHaveTextContent('Ran 2 read-only check steps')
+    expect(screen.getByTestId('ai-note')).toHaveTextContent('All healthy.')
+    fireEvent.click(screen.getByRole('button', { name: /Ran 2 read-only check steps/ }))
+    expect(screen.getByText('df -h')).toBeInTheDocument()
+    expect(screen.getByText('free -m')).toBeInTheDocument()
+  })
 })
