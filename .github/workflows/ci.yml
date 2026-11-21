@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -41,6 +43,13 @@ jobs:
       - name: Packaged acceptance path rules
         run: node --test scripts/ci-acceptance-scope.test.mjs
 
+      - name: CI lint and clippy gate guards
+        run: node --test scripts/ci-quality-gates.test.mjs
+
+      - name: Lint changed TypeScript/React files
+        if: github.event_name == 'pull_request'
+        run: node scripts/ci-lint-changed.mjs --base "${{ github.event.pull_request.base.sha }}"
+
       - name: Verify bundled monitoring extension and policy runtime
         run: |
           node scripts/package-monitoring-extension.mjs --check
@@ -58,11 +67,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           # npm ci uses the lockfile directly; npm cache restore can stall on egress limits.
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
@@ -136,6 +149,9 @@ jobs:
           retention-days: 7
       - name: Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Clippy on changed Rust files
+        if: github.event_name == 'pull_request'
+        run: node scripts/ci-clippy-changed.mjs --base "${{ github.event.pull_request.base.sha }}"
 
   monitoring-extension:
     name: Monitoring extension server contract
