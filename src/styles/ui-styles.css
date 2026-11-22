@@ -102,6 +102,15 @@ html.dark[data-dark-style="sharp"], html:not(.dark)[data-light-style="sharp"] {
   transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 .sb-card:hover { box-shadow: var(--sb-card-shadow-hover); }
+/* Cards that own a position:fixed descendant (e.g. HostOpsDrawer) must not apply
+   backdrop-filter directly, or browsers make the card a containing block for
+   fixed children and clip the drawer inside the card bounds. */
+.sb-card.sb-host-card,
+.sb-card.sb-host-list,
+.sb-card:has([data-testid="host-ops-details"]) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
 
 /* Host cards: a status edge for hosts that need attention, brand-tinted OS badges. */
 .sb-host-card[data-host-health="stale"] { box-shadow: inset 3px 0 0 var(--workspace-status-warn), var(--sb-card-shadow); }

@@ -30,6 +30,9 @@ describe('appearance preferences', () => {
     localStorage.setItem('shellbeam.appearance', JSON.stringify({ darkPalette: 'dracula', lightPalette: 'paper', darkAccent: null, lightAccent: null }))
     expect(loadAppearance()).toEqual({ darkPalette: 'rose-pine', lightPalette: 'graphite-light', darkAccent: null, lightAccent: null, uiStyle: 'auto' })
 
+    localStorage.setItem('shellbeam.appearance', JSON.stringify({ darkPalette: 'midnight', lightPalette: 'lavender', darkAccent: null, lightAccent: null }))
+    expect(loadAppearance()).toEqual({ darkPalette: 'catppuccin', lightPalette: 'catppuccin-light', darkAccent: null, lightAccent: null, uiStyle: 'auto' })
+
     localStorage.setItem('shellbeam.appearance', JSON.stringify({ darkPalette: 'paper', lightPalette: 'nord', darkAccent: 'neon', lightAccent: 'teal' }))
     expect(loadAppearance()).toEqual({ darkPalette: 'obsidian', lightPalette: 'obsidian-light', darkAccent: null, lightAccent: 'teal', uiStyle: 'auto' })
   })

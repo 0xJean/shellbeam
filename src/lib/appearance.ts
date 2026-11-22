@@ -170,7 +170,7 @@ const STORAGE_KEY = 'shellbeam.appearance'
 /** Seamless migration map for users upgrading from v3 palette identifiers. */
 const LEGACY_DARK_PALETTES: Record<string, DarkPalette> = {
   'aqua-dark': 'obsidian',
-  midnight: 'tokyo-night',
+  midnight: 'catppuccin',
   dracula: 'rose-pine',
   ocean: 'tokyo-night',
   'mist-dark': 'emerald-ops',
