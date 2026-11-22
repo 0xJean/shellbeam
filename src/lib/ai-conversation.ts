@@ -243,9 +243,9 @@ export function currentModelTarget(settings: AISettings): AIModelTarget {
 
 /** Curated model presets each CLI accepts; '' keeps the CLI's configured default. */
 export const CLI_MODEL_PRESETS: Record<AICliBackend, string[]> = {
-  'claude-code': ['', 'sonnet', 'opus', 'haiku'],
-  'codex-cli': ['', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'o4-mini', 'o3'],
-  'gemini-cli': ['', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+  'claude-code': ['', 'sonnet', 'opus', 'haiku', 'fable', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-2'],
+  'codex-cli': ['', 'gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-5.5'],
+  'gemini-cli': ['', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.5-flash-lite'],
   'opencode-cli': [''],
 }
 

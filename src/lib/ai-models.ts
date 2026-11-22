@@ -90,11 +90,25 @@ export function parseModels(provider: AIProviderId, payload: unknown): AIModel[]
   return [...models.values()].sort((a, b) => a.id.localeCompare(b.id))
 }
 
+/** Whether `discoverModels` has a valid endpoint and required credentials (does not require a pre-selected model). */
+export function canDiscoverModels(settings: AISettings): boolean {
+  try {
+    aiBaseUrl(settings)
+  } catch {
+    return false
+  }
+  const localNoKey = settings.provider === 'ollama' || settings.provider === 'lmstudio'
+  if (!localNoKey && settings.provider !== 'custom' && settings.provider !== 'openrouter' && !settings.apiKey.trim()) {
+    return false
+  }
+  return true
+}
+
 export async function discoverModels(settings: AISettings, signal?: AbortSignal): Promise<AIModelCatalog> {
   const base = aiBaseUrl(settings)
   const key = settings.apiKey.trim()
   const localNoKey = settings.provider === 'ollama' || settings.provider === 'lmstudio'
-  if (!localNoKey && settings.provider !== 'custom' && settings.provider !== 'openrouter' && !key) throw new ModelDiscoveryError('credentials')
+  if (!canDiscoverModels(settings)) throw new ModelDiscoveryError('credentials')
   const controller = new AbortController()
   const abort = () => controller.abort()
   signal?.addEventListener('abort', abort, { once: true })

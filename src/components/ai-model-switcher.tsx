@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, Cpu, RefreshCw, Search } from 'lucide-react'
 import { AI_CLI_BACKENDS, AI_PROVIDERS, isAIConfigured, switchAIProvider, type AIProviderId, type AIReasoningEffort, type AISettings } from '@/lib/ai'
 import { CLI_BACKEND_LABELS, CLI_MODEL_PRESETS, currentModelTarget, withEffort, withModel } from '@/lib/ai-conversation'
-import { discoverModels, loadModelCache, modelCacheKey, saveModelCache, type AIModel } from '@/lib/ai-models'
+import { MODEL_CACHE_TTL, canDiscoverModels, discoverModels, loadModelCache, modelCacheKey, saveModelCache, type AIModel } from '@/lib/ai-models'
 import { useT } from '@/lib/i18n'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
 import { cn } from '@/lib/utils'
@@ -49,7 +49,7 @@ export function AIModelSwitcher({ settings, reportedModel, onChange, disabled }:
   const supportsEffort = target.backend === 'claude-code'
     || target.backend === 'codex-cli'
     || target.backend === 'opencode-cli'
-    || (target.backend === 'api' && settings.provider === 'openai' && /^(o\d|gpt-5)/i.test(target.model))
+    || (target.backend === 'api' && settings.provider === 'openai' && /^(o\d|gpt-[5-9])/i.test(target.model))
 
   useEffect(() => {
     if (!open) return
@@ -60,23 +60,48 @@ export function AIModelSwitcher({ settings, reportedModel, onChange, disabled }:
     return () => { window.removeEventListener('pointerdown', onPointer); window.removeEventListener('keydown', onKey, true) }
   }, [open])
 
-  // Load cached discovered models for the active API provider whenever the popover opens or provider changes.
+  // Load cached discovered models for the active API provider whenever the popover opens or provider changes,
+  // and silently refresh from the provider's /models endpoint when the cache is absent or expired.
   useEffect(() => {
     if (!open || target.backend !== 'api') {
       setDiscovered(null)
       setRefreshError('')
+      setRefreshing(false)
       return
     }
     let active = true
+    const ac = new AbortController()
+    refreshAbort.current?.abort()
+    refreshAbort.current = ac
     setRefreshError('')
-    void modelCacheKey(settings).then((key) => {
+    setRefreshing(false)
+    void modelCacheKey(settings).then(async (key) => {
       if (!active) return
       const cached = loadModelCache(key)
       setDiscovered(cached?.models ?? null)
+      const isFresh = Boolean(cached && Date.now() - cached.fetchedAt < MODEL_CACHE_TTL)
+      if (isFresh || !canDiscoverModels(settings)) {
+        if (refreshAbort.current === ac) setRefreshing(false)
+        return
+      }
+      setRefreshing(true)
+      try {
+        const catalog = await discoverModels(settings, ac.signal)
+        if (!active || ac.signal.aborted) return
+        setDiscovered(catalog.models)
+        saveModelCache(key, catalog)
+      } catch {
+        // Silent background refresh fallback: keep showing curated presets without alarming offline users.
+      } finally {
+        if (active && refreshAbort.current === ac) setRefreshing(false)
+      }
     }).catch(() => {
-      if (active) setDiscovered(null)
+      if (active) {
+        setDiscovered(null)
+        if (refreshAbort.current === ac) setRefreshing(false)
+      }
     })
-    return () => { active = false; refreshAbort.current?.abort() }
+    return () => { active = false; ac.abort() }
   }, [open, target.backend, settings])
 
   const handleRefreshModels = async () => {
@@ -97,7 +122,7 @@ export function AIModelSwitcher({ settings, reportedModel, onChange, disabled }:
     } catch {
       if (!ac.signal.aborted) setRefreshError('Failed to fetch models')
     } finally {
-      if (!ac.signal.aborted) setRefreshing(false)
+      if (refreshAbort.current === ac) setRefreshing(false)
     }
   }
 

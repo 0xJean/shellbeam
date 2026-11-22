@@ -60,7 +60,7 @@ describe('ai conversation', () => {
   })
 
   it('reports and changes the model for API and CLI backends', () => {
-    expect(currentModelTarget(DEFAULT_AI_SETTINGS)).toEqual({ backend: 'api', providerName: 'OpenAI', model: 'gpt-4o-mini', effort: '', bucketKey: 'api:openai' })
+    expect(currentModelTarget(DEFAULT_AI_SETTINGS)).toEqual({ backend: 'api', providerName: 'OpenAI', model: 'gpt-6.2-sol', effort: '', bucketKey: 'api:openai' })
     const claude = withModel({ ...DEFAULT_AI_SETTINGS, backend: 'claude-code' }, 'opus')
     expect(currentModelTarget(claude)).toEqual({ backend: 'claude-code', providerName: 'Claude Code', model: 'opus', effort: '', bucketKey: 'claude-code' })
     expect(claude.recentModels?.['claude-code']).toEqual(['opus'])
