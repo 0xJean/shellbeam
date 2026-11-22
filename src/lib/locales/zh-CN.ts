@@ -788,6 +788,7 @@ const zhCN: Record<string, string> = {
   'settings.uiStyle.auto': '跟随主题',
   'settings.uiStyle.outline': '描边',
   'settings.uiStyle.elevated': '浮起',
+  'settings.uiStyle.glass': '毛玻璃',
   'settings.uiStyle.sharp': '方正',
   'settings.accent.violet': '紫',
   'settings.accent.blue': '蓝',

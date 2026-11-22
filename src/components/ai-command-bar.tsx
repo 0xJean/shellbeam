@@ -694,7 +694,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
       />
       <aside data-testid="ai-assistant-panel" aria-label={copy.title}
         style={{ width: `${panelResize.size}px` }}
-        className="flex h-full shrink-0 flex-col bg-[var(--workspace-surface-950)] text-[var(--workspace-text)]">
+        className="flex h-full shrink-0 flex-col bg-[var(--workspace-bg-950)] text-[var(--workspace-text)]">
       <header className="flex h-10 shrink-0 items-center gap-1.5 border-b border-[color:var(--workspace-border-soft)] px-3">
         <Sparkles className={cn('h-4 w-4 shrink-0 text-[var(--workspace-accent-text)]', isStreaming && 'animate-pulse')} aria-hidden="true" />
         <h2 className="shrink-0 text-[13px] font-semibold text-[var(--workspace-text-strong)]">{copy.title}</h2>

@@ -1,5 +1,5 @@
 /* Interface styles (data-dark-style / data-light-style on <html>, see src/lib/appearance.ts).
-   A style changes geometry and depth only — corner radii, borders and small shadows —
+   A style changes geometry and depth only — corner radii, borders, glass blur and shadows —
    so it combines freely with any colour palette. Tailwind's radius and small shadow
    utilities read these variables (tailwind.config.ts). Shadows use `0 0 #0000` rather than
    `none` because they are composed into comma-separated box-shadow lists. The existing
@@ -10,45 +10,80 @@
   --sb-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --sb-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --sb-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --sb-card-bg: var(--workspace-surface-900);
+  --sb-card-backdrop: none;
   --sb-card-border: 1px solid var(--workspace-border-soft);
   --sb-card-shadow: 0 0 #0000;
   --sb-card-shadow-hover: var(--workspace-shadow-card-hover);
 }
 
-/* 描边 Outline — crisp 1px edges, no ambient shadow (default for dark). */
+/* 描边 Outline — crisp translucent hairlines with a subtle specular top edge in dark mode (default for dark). */
 html.dark[data-dark-style="outline"], html:not(.dark)[data-light-style="outline"] {
   --sb-r-sm: 5px; --sb-r: 6px; --sb-r-md: 7px; --sb-r-lg: 9px; --sb-r-xl: 12px; --sb-r-2xl: 16px;
   --sb-shadow-sm: 0 0 #0000; --sb-shadow: 0 0 #0000;
+  --sb-card-bg: var(--workspace-surface-900);
+  --sb-card-backdrop: none;
   --sb-card-border: 1px solid var(--workspace-border-soft);
   --sb-card-shadow: 0 0 #0000;
   --sb-card-shadow-hover: 0 0 0 1px var(--workspace-border-strong);
   --workspace-shadow-card: 0 0 #0000;
   --workspace-shadow-card-hover: 0 0 0 1px var(--workspace-border-strong);
 }
+html.dark[data-dark-style="outline"] {
+  --sb-card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045);
+  --sb-card-shadow-hover: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 0 0 1px var(--workspace-border-strong);
+  --workspace-shadow-card: var(--sb-card-shadow);
+  --workspace-shadow-card-hover: var(--sb-card-shadow-hover);
+}
 
 /* 浮起 Elevated — soft layered shadows, quieter edges, rounder corners (default for light). */
 html.dark[data-dark-style="elevated"], html:not(.dark)[data-light-style="elevated"] {
   --sb-r-sm: 6px; --sb-r: 7px; --sb-r-md: 8px; --sb-r-lg: 11px; --sb-r-xl: 14px; --sb-r-2xl: 20px;
-  --sb-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
-  --sb-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 2px 8px -2px rgb(0 0 0 / 0.08);
-  --sb-shadow-md: 0 2px 4px rgb(0 0 0 / 0.05), 0 8px 20px -6px rgb(0 0 0 / 0.14);
-  --sb-card-border: 1px solid color-mix(in srgb, var(--workspace-border-soft) 55%, transparent);
-  --sb-card-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 14px -4px rgb(0 0 0 / 0.1);
-  --sb-card-shadow-hover: 0 2px 4px rgb(0 0 0 / 0.05), 0 12px 28px -8px rgb(0 0 0 / 0.18);
+  --sb-shadow-sm: 0 1px 2px rgb(15 23 42 / 0.05);
+  --sb-shadow: 0 1px 2px rgb(15 23 42 / 0.05), 0 3px 10px -3px rgb(15 23 42 / 0.09);
+  --sb-shadow-md: 0 2px 4px rgb(15 23 42 / 0.05), 0 10px 24px -8px rgb(15 23 42 / 0.14);
+  --sb-card-bg: var(--workspace-surface-900);
+  --sb-card-backdrop: none;
+  --sb-card-border: 1px solid color-mix(in srgb, var(--workspace-border-soft) 65%, transparent);
+  --sb-card-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 14px -4px rgb(15 23 42 / 0.09);
+  --sb-card-shadow-hover: 0 2px 4px rgb(15 23 42 / 0.06), 0 12px 28px -8px rgb(15 23 42 / 0.16);
   --workspace-shadow-card: var(--sb-card-shadow);
   --workspace-shadow-card-hover: var(--sb-card-shadow-hover);
 }
 html.dark[data-dark-style="elevated"] {
   --sb-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
   --sb-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 12px -4px rgb(0 0 0 / 0.45);
-  --sb-card-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 18px -6px rgb(0 0 0 / 0.5);
-  --sb-card-shadow-hover: 0 2px 4px rgb(0 0 0 / 0.35), 0 16px 32px -10px rgb(0 0 0 / 0.6);
+  --sb-card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.055), 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 20px -8px rgb(0 0 0 / 0.52);
+  --sb-card-shadow-hover: inset 0 1px 0 rgb(255 255 255 / 0.09), 0 2px 4px rgb(0 0 0 / 0.36), 0 16px 32px -10px rgb(0 0 0 / 0.62);
+}
+
+/* 毛玻璃 Glass — translucent frosted surfaces with crisp specular highlights. */
+html.dark[data-dark-style="glass"], html:not(.dark)[data-light-style="glass"] {
+  --sb-r-sm: 6px; --sb-r: 8px; --sb-r-md: 9px; --sb-r-lg: 12px; --sb-r-xl: 14px; --sb-r-2xl: 20px;
+  --sb-card-bg: color-mix(in srgb, var(--workspace-surface-900) 76%, transparent);
+  --sb-card-backdrop: blur(16px) saturate(145%);
+  --sb-shadow-sm: 0 1px 2px rgb(15 23 42 / 0.05);
+  --sb-shadow: 0 2px 8px -2px rgb(15 23 42 / 0.1);
+  --sb-shadow-md: 0 10px 28px -10px rgb(15 23 42 / 0.18);
+  --sb-card-border: 1px solid color-mix(in srgb, var(--workspace-border-strong) 72%, transparent);
+  --sb-card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.72), 0 4px 16px -6px rgb(15 23 42 / 0.12);
+  --sb-card-shadow-hover: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 10px 26px -8px rgb(15 23 42 / 0.18);
+  --workspace-shadow-card: var(--sb-card-shadow);
+  --workspace-shadow-card-hover: var(--sb-card-shadow-hover);
+}
+html.dark[data-dark-style="glass"] {
+  --sb-card-bg: color-mix(in srgb, var(--workspace-surface-900) 74%, transparent);
+  --sb-card-border: 1px solid rgba(255, 255, 255, 0.1);
+  --sb-card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.09), 0 8px 24px -10px rgb(0 0 0 / 0.56);
+  --sb-card-shadow-hover: inset 0 1px 0 rgb(255 255 255 / 0.14), 0 14px 32px -10px rgb(0 0 0 / 0.66);
 }
 
 /* 方正 Sharp — small corners and firm edges for a dense, tool-like look. */
 html.dark[data-dark-style="sharp"], html:not(.dark)[data-light-style="sharp"] {
   --sb-r-sm: 2px; --sb-r: 3px; --sb-r-md: 3px; --sb-r-lg: 4px; --sb-r-xl: 5px; --sb-r-2xl: 7px;
   --sb-shadow-sm: 0 0 #0000; --sb-shadow: 0 0 #0000;
+  --sb-card-bg: var(--workspace-surface-900);
+  --sb-card-backdrop: none;
   --sb-card-border: 1px solid var(--workspace-border-strong);
   --sb-card-shadow: 0 0 #0000;
   --sb-card-shadow-hover: inset 0 0 0 1px var(--workspace-border-strong);
@@ -59,7 +94,9 @@ html.dark[data-dark-style="sharp"], html:not(.dark)[data-light-style="sharp"] {
 /* Shared card surface used by redesigned components. */
 .sb-card {
   border: var(--sb-card-border);
-  background: var(--workspace-surface-900);
+  background: var(--sb-card-bg);
+  backdrop-filter: var(--sb-card-backdrop);
+  -webkit-backdrop-filter: var(--sb-card-backdrop);
   box-shadow: var(--sb-card-shadow);
   border-radius: var(--sb-r-xl);
   transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease;

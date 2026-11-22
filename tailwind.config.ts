@@ -66,7 +66,7 @@ const config: Config = {
         md: 'var(--sb-shadow-md)',
       },
       fontFamily: {
-        display: ['Inter', 'sans-serif'],
+        display: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"PingFang SC"', '"Hiragino Sans GB"', 'Inter', '"Segoe UI"', '"Microsoft YaHei"', 'sans-serif'],
       },
       backgroundImage: {
         'workspace-desktop-wallpaper': 'linear-gradient(180deg, var(--workspace-bg-950) 0%, var(--workspace-bg-900) 42%, var(--workspace-bg-850) 100%)',

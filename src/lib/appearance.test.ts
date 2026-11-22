@@ -13,15 +13,25 @@ describe('appearance preferences', () => {
     delete root.dataset.lightStyle
   })
 
-  it('defaults to Aqua Dark / Aqua with the same blue accent', () => {
+  it('defaults to Obsidian / Obsidian Light with the same blue accent', () => {
     expect(loadAppearance()).toEqual(DEFAULT_APPEARANCE)
     applyAppearance(DEFAULT_APPEARANCE)
-    expect(document.documentElement.dataset).toMatchObject({ darkPalette: 'aqua-dark', lightPalette: 'aqua', darkAccent: 'blue', lightAccent: 'blue', darkStyle: 'outline', lightStyle: 'elevated' })
+    expect(document.documentElement.dataset).toMatchObject({
+      darkPalette: 'obsidian',
+      lightPalette: 'obsidian-light',
+      darkAccent: 'blue',
+      lightAccent: 'blue',
+      darkStyle: 'outline',
+      lightStyle: 'elevated',
+    })
   })
 
-  it('rejects palettes from the wrong family and unknown accents', () => {
+  it('migrates legacy v3 palettes seamlessly while rejecting wrong-family palettes and unknown accents', () => {
+    localStorage.setItem('shellbeam.appearance', JSON.stringify({ darkPalette: 'dracula', lightPalette: 'paper', darkAccent: null, lightAccent: null }))
+    expect(loadAppearance()).toEqual({ darkPalette: 'rose-pine', lightPalette: 'graphite-light', darkAccent: null, lightAccent: null, uiStyle: 'auto' })
+
     localStorage.setItem('shellbeam.appearance', JSON.stringify({ darkPalette: 'paper', lightPalette: 'nord', darkAccent: 'neon', lightAccent: 'teal' }))
-    expect(loadAppearance()).toEqual({ darkPalette: 'aqua-dark', lightPalette: 'aqua', darkAccent: null, lightAccent: 'teal', uiStyle: 'auto' })
+    expect(loadAppearance()).toEqual({ darkPalette: 'obsidian', lightPalette: 'obsidian-light', darkAccent: null, lightAccent: 'teal', uiStyle: 'auto' })
   })
 
   it('falls back to defaults when storage holds invalid JSON', () => {
@@ -41,9 +51,11 @@ describe('appearance preferences', () => {
     expect(document.documentElement.dataset).toMatchObject({ lightPalette: 'solarized', lightAccent: 'teal', darkAccent: 'pink' })
   })
 
-  it('pairs outline with dark and elevated with light until a style is chosen', () => {
+  it('pairs outline with dark and elevated with light until a style is chosen, including glass', () => {
     expect(resolveUiStyle(DEFAULT_APPEARANCE, 'dark')).toBe('outline')
     expect(resolveUiStyle(DEFAULT_APPEARANCE, 'light')).toBe('elevated')
+    setAppearance({ uiStyle: 'glass' })
+    expect(document.documentElement.dataset).toMatchObject({ darkStyle: 'glass', lightStyle: 'glass' })
     setAppearance({ uiStyle: 'sharp' })
     expect(document.documentElement.dataset).toMatchObject({ darkStyle: 'sharp', lightStyle: 'sharp' })
     localStorage.setItem('shellbeam.appearance', JSON.stringify({ uiStyle: 'neon' }))

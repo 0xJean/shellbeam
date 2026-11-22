@@ -788,6 +788,7 @@ const en: Record<string, string> = {
   'settings.uiStyle.auto': 'Match theme',
   'settings.uiStyle.outline': 'Outline',
   'settings.uiStyle.elevated': 'Elevated',
+  'settings.uiStyle.glass': 'Glass',
   'settings.uiStyle.sharp': 'Sharp',
   'settings.accent.violet': 'Violet',
   'settings.accent.blue': 'Blue',
