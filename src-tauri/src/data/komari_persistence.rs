@@ -603,6 +603,7 @@ fn import_monitoring_host_on(
         tags: p.tags.clone(),
         connections: Some(vec![]),
         default_connection_id: None,
+        billing: None,
         address: String::new(),
         username: String::new(),
         port: 0,

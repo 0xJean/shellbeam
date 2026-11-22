@@ -22,9 +22,9 @@ export function SegmentedMeter({ kind, value, segments = 10, className }: { kind
   const percent = value == null ? 0 : Math.min(100, Math.max(0, value))
   const lit = Math.round((percent / 100) * segments)
   return (
-    <span data-meter-kind={kind} data-tone={tone ?? 'unknown'} aria-hidden="true" className={cn('grid h-1.5 gap-0.5', className)} style={{ gridTemplateColumns: `repeat(${segments}, minmax(0, 1fr))` }}>
+    <span data-meter-kind={kind} data-tone={tone ?? 'unknown'} aria-hidden="true" className={cn('grid h-1 gap-0.5', className)} style={{ gridTemplateColumns: `repeat(${segments}, minmax(0, 1fr))` }}>
       {Array.from({ length: segments }, (_, index) => (
-        <span key={index} className="rounded-[2px]"
+        <span key={index} className="rounded-full"
           style={index < lit
             ? { background: color, opacity: tone === 'good' ? 0.5 + (index / segments) * 0.5 : 1, boxShadow: tone === 'warn' || tone === 'bad' ? `0 0 6px -1px ${color}` : undefined }
             : { background: 'var(--workspace-meter-track)' }} />

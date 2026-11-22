@@ -36,6 +36,9 @@ import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { KomariProbeOpsView } from './komari-probe-ops-view'
 import { CompatibleAgentTools } from './compatible-agent-panel'
 import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS, HOST_RESOURCE_COLUMNS } from './host-list-layout'
+import { HostNetworkDiagnosticsCard } from './host-network-diagnostics'
+import { SegmentedSparkline, type SparklineSegment } from './charts/segmented-sparkline'
+import { evaluateHostExpiry, formatBillingExpiryBadge, formatMoney } from '@/lib/host-billing'
 
 type TFn = (key: string, params?: Record<string, string | number>) => string
 
@@ -210,15 +213,85 @@ interface HostGridCardProps {
   /** Present only when another Vault exists to move the host into. */
   onMoveToVault?: (id: string) => void
   onSelect: (id: string) => void
+  resolveAuthSecret?: (host: HostProfile) => Promise<string>
+}
+
+function HostBillingBadge({ host }: { host: HostProfile }) {
+  const { locale } = useT()
+  const expiry = evaluateHostExpiry(host.billing)
+  if (!expiry) return null
+  const label = formatBillingExpiryBadge(expiry, locale)
+  const toneClass = expiry.status === 'expired' || expiry.status === 'urgent'
+    ? 'border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)]'
+    : expiry.status === 'soon'
+      ? 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]'
+      : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]'
+  const detail = [
+    host.billing?.provider,
+    host.billing?.price != null ? formatMoney(host.billing.price, host.billing.currency) : null,
+    expiry.expiresAt,
+  ].filter(Boolean).join(' · ')
+  return (
+    <span
+      data-testid="host-billing-badge"
+      data-expiry-status={expiry.status}
+      title={detail}
+      className={cn('inline-flex shrink-0 items-center rounded-md border px-1.5 py-px font-mono text-[10px] font-medium tabular-nums', toneClass)}
+    >
+      {label}
+    </span>
+  )
+}
+
+function HostBillingDrawerSummary({ host }: { host: HostProfile }) {
+  const { locale } = useT()
+  const billing = host.billing
+  if (!billing) return null
+  const expiry = evaluateHostExpiry(billing)
+  const parts: string[] = []
+  if (billing.provider) parts.push(billing.provider)
+  if (billing.price != null) {
+    const cycleLabel = billing.cycle ? `/${billing.cycle}` : ''
+    parts.push(`${formatMoney(billing.price, billing.currency)}${cycleLabel}`)
+  }
+  if (billing.monthlyTrafficGb != null) {
+    parts.push(`${billing.monthlyTrafficGb} GB/${locale === 'zh-CN' ? '月' : 'mo'}`)
+  }
+  if (billing.autoRenew) {
+    parts.push(locale === 'zh-CN' ? '自动续费' : 'Auto-renew')
+  }
+  if (!parts.length && !expiry) return null
+  return (
+    <div data-testid="host-drawer-billing" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2 text-[var(--workspace-text)]">
+        <span className="font-medium text-[var(--workspace-text-strong)]">{locale === 'zh-CN' ? '资产与续费' : 'Asset & Renewal'}</span>
+        {parts.length > 0 && <span className="text-[var(--workspace-text-muted)]">{parts.join(' · ')}</span>}
+      </div>
+      {expiry && <HostBillingBadge host={host} />}
+    </div>
+  )
+}
+
+function auditHistorySegments(audits?: OperationAuditEntry[]): SparklineSegment[] {
+  if (!audits || audits.length === 0) return []
+  return [...audits]
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(-24)
+    .map((entry, idx) => ({
+      key: `${entry.auditId || entry.jobId || idx}`,
+      tone: entry.status === 'failed' ? 'bad' : entry.status === 'unknown' ? 'warn' : entry.status === 'completed' ? 'good' : 'unknown',
+      ratio: entry.status === 'failed' ? 100 : entry.status === 'unknown' ? 70 : 55,
+      label: `${new Date(entry.createdAt).toLocaleString()} · ${entry.action} (${entry.status})`,
+    }))
 }
 
 /**
  * Right-hand drawer with a host's full operations detail (v3 "hostops" overlay).
  * It stays inside the card's DOM so the card keeps owning its id and toggle.
  */
-function HostOpsDrawer({ id, host, summary, open, onClose, dot, groupLabel, network, jumpHost, actions, children }: {
+function HostOpsDrawer({ id, host, summary, open, onClose, dot, groupLabel, network, jumpHost, resolveAuthSecret, actions, children }: {
   id: string; host: HostProfile; summary: HostOperationalSummary; open: boolean; onClose: () => void; dot?: string; groupLabel?: string
-  network?: HostNetworkDisplay; jumpHost?: string | null; actions: ReactNode; children: ReactNode
+  network?: HostNetworkDisplay; jumpHost?: string | null; resolveAuthSecret?: (host: HostProfile) => Promise<string>; actions: ReactNode; children: ReactNode
 }) {
   const { t, locale } = useT()
   const copy = hostsOverviewCopy[locale]
@@ -274,6 +347,23 @@ function HostOpsDrawer({ id, host, summary, open, onClose, dot, groupLabel, netw
             </div>
           ))}
         </div>}
+        {open && <HostBillingDrawerSummary host={host} />}
+        {open && (summary.audits?.length ?? 0) > 0 && (
+          <div className="space-y-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2.5">
+            <div className="flex items-center justify-between text-[11px] text-[var(--workspace-text-muted)]">
+              <span>{locale === 'zh-CN' ? '近期任务与探针状态走势（24 条）' : 'Recent operation & probe cadence (24 samples)'}</span>
+              <span className="font-mono text-[10px] tabular-nums">{summary.audits?.length ?? 0}</span>
+            </div>
+            <SegmentedSparkline
+              segments={auditHistorySegments(summary.audits)}
+              slots={24}
+              label={locale === 'zh-CN' ? '近期状态走势' : 'Recent status cadence'}
+            />
+          </div>
+        )}
+        {open && hasSshConnection(host) && resolveAuthSecret && (
+          <HostNetworkDiagnosticsCard host={host} resolveAuthSecret={resolveAuthSecret} />
+        )}
         {children}
       </div>
     </section>
@@ -304,7 +394,7 @@ function hostAttention(hostId: string, summary: HostOperationalSummary | undefin
   return worst ? t('hostCard.usageHigh', { resource: worst[0], value: Math.round(worst[1] ?? 0) }) : null
 }
 
-export function HostGridCard({ host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, onMoveToVault, monitoring = true, batchSelection }: HostGridCardProps) {
+export function HostGridCard({ host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, onMoveToVault, resolveAuthSecret, monitoring = true, batchSelection }: HostGridCardProps) {
   const { t, locale } = useT()
   const detailsId = useId()
   const owner = JSON.stringify([host.id, host.vaultId, operations?.vaultId, monitoring])
@@ -339,6 +429,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
               {sc ? <span data-testid="host-card-status" title={sc.label} className={cn('h-2 w-2 shrink-0 rounded-full', sc.dot)} />
                 : status === 'checking' ? <RefreshCw className="h-3 w-3 shrink-0 animate-spin text-[var(--workspace-text-muted)]" aria-label={t('hostCard.checking')} /> : null}
               <span className="truncate">{host.name}</span>
+              <HostBillingBadge host={host} />
             </p>
             <p className="mt-0.5 flex min-w-0 items-center gap-1 truncate text-xs text-[var(--workspace-text-muted)]">
               {network && <span className="flex shrink-0 items-center"><HostRegionMeta network={network} /></span>}
@@ -380,7 +471,7 @@ export function HostGridCard({ host, isSelected, status, resource, metrics, oper
         {operations && <div className="border-t border-[color:var(--workspace-border-soft)] px-4 py-2">
           <HostOperationsCell host={host} summary={operations} expanded={detailsOpen} detailsId={detailsId} compactOnly={!monitoring} onToggle={toggleDetails} />
         </div>}
-        {operations && <HostOpsDrawer id={detailsId} host={host} summary={operations} open={detailsOpen} onClose={() => setDisclosure({ owner, expanded: false })} dot={sc?.dot} groupLabel={host.group ? groupLabel : undefined} network={network} jumpHost={jumpHost}
+        {operations && <HostOpsDrawer id={detailsId} host={host} summary={operations} open={detailsOpen} onClose={() => setDisclosure({ owner, expanded: false })} dot={sc?.dot} groupLabel={host.group ? groupLabel : undefined} network={network} jumpHost={jumpHost} resolveAuthSecret={resolveAuthSecret}
           actions={<>
             <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => ssh ? onConnect(host.id) : onEdit(host.id)}><Terminal className="h-3.5 w-3.5" />{ssh ? t('hostCard.connect') : t('hostDirectory.addSsh')}</Button>
             {ssh && <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => requestHostSftp({ vaultId: host.vaultId, hostId: host.id, path: '' })}><FolderOpen className="h-3.5 w-3.5" />SFTP</Button>}
@@ -440,6 +531,7 @@ interface HostListItemProps {
   onDelete: (id: string) => void
   /** Present only when another Vault exists to move the host into. */
   onMoveToVault?: (id: string) => void
+  resolveAuthSecret?: (host: HostProfile) => Promise<string>
 }
 
 function HostStatusPill({ status, sc, t }: { status?: HostHealthStatus; sc: ReturnType<typeof statusConfig>; t: TFn }) {
@@ -970,7 +1062,7 @@ function getNetworkScopeLabel(network: HostNetworkDisplay | undefined, t: TFn) {
   return t('hosts.networkUnknown')
 }
 
-export function HostListItem({ resources, index, host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, onMoveToVault, monitoring = true, batchSelection }: HostListItemProps) {
+export function HostListItem({ resources, index, host, isSelected, status, resource, metrics, operations, network, agentDeploymentCount = 0, agentDeploymentStatus, onSelect, onConnect, onOpenWorkspace, onRefresh, onEdit, onDelete, onMoveToVault, resolveAuthSecret, monitoring = true, batchSelection }: HostListItemProps) {
   const { t, locale } = useT()
   const { icon, bg } = groupIconConfig(host.group || 'Custom')
   const sc = statusConfig(status, t, operations?.provider, hostPresentationCopy[locale])
@@ -1021,6 +1113,7 @@ export function HostListItem({ resources, index, host, isSelected, status, resou
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <p className="truncate text-sm font-semibold text-[var(--workspace-text-strong)]">{host.name}</p>
+              <HostBillingBadge host={host} />
             </div>
             <p className="mt-0.5 truncate font-mono text-[11.5px] text-[var(--workspace-text-muted)]">
               {!hasSshConnection(host) ? t('hostDirectory.monitoringOnly') : `${host.username || 'root'}@${host.address}${host.port !== 22 ? `:${host.port}` : ''}`}
@@ -1095,7 +1188,7 @@ export function HostListItem({ resources, index, host, isSelected, status, resou
           </button>
         </div>
         </div>
-        {operations && <HostOpsDrawer id={detailsId} host={host} summary={operations} open={detailsOpen} onClose={() => setDetailsState({ owner: detailsOwner, expanded: false })} dot={sc?.dot} groupLabel={host.group ? getDisplayGroupLabel(host.group, t) : undefined} network={network} jumpHost={formatJumpHost(host, operations)}
+        {operations && <HostOpsDrawer id={detailsId} host={host} summary={operations} open={detailsOpen} onClose={() => setDetailsState({ owner: detailsOwner, expanded: false })} dot={sc?.dot} groupLabel={host.group ? getDisplayGroupLabel(host.group, t) : undefined} network={network} jumpHost={formatJumpHost(host, operations)} resolveAuthSecret={resolveAuthSecret}
           actions={<>
             <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => hasSshConnection(host) ? onConnect(host.id) : onEdit(host.id)}><Terminal className="h-3.5 w-3.5" />{hasSshConnection(host) ? t('hostCard.connect') : t('hostDirectory.addSsh')}</Button>
             {hasSshConnection(host) && <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => requestHostSftp({ vaultId: host.vaultId, hostId: host.id, path: '' })}><FolderOpen className="h-3.5 w-3.5" />SFTP</Button>}

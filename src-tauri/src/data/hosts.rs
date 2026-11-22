@@ -7,6 +7,68 @@ use crate::vaults_meta;
 
 const SHELLBEAM_DATA_DB: &str = "workspace_inventory.sqlite3";
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostBilling {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycle: Option<String>,
+    /// ISO date string `YYYY-MM-DD`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monthly_traffic_gb: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_renew: Option<bool>,
+}
+
+fn normalize_billing(billing: Option<HostBilling>) -> Option<HostBilling> {
+    let b = billing?;
+    let provider = b
+        .provider
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let currency = b
+        .currency
+        .map(|v| v.trim().to_uppercase())
+        .filter(|v| !v.is_empty());
+    let cycle = b
+        .cycle
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty());
+    let expires_at = b
+        .expires_at
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let price = b.price.filter(|v| v.is_finite() && *v >= 0.0);
+    let monthly_traffic_gb = b.monthly_traffic_gb.filter(|v| v.is_finite() && *v >= 0.0);
+    let auto_renew = b.auto_renew.filter(|v| *v);
+    if provider.is_none()
+        && price.is_none()
+        && currency.is_none()
+        && cycle.is_none()
+        && expires_at.is_none()
+        && monthly_traffic_gb.is_none()
+        && auto_renew.is_none()
+    {
+        return None;
+    }
+    Some(HostBilling {
+        provider,
+        price,
+        currency,
+        cycle,
+        expires_at,
+        monthly_traffic_gb,
+        auto_renew,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostProfile {
@@ -17,6 +79,8 @@ pub struct HostProfile {
     pub connections: Option<Vec<super::host_connections::ConnectionProfile>>,
     #[serde(default)]
     pub default_connection_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub billing: Option<HostBilling>,
     pub id: String,
     pub name: String,
     pub address: String,
@@ -49,6 +113,8 @@ pub struct HostProfileDraft {
     connections: Option<Vec<super::host_connections::ConnectionProfile>>,
     #[serde(default)]
     default_connection_id: Option<String>,
+    #[serde(default)]
+    billing: Option<HostBilling>,
     name: String,
     address: String,
     port: u16,
@@ -185,21 +251,26 @@ pub(crate) fn initialize_host_schema(conn: &Connection) -> Result<(), String> {
         "#,
     )
     .map_err(|err| format!("Initialize hosts db failed: {err}"))?;
-    let has_jump_id = conn
+    let existing_cols = conn
         .prepare("PRAGMA table_info(workspace_hosts)")
         .and_then(|mut stmt| {
             stmt.query_map([], |row| row.get::<_, String>(1))?
                 .collect::<Result<Vec<_>, _>>()
         })
-        .map_err(|error| format!("Inspect hosts schema failed: {error}"))?
-        .iter()
-        .any(|name| name == "jump_host_id");
-    if !has_jump_id {
+        .map_err(|error| format!("Inspect hosts schema failed: {error}"))?;
+    if !existing_cols.iter().any(|name| name == "jump_host_id") {
         conn.execute(
             "ALTER TABLE workspace_hosts ADD COLUMN jump_host_id TEXT",
             [],
         )
         .map_err(|error| format!("Migrate jump profile failed: {error}"))?;
+    }
+    if !existing_cols.iter().any(|name| name == "billing_json") {
+        conn.execute(
+            "ALTER TABLE workspace_hosts ADD COLUMN billing_json TEXT",
+            [],
+        )
+        .map_err(|error| format!("Migrate host billing column failed: {error}"))?;
     }
     super::host_connections::initialize(conn)?;
     Ok(())
@@ -233,13 +304,19 @@ pub(crate) fn insert_host_row(
     super::host_monitoring::validate(host.monitoring_mode.as_deref())?;
     let tags_json = serde_json::to_string(&host.tags)
         .map_err(|err| format!("Serialize host tags failed: {err}"))?;
+    let billing_json = host
+        .billing
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|err| format!("Serialize host billing failed: {err}"))?;
     conn.execute(
         r#"
         INSERT INTO workspace_hosts
           (vault_id, id, name, address, port, username, host_group, auth_type,
            secret_key_ref, password_key_ref, private_key_ref, tags_json,
-           jump_host, jump_port, jump_user, created_at, updated_at, jump_host_id, connections_json, default_connection_id, monitoring_mode)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+           jump_host, jump_port, jump_user, created_at, updated_at, jump_host_id, connections_json, default_connection_id, monitoring_mode, billing_json)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
         ON CONFLICT(vault_id, id) DO UPDATE SET
           name = excluded.name,
           address = excluded.address,
@@ -259,7 +336,8 @@ pub(crate) fn insert_host_row(
           updated_at = excluded.updated_at,
           connections_json = excluded.connections_json,
           default_connection_id = excluded.default_connection_id,
-          monitoring_mode = COALESCE(excluded.monitoring_mode, workspace_hosts.monitoring_mode)
+          monitoring_mode = COALESCE(excluded.monitoring_mode, workspace_hosts.monitoring_mode),
+          billing_json = excluded.billing_json
         "#,
         params![
             vault_id,
@@ -283,6 +361,7 @@ pub(crate) fn insert_host_row(
             host.connections.as_ref().map(serde_json::to_string).transpose().map_err(|_| "HOST_CONNECTION_INVALID")?,
             host.default_connection_id,
             host.monitoring_mode,
+            billing_json,
         ],
     )
     .map_err(|err| format!("Save host profile failed: {err}"))?;
@@ -384,6 +463,9 @@ fn host_from_row(row: &rusqlite::Row<'_>) -> Result<HostProfile, rusqlite::Error
                 )
             })?,
         default_connection_id: row.get(18)?,
+        billing: row
+            .get::<_, Option<String>>(20)?
+            .and_then(|v| serde_json::from_str::<HostBilling>(&v).ok()),
         id: row.get(0)?,
         name: row.get(1)?,
         address: row.get(2)?,
@@ -417,7 +499,7 @@ pub fn load_hosts(
             r#"
             SELECT id, name, address, port, username, host_group, auth_type,
                    secret_key_ref, password_key_ref, private_key_ref, tags_json,
-                   jump_host, jump_port, jump_user, created_at, updated_at, jump_host_id, connections_json, default_connection_id, monitoring_mode
+                   jump_host, jump_port, jump_user, created_at, updated_at, jump_host_id, connections_json, default_connection_id, monitoring_mode, billing_json
             FROM workspace_hosts
             WHERE vault_id = ?1
             ORDER BY created_at ASC, updated_at ASC
@@ -498,6 +580,7 @@ pub fn create_host(
         monitoring_mode: Some(payload.monitoring_mode.unwrap_or_else(|| "ssh".into())),
         connections: payload.connections,
         default_connection_id: payload.default_connection_id,
+        billing: normalize_billing(payload.billing),
         id: Uuid::new_v4().to_string(),
         name: payload.name.trim().to_string(),
         address: payload.address.trim().to_string(),
@@ -610,6 +693,7 @@ pub fn update_host(
         updated.name = updated.name.trim().to_string();
         updated.address = updated.address.trim().to_string();
         updated.username = updated.username.trim().to_string();
+        updated.billing = normalize_billing(updated.billing);
         for reference in [
             &mut updated.secret_key_ref,
             &mut updated.password_key_ref,
@@ -665,7 +749,7 @@ pub fn delete_host(
         let mut conn = open_hosts_db(&app)?;
         migrate_legacy_hosts(&app, &mut conn, &vault, vid)?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|_| "HOST_SAVE_FAILED")?;
-        let host = tx.query_row("SELECT id,name,address,port,username,host_group,auth_type,secret_key_ref,password_key_ref,private_key_ref,tags_json,jump_host,jump_port,jump_user,created_at,updated_at,jump_host_id,connections_json,default_connection_id,monitoring_mode FROM workspace_hosts WHERE vault_id=?1 AND id=?2", params![vault,id], host_from_row).map_err(|_| "Host not found")?;
+        let host = tx.query_row("SELECT id,name,address,port,username,host_group,auth_type,secret_key_ref,password_key_ref,private_key_ref,tags_json,jump_host,jump_port,jump_user,created_at,updated_at,jump_host_id,connections_json,default_connection_id,monitoring_mode,billing_json FROM workspace_hosts WHERE vault_id=?1 AND id=?2", params![vault,id], host_from_row).map_err(|_| "Host not found")?;
         super::host_metadata::begin_host_write(&tx, &vault)?;
         tx.execute("DELETE FROM workspace_hosts WHERE vault_id=?1 AND id=?2", params![vault,id]).map_err(|_| "HOST_SAVE_FAILED")?;
         super::host_metadata::hosts_changed(&tx, &vault)?;
@@ -685,4 +769,78 @@ pub fn delete_host(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_billing_roundtrips_and_normalizes_empty_values() {
+        let db = Connection::open_in_memory().unwrap();
+        initialize_host_schema(&db).unwrap();
+
+        let billing = normalize_billing(Some(HostBilling {
+            provider: Some("  Bandwagon  ".into()),
+            price: Some(49.9),
+            currency: Some("usd".into()),
+            cycle: Some("Annual".into()),
+            expires_at: Some(" 2027-01-15 ".into()),
+            monthly_traffic_gb: Some(1000.0),
+            auto_renew: Some(true),
+        }))
+        .unwrap();
+        assert_eq!(billing.provider.as_deref(), Some("Bandwagon"));
+        assert_eq!(billing.currency.as_deref(), Some("USD"));
+        assert_eq!(billing.cycle.as_deref(), Some("annual"));
+        assert_eq!(billing.expires_at.as_deref(), Some("2027-01-15"));
+
+        let host = HostProfile {
+            monitoring_mode: Some("ssh".into()),
+            connections: None,
+            default_connection_id: None,
+            billing: Some(billing.clone()),
+            id: "host-billing-1".into(),
+            name: "Tokyo Edge".into(),
+            address: "203.0.113.10".into(),
+            port: 22,
+            username: "root".into(),
+            group: "Production".into(),
+            auth_type: "privateKey".into(),
+            secret_key_ref: None,
+            password_key_ref: None,
+            private_key_ref: Some("k1".into()),
+            tags: vec!["jp".into()],
+            jump_host: None,
+            jump_port: None,
+            jump_user: None,
+            jump_host_id: None,
+            created_at: 100,
+            updated_at: 100,
+        };
+        insert_host_row(&db, "default", &host).unwrap();
+
+        let loaded = db
+            .query_row(
+                "SELECT id,name,address,port,username,host_group,auth_type,secret_key_ref,password_key_ref,private_key_ref,tags_json,jump_host,jump_port,jump_user,created_at,updated_at,jump_host_id,connections_json,default_connection_id,monitoring_mode,billing_json FROM workspace_hosts WHERE vault_id='default' AND id='host-billing-1'",
+                [],
+                host_from_row,
+            )
+            .unwrap();
+        assert_eq!(loaded.billing, Some(billing));
+
+        // Empty billing normalizes to None so no unnecessary JSON is stored.
+        assert_eq!(
+            normalize_billing(Some(HostBilling {
+                provider: Some("   ".into()),
+                price: None,
+                currency: None,
+                cycle: None,
+                expires_at: None,
+                monthly_traffic_gb: None,
+                auto_renew: Some(false),
+            })),
+            None
+        );
+    }
 }

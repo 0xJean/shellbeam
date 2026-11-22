@@ -33,10 +33,10 @@ const rules: { pattern: RegExp; replace: (match: string, ...groups: string[]) =>
   },
   // Well-known token formats, wherever they appear.
   {
-    pattern: /\b(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|glpat-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g,
+    pattern: /\b(?:sk-(?:ant-|proj-|or-v1-)?[A-Za-z0-9_-]{20,}|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|xai-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|glpat-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16}|\d{8,10}:[A-Za-z0-9_-]{35}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g,
     replace: () => REDACTED,
   },
-  // Flags: --password=x, --token x, sshpass -p x
+  // Flags: --password=x, --token x, sshpass -p x, mysql -psecret, curl -u user:pass
   {
     pattern: new RegExp(String.raw`(--[a-z0-9-]*${SECRET_NAME}[a-z0-9-]*)(=|\s+)("[^"]*"|'[^']*'|[^\s"']+)`, 'gi'),
     replace: (_m, flag: string, sep: string) => `${flag}${sep}${REDACTED}`,
@@ -44,6 +44,18 @@ const rules: { pattern: RegExp; replace: (match: string, ...groups: string[]) =>
   {
     pattern: /(\bsshpass\s+-p\s*)("[^"]*"|'[^']*'|\S+)/g,
     replace: (_m, prefix: string) => `${prefix}${REDACTED}`,
+  },
+  {
+    pattern: /(\b(?:mysql|mysqldump|mariadb)\b[^\n]*?\s-p)("[^"]*"|'[^']*'|[^\s"']+)/g,
+    replace: (_m, prefix: string) => `${prefix}${REDACTED}`,
+  },
+  {
+    pattern: /(\bcurl\b[^\n]*?(?:\s(?:-u|--user)(?:=|\s+)|\s-u))(?:"([^":\n]+):([^"\n]*)"|'([^':\n]+):([^'\n]*)'|([^\s:"'=]+):([^\s"']+))/g,
+    replace: (_m, prefix: string, dqUser?: string, _dqPass?: string, sqUser?: string, _sqPass?: string, bareUser?: string) => {
+      if (dqUser !== undefined) return `${prefix}"${dqUser}:${REDACTED}"`
+      if (sqUser !== undefined) return `${prefix}'${sqUser}:${REDACTED}'`
+      return `${prefix}${bareUser}:${REDACTED}`
+    },
   },
   // Assignments and fields: DB_PASSWORD=x, "api_key": "x", token: x
   {

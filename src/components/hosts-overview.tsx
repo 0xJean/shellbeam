@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { ProbeBatchInstallDialog } from '@/components/probe-batch-install'
 import { loadProbeInstallReadiness, PROBE_DEPLOYMENT_CHANGED_EVENT } from '@/hooks/use-probe-install-readiness'
 import { hasSshConnection, type HostProfile } from '@/lib/hosts'
+import { formatMoney, type FleetBillingSummary } from '@/lib/host-billing'
 import { useT } from '@/lib/i18n'
 import { KOMARI_MAPPING_CHANGED_EVENT } from '@/lib/komari-persistence'
 import { hostMoveCopy } from '@/lib/locales/host-move'
@@ -16,12 +17,18 @@ import { cn } from '@/lib/utils'
 
 export interface HostReading { host: HostProfile; cpu: number | null | undefined; disk: number | null | undefined; os?: string | null }
 
-function Kpi({ icon, label, value, sub, tone, onClick }: { icon: ReactNode; label: string; value: ReactNode; sub: string; tone?: 'warn'; onClick?: () => void }) {
+function Kpi({ icon, label, value, sub, badge, tone, onClick }: { icon: ReactNode; label: string; value: ReactNode; sub: string; badge?: ReactNode; tone?: 'warn'; onClick?: () => void }) {
   const Tag = onClick ? 'button' : 'div'
   return (
     <Tag type={onClick ? 'button' : undefined} onClick={onClick}
       className={cn('sb-card flex min-w-0 flex-col gap-1 px-4 py-3 text-left', onClick && 'cursor-pointer')}>
-      <span className="flex items-center justify-between text-xs text-[var(--workspace-text-muted)]">{label}<span className="text-[var(--workspace-text-subtle)]" aria-hidden="true">{icon}</span></span>
+      <span className="flex items-center justify-between gap-2 text-xs text-[var(--workspace-text-muted)]">
+        <span className="truncate">{label}</span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          {badge}
+          <span className="text-[var(--workspace-text-subtle)]" aria-hidden="true">{icon}</span>
+        </span>
+      </span>
       <span className={cn('text-[26px] font-semibold leading-tight tracking-tight tabular-nums', tone === 'warn' ? 'text-[color:var(--workspace-status-warn-text)]' : 'text-[var(--workspace-text-strong)]')}>{value}</span>
       <span className="truncate text-[11px] text-[var(--workspace-text-muted)]">{sub}</span>
     </Tag>
@@ -29,7 +36,29 @@ function Kpi({ icon, label, value, sub, tone, onClick }: { icon: ReactNode; labe
 }
 
 /** Fleet summary above the host list; every number is derived from current samples only. */
-export function HostKpiRow({ total, online, offline, stale, openAlerts, readings, onOpenAlerts }: { total: number; online: number; offline: number; stale: number; openAlerts: number; readings: HostReading[]; onOpenAlerts?: () => void }) {
+export function HostKpiRow({
+  total,
+  online,
+  offline,
+  stale,
+  openAlerts,
+  readings,
+  onOpenAlerts,
+  billingSummary,
+  expiringOnly = false,
+  onToggleExpiring,
+}: {
+  total: number
+  online: number
+  offline: number
+  stale: number
+  openAlerts: number
+  readings: HostReading[]
+  onOpenAlerts?: () => void
+  billingSummary?: FleetBillingSummary
+  expiringOnly?: boolean
+  onToggleExpiring?: () => void
+}) {
   const { locale } = useT()
   const c = hostsOverviewCopy[locale]
   const stat = (key: 'cpu' | 'disk') => {
@@ -40,9 +69,34 @@ export function HostKpiRow({ total, online, offline, stale, openAlerts, readings
   }
   const cpu = stat('cpu'); const disk = stat('disk')
   if (total === 0) return null
+  const monthlySummary = billingSummary?.monthlyByCurrency.length
+    ? billingSummary.monthlyByCurrency.map((item) => formatMoney(item.amount, item.currency)).join(' + ')
+    : null
+  const onlineSubBase = offline || stale ? fill(c.onlineSub, { offline, stale }) : c.onlineAll
+  const onlineSub = monthlySummary
+    ? `${onlineSubBase} · ${locale === 'zh-CN' ? '月均' : 'Est.'} ${monthlySummary}/${locale === 'zh-CN' ? '月' : 'mo'}`
+    : onlineSubBase
+  const expiringBadge = billingSummary && billingSummary.expiringCount > 0 ? (
+    <button
+      type="button"
+      data-testid="host-kpi-expiring"
+      aria-pressed={expiringOnly}
+      onClick={(event) => { event.stopPropagation(); onToggleExpiring?.() }}
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full border px-2 py-px font-mono text-[10px] font-semibold tabular-nums transition-colors',
+        expiringOnly
+          ? 'border-[color:var(--workspace-status-warn)] bg-[var(--workspace-status-warn)] text-black'
+          : billingSummary.expiredCount > 0
+            ? 'border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] text-[color:var(--workspace-status-bad-text)] hover:opacity-90'
+            : 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)] hover:opacity-90',
+      )}
+    >
+      {locale === 'zh-CN' ? `到期 ${billingSummary.expiringCount}` : `Expiring ${billingSummary.expiringCount}`}
+    </button>
+  ) : undefined
   return (
     <div data-testid="host-kpis" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Kpi icon={<Activity className="h-4 w-4" />} label={c.online} value={<>{online}<small className="ml-1 text-sm font-medium text-[var(--workspace-text-muted)]">/ {total}</small></>} sub={offline || stale ? fill(c.onlineSub, { offline, stale }) : c.onlineAll} />
+      <Kpi icon={<Activity className="h-4 w-4" />} label={c.online} badge={expiringBadge} value={<>{online}<small className="ml-1 text-sm font-medium text-[var(--workspace-text-muted)]">/ {total}</small></>} sub={onlineSub} />
       <Kpi icon={<Siren className="h-4 w-4" />} label={c.alerts} value={openAlerts} tone={openAlerts > 0 ? 'warn' : undefined} sub={openAlerts > 0 ? c.alertsSub : c.alertsNone} onClick={openAlerts > 0 ? onOpenAlerts : undefined} />
       <Kpi icon={<Cpu className="h-4 w-4" />} label={c.cpu} value={cpu ? `${cpu.average}%` : '—'} sub={cpu ? fill(c.cpuSub, { value: cpu.peak, host: cpu.host }) : c.noData} />
       <Kpi icon={<HardDrive className="h-4 w-4" />} label={c.disk} value={disk ? `${disk.average}%` : '—'} sub={disk ? fill(c.diskSub, { value: disk.peak, host: disk.host }) : c.noData} />

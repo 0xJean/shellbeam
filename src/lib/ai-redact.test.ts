@@ -24,6 +24,10 @@ describe('redactSecrets', () => {
     for (const token of [
       'sk-proj-abcdefghijklmnopqrstuvwxyz012345',
       'sk-ant-api03-abcdefghijklmnopqrstuvwxyz',
+      'sk-or-v1-abcdefghijklmnopqrstuvwxyz012345',
+      'xai-abcdefghijklmnopqrstuvwxyz012345',
+      'gsk_abcdefghijklmnopqrstuvwxyz012345',
+      '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi',
       'ghp_abcdefghijklmnopqrstuvwxyz0123456789',
       'AKIAIOSFODNN7EXAMPLE',
       'xoxb-1234567890-abcdefghij',
@@ -39,6 +43,11 @@ describe('redactSecrets', () => {
     expect(redactSecrets('mysql --password=hunter2 -h db')).toBe(`mysql --password=${REDACTED} -h db`)
     expect(redactSecrets('vault login --token s.abcdef')).toBe(`vault login --token ${REDACTED}`)
     expect(redactSecrets('sshpass -p hunter2 ssh root@h')).toBe(`sshpass -p ${REDACTED} ssh root@h`)
+    expect(redactSecrets('mysql -u root -phunter2 appdb')).toBe(`mysql -u root -p${REDACTED} appdb`)
+    expect(redactSecrets('curl -u admin:s3cr3t https://api.example.com')).toBe(`curl -u admin:${REDACTED} https://api.example.com`)
+    expect(redactSecrets('curl --user=admin:s3cr3t https://api.example.com')).toBe(`curl --user=admin:${REDACTED} https://api.example.com`)
+    expect(redactSecrets('curl -u "admin:my secret pass" https://api.example.com')).toBe(`curl -u "admin:${REDACTED}" https://api.example.com`)
+    expect(redactSecrets("curl --user='admin:my secret pass' https://api.example.com")).toBe(`curl --user='admin:${REDACTED}' https://api.example.com`)
   })
 
   it('leaves ordinary output alone', () => {

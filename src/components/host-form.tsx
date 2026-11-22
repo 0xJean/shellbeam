@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { hasSshConnection, validateHostDraft } from '@/lib/hosts'
+import { billingFormDraftToHostBilling, HostBillingFields, initialBillingFormDraft, validateBillingFormDraft } from './host-billing-fields'
 import { useT } from '@/lib/i18n'
 import { isSshPublicKeyText, pickPrivateKeyFile } from '@/lib/keys'
 import { connectShellbeamServer, formatServerConnectError } from '@/lib/server-quick-connect'
@@ -82,6 +83,7 @@ export function HostForm({
   const [jumpPort, setJumpPort] = useState(String(initial?.jumpPort ?? ''))
   const [jumpUser, setJumpUser] = useState(initial?.jumpUser ?? '')
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [billingDraft, setBillingDraft] = useState(() => initialBillingFormDraft(initial?.billing))
 
   const { t, locale } = useT()
 
@@ -189,6 +191,15 @@ export function HostForm({
       jumpHost: jumpHost.trim() || undefined,
       jumpPort: jumpPort.trim() ? parseInt(jumpPort, 10) || undefined : undefined,
       jumpUser: jumpUser.trim() || undefined,
+      ...(!connectionOnly ? { billing: billingFormDraftToHostBilling(billingDraft) } : {}),
+    }
+
+    if (!connectionOnly) {
+      const billingError = validateBillingFormDraft(billingDraft, locale)
+      if (billingError) {
+        setError(billingError)
+        return
+      }
     }
 
     const validation = validateHostDraft(draft)
@@ -463,6 +474,13 @@ export function HostForm({
           </div>
 
         </div>
+
+        <HostBillingFields
+          value={billingDraft}
+          onChange={setBillingDraft}
+          defaultExpanded={Boolean(initial?.billing)}
+          disabled={submitting}
+        />
 
         {metadataControls}
         </>}

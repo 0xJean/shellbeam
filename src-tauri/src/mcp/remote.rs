@@ -886,6 +886,7 @@ mod tests {
             monitoring_mode: None,
             connections: None,
             default_connection_id: None,
+            billing: None,
             id: "host".into(),
             name: "host".into(),
             address: "target.example.com".into(),

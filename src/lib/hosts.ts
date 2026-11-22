@@ -1,4 +1,5 @@
 import { DEFAULT_VAULT_ID } from './vaults'
+import { normalizeHostBilling, type HostBilling } from './host-billing'
 import type { AuthType } from '@/lib/ssh'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -28,6 +29,8 @@ export interface HostProfile {
   /** Absent means a legacy single connection; [] explicitly means no SSH. */
   connections?: ConnectionProfile[] | null
   defaultConnectionId?: string | null
+  /** Optional VPS / asset renewal & cost tracking metadata. */
+  billing?: HostBilling | null
   /** Runtime Vault scope supplied by the native host registry. */
   vaultId?: string
   id: string
@@ -53,6 +56,7 @@ export interface HostProfileDraft {
   monitoringMode?: MonitoringMode | null
   connections?: ConnectionProfile[] | null
   defaultConnectionId?: string | null
+  billing?: HostBilling | null
   name: string
   address: string
   port: number
@@ -118,6 +122,7 @@ export function normalizeHostDraft(draft: HostProfileDraft): HostProfileDraft {
     privateKeyRef: draft.privateKeyRef?.trim() || undefined,
     group: draft.group ?? 'Custom',
     tags: (draft.tags ?? []).map((tag) => tag.trim()).filter(Boolean),
+    billing: normalizeHostBilling(draft.billing),
   }
 }
 
