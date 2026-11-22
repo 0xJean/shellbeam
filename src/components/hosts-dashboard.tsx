@@ -49,18 +49,21 @@ import { loadNotificationPolicy } from '@/lib/notification-policy'
 import { MAX_BATCH_HOSTS, runBatchDockerOperation, runBatchOperation, runBatchServiceOperation, type BatchOperationResult } from '@/lib/multi-host-operations'
 import { runWorkspaceRemoteCommand } from '@/lib/workspace-remote'
 import { DEFAULT_KOMARI_SYNC_TTL_MS, isKomariSyncFresh, reconcileKomariProbeAlerts, syncKomariIntegration } from '@/lib/komari-sync'
-import { ArrowDownAZ, ArrowUpZA, CalendarArrowDown, Bell, CalendarArrowUp, ChevronDown, FileDown, LayoutGrid, List, Plus, RefreshCw, Search, Server, SlidersHorizontal, Tag, X } from 'lucide-react'
+import { Activity, ArrowDownAZ, ArrowUpZA, CalendarArrowDown, Bell, CalendarArrowUp, CalendarClock, ChevronDown, Cpu, FileDown, HardDrive, LayoutGrid, List, Lock, MemoryStick, Plus, RefreshCw, Search, Server, SlidersHorizontal, Tag, Unlock, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { SshImportDialog } from './ssh-import-dialog'
 import { KomariAlertsDashboardPanel } from './komari-alerts-dashboard-panel'
 import { HOST_CONNECTION_COLUMNS, HOST_LIST_COLUMNS, HOST_RESOURCE_COLUMNS } from './host-list-layout'
 import { HostMoveDialog } from './host-move-dialog'
 import { HostBatchFloatingBar, HostKpiRow, HostStatusSegments, ProbeCoverageBanner } from './hosts-overview'
+import { HostsRegionStrip, type RegionHealthBucket } from './hosts-region-strip'
+import { compareHostExpiry, evaluateHostExpiry, summarizeFleetBilling } from '@/lib/host-billing'
 import { ProbeInstallDialog } from './probe-install-dialog'
 import MultiHostOperationsPanel, { type MultiHostOperationKind, type MultiHostOperationRequest, type MultiHostOperationResult } from './multi-host-operations-panel'
 import type { WorkspaceResourceGroup } from './workspace/workspace-resource-overview-header'
 
-type SortMode = 'az' | 'za' | 'newest' | 'oldest'
+type SortMode = 'az' | 'za' | 'newest' | 'oldest' | 'status' | 'cpu' | 'memory' | 'disk' | 'expiry'
+const VALID_SORT_MODES: readonly SortMode[] = ['az', 'za', 'newest', 'oldest', 'status', 'cpu', 'memory', 'disk', 'expiry']
 type HostStatusFilter = 'all' | 'online' | 'stale' | 'checking' | 'offline' | 'paused' | 'unsupported' | 'unknown' | 'jump-unavailable'
 type HostHealthStatus = Exclude<HostStatusFilter, 'all'>
 export type HostOpsRefreshStatus = 'idle' | 'refreshing' | 'fresh' | 'recovered' | 'error'
@@ -279,7 +282,13 @@ export function HostsDashboard({
   const [checkingStatus, setCheckingStatus] = useState(false)
   const [showSshImport, setShowSshImport] = useState(false)
   const [editingHost, setEditingHost] = useState<HostProfile | null>(null)
-  const [sortMode, setSortMode] = useState<SortMode>(() => (localStorage.getItem(SORT_KEY) as SortMode) || 'newest')
+  const [sortMode, setSortMode] = useState<SortMode>(() => {
+    const saved = localStorage.getItem(SORT_KEY) as SortMode | null
+    return saved && VALID_SORT_MODES.includes(saved) ? saved : 'newest'
+  })
+  const [frozenOrder, setFrozenOrder] = useState<string[] | null>(null)
+  const [regionFilter, setRegionFilter] = useState<string | null>(null)
+  const [expiringOnly, setExpiringOnly] = useState(false)
   const [advancedFilters, setAdvancedFilters] = useState<HostOpsFilters>({ ...DEFAULT_HOST_OPS_FILTERS })
   const [filterNow, setFilterNow] = useState(Date.now)
   const [statusFilter, setStatusFilter] = useState<HostStatusFilter>('all')
@@ -952,6 +961,7 @@ export function HostsDashboard({
 
   function handleSortChange(mode: SortMode) {
     setSortMode(mode)
+    setFrozenOrder(null)
     localStorage.setItem(SORT_KEY, mode)
     setSortOpen(false)
   }
@@ -998,6 +1008,34 @@ export function HostsDashboard({
     ])
   }, [onRefreshHosts, refreshHostOps])
 
+  const billingSummary = useMemo(() => summarizeFleetBilling(hosts, filterNow), [hosts, filterNow])
+
+  const regionBuckets = useMemo<RegionHealthBucket[]>(() => {
+    const map = new Map<string, RegionHealthBucket>()
+    for (const host of hosts) {
+      const net = networkByAddress[host.address]
+      if (!net || net.locationStatus !== 'ready') continue
+      const key = (net.countryCode || net.countryName || net.resolvedLocationLabel || '').trim()
+      if (!key) continue
+      const label = net.countryName || net.resolvedLocationLabel || key
+      const status = getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)
+      const current = map.get(key) ?? {
+        key,
+        label,
+        countryCode: net.countryCode,
+        countryName: net.countryName,
+        online: 0,
+        total: 0,
+        offline: 0,
+      }
+      current.total += 1
+      if (status === 'online') current.online += 1
+      else if (status === 'offline' || status === 'jump-unavailable' || status === 'stale') current.offline += 1
+      map.set(key, current)
+    }
+    return [...map.values()].sort((a, b) => b.offline - a.offline || b.total - a.total || a.label.localeCompare(b.label))
+  }, [hosts, networkByAddress, hostOpsViews, sharedStates, hostOpsLoading])
+
   const filteredHosts = useMemo(() => {
     const q = effectiveSearch.trim().toLowerCase()
     let filtered = hosts
@@ -1011,6 +1049,19 @@ export function HostsDashboard({
     if (groupFilter !== 'All') {
       filtered = filtered.filter((h) => (h.group || 'Custom') === groupFilter)
     }
+    if (regionFilter) {
+      filtered = filtered.filter((h) => {
+        const net = networkByAddress[h.address]
+        const key = net?.locationStatus === 'ready' ? (net.countryCode || net.countryName || net.resolvedLocationLabel || '').trim() : ''
+        return key === regionFilter
+      })
+    }
+    if (expiringOnly) {
+      filtered = filtered.filter((h) => {
+        const exp = evaluateHostExpiry(h.billing, filterNow)
+        return exp !== null && exp.status !== 'ok'
+      })
+    }
     if (tagFilter.size > 0) {
       filtered = filtered.filter((h) => h.tags?.some((tg) => tagFilter.has(tg)))
     }
@@ -1019,14 +1070,36 @@ export function HostsDashboard({
     }
     filtered = filtered.filter((host) => matchesHostOpsFilters(hostOpsViews[host.id], advancedFilters, filterNow))
     const sorted = [...filtered]
+    if (frozenOrder) {
+      const rank = new Map(frozenOrder.map((id, idx) => [id, idx]))
+      sorted.sort((a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER))
+      return sorted
+    }
+    const metricOf = (host: HostProfile, key: 'cpuPercent' | 'memoryPercent' | 'diskPercent'): number => {
+      const view = hostOpsViews[host.id]
+      const value = view?.metrics ? view.metrics[key] : (view?.resource?.[key] ?? sharedStates[hostKey(host)]?.inventory?.resource?.[key])
+      return typeof value === 'number' && Number.isFinite(value) ? value : -1
+    }
+    const statusPriority = (host: HostProfile): number => {
+      const st = getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)
+      if (st === 'offline' || st === 'jump-unavailable') return 0
+      if (st === 'stale') return 1
+      if (st === 'online') return 2
+      return 3
+    }
     switch (sortMode) {
       case 'az': sorted.sort((a, b) => a.name.localeCompare(b.name)); break
       case 'za': sorted.sort((a, b) => b.name.localeCompare(a.name)); break
       case 'newest': sorted.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)); break
       case 'oldest': sorted.sort((a, b) => (a.updatedAt || a.createdAt) - (b.updatedAt || b.createdAt)); break
+      case 'status': sorted.sort((a, b) => statusPriority(a) - statusPriority(b) || a.name.localeCompare(b.name)); break
+      case 'cpu': sorted.sort((a, b) => metricOf(b, 'cpuPercent') - metricOf(a, 'cpuPercent') || a.name.localeCompare(b.name)); break
+      case 'memory': sorted.sort((a, b) => metricOf(b, 'memoryPercent') - metricOf(a, 'memoryPercent') || a.name.localeCompare(b.name)); break
+      case 'disk': sorted.sort((a, b) => metricOf(b, 'diskPercent') - metricOf(a, 'diskPercent') || a.name.localeCompare(b.name)); break
+      case 'expiry': sorted.sort((a, b) => compareHostExpiry(a.billing, b.billing, filterNow) || a.name.localeCompare(b.name)); break
     }
     return sorted
-  }, [agentDeploymentsByHost, hosts, effectiveSearch, groupFilter, sharedStates, statusFilter, tagFilter, sortMode, hostOpsLoading, hostOpsViews, advancedFilters, filterNow])
+  }, [agentDeploymentsByHost, hosts, effectiveSearch, groupFilter, regionFilter, expiringOnly, networkByAddress, sharedStates, statusFilter, tagFilter, sortMode, frozenOrder, hostOpsLoading, hostOpsViews, advancedFilters, filterNow])
 
   const statusCounts = useMemo(() => hosts.reduce<Record<Exclude<HostStatusFilter, 'all'>, number>>((counts, host) => {
     const status = getHostHealthStatus(hostOpsViews[host.id], getWorkspaceInventoryHealthStatus(sharedStates[hostKey(host)]), hostOpsLoading)
@@ -1149,7 +1222,11 @@ export function HostsDashboard({
         </div>
       <HostKpiRow total={hosts.length} online={statusCounts.online} offline={statusCounts.offline + statusCounts['jump-unavailable']} stale={statusCounts.stale} openAlerts={openIncidents}
         readings={hosts.map(host => { const view = hostOpsViews[host.id]; const resource = view?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource; return { host, cpu: view?.metrics ? view.metrics.cpuPercent : resource?.cpuPercent, disk: view?.metrics ? view.metrics.diskPercent : resource?.diskPercent } })}
+        billingSummary={billingSummary}
+        expiringOnly={expiringOnly}
+        onToggleExpiring={() => setExpiringOnly((value) => !value)}
         onOpenAlerts={vaultUnlocked ? () => setPresentation(current => ({ ...current, alerts: true })) : undefined} />
+      <HostsRegionStrip buckets={regionBuckets} selected={regionFilter} onSelect={setRegionFilter} />
       {vaultUnlocked && showMonitoring && <ProbeCoverageBanner hosts={hosts.filter(host => !host.vaultId || host.vaultId === activeVaultId)} osOf={host => (hostOpsViews[host.id]?.resource ?? sharedStates[hostKey(host)]?.inventory?.resource)?.os} />}
         <div data-testid="hosts-toolbar" className="flex flex-wrap items-center gap-2">
           <div className="w-full sm:w-72">
@@ -1231,25 +1308,60 @@ export function HostsDashboard({
                 </>
               )}
             </div>
-            <div className="relative">
+            <div className="relative flex items-center gap-1.5">
               <button type="button" onClick={() => { setSortOpen((v) => !v); setTagFilterOpen(false) }}
                 className="flex items-center gap-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2.5 py-1.5 text-xs font-medium text-[var(--workspace-text-muted)] transition-colors hover:text-[var(--workspace-text-strong)]">
                 {sortMode === 'az' && <ArrowDownAZ className="h-3.5 w-3.5" />}
                 {sortMode === 'za' && <ArrowUpZA className="h-3.5 w-3.5" />}
                 {sortMode === 'newest' && <CalendarArrowDown className="h-3.5 w-3.5" />}
                 {sortMode === 'oldest' && <CalendarArrowUp className="h-3.5 w-3.5" />}
+                {sortMode === 'status' && <Activity className="h-3.5 w-3.5" />}
+                {sortMode === 'cpu' && <Cpu className="h-3.5 w-3.5" />}
+                {sortMode === 'memory' && <MemoryStick className="h-3.5 w-3.5" />}
+                {sortMode === 'disk' && <HardDrive className="h-3.5 w-3.5" />}
+                {sortMode === 'expiry' && <CalendarClock className="h-3.5 w-3.5" />}
                 <span className="hidden sm:inline">{t(`hosts.sort.${sortMode}`)}</span>
                 <ChevronDown className="h-3 w-3" />
               </button>
+              {(['status', 'cpu', 'memory', 'disk'] as const).includes(sortMode as never) && (
+                <button
+                  type="button"
+                  data-testid="host-live-sort-toggle"
+                  aria-pressed={frozenOrder === null}
+                  onClick={() => setFrozenOrder((prev) => (prev ? null : filteredHosts.map((h) => h.id)))}
+                  title={frozenOrder
+                    ? (locale === 'zh-CN' ? '排序已冻结，点击恢复实时排序' : 'Order frozen — click to resume live sorting')
+                    : (locale === 'zh-CN' ? '实时排序中，点击冻结当前顺序' : 'Live sorting active — click to freeze row order')}
+                  className={cn(
+                    'flex h-7 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors',
+                    frozenOrder
+                      ? 'border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] text-[color:var(--workspace-status-warn-text)]'
+                      : 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]',
+                  )}
+                >
+                  {frozenOrder ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                  <span className="hidden md:inline">{frozenOrder ? (locale === 'zh-CN' ? '已冻结' : 'Frozen') : (locale === 'zh-CN' ? '实时排序' : 'Live')}</span>
+                </button>
+              )}
               {sortOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setSortOpen(false)} />
-                  <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1 shadow-xl">
-                    {([['az', ArrowDownAZ], ['za', ArrowUpZA], ['newest', CalendarArrowDown], ['oldest', CalendarArrowUp]] as const).map(([mode, Icon]) => (
+                  <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1 shadow-xl">
+                    {([
+                      ['newest', CalendarArrowDown],
+                      ['oldest', CalendarArrowUp],
+                      ['az', ArrowDownAZ],
+                      ['za', ArrowUpZA],
+                      ['status', Activity],
+                      ['cpu', Cpu],
+                      ['memory', MemoryStick],
+                      ['disk', HardDrive],
+                      ['expiry', CalendarClock],
+                    ] as const).map(([mode, Icon]) => (
                       <button key={mode} type="button" onClick={() => handleSortChange(mode)}
-                        className={cn('flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
+                        className={cn('flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition-colors',
                           sortMode === mode ? 'bg-[var(--workspace-accent-subtle)] text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-700)]')}>
-                        <Icon className="h-4 w-4" />
+                        <Icon className="h-3.5 w-3.5" />
                         <span className="flex-1 text-left">{t(`hosts.sort.${mode}`)}</span>
                         {sortMode === mode && <span className="text-[color:var(--workspace-accent-solid)]">✓</span>}
                       </button>
@@ -1381,6 +1493,7 @@ export function HostsDashboard({
                     onDelete={(id) => void onDeleteHost(id)}
                     onMoveToVault={canMoveHosts ? (id) => openHostMove(hosts.filter(host => host.id === id)) : undefined}
                     onSelect={onSelectHost}
+                    resolveAuthSecret={vaultUnlocked ? resolveKomariHostSecret : undefined}
                   />
                 ))}
                     </div>
@@ -1452,6 +1565,7 @@ export function HostsDashboard({
                           onEdit={(id) => { const h = hosts.find((x) => x.id === id); if (h) setEditingHost(h) }}
                           onDelete={(id) => void onDeleteHost(id)}
                           onMoveToVault={canMoveHosts ? (id) => openHostMove(hosts.filter(host => host.id === id)) : undefined}
+                          resolveAuthSecret={vaultUnlocked ? resolveKomariHostSecret : undefined}
                         />
                       ))}
                     </div>

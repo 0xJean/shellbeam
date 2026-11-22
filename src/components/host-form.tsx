@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { hasSshConnection, validateHostDraft } from '@/lib/hosts'
+import { BILLING_CURRENCIES, BILLING_CYCLES, normalizeHostBilling } from '@/lib/host-billing'
 import { useT } from '@/lib/i18n'
 import { isSshPublicKeyText, pickPrivateKeyFile } from '@/lib/keys'
 import { connectShellbeamServer, formatServerConnectError } from '@/lib/server-quick-connect'
@@ -82,6 +83,14 @@ export function HostForm({
   const [jumpPort, setJumpPort] = useState(String(initial?.jumpPort ?? ''))
   const [jumpUser, setJumpUser] = useState(initial?.jumpUser ?? '')
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [billingProvider, setBillingProvider] = useState(initial?.billing?.provider ?? '')
+  const [billingPrice, setBillingPrice] = useState(initial?.billing?.price != null ? String(initial.billing.price) : '')
+  const [billingCurrency, setBillingCurrency] = useState(initial?.billing?.currency ?? 'USD')
+  const [billingCycle, setBillingCycle] = useState(initial?.billing?.cycle ?? 'monthly')
+  const [billingExpiresAt, setBillingExpiresAt] = useState(initial?.billing?.expiresAt ?? '')
+  const [billingTrafficGb, setBillingTrafficGb] = useState(initial?.billing?.monthlyTrafficGb != null ? String(initial.billing.monthlyTrafficGb) : '')
+  const [billingAutoRenew, setBillingAutoRenew] = useState(Boolean(initial?.billing?.autoRenew))
+  const [showBilling, setShowBilling] = useState(Boolean(initial?.billing))
 
   const { t, locale } = useT()
 
@@ -189,6 +198,19 @@ export function HostForm({
       jumpHost: jumpHost.trim() || undefined,
       jumpPort: jumpPort.trim() ? parseInt(jumpPort, 10) || undefined : undefined,
       jumpUser: jumpUser.trim() || undefined,
+      ...(!connectionOnly
+        ? {
+            billing: normalizeHostBilling({
+              provider: billingProvider,
+              price: billingPrice.trim() ? Number(billingPrice) : undefined,
+              currency: billingPrice.trim() ? billingCurrency : undefined,
+              cycle: billingPrice.trim() ? billingCycle : undefined,
+              expiresAt: billingExpiresAt,
+              monthlyTrafficGb: billingTrafficGb.trim() ? Number(billingTrafficGb) : undefined,
+              autoRenew: billingAutoRenew,
+            }),
+          }
+        : {}),
     }
 
     const validation = validateHostDraft(draft)
@@ -462,6 +484,113 @@ export function HostForm({
             )}
           </div>
 
+        </div>
+
+        {/* Optional Asset & Billing Renewal Tracking */}
+        <div className="rounded-lg border border-border/80 bg-muted/20 p-3">
+          <button
+            type="button"
+            data-testid="host-billing-toggle"
+            onClick={() => setShowBilling((value) => !value)}
+            className="flex w-full items-center justify-between text-left text-[13px] font-medium text-foreground"
+          >
+            <span>{locale === 'zh-CN' ? '资产与续费记录（可选）' : 'Asset & Renewal Tracking (Optional)'}</span>
+            <span className="text-xs text-muted-foreground">{showBilling ? (locale === 'zh-CN' ? '收起' : 'Hide') : (locale === 'zh-CN' ? '展开' : 'Configure')}</span>
+          </button>
+          {showBilling && (
+            <div data-testid="host-billing-fields" className="mt-3 space-y-2.5">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '服务商' : 'Provider'}</label>
+                  <Input
+                    data-testid="host-billing-provider"
+                    value={billingProvider}
+                    onChange={(e) => setBillingProvider(e.target.value)}
+                    placeholder={locale === 'zh-CN' ? '如 Aliyun / Vultr / 搬瓦工' : 'e.g. Hetzner, Vultr, AWS'}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '到期日期' : 'Expires On'}</label>
+                  <Input
+                    data-testid="host-billing-expires"
+                    type="date"
+                    value={billingExpiresAt}
+                    onChange={(e) => setBillingExpiresAt(e.target.value)}
+                    className="h-8 font-mono text-xs"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '价格' : 'Price'}</label>
+                  <Input
+                    data-testid="host-billing-price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={billingPrice}
+                    onChange={(e) => setBillingPrice(e.target.value)}
+                    placeholder="9.99"
+                    className="h-8 font-mono text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '币种' : 'Currency'}</label>
+                  <NativeSelect
+                    data-testid="host-billing-currency"
+                    aria-label={locale === 'zh-CN' ? '币种' : 'Currency'}
+                    value={billingCurrency}
+                    onChange={(e) => setBillingCurrency(e.target.value)}
+                    className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                  >
+                    {BILLING_CURRENCIES.map((code) => <option key={code} value={code}>{code}</option>)}
+                  </NativeSelect>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '计费周期' : 'Cycle'}</label>
+                  <NativeSelect
+                    data-testid="host-billing-cycle"
+                    aria-label={locale === 'zh-CN' ? '计费周期' : 'Cycle'}
+                    value={billingCycle}
+                    onChange={(e) => setBillingCycle(e.target.value)}
+                    className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                  >
+                    {BILLING_CYCLES.map((cycle) => (
+                      <option key={cycle} value={cycle}>
+                        {locale === 'zh-CN'
+                          ? ({ monthly: '月付', quarterly: '季付', semiannual: '半年付', annual: '年付', biennial: '两年付', triennial: '三年付', onetime: '一次性' } as const)[cycle]
+                          : ({ monthly: 'Monthly', quarterly: 'Quarterly', semiannual: 'Semi-annual', annual: 'Annual', biennial: 'Biennial', triennial: 'Triennial', onetime: 'One-time' } as const)[cycle]}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 items-end gap-2">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '月流量配额 (GB)' : 'Monthly Quota (GB)'}</label>
+                  <Input
+                    data-testid="host-billing-traffic"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={billingTrafficGb}
+                    onChange={(e) => setBillingTrafficGb(e.target.value)}
+                    placeholder="1000"
+                    className="h-8 font-mono text-xs"
+                  />
+                </div>
+                <label className="flex h-8 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={billingAutoRenew}
+                    onChange={(e) => setBillingAutoRenew(e.target.checked)}
+                  />
+                  <span>{locale === 'zh-CN' ? '开启自动续费' : 'Auto-renew enabled'}</span>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
 
         {metadataControls}

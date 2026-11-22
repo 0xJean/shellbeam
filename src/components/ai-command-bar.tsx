@@ -10,6 +10,7 @@ import {
 import { deleteConversationThread, loadConversationBookState, saveConversationThread, threadRevision, type AIConversationThread } from '@/lib/ai-conversation-store'
 import { aiAssistantCopy, fillCopy } from '@/lib/locales/ai-assistant'
 import { hostFactsText, type HostFact } from '@/lib/ai-host-facts'
+import { buildFileBackupPlan, detectModifiedFileTargets } from '@/lib/ai-file-backup'
 import { suggestPrompts } from '@/lib/ai-suggestions'
 import type { WorkspaceInventory } from '@/lib/workspace-inventory'
 import { AiAssistantSheet, type AiSheetMessage } from './mobile/ai-assistant-sheet'
@@ -944,8 +945,10 @@ function CommandCard({ turn, copied, run, hasSilentExec, onRun, onRunInTerminal,
   const { locale } = useT()
   const copy = aiAssistantCopy[locale]
   const [editing, setEditing] = useState(false)
+  const [lastRollbackCommand, setLastRollbackCommand] = useState<string | null>(null)
   const reply = splitReply(turn.text)
   const [draft, setDraft] = useState(reply.command)
+  const backupTargets = useMemo(() => detectModifiedFileTargets(draft.trim()), [draft])
   const meta = [turn.model, turn.durationMs ? fillCopy(copy.duration, { seconds: (turn.durationMs / 1000).toFixed(1) }) : ''].filter(Boolean).join(' · ')
 
   const question = isNoteReply(turn.text) ? parseQuestion(turn.text) : null
@@ -1003,6 +1006,27 @@ function CommandCard({ turn, copied, run, hasSilentExec, onRun, onRunInTerminal,
                 <SquareTerminal className="h-3 w-3" aria-hidden="true" />{copy.runInTerminal}
               </button>
             )}
+            {backupTargets.length > 0 && (
+              <button
+                type="button"
+                data-testid="ai-backup-run"
+                disabled={!command}
+                onClick={() => {
+                  const plan = buildFileBackupPlan(command)
+                  if (!plan) return
+                  setEditing(false)
+                  setLastRollbackCommand(plan.rollbackCommand)
+                  onRun(plan.wrappedCommand)
+                }}
+                title={locale === 'zh-CN'
+                  ? `执行前自动备份至 ~/.shellbeam-backups/（保留最近 3 份）：${backupTargets.join(', ')}`
+                  : `Auto-backup to ~/.shellbeam-backups/ (keeps 3 copies) before running: ${backupTargets.join(', ')}`}
+                className={cn(button, 'border border-[color:var(--workspace-status-good-border)] bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)] hover:opacity-90 disabled:opacity-40')}
+              >
+                <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+                {locale === 'zh-CN' ? '备份后执行' : 'Backup & Run'}
+              </button>
+            )}
           </>
         )}
         <button type="button" disabled={!command} onClick={() => onInsert(command)} title={copy.insertHint}
@@ -1025,6 +1049,18 @@ function CommandCard({ turn, copied, run, hasSilentExec, onRun, onRunInTerminal,
           {run.via === 'exec' && <span>· {copy.viaExec}</span>}
           {run.via === 'exec' && run.exitCode !== undefined && <span className="font-mono">· {fillCopy(copy.exitCode, { code: run.exitCode })}</span>}
           {run.durationMs !== undefined && <span>· {fillCopy(copy.duration, { seconds: (run.durationMs / 1000).toFixed(1) })}</span>}
+          {lastRollbackCommand && (
+            <button
+              type="button"
+              data-testid="ai-backup-rollback"
+              onClick={() => onRun(lastRollbackCommand)}
+              title={lastRollbackCommand}
+              className="ml-auto inline-flex items-center gap-1 rounded border border-[color:var(--workspace-status-warn-border)] bg-[var(--workspace-status-warn-bg)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--workspace-status-warn-text)] hover:opacity-90"
+            >
+              <RotateCcw className="h-2.5 w-2.5" aria-hidden="true" />
+              {locale === 'zh-CN' ? '一键回滚' : 'Rollback'}
+            </button>
+          )}
         </div>
       )}
       {meta && <p className="border-t border-[color:var(--workspace-border-soft)] px-3 py-1 font-mono text-[10.5px] text-[var(--workspace-text-subtle)]">{meta}</p>}
