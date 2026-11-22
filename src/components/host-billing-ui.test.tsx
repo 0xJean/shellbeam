@@ -1,9 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { HostGridCard } from './host-card'
+import { HostDirectoryEditor } from './host-directory-editor'
 import { HostKpiRow } from './hosts-overview'
 import { summarizeFleetBilling } from '@/lib/host-billing'
-import type { HostProfile } from '@/lib/hosts'
+import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 
 const makeHost = (overrides: Partial<HostProfile> = {}): HostProfile => ({
   id: 'h-bill',
@@ -70,5 +71,47 @@ describe('Host billing & expiry UI', () => {
     fireEvent.click(pill)
     expect(onToggleExpiring).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('host-kpis')).toHaveTextContent('$20')
+  })
+
+  it('supports adding, updating, and clearing billing on saved hosts via HostDirectoryEditor', async () => {
+    const saved = makeHost({
+      privateKeyRef: 'k1',
+      billing: { provider: 'Vultr', price: 12, currency: 'USD', cycle: 'monthly', expiresAt: '2026-12-01' },
+    })
+    const onSubmit = vi.fn<(draft: HostProfileDraft) => Promise<void>>(async () => {})
+
+    const { rerender } = render(
+      <HostDirectoryEditor
+        host={saved}
+        vaultUnlocked
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    )
+
+    // Existing billing starts expanded and can be updated.
+    const expiresInput = screen.getByTestId('host-billing-expires') as HTMLInputElement
+    expect(expiresInput.value).toBe('2026-12-01')
+    fireEvent.change(expiresInput, { target: { value: '2027-12-01' } })
+    fireEvent.click(screen.getByRole('button', { name: /save|保存/i }))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit.mock.calls[0][0].billing?.expiresAt).toBe('2027-12-01')
+
+    // Clearing all billing fields removes billing cleanly.
+    rerender(
+      <HostDirectoryEditor
+        key="clear"
+        host={saved}
+        vaultUnlocked
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    )
+    fireEvent.change(screen.getByTestId('host-billing-provider'), { target: { value: '' } })
+    fireEvent.change(screen.getByTestId('host-billing-price'), { target: { value: '' } })
+    fireEvent.change(screen.getByTestId('host-billing-expires'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: /save|保存/i }))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2))
+    expect(onSubmit.mock.calls[1][0].billing).toBeUndefined()
   })
 })

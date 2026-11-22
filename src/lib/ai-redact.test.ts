@@ -45,6 +45,9 @@ describe('redactSecrets', () => {
     expect(redactSecrets('sshpass -p hunter2 ssh root@h')).toBe(`sshpass -p ${REDACTED} ssh root@h`)
     expect(redactSecrets('mysql -u root -phunter2 appdb')).toBe(`mysql -u root -p${REDACTED} appdb`)
     expect(redactSecrets('curl -u admin:s3cr3t https://api.example.com')).toBe(`curl -u admin:${REDACTED} https://api.example.com`)
+    expect(redactSecrets('curl --user=admin:s3cr3t https://api.example.com')).toBe(`curl --user=admin:${REDACTED} https://api.example.com`)
+    expect(redactSecrets('curl -u "admin:my secret pass" https://api.example.com')).toBe(`curl -u "admin:${REDACTED}" https://api.example.com`)
+    expect(redactSecrets("curl --user='admin:my secret pass' https://api.example.com")).toBe(`curl --user='admin:${REDACTED}' https://api.example.com`)
   })
 
   it('leaves ordinary output alone', () => {

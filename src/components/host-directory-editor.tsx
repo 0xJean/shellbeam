@@ -3,6 +3,7 @@ import { hostConnections, validateHostDraft, withHostConnections, type Connectio
 import { useT } from '@/lib/i18n'
 import { connectShellbeamServer, formatServerConnectError } from '@/lib/server-quick-connect'
 import { HostForm } from './host-form'
+import { billingFormDraftToHostBilling, HostBillingFields, initialBillingFormDraft } from './host-billing-fields'
 import { INITIAL_SERVER_DRAFT, type InlineServerConnectDraft } from './inline-server-connect'
 import { MonitoringModeField } from './monitoring-mode-field'
 import { Button } from './ui/button'
@@ -21,6 +22,7 @@ export function HostDirectoryEditor({ host, onSubmit, onCancel, metadataControls
   const [selectedServerId, setSelectedServerId] = useState<string>('')
   const [group, setGroup] = useState(host.group)
   const [tags, setTags] = useState(host.tags.join(', '))
+  const [billingDraft, setBillingDraft] = useState(() => initialBillingFormDraft(host.billing))
   const [connections, setConnections] = useState(() => hostConnections(host))
   const [defaultId, setDefaultId] = useState(host.defaultConnectionId ?? hostConnections(host)[0]?.id ?? null)
   const [editing, setEditing] = useState<ConnectionProfile | 'new' | null>(null)
@@ -44,7 +46,18 @@ export function HostDirectoryEditor({ host, onSubmit, onCancel, metadataControls
   async function save() {
     if (form.vaultUnlocked === false || saving) return
     setError('')
-    const draft = withHostConnections({ ...host, monitoringMode, name: name.trim(), group: group.trim(), tags: tags.split(/[,，]/).map(v => v.trim()).filter(Boolean) }, connections, defaultId)
+    const draft = withHostConnections(
+      {
+        ...host,
+        monitoringMode,
+        name: name.trim(),
+        group: group.trim(),
+        tags: tags.split(/[,，]/).map(v => v.trim()).filter(Boolean),
+        billing: billingFormDraftToHostBilling(billingDraft),
+      },
+      connections,
+      defaultId,
+    )
     const validation = validateHostDraft(draft)
     if (!validation.isValid) { setError(validation.errors[0]); return }
     setSaving(true)
@@ -91,6 +104,12 @@ export function HostDirectoryEditor({ host, onSubmit, onCancel, metadataControls
     <label className="block space-y-1 text-sm">{t('hostForm.label')}<Input aria-label={t('hostForm.label')} value={name} onChange={e => setName(e.target.value)} /></label>
     <label className="block space-y-1 text-sm">{t('hostForm.parentGroup')}<Input aria-label={t('hostForm.parentGroup')} value={group} onChange={e => setGroup(e.target.value)} /></label>
     <label className="block space-y-1 text-sm">{t('hostForm.tags')}<Input aria-label={t('hostForm.tags')} value={tags} onChange={e => setTags(e.target.value)} /></label>
+    <HostBillingFields
+      value={billingDraft}
+      onChange={setBillingDraft}
+      defaultExpanded={Boolean(host.billing)}
+      disabled={saving || form.vaultUnlocked === false}
+    />
     <MonitoringModeField
       host={host}
       retainedServer={host.monitoringMode === 'server'}

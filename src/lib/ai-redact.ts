@@ -50,8 +50,12 @@ const rules: { pattern: RegExp; replace: (match: string, ...groups: string[]) =>
     replace: (_m, prefix: string) => `${prefix}${REDACTED}`,
   },
   {
-    pattern: /(\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?[^\s:"']+):([^\s"']+)/g,
-    replace: (_m, prefix: string) => `${prefix}:${REDACTED}`,
+    pattern: /(\bcurl\b[^\n]*?(?:\s(?:-u|--user)(?:=|\s+)|\s-u))(?:"([^":\n]+):([^"\n]*)"|'([^':\n]+):([^'\n]*)'|([^\s:"'=]+):([^\s"']+))/g,
+    replace: (_m, prefix: string, dqUser?: string, _dqPass?: string, sqUser?: string, _sqPass?: string, bareUser?: string) => {
+      if (dqUser !== undefined) return `${prefix}"${dqUser}:${REDACTED}"`
+      if (sqUser !== undefined) return `${prefix}'${sqUser}:${REDACTED}'`
+      return `${prefix}${bareUser}:${REDACTED}`
+    },
   },
   // Assignments and fields: DB_PASSWORD=x, "api_key": "x", token: x
   {
