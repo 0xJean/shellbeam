@@ -3,7 +3,7 @@ import { hostConnections, validateHostDraft, withHostConnections, type Connectio
 import { useT } from '@/lib/i18n'
 import { connectShellbeamServer, formatServerConnectError } from '@/lib/server-quick-connect'
 import { HostForm } from './host-form'
-import { billingFormDraftToHostBilling, HostBillingFields, initialBillingFormDraft } from './host-billing-fields'
+import { billingFormDraftToHostBilling, HostBillingFields, initialBillingFormDraft, validateBillingFormDraft } from './host-billing-fields'
 import { INITIAL_SERVER_DRAFT, type InlineServerConnectDraft } from './inline-server-connect'
 import { MonitoringModeField } from './monitoring-mode-field'
 import { Button } from './ui/button'
@@ -46,6 +46,8 @@ export function HostDirectoryEditor({ host, onSubmit, onCancel, metadataControls
   async function save() {
     if (form.vaultUnlocked === false || saving) return
     setError('')
+    const billingError = validateBillingFormDraft(billingDraft, locale)
+    if (billingError) { setError(billingError); return }
     const draft = withHostConnections(
       {
         ...host,

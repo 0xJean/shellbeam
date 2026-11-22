@@ -29,9 +29,19 @@ function shellPathExpr(filePath: string): string {
   return shellQuote(filePath)
 }
 
+/** Deterministic 32-bit FNV-1a hex hash of the exact target path to prevent slug collisions. */
+function targetPathHash(filePath: string): string {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < filePath.length; i += 1) {
+    hash ^= filePath.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+
 function sanitizeBackupSlug(filePath: string): string {
   const normalized = filePath.replace(/^~\/+/, 'home_').replace(/^\/+/, '').replace(/[^A-Za-z0-9._-]+/g, '_')
-  return (normalized || 'file').slice(-80)
+  return (normalized || 'file').slice(-64)
 }
 
 function isCandidateFilePath(token: string): boolean {
@@ -56,11 +66,77 @@ function commandUsesSudo(command: string): boolean {
   return /(?:^|[;&|\n(]\s*)sudo\b/.test(command)
 }
 
+interface OptionParseSpec {
+  /** Single-letter short flags that take a separate argument (e.g. `-m 0644`). */
+  shortValue: string
+  /** Long flag names (without `--`) that take a separate argument (e.g. `--mode 0644`). */
+  longValue: readonly string[]
+  /** Flags that make target resolution ambiguous (e.g. `-t`, `-d`, `--target-directory`). */
+  rejectShort: string
+  rejectLong: readonly string[]
+}
+
+const OPTION_SPECS: Record<'mv' | 'cp' | 'install' | 'truncate', OptionParseSpec> = {
+  mv: { shortValue: 'S', longValue: ['suffix'], rejectShort: 't', rejectLong: ['target-directory'] },
+  cp: { shortValue: 'S', longValue: ['suffix'], rejectShort: 't', rejectLong: ['target-directory'] },
+  install: {
+    shortValue: 'mgoSZ',
+    longValue: ['mode', 'group', 'owner', 'suffix', 'context'],
+    rejectShort: 'td',
+    rejectLong: ['target-directory', 'directory'],
+  },
+  truncate: {
+    shortValue: 'sr',
+    longValue: ['size', 'reference'],
+    rejectShort: '',
+    rejectLong: [],
+  },
+}
+
+function parseCommandPositionals(bin: 'mv' | 'cp' | 'install' | 'truncate', args: string[]): string[] | null {
+  const spec = OPTION_SPECS[bin]
+  const positionals: string[] = []
+  let endOfFlags = false
+  for (let i = 0; i < args.length; i += 1) {
+    const raw = args[i]
+    if (endOfFlags || raw === '-' || !raw.startsWith('-')) {
+      positionals.push(stripOuterQuotes(raw))
+      continue
+    }
+    if (raw === '--') {
+      endOfFlags = true
+      continue
+    }
+    if (raw.startsWith('--')) {
+      const [flagPart] = raw.slice(2).split('=')
+      if (spec.rejectLong.includes(flagPart)) return null
+      if (spec.longValue.includes(flagPart) && !raw.includes('=')) {
+        if (i + 1 >= args.length) return null
+        i += 1
+      }
+      continue
+    }
+    // Short option cluster (e.g. `-m`, `-m0644`, `-rf`)
+    for (let j = 1; j < raw.length; j += 1) {
+      const ch = raw[j]
+      if (spec.rejectShort.includes(ch)) return null
+      if (spec.shortValue.includes(ch)) {
+        if (j === raw.length - 1) {
+          if (i + 1 >= args.length) return null
+          i += 1
+        }
+        break
+      }
+    }
+  }
+  return positionals
+}
+
 /**
  * Conservative extraction of concrete file paths that a state-changing shell
  * command will modify, move, or overwrite. Fails closed (returns `[]`) when:
  * - any target uses unresolvable shell expansion (`~user`, globs, `$VAR`),
- * - `mv` / `cp` / `install` targets a directory or uses `-t`/`--target-directory` or >2 operands,
+ * - `mv` / `cp` / `install` targets a directory or uses `-t`/`--target-directory`/`-d` or >2 operands,
  * - the total number of detected targets exceeds `MAX_BACKUP_TARGETS` (never advertises partial coverage).
  */
 export function detectModifiedFileTargets(command: string): string[] {
@@ -107,27 +183,18 @@ export function detectModifiedFileTargets(command: string): string[] {
     if (bin === 'sed') {
       const hasInPlace = args.some((a) => a === '-i' || a.startsWith('-i') || a === '--in-place' || a.startsWith('--in-place='))
       if (hasInPlace) {
-        let sawTarget = false
         for (let i = args.length - 1; i >= 0; i -= 1) {
           const arg = stripOuterQuotes(args[i])
           if (arg.startsWith('-')) break
-          if (isCandidateFilePath(arg)) {
-            found.add(arg)
-            sawTarget = true
-          } else if (sawTarget) {
-            break
-          } else {
-            break
-          }
+          if (isCandidateFilePath(arg)) found.add(arg)
+          else break
         }
       }
     } else if (bin === 'mv') {
-      const hasTargetDirFlag = args.some((a) => a === '-t' || a.startsWith('--target-directory'))
-      const positionals = args.filter((a) => !a.startsWith('-')).map(stripOuterQuotes)
-      if (hasTargetDirFlag || positionals.length !== 2) {
+      const positionals = parseCommandPositionals('mv', args)
+      if (!positionals || positionals.length !== 2) {
         unsupported = true
       } else {
-        // Track BOTH source and destination so rollback restores the moved source and old destination.
         const [src, dst] = positionals
         if (!isCandidateFilePath(src) || !isCandidateFilePath(dst)) {
           unsupported = true
@@ -137,9 +204,8 @@ export function detectModifiedFileTargets(command: string): string[] {
         }
       }
     } else if (bin === 'cp' || bin === 'install') {
-      const hasTargetDirFlag = args.some((a) => a === '-t' || a.startsWith('--target-directory'))
-      const positionals = args.filter((a) => !a.startsWith('-')).map(stripOuterQuotes)
-      if (hasTargetDirFlag || positionals.length !== 2) {
+      const positionals = parseCommandPositionals(bin, args)
+      if (!positionals || positionals.length !== 2) {
         unsupported = true
       } else {
         const dest = positionals[1]
@@ -149,7 +215,16 @@ export function detectModifiedFileTargets(command: string): string[] {
           found.add(dest)
         }
       }
-    } else if (bin === 'rm' || bin === 'truncate') {
+    } else if (bin === 'truncate') {
+      const positionals = parseCommandPositionals('truncate', args)
+      if (!positionals || positionals.length === 0) {
+        unsupported = true
+      } else {
+        for (const target of positionals) {
+          if (!addChecked(target)) unsupported = true
+        }
+      }
+    } else if (bin === 'rm') {
       for (const arg of args) {
         if (!arg.startsWith('-') && !addChecked(arg)) unsupported = true
       }
@@ -171,13 +246,12 @@ function formatUtcStamp(now: number): string {
 
 /**
  * Wraps a mutating command with a POSIX-safe pre-backup into `~/.shellbeam-backups/`:
- * - Resolves `~/...` via `"$HOME"/'...'` so home-relative edits back up the real file.
- * - Records `.absent` markers for files that did not exist prior to mutation.
- * - Uses privilege-aware restore (`sudo`) when the command itself uses `sudo`, and verifies
- *   non-elevated writability before running unprivileged mutations.
- * - Uses a newline-delimited subshell so heredoc writes (`<<EOF ... EOF`) remain intact.
- * - Rollback processes every target independently (reporting any individual failure via exit code)
- *   so a newly created file never skips restoring later targets.
+ * - Every backup step executes inside a subshell `( ... )` so a refusal (`exit 1`) never closes an interactive SSH session.
+ * - Snapshot names include a deterministic path hash (`${stamp}_${hash}_${slug}.bak`) and separate `.absent` markers to prevent collisions.
+ * - Uses the same privilege level (`sudo`) for inspecting, copying, pruning, and restoring elevated targets, preserving original UID/GID ownership.
+ * - Refuses directory and symlink targets (including dangling symlinks) as well as untraversable parent directories.
+ * - Uses a newline-delimited subshell so heredoc writes (`<<EOF ... EOF`) terminate cleanly.
+ * - Rollback processes every target independently and propagates any failure via exit status.
  */
 export function buildFileBackupPlan(command: string, now = Date.now()): FileBackupPlan | null {
   const targets = detectModifiedFileTargets(command)
@@ -186,28 +260,46 @@ export function buildFileBackupPlan(command: string, now = Date.now()): FileBack
   const trimmed = command.trim()
   const usesSudo = commandUsesSudo(trimmed)
   const stamp = formatUtcStamp(now)
-  const backupSteps: string[] = [`mkdir -p "${BACKUP_DIR}" && chmod 700 "${BACKUP_DIR}"`]
+  const backupSteps: string[] = [`( mkdir -p "${BACKUP_DIR}" && chmod 700 "${BACKUP_DIR}" )`]
   const rollbackSteps: string[] = ['rc=0']
   const priv = usesSudo ? 'sudo ' : ''
 
   for (const target of targets) {
+    const hash = targetPathHash(target)
     const slug = sanitizeBackupSlug(target)
+    const key = `${hash}_${slug}`
     const targetExpr = shellPathExpr(target)
-    const backupFile = `"${BACKUP_DIR}/${stamp}_${slug}"`
-    const absentMarker = `"${BACKUP_DIR}/${stamp}_${slug}.absent"`
+    const backupFile = `"${BACKUP_DIR}/${stamp}_${key}.bak"`
+    const absentMarker = `"${BACKUP_DIR}/${stamp}_${key}.absent"`
 
-    // Refuse if target is an existing directory (cannot safely roll back directory overwrite as file).
-    // For non-sudo commands, verify target (or parent dir if new) is writable so rollback can succeed.
-    const guard = usesSudo
-      ? `if [ -d ${targetExpr} ]; then printf '%s\\n' ${shellQuote(`Refusing backup (directory): ${target}`)} >&2; exit 1; fi`
-      : `if [ -d ${targetExpr} ]; then printf '%s\\n' ${shellQuote(`Refusing backup (directory): ${target}`)} >&2; exit 1; fi; if [ -e ${targetExpr} ] && [ ! -w ${targetExpr} ]; then printf '%s\\n' ${shellQuote(`Refusing backup (not writable): ${target}`)} >&2; exit 1; fi; if [ ! -e ${targetExpr} ] && [ ! -w "$(dirname -- ${targetExpr})" ]; then printf '%s\\n' ${shellQuote(`Refusing backup (parent not writable): ${target}`)} >&2; exit 1; fi`
+    // Inspect target under the exact same effective privileges as the mutation/copy.
+    // Refuse symlinks (including dangling links), directories, and untraversable/unwritable parents.
+    const guardParts = [
+      `if ${priv}test -L ${targetExpr}; then printf '%s\\n' ${shellQuote(`Refusing backup (symlink): ${target}`)} >&2; exit 1; fi`,
+      `if ${priv}test -d ${targetExpr}; then printf '%s\\n' ${shellQuote(`Refusing backup (directory): ${target}`)} >&2; exit 1; fi`,
+      `if ! ${priv}test -x "$(dirname -- ${targetExpr})"; then printf '%s\\n' ${shellQuote(`Refusing backup (parent not accessible): ${target}`)} >&2; exit 1; fi`,
+    ]
+    if (!usesSudo) {
+      guardParts.push(
+        `if test -e ${targetExpr} && ! test -w ${targetExpr}; then printf '%s\\n' ${shellQuote(`Refusing backup (not writable): ${target}`)} >&2; exit 1; fi`,
+        `if ! test -e ${targetExpr} && ! test -w "$(dirname -- ${targetExpr})"; then printf '%s\\n' ${shellQuote(`Refusing backup (parent not writable): ${target}`)} >&2; exit 1; fi`,
+      )
+    }
+    const guard = guardParts.join('; ')
 
-    const snapshot = `if [ -f ${targetExpr} ]; then ${priv}cp -p ${targetExpr} ${backupFile} && ${usesSudo ? `sudo chown "$(id -u):$(id -g)" ${backupFile} && ` : ''}ls -1t "${BACKUP_DIR}/"*_${slug} 2>/dev/null | tail -n +${MAX_BACKUPS_PER_FILE + 1} | xargs -r rm -f; elif [ ! -e ${targetExpr} ]; then : > ${absentMarker}; fi`
+    // Preserve original owner/mode on elevated backups (never chown snapshots away from original owner).
+    const snapshot = [
+      `if ${priv}test -f ${targetExpr}; then`,
+      `${priv}cp -p ${targetExpr} ${backupFile} && ls -1t "${BACKUP_DIR}/"*_${key}.bak 2>/dev/null | tail -n +${MAX_BACKUPS_PER_FILE + 1} | xargs -r ${priv}rm -f;`,
+      `elif ! ${priv}test -e ${targetExpr}; then`,
+      `: > ${absentMarker};`,
+      `else printf '%s\\n' ${shellQuote(`Refusing backup (unsupported file type): ${target}`)} >&2; exit 1; fi`,
+    ].join(' ')
 
-    backupSteps.push(`{ ${guard} && ${snapshot}; }`)
+    backupSteps.push(`( ${guard}; ${snapshot} )`)
 
     rollbackSteps.push(
-      `if [ -f ${backupFile} ]; then ${priv}cp -p ${backupFile} ${targetExpr} || { printf '%s\\n' ${shellQuote(`Rollback failed: ${target}`)} >&2; rc=1; }; elif [ -f ${absentMarker} ]; then ${priv}rm -f ${targetExpr} || { printf '%s\\n' ${shellQuote(`Rollback cleanup failed: ${target}`)} >&2; rc=1; }; else printf '%s\\n' ${shellQuote(`Rollback skipped (no snapshot): ${target}`)} >&2; rc=1; fi`,
+      `if ${priv}test -f ${backupFile}; then ${priv}cp -p ${backupFile} ${targetExpr} || { printf '%s\\n' ${shellQuote(`Rollback failed: ${target}`)} >&2; rc=1; }; elif test -f ${absentMarker}; then ${priv}rm -f ${targetExpr} || { printf '%s\\n' ${shellQuote(`Rollback cleanup failed: ${target}`)} >&2; rc=1; }; else printf '%s\\n' ${shellQuote(`Rollback skipped (no snapshot): ${target}`)} >&2; rc=1; fi`,
     )
   }
 

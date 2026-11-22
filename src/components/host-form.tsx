@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import { hasSshConnection, validateHostDraft } from '@/lib/hosts'
-import { billingFormDraftToHostBilling, HostBillingFields, initialBillingFormDraft } from './host-billing-fields'
+import { billingFormDraftToHostBilling, HostBillingFields, initialBillingFormDraft, validateBillingFormDraft } from './host-billing-fields'
 import { useT } from '@/lib/i18n'
 import { isSshPublicKeyText, pickPrivateKeyFile } from '@/lib/keys'
 import { connectShellbeamServer, formatServerConnectError } from '@/lib/server-quick-connect'
@@ -192,6 +192,14 @@ export function HostForm({
       jumpPort: jumpPort.trim() ? parseInt(jumpPort, 10) || undefined : undefined,
       jumpUser: jumpUser.trim() || undefined,
       ...(!connectionOnly ? { billing: billingFormDraftToHostBilling(billingDraft) } : {}),
+    }
+
+    if (!connectionOnly) {
+      const billingError = validateBillingFormDraft(billingDraft, locale)
+      if (billingError) {
+        setError(billingError)
+        return
+      }
     }
 
     const validation = validateHostDraft(draft)

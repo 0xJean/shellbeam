@@ -114,4 +114,26 @@ describe('Host billing & expiry UI', () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2))
     expect(onSubmit.mock.calls[1][0].billing).toBeUndefined()
   })
+
+  it('rejects negative billing price or quota instead of silently clearing saved values', async () => {
+    const saved = makeHost({
+      privateKeyRef: 'k1',
+      billing: { provider: 'Vultr', price: 12, currency: 'USD', cycle: 'monthly', monthlyTrafficGb: 1000 },
+    })
+    const onSubmit = vi.fn<(draft: HostProfileDraft) => Promise<void>>(async () => {})
+
+    render(
+      <HostDirectoryEditor
+        host={saved}
+        vaultUnlocked
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    )
+
+    fireEvent.change(screen.getByTestId('host-billing-traffic'), { target: { value: '-1' } })
+    fireEvent.click(screen.getByRole('button', { name: /save|保存/i }))
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
 })

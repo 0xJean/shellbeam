@@ -33,6 +33,26 @@ export function initialBillingFormDraft(billing?: HostBilling | null): HostBilli
 }
 
 // eslint-disable-next-line react-refresh/only-export-components -- Co-located draft helpers for HostBillingFields callers.
+export function validateBillingFormDraft(draft: HostBillingFormDraft, locale: 'en' | 'zh-CN'): string | null {
+  if (draft.price.trim()) {
+    const price = Number(draft.price)
+    if (!Number.isFinite(price) || price < 0) {
+      return locale === 'zh-CN' ? '价格必须为大于等于 0 的有效数字' : 'Price must be a valid number greater than or equal to 0'
+    }
+  }
+  if (draft.monthlyTrafficGb.trim()) {
+    const quota = Number(draft.monthlyTrafficGb)
+    if (!Number.isFinite(quota) || quota < 0) {
+      return locale === 'zh-CN' ? '月流量配额必须为大于等于 0 的有效数字' : 'Monthly quota must be a valid number greater than or equal to 0'
+    }
+  }
+  if (draft.expiresAt.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(draft.expiresAt.trim())) {
+    return locale === 'zh-CN' ? '到期日期格式必须为 YYYY-MM-DD' : 'Expiration date must use YYYY-MM-DD format'
+  }
+  return null
+}
+
+// eslint-disable-next-line react-refresh/only-export-components -- Co-located draft helpers for HostBillingFields callers.
 export function billingFormDraftToHostBilling(draft: HostBillingFormDraft): HostBilling | undefined {
   const hasPrice = draft.price.trim().length > 0
   return normalizeHostBilling({
