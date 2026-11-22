@@ -1,7 +1,7 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_AI_SETTINGS, streamAICommand, switchAIProvider } from './ai'
-import { aiBaseUrl, discoverModels, loadModelCache, modelCacheKey, openAIEndpoint, parseModels, saveModelCache } from './ai-models'
+import { aiBaseUrl, canDiscoverModels, discoverModels, loadModelCache, modelCacheKey, openAIEndpoint, parseModels, saveModelCache } from './ai-models'
 
 const settings = { ...DEFAULT_AI_SETTINGS, apiKey: 'test-key' }
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
@@ -139,6 +139,23 @@ describe('model discovery', () => {
     expect(openAIEndpoint('https://open.bigmodel.cn/api/paas/v4', 'models')).toBe('https://open.bigmodel.cn/api/paas/v4/models')
     expect(openAIEndpoint('https://ark.cn-beijing.volces.com/api/v3', 'models')).toBe('https://ark.cn-beijing.volces.com/api/v3/models')
     expect(openAIEndpoint('https://dashscope.aliyuncs.com/compatible-mode/v1', 'models')).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/models')
-    expect(aiBaseUrl({ ...settings, provider: 'deepseek', providerProfiles: { deepseek: { apiKey: 'k', model: 'deepseek-chat', baseUrl: 'https://relay.example.com/v1' } } })).toBe('https://relay.example.com/v1')
+    expect(aiBaseUrl({ ...settings, provider: 'deepseek', providerProfiles: { deepseek: { apiKey: 'k', model: 'deepseek-flash', baseUrl: 'https://relay.example.com/v1' } } })).toBe('https://relay.example.com/v1')
+  })
+
+  it('allows model discovery for local and custom endpoints without a pre-selected model and sends reasoning_effort for gpt-6', async () => {
+    expect(canDiscoverModels({ ...DEFAULT_AI_SETTINGS, provider: 'ollama', model: '', apiKey: '' })).toBe(true)
+    expect(canDiscoverModels({ ...DEFAULT_AI_SETTINGS, provider: 'custom', customBaseUrl: 'https://llm.internal/v1', customModel: '', apiKey: '' })).toBe(true)
+    expect(canDiscoverModels({ ...DEFAULT_AI_SETTINGS, provider: 'custom', customBaseUrl: '', customModel: '', apiKey: '' })).toBe(false)
+    expect(canDiscoverModels({ ...DEFAULT_AI_SETTINGS, provider: 'openai', apiKey: '' })).toBe(false)
+    expect(canDiscoverModels(settings)).toBe(true)
+
+    vi.mocked(fetch).mockImplementation(async () => new Response('data: [DONE]\n\n'))
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    await streamAICommand({ ...settings, model: 'gpt-6.2-sol', reasoningEffort: 'high' }, 'check disk', '', callbacks)
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)).toMatchObject({
+      model: 'gpt-6.2-sol',
+      reasoning_effort: 'high',
+      max_completion_tokens: 2048,
+    })
   })
 })
