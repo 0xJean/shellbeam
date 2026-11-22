@@ -207,6 +207,7 @@
   body {
     @apply text-foreground font-display antialiased;
     background: var(--workspace-bg-950);
+    text-rendering: optimizeLegibility;
     -webkit-tap-highlight-color: transparent;
   }
 

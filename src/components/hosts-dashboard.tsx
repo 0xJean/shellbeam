@@ -1388,7 +1388,7 @@ export function HostsDashboard({
                 })}
               </div>
             ) : (
-              <div className="sb-card min-w-0 overflow-hidden">
+              <div className="sb-card sb-host-list min-w-0 overflow-hidden">
                 {(statusFilter !== 'all' || tagFilter.size > 0 || groupFilter !== 'All') && <div className="flex flex-wrap items-center gap-2 border-b border-[color:var(--workspace-border-soft)] px-4 py-2.5">
                   <span className="text-xs text-[var(--workspace-text-muted)]">{t('hosts.listPanelMeta', { visible: filteredHosts.length, total: hosts.length })}</span>
                   <div className="flex flex-wrap gap-2">

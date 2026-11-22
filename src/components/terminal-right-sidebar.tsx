@@ -146,7 +146,7 @@ export function TerminalRightSidebar({
       <div
         data-testid="terminal-right-sidebar"
         style={{ width: `${sidebarResize.size}px` }}
-        className="hidden h-full shrink-0 flex-col bg-background md:flex"
+        className="hidden h-full shrink-0 flex-col bg-[var(--workspace-nav-translucent)] backdrop-blur-md md:flex"
       >
         {tabBar}
         {content}
@@ -165,11 +165,11 @@ function StatusTab({ hosts, vaultId, hostAddress, snippets, onRunSnippet, onShow
   const provider = useWorkspaceProviderState({ host, hosts, vaultId })
   const snapshot = provider.view?.metrics ?? null
   const history = useHostMetricHistory(host?.vaultId ?? vaultId, host?.id, 1)
-  const rows: Array<{ key: string; label: string; value: string; values: Array<number | null> }> = [
-    { key: 'cpu', label: 'CPU', value: snapshot?.cpuPercent == null ? '—' : `${Math.round(snapshot.cpuPercent)}%`, values: history.map((point) => point.metrics.cpuPercent) },
-    { key: 'memory', label: c.memory, value: snapshot?.memoryPercent == null ? '—' : `${Math.round(snapshot.memoryPercent)}%`, values: history.map((point) => point.metrics.memoryPercent) },
-    { key: 'disk', label: c.disk, value: snapshot?.diskPercent == null ? '—' : `${Math.round(snapshot.diskPercent)}%`, values: history.map((point) => point.metrics.diskPercent) },
-    { key: 'network', label: `${c.network} ↓`, value: formatBytesRate(snapshot?.networkRxBytesPerSec), values: history.map((point) => point.metrics.networkRxBytesPerSec) },
+  const rows: Array<{ key: string; label: string; value: string; values: Array<number | null>; color: string }> = [
+    { key: 'cpu', label: 'CPU', value: snapshot?.cpuPercent == null ? '—' : `${Math.round(snapshot.cpuPercent)}%`, values: history.map((point) => point.metrics.cpuPercent), color: 'var(--workspace-metric-cpu-from)' },
+    { key: 'memory', label: c.memory, value: snapshot?.memoryPercent == null ? '—' : `${Math.round(snapshot.memoryPercent)}%`, values: history.map((point) => point.metrics.memoryPercent), color: 'var(--workspace-metric-memory-from)' },
+    { key: 'disk', label: c.disk, value: snapshot?.diskPercent == null ? '—' : `${Math.round(snapshot.diskPercent)}%`, values: history.map((point) => point.metrics.diskPercent), color: 'var(--workspace-metric-disk-from)' },
+    { key: 'network', label: `${c.network} ↓`, value: formatBytesRate(snapshot?.networkRxBytesPerSec), values: history.map((point) => point.metrics.networkRxBytesPerSec), color: 'var(--workspace-metric-network-from)' },
   ]
   const uptime = snapshot?.uptimeSeconds == null ? null : `${Math.floor(snapshot.uptimeSeconds / 86400)} ${c.days} ${Math.floor((snapshot.uptimeSeconds % 86400) / 3600)} ${c.hours}`
   const info: Array<[string, string | null | undefined]> = [
@@ -181,12 +181,18 @@ function StatusTab({ hosts, vaultId, hostAddress, snippets, onRunSnippet, onShow
       {variableFill.dialog}
       <section>
         <div className="mb-2 flex items-center justify-between text-xs"><h3 className="font-semibold text-foreground">{c.live}</h3>
-          {snapshot?.sampledAt ? <span className="text-[11px] text-muted-foreground">{new Date(snapshot.sampledAt).toLocaleTimeString(locale)}</span> : null}</div>
+          {snapshot?.sampledAt ? <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{new Date(snapshot.sampledAt).toLocaleTimeString(locale)}</span> : null}</div>
         {!host ? <p className="text-xs text-muted-foreground">{c.noHost}</p> : !snapshot ? <p className="text-xs text-muted-foreground">{c.noSample}</p> : (
           <div className="divide-y divide-border/50">
             {rows.map((row) => <div key={row.key} className="flex items-end justify-between gap-3 py-2.5">
-              <div><div className="text-[11px] text-muted-foreground">{row.label}</div><div className="font-mono text-sm font-semibold text-foreground">{row.value}</div></div>
-              {row.values.filter((value) => value != null).length > 1 && <Sparkline values={row.values} width={116} height={28} />}
+              <div>
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: row.color }} aria-hidden="true" />
+                  {row.label}
+                </div>
+                <div className="font-mono text-sm font-semibold tabular-nums text-foreground">{row.value}</div>
+              </div>
+              {row.values.filter((value) => value != null).length > 1 && <Sparkline values={row.values} color={row.color} width={116} height={28} />}
             </div>)}
           </div>
         )}
@@ -194,7 +200,7 @@ function StatusTab({ hosts, vaultId, hostAddress, snippets, onRunSnippet, onShow
       {snapshot && <section>
         <h3 className="mb-2 text-xs font-semibold text-foreground">{c.system}</h3>
         <dl className="space-y-1.5 text-xs">
-          {info.filter(([, value]) => value).map(([label, value]) => <div key={label} className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="truncate font-mono text-foreground" title={value ?? undefined}>{value}</dd></div>)}
+          {info.filter(([, value]) => value).map(([label, value]) => <div key={label} className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="truncate font-mono tabular-nums text-foreground" title={value ?? undefined}>{value}</dd></div>)}
         </dl>
       </section>}
       {snippets.length > 0 && <section>

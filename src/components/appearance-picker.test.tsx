@@ -12,18 +12,27 @@ describe('AppearancePicker', () => {
 
   it('sets both sides of a theme, so the mode picks the side', () => {
     render(<AppearancePicker family="dark" />)
-    expect(screen.getByTestId('theme-aqua')).toHaveAttribute('aria-checked', 'true')
-    fireEvent.click(screen.getByTestId('theme-dracula'))
-    expect(screen.getByTestId('theme-dracula')).toHaveAttribute('aria-checked', 'true')
-    expect(document.documentElement.dataset).toMatchObject({ darkPalette: 'dracula', darkAccent: 'pink', lightPalette: 'dracula-light', lightAccent: 'pink' })
+    expect(screen.getByTestId('theme-obsidian')).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(screen.getByTestId('theme-rose-pine'))
+    expect(screen.getByTestId('theme-rose-pine')).toHaveAttribute('aria-checked', 'true')
+    expect(document.documentElement.dataset).toMatchObject({
+      darkPalette: 'rose-pine',
+      darkAccent: 'pink',
+      lightPalette: 'rose-pine-light',
+      lightAccent: 'pink',
+    })
   })
 
-  it('offers eight themes that each have both sides', () => {
+  it('offers eight themes that each have both sides and supports glass UI style', () => {
     expect(THEMES).toHaveLength(8)
     for (const theme of THEMES) {
       expect(PALETTES[theme.dark].family).toBe('dark')
       expect(PALETTES[theme.light].family).toBe('light')
     }
+    render(<AppearancePicker family="dark" />)
+    fireEvent.click(screen.getByTestId('ui-style-glass'))
+    expect(screen.getByTestId('ui-style-glass')).toHaveAttribute('aria-checked', 'true')
+    expect(document.documentElement.dataset).toMatchObject({ darkStyle: 'glass', lightStyle: 'glass' })
   })
 
   it('applies a custom accent to both sides and can go back to the theme colour', () => {
