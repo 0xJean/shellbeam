@@ -80,8 +80,8 @@ const OPTION_SPECS: Record<'mv' | 'cp' | 'install' | 'truncate', OptionParseSpec
   mv: { shortValue: 'S', longValue: ['suffix'], rejectShort: 't', rejectLong: ['target-directory'] },
   cp: { shortValue: 'S', longValue: ['suffix'], rejectShort: 't', rejectLong: ['target-directory'] },
   install: {
-    shortValue: 'mgoSZ',
-    longValue: ['mode', 'group', 'owner', 'suffix', 'context'],
+    shortValue: 'mgoS',
+    longValue: ['mode', 'group', 'owner', 'suffix'],
     rejectShort: 'td',
     rejectLong: ['target-directory', 'directory'],
   },
@@ -146,13 +146,20 @@ export function detectModifiedFileTargets(command: string): string[] {
   const found = new Set<string>()
   let unsupported = false
 
+  const addParsed = (operand: string): boolean => {
+    if (!operand || operand === '/dev/null') return true
+    if (!isCandidateFilePath(operand)) return false
+    found.add(operand)
+    return true
+  }
+
   const addChecked = (raw?: string): boolean => {
     if (!raw) return false
-    const cleaned = stripOuterQuotes(raw.trim())
-    if (!cleaned || cleaned === '/dev/null') return true
-    if (!isCandidateFilePath(cleaned)) return false
-    found.add(cleaned)
-    return true
+    const trimmedRaw = raw.trim()
+    const cleaned = (trimmedRaw.startsWith('"') && trimmedRaw.endsWith('"')) || (trimmedRaw.startsWith("'") && trimmedRaw.endsWith("'"))
+      ? stripOuterQuotes(trimmedRaw)
+      : trimmedRaw
+    return addParsed(cleaned)
   }
 
   // 1. Output redirections: > /path, >> /path, 1> /path (exclude 2>&1 / &>)
@@ -221,7 +228,7 @@ export function detectModifiedFileTargets(command: string): string[] {
         unsupported = true
       } else {
         for (const target of positionals) {
-          if (!addChecked(target)) unsupported = true
+          if (!addParsed(target)) unsupported = true
         }
       }
     } else if (bin === 'rm') {

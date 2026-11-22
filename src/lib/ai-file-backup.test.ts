@@ -29,9 +29,18 @@ describe('ai-file-backup', () => {
     expect(detectModifiedFileTargets('sudo install -m 0644 -o root ./app.conf /etc/my-app.conf')).toEqual([
       '/etc/my-app.conf',
     ])
+    expect(detectModifiedFileTargets('sudo install -Z ./app.conf /etc/my-app.conf')).toEqual([
+      '/etc/my-app.conf',
+    ])
     expect(detectModifiedFileTargets('truncate -s 0 ./app.log')).toEqual([
       './app.log',
     ])
+    expect(detectModifiedFileTargets("truncate -s 0 '/var/log/app.log '")).toEqual([
+      '/var/log/app.log ',
+    ])
+    const trailingSpacePlan = buildFileBackupPlan("truncate -s 0 '/var/log/app.log '", fixedNow)
+    expect(trailingSpacePlan?.wrappedCommand).toContain("'/var/log/app.log '")
+    expect(trailingSpacePlan?.rollbackCommand).toContain("'/var/log/app.log '")
     expect(detectModifiedFileTargets('rm -f /etc/nginx/conf.d/old.conf')).toEqual([
       '/etc/nginx/conf.d/old.conf',
     ])
