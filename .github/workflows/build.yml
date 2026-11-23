@@ -415,10 +415,15 @@ jobs:
 
   release:
     # Platform builds may be skipped by a manual run. Acceptance may not.
+    # TestFlight-only dispatches do not create or update GitHub Release assets.
     if: >-
       always() &&
       startsWith(github.ref, 'refs/tags/v') &&
       needs.acceptance.result == 'success' &&
+      (needs.build-macos.result == 'success' ||
+       needs.build-linux.result == 'success' ||
+       needs.build-android.result == 'success' ||
+       needs.build-windows.result == 'success') &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
     needs: [acceptance, build-macos, build-linux, build-android, build-windows, ios-testflight]
@@ -435,11 +440,42 @@ jobs:
           pattern: '{macos,linux,android,windows}'
           path: artifacts
 
+      - name: Guard published release and clean stale unsigned draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS_SIGNED: ${{ needs.build-macos.outputs.signed }}
+          ANDROID_SIGNED: ${{ needs.build-android.outputs.signed }}
+          MACOS_BUILT: ${{ needs.build-macos.result == 'success' }}
+          ANDROID_BUILT: ${{ needs.build-android.result == 'success' }}
+        run: |
+          set -euo pipefail
+          EXISTING_JSON="$(gh release view "$GITHUB_REF_NAME" --json isDraft,assets 2>/dev/null || true)"
+          if [ -z "$EXISTING_JSON" ]; then
+            exit 0
+          fi
+          IS_DRAFT="$(printf '%s' "$EXISTING_JSON" | jq -r '.isDraft')"
+          if [ "$IS_DRAFT" = "false" ]; then
+            if [ "$MACOS_BUILT" = "true" ] && [ "$MACOS_SIGNED" != "true" ]; then
+              echo "::error::Refusing to overwrite published release $GITHUB_REF_NAME with an unsigned macOS DMG."
+              exit 1
+            fi
+            if [ "$ANDROID_BUILT" = "true" ] && [ "$ANDROID_SIGNED" != "true" ]; then
+              echo "::error::Refusing to overwrite published release $GITHUB_REF_NAME with an unsigned Android APK."
+              exit 1
+            fi
+          fi
+          if [ "$ANDROID_SIGNED" = "true" ]; then
+            for STALE in $(printf '%s' "$EXISTING_JSON" | jq -r '.assets[].name | select(test("-unsigned\\.apk$|^app-universal-release\\.aab$"))'); do
+              echo "Removing stale unsigned Android asset from existing release: $STALE"
+              gh release delete-asset "$GITHUB_REF_NAME" "$STALE" --yes
+            done
+          fi
+
       - name: Stage release assets and generate SHA256SUMS
         run: |
           set -euo pipefail
-          rm -rf release-assets
-          mkdir -p release-assets
+          rm -rf release-assets SHA256SUMS
+          mkdir -p artifacts release-assets
           find artifacts -type f \( \
             -name '*.dmg' -o \
             -name '*.deb' -o \
@@ -450,7 +486,8 @@ jobs:
             -name '*.apk' -o \
             -name '*.aab' \
           \) -exec cp {} release-assets/ \;
-          (cd release-assets && sha256sum * | sort -k2) > release-assets/SHA256SUMS
+          (cd release-assets && sha256sum -- *) | sort -k2 > SHA256SUMS
+          mv SHA256SUMS release-assets/SHA256SUMS
           ls -lh release-assets
           cat release-assets/SHA256SUMS
 

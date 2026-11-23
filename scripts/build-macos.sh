@@ -25,10 +25,21 @@ fi
 TARGET="${MACOS_TARGET:-universal-apple-darwin}"
 export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-Developer ID Application: chuang liu (H4NCLYWCAJ)}"
 
-# ── Validate required credentials ──
+# ── Validate required credentials & Rust targets ──
 : "${APPLE_ID:?Missing APPLE_ID — set in .env or environment}"
 : "${APPLE_PASSWORD:?Missing APPLE_PASSWORD — set in .env or environment}"
 : "${APPLE_TEAM_ID:=H4NCLYWCAJ}"
+
+if [ "$TARGET" = "universal-apple-darwin" ]; then
+  INSTALLED_TARGETS="$(rustup target list --installed)"
+  for REQUIRED in aarch64-apple-darwin x86_64-apple-darwin; do
+    if ! printf '%s\n' "$INSTALLED_TARGETS" | grep -qx "$REQUIRED"; then
+      echo "❌ Missing Rust target '$REQUIRED' required for universal-apple-darwin."
+      echo "   Run: rustup target add aarch64-apple-darwin x86_64-apple-darwin"
+      exit 1
+    fi
+  done
+fi
 
 echo "🔐 Identity: $APPLE_SIGNING_IDENTITY"
 echo "🎯 Target:   $TARGET"

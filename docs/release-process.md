@@ -44,22 +44,20 @@
 | Android | `ANDROID_KEY_ALIAS` | Key Alias（如 `shellbeam`） |
 | Android | `ANDROID_KEY_PASS` | Key 密码 |
 
-### 从本机钥匙串安全导入 `.p12` 到 GitHub Secrets（一次性）
+### 从本机钥匙串安全导入单个 Developer ID `.p12` 到 GitHub Secrets（一次性）
 
-在已安装 Developer ID 证书的 Mac 终端执行（会弹出系统钥匙串授权确认，结束后自动销毁临时 `.p12`）：
+> **安全注意**：切勿对整个 `login.keychain-db` 使用 `security export -t identities`，否则会把无关的个人/开发私钥一并导出并上传到 CI。
+
+1. 打开 macOS **钥匙串访问（Keychain Access）** → 左侧选「登录」→「我的证书」；
+2. **仅选中** `Developer ID Application: chuang liu (H4NCLYWCAJ)`（展开确认仅包含这一对证书与私钥）→ 右键 → **导出…** → 保存为临时 `.p12` 文件（如 `/tmp/shellbeam-dev-id.p12`），设置强随机导出密码；
+3. 在终端将其直接写入 GitHub Secrets 并立即删除临时 `.p12`：
 
 ```bash
-P12_TMP=$(mktemp -t shellbeam-cert).p12
-P12_PASS=$(openssl rand -base64 24)
-# 从「钥匙串访问」右键导出 Developer ID Application 证书与私钥为 "$P12_TMP"（密码填 "$P12_PASS"），
-# 或运行：
-security export -k ~/Library/Keychains/login.keychain-db \
-  -t identities -f pkcs12 -P "$P12_PASS" -o "$P12_TMP"
-
-base64 -i "$P12_TMP" | tr -d '\n' | gh secret set APPLE_CERTIFICATE --repo 0xJean/shellbeam
+read -rsp "输入刚才导出 .p12 时设置的密码: " P12_PASS; echo
+base64 -i /tmp/shellbeam-dev-id.p12 | tr -d '\n' | gh secret set APPLE_CERTIFICATE --repo 0xJean/shellbeam
 printf '%s' "$P12_PASS" | gh secret set APPLE_CERTIFICATE_PASSWORD --repo 0xJean/shellbeam
-rm -f "$P12_TMP"
-unset P12_PASS P12_TMP
+rm -f /tmp/shellbeam-dev-id.p12
+unset P12_PASS
 ```
 
 > **安全兜底机制**：如果任意一项 macOS 或 Android 签名 Secret 缺失导致 CI 降级为未签名包，`Release` workflow 会自动将 GitHub Release 设为 **`draft: true`**，绝不把未签名包直接对外公开。
@@ -94,6 +92,9 @@ gh run list --workflow build.yml --branch vX.Y.Z --repo 0xJean/shellbeam
 ### 4.1 macOS Universal 签名 + 双重公证
 
 ```bash
+# 首次构建通用包需确保两个 macOS Rust target 均已安装：
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
 # 确保 .env 包含 APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
 npm run build:macos
 ```
