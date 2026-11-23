@@ -1,6 +1,6 @@
 # ShellBeam CI/CD 配置指南
 
-Push `v*` tag 自动构建 macOS / Linux / Windows / Android，产物发布到 GitHub Release（draft）。
+Push `v*` tag 自动构建 Universal macOS（Apple Silicon + Intel）/ Linux / Windows / Android 并生成 `SHA256SUMS`。当 macOS 公证与 Android 签名全部配置且校验通过时自动公开发布 GitHub Release；若缺少签名 Secret 则自动保留为 **draft**，避免未签名包对外暴露。完整发版手册见 [release-process.md](release-process.md)。
 
 ## 1. GitHub Secrets 配置
 
