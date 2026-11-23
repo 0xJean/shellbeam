@@ -39,30 +39,35 @@ The nightly run is the safety net for a path rule that is too narrow. GitHub sen
 
 ## Release flow
 
-1. Update `src-tauri/tauri.conf.json` and `package.json` versions.
+See [release-process.md](release-process.md) for the full end-to-end release runbook (signing verification, local fallback signing, `SHA256SUMS`, and website sync).
+
+1. Update version to `X.Y.Z` in `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `src-tauri/Cargo.lock`, and add `docs/releases/vX.Y.Z.md`.
 2. Push a version tag:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.1.16
+   git push origin v0.1.16
    ```
-3. Wait for the `Release` workflow. It calls `Packaged acceptance`, so the tag has one run and the four suites appear inside it:
+3. Wait for the `Release` workflow. It builds Universal macOS (`universal-apple-darwin`), Linux, Windows, and Android, runs all four `Packaged acceptance` suites, verifies signatures, and generates `SHA256SUMS`:
    ```bash
-   gh run list --workflow build.yml --branch v0.1.0
+   gh run list --workflow build.yml --branch v0.1.16
    ```
-4. Publish the draft GitHub Release once the attached files and release notes look right. The draft only exists if all four acceptance checks and every enabled platform build passed.
+4. **Auto-publish vs Draft safety gate**:
+   - When both macOS Developer ID signing/notarization (`.app` + `.dmg`) and Android APK/AAB signing succeed, the GitHub Release publishes automatically (`draft: false`).
+   - If any required macOS or Android signing secret is missing, the workflow automatically creates a **`draft: true`** release so unsigned installers are never exposed publicly; replace the unsigned assets locally via `npm run build:macos` / `npm run build:android` before publishing.
 
-If acceptance fails, no draft is created. Fix the cause and push a new tag, or use **Re-run failed jobs** on the `Release` run for a failure that does not need a code change. Acceptance does not hold back the platform builds, which run alongside it, and an enabled iOS build reaches TestFlight whatever acceptance reports.
+If acceptance fails, no release is created. Fix the cause and push a new tag, or use **Re-run failed jobs** on the `Release` run for a failure that does not need a code change. Acceptance does not hold back the platform builds, which run alongside it, and an enabled iOS build reaches TestFlight whatever acceptance reports.
 
-Manual builds can be started from GitHub Actions with `workflow_dispatch`; platform builds can be enabled or disabled there. A manual run on a branch skips acceptance and creates no release. To create a draft GitHub Release from a manual run, dispatch the workflow on a `v*` tag ref, which runs acceptance the same way a tag push does. The iOS option uploads a build to TestFlight.
+Manual builds can be started from GitHub Actions with `workflow_dispatch`; platform builds can be enabled or disabled there. A manual run on a branch skips acceptance and creates no release. To create a GitHub Release from a manual run, dispatch the workflow on a `v*` tag ref, which runs acceptance the same way a tag push does. The iOS option uploads a build to TestFlight.
 
 ## GitHub downloads
 
 The release workflow attaches these files directly to the GitHub Release:
 
-- macOS: `.dmg`
+- macOS: `ShellBeam_<ver>_universal.dmg` (Apple Silicon + Intel)
 - Windows: `.msi`, `.exe`
 - Linux: `.deb`, `.AppImage`, `.rpm`
-- Android: `.apk`, `.aab`
+- Android: `ShellBeam_<ver>_universal.apk`, `ShellBeam_<ver>_universal.aab`
+- Checksums: `SHA256SUMS`
 
 iOS is intentionally excluded from GitHub assets. Set the repository variable `TESTFLIGHT_PUBLIC_LINK` to show the TestFlight link in release notes.
 

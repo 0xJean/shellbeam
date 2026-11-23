@@ -61,3 +61,8 @@ cargo clippy --manifest-path agent/Cargo.toml --locked --all-targets -- -D warni
 - **PR Scope & Baseline Hygiene**:
   - Keep PRs focused on the task. Distinguish newly introduced issues from pre-existing baseline debt on `main`.
   - Do not disable lint rules (`eslint-disable`, `#[allow(...)]`) without a concrete reason scoped as narrowly as possible.
+
+## Release Hygiene
+
+- Follow `docs/release-process.md` end-to-end for every tagged release (`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `docs/releases/vX.Y.Z.md`).
+- Never publish a public GitHub Release with an unsigned/unnotarized macOS DMG or unsigned Android APK: verify `codesign -dv`, `xcrun stapler validate`, `spctl -a -vvv` (macOS `.app` and `.dmg`), `apksigner verify` (Android), and `SHA256SUMS` before publishing.

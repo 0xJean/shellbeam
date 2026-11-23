@@ -45,6 +45,8 @@ jobs:
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.build_macos)
     runs-on: macos-latest
+    outputs:
+      signed: ${{ steps.build.outputs.signed }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -54,8 +56,10 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install Rust stable
+      - name: Install Rust stable (Universal macOS targets)
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Rust cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -71,7 +75,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           if [ -z "$APPLE_CERTIFICATE" ]; then
-            echo "No APPLE_CERTIFICATE secret; building unsigned macOS artifacts."
+            echo "::warning::Missing APPLE_CERTIFICATE secret; building ad-hoc unsigned macOS artifacts (Release will remain draft)."
             exit 0
           fi
 
@@ -86,26 +90,58 @@ jobs:
           security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          rm -f "$CERT_PATH"
 
-      - name: Build macOS app
+      - name: Build, sign, and notarize Universal macOS app
+        id: build
         env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+          set -euo pipefail
+          SIGNED="false"
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY" ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            SIGNED="true"
+          else
+            echo "::warning::Apple Developer ID signing/notarization secrets incomplete; falling back to ad-hoc signing."
             export APPLE_SIGNING_IDENTITY="-"
             unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
           fi
-          npm run tauri build
+
+          npm run tauri build -- --target universal-apple-darwin
+
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/ShellBeam.app"
+          DMG="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' | head -n 1)"
+          test -n "$DMG"
+
+          if [ "$SIGNED" = "true" ]; then
+            echo "Notarizing outer DMG: $DMG"
+            xcrun notarytool submit "$DMG" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            xcrun stapler staple "$DMG"
+
+            echo "Verifying codesign, stapler, and Gatekeeper..."
+            codesign -dv --verbose=2 "$APP" 2>&1 | grep -E "Authority|Identifier|TeamIdentifier|Timestamp"
+            spctl -a -vvv "$APP"
+            xcrun stapler validate "$APP"
+            xcrun stapler validate "$DMG"
+            spctl -a -t open --context context:primary-signature -vvv "$DMG"
+          fi
+
+          echo "signed=$SIGNED" >> "$GITHUB_OUTPUT"
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos
           path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
   build-linux:
@@ -164,6 +200,8 @@ jobs:
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.build_android)
     runs-on: ubuntu-latest
+    outputs:
+      signed: ${{ steps.stage.outputs.signed }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -207,6 +245,8 @@ jobs:
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
             echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > shellbeam.jks
             echo "ANDROID_KEYSTORE_PATH=./shellbeam.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Missing ANDROID_KEYSTORE_BASE64 secret; Android APK will be unsigned (Release will remain draft)."
           fi
 
       - name: Build Android app
@@ -216,13 +256,47 @@ jobs:
           ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
         run: npm run build:android
 
+      - name: Verify and stage Android release artifacts
+        id: stage
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          OUTPUTS="src-tauri/gen/android/app/build/outputs"
+          STAGE="release-android"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+
+          SIGNED_APK="$(find "$OUTPUTS" -name '*-universal-release.apk' ! -name '*-unsigned.apk' 2>/dev/null | head -n 1 || true)"
+          UNSIGNED_APK="$(find "$OUTPUTS" -name '*-unsigned.apk' 2>/dev/null | head -n 1 || true)"
+          AAB_PATH="$(find "$OUTPUTS" -name '*.aab' 2>/dev/null | head -n 1 || true)"
+
+          SIGNED="false"
+          if [ -n "${ANDROID_KEYSTORE_PATH:-}" ] && [ -n "$SIGNED_APK" ]; then
+            BUILD_TOOLS_DIR="$(ls -d "$ANDROID_HOME/build-tools/"* | sort -V | tail -n 1)"
+            "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$SIGNED_APK"
+            cp "$SIGNED_APK" "$STAGE/ShellBeam_${VERSION}_universal.apk"
+            if [ -n "$AAB_PATH" ]; then
+              cp "$AAB_PATH" "$STAGE/ShellBeam_${VERSION}_universal.aab"
+            fi
+            SIGNED="true"
+          else
+            if [ -n "$UNSIGNED_APK" ]; then
+              cp "$UNSIGNED_APK" "$STAGE/"
+            fi
+            if [ -n "$AAB_PATH" ]; then
+              cp "$AAB_PATH" "$STAGE/"
+            fi
+          fi
+
+          rm -f shellbeam.jks
+          ls -lh "$STAGE"
+          echo "signed=$SIGNED" >> "$GITHUB_OUTPUT"
+
       - name: Upload Android artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android
-          path: |
-            src-tauri/gen/android/app/build/outputs/**/*.apk
-            src-tauri/gen/android/app/build/outputs/**/*.aab
+          path: release-android/*
           if-no-files-found: warn
 
   build-windows:
@@ -308,6 +382,7 @@ jobs:
           security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          rm -f "$CERT_PATH"
 
       - name: Install iOS provisioning profile
         env:
@@ -322,6 +397,7 @@ jobs:
           echo "$IOS_PROVISIONING_PROFILE" | base64 --decode > "$PP_PATH"
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/
+          rm -f "$PP_PATH"
 
       - name: Build and upload iOS to TestFlight
         env:
@@ -359,13 +435,31 @@ jobs:
           pattern: '{macos,linux,android,windows}'
           path: artifacts
 
-      - name: List release files
-        run: find artifacts -type f | sort
+      - name: Stage release assets and generate SHA256SUMS
+        run: |
+          set -euo pipefail
+          rm -rf release-assets
+          mkdir -p release-assets
+          find artifacts -type f \( \
+            -name '*.dmg' -o \
+            -name '*.deb' -o \
+            -name '*.AppImage' -o \
+            -name '*.rpm' -o \
+            -name '*.msi' -o \
+            -name '*.exe' -o \
+            -name '*.apk' -o \
+            -name '*.aab' \
+          \) -exec cp {} release-assets/ \;
+          (cd release-assets && sha256sum * | sort -k2) > release-assets/SHA256SUMS
+          ls -lh release-assets
+          cat release-assets/SHA256SUMS
 
       - name: Write release notes preface
         env:
           DISPATCH_TESTFLIGHT_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.testflight_url || '' }}
           TESTFLIGHT_PUBLIC_LINK: ${{ vars.TESTFLIGHT_PUBLIC_LINK }}
+          MACOS_SIGNED: ${{ needs.build-macos.outputs.signed }}
+          ANDROID_SIGNED: ${{ needs.build-android.outputs.signed }}
         run: |
           TESTFLIGHT_URL="${DISPATCH_TESTFLIGHT_URL:-$TESTFLIGHT_PUBLIC_LINK}"
           {
@@ -376,13 +470,19 @@ jobs:
             fi
             echo "## Downloads"
             echo ""
-            echo "- Available platform builds are attached below as GitHub release assets."
-            echo "- CI macOS builds use ad-hoc signing unless Developer ID signing is configured. Only assets explicitly marked notarized have completed Apple notarization."
-            echo "- Android assets marked unsigned require signing before installation."
+            echo "- All platform builds and \`SHA256SUMS\` are attached below."
+            if [ "$MACOS_SIGNED" = "true" ]; then
+              echo "- macOS: Universal (\`Apple Silicon + Intel\`), Developer ID signed, Apple notarized and stapled."
+            else
+              echo "- macOS: Ad-hoc signed CI build (not notarized). Replace with a signed + notarized Universal DMG before publishing."
+            fi
+            if [ "$ANDROID_SIGNED" = "true" ]; then
+              echo "- Android: Signed universal APK (4 ABIs) and signed AAB."
+            else
+              echo "- Android: Unsigned CI build. Replace with signed APK/AAB before publishing."
+            fi
             if [ -n "$TESTFLIGHT_URL" ]; then
               echo "- iOS is distributed through TestFlight: $TESTFLIGHT_URL"
-            else
-              echo "- iOS is distributed through TestFlight. Set the TESTFLIGHT_PUBLIC_LINK repository variable to show the public link here."
             fi
             echo ""
           } > release-notes.md
@@ -390,16 +490,11 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          draft: false
+          # Auto-publish only when macOS notarization and Android signing both succeeded.
+          # Otherwise keep as draft so unsigned builds are never exposed publicly.
+          draft: ${{ needs.build-macos.outputs.signed != 'true' || needs.build-android.outputs.signed != 'true' }}
           generate_release_notes: true
           body_path: release-notes.md
           fail_on_unmatched_files: false
           files: |
-            artifacts/**/*.dmg
-            artifacts/**/*.deb
-            artifacts/**/*.AppImage
-            artifacts/**/*.rpm
-            artifacts/**/*.msi
-            artifacts/**/*.exe
-            artifacts/**/*.apk
-            artifacts/**/*.aab
+            release-assets/*
