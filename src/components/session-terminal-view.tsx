@@ -106,6 +106,7 @@ export function SessionTerminalView({
 }: SessionTerminalViewProps) {
   const { t, locale } = useT()
   const aiCopy = aiAssistantCopy[locale] ?? aiAssistantCopy['zh-CN']
+  const rootRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -135,12 +136,14 @@ export function SessionTerminalView({
   const showAIRef = useRef(showAI)
   const aiHostKeyRef = useRef(aiHostKey)
   const shortcutActiveResolved = shortcutActive ?? visible
+  const visibleRef = useRef(visible)
   const shortcutActiveRef = useRef(shortcutActiveResolved)
   useEffect(() => {
     showAIRef.current = showAI
     aiHostKeyRef.current = aiHostKey
+    visibleRef.current = visible
     shortcutActiveRef.current = shortcutActiveResolved
-  }, [showAI, aiHostKey, shortcutActiveResolved])
+  }, [showAI, aiHostKey, visible, shortcutActiveResolved])
   const setShowAI = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
     const key = aiHostKeyRef.current
     const resolved = typeof next === 'function' ? next(showAIRef.current) : next
@@ -303,7 +306,15 @@ export function SessionTerminalView({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!shortcutActiveRef.current) return
+      if (!visibleRef.current) return
+      const activeEl = document.activeElement
+      const focusedSession = activeEl instanceof Element
+        ? activeEl.closest('[data-testid="terminal-session"]')
+        : null
+      const targetsThisPane = focusedSession
+        ? focusedSession === rootRef.current
+        : shortcutActiveRef.current
+      if (!targetsThisPane) return
       if ((e.metaKey || e.ctrlKey) && e.key === 'i') {
         e.preventDefault()
         setShowAI((v) => !v)
@@ -564,6 +575,7 @@ export function SessionTerminalView({
 
   return (
     <div
+      ref={rootRef}
       data-testid="terminal-session" data-session-id={sessionId} data-host-name={hostName} data-host-id={session?.hostId} data-status={isConnected ? 'connected' : isDisconnected ? 'disconnected' : 'connecting'}
       className={cn('relative flex h-full flex-col', chromeOnly && 'pointer-events-none')}
       style={{

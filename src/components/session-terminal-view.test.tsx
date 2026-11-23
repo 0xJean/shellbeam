@@ -443,6 +443,13 @@ describe('session terminal view', () => {
       const bars = screen.getAllByTestId('ai-command-bar')
       expect(bars[0]).toHaveAttribute('data-visible', 'true')
       expect(bars[1]).toHaveAttribute('data-visible', 'false')
+
+      // Focusing a control inside the right split pane routes Cmd/Ctrl+I to the right pane.
+      const rightCloseButton = screen.getAllByTestId('mock-ai-close')[1]
+      rightCloseButton.focus()
+      fireEvent.keyDown(window, { key: 'i', metaKey: true })
+      expect(bars[0]).toHaveAttribute('data-visible', 'true')
+      expect(bars[1]).toHaveAttribute('data-visible', 'true')
     })
 
     it('does not overwrite another vault preference when a same-address display host comes from a different vault', () => {
