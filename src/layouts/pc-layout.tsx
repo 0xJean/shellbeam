@@ -1066,6 +1066,7 @@ export function PcLayout() {
                           isReconnecting={sessions.reconnectingSessionIds.has(tab.sessionId)}
                           onReconnect={() => sessions.manualReconnect(tab.sessionId)}
                           visible={isVisible && !!sessions.pcActiveSessionId}
+                          shortcutActive={isActive && !!sessions.pcActiveSessionId}
                           workspaceMode={mode}
                           onWorkspaceModeChange={(nextMode) => {
                             sessions.setSessionMode(tab.sessionId, nextMode)

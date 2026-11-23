@@ -412,5 +412,88 @@ describe('session terminal view', () => {
       expect(bars[0]).toHaveAttribute('data-visible', 'true')
       expect(bars[1]).toHaveAttribute('data-visible', 'false')
     })
+
+    it('only toggles the active pane on Cmd/Ctrl+I when two split panes are both visible', () => {
+      render(
+        <>
+          <SessionTerminalView
+            sessionId="sess-split-left"
+            session={{ sessionId: 'sess-split-left', hostId: 'host-left', vaultId: 'personal', status: 'running', username: 'root' } as never}
+            hostName="Left"
+            hostAddress="10.0.3.1"
+            visible
+            shortcutActive
+            chunkEmitterRef={{ current: {} }}
+            onSendRaw={() => {}}
+          />
+          <SessionTerminalView
+            sessionId="sess-split-right"
+            session={{ sessionId: 'sess-split-right', hostId: 'host-right', vaultId: 'personal', status: 'running', username: 'root' } as never}
+            hostName="Right"
+            hostAddress="10.0.3.2"
+            visible
+            shortcutActive={false}
+            chunkEmitterRef={{ current: {} }}
+            onSendRaw={() => {}}
+          />
+        </>,
+      )
+
+      fireEvent.keyDown(window, { key: 'i', metaKey: true })
+      const bars = screen.getAllByTestId('ai-command-bar')
+      expect(bars[0]).toHaveAttribute('data-visible', 'true')
+      expect(bars[1]).toHaveAttribute('data-visible', 'false')
+    })
+
+    it('does not overwrite another vault preference when a same-address display host comes from a different vault', () => {
+      const workHost = { id: 'work-host', vaultId: 'work', name: 'Shared', address: '10.0.9.9', port: 22, username: 'ops', authType: 'password' } as never
+      const personalHost = { id: 'personal-host', vaultId: 'personal', name: 'Shared', address: '10.0.9.9', port: 22, username: 'admin', authType: 'password' } as never
+
+      // User opens AI on the Work session, then switches active vault to Personal so displayHost becomes personalHost.
+      const workView = render(
+        <SessionTerminalView
+          sessionId="sess-work"
+          session={{ sessionId: 'sess-work', hostId: 'work-host', vaultId: 'work', status: 'running', username: 'ops' } as never}
+          host={personalHost}
+          hostName="Shared"
+          hostAddress="10.0.9.9"
+          chunkEmitterRef={{ current: {} }}
+          onSendRaw={() => {}}
+        />,
+      )
+      act(() => {
+        window.dispatchEvent(new CustomEvent(TERMINAL_AI_TOGGLE_EVENT, { detail: { sessionId: 'sess-work' } }))
+      })
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'true')
+      workView.unmount()
+
+      // Personal host must remain closed; Work host must restore open.
+      const personalView = render(
+        <SessionTerminalView
+          sessionId="sess-personal"
+          session={{ sessionId: 'sess-personal', hostId: 'personal-host', vaultId: 'personal', status: 'running', username: 'admin' } as never}
+          host={personalHost}
+          hostName="Shared"
+          hostAddress="10.0.9.9"
+          chunkEmitterRef={{ current: {} }}
+          onSendRaw={() => {}}
+        />,
+      )
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'false')
+      personalView.unmount()
+
+      render(
+        <SessionTerminalView
+          sessionId="sess-work-2"
+          session={{ sessionId: 'sess-work-2', hostId: 'work-host', vaultId: 'work', status: 'running', username: 'ops' } as never}
+          host={workHost}
+          hostName="Shared"
+          hostAddress="10.0.9.9"
+          chunkEmitterRef={{ current: {} }}
+          onSendRaw={() => {}}
+        />,
+      )
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'true')
+    })
   })
 })

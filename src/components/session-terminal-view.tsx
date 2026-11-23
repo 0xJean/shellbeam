@@ -50,6 +50,8 @@ interface SessionTerminalViewProps {
   isReconnecting?: boolean
   onReconnect?: () => void
   visible?: boolean
+  /** Whether keyboard shortcuts (Cmd/Ctrl+I, Cmd/Ctrl+Shift+F) target this terminal. Defaults to `visible`. */
+  shortcutActive?: boolean
   onToggleRightSidebar?: () => void
   rightSidebarOpen?: boolean
   initialChunks?: InteractiveOutputChunk[]
@@ -86,6 +88,7 @@ export function SessionTerminalView({
   isReconnecting,
   onReconnect,
   visible = true,
+  shortcutActive,
   onToggleRightSidebar,
   rightSidebarOpen,
   initialChunks,
@@ -111,27 +114,33 @@ export function SessionTerminalView({
   const historyVaultId = session?.vaultId ?? activeVaultId
   const historyVaultIdRef = useRef(historyVaultId)
   useEffect(() => { historyVaultIdRef.current = historyVaultId }, [historyVaultId])
-  const aiHostKey = useMemo(
-    () => aiPanelHostKey({
-      vaultId: host?.vaultId ?? historyVaultId,
-      hostId: host?.id ?? session?.hostId,
+  const aiHostKey = useMemo(() => {
+    const resolvedVaultId = session?.vaultId ?? host?.vaultId ?? historyVaultId
+    const matchingHost = host
+      && (!session?.vaultId || host.vaultId === session.vaultId)
+      && (!session?.hostId || host.id === session.hostId)
+      ? host
+      : undefined
+    return aiPanelHostKey({
+      vaultId: resolvedVaultId,
+      hostId: session?.hostId ?? matchingHost?.id,
       username: session?.username,
       hostAddress,
-    }),
-    [host?.vaultId, historyVaultId, host?.id, session?.hostId, session?.username, hostAddress],
-  )
+    })
+  }, [session?.vaultId, session?.hostId, session?.username, host, historyVaultId, hostAddress])
   const [aiOpenOverride, setAiOpenOverride] = useState<{ key: string | null; open: boolean } | null>(null)
   const showAI = aiOpenOverride && aiOpenOverride.key === aiHostKey
     ? aiOpenOverride.open
     : readHostAiPanelOpen(aiHostKey)
   const showAIRef = useRef(showAI)
   const aiHostKeyRef = useRef(aiHostKey)
-  const visibleRef = useRef(visible)
+  const shortcutActiveResolved = shortcutActive ?? visible
+  const shortcutActiveRef = useRef(shortcutActiveResolved)
   useEffect(() => {
     showAIRef.current = showAI
     aiHostKeyRef.current = aiHostKey
-    visibleRef.current = visible
-  }, [showAI, aiHostKey, visible])
+    shortcutActiveRef.current = shortcutActiveResolved
+  }, [showAI, aiHostKey, shortcutActiveResolved])
   const setShowAI = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
     const key = aiHostKeyRef.current
     const resolved = typeof next === 'function' ? next(showAIRef.current) : next
@@ -294,7 +303,7 @@ export function SessionTerminalView({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!visibleRef.current) return
+      if (!shortcutActiveRef.current) return
       if ((e.metaKey || e.ctrlKey) && e.key === 'i') {
         e.preventDefault()
         setShowAI((v) => !v)

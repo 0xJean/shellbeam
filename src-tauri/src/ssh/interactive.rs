@@ -341,6 +341,7 @@ fn spawn_pipe_reader(
 const NONBLOCKING_WRITE_SLICE_BYTES: usize = 4096;
 const RESIZE_WOULDBLOCK_BUDGET: Duration = Duration::from_millis(50);
 const KEEPALIVE_WOULDBLOCK_BUDGET: Duration = Duration::from_millis(20);
+const CLOSE_FLUSH_BUDGET: Duration = Duration::from_millis(1500);
 const CLOSE_WOULDBLOCK_BUDGET: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -434,6 +435,50 @@ fn pump_nonblocking_write<W: Write>(
     WriteStep::Wrote(total_written)
 }
 
+/// Tracks an in-flight `libssh2` PTY resize separately from the latest requested size.
+///
+/// In `libssh2`, a `WouldBlock` (`EAGAIN`) from `request_pty_size` leaves the encoded packet in
+/// flight; retrying replays that packet rather than encoding new dimensions. Keeping the two slots
+/// separate ensures newer dimensions requested while blocked are sent right after the in-flight
+/// packet completes instead of being silently dropped.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+struct ResizeQueue {
+    in_flight: Option<(u32, u32)>,
+    pending: Option<(u32, u32)>,
+}
+
+impl ResizeQueue {
+    fn enqueue(&mut self, cols: u32, rows: u32) {
+        if cols > 0 && rows > 0 {
+            self.pending = Some((cols, rows));
+        }
+    }
+
+    fn pump<F>(&mut self, mut send: F) -> bool
+    where
+        F: FnMut(u32, u32) -> NonBlockingOp<()>,
+    {
+        if self.in_flight.is_none() {
+            self.in_flight = self.pending.take();
+        }
+        let Some((cols, rows)) = self.in_flight else {
+            return false;
+        };
+        match send(cols, rows) {
+            NonBlockingOp::Ok(()) => {
+                self.in_flight = None;
+                true
+            }
+            NonBlockingOp::WouldBlock => false,
+            NonBlockingOp::Err => {
+                // Transient or denied window-change requests must never kill a live shell.
+                self.in_flight = None;
+                false
+            }
+        }
+    }
+}
+
 fn close_channel_nonblocking(channel: &mut Channel) -> i32 {
     let _ = try_ssh2_with_budget(CLOSE_WOULDBLOCK_BUDGET, || channel.send_eof());
     let _ = try_ssh2_with_budget(CLOSE_WOULDBLOCK_BUDGET, || channel.close());
@@ -456,7 +501,8 @@ fn session_io_loop(
     session.set_blocking(false);
     let mut buf = [0u8; 32768];
     let mut pending_write: VecDeque<u8> = VecDeque::new();
-    let mut pending_resize: Option<(u32, u32)> = None;
+    let mut resize_queue = ResizeQueue::default();
+    let mut closing_deadline: Option<Instant> = None;
     let mut last_activity = Instant::now();
     let mut last_keepalive = Instant::now();
     let keepalive_interval = Duration::from_secs(keepalive_secs as u64);
@@ -467,50 +513,40 @@ fn session_io_loop(
     loop {
         let mut had_data = false;
 
-        // 1. Drain all queued frontend commands into local non-blocking buffers.
-        loop {
-            match command_rx.try_recv() {
-                Ok(SessionCommand::Input(data)) => {
-                    pending_write.extend(data);
-                }
-                Ok(SessionCommand::Resize(cols, rows)) => {
-                    if cols > 0 && rows > 0 {
-                        pending_resize = Some((cols, rows));
+        // 1. Drain queued frontend commands. Once Close is requested, stop accepting new commands
+        //    but finish flushing already-queued input up to CLOSE_FLUSH_BUDGET before closing.
+        if closing_deadline.is_none() {
+            loop {
+                match command_rx.try_recv() {
+                    Ok(SessionCommand::Input(data)) => {
+                        pending_write.extend(data);
                     }
-                }
-                Ok(SessionCommand::Close) => {
-                    set_status(
-                        &app,
-                        &session_id,
-                        &status,
-                        format!("closed({})", close_channel_nonblocking(&mut channel)),
-                    );
-                    return;
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    let _ = close_channel_nonblocking(&mut channel);
-                    set_status(&app, &session_id, &status, "closed(-1)".to_string());
-                    return;
+                    Ok(SessionCommand::Resize(cols, rows)) => {
+                        resize_queue.enqueue(cols, rows);
+                    }
+                    Ok(SessionCommand::Close) => {
+                        closing_deadline = Some(Instant::now() + CLOSE_FLUSH_BUDGET);
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        let _ = close_channel_nonblocking(&mut channel);
+                        set_status(&app, &session_id, &status, "closed(-1)".to_string());
+                        return;
+                    }
                 }
             }
         }
 
-        // 2. Apply coalesced PTY resize without tearing down the session on transient errors.
-        if let Some((cols, rows)) = pending_resize {
-            match try_ssh2_with_budget(RESIZE_WOULDBLOCK_BUDGET, || {
-                channel.request_pty_size(cols, rows, None, None)
-            }) {
-                NonBlockingOp::Ok(_) => {
-                    pending_resize = None;
-                    had_data = true;
-                }
-                NonBlockingOp::WouldBlock => {}
-                NonBlockingOp::Err => {
-                    // Transient or denied window-change requests must never kill a live shell.
-                    pending_resize = None;
-                }
-            }
+        // 2. Apply coalesced PTY resize without dropping newer dimensions or killing the session.
+        if closing_deadline.is_none()
+            && resize_queue.pump(|cols, rows| {
+                try_ssh2_with_budget(RESIZE_WOULDBLOCK_BUDGET, || {
+                    channel.request_pty_size(cols, rows, None, None)
+                })
+            })
+        {
+            had_data = true;
         }
 
         // 3. Interleave bounded writes with reads so large pasted/AI scripts never deadlock the
@@ -528,6 +564,18 @@ fn session_io_loop(
             WriteStep::Idle | WriteStep::Blocked => {}
             WriteStep::Fatal => {
                 set_status(&app, &session_id, &status, "closed(-1)".to_string());
+                return;
+            }
+        }
+
+        if let Some(deadline) = closing_deadline {
+            if pending_write.is_empty() || Instant::now() >= deadline {
+                set_status(
+                    &app,
+                    &session_id,
+                    &status,
+                    format!("closed({})", close_channel_nonblocking(&mut channel)),
+                );
                 return;
             }
         }
@@ -1221,6 +1269,33 @@ mod tests {
         assert_eq!(
             pump_nonblocking_write(&mut writer, &mut pending, NONBLOCKING_WRITE_SLICE_BYTES),
             WriteStep::Fatal
+        );
+    }
+
+    #[test]
+    fn resize_queue_preserves_newer_dimensions_after_blocked_in_flight_resize() {
+        let mut queue = ResizeQueue::default();
+        let mut sent = Vec::new();
+        queue.enqueue(100, 30);
+
+        assert!(!queue.pump(|c, r| {
+            sent.push((c, r, "blocked"));
+            NonBlockingOp::WouldBlock
+        }));
+        queue.enqueue(120, 40);
+
+        assert!(queue.pump(|c, r| {
+            sent.push((c, r, "ok"));
+            NonBlockingOp::Ok(())
+        }));
+        assert!(queue.pump(|c, r| {
+            sent.push((c, r, "ok"));
+            NonBlockingOp::Ok(())
+        }));
+        assert!(!queue.pump(|_, _| NonBlockingOp::Ok(())));
+        assert_eq!(
+            sent,
+            vec![(100, 30, "blocked"), (100, 30, "ok"), (120, 40, "ok")]
         );
     }
 }
