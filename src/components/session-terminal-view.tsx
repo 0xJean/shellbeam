@@ -14,6 +14,7 @@ import { DEFAULT_TERMINAL_PREFS, useResolvedTerminalTheme, type TerminalPrefs } 
 import { cn } from '@/lib/utils'
 import { createTerminalAiBridge } from '@/lib/terminal-ai-bridge'
 import type { WorkspaceInventory, WorkspaceInventoryResource } from '@/lib/workspace-inventory'
+import { aiPanelHostKey, readHostAiPanelOpen, writeHostAiPanelOpen } from '@/lib/ai-panel-state'
 import { collectHostFacts } from '@/lib/ai-host-facts'
 import type { HostProfile } from '@/lib/hosts'
 import { offersProbeInstall } from '@/lib/probe-install'
@@ -106,7 +107,38 @@ export function SessionTerminalView({
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const onSendRawRef = useRef(onSendRaw)
-  const [showAI, setShowAI] = useState(false)
+  const { activeVaultId } = useVault()
+  const historyVaultId = session?.vaultId ?? activeVaultId
+  const historyVaultIdRef = useRef(historyVaultId)
+  useEffect(() => { historyVaultIdRef.current = historyVaultId }, [historyVaultId])
+  const aiHostKey = useMemo(
+    () => aiPanelHostKey({
+      vaultId: host?.vaultId ?? historyVaultId,
+      hostId: host?.id ?? session?.hostId,
+      username: session?.username,
+      hostAddress,
+    }),
+    [host?.vaultId, historyVaultId, host?.id, session?.hostId, session?.username, hostAddress],
+  )
+  const [aiOpenOverride, setAiOpenOverride] = useState<{ key: string | null; open: boolean } | null>(null)
+  const showAI = aiOpenOverride && aiOpenOverride.key === aiHostKey
+    ? aiOpenOverride.open
+    : readHostAiPanelOpen(aiHostKey)
+  const showAIRef = useRef(showAI)
+  const aiHostKeyRef = useRef(aiHostKey)
+  const visibleRef = useRef(visible)
+  useEffect(() => {
+    showAIRef.current = showAI
+    aiHostKeyRef.current = aiHostKey
+    visibleRef.current = visible
+  }, [showAI, aiHostKey, visible])
+  const setShowAI = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+    const key = aiHostKeyRef.current
+    const resolved = typeof next === 'function' ? next(showAIRef.current) : next
+    showAIRef.current = resolved
+    writeHostAiPanelOpen(key, resolved)
+    setAiOpenOverride({ key, open: resolved })
+  }, [])
   const [selectedTerminalText, setSelectedTerminalText] = useState('')
   const [attachedAiSnippet, setAttachedAiSnippet] = useState('')
   const { readiness: probeReadiness } = useProbeInstallReadiness(host ?? NO_HOST, Boolean(host?.vaultId) && showAI)
@@ -126,10 +158,6 @@ export function SessionTerminalView({
   }, [])
   // Commands typed on this host feed the history half of the suggestion bar.
   // Typed history is per vault: the session's own vault, else the active one.
-  const { activeVaultId } = useVault()
-  const historyVaultId = session?.vaultId ?? activeVaultId
-  const historyVaultIdRef = useRef(historyVaultId)
-  useEffect(() => { historyVaultIdRef.current = historyVaultId }, [historyVaultId])
   const [historyEntries, setHistoryEntries] = useState<string[]>(() => getInteractiveHistory(historyVaultId, hostAddress).map((entry) => entry.command).reverse())
   useEffect(() => {
     const load = () => setHistoryEntries(getInteractiveHistory(historyVaultId, hostAddress).map((entry) => entry.command).reverse())
@@ -146,7 +174,7 @@ export function SessionTerminalView({
     const onToggle = (event: Event) => { if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setShowAI((open) => !open) }
     window.addEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
     return () => window.removeEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
-  }, [sessionId])
+  }, [sessionId, setShowAI])
   useEffect(() => { announceTerminalAiState(sessionId, showAI) }, [sessionId, showAI])
   // The assistant works on the terminal, so opening it from the workbench switches to the terminal.
   // Only the moment it opens counts: with it already open, the user can still move to any other mode.
@@ -266,6 +294,7 @@ export function SessionTerminalView({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (!visibleRef.current) return
       if ((e.metaKey || e.ctrlKey) && e.key === 'i') {
         e.preventDefault()
         setShowAI((v) => !v)
@@ -282,7 +311,7 @@ export function SessionTerminalView({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [scheduleInputUiSync])
+  }, [scheduleInputUiSync, setShowAI])
 
   useEffect(() => {
     if (!containerRef.current) return
