@@ -340,7 +340,6 @@ fn spawn_pipe_reader(
 
 const NONBLOCKING_WRITE_SLICE_BYTES: usize = 4096;
 const RESIZE_WOULDBLOCK_BUDGET: Duration = Duration::from_millis(50);
-const KEEPALIVE_WOULDBLOCK_BUDGET: Duration = Duration::from_millis(20);
 const CLOSE_FLUSH_BUDGET: Duration = Duration::from_millis(1500);
 const CLOSE_WOULDBLOCK_BUDGET: Duration = Duration::from_millis(250);
 
@@ -352,11 +351,20 @@ enum NonBlockingOp<T> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WriteStep {
-    Idle,
-    Wrote(usize),
-    Blocked,
+enum WriteOutcome {
+    Done,
+    /// Remote SSH channel window is temporarily full (`Ok(0)`); no outbound packet is in flight.
+    WindowFull,
+    /// Transport returned `WouldBlock`/`Interrupted`; `libssh2` holds an in-flight write packet
+    /// that must be retried before sending any other packet (such as PTY resize or keepalive).
+    InFlightWouldBlock,
     Fatal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WriteProgress {
+    wrote: usize,
+    outcome: WriteOutcome,
 }
 
 fn try_ssh2_with_budget<T, F>(budget: Duration, mut operation: F) -> NonBlockingOp<T>
@@ -387,18 +395,22 @@ where
 
 /// Write up to `max_bytes` from `pending` without stalling the IO loop.
 ///
-/// In non-blocking `libssh2`, `channel.write` can return `Ok(0)` or `WouldBlock` when the
-/// remote channel window is temporarily full (for example, while pasting a large multiline AI
-/// script whose PTY echo has not been drained yet). Neither is fatal: returning `Blocked`
-/// lets the IO loop drain `channel.read` (processing incoming `WINDOW_ADJUST` packets) and
-/// resume writing on the next iteration.
+/// In non-blocking `libssh2`, `channel.write` can return `Ok(0)` when the remote channel window
+/// is temporarily full (no transport packet in flight) or `WouldBlock` when the transport socket
+/// holds a partially sent `channel->write_packet` (`InFlightWouldBlock`). Neither is fatal:
+/// returning lets the IO loop drain `channel.read` (processing incoming `WINDOW_ADJUST` packets)
+/// and resume writing on the next iteration while keeping other outbound libssh2 operations from
+/// colliding with `send_existing`.
 fn pump_nonblocking_write<W: Write>(
     writer: &mut W,
     pending: &mut VecDeque<u8>,
     max_bytes: usize,
-) -> WriteStep {
+) -> WriteProgress {
     if pending.is_empty() {
-        return WriteStep::Idle;
+        return WriteProgress {
+            wrote: 0,
+            outcome: WriteOutcome::Done,
+        };
     }
     let mut total_written = 0usize;
     while total_written < max_bytes && !pending.is_empty() {
@@ -410,10 +422,9 @@ fn pump_nonblocking_write<W: Write>(
         let to_write = front.len().min(max_bytes - total_written);
         match writer.write(&front[..to_write]) {
             Ok(0) => {
-                return if total_written > 0 {
-                    WriteStep::Wrote(total_written)
-                } else {
-                    WriteStep::Blocked
+                return WriteProgress {
+                    wrote: total_written,
+                    outcome: WriteOutcome::WindowFull,
                 };
             }
             Ok(written) => {
@@ -423,16 +434,23 @@ fn pump_nonblocking_write<W: Write>(
             Err(ref error)
                 if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) =>
             {
-                return if total_written > 0 {
-                    WriteStep::Wrote(total_written)
-                } else {
-                    WriteStep::Blocked
+                return WriteProgress {
+                    wrote: total_written,
+                    outcome: WriteOutcome::InFlightWouldBlock,
                 };
             }
-            Err(_) => return WriteStep::Fatal,
+            Err(_) => {
+                return WriteProgress {
+                    wrote: total_written,
+                    outcome: WriteOutcome::Fatal,
+                };
+            }
         }
     }
-    WriteStep::Wrote(total_written)
+    WriteProgress {
+        wrote: total_written,
+        outcome: WriteOutcome::Done,
+    }
 }
 
 /// Tracks an in-flight `libssh2` PTY resize separately from the latest requested size.
@@ -448,6 +466,10 @@ struct ResizeQueue {
 }
 
 impl ResizeQueue {
+    fn is_in_flight(&self) -> bool {
+        self.in_flight.is_some()
+    }
+
     fn enqueue(&mut self, cols: u32, rows: u32) {
         if cols > 0 && rows > 0 {
             self.pending = Some((cols, rows));
@@ -479,6 +501,88 @@ impl ResizeQueue {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeepaliveOutcome {
+    Sent,
+    OutboundBlocked,
+    Failed,
+}
+
+struct KeepaliveState {
+    interval: Duration,
+    normal_secs: u32,
+    last_sent: Instant,
+    in_flight: bool,
+    consecutive_failures: u32,
+}
+
+impl KeepaliveState {
+    fn new(keepalive_secs: u32, now: Instant) -> Self {
+        Self {
+            interval: Duration::from_secs(keepalive_secs as u64),
+            normal_secs: keepalive_secs,
+            last_sent: now,
+            in_flight: false,
+            consecutive_failures: 0,
+        }
+    }
+
+    fn is_in_flight(&self) -> bool {
+        self.in_flight
+    }
+
+    fn reset_failures(&mut self) {
+        self.consecutive_failures = 0;
+    }
+
+    fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures
+    }
+
+    fn should_poll(
+        &self,
+        now: Instant,
+        pending_write_empty: bool,
+        write_in_flight: bool,
+        resize_in_flight: bool,
+    ) -> bool {
+        if self.normal_secs == 0 || write_in_flight || resize_in_flight {
+            return false;
+        }
+        if self.in_flight {
+            return true;
+        }
+        pending_write_empty && now.duration_since(self.last_sent) >= self.interval
+    }
+
+    /// Updates keepalive state after a `session.keepalive_send()` attempt.
+    /// Returns `Some(secs)` when `session.set_keepalive(true, secs)` should be updated.
+    fn apply_result(&mut self, outcome: KeepaliveOutcome, now: Instant) -> Option<u32> {
+        let was_in_flight = self.in_flight;
+        match outcome {
+            KeepaliveOutcome::Sent => {
+                self.in_flight = false;
+                self.consecutive_failures = 0;
+                self.last_sent = now;
+                was_in_flight.then_some(self.normal_secs)
+            }
+            KeepaliveOutcome::OutboundBlocked => {
+                // Keep in-flight active and shorten libssh2's keepalive interval to 1s (clamped
+                // to 2s by libssh2) so subsequent polls drain the pending keepalive packet instead
+                // of stalling outbound writes behind send_existing() until normal_secs elapses.
+                self.in_flight = true;
+                (!was_in_flight).then_some(1)
+            }
+            KeepaliveOutcome::Failed => {
+                self.in_flight = false;
+                self.consecutive_failures += 1;
+                self.last_sent = now;
+                was_in_flight.then_some(self.normal_secs)
+            }
+        }
+    }
+}
+
 fn close_channel_nonblocking(channel: &mut Channel) -> i32 {
     let _ = try_ssh2_with_budget(CLOSE_WOULDBLOCK_BUDGET, || channel.send_eof());
     let _ = try_ssh2_with_budget(CLOSE_WOULDBLOCK_BUDGET, || channel.close());
@@ -501,13 +605,12 @@ fn session_io_loop(
     session.set_blocking(false);
     let mut buf = [0u8; 32768];
     let mut pending_write: VecDeque<u8> = VecDeque::new();
+    let mut write_in_flight = false;
     let mut resize_queue = ResizeQueue::default();
     let mut closing_deadline: Option<Instant> = None;
     let mut last_activity = Instant::now();
-    let mut last_keepalive = Instant::now();
-    let keepalive_interval = Duration::from_secs(keepalive_secs as u64);
+    let mut keepalive = KeepaliveState::new(keepalive_secs, last_activity);
     let dead_threshold = Duration::from_secs(keepalive_secs as u64 * 3 + 10);
-    let mut consecutive_keepalive_failures: u32 = 0;
     const MAX_KEEPALIVE_FAILURES: u32 = 3;
 
     loop {
@@ -538,8 +641,14 @@ fn session_io_loop(
             }
         }
 
-        // 2. Apply coalesced PTY resize without dropping newer dimensions or killing the session.
-        if closing_deadline.is_none()
+        // 2. Apply coalesced PTY resize without colliding with an in-flight write or keepalive
+        //    packet. In libssh2, `_libssh2_transport_send` requires the exact in-flight packet to
+        //    finish before another packet can be sent; mixing resize/write/keepalive while EAGAIN
+        //    is pending causes `send_existing` to reject every other sender with EAGAIN.
+        let should_pump_resize = !write_in_flight
+            && !keepalive.is_in_flight()
+            && (closing_deadline.is_none() || resize_queue.is_in_flight());
+        if should_pump_resize
             && resize_queue.pump(|cols, rows| {
                 try_ssh2_with_budget(RESIZE_WOULDBLOCK_BUDGET, || {
                     channel.request_pty_size(cols, rows, None, None)
@@ -550,19 +659,21 @@ fn session_io_loop(
         }
 
         // 3. Interleave bounded writes with reads so large pasted/AI scripts never deadlock the
-        //    SSH channel window or prematurely trigger closed(-1).
-        match pump_nonblocking_write(
-            &mut channel,
-            &mut pending_write,
-            NONBLOCKING_WRITE_SLICE_BYTES,
-        ) {
-            WriteStep::Wrote(_) => {
+        //    SSH channel window or prematurely trigger closed(-1). Skip starting a new write while
+        //    a PTY resize or keepalive packet is still in flight in libssh2.
+        if !resize_queue.is_in_flight() && !keepalive.is_in_flight() {
+            let progress = pump_nonblocking_write(
+                &mut channel,
+                &mut pending_write,
+                NONBLOCKING_WRITE_SLICE_BYTES,
+            );
+            if progress.wrote > 0 {
                 had_data = true;
                 last_activity = Instant::now();
-                consecutive_keepalive_failures = 0;
+                keepalive.reset_failures();
             }
-            WriteStep::Idle | WriteStep::Blocked => {}
-            WriteStep::Fatal => {
+            write_in_flight = matches!(progress.outcome, WriteOutcome::InFlightWouldBlock);
+            if progress.outcome == WriteOutcome::Fatal {
                 set_status(&app, &session_id, &status, "closed(-1)".to_string());
                 return;
             }
@@ -638,7 +749,7 @@ fn session_io_loop(
                 coalesced,
             );
             last_activity = Instant::now();
-            consecutive_keepalive_failures = 0;
+            keepalive.reset_failures();
         }
         match channel.stderr().read(&mut buf) {
             Ok(n) if n > 0 => {
@@ -652,7 +763,7 @@ fn session_io_loop(
                 );
                 had_data = true;
                 last_activity = Instant::now();
-                consecutive_keepalive_failures = 0;
+                keepalive.reset_failures();
             }
             _ => {}
         }
@@ -667,22 +778,35 @@ fn session_io_loop(
             break;
         }
 
-        if last_keepalive.elapsed() >= keepalive_interval {
-            match try_ssh2_with_budget(KEEPALIVE_WOULDBLOCK_BUDGET, || session.keepalive_send()) {
-                NonBlockingOp::Ok(_) => {
-                    consecutive_keepalive_failures = 0;
-                    last_activity = Instant::now();
-                    last_keepalive = Instant::now();
+        let now = Instant::now();
+        if keepalive.should_poll(
+            now,
+            pending_write.is_empty(),
+            write_in_flight,
+            resize_queue.is_in_flight(),
+        ) {
+            let outcome = match session.keepalive_send() {
+                Ok(_) => {
+                    if matches!(
+                        session.block_directions(),
+                        ssh2::BlockDirections::Outbound | ssh2::BlockDirections::Both
+                    ) {
+                        KeepaliveOutcome::OutboundBlocked
+                    } else {
+                        KeepaliveOutcome::Sent
+                    }
                 }
-                NonBlockingOp::WouldBlock => {}
-                NonBlockingOp::Err => {
-                    consecutive_keepalive_failures += 1;
-                    last_keepalive = Instant::now();
-                }
+                Err(_) => KeepaliveOutcome::Failed,
+            };
+            if let Some(interval_secs) = keepalive.apply_result(outcome, now) {
+                session.set_keepalive(true, interval_secs);
+            }
+            if outcome == KeepaliveOutcome::Sent {
+                last_activity = now;
             }
         }
 
-        if consecutive_keepalive_failures >= MAX_KEEPALIVE_FAILURES
+        if keepalive.consecutive_failures() >= MAX_KEEPALIVE_FAILURES
             || last_activity.elapsed() > dead_threshold
         {
             push_chunk(
@@ -1245,21 +1369,43 @@ mod tests {
             ScriptedOutcome::Bytes(2048),
         ]);
 
-        let mut blocked_ticks = 0usize;
+        let mut window_full_ticks = 0usize;
+        let mut in_flight_ticks = 0usize;
         let mut wrote_ticks = 0usize;
         for _ in 0..32 {
-            match pump_nonblocking_write(&mut writer, &mut pending, NONBLOCKING_WRITE_SLICE_BYTES) {
-                WriteStep::Idle => break,
-                WriteStep::Wrote(_) => wrote_ticks += 1,
-                WriteStep::Blocked => blocked_ticks += 1,
-                WriteStep::Fatal => panic!("transient backpressure must not be fatal"),
+            if pending.is_empty() {
+                break;
+            }
+            let progress =
+                pump_nonblocking_write(&mut writer, &mut pending, NONBLOCKING_WRITE_SLICE_BYTES);
+            if progress.wrote > 0 {
+                wrote_ticks += 1;
+            }
+            match progress.outcome {
+                WriteOutcome::Done => {}
+                WriteOutcome::WindowFull => window_full_ticks += 1,
+                WriteOutcome::InFlightWouldBlock => in_flight_ticks += 1,
+                WriteOutcome::Fatal => panic!("transient backpressure must not be fatal"),
             }
         }
 
         assert!(pending.is_empty(), "all queued bytes should be written");
         assert_eq!(writer.written, payload);
         assert!(wrote_ticks >= 3);
-        assert!(blocked_ticks >= 2);
+        assert_eq!(window_full_ticks, 2);
+        assert_eq!(in_flight_ticks, 2);
+    }
+
+    #[test]
+    fn nonblocking_write_preserves_in_flight_flag_after_partial_write_then_wouldblock() {
+        let mut pending: VecDeque<u8> = vec![b'x'; 2048].into_iter().collect();
+        let mut writer =
+            ScriptedWriter::new([ScriptedOutcome::Bytes(512), ScriptedOutcome::WouldBlock]);
+        let progress =
+            pump_nonblocking_write(&mut writer, &mut pending, NONBLOCKING_WRITE_SLICE_BYTES);
+        assert_eq!(progress.wrote, 512);
+        assert_eq!(progress.outcome, WriteOutcome::InFlightWouldBlock);
+        assert_eq!(pending.len(), 1536);
     }
 
     #[test]
@@ -1267,8 +1413,9 @@ mod tests {
         let mut pending: VecDeque<u8> = b"echo hi\r".iter().copied().collect();
         let mut writer = ScriptedWriter::new([ScriptedOutcome::BrokenPipe]);
         assert_eq!(
-            pump_nonblocking_write(&mut writer, &mut pending, NONBLOCKING_WRITE_SLICE_BYTES),
-            WriteStep::Fatal
+            pump_nonblocking_write(&mut writer, &mut pending, NONBLOCKING_WRITE_SLICE_BYTES)
+                .outcome,
+            WriteOutcome::Fatal
         );
     }
 
@@ -1277,17 +1424,20 @@ mod tests {
         let mut queue = ResizeQueue::default();
         let mut sent = Vec::new();
         queue.enqueue(100, 30);
+        assert!(!queue.is_in_flight());
 
         assert!(!queue.pump(|c, r| {
             sent.push((c, r, "blocked"));
             NonBlockingOp::WouldBlock
         }));
+        assert!(queue.is_in_flight());
         queue.enqueue(120, 40);
 
         assert!(queue.pump(|c, r| {
             sent.push((c, r, "ok"));
             NonBlockingOp::Ok(())
         }));
+        assert!(!queue.is_in_flight());
         assert!(queue.pump(|c, r| {
             sent.push((c, r, "ok"));
             NonBlockingOp::Ok(())
@@ -1297,5 +1447,41 @@ mod tests {
             sent,
             vec![(100, 30, "blocked"), (100, 30, "ok"), (120, 40, "ok")]
         );
+    }
+
+    #[test]
+    fn keepalive_retries_while_outbound_blocked_even_when_user_input_is_queued() {
+        let t0 = Instant::now();
+        let mut keepalive = KeepaliveState::new(30, t0);
+        assert!(!keepalive.is_in_flight());
+        assert!(!keepalive.should_poll(t0 + Duration::from_secs(29), true, false, false));
+        assert!(keepalive.should_poll(t0 + Duration::from_secs(30), true, false, false));
+
+        // First send encounters outbound EAGAIN inside libssh2: enters in-flight retry mode and
+        // shortens libssh2 keepalive interval to 1s (clamped to 2s by libssh2).
+        let t1 = t0 + Duration::from_secs(30);
+        assert_eq!(
+            keepalive.apply_result(KeepaliveOutcome::OutboundBlocked, t1),
+            Some(1)
+        );
+        assert!(keepalive.is_in_flight());
+
+        // User queues input (pending_write_empty == false): keepalive must STILL poll so the
+        // in-flight keepalive packet drains instead of stalling writes behind send_existing().
+        let t2 = t1 + Duration::from_secs(1);
+        assert!(keepalive.should_poll(t2, false, false, false));
+        assert_eq!(
+            keepalive.apply_result(KeepaliveOutcome::OutboundBlocked, t2),
+            None
+        );
+        assert!(keepalive.is_in_flight());
+
+        // Once outbound drains, in-flight clears and the normal 30s interval is restored.
+        let t3 = t1 + Duration::from_secs(2);
+        assert_eq!(keepalive.apply_result(KeepaliveOutcome::Sent, t3), Some(30));
+        assert!(!keepalive.is_in_flight());
+        assert_eq!(keepalive.consecutive_failures(), 0);
+        assert!(!keepalive.should_poll(t3 + Duration::from_secs(1), true, false, false));
+        assert!(keepalive.should_poll(t3 + Duration::from_secs(30), true, false, false));
     }
 }

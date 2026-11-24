@@ -2,9 +2,16 @@ import { act, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useEffect } from 'react'
 import { SessionsProvider, useSessions } from './sessions-context'
-import type { InteractiveSessionInfo, InteractiveStatusEventPayload } from '@/lib/interactive-session'
+import type { InteractiveOutputEventPayload, InteractiveSessionInfo, InteractiveStatusEventPayload } from '@/lib/interactive-session'
 
-const listenToInteractiveOutputEventsMock = vi.hoisted(() => vi.fn(async (handler: unknown) => { void handler; return () => {} }))
+const interactiveOutputHandlers = vi.hoisted(() => [] as Array<(payload: InteractiveOutputEventPayload) => void>)
+const listenToInteractiveOutputEventsMock = vi.hoisted(() => vi.fn(async (handler: (payload: InteractiveOutputEventPayload) => void) => {
+  interactiveOutputHandlers.push(handler)
+  return () => {
+    const index = interactiveOutputHandlers.indexOf(handler)
+    if (index >= 0) interactiveOutputHandlers.splice(index, 1)
+  }
+}))
 const listenToInteractiveProgressEventsMock = vi.hoisted(() => vi.fn(async (handler: unknown) => { void handler; return () => {} }))
 const interactiveStatusHandlers = vi.hoisted(() => [] as Array<(payload: InteractiveStatusEventPayload) => void>)
 const listenToInteractiveStatusEventsMock = vi.hoisted(() => vi.fn(async (handler: (payload: InteractiveStatusEventPayload) => void) => {
@@ -122,6 +129,7 @@ describe('sessions context integration', () => {
   beforeEach(() => {
     localStorage.clear()
     sessionsApi = null
+    interactiveOutputHandlers.length = 0
     interactiveStatusHandlers.length = 0
     browserStateHandlers.length = 0
     browserWindowClosedHandlers.length = 0
@@ -197,6 +205,33 @@ describe('sessions context integration', () => {
     expect(sessionsApi!.workspaceBySession['new-session']).toEqual({ mode: 'workspace', activeApp: 'services' })
     expect(sessionsApi!.pcSessionTabs.find((tab) => tab.sessionId === 'new-session')).toMatchObject({ mode: 'workspace', workspaceApp: 'services', status: 'connected' })
     expect(sessionsApi!.leftPaneSessionId).toBe('new-session')
+  })
+
+  it('preserves early welcome banner output emitted before createInteractiveSession resolves', async () => {
+    useVaultMock.mockReturnValue({ activeVaultId: 'vault-a', resolveAuthSecret: vi.fn() })
+    renderSessionsProvider()
+    await waitFor(() => expect(listenToInteractiveOutputEventsMock).toHaveBeenCalled())
+    const created: InteractiveSessionInfo = { sessionId: 'early-banner-session', hostId: 'host-1', vaultId: 'vault-a', host: '10.0.0.8', username: 'root', createdAt: 10, lastActiveAt: 10, status: 'running' }
+    createInteractiveSessionMock.mockImplementationOnce(async () => {
+      // Simulate Rust spawning session_io_loop and emitting MOTD + prompt before IPC returns.
+      for (const handler of interactiveOutputHandlers) {
+        handler({
+          sessionId: created.sessionId,
+          chunks: [{ seq: 1, stream: 'stdout', data: 'Welcome to Ubuntu\r\nroot@prod:~# ', timestamp: 11 }],
+        })
+      }
+      return created
+    })
+    listInteractiveSessionsMock.mockResolvedValue([created])
+
+    await act(async () => { await sessionsApi!.handleConnectHost('host-1') })
+
+    expect(sessionsApi!.pcOutputReplayRef.current[created.sessionId]).toEqual([
+      expect.objectContaining({ seq: 1, data: 'Welcome to Ubuntu\r\nroot@prod:~# ' }),
+    ])
+    expect(sessionsApi!.interactiveChunksBySession[created.sessionId]).toEqual([
+      expect.objectContaining({ seq: 1, data: 'Welcome to Ubuntu\r\nroot@prod:~# ' }),
+    ])
   })
 
   it('blocks a foreign Vault session from routing through an identically named current host', async () => {

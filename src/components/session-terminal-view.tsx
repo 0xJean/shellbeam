@@ -130,6 +130,7 @@ export function SessionTerminalView({
     })
   }, [session?.vaultId, session?.hostId, session?.username, host, historyVaultId, hostAddress])
   const [aiOpenOverride, setAiOpenOverride] = useState<{ key: string | null; open: boolean } | null>(null)
+  const [aiFocusToken, setAiFocusToken] = useState(0)
   const showAI = aiOpenOverride && aiOpenOverride.key === aiHostKey
     ? aiOpenOverride.open
     : readHostAiPanelOpen(aiHostKey)
@@ -146,10 +147,12 @@ export function SessionTerminalView({
   }, [showAI, aiHostKey, visible, shortcutActiveResolved])
   const setShowAI = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
     const key = aiHostKeyRef.current
-    const resolved = typeof next === 'function' ? next(showAIRef.current) : next
+    const prev = showAIRef.current
+    const resolved = typeof next === 'function' ? next(prev) : next
     showAIRef.current = resolved
     writeHostAiPanelOpen(key, resolved)
     setAiOpenOverride({ key, open: resolved })
+    if (resolved && !prev) setAiFocusToken((token) => token + 1)
   }, [])
   const [selectedTerminalText, setSelectedTerminalText] = useState('')
   const [attachedAiSnippet, setAttachedAiSnippet] = useState('')
@@ -358,7 +361,23 @@ export function SessionTerminalView({
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(containerRef.current)
-    fit.fit()
+    const onResize = term.onResize(({ cols, rows }) => {
+      if (!sessionId.startsWith('pending-')) {
+        void resizeInteractiveTerminal(sessionId, cols, rows).catch(() => {})
+      }
+    })
+    const fitIfSized = () => {
+      const el = containerRef.current
+      if (!el || el.clientWidth === 0 || el.clientHeight === 0) return
+      try { fit.fit() } catch { /* teardown */ }
+    }
+    fitIfSized()
+    const mountFocusFrame = visibleRef.current && !chromeOnlyRef.current && shortcutActiveRef.current
+      ? window.requestAnimationFrame(() => {
+        fitIfSized()
+        term.focus()
+      })
+      : null
 
     const search = new SearchAddon()
     term.loadAddon(search)
@@ -406,7 +425,8 @@ export function SessionTerminalView({
 
     // Replay the session's recent output, which covers chunks buffered before the emitter was
     // registered and output this session already showed in a view that has since unmounted.
-    const replay = outputReplayRef?.current[sessionId] ?? initialChunks
+    const replayCandidates = outputReplayRef?.current[sessionId]
+    const replay = replayCandidates && replayCandidates.length > 0 ? replayCandidates : initialChunks
     if (replay && replay.length > 0) {
       let batch = ''
       for (let i = 0; i < replay.length; i++) batch += replay[i].data
@@ -448,24 +468,19 @@ export function SessionTerminalView({
       onSendRawRef.current(data)
     })
 
-    const onResize = term.onResize(({ cols, rows }) => {
-      if (!sessionId.startsWith('pending-')) {
-        void resizeInteractiveTerminal(sessionId, cols, rows).catch(() => {})
-      }
-    })
-
     let fitTimer: ReturnType<typeof setTimeout> | null = null
     const resizeObs = new ResizeObserver(() => {
       if (fitTimer) clearTimeout(fitTimer)
       fitTimer = setTimeout(() => {
         // Hidden behind another mode: leave the remote size alone. Returning to the terminal refits it.
         if (chromeOnlyRef.current) return
-        try { fit.fit() } catch { /* teardown */ }
+        fitIfSized()
       }, 50)
     })
     resizeObs.observe(containerRef.current)
 
     return () => {
+      if (mountFocusFrame !== null) window.cancelAnimationFrame(mountFocusFrame)
       delete chunkEmitters[sessionId]
       onData.dispose()
       onBinary.dispose()
@@ -707,7 +722,7 @@ export function SessionTerminalView({
           <div className="relative flex min-w-0 flex-1 flex-col">
           <div
             ref={containerRef}
-            className="terminal-surface min-h-0 flex-1"
+            className="terminal-surface min-h-0 flex-1 overflow-hidden"
             onClick={handleContainerClick}
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
@@ -776,6 +791,7 @@ export function SessionTerminalView({
               key={sessionId}
               contextLabel={hostName || hostAddress}
               visible={showAI && visible}
+              focusToken={aiFocusToken}
               bridge={aiBridge}
               memoryKey={`${historyVaultId ?? 'none'}:${session?.username ?? ''}@${hostAddress}`}
               memoryVaultId={historyVaultId}

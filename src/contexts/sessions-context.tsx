@@ -802,9 +802,10 @@ export function SessionsProvider({ children, setOutput }: { children: ReactNode;
   ) {
     const routeMode = getStoredBrowserRouteMode(options ?? {})
     const restoredBrowserState = getStoredBrowserSessionState(options ?? {})
-    setInteractiveChunksBySession((prev) => ({ ...prev, [sessionId]: [] }))
-    pcOutputReplayRef.current[sessionId] = []
-    interactiveNextSeqRef.current[sessionId] = 0
+    // Preserve welcome banner / initial prompt chunks that Rust may emit before createInteractiveSession resolves.
+    setInteractiveChunksBySession((prev) => (prev[sessionId]?.length ? prev : { ...prev, [sessionId]: [] }))
+    if (!pcOutputReplayRef.current[sessionId]?.length) pcOutputReplayRef.current[sessionId] = []
+    if (!interactiveNextSeqRef.current[sessionId]) interactiveNextSeqRef.current[sessionId] = 0
     setInteractiveInputBySession((prev) => ({ ...prev, [sessionId]: '' }))
     setInteractiveHistoryBySession((prev) => ({ ...prev, [sessionId]: [] }))
     setInteractiveHistoryCursorBySession((prev) => ({ ...prev, [sessionId]: null }))

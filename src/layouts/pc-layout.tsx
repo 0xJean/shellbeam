@@ -2,7 +2,7 @@ import { usePortForwardSummary } from '@/hooks/use-port-forward-summary'
 import { MobileTerminalDrawer } from '@/components/mobile/mobile-terminal-drawer'
 import { MobileHostsPage } from '@/components/mobile/mobile-hosts-page'
 import { FleetDashboard } from '@/components/dashboard/fleet-dashboard'
-import { requestSettingsCategory } from '@/lib/settings-request'
+import { requestSettingsCategory, SETTINGS_OPEN_EVENT } from '@/lib/settings-request'
 import { MobileToolsPage } from '@/components/mobile-tools-page'
 import { isMobileDevice, useMobileBackHandler } from '@/lib/mobile-back'
 import { isToolPage } from '@/lib/mobile-navigation'
@@ -477,6 +477,16 @@ export function PcLayout() {
     void refreshSnippets()
     void refreshSync()
   }, [refreshSnippets, refreshSync])
+
+  useEffect(() => {
+    const onOpenSettings = () => {
+      sessions.setPcActiveSessionId(null)
+      setShowQuickConnect(false)
+      app.setPcSidebarNav('settings')
+    }
+    window.addEventListener(SETTINGS_OPEN_EVENT, onOpenSettings)
+    return () => window.removeEventListener(SETTINGS_OPEN_EVENT, onOpenSettings)
+  }, [app, sessions])
 
   const isMd = useSyncExternalStore(subscribeMediaQuery, getIsMd, () => true)
   const SettingsScreen = isMd ? SettingsPanel : MobileSettingsPage

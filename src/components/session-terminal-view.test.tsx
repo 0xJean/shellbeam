@@ -20,8 +20,8 @@ vi.mock('@/lib/terminal-themes', () => ({
 }))
 
 vi.mock('./ai-command-bar', () => ({
-  AICommandBar: ({ visible, onClose }: { visible?: boolean; onClose?: () => void }) => (
-    <div data-testid="ai-command-bar" data-visible={String(Boolean(visible))}>
+  AICommandBar: ({ visible, focusToken, onClose }: { visible?: boolean; focusToken?: number; onClose?: () => void }) => (
+    <div data-testid="ai-command-bar" data-visible={String(Boolean(visible))} data-focus-token={String(focusToken ?? 0)}>
       <button type="button" data-testid="mock-ai-close" onClick={onClose}>close</button>
     </div>
   ),
@@ -489,7 +489,7 @@ describe('session terminal view', () => {
       expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'false')
       personalView.unmount()
 
-      render(
+      const workRestored = render(
         <SessionTerminalView
           sessionId="sess-work-2"
           session={{ sessionId: 'sess-work-2', hostId: 'work-host', vaultId: 'work', status: 'running', username: 'ops' } as never}
@@ -500,7 +500,21 @@ describe('session terminal view', () => {
           onSendRaw={() => {}}
         />,
       )
+      // Persisted open panel must not request auto-focus on initial mount (so terminal keeps keyboard focus).
       expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'true')
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-focus-token', '0')
+
+      // Explicitly closing and reopening increments focusToken so the AI input takes focus on demand.
+      act(() => {
+        window.dispatchEvent(new CustomEvent(TERMINAL_AI_TOGGLE_EVENT, { detail: { sessionId: 'sess-work-2' } }))
+      })
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'false')
+      act(() => {
+        window.dispatchEvent(new CustomEvent(TERMINAL_AI_TOGGLE_EVENT, { detail: { sessionId: 'sess-work-2' } }))
+      })
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'true')
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-focus-token', '1')
+      workRestored.unmount()
     })
   })
 })

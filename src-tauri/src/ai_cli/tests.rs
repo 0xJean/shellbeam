@@ -203,6 +203,40 @@ fn generation_arguments_never_include_user_input_and_keep_isolation() {
     assert!(opencode_args
         .windows(2)
         .any(|a| a == ["--model", "openai/gpt-5.4"]));
+
+    let cursor_args = cli_args(Backend::CursorCli, "sonnet-4.5", "");
+    assert!(cursor_args.contains(&"--print".into()));
+    assert!(cursor_args.windows(2).any(|a| a == ["--mode", "ask"]));
+    assert!(cursor_args
+        .windows(2)
+        .any(|a| a == ["--output-format", "stream-json"]));
+    assert!(cursor_args.contains(&"--stream-partial-output".into()));
+    assert!(cursor_args
+        .windows(2)
+        .any(|a| a == ["--sandbox", "enabled"]));
+    assert!(cursor_args.windows(2).any(|a| a == ["--workspace", "."]));
+    assert!(cursor_args
+        .windows(2)
+        .any(|a| a == ["--model", "sonnet-4.5"]));
+
+    let devin_args = cli_args(Backend::DevinCli, "swe-2-high", "");
+    assert!(devin_args.contains(&"--print".into()));
+    assert!(devin_args
+        .windows(2)
+        .any(|a| a == ["--respect-workspace-trust", "false"]));
+    assert!(devin_args
+        .windows(2)
+        .any(|a| a == ["--permission-mode", "auto"]));
+    assert!(devin_args.contains(&"--sandbox".into()));
+    assert!(devin_args
+        .windows(2)
+        .any(|a| a == ["--config", "devin-config.json"]));
+    assert!(devin_args
+        .windows(2)
+        .any(|a| a == ["--prompt-file", "request.json"]));
+    assert!(devin_args
+        .windows(2)
+        .any(|a| a == ["--model", "swe-2-high"]));
 }
 #[test]
 fn opencode_denies_every_tool_before_it_can_run() {
@@ -257,6 +291,100 @@ fn gemini_and_opencode_parsers_stream_text_and_reject_tools() {
             .unwrap_err(),
         "tool_use"
     );
+
+    let mut cursor = Parser::new(Backend::CursorCli);
+    assert!(cursor
+        .line(r#"{"type":"system","subtype":"init","model":"sonnet-4.5"}"#)
+        .unwrap()
+        .is_none());
+    assert_eq!(cursor.model.take().as_deref(), Some("sonnet-4.5"));
+    // Repeated identical streaming deltas (carrying timestamp_ms) must all be preserved.
+    assert_eq!(
+        cursor
+            .line(
+                r#"{"type":"assistant","timestamp_ms":1,"message":{"content":[{"type":"text","text":"x"}]}}"#
+            )
+            .unwrap(),
+        Some("x".into())
+    );
+    assert_eq!(
+        cursor
+            .line(
+                r#"{"type":"assistant","timestamp_ms":2,"message":{"content":[{"type":"text","text":"x"}]}}"#
+            )
+            .unwrap(),
+        Some("x".into())
+    );
+    // Final aggregated message block without timestamp_ms matches streamed text and is skipped.
+    assert!(cursor
+        .line(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"xx"}]}}"#)
+        .unwrap()
+        .is_none());
+    assert!(cursor
+        .line(r#"{"type":"result","subtype":"success","is_error":false,"result":"xx"}"#)
+        .unwrap()
+        .is_none());
+    assert!(cursor.done);
+    assert_eq!(cursor.text, "xx");
+    // Disagreeing final result fails closed.
+    let mut cursor_mismatch = Parser::new(Backend::CursorCli);
+    assert_eq!(
+        cursor_mismatch
+            .line(
+                r#"{"type":"assistant","timestamp_ms":1,"message":{"content":[{"type":"text","text":"pwd"}]}}"#
+            )
+            .unwrap(),
+        Some("pwd".into())
+    );
+    assert_eq!(
+        cursor_mismatch
+            .line(r#"{"type":"result","subtype":"success","is_error":false,"result":"rm -rf /"}"#)
+            .unwrap_err(),
+        "invalid_output"
+    );
+    assert_eq!(
+        Parser::new(Backend::CursorCli)
+            .line(r#"{"type":"tool_call","name":"shell"}"#)
+            .unwrap_err(),
+        "tool_use"
+    );
+
+    // run_process passes raw lines including trailing '\n' (or '\r\n').
+    let mut devin = Parser::new(Backend::DevinCli);
+    assert_eq!(
+        devin.line("# Check disk usage\n").unwrap(),
+        Some("# Check disk usage".into())
+    );
+    assert_eq!(devin.line("df \\\r\n").unwrap(), Some("\ndf \\".into()));
+    assert_eq!(devin.line("  -h\n").unwrap(), Some("\n  -h".into()));
+    assert_eq!(devin.text, "# Check disk usage\ndf \\\n  -h");
+}
+
+#[test]
+fn scratch_policy_files_deny_tools_for_cursor_and_devin() {
+    let cursor_scratch = Scratch::create().unwrap();
+    write_scratch_policy_files(Backend::CursorCli, &cursor_scratch.0).unwrap();
+    let cursor_policy: Value = serde_json::from_str(
+        &std::fs::read_to_string(cursor_scratch.0.join(".cursor/cli.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(cursor_policy["permissions"]["allow"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let cursor_deny = cursor_policy["permissions"]["deny"].as_array().unwrap();
+    assert!(cursor_deny.iter().any(|v| v == "Read(**)"));
+    assert!(cursor_deny.iter().any(|v| v == "Shell(*)"));
+
+    let devin_scratch = Scratch::create().unwrap();
+    write_scratch_policy_files(Backend::DevinCli, &devin_scratch.0).unwrap();
+    let devin_policy: Value = serde_json::from_str(
+        &std::fs::read_to_string(devin_scratch.0.join("devin-config.json")).unwrap(),
+    )
+    .unwrap();
+    let devin_deny = devin_policy["permissions"]["deny"].as_array().unwrap();
+    assert!(devin_deny.iter().any(|v| v == "Read(**)"));
+    assert!(devin_deny.iter().any(|v| v == "Exec(**)"));
 }
 #[cfg(unix)]
 fn fixture() -> (Scratch, PathBuf) {

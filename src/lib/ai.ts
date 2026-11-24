@@ -5,7 +5,7 @@ import { aiKeysMayLiveInStorage, cachedAIKey, isAIKeyProvider, onAIKeysSecured, 
 
 const AI_SETTINGS_KEY = 'shellbeam.aiSettings'
 
-export type AICliBackend = 'claude-code' | 'codex-cli' | 'gemini-cli' | 'opencode-cli'
+export type AICliBackend = 'claude-code' | 'codex-cli' | 'gemini-cli' | 'opencode-cli' | 'cursor-cli' | 'devin-cli'
 export type AIBackend = 'api' | AICliBackend
 export type AIReasoningEffort = '' | 'low' | 'medium' | 'high'
 export interface AICliProfile { executable: string; model: string; effort?: AIReasoningEffort }
@@ -180,7 +180,7 @@ export const AI_PROVIDERS: AIProvider[] = [
   },
 ]
 
-export const AI_CLI_BACKENDS: readonly AICliBackend[] = ['claude-code', 'codex-cli', 'gemini-cli', 'opencode-cli']
+export const AI_CLI_BACKENDS: readonly AICliBackend[] = ['claude-code', 'codex-cli', 'gemini-cli', 'opencode-cli', 'cursor-cli', 'devin-cli']
 export const isCliBackend = (backend?: AIBackend): backend is AICliBackend =>
   Boolean(backend && (AI_CLI_BACKENDS as readonly string[]).includes(backend))
 
@@ -442,7 +442,7 @@ export async function streamAICommand(
     if (settings.provider === 'anthropic') {
       await streamAnthropic(baseUrl, apiKey, model, messages, callbacks, signal)
     } else {
-      await streamOpenAICompatible(baseUrl, apiKey, model, messages, callbacks, signal, settings.provider === 'openai', settings.reasoningEffort)
+      await streamOpenAICompatible(baseUrl, apiKey, model, messages, callbacks, signal, settings.provider, settings.reasoningEffort)
     }
   } catch (err) {
     if (signal?.aborted) return
@@ -457,7 +457,7 @@ async function streamOpenAICompatible(
   messages: { role: string; content: string }[],
   callbacks: AIStreamCallbacks,
   signal?: AbortSignal,
-  isOpenAI = false,
+  provider: AIProviderId = 'openai',
   effort?: AIReasoningEffort,
 ) {
   const url = resolveChatCompletionsUrl(baseUrl)
@@ -469,7 +469,9 @@ async function streamOpenAICompatible(
     headers['X-Title'] = 'ShellBeam'
   }
 
-  const supportsReasoningEffort = isOpenAI && /^(o\d|gpt-[5-9])/i.test(model)
+  const isOpenAI = provider === 'openai'
+  const supportsReasoningEffort = (isOpenAI && /^(o\d|gpt-[5-9])/i.test(model))
+    || (provider === 'gemini' && /^gemini-(2\.5|[3-9])/i.test(model))
   const res = await fetch(url, {
     method: 'POST',
     headers,

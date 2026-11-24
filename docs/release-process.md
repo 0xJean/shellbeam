@@ -6,11 +6,13 @@
 
 ## 1. 发布前准备（Release Prep PR）
 
-1. **同步版本号（4 处保持完全一致）**
+1. **同步版本号（6 处保持完全一致）**
    - `package.json` → `"version": "X.Y.Z"`
+   - `package-lock.json` → 顶层与 `packages[""]` 的 `"version": "X.Y.Z"`
    - `src-tauri/tauri.conf.json` → `"version": "X.Y.Z"`
    - `src-tauri/Cargo.toml` → `version = "X.Y.Z"`
    - `src-tauri/Cargo.lock`（执行 `cargo update --workspace --manifest-path src-tauri/Cargo.toml` 或 `cargo check` 更新 `app` 节点）
+   - `src-tauri/gen/apple/app_iOS/Info.plist` → `CFBundleShortVersionString` 为 `X.Y.Z`（TestFlight 显示版本）
 2. **编写中英双语发布说明**
    - 新增 `docs/releases/vX.Y.Z.md`，包含核心功能变更、升级说明与英文摘要。`Release` workflow 会自动将其作为 GitHub Release 正文开头。
 3. **提交发布准备 PR**
@@ -19,30 +21,34 @@
 
 ---
 
-## 2. 自动化签名与公证配置（推荐，一次性完成）
+## 2. 自动化签名、公证与 TestFlight 配置（推荐，一次性完成）
 
 `Release` workflow（`.github/workflows/build.yml`）支持全自动产出：
 - **macOS**：`ShellBeam_X.Y.Z_universal.dmg`（Apple Silicon + Intel 通用包，Developer ID 签名 + `.app` 与外层 `.dmg` 双重 Apple 公证 + `stapler` 装订 + `spctl` 校验）
 - **Android**：`ShellBeam_X.Y.Z_universal.apk`（4 ABI 签名包 + `apksigner verify` 校验）与已签名 `ShellBeam_X.Y.Z_universal.aab`
 - **Windows / Linux**：`.exe` / `.msi` / `.deb` / `.rpm` / `.AppImage`
+- **iOS（TestFlight）**：上传 App Store IPA 至 App Store Connect（不作为 `.ipa` 附件挂在 GitHub Release，而在 Release Notes 中展示 TestFlight 链接）
 - **校验文件**：自动生成并附带 `SHA256SUMS`
 
-### 必需的 10 项 GitHub Repository Secrets
+### 必需的 GitHub Repository Secrets 与 Variables
 
 在 `0xJean/shellbeam` → **Settings → Secrets and variables → Actions** 配置：
 
-| 平台 | Secret 名称 | 说明 |
-|---|---|---|
-| macOS | `APPLE_CERTIFICATE` | 含 `Developer ID Application` 证书与私钥的 `.p12` base64 |
-| macOS | `APPLE_CERTIFICATE_PASSWORD` | 导出 `.p12` 时设置的密码 |
-| macOS | `APPLE_SIGNING_IDENTITY` | `Developer ID Application: <Name> (<TEAMID>)` |
-| macOS | `APPLE_ID` | Apple Developer 账号邮箱 |
-| macOS | `APPLE_PASSWORD` | App 专用密码（appleid.apple.com 生成） |
-| macOS | `APPLE_TEAM_ID` | 10 位 Team ID（如 `H4NCLYWCAJ`） |
-| Android | `ANDROID_KEYSTORE_BASE64` | `shellbeam.jks` 的单行 base64 |
-| Android | `ANDROID_KEYSTORE_PASS` | Keystore 密码 |
-| Android | `ANDROID_KEY_ALIAS` | Key Alias（如 `shellbeam`） |
-| Android | `ANDROID_KEY_PASS` | Key 密码 |
+| 类型 | 平台 | 名称 | 说明 |
+|---|---|---|---|
+| Secret | macOS / iOS | `APPLE_CERTIFICATE` | `.p12` base64（仅发 macOS 含 `Developer ID Application`；若同时启用 CI iOS TestFlight，一并包含 `iPhone Distribution` / `Apple Distribution` 证书与私钥） |
+| Secret | macOS / iOS | `APPLE_CERTIFICATE_PASSWORD` | 导出 `.p12` 时设置的密码 |
+| Secret | macOS | `APPLE_SIGNING_IDENTITY` | `Developer ID Application: <Name> (<TEAMID>)` |
+| Secret | macOS / iOS | `APPLE_ID` | Apple Developer 账号邮箱 |
+| Secret | macOS / iOS | `APPLE_PASSWORD` | App 专用密码（appleid.apple.com 生成） |
+| Secret | macOS / iOS | `APPLE_TEAM_ID` | 10 位 Team ID（如 `H4NCLYWCAJ`） |
+| Secret | iOS（可选） | `IOS_PROVISIONING_PROFILE` | App Store Provisioning Profile 的 base64；不填则走 Xcode 自动签名 |
+| Secret | Android | `ANDROID_KEYSTORE_BASE64` | `shellbeam.jks` 的单行 base64 |
+| Secret | Android | `ANDROID_KEYSTORE_PASS` | Keystore 密码 |
+| Secret | Android | `ANDROID_KEY_ALIAS` | Key Alias（如 `shellbeam`） |
+| Secret | Android | `ANDROID_KEY_PASS` | Key 密码 |
+| Variable | iOS | `ENABLE_IOS_TESTFLIGHT` | 设为 `true` 时，每次推送 `v*` tag 自动执行 `ios-testflight` 上传 TestFlight |
+| Variable | iOS | `TESTFLIGHT_PUBLIC_LINK` | TestFlight 公开测试链接（如 `https://testflight.apple.com/join/...`），自动写入 Release Notes |
 
 ### 从本机钥匙串安全导入单个 Developer ID `.p12` 到 GitHub Secrets（一次性）
 
@@ -81,11 +87,12 @@ gh run list --workflow build.yml --branch vX.Y.Z --repo 0xJean/shellbeam
 1. `Packaged acceptance` 全部 4 项 UI 验收通过；
 2. 4 个桌面/移动平台构建全部成功；
 3. macOS 产物为 **已公证通用包**（`ShellBeam_X.Y.Z_universal.dmg`），Android 产物为 **已签名通用包**（`ShellBeam_X.Y.Z_universal.apk` / `.aab`）；
-4. 附件列表包含 `SHA256SUMS`，且无残留 `-unsigned.apk` 或单架构未签名 `.dmg`。
+4. 附件列表包含 `SHA256SUMS`，且无残留 `-unsigned.apk` 或单架构未签名 `.dmg`；
+5. iOS TestFlight 已随本版本完成上传（CI `ios-testflight` 成功，或已按第 4.3 节在本机上传至 App Store Connect，避免超过 90 天有效期）。
 
 ---
 
-## 4. 本机补签 / 手动替换产物（应急或未配 `.p12` Secret 时）
+## 4. 本机补签 / 手动替换产物与 TestFlight 上传（应急或未配 Apple `.p12` Secret 时）
 
 当 CI 因缺少签名 Secret 产出 `draft` Release 时，在本机执行签名打包并替换对应附件：
 
@@ -131,7 +138,22 @@ gh release delete-asset vX.Y.Z app-universal-release.aab --repo 0xJean/shellbeam
 rm -rf "$TMPDIR"
 ```
 
-### 4.3 刷新 `SHA256SUMS` 并正式公开
+### 4.3 iOS TestFlight 构建与上传
+
+当 CI 未开启 `ENABLE_IOS_TESTFLIGHT=true` 时，在已登录 Apple Distribution 证书（`iPhone Distribution` / `Apple Distribution`）的 macOS 本机执行：
+
+```bash
+# 确保 .env 包含 IOS_DEVELOPMENT_TEAM / APPLE_ID / APPLE_PASSWORD
+# 且 src-tauri/gen/apple/app_iOS/Info.plist 的 CFBundleShortVersionString 已为 X.Y.Z
+npm run build:ios:tf
+```
+
+说明：
+- `scripts/ios-build-tf.sh` 会自动生成唯一构建号 `CFBundleVersion`（`YYYYMMDD.HHMM`）、执行 `tauri ios build`、导出 App Store IPA 并通过 `xcrun altool --upload-app` 上传至 App Store Connect。
+- 上传成功后约 15 分钟内会出现在 TestFlight；若本机仅作临时发包不希望留下工作区脏改动，可在上传确认后执行 `git checkout -- src-tauri/gen/apple/app_iOS/Info.plist`。
+- **外部测试（External Testing）提醒**：TestFlight 单个构建有效期为 90 天；新版本号（`X.Y.Z` 变更）首次发给外部测试组时，需在 App Store Connect 中将新构建添加到对应外部测试组并等待 Apple Beta 审核通过。
+
+### 4.4 刷新 `SHA256SUMS` 并正式公开
 
 ```bash
 gh release view vX.Y.Z --repo 0xJean/shellbeam --json assets \
@@ -146,9 +168,10 @@ gh release edit vX.Y.Z --draft=false --repo 0xJean/shellbeam
 
 ---
 
-## 5. 发布后官网同步清单（`0xJean/shellbeam-site`）
+## 5. 发布后官网验证与同步清单（`0xJean/shellbeam-site`）
 
-1. 检查官网版本号徽章（`src/locales/zh.json`、`en.json`、下载按钮版本标签）是否更新至 `vX.Y.Z`。
-2. 核对下载区安装包格式与架构说明与 GitHub Release 实际附件完全一致（例如 macOS 为通用包 `.dmg`、Android 为 `.apk / .aab`）。
-3. 若本版本包含显著 UI/交互改版，运行 `tools/demo-recorder` 重录演示视频与封面图。
-4. 合并官网 PR 至 `main` 并执行 `vercel --prod --yes` 发布至 `https://www.shellbeam.xyz`。
+1. **自动版本同步验证**：`https://www.shellbeam.xyz` 已接入 `https://api.github.com/repos/0xJean/shellbeam/releases/latest` 自动拉取（带 15 分钟 `sessionStorage` 缓存）。正式公开 Release 后，验证接口返回 `tag_name: "vX.Y.Z"`，官网即自动显示新版本，**常规版本无需重新部署官网**。
+2. **需要手动更新官网的场景**：
+   - 新增或变更安装包格式/平台入口（例如新增 iOS TestFlight 入口或变更链接）；
+   - 本版本包含显著 UI/交互改版，需运行 `tools/demo-recorder` 重录演示视频与封面图，或更新官网文案与 `FALLBACK_VERSION`。
+3. 如有官网改动，合并 `0xJean/shellbeam-site` PR 至 `main` 并执行 `vercel --prod --yes` 发布至 `https://www.shellbeam.xyz`。

@@ -1,35 +1,18 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Asterisk, Bot, Cloud, Cpu, Eye, EyeOff, Flame, Globe, Layers, Lock, Moon, Plug, Route, ShieldCheck, Sparkles, SquareTerminal, Zap, type LucideIcon } from 'lucide-react'
+import { Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react'
 import { AICliSettings } from '@/components/ai-cli-settings'
 import { AIModelPicker } from '@/components/ai-model-picker'
+import { AIProviderLogo } from '@/components/ai-provider-logo'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { SettingSwitch } from '@/components/settings-controls'
-import { AI_PROVIDERS, AI_SETTINGS_EVENT, isCliBackend, loadAISettings, saveAISettings, switchAIProvider, type AIBackend, type AIProviderGroup, type AIProviderId, type AISettings } from '@/lib/ai'
+import { AI_PROVIDERS, AI_SETTINGS_EVENT, isCliBackend, loadAISettings, saveAISettings, switchAIProvider, type AIBackend, type AIProviderGroup, type AISettings } from '@/lib/ai'
 import { CLI_BACKEND_LABELS } from '@/lib/ai-conversation'
 import { useT } from '@/lib/i18n'
 import { aiMcpSettingsCopy } from '@/lib/locales/ai-mcp-settings-v3'
 import { cn } from '@/lib/utils'
 
-const PROVIDER_ICONS: Record<AIProviderId, LucideIcon> = {
-  openai: Sparkles,
-  anthropic: Asterisk,
-  gemini: Globe,
-  openrouter: Route,
-  xai: Zap,
-  groq: Flame,
-  deepseek: Bot,
-  qwen: Cloud,
-  zhipu: Layers,
-  moonshot: Moon,
-  siliconflow: Cpu,
-  volcengine: Flame,
-  minimax: Sparkles,
-  ollama: Cpu,
-  lmstudio: Cpu,
-  custom: Plug,
-}
-const BACKENDS: readonly AIBackend[] = ['api', 'claude-code', 'codex-cli', 'gemini-cli', 'opencode-cli']
+const BACKENDS: readonly AIBackend[] = ['api', 'claude-code', 'codex-cli', 'gemini-cli', 'opencode-cli', 'cursor-cli', 'devin-cli']
 const PROVIDER_GROUPS: readonly AIProviderGroup[] = ['global', 'china', 'local']
 
 const choiceCardClass = (active: boolean) => cn('rounded-lg border text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -75,14 +58,13 @@ export function AISettingsSection() {
       </header>
       <div>
         <p className="mb-2 text-sm font-medium text-[var(--workspace-text)]">{t('ai.backend')}</p>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {BACKENDS.map((item) => {
             const label = item === 'api' ? t('ai.backendApi') : CLI_BACKEND_LABELS[item]
-            const Icon = item === 'api' ? Cloud : SquareTerminal
             return <button key={item} type="button" aria-label={label} aria-pressed={backend === item}
               onClick={() => { setShowKey(false); setSettings((s) => ({ ...s, backend: item })) }}
               className={cn(choiceCardClass(backend === item), 'flex min-w-0 items-center gap-2.5 px-3 py-2.5')}>
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]"><Icon aria-hidden className="h-4 w-4" /></span>
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--workspace-surface-800)] text-[var(--workspace-text-strong)]"><AIProviderLogo brand={item} className="h-4 w-4" /></span>
               <span className="min-w-0"><span className="block truncate text-sm font-medium text-[var(--workspace-text-strong)]">{label}</span><span className="block truncate text-xs text-[var(--workspace-text-muted)]">{copy.backendDesc[item]}</span></span>
             </button>
           })}
@@ -102,12 +84,11 @@ export function AISettingsSection() {
                 <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--workspace-text-subtle)]">{copy.providerGroups[group]}</p>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                   {items.map((p) => {
-                    const Icon = PROVIDER_ICONS[p.id]
                     const active = settings.provider === p.id
                     return <button key={p.id} type="button" aria-pressed={active}
                       onClick={() => { setShowKey(false); setSettings((s) => switchAIProvider(s, p.id)) }}
                       className={cn(choiceCardClass(active), 'flex flex-col items-center gap-1.5 px-2 py-3')}>
-                      <span className={cn('flex h-7 w-7 items-center justify-center rounded-md bg-[var(--workspace-surface-800)]', active ? 'text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text-muted)]')}><Icon aria-hidden className="h-3.5 w-3.5" /></span>
+                      <span className={cn('flex h-7 w-7 items-center justify-center rounded-md bg-[var(--workspace-surface-800)]', active ? 'text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text-strong)]')}><AIProviderLogo brand={p.id} className="h-4 w-4" /></span>
                       <span className={cn('w-full truncate text-center text-xs', active ? 'font-semibold text-[var(--workspace-text-strong)]' : 'text-[var(--workspace-text)]')}>{p.name}</span>
                     </button>
                   })}
