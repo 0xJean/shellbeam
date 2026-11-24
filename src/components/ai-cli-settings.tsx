@@ -33,7 +33,7 @@ export function AICliSettings({ backend, profile, onChange }: {
   }
   const name = CLI_BACKEND_LABELS[backend]
   const presets = CLI_MODEL_PRESETS[backend]
-  const supportsEffort = backend !== 'gemini-cli'
+  const supportsEffort = backend === 'claude-code' || backend === 'codex-cli' || backend === 'opencode-cli'
   const currentEffort = profile.effort ?? ''
   return <div className="grid items-start gap-4 lg:grid-cols-2">
     <div className="sb-card min-w-0">

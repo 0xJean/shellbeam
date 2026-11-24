@@ -203,6 +203,36 @@ fn generation_arguments_never_include_user_input_and_keep_isolation() {
     assert!(opencode_args
         .windows(2)
         .any(|a| a == ["--model", "openai/gpt-5.4"]));
+
+    let cursor_args = cli_args(Backend::CursorCli, "sonnet-4.5", "");
+    assert!(cursor_args.contains(&"--print".into()));
+    assert!(cursor_args.windows(2).any(|a| a == ["--mode", "ask"]));
+    assert!(cursor_args
+        .windows(2)
+        .any(|a| a == ["--output-format", "stream-json"]));
+    assert!(cursor_args.contains(&"--stream-partial-output".into()));
+    assert!(cursor_args
+        .windows(2)
+        .any(|a| a == ["--sandbox", "enabled"]));
+    assert!(cursor_args
+        .windows(2)
+        .any(|a| a == ["--model", "sonnet-4.5"]));
+
+    let devin_args = cli_args(Backend::DevinCli, "swe-2-high", "");
+    assert!(devin_args.contains(&"--print".into()));
+    assert!(devin_args
+        .windows(2)
+        .any(|a| a == ["--respect-workspace-trust", "false"]));
+    assert!(devin_args
+        .windows(2)
+        .any(|a| a == ["--permission-mode", "auto"]));
+    assert!(devin_args.contains(&"--sandbox".into()));
+    assert!(devin_args
+        .windows(2)
+        .any(|a| a == ["--prompt-file", "request.json"]));
+    assert!(devin_args
+        .windows(2)
+        .any(|a| a == ["--model", "swe-2-high"]));
 }
 #[test]
 fn opencode_denies_every_tool_before_it_can_run() {
@@ -257,6 +287,40 @@ fn gemini_and_opencode_parsers_stream_text_and_reject_tools() {
             .unwrap_err(),
         "tool_use"
     );
+
+    let mut cursor = Parser::new(Backend::CursorCli);
+    assert!(cursor
+        .line(r#"{"type":"system","subtype":"init","model":"sonnet-4.5"}"#)
+        .unwrap()
+        .is_none());
+    assert_eq!(cursor.model.take().as_deref(), Some("sonnet-4.5"));
+    assert_eq!(
+        cursor
+            .line(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"uptime"}]}}"#)
+            .unwrap(),
+        Some("uptime".into())
+    );
+    // Final aggregated duplicate message block is skipped.
+    assert!(cursor
+        .line(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"uptime"}]}}"#)
+        .unwrap()
+        .is_none());
+    assert!(cursor
+        .line(r#"{"type":"result","subtype":"success","is_error":false,"result":"uptime"}"#)
+        .unwrap()
+        .is_none());
+    assert!(cursor.done);
+    assert_eq!(
+        Parser::new(Backend::CursorCli)
+            .line(r#"{"type":"tool_call","name":"shell"}"#)
+            .unwrap_err(),
+        "tool_use"
+    );
+
+    let mut devin = Parser::new(Backend::DevinCli);
+    assert_eq!(devin.line("# Check disk usage").unwrap(), Some("# Check disk usage".into()));
+    assert_eq!(devin.line("df -h").unwrap(), Some("\ndf -h".into()));
+    assert_eq!(devin.text, "# Check disk usage\ndf -h");
 }
 #[cfg(unix)]
 fn fixture() -> (Scratch, PathBuf) {

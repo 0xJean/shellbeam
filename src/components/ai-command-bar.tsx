@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { AlertCircle, ArrowUp, FastForward, HelpCircle, History, Lightbulb, Plus, ShieldCheck, Trash2, TriangleAlert, Zap, Server, Check, ChevronDown, Copy, CornerDownLeft, Eraser, Loader2, MessageSquareText, MoreHorizontal, Pencil, Play, Radar, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
+import { AlertCircle, ArrowUp, FastForward, HelpCircle, History, Lightbulb, Paperclip, Plus, ShieldCheck, Trash2, TriangleAlert, Zap, Server, Check, ChevronDown, Copy, CornerDownLeft, Eraser, Loader2, MessageSquareText, MoreHorizontal, Pencil, Play, Radar, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AI_SETTINGS_EVENT, streamAICommand, loadAISettings, saveAISettings, isAIConfigured, createAbortController, type AISettings } from '@/lib/ai'
@@ -45,6 +46,8 @@ interface AICommandBarProps {
   /** Optional text selected in the terminal to attach as quoted context on the next message. */
   attachedSnippet?: string
   onClearAttachedSnippet?: () => void
+  /** Incremented when the user explicitly opens the panel so persisted-open mounts do not steal terminal focus. */
+  focusToken?: number
 }
 
 const PROBE_TIP_KEY = 'shellbeam.aiProbeTipDismissed.'
@@ -69,7 +72,7 @@ const nextId = (prefix: string) => `${prefix}-${Date.now()}-${++turnSeq}`
 /** Excludes in-flight running captures from local transcript cache so switching away and back never restores a stuck spinner. */
 const cacheableTurns = (list: AITurn[]) => list.filter((turn) => turn.kind !== 'run' || turn.state !== 'running')
 
-export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, memoryVaultId, hostFacts, inventory, probe, attachedSnippet, onClearAttachedSnippet }: AICommandBarProps) {
+export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, memoryVaultId, hostFacts, inventory, probe, attachedSnippet, onClearAttachedSnippet, focusToken }: AICommandBarProps) {
   const { t, locale } = useT()
   const copy = aiAssistantCopy[locale]
   const narrow = useNarrowViewport()
@@ -153,6 +156,8 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const abortRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const sheetInputRef = useRef<HTMLInputElement>(null)
+  const isComposingRef = useRef(false)
+  const compositionEndedAtRef = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const streamBuf = useRef('')
   const captures = useRef(new Map<string, { capture: TerminalCapture; stop: () => void; finish?: () => void }>())
@@ -228,8 +233,17 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     captures.current.clear()
   }, [])
 
+  const prevVisibleRef = useRef(visible)
+  const prevFocusTokenRef = useRef(focusToken ?? 0)
   useEffect(() => {
+    const opened = visible && !prevVisibleRef.current
+    prevVisibleRef.current = visible
     if (visible) {
+      const requestedFocus = focusToken !== undefined
+        ? focusToken > prevFocusTokenRef.current
+        : opened
+      if (focusToken !== undefined) prevFocusTokenRef.current = focusToken
+      if (!requestedFocus) return
       const timer = setTimeout(() => (asSheet ? sheetInputRef : inputRef).current?.focus(), 100)
       return () => clearTimeout(timer)
     }
@@ -240,7 +254,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     // Hiding the panel ends any automatic run; drop its status so it is not stale when reopened.
     const timer = setTimeout(() => setAutoState(null), 0)
     return () => clearTimeout(timer)
-  }, [visible, asSheet])
+  }, [visible, asSheet, focusToken])
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -506,12 +520,12 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     else onExecuteCommand(command)
   }, [bridge, onExecuteCommand])
 
-  const handleCopy = useCallback(async (id: string, command: string) => {
-    try {
-      await navigator.clipboard.writeText(command)
+  const handleCopy = useCallback(async (id: string, text: string) => {
+    const ok = await copyTextToClipboard(text)
+    if (ok) {
       setCopiedId(id)
-      setTimeout(() => setCopiedId(null), 1500)
-    } catch { /* clipboard not available */ }
+      setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 1500)
+    }
   }, [])
 
   const resolveThreadTurns = useCallback((thread: AIConversationThread): AITurn[] => {
@@ -621,8 +635,15 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
   const tip = useMemo(() => (isStreaming ? '' : nextStepTip(turns, { next: copy.nextPrompt, fix: copy.fixPrompt })), [turns, isStreaming, copy])
 
   const handleKeyDown = useCallback((event: ReactKeyboardEvent) => {
-    if (event.nativeEvent.isComposing) return
+    // macOS WKWebView/Safari often fires `compositionend` right before `keydown(Enter)` with
+    // `isComposing === false` when committing raw Latin text in CJK IMEs; guard with both refs and keyCode 229.
+    const imeJustEnded = compositionEndedAtRef.current > 0 && Date.now() - compositionEndedAtRef.current < 80
+    if (event.nativeEvent.isComposing || event.keyCode === 229 || isComposingRef.current || imeJustEnded) return
     if (event.key === 'Tab' && !event.shiftKey && !input && tip) { event.preventDefault(); setInput(tip); return }
+    if (event.key === 'ArrowUp' && !input && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const prevPrompt = [...turnsRef.current].reverse().find((turn): turn is Extract<AITurn, { kind: 'user' }> => turn.kind === 'user' && !turn.auto)?.text
+      if (prevPrompt) { event.preventDefault(); setInput(prevPrompt); return }
+    }
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault()
       const latest = [...turnsRef.current].reverse().find((turn): turn is Extract<AITurn, { kind: 'ai' }> => turn.kind === 'ai')
@@ -711,7 +732,6 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
             onOpenHistory={handleRefreshThreads}
           />
         )}
-        <AIModelSwitcher settings={settings} reportedModel={reportedModel} onChange={changeSettings} />
         <AIPanelMenu items={[
           { key: 'chat', label: copy.clearChat, icon: RotateCcw, disabled: turns.length === 0 && !isStreaming, onSelect: handleNewChat },
           ...(bridge?.clear ? [{ key: 'screen', label: copy.clearScreen, icon: Eraser, onSelect: bridge.clear }] : []),
@@ -723,7 +743,7 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
         </button>
       </header>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
+      <div ref={scrollRef} className="min-h-0 flex-1 select-text space-y-3 overflow-y-auto px-3 py-3">
         {turns.length === 0 && !isStreaming && (
           <div className="space-y-3 px-1 pt-2">
             <p className="text-[13px] font-medium leading-relaxed text-[var(--workspace-text-strong)]">{copy.emptyTitle}</p>
@@ -793,14 +813,33 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
               </p>
             )
             if (turn.kind === 'user') return (
-              <div key={turn.id} className="flex justify-end">
-                <p className="max-w-[88%] whitespace-pre-wrap break-words rounded-lg rounded-br-sm bg-[var(--workspace-accent-subtle)] px-3 py-2 text-[13px] text-[var(--workspace-text-strong)]">{turn.text}</p>
+              <div key={turn.id} className="group flex flex-col items-end gap-1">
+                <p className="max-w-[88%] select-text whitespace-pre-wrap break-words rounded-lg rounded-br-sm bg-[var(--workspace-accent-subtle)] px-3 py-2 text-[13px] text-[var(--workspace-text-strong)]">{turn.text}</p>
+                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                  <button type="button" onClick={() => void handleCopy(turn.id, turn.text)}
+                    aria-label={copy.copyMessage} title={copy.copyMessage}
+                    className="inline-flex h-5 items-center gap-1 rounded px-1.5 text-[10.5px] text-[var(--workspace-text-subtle)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+                    {copiedId === turn.id ? <Check className="h-2.5 w-2.5" aria-hidden="true" /> : <Copy className="h-2.5 w-2.5" aria-hidden="true" />}
+                    <span>{copiedId === turn.id ? copy.copied : copy.copy}</span>
+                  </button>
+                  <button type="button" onClick={() => { setInput(turn.text); setTimeout(() => inputRef.current?.focus(), 0) }}
+                    aria-label={copy.reusePrompt} title={copy.reusePrompt}
+                    className="inline-flex h-5 items-center gap-1 rounded px-1.5 text-[10.5px] text-[var(--workspace-text-subtle)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+                    <Pencil className="h-2.5 w-2.5" aria-hidden="true" />
+                    <span>{copy.reusePrompt}</span>
+                  </button>
+                </div>
               </div>
             )
             if (turn.kind === 'error') return (
               <div key={turn.id} role="alert" className="flex items-start gap-2 rounded-lg border border-[color:var(--workspace-status-bad-border)] bg-[var(--workspace-status-bad-bg)] px-3 py-2 text-xs text-[var(--workspace-status-bad-text)]">
                 <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                <span className="min-w-0 flex-1 break-words">{turn.text}</span>
+                <span className="min-w-0 flex-1 select-text break-words">{turn.text}</span>
+                <button type="button" onClick={() => void handleCopy(turn.id, turn.text)}
+                  aria-label={copy.copyMessage} title={copy.copyMessage}
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md hover:opacity-80">
+                  {copiedId === turn.id ? <Check className="h-3 w-3" aria-hidden="true" /> : <Copy className="h-3 w-3" aria-hidden="true" />}
+                </button>
                 {lastPrompt && turn.id === lastTurn?.id && !isStreaming && (
                   <button type="button" onClick={() => void submit(lastPrompt)}
                     className="flex h-6 shrink-0 items-center gap-1 rounded-md border border-current px-2 text-[11px] font-medium hover:opacity-80">
@@ -810,7 +849,9 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
               </div>
             )
             if (turn.kind === 'run') return (
-              <RunBlock key={turn.id} turn={turn} onRefresh={() => readCapture(turn.id)}
+              <RunBlock key={turn.id} turn={turn} copied={copiedId === `${turn.id}:out`}
+                onCopyOutput={(output) => void handleCopy(`${turn.id}:out`, output)}
+                onRefresh={() => readCapture(turn.id)}
                 onInterrupt={bridge?.interrupt} onStopWaiting={() => captures.current.get(turn.id)?.finish?.()} />
             )
             return (
@@ -892,24 +933,25 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
             </div>
           )}
           <textarea ref={inputRef} value={input} rows={2} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown}
+            onCompositionStart={() => { isComposingRef.current = true }}
+            onCompositionEnd={() => { isComposingRef.current = false; compositionEndedAtRef.current = Date.now() }}
             placeholder={tip ? '' : turns.length ? copy.followUp : copy.placeholder} aria-label={copy.placeholder}
             aria-description={tip ? fillCopy(copy.tipA11y, { tip }) : undefined}
             className="block max-h-40 min-h-[44px] w-full resize-none bg-transparent px-3 pt-2 text-[13px] text-[var(--workspace-text-strong)] outline-none placeholder:text-[var(--workspace-text-subtle)]" />
           <div className="flex items-center gap-1.5 px-2 pb-2">
+            <AIModelSwitcher settings={settings} reportedModel={reportedModel} onChange={changeSettings} placement="top" compact />
             <RunModePicker mode={runMode} onChange={changeRunMode} />
-            <ContextChip icon={SquareTerminal} label={copy.terminalContext} on={includeContext} onToggle={() => setIncludeContext((value) => !value)}
-              hint={includeContext ? copy.terminalContextOn : copy.terminalContextOff}
-              preview={() => (bridge?.recentOutput(CONTEXT_LINES) ?? getTerminalContext()).trim()} />
-            {factsText && (
-              <ContextChip icon={Server} label={copy.hostFacts} on={includeFacts} onToggle={() => setIncludeFacts((value) => !value)}
-                hint={includeFacts ? copy.hostFactsOn : copy.hostFactsOff} preview={() => factsText} />
-            )}
-            {history.length > 0 && (
-              <span className="min-w-0 truncate text-[11px] text-[var(--workspace-text-subtle)]">
-                {fillCopy(copy.shared, { messages: history.length, outputs: sharedOutputs })}
-              </span>
-            )}
             <span className="flex-1" />
+            <ContextMenuButton
+              includeContext={includeContext}
+              onToggleContext={() => setIncludeContext((value) => !value)}
+              previewContext={() => (bridge?.recentOutput(CONTEXT_LINES) ?? getTerminalContext()).trim()}
+              includeFacts={includeFacts}
+              hasFacts={Boolean(factsText)}
+              onToggleFacts={() => setIncludeFacts((value) => !value)}
+              previewFacts={() => factsText}
+              sharedSummary={history.length > 0 ? fillCopy(copy.shared, { messages: history.length, outputs: sharedOutputs }) : ''}
+            />
             {isStreaming ? (
               <button type="button" onClick={handleCancel} aria-label={copy.stop} title={copy.stop}
                 className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--workspace-surface-800)] text-[var(--workspace-text-strong)]">
@@ -952,32 +994,52 @@ function CommandCard({ turn, copied, run, hasSilentExec, onRun, onRunInTerminal,
   const meta = [turn.model, turn.durationMs ? fillCopy(copy.duration, { seconds: (turn.durationMs / 1000).toFixed(1) }) : ''].filter(Boolean).join(' · ')
 
   const question = isNoteReply(turn.text) ? parseQuestion(turn.text) : null
-  if (question) return (
-    <div data-testid="ai-question" className="rounded-lg border border-[color:var(--workspace-primary-500)] bg-[var(--workspace-surface-900)] px-3 py-2.5">
-      <p className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-[var(--workspace-accent-text)]"><HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />{copy.question}</p>
-      {question.notes && <p className="mb-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--workspace-text-muted)]">{question.notes}</p>}
-      <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-[var(--workspace-text-strong)]">{question.question}</p>
-      {question.options.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {question.options.map((option) => (
-            <button key={option} type="button" onClick={() => onAnswer(option)}
-              className="rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-2.5 py-1 text-left text-xs text-[var(--workspace-text-strong)] transition-colors hover:border-[color:var(--workspace-primary-500)] hover:bg-[var(--workspace-accent-subtle)]">
-              {option}
-            </button>
-          ))}
+  if (question) {
+    const questionCopyText = [question.notes, question.question].filter(Boolean).join('\n\n')
+    return (
+      <div data-testid="ai-question" className="rounded-lg border border-[color:var(--workspace-primary-500)] bg-[var(--workspace-surface-900)] px-3 py-2.5">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--workspace-accent-text)]"><HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />{copy.question}</p>
+          <button type="button" onClick={() => onCopy(questionCopyText)} aria-label={copy.copyMessage} title={copy.copyMessage}
+            className="inline-flex h-5 items-center gap-1 rounded px-1.5 text-[10.5px] text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+            {copied ? <Check className="h-3 w-3" aria-hidden="true" /> : <Copy className="h-3 w-3" aria-hidden="true" />}
+            <span>{copied ? copy.copied : copy.copy}</span>
+          </button>
         </div>
-      )}
-      {meta && <p className="mt-1.5 font-mono text-[10.5px] text-[var(--workspace-text-subtle)]">{meta}</p>}
-    </div>
-  )
+        {question.notes && <p className="mb-1 select-text whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--workspace-text-muted)]">{question.notes}</p>}
+        <p className="select-text whitespace-pre-wrap break-words text-[13px] leading-relaxed text-[var(--workspace-text-strong)]">{question.question}</p>
+        {question.options.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {question.options.map((option) => (
+              <button key={option} type="button" onClick={() => onAnswer(option)}
+                className="rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] px-2.5 py-1 text-left text-xs text-[var(--workspace-text-strong)] transition-colors hover:border-[color:var(--workspace-primary-500)] hover:bg-[var(--workspace-accent-subtle)]">
+                {option}
+              </button>
+            ))}
+          </div>
+        )}
+        {meta && <p className="mt-1.5 font-mono text-[10.5px] text-[var(--workspace-text-subtle)]">{meta}</p>}
+      </div>
+    )
+  }
 
-  if (isNoteReply(turn.text)) return (
-    <div data-testid="ai-note" className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2.5">
-      <p className="mb-1.5 text-[11px] font-medium text-[var(--workspace-text-subtle)]">{copy.answer}</p>
-      <AIMarkdown content={noteText(turn.text)} />
-      {meta && <p className="mt-1.5 font-mono text-[10.5px] text-[var(--workspace-text-subtle)]">{meta}</p>}
-    </div>
-  )
+  if (isNoteReply(turn.text)) {
+    const answerText = noteText(turn.text)
+    return (
+      <div data-testid="ai-note" className="rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-3 py-2.5">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <p className="text-[11px] font-medium text-[var(--workspace-text-subtle)]">{copy.answer}</p>
+          <button type="button" onClick={() => onCopy(answerText)} aria-label={copy.copyMessage} title={copy.copyMessage}
+            className="inline-flex h-5 items-center gap-1 rounded px-1.5 text-[10.5px] text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+            {copied ? <Check className="h-3 w-3" aria-hidden="true" /> : <Copy className="h-3 w-3" aria-hidden="true" />}
+            <span>{copied ? copy.copied : copy.copy}</span>
+          </button>
+        </div>
+        <AIMarkdown content={answerText} />
+        {meta && <p className="mt-1.5 font-mono text-[10.5px] text-[var(--workspace-text-subtle)]">{meta}</p>}
+      </div>
+    )
+  }
 
   const command = draft.trim()
   const runsSilently = Boolean(hasSilentExec && command && canRunSilently(command))
@@ -1088,8 +1150,10 @@ function RunOutcomeChip({ outcome }: { outcome: RunOutcome }) {
   )
 }
 
-function RunBlock({ turn, onRefresh, onInterrupt, onStopWaiting }: {
+function RunBlock({ turn, copied, onCopyOutput, onRefresh, onInterrupt, onStopWaiting }: {
   turn: Extract<AITurn, { kind: 'run' }>
+  copied?: boolean
+  onCopyOutput?: (output: string) => void
   onRefresh: () => void
   onInterrupt?: () => void
   onStopWaiting: () => void
@@ -1115,6 +1179,12 @@ function RunBlock({ turn, onRefresh, onInterrupt, onStopWaiting }: {
           </button>
         )}
         {running && <button type="button" onClick={onStopWaiting} title={copy.stopWaitingHint} className={small}>{copy.stopWaiting}</button>}
+        {turn.state === 'captured' && turn.output && onCopyOutput && (
+          <button type="button" onClick={() => onCopyOutput(turn.output)} title={copy.copyOutput} aria-label={copy.copyOutput}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+            {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+          </button>
+        )}
         {turn.state === 'captured' && !isExec && (
           <button type="button" onClick={onRefresh} title={copy.refreshHint} aria-label={copy.refresh}
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
@@ -1266,7 +1336,8 @@ function AutoStatus({ state, onStop, onKeepGoing, onDismiss }: {
 }) {
   const { locale } = useT()
   const copy = aiAssistantCopy[locale]
-  const text = state.status === 'running' ? fillCopy(copy.autoRunning, { step: state.steps, max: MAX_AUTO_STEPS })
+  const text = state.status === 'running'
+    ? (state.steps === 0 ? copy.autoPlanning : fillCopy(copy.autoRunning, { step: state.steps }))
     : state.status === 'waiting' ? copy.autoWaiting
       : state.status === 'limit' ? fillCopy(copy.autoLimit, { max: MAX_AUTO_STEPS })
         : state.status === 'input' ? copy.autoInput
@@ -1289,53 +1360,146 @@ function AutoStatus({ state, onStop, onKeepGoing, onDismiss }: {
   )
 }
 
-function ContextChip({ icon: Icon, label, on, onToggle, hint, preview }: {
-  icon: typeof Server
-  label: string
-  on: boolean
-  onToggle: () => void
-  hint: string
-  /** Read when the popover opens, so it shows what the next message would carry. */
-  preview: () => string
+function ContextMenuButton({
+  includeContext,
+  onToggleContext,
+  previewContext,
+  includeFacts,
+  hasFacts,
+  onToggleFacts,
+  previewFacts,
+  sharedSummary,
+}: {
+  includeContext: boolean
+  onToggleContext: () => void
+  previewContext: () => string
+  includeFacts: boolean
+  hasFacts: boolean
+  onToggleFacts: () => void
+  previewFacts: () => string
+  sharedSummary: string
 }) {
   const { locale } = useT()
   const copy = aiAssistantCopy[locale]
-  const [content, setContent] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const [previewTab, setPreviewTab] = useState<'terminal' | 'facts'>('terminal')
+  const [previews, setPreviews] = useState<{ terminal: string; facts: string }>({ terminal: '', facts: '' })
   const root = useRef<HTMLDivElement>(null)
-  const open = content !== null
+  const activeCount = (includeContext ? 1 : 0) + (hasFacts && includeFacts ? 1 : 0)
+
   useEffect(() => {
     if (!open) return
-    const onPointer = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setContent(null) }
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setContent(null) } }
+    const onPointer = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false) }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false) } }
     window.addEventListener('pointerdown', onPointer)
     window.addEventListener('keydown', onKey, true)
     return () => { window.removeEventListener('pointerdown', onPointer); window.removeEventListener('keydown', onKey, true) }
   }, [open])
+
+  const toggleOpen = () => {
+    if (!open) {
+      setPreviews({ terminal: previewContext(), facts: hasFacts ? previewFacts() : '' })
+    }
+    setOpen((value) => !value)
+  }
+
+  const effectiveTab = previewTab === 'facts' && hasFacts ? 'facts' : 'terminal'
+  const activePreviewText = effectiveTab === 'facts' ? previews.facts : previews.terminal
+  const activePreviewOn = effectiveTab === 'facts' ? includeFacts : includeContext
+
   return (
-    // Not positioned itself, so the popover spans the whole input box instead of overflowing from the chip.
+    // Not positioned itself, so the popover spans the full composer width cleanly.
     <div ref={root} className="shrink-0">
-      <button type="button" aria-haspopup="dialog" aria-expanded={open} aria-label={label} title={hint} data-on={on}
-        onClick={() => setContent(open ? null : preview())}
-        className={cn('flex h-6 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] transition-colors',
-          on ? 'border-[color:var(--workspace-primary-500)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]'
-            : 'border-dashed border-[color:var(--workspace-border-soft)] text-[var(--workspace-text-subtle)] line-through')}>
-        <Icon className="h-3 w-3" aria-hidden="true" />{label}
+      <button
+        type="button"
+        data-testid="ai-context-menu"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={copy.contextLabel}
+        title={copy.contextHint}
+        onClick={toggleOpen}
+        className={cn(
+          'flex h-6 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11px] transition-colors',
+          open
+            ? 'border-[color:var(--workspace-primary-500)] bg-[var(--workspace-accent-subtle)] text-[var(--workspace-accent-text)]'
+            : activeCount > 0
+              ? 'border-[color:var(--workspace-border-soft)] text-[var(--workspace-text-muted)] hover:border-[color:var(--workspace-border-strong)] hover:text-[var(--workspace-text-strong)]'
+              : 'border-dashed border-[color:var(--workspace-border-soft)] text-[var(--workspace-text-subtle)] hover:text-[var(--workspace-text)]',
+        )}
+      >
+        <Paperclip className="h-3 w-3" aria-hidden="true" />
+        <span>{copy.contextLabel}</span>
+        <span className={cn(
+          'inline-flex h-4 min-w-[16px] items-center justify-center rounded px-1 font-mono text-[10px]',
+          activeCount > 0
+            ? 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-strong)]'
+            : 'bg-transparent text-[var(--workspace-text-subtle)]',
+        )}>
+          {activeCount}
+        </span>
       </button>
+
       {open && (
-        <div role="dialog" aria-label={label} className="absolute inset-x-0 bottom-full z-30 mb-1.5 rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-2.5 text-xs shadow-[var(--workspace-shadow-overlay)]">
-          <div className="flex items-center gap-2">
-            <Icon className="h-3.5 w-3.5 text-[var(--workspace-accent-text)]" aria-hidden="true" />
-            <span className="flex-1 font-medium text-[var(--workspace-text-strong)]">{label}</span>
-            <span className="text-[11px] text-[var(--workspace-text-muted)]">{copy.contextSend}</span>
-            <button type="button" role="switch" aria-checked={on} aria-label={copy.contextSend} onClick={onToggle}
-              className={cn('relative h-4 w-7 shrink-0 rounded-full transition-colors', on ? 'bg-[var(--workspace-primary-500)]' : 'bg-[var(--workspace-surface-800)] ring-1 ring-inset ring-[color:var(--workspace-border-soft)]')}>
-              <span className={cn('absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-[left]', on ? 'left-3.5' : 'left-0.5')} />
-            </button>
+        <div role="dialog" aria-label={copy.contextLabel}
+          className="absolute inset-x-0 bottom-full z-40 mb-2 rounded-xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-2.5 text-xs shadow-[var(--workspace-shadow-overlay)]">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="font-medium text-[var(--workspace-text-strong)]">{copy.contextLabel}</span>
+            {sharedSummary && (
+              <span className="truncate text-[10.5px] text-[var(--workspace-text-subtle)]">{sharedSummary}</span>
+            )}
           </div>
-          <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--workspace-text-muted)]">{hint}</p>
-          <p className="mt-2 text-[10.5px] font-medium text-[var(--workspace-text-subtle)]">{copy.contextPreview}</p>
-          <pre className={cn('mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-[var(--workspace-surface-900)] px-2 py-1.5 font-mono text-[10.5px] leading-relaxed text-[var(--workspace-text)]', !on && 'opacity-50')}>
-            {content || copy.contextEmpty}
+
+          <div className="space-y-1.5">
+            <div
+              className={cn(
+                'flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors',
+                effectiveTab === 'terminal'
+                  ? 'border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)]'
+                  : 'border-[color:var(--workspace-border-soft)] bg-transparent',
+              )}
+            >
+              <button type="button" onClick={() => setPreviewTab('terminal')} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                <SquareTerminal className={cn('h-3.5 w-3.5 shrink-0', includeContext ? 'text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text-subtle)]')} aria-hidden="true" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs font-medium text-[var(--workspace-text-strong)]">{copy.terminalContext}</span>
+                  <span className="block truncate text-[10.5px] text-[var(--workspace-text-muted)]">{includeContext ? copy.terminalContextOn : copy.terminalContextOff}</span>
+                </span>
+              </button>
+              <button type="button" role="switch" aria-checked={includeContext} aria-label={copy.terminalContext} onClick={onToggleContext}
+                className={cn('relative h-4 w-7 shrink-0 rounded-full transition-colors', includeContext ? 'bg-[var(--workspace-primary-500)]' : 'bg-[var(--workspace-surface-800)] ring-1 ring-inset ring-[color:var(--workspace-border-soft)]')}>
+                <span className={cn('absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-[left]', includeContext ? 'left-3.5' : 'left-0.5')} />
+              </button>
+            </div>
+
+            {hasFacts && (
+              <div
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors',
+                  effectiveTab === 'facts'
+                    ? 'border-[color:var(--workspace-border-strong)] bg-[var(--workspace-surface-900)]'
+                    : 'border-[color:var(--workspace-border-soft)] bg-transparent',
+                )}
+              >
+                <button type="button" onClick={() => setPreviewTab('facts')} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                  <Server className={cn('h-3.5 w-3.5 shrink-0', includeFacts ? 'text-[var(--workspace-accent-text)]' : 'text-[var(--workspace-text-subtle)]')} aria-hidden="true" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-medium text-[var(--workspace-text-strong)]">{copy.hostFacts}</span>
+                    <span className="block truncate text-[10.5px] text-[var(--workspace-text-muted)]">{includeFacts ? copy.hostFactsOn : copy.hostFactsOff}</span>
+                  </span>
+                </button>
+                <button type="button" role="switch" aria-checked={includeFacts} aria-label={copy.hostFacts} onClick={onToggleFacts}
+                  className={cn('relative h-4 w-7 shrink-0 rounded-full transition-colors', includeFacts ? 'bg-[var(--workspace-primary-500)]' : 'bg-[var(--workspace-surface-800)] ring-1 ring-inset ring-[color:var(--workspace-border-soft)]')}>
+                  <span className={cn('absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-[left]', includeFacts ? 'left-3.5' : 'left-0.5')} />
+                </button>
+              </div>
+            )}
+          </div>
+
+          <p className="mt-2.5 text-[10.5px] font-medium text-[var(--workspace-text-subtle)]">
+            {copy.contextPreview} · {effectiveTab === 'facts' ? copy.hostFacts : copy.terminalContext}
+          </p>
+          <pre className={cn('mt-1 max-h-40 select-text overflow-auto whitespace-pre-wrap break-words rounded-md bg-[var(--workspace-surface-900)] px-2 py-1.5 font-mono text-[10.5px] leading-relaxed text-[var(--workspace-text)]', !activePreviewOn && 'opacity-50')}>
+            {activePreviewText || copy.contextEmpty}
           </pre>
         </div>
       )}

@@ -215,6 +215,8 @@ export const CLI_BACKEND_LABELS: Record<AICliBackend, string> = {
   'codex-cli': 'Codex CLI',
   'gemini-cli': 'Gemini CLI',
   'opencode-cli': 'OpenCode',
+  'cursor-cli': 'Cursor Agent',
+  'devin-cli': 'Devin CLI',
 }
 
 /** What the next request will use; an empty model means the CLI's own default. */
@@ -247,6 +249,8 @@ export const CLI_MODEL_PRESETS: Record<AICliBackend, string[]> = {
   'codex-cli': ['', 'gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-5.5'],
   'gemini-cli': ['', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.5-flash-lite'],
   'opencode-cli': [''],
+  'cursor-cli': ['', 'auto', 'sonnet-4.5', 'opus-4.5', 'gpt-5', 'gemini-2.5-pro'],
+  'devin-cli': ['', 'adaptive', 'swe-2-high', 'swe-2-medium', 'swe-2-flash-medium', 'swe-2-flash-high', 'claude-fable-5-2-medium', 'claude-fable-5-2-high'],
 }
 
 export function withModel(settings: AISettings, model: string): AISettings {

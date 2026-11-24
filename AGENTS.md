@@ -64,5 +64,5 @@ cargo clippy --manifest-path agent/Cargo.toml --locked --all-targets -- -D warni
 
 ## Release Hygiene
 
-- Follow `docs/release-process.md` end-to-end for every tagged release (`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `docs/releases/vX.Y.Z.md`).
+- Follow `docs/release-process.md` end-to-end for every tagged release (`package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/gen/apple/app_iOS/Info.plist`, and `docs/releases/vX.Y.Z.md`), including iOS TestFlight (`ios-testflight` CI job or local `npm run build:ios:tf`).
 - Never publish a public GitHub Release with an unsigned/unnotarized macOS DMG or unsigned Android APK: verify `codesign -dv`, `xcrun stapler validate`, `spctl -a -vvv` (macOS `.app` and `.dmg`), `apksigner verify` (Android), and `SHA256SUMS` before publishing.

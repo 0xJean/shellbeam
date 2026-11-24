@@ -208,10 +208,13 @@ describe('AICommandBar', () => {
     fireEvent.keyDown(box, { key: 'Tab' })
     expect(box).toHaveValue('Find what fills the disk')
     expect(screen.queryByTestId('ai-next-tip')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Server info' }))
-    expect(screen.getByRole('dialog', { name: 'Server info' })).toHaveTextContent('os: Ubuntu 24.04')
-    fireEvent.click(screen.getByRole('switch', { name: 'Send with each message' }))
-    expect(screen.getByRole('switch', { name: 'Send with each message' })).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(screen.getByTestId('ai-context-menu'))
+    const contextDialog = screen.getByRole('dialog', { name: 'Context' })
+    fireEvent.click(within(contextDialog).getByRole('button', { name: /Server info/ }))
+    expect(contextDialog).toHaveTextContent('os: Ubuntu 24.04')
+    const factsSwitch = within(contextDialog).getByRole('switch', { name: 'Server info' })
+    fireEvent.click(factsSwitch)
+    expect(factsSwitch).toHaveAttribute('aria-checked', 'false')
     fireEvent.click(screen.getByRole('button', { name: 'Generate command' }))
     expect(lastHost).toBe('')
   })
@@ -683,5 +686,73 @@ describe('AICommandBar', () => {
     fireEvent.click(screen.getByRole('button', { name: /Ran 2 read-only check steps/ }))
     expect(screen.getByText('df -h')).toBeInTheDocument()
     expect(screen.getByText('free -m')).toBeInTheDocument()
+  })
+
+  it('does not steal focus when mounted already visible with focusToken=0, and focuses when focusToken increments', async () => {
+    const terminalStub = document.createElement('button')
+    document.body.appendChild(terminalStub)
+    terminalStub.focus()
+    try {
+      const { rerender } = render(<AICommandBar {...base} visible focusToken={0} />)
+      await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+      expect(document.activeElement).toBe(terminalStub)
+
+      rerender(<AICommandBar {...base} visible focusToken={1} />)
+      await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Describe what you want to do…' }))
+    } finally {
+      terminalStub.remove()
+    }
+  })
+
+  it('ignores IME Enter confirmation (compositionEnd + Enter and keyCode 229) instead of submitting', () => {
+    render(<AICommandBar {...base} />)
+    const box = screen.getByRole('textbox', { name: 'Describe what you want to do…' })
+    fireEvent.change(box, { target: { value: 'nginx' } })
+
+    // Case 1: WebKit/WKWebView fires compositionEnd right before keydown(Enter) with isComposing=false.
+    fireEvent.compositionStart(box)
+    fireEvent.compositionEnd(box)
+    fireEvent.keyDown(box, { key: 'Enter' })
+    expect(streamAICommand).not.toHaveBeenCalled()
+
+    // Case 2: IME Process keyCode 229.
+    fireEvent.keyDown(box, { key: 'Enter', keyCode: 229 })
+    expect(streamAICommand).not.toHaveBeenCalled()
+  })
+
+  it('shows planning and step count without 0/10 denominator during continuous run', () => {
+    vi.useFakeTimers()
+    localStorage.setItem('shellbeam.aiRunMode.k-plan', 'auto')
+    const bridge = fakeBridge('ok')
+    render(<AICommandBar {...base} bridge={bridge} memoryKey="k-plan" />)
+    ask('check slow sql')
+    expect(screen.getByTestId('ai-auto-status')).toHaveTextContent('Auto-running · Planning…')
+    expect(screen.getByTestId('ai-auto-status')).not.toHaveTextContent('0/10')
+
+    act(() => { callbacks.onToken('uptime'); callbacks.onDone() })
+    expect(screen.getByTestId('ai-auto-status')).toHaveTextContent('Auto-running · Step 1')
+    expect(screen.getByTestId('ai-auto-status')).not.toHaveTextContent('/10')
+  })
+
+  it('copies AI answers, user prompts, and captured run outputs to clipboard, and recalls prompts with ArrowUp', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const bridge = fakeBridge('slow_query_count=42')
+    render(<AICommandBar {...base} bridge={bridge} />)
+
+    ask('check slow sql')
+    act(() => { callbacks.onToken('# Found 42 slow queries.'); callbacks.onDone() })
+
+    // Copy AI markdown answer
+    const noteCard = screen.getByTestId('ai-note')
+    fireEvent.click(within(noteCard).getByRole('button', { name: 'Copy message' }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Found 42 slow queries.'))
+
+    // Recall previous prompt with ArrowUp on empty composer
+    const box = screen.getByRole('textbox', { name: 'Describe what you want to do…' })
+    expect(box).toHaveValue('')
+    fireEvent.keyDown(box, { key: 'ArrowUp' })
+    expect(box).toHaveValue('check slow sql')
   })
 })

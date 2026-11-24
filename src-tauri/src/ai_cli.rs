@@ -49,6 +49,8 @@ pub enum Backend {
     CodexCli,
     GeminiCli,
     OpencodeCli,
+    CursorCli,
+    DevinCli,
 }
 impl Backend {
     fn binary(self) -> &'static str {
@@ -57,6 +59,15 @@ impl Backend {
             Self::CodexCli => "codex",
             Self::GeminiCli => "gemini",
             Self::OpencodeCli => "opencode",
+            Self::CursorCli => "cursor-agent",
+            Self::DevinCli => "devin",
+        }
+    }
+
+    fn fallback_binaries(self) -> &'static [&'static str] {
+        match self {
+            Self::CursorCli => &["agent"],
+            _ => &[],
         }
     }
 }
@@ -285,7 +296,15 @@ fn resolve_executable(backend: Backend, configured: &str) -> Result<PathBuf, Str
             })
             .unwrap_or_default();
         dirs.extend(extra_search_dirs());
-        let mut paths: Vec<PathBuf> = dirs.into_iter().map(|p| p.join(&name)).collect();
+        let mut paths: Vec<PathBuf> = dirs.iter().map(|p| p.join(&name)).collect();
+        for fallback in backend.fallback_binaries() {
+            let fb_name = if cfg!(windows) {
+                format!("{fallback}.exe")
+            } else {
+                (*fallback).to_string()
+            };
+            paths.extend(dirs.iter().map(|p| p.join(&fb_name)));
+        }
         if backend == Backend::CodexCli {
             paths.extend(codex_native_candidates());
         }
@@ -436,7 +455,11 @@ impl Drop for Scratch {
 fn cli_env(backend: Backend) -> &'static [(&'static str, &'static str)] {
     match backend {
         Backend::OpencodeCli => &[("OPENCODE_PERMISSION", r#"{"*":"deny"}"#)],
-        Backend::ClaudeCode | Backend::CodexCli | Backend::GeminiCli => &[],
+        Backend::ClaudeCode
+        | Backend::CodexCli
+        | Backend::GeminiCli
+        | Backend::CursorCli
+        | Backend::DevinCli => &[],
     }
 }
 fn cli_args(backend: Backend, model: &str, effort: &str) -> Vec<String> {
@@ -564,6 +587,33 @@ fn cli_args(backend: Backend, model: &str, effort: &str) -> Vec<String> {
             }
             a
         }
+        Backend::CursorCli => [
+            "--print",
+            "--mode",
+            "ask",
+            "--output-format",
+            "stream-json",
+            "--stream-partial-output",
+            "--sandbox",
+            "enabled",
+            "--trust",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        Backend::DevinCli => [
+            "--print",
+            "--respect-workspace-trust",
+            "false",
+            "--permission-mode",
+            "auto",
+            "--sandbox",
+            "--prompt-file",
+            "request.json",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
     };
     if !model.trim().is_empty() {
         args.extend(["--model".into(), model.trim().into()]);
@@ -577,7 +627,7 @@ fn cli_args(backend: Backend, model: &str, effort: &str) -> Vec<String> {
                 "Follow the instructions and answer the request in request.json.".into(),
             ]);
         }
-        Backend::ClaudeCode | Backend::GeminiCli => {}
+        Backend::ClaudeCode | Backend::GeminiCli | Backend::CursorCli | Backend::DevinCli => {}
     }
     args
 }
@@ -602,15 +652,27 @@ fn validate_cli(
         },
     )?;
     // Only return a parsed version, never arbitrary executable stdout or stderr.
+    // Supports standard X.Y.Z as well as date/hash versions like Cursor's `2026.02.27-e7d2ef6`.
     let version = version
         .split_whitespace()
-        .find(|v| v.split('.').count() == 3 && v.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .find(|v| {
+            let base = v.split('-').next().unwrap_or("");
+            base.split('.').count() == 3
+                && base
+                    .split('.')
+                    .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()))
+                && v.len() <= 40
+                && v.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+        })
         .ok_or("unsupported")?
         .to_string();
     let args = match backend {
         Backend::CodexCli => vec!["exec".into(), "--help".into()],
         Backend::OpencodeCli => vec!["run".into(), "--help".into()],
-        Backend::ClaudeCode | Backend::GeminiCli => vec!["--help".into()],
+        Backend::ClaudeCode | Backend::GeminiCli | Backend::CursorCli | Backend::DevinCli => {
+            vec!["--help".into()]
+        }
     };
     let mut help = String::new();
     run_process(
@@ -643,6 +705,20 @@ fn validate_cli(
         ],
         Backend::GeminiCli => &["--output-format", "--approval-mode", "--prompt"],
         Backend::OpencodeCli => &["--format", "--pure", "--file"],
+        Backend::CursorCli => &[
+            "--print",
+            "--output-format",
+            "--stream-partial-output",
+            "--mode",
+            "--sandbox",
+        ],
+        Backend::DevinCli => &[
+            "--print",
+            "--prompt-file",
+            "--permission-mode",
+            "--sandbox",
+            "--respect-workspace-trust",
+        ],
     };
     if required.iter().any(|flag| !help.contains(flag)) {
         return Err("unsupported".into());
@@ -658,15 +734,17 @@ fn generate(
     validate_cli(request.backend, &executable, cancel)?;
     let scratch = Scratch::create()?;
     let payload = match request.backend {
-        Backend::GeminiCli | Backend::OpencodeCli => serde_json::json!({
-            "instructions": INSTRUCTIONS,
-            "host": request.host,
-            "mode": request.mode,
-            "conversation": request.history,
-            "request": request.prompt,
-            "recentTerminalOutput": request.context,
-        })
-        .to_string(),
+        Backend::GeminiCli | Backend::OpencodeCli | Backend::CursorCli | Backend::DevinCli => {
+            serde_json::json!({
+                "instructions": INSTRUCTIONS,
+                "host": request.host,
+                "mode": request.mode,
+                "conversation": request.history,
+                "request": request.prompt,
+                "recentTerminalOutput": request.context,
+            })
+            .to_string()
+        }
         Backend::ClaudeCode | Backend::CodexCli => serde_json::json!({
             "host": request.host,
             "mode": request.mode,
@@ -676,7 +754,7 @@ fn generate(
         })
         .to_string(),
     };
-    let stdin_bytes = if request.backend == Backend::OpencodeCli {
+    let stdin_bytes = if matches!(request.backend, Backend::OpencodeCli | Backend::DevinCli) {
         std::fs::write(scratch.0.join("request.json"), payload.as_bytes()).map_err(|_| "failed")?;
         None
     } else {
@@ -701,6 +779,9 @@ fn generate(
             Ok(())
         },
     )?;
+    if request.backend == Backend::DevinCli && !parser.text.trim().is_empty() {
+        parser.done = true;
+    }
     if !parser.done || parser.text.trim().is_empty() {
         return Err("invalid_output".into());
     }
@@ -735,6 +816,18 @@ impl Parser {
         Ok((!text.is_empty()).then(|| text.to_string()))
     }
     fn line(&mut self, line: &str) -> Result<Option<String>, String> {
+        if self.backend == Backend::DevinCli {
+            let trimmed_cr = line.trim_end_matches('\r');
+            if self.text.is_empty() && trimmed_cr.trim().is_empty() {
+                return Ok(None);
+            }
+            let chunk = if self.text.is_empty() {
+                trimmed_cr.to_string()
+            } else {
+                format!("\n{trimmed_cr}")
+            };
+            return self.append(&chunk);
+        }
         if line.trim().is_empty() {
             return Ok(None);
         }
@@ -855,6 +948,57 @@ impl Parser {
                     return Err("tool_use".into());
                 }
                 self.done = true;
+            }
+            (Backend::CursorCli, "system") => {
+                if let Some(name) = value["model"].as_str() {
+                    if !name.is_empty() && name.len() <= 100 && !name.chars().any(char::is_control)
+                    {
+                        self.model = Some(name.to_owned());
+                    }
+                }
+            }
+            (Backend::CursorCli, "user" | "thinking") => {}
+            (Backend::CursorCli, "tool_call" | "tool_use" | "tool_result") => {
+                return Err("tool_use".into());
+            }
+            (Backend::CursorCli, "assistant") => {
+                let text = if let Some(content) = value["message"]["content"].as_array() {
+                    if content.iter().any(|item| item["type"] == "tool_use") {
+                        return Err("tool_use".into());
+                    }
+                    content
+                        .iter()
+                        .filter(|item| item["type"] == "text")
+                        .filter_map(|item| item["text"].as_str())
+                        .collect::<String>()
+                } else {
+                    value["text"]
+                        .as_str()
+                        .or_else(|| value["result"].as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                if !text.is_empty() && text != self.text {
+                    return self.append(&text);
+                }
+            }
+            (Backend::CursorCli, "result") => {
+                if value["is_error"] == true
+                    || value["subtype"].as_str().is_some_and(|s| s != "success")
+                {
+                    return Err("failed".into());
+                }
+                let extra = if self.text.is_empty() {
+                    if let Some(result) = value["result"].as_str() {
+                        self.append(result)?
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                self.done = true;
+                return Ok(extra);
             }
             (_, "error" | "turn.failed") => return Err("failed".into()),
             _ => return Err("invalid_output".into()),

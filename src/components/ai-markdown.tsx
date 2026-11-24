@@ -1,5 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import { Check, Copy } from 'lucide-react'
+import { copyTextToClipboard } from '@/lib/clipboard'
+import { useT } from '@/lib/i18n'
+import { aiAssistantCopy } from '@/lib/locales/ai-assistant'
 import { cn } from '@/lib/utils'
 
 interface Block {
@@ -140,23 +143,27 @@ function renderInline(text: string): ReactNode[] {
 }
 
 function CodeBlock({ lang, code }: { lang?: string; code: string }) {
+  const { locale } = useT()
+  const copyCopy = aiAssistantCopy[locale]
   const [copied, setCopied] = useState(false)
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code)
+    const ok = await copyTextToClipboard(code)
+    if (ok) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
-    } catch { /* ignore */ }
+    }
   }
   return (
     <div className="overflow-hidden rounded-md border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)]">
       <div className="flex items-center justify-between border-b border-[color:var(--workspace-border-soft)] px-2.5 py-1 text-[10.5px] text-[var(--workspace-text-subtle)]">
         <span className="font-mono">{lang || 'text'}</span>
-        <button type="button" onClick={() => void copy()} className="inline-flex items-center gap-1 hover:text-[var(--workspace-text-strong)]">
-          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+        <button type="button" onClick={() => void copy()} aria-label={copied ? copyCopy.copied : copyCopy.copy}
+          className="inline-flex items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]">
+          {copied ? <Check className="h-3 w-3" aria-hidden="true" /> : <Copy className="h-3 w-3" aria-hidden="true" />}
+          <span>{copied ? copyCopy.copied : copyCopy.copy}</span>
         </button>
       </div>
-      <pre className="max-h-56 overflow-auto px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-[var(--workspace-text-strong)]">{code}</pre>
+      <pre className="max-h-56 select-text overflow-auto px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-[var(--workspace-text-strong)]">{code}</pre>
     </div>
   )
 }
@@ -165,7 +172,7 @@ function CodeBlock({ lang, code }: { lang?: string; code: string }) {
 export function AIMarkdown({ content, className }: { content: string; className?: string }) {
   const blocks = parseBlocks(content)
   return (
-    <div className={cn('space-y-2 text-[13px] leading-relaxed text-[var(--workspace-text-strong)]', className)}>
+    <div className={cn('select-text space-y-2 text-[13px] leading-relaxed text-[var(--workspace-text-strong)]', className)}>
       {blocks.map((block, index) => {
         if (block.type === 'heading') {
           const text = block.lines?.[0] ?? ''
