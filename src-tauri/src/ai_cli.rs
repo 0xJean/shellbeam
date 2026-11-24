@@ -1017,11 +1017,7 @@ impl Parser {
                         .unwrap_or("")
                         .to_string()
                 };
-                if value.get("timestamp_ms").is_some() {
-                    if !text.is_empty() {
-                        return self.append(&text);
-                    }
-                } else if self.text.is_empty() {
+                if value.get("timestamp_ms").is_some() || self.text.is_empty() {
                     if !text.is_empty() {
                         return self.append(&text);
                     }

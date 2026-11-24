@@ -65,12 +65,18 @@ function updateFavorites(updater: (prev: Record<string, string[]>) => Record<str
   const prev = getFavoritesSnapshot()
   const next = updater(prev)
   const serialized = JSON.stringify(next)
-  cachedFavoritesRaw = serialized
   cachedFavoritesValue = next
   try {
     localStorage.setItem(FAVORITE_MODELS_KEY, serialized)
+    cachedFavoritesRaw = serialized
   } catch {
-    // Storage unavailable; keep in-memory favorites synced across mounted instances.
+    // Storage unavailable or over quota: keep cachedFavoritesRaw aligned with what storage still
+    // holds so the in-memory update isn't immediately overwritten on the next snapshot read.
+    try {
+      cachedFavoritesRaw = localStorage.getItem(FAVORITE_MODELS_KEY)
+    } catch {
+      // Storage unreadable; getFavoritesSnapshot returns cachedFavoritesValue directly.
+    }
   }
   favoriteListeners.forEach((listener) => listener())
 }
