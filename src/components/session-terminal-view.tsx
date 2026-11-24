@@ -14,6 +14,7 @@ import { DEFAULT_TERMINAL_PREFS, useResolvedTerminalTheme, type TerminalPrefs } 
 import { cn } from '@/lib/utils'
 import { createTerminalAiBridge } from '@/lib/terminal-ai-bridge'
 import type { WorkspaceInventory, WorkspaceInventoryResource } from '@/lib/workspace-inventory'
+import { aiPanelHostKey, readHostAiPanelOpen, writeHostAiPanelOpen } from '@/lib/ai-panel-state'
 import { collectHostFacts } from '@/lib/ai-host-facts'
 import type { HostProfile } from '@/lib/hosts'
 import { offersProbeInstall } from '@/lib/probe-install'
@@ -49,6 +50,8 @@ interface SessionTerminalViewProps {
   isReconnecting?: boolean
   onReconnect?: () => void
   visible?: boolean
+  /** Whether keyboard shortcuts (Cmd/Ctrl+I, Cmd/Ctrl+Shift+F) target this terminal. Defaults to `visible`. */
+  shortcutActive?: boolean
   onToggleRightSidebar?: () => void
   rightSidebarOpen?: boolean
   initialChunks?: InteractiveOutputChunk[]
@@ -85,6 +88,7 @@ export function SessionTerminalView({
   isReconnecting,
   onReconnect,
   visible = true,
+  shortcutActive,
   onToggleRightSidebar,
   rightSidebarOpen,
   initialChunks,
@@ -102,11 +106,51 @@ export function SessionTerminalView({
 }: SessionTerminalViewProps) {
   const { t, locale } = useT()
   const aiCopy = aiAssistantCopy[locale] ?? aiAssistantCopy['zh-CN']
+  const rootRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const onSendRawRef = useRef(onSendRaw)
-  const [showAI, setShowAI] = useState(false)
+  const { activeVaultId } = useVault()
+  const historyVaultId = session?.vaultId ?? activeVaultId
+  const historyVaultIdRef = useRef(historyVaultId)
+  useEffect(() => { historyVaultIdRef.current = historyVaultId }, [historyVaultId])
+  const aiHostKey = useMemo(() => {
+    const resolvedVaultId = session?.vaultId ?? host?.vaultId ?? historyVaultId
+    const matchingHost = host
+      && (!session?.vaultId || host.vaultId === session.vaultId)
+      && (!session?.hostId || host.id === session.hostId)
+      ? host
+      : undefined
+    return aiPanelHostKey({
+      vaultId: resolvedVaultId,
+      hostId: session?.hostId ?? matchingHost?.id,
+      username: session?.username,
+      hostAddress,
+    })
+  }, [session?.vaultId, session?.hostId, session?.username, host, historyVaultId, hostAddress])
+  const [aiOpenOverride, setAiOpenOverride] = useState<{ key: string | null; open: boolean } | null>(null)
+  const showAI = aiOpenOverride && aiOpenOverride.key === aiHostKey
+    ? aiOpenOverride.open
+    : readHostAiPanelOpen(aiHostKey)
+  const showAIRef = useRef(showAI)
+  const aiHostKeyRef = useRef(aiHostKey)
+  const shortcutActiveResolved = shortcutActive ?? visible
+  const visibleRef = useRef(visible)
+  const shortcutActiveRef = useRef(shortcutActiveResolved)
+  useEffect(() => {
+    showAIRef.current = showAI
+    aiHostKeyRef.current = aiHostKey
+    visibleRef.current = visible
+    shortcutActiveRef.current = shortcutActiveResolved
+  }, [showAI, aiHostKey, visible, shortcutActiveResolved])
+  const setShowAI = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+    const key = aiHostKeyRef.current
+    const resolved = typeof next === 'function' ? next(showAIRef.current) : next
+    showAIRef.current = resolved
+    writeHostAiPanelOpen(key, resolved)
+    setAiOpenOverride({ key, open: resolved })
+  }, [])
   const [selectedTerminalText, setSelectedTerminalText] = useState('')
   const [attachedAiSnippet, setAttachedAiSnippet] = useState('')
   const { readiness: probeReadiness } = useProbeInstallReadiness(host ?? NO_HOST, Boolean(host?.vaultId) && showAI)
@@ -126,10 +170,6 @@ export function SessionTerminalView({
   }, [])
   // Commands typed on this host feed the history half of the suggestion bar.
   // Typed history is per vault: the session's own vault, else the active one.
-  const { activeVaultId } = useVault()
-  const historyVaultId = session?.vaultId ?? activeVaultId
-  const historyVaultIdRef = useRef(historyVaultId)
-  useEffect(() => { historyVaultIdRef.current = historyVaultId }, [historyVaultId])
   const [historyEntries, setHistoryEntries] = useState<string[]>(() => getInteractiveHistory(historyVaultId, hostAddress).map((entry) => entry.command).reverse())
   useEffect(() => {
     const load = () => setHistoryEntries(getInteractiveHistory(historyVaultId, hostAddress).map((entry) => entry.command).reverse())
@@ -146,7 +186,7 @@ export function SessionTerminalView({
     const onToggle = (event: Event) => { if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setShowAI((open) => !open) }
     window.addEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
     return () => window.removeEventListener(TERMINAL_AI_TOGGLE_EVENT, onToggle)
-  }, [sessionId])
+  }, [sessionId, setShowAI])
   useEffect(() => { announceTerminalAiState(sessionId, showAI) }, [sessionId, showAI])
   // The assistant works on the terminal, so opening it from the workbench switches to the terminal.
   // Only the moment it opens counts: with it already open, the user can still move to any other mode.
@@ -266,6 +306,15 @@ export function SessionTerminalView({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (!visibleRef.current) return
+      const activeEl = document.activeElement
+      const focusedSession = activeEl instanceof Element
+        ? activeEl.closest('[data-testid="terminal-session"]')
+        : null
+      const targetsThisPane = focusedSession
+        ? focusedSession === rootRef.current
+        : shortcutActiveRef.current
+      if (!targetsThisPane) return
       if ((e.metaKey || e.ctrlKey) && e.key === 'i') {
         e.preventDefault()
         setShowAI((v) => !v)
@@ -282,7 +331,7 @@ export function SessionTerminalView({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [scheduleInputUiSync])
+  }, [scheduleInputUiSync, setShowAI])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -526,6 +575,7 @@ export function SessionTerminalView({
 
   return (
     <div
+      ref={rootRef}
       data-testid="terminal-session" data-session-id={sessionId} data-host-name={hostName} data-host-id={session?.hostId} data-status={isConnected ? 'connected' : isDisconnected ? 'disconnected' : 'connecting'}
       className={cn('relative flex h-full flex-col', chromeOnly && 'pointer-events-none')}
       style={{

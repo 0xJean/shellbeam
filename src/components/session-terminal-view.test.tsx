@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SessionTerminalView } from './session-terminal-view'
 
 import { TERMINAL_AI_TOGGLE_EVENT } from '@/lib/terminal-events'
@@ -20,7 +20,11 @@ vi.mock('@/lib/terminal-themes', () => ({
 }))
 
 vi.mock('./ai-command-bar', () => ({
-  AICommandBar: () => <div data-testid="ai-command-bar" />,
+  AICommandBar: ({ visible, onClose }: { visible?: boolean; onClose?: () => void }) => (
+    <div data-testid="ai-command-bar" data-visible={String(Boolean(visible))}>
+      <button type="button" data-testid="mock-ai-close" onClick={onClose}>close</button>
+    </div>
+  ),
 }))
 
 vi.mock('./mobile-terminal-toolbar', () => ({
@@ -88,6 +92,10 @@ Object.defineProperty(window, 'ResizeObserver', {
 })
 
 describe('session terminal view', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
   it('renders workspace toggle without duplicate browser shortcuts in the toolbar', () => {
     render(
       <SessionTerminalView
@@ -300,6 +308,199 @@ describe('session terminal view', () => {
       expect(emitter).toBeTruthy()
       view.rerender(<SessionTerminalView {...props} chunkEmitterRef={chunkEmitterRef} workspaceMode="browser" chromeOnly onWorkspaceModeChange={() => {}} />)
       expect(chunkEmitterRef.current['session-modes']).toBe(emitter)
+    })
+  })
+
+  describe('per-server AI assistant open state', () => {
+    it('remembers open and closed state independently per server across reconnects and remounts', () => {
+      const hostA = { id: 'host-a', vaultId: 'personal', name: 'UstarPay-Test', address: '10.0.1.10', port: 22, username: 'root', authType: 'password' } as never
+      const hostB = { id: 'host-b', vaultId: 'personal', name: 'Prod-DB', address: '10.0.1.20', port: 22, username: 'root', authType: 'password' } as never
+
+      const firstA = render(
+        <SessionTerminalView
+          sessionId="sess-a-1"
+          session={{ sessionId: 'sess-a-1', hostId: 'host-a', vaultId: 'personal', status: 'running', username: 'root' } as never}
+          host={hostA}
+          hostName="UstarPay-Test"
+          hostAddress="10.0.1.10"
+          chunkEmitterRef={{ current: {} }}
+          onSendRaw={() => {}}
+        />,
+      )
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'false')
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent(TERMINAL_AI_TOGGLE_EVENT, { detail: { sessionId: 'sess-a-1' } }))
+      })
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'true')
+      firstA.unmount()
+
+      // Connecting to a different server starts closed.
+      const viewB = render(
+        <SessionTerminalView
+          sessionId="sess-b-1"
+          session={{ sessionId: 'sess-b-1', hostId: 'host-b', vaultId: 'personal', status: 'running', username: 'root' } as never}
+          host={hostB}
+          hostName="Prod-DB"
+          hostAddress="10.0.1.20"
+          chunkEmitterRef={{ current: {} }}
+          onSendRaw={() => {}}
+        />,
+      )
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'false')
+      viewB.unmount()
+
+      // Reconnecting or reopening Server A with a new sessionId restores open state automatically.
+      const secondA = render(
+        <SessionTerminalView
+          sessionId="sess-a-2"
+          session={{ sessionId: 'sess-a-2', hostId: 'host-a', vaultId: 'personal', status: 'running', username: 'root' } as never}
+          host={hostA}
+          hostName="UstarPay-Test"
+          hostAddress="10.0.1.10"
+          chunkEmitterRef={{ current: {} }}
+          onSendRaw={() => {}}
+        />,
+      )
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'true')
+
+      // Closing AI persists closed state for Server A.
+      fireEvent.click(screen.getByTestId('mock-ai-close'))
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'false')
+      secondA.unmount()
+
+      render(
+        <SessionTerminalView
+          sessionId="sess-a-3"
+          session={{ sessionId: 'sess-a-3', hostId: 'host-a', vaultId: 'personal', status: 'running', username: 'root' } as never}
+          host={hostA}
+          hostName="UstarPay-Test"
+          hostAddress="10.0.1.10"
+          chunkEmitterRef={{ current: {} }}
+          onSendRaw={() => {}}
+        />,
+      )
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'false')
+    })
+
+    it('only toggles the visible tab on Cmd/Ctrl+I when multiple server tabs are mounted', () => {
+      render(
+        <>
+          <SessionTerminalView
+            sessionId="sess-vis"
+            session={{ sessionId: 'sess-vis', hostId: 'host-vis', vaultId: 'personal', status: 'running', username: 'root' } as never}
+            hostName="Visible"
+            hostAddress="10.0.2.1"
+            visible
+            chunkEmitterRef={{ current: {} }}
+            onSendRaw={() => {}}
+          />
+          <SessionTerminalView
+            sessionId="sess-hid"
+            session={{ sessionId: 'sess-hid', hostId: 'host-hid', vaultId: 'personal', status: 'running', username: 'root' } as never}
+            hostName="Hidden"
+            hostAddress="10.0.2.2"
+            visible={false}
+            chunkEmitterRef={{ current: {} }}
+            onSendRaw={() => {}}
+          />
+        </>,
+      )
+
+      fireEvent.keyDown(window, { key: 'i', metaKey: true })
+      const bars = screen.getAllByTestId('ai-command-bar')
+      expect(bars[0]).toHaveAttribute('data-visible', 'true')
+      expect(bars[1]).toHaveAttribute('data-visible', 'false')
+    })
+
+    it('only toggles the active pane on Cmd/Ctrl+I when two split panes are both visible', () => {
+      render(
+        <>
+          <SessionTerminalView
+            sessionId="sess-split-left"
+            session={{ sessionId: 'sess-split-left', hostId: 'host-left', vaultId: 'personal', status: 'running', username: 'root' } as never}
+            hostName="Left"
+            hostAddress="10.0.3.1"
+            visible
+            shortcutActive
+            chunkEmitterRef={{ current: {} }}
+            onSendRaw={() => {}}
+          />
+          <SessionTerminalView
+            sessionId="sess-split-right"
+            session={{ sessionId: 'sess-split-right', hostId: 'host-right', vaultId: 'personal', status: 'running', username: 'root' } as never}
+            hostName="Right"
+            hostAddress="10.0.3.2"
+            visible
+            shortcutActive={false}
+            chunkEmitterRef={{ current: {} }}
+            onSendRaw={() => {}}
+          />
+        </>,
+      )
+
+      fireEvent.keyDown(window, { key: 'i', metaKey: true })
+      const bars = screen.getAllByTestId('ai-command-bar')
+      expect(bars[0]).toHaveAttribute('data-visible', 'true')
+      expect(bars[1]).toHaveAttribute('data-visible', 'false')
+
+      // Focusing a control inside the right split pane routes Cmd/Ctrl+I to the right pane.
+      const rightCloseButton = screen.getAllByTestId('mock-ai-close')[1]
+      rightCloseButton.focus()
+      fireEvent.keyDown(window, { key: 'i', metaKey: true })
+      expect(bars[0]).toHaveAttribute('data-visible', 'true')
+      expect(bars[1]).toHaveAttribute('data-visible', 'true')
+    })
+
+    it('does not overwrite another vault preference when a same-address display host comes from a different vault', () => {
+      const workHost = { id: 'work-host', vaultId: 'work', name: 'Shared', address: '10.0.9.9', port: 22, username: 'ops', authType: 'password' } as never
+      const personalHost = { id: 'personal-host', vaultId: 'personal', name: 'Shared', address: '10.0.9.9', port: 22, username: 'admin', authType: 'password' } as never
+
+      // User opens AI on the Work session, then switches active vault to Personal so displayHost becomes personalHost.
+      const workView = render(
+        <SessionTerminalView
+          sessionId="sess-work"
+          session={{ sessionId: 'sess-work', hostId: 'work-host', vaultId: 'work', status: 'running', username: 'ops' } as never}
+          host={personalHost}
+          hostName="Shared"
+          hostAddress="10.0.9.9"
+          chunkEmitterRef={{ current: {} }}
+          onSendRaw={() => {}}
+        />,
+      )
+      act(() => {
+        window.dispatchEvent(new CustomEvent(TERMINAL_AI_TOGGLE_EVENT, { detail: { sessionId: 'sess-work' } }))
+      })
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'true')
+      workView.unmount()
+
+      // Personal host must remain closed; Work host must restore open.
+      const personalView = render(
+        <SessionTerminalView
+          sessionId="sess-personal"
+          session={{ sessionId: 'sess-personal', hostId: 'personal-host', vaultId: 'personal', status: 'running', username: 'admin' } as never}
+          host={personalHost}
+          hostName="Shared"
+          hostAddress="10.0.9.9"
+          chunkEmitterRef={{ current: {} }}
+          onSendRaw={() => {}}
+        />,
+      )
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'false')
+      personalView.unmount()
+
+      render(
+        <SessionTerminalView
+          sessionId="sess-work-2"
+          session={{ sessionId: 'sess-work-2', hostId: 'work-host', vaultId: 'work', status: 'running', username: 'ops' } as never}
+          host={workHost}
+          hostName="Shared"
+          hostAddress="10.0.9.9"
+          chunkEmitterRef={{ current: {} }}
+          onSendRaw={() => {}}
+        />,
+      )
+      expect(screen.getByTestId('ai-command-bar')).toHaveAttribute('data-visible', 'true')
     })
   })
 })
