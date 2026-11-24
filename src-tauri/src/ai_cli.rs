@@ -596,6 +596,8 @@ fn cli_args(backend: Backend, model: &str, effort: &str) -> Vec<String> {
             "--stream-partial-output",
             "--sandbox",
             "enabled",
+            "--workspace",
+            ".",
             "--trust",
         ]
         .iter()
@@ -608,6 +610,8 @@ fn cli_args(backend: Backend, model: &str, effort: &str) -> Vec<String> {
             "--permission-mode",
             "auto",
             "--sandbox",
+            "--config",
+            "devin-config.json",
             "--prompt-file",
             "request.json",
         ]
@@ -631,11 +635,37 @@ fn cli_args(backend: Backend, model: &str, effort: &str) -> Vec<String> {
     }
     args
 }
+const CURSOR_DENY_POLICY: &str = r#"{"permissions":{"allow":[],"deny":["Read(**)","Write(**)","Edit(**)","Shell(*)","WebFetch(*)","WebSearch(*)","MCP(*)"]}}"#;
+const DEVIN_DENY_CONFIG: &str = r#"{"permissions":{"deny":["Read(**)","Write(**)","Edit(**)","Exec(**)","Glob(**)","Grep(**)","WebFetch(**)","WebSearch(**)"]}}"#;
+
+fn write_scratch_policy_files(backend: Backend, scratch: &Path) -> Result<(), String> {
+    match backend {
+        Backend::CursorCli => {
+            let cursor_dir = scratch.join(".cursor");
+            std::fs::create_dir_all(&cursor_dir).map_err(|_| "failed")?;
+            std::fs::write(cursor_dir.join("cli.json"), CURSOR_DENY_POLICY.as_bytes())
+                .map_err(|_| "failed")?;
+        }
+        Backend::DevinCli => {
+            std::fs::write(
+                scratch.join("devin-config.json"),
+                DEVIN_DENY_CONFIG.as_bytes(),
+            )
+            .map_err(|_| "failed")?;
+        }
+        Backend::ClaudeCode | Backend::CodexCli | Backend::GeminiCli | Backend::OpencodeCli => {}
+    }
+    Ok(())
+}
+
 fn validate_cli(
     backend: Backend,
     executable: &Path,
     cancel: &AtomicBool,
 ) -> Result<String, String> {
+    if backend == Backend::DevinCli && cfg!(windows) {
+        return Err("unsupported".into());
+    }
     let scratch = Scratch::create()?;
     let mut version = String::new();
     run_process(
@@ -711,12 +741,14 @@ fn validate_cli(
             "--stream-partial-output",
             "--mode",
             "--sandbox",
+            "--workspace",
         ],
         Backend::DevinCli => &[
             "--print",
             "--prompt-file",
             "--permission-mode",
             "--sandbox",
+            "--config",
             "--respect-workspace-trust",
         ],
     };
@@ -730,9 +762,13 @@ fn generate(
     cancel: &AtomicBool,
     mut send: impl FnMut(Event) -> Result<(), String>,
 ) -> Result<(), String> {
+    if request.backend == Backend::DevinCli && cfg!(windows) {
+        return Err("unsupported".into());
+    }
     let executable = resolve_executable(request.backend, &request.executable)?;
     validate_cli(request.backend, &executable, cancel)?;
     let scratch = Scratch::create()?;
+    write_scratch_policy_files(request.backend, &scratch.0)?;
     let payload = match request.backend {
         Backend::GeminiCli | Backend::OpencodeCli | Backend::CursorCli | Backend::DevinCli => {
             serde_json::json!({
@@ -817,14 +853,17 @@ impl Parser {
     }
     fn line(&mut self, line: &str) -> Result<Option<String>, String> {
         if self.backend == Backend::DevinCli {
-            let trimmed_cr = line.trim_end_matches('\r');
-            if self.text.is_empty() && trimmed_cr.trim().is_empty() {
+            let trimmed = line
+                .strip_suffix('\n')
+                .unwrap_or(line)
+                .trim_end_matches('\r');
+            if self.text.is_empty() && trimmed.trim().is_empty() {
                 return Ok(None);
             }
             let chunk = if self.text.is_empty() {
-                trimmed_cr.to_string()
+                trimmed.to_string()
             } else {
-                format!("\n{trimmed_cr}")
+                format!("\n{trimmed}")
             };
             return self.append(&chunk);
         }
@@ -978,8 +1017,16 @@ impl Parser {
                         .unwrap_or("")
                         .to_string()
                 };
-                if !text.is_empty() && text != self.text {
-                    return self.append(&text);
+                if value.get("timestamp_ms").is_some() {
+                    if !text.is_empty() {
+                        return self.append(&text);
+                    }
+                } else if self.text.is_empty() {
+                    if !text.is_empty() {
+                        return self.append(&text);
+                    }
+                } else if !text.is_empty() && text != self.text {
+                    return Err("invalid_output".into());
                 }
             }
             (Backend::CursorCli, "result") => {
@@ -995,6 +1042,11 @@ impl Parser {
                         None
                     }
                 } else {
+                    if let Some(result) = value["result"].as_str() {
+                        if result != self.text {
+                            return Err("invalid_output".into());
+                        }
+                    }
                     None
                 };
                 self.done = true;

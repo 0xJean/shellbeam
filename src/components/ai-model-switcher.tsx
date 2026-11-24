@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Check, ChevronDown, Plus, RefreshCw, Search, Star } from 'lucide-react'
 import { AI_CLI_BACKENDS, AI_PROVIDERS, isAIConfigured, switchAIProvider, type AIProviderId, type AIReasoningEffort, type AISettings } from '@/lib/ai'
 import { CLI_BACKEND_LABELS, CLI_MODEL_PRESETS, currentModelTarget, withEffort, withModel } from '@/lib/ai-conversation'
@@ -15,10 +15,14 @@ type Choice = { key: string; label: string; brand: AIBrandId; apply: (settings: 
 const EFFORT_LEVELS: readonly AIReasoningEffort[] = ['', 'low', 'medium', 'high']
 const FAVORITE_MODELS_KEY = 'shellbeam.aiFavoriteModels'
 
-function loadFavorites(): Record<string, string[]> {
+const EMPTY_FAVORITES: Record<string, string[]> = {}
+let cachedFavoritesRaw: string | null | undefined = undefined
+let cachedFavoritesValue: Record<string, string[]> = EMPTY_FAVORITES
+const favoriteListeners = new Set<() => void>()
+
+function parseFavorites(raw: string | null): Record<string, string[]> {
+  if (!raw) return {}
   try {
-    const raw = localStorage.getItem(FAVORITE_MODELS_KEY)
-    if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
     const out: Record<string, string[]> = {}
@@ -31,12 +35,44 @@ function loadFavorites(): Record<string, string[]> {
   }
 }
 
-function saveFavorites(map: Record<string, string[]>) {
+function getFavoritesSnapshot(): Record<string, string[]> {
+  let raw: string | null = null
   try {
-    localStorage.setItem(FAVORITE_MODELS_KEY, JSON.stringify(map))
+    raw = localStorage.getItem(FAVORITE_MODELS_KEY)
   } catch {
-    // Storage unavailable; keep in-memory favorites only.
+    return cachedFavoritesValue
   }
+  if (raw !== cachedFavoritesRaw) {
+    cachedFavoritesRaw = raw
+    cachedFavoritesValue = parseFavorites(raw)
+  }
+  return cachedFavoritesValue
+}
+
+function subscribeFavorites(listener: () => void): () => void {
+  favoriteListeners.add(listener)
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === null || event.key === FAVORITE_MODELS_KEY) listener()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    favoriteListeners.delete(listener)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
+function updateFavorites(updater: (prev: Record<string, string[]>) => Record<string, string[]>) {
+  const prev = getFavoritesSnapshot()
+  const next = updater(prev)
+  const serialized = JSON.stringify(next)
+  cachedFavoritesRaw = serialized
+  cachedFavoritesValue = next
+  try {
+    localStorage.setItem(FAVORITE_MODELS_KEY, serialized)
+  } catch {
+    // Storage unavailable; keep in-memory favorites synced across mounted instances.
+  }
+  favoriteListeners.forEach((listener) => listener())
 }
 
 function backendChoices(settings: AISettings): Choice[] {
@@ -71,7 +107,7 @@ export function AIModelSwitcher({ settings, reportedModel, onChange, disabled, p
   const [open, setOpen] = useState(false)
   const [custom, setCustom] = useState('')
   const [query, setQuery] = useState('')
-  const [favoritesByBucket, setFavoritesByBucket] = useState<Record<string, string[]>>(loadFavorites)
+  const favoritesByBucket = useSyncExternalStore(subscribeFavorites, getFavoritesSnapshot, () => EMPTY_FAVORITES)
   const [discovered, setDiscovered] = useState<AIModel[] | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState('')
@@ -172,14 +208,12 @@ export function AIModelSwitcher({ settings, reportedModel, onChange, disabled, p
   const favoriteSet = useMemo(() => new Set(bucketFavorites), [bucketFavorites])
 
   const toggleFavorite = (model: string) => {
-    setFavoritesByBucket((prev) => {
+    updateFavorites((prev) => {
       const existing = prev[target.bucketKey] ?? []
       const nextBucket = existing.includes(model)
         ? existing.filter((item) => item !== model)
         : [model, ...existing].slice(0, 12)
-      const next = { ...prev, [target.bucketKey]: nextBucket }
-      saveFavorites(next)
-      return next
+      return { ...prev, [target.bucketKey]: nextBucket }
     })
   }
 

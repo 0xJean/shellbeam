@@ -340,7 +340,6 @@ fn spawn_pipe_reader(
 
 const NONBLOCKING_WRITE_SLICE_BYTES: usize = 4096;
 const RESIZE_WOULDBLOCK_BUDGET: Duration = Duration::from_millis(50);
-const KEEPALIVE_WOULDBLOCK_BUDGET: Duration = Duration::from_millis(20);
 const CLOSE_FLUSH_BUDGET: Duration = Duration::from_millis(1500);
 const CLOSE_WOULDBLOCK_BUDGET: Duration = Duration::from_millis(250);
 
@@ -502,6 +501,88 @@ impl ResizeQueue {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeepaliveOutcome {
+    Sent,
+    OutboundBlocked,
+    Failed,
+}
+
+struct KeepaliveState {
+    interval: Duration,
+    normal_secs: u32,
+    last_sent: Instant,
+    in_flight: bool,
+    consecutive_failures: u32,
+}
+
+impl KeepaliveState {
+    fn new(keepalive_secs: u32, now: Instant) -> Self {
+        Self {
+            interval: Duration::from_secs(keepalive_secs as u64),
+            normal_secs: keepalive_secs,
+            last_sent: now,
+            in_flight: false,
+            consecutive_failures: 0,
+        }
+    }
+
+    fn is_in_flight(&self) -> bool {
+        self.in_flight
+    }
+
+    fn reset_failures(&mut self) {
+        self.consecutive_failures = 0;
+    }
+
+    fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures
+    }
+
+    fn should_poll(
+        &self,
+        now: Instant,
+        pending_write_empty: bool,
+        write_in_flight: bool,
+        resize_in_flight: bool,
+    ) -> bool {
+        if self.normal_secs == 0 || write_in_flight || resize_in_flight {
+            return false;
+        }
+        if self.in_flight {
+            return true;
+        }
+        pending_write_empty && now.duration_since(self.last_sent) >= self.interval
+    }
+
+    /// Updates keepalive state after a `session.keepalive_send()` attempt.
+    /// Returns `Some(secs)` when `session.set_keepalive(true, secs)` should be updated.
+    fn apply_result(&mut self, outcome: KeepaliveOutcome, now: Instant) -> Option<u32> {
+        let was_in_flight = self.in_flight;
+        match outcome {
+            KeepaliveOutcome::Sent => {
+                self.in_flight = false;
+                self.consecutive_failures = 0;
+                self.last_sent = now;
+                was_in_flight.then_some(self.normal_secs)
+            }
+            KeepaliveOutcome::OutboundBlocked => {
+                // Keep in-flight active and shorten libssh2's keepalive interval to 1s (clamped
+                // to 2s by libssh2) so subsequent polls drain the pending keepalive packet instead
+                // of stalling outbound writes behind send_existing() until normal_secs elapses.
+                self.in_flight = true;
+                (!was_in_flight).then_some(1)
+            }
+            KeepaliveOutcome::Failed => {
+                self.in_flight = false;
+                self.consecutive_failures += 1;
+                self.last_sent = now;
+                was_in_flight.then_some(self.normal_secs)
+            }
+        }
+    }
+}
+
 fn close_channel_nonblocking(channel: &mut Channel) -> i32 {
     let _ = try_ssh2_with_budget(CLOSE_WOULDBLOCK_BUDGET, || channel.send_eof());
     let _ = try_ssh2_with_budget(CLOSE_WOULDBLOCK_BUDGET, || channel.close());
@@ -528,10 +609,8 @@ fn session_io_loop(
     let mut resize_queue = ResizeQueue::default();
     let mut closing_deadline: Option<Instant> = None;
     let mut last_activity = Instant::now();
-    let mut last_keepalive = Instant::now();
-    let keepalive_interval = Duration::from_secs(keepalive_secs as u64);
+    let mut keepalive = KeepaliveState::new(keepalive_secs, last_activity);
     let dead_threshold = Duration::from_secs(keepalive_secs as u64 * 3 + 10);
-    let mut consecutive_keepalive_failures: u32 = 0;
     const MAX_KEEPALIVE_FAILURES: u32 = 3;
 
     loop {
@@ -562,12 +641,13 @@ fn session_io_loop(
             }
         }
 
-        // 2. Apply coalesced PTY resize without colliding with an in-flight write packet.
-        //    In libssh2, `_libssh2_transport_send` requires the exact in-flight packet to finish
-        //    before another packet can be sent; mixing resize/write/keepalive while EAGAIN is
-        //    pending causes `send_existing` to reject every other sender with EAGAIN.
-        let should_pump_resize =
-            !write_in_flight && (closing_deadline.is_none() || resize_queue.is_in_flight());
+        // 2. Apply coalesced PTY resize without colliding with an in-flight write or keepalive
+        //    packet. In libssh2, `_libssh2_transport_send` requires the exact in-flight packet to
+        //    finish before another packet can be sent; mixing resize/write/keepalive while EAGAIN
+        //    is pending causes `send_existing` to reject every other sender with EAGAIN.
+        let should_pump_resize = !write_in_flight
+            && !keepalive.is_in_flight()
+            && (closing_deadline.is_none() || resize_queue.is_in_flight());
         if should_pump_resize
             && resize_queue.pump(|cols, rows| {
                 try_ssh2_with_budget(RESIZE_WOULDBLOCK_BUDGET, || {
@@ -580,8 +660,8 @@ fn session_io_loop(
 
         // 3. Interleave bounded writes with reads so large pasted/AI scripts never deadlock the
         //    SSH channel window or prematurely trigger closed(-1). Skip starting a new write while
-        //    a PTY resize packet is still in flight in libssh2.
-        if !resize_queue.is_in_flight() {
+        //    a PTY resize or keepalive packet is still in flight in libssh2.
+        if !resize_queue.is_in_flight() && !keepalive.is_in_flight() {
             let progress = pump_nonblocking_write(
                 &mut channel,
                 &mut pending_write,
@@ -590,7 +670,7 @@ fn session_io_loop(
             if progress.wrote > 0 {
                 had_data = true;
                 last_activity = Instant::now();
-                consecutive_keepalive_failures = 0;
+                keepalive.reset_failures();
             }
             write_in_flight = matches!(progress.outcome, WriteOutcome::InFlightWouldBlock);
             if progress.outcome == WriteOutcome::Fatal {
@@ -669,7 +749,7 @@ fn session_io_loop(
                 coalesced,
             );
             last_activity = Instant::now();
-            consecutive_keepalive_failures = 0;
+            keepalive.reset_failures();
         }
         match channel.stderr().read(&mut buf) {
             Ok(n) if n > 0 => {
@@ -683,7 +763,7 @@ fn session_io_loop(
                 );
                 had_data = true;
                 last_activity = Instant::now();
-                consecutive_keepalive_failures = 0;
+                keepalive.reset_failures();
             }
             _ => {}
         }
@@ -698,26 +778,35 @@ fn session_io_loop(
             break;
         }
 
-        if last_keepalive.elapsed() >= keepalive_interval
-            && pending_write.is_empty()
-            && !write_in_flight
-            && !resize_queue.is_in_flight()
-        {
-            match try_ssh2_with_budget(KEEPALIVE_WOULDBLOCK_BUDGET, || session.keepalive_send()) {
-                NonBlockingOp::Ok(_) => {
-                    consecutive_keepalive_failures = 0;
-                    last_activity = Instant::now();
-                    last_keepalive = Instant::now();
+        let now = Instant::now();
+        if keepalive.should_poll(
+            now,
+            pending_write.is_empty(),
+            write_in_flight,
+            resize_queue.is_in_flight(),
+        ) {
+            let outcome = match session.keepalive_send() {
+                Ok(_) => {
+                    if matches!(
+                        session.block_directions(),
+                        ssh2::BlockDirections::Outbound | ssh2::BlockDirections::Both
+                    ) {
+                        KeepaliveOutcome::OutboundBlocked
+                    } else {
+                        KeepaliveOutcome::Sent
+                    }
                 }
-                NonBlockingOp::WouldBlock => {}
-                NonBlockingOp::Err => {
-                    consecutive_keepalive_failures += 1;
-                    last_keepalive = Instant::now();
-                }
+                Err(_) => KeepaliveOutcome::Failed,
+            };
+            if let Some(interval_secs) = keepalive.apply_result(outcome, now) {
+                session.set_keepalive(true, interval_secs);
+            }
+            if outcome == KeepaliveOutcome::Sent {
+                last_activity = now;
             }
         }
 
-        if consecutive_keepalive_failures >= MAX_KEEPALIVE_FAILURES
+        if keepalive.consecutive_failures() >= MAX_KEEPALIVE_FAILURES
             || last_activity.elapsed() > dead_threshold
         {
             push_chunk(
@@ -1358,5 +1447,41 @@ mod tests {
             sent,
             vec![(100, 30, "blocked"), (100, 30, "ok"), (120, 40, "ok")]
         );
+    }
+
+    #[test]
+    fn keepalive_retries_while_outbound_blocked_even_when_user_input_is_queued() {
+        let t0 = Instant::now();
+        let mut keepalive = KeepaliveState::new(30, t0);
+        assert!(!keepalive.is_in_flight());
+        assert!(!keepalive.should_poll(t0 + Duration::from_secs(29), true, false, false));
+        assert!(keepalive.should_poll(t0 + Duration::from_secs(30), true, false, false));
+
+        // First send encounters outbound EAGAIN inside libssh2: enters in-flight retry mode and
+        // shortens libssh2 keepalive interval to 1s (clamped to 2s by libssh2).
+        let t1 = t0 + Duration::from_secs(30);
+        assert_eq!(
+            keepalive.apply_result(KeepaliveOutcome::OutboundBlocked, t1),
+            Some(1)
+        );
+        assert!(keepalive.is_in_flight());
+
+        // User queues input (pending_write_empty == false): keepalive must STILL poll so the
+        // in-flight keepalive packet drains instead of stalling writes behind send_existing().
+        let t2 = t1 + Duration::from_secs(1);
+        assert!(keepalive.should_poll(t2, false, false, false));
+        assert_eq!(
+            keepalive.apply_result(KeepaliveOutcome::OutboundBlocked, t2),
+            None
+        );
+        assert!(keepalive.is_in_flight());
+
+        // Once outbound drains, in-flight clears and the normal 30s interval is restored.
+        let t3 = t1 + Duration::from_secs(2);
+        assert_eq!(keepalive.apply_result(KeepaliveOutcome::Sent, t3), Some(30));
+        assert!(!keepalive.is_in_flight());
+        assert_eq!(keepalive.consecutive_failures(), 0);
+        assert!(!keepalive.should_poll(t3 + Duration::from_secs(1), true, false, false));
+        assert!(keepalive.should_poll(t3 + Duration::from_secs(30), true, false, false));
     }
 }

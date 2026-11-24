@@ -479,10 +479,14 @@ export function PcLayout() {
   }, [refreshSnippets, refreshSync])
 
   useEffect(() => {
-    const onOpenSettings = () => app.setPcSidebarNav('settings')
+    const onOpenSettings = () => {
+      sessions.setPcActiveSessionId(null)
+      setShowQuickConnect(false)
+      app.setPcSidebarNav('settings')
+    }
     window.addEventListener(SETTINGS_OPEN_EVENT, onOpenSettings)
     return () => window.removeEventListener(SETTINGS_OPEN_EVENT, onOpenSettings)
-  }, [app])
+  }, [app, sessions])
 
   const isMd = useSyncExternalStore(subscribeMediaQuery, getIsMd, () => true)
   const SettingsScreen = isMd ? SettingsPanel : MobileSettingsPage
