@@ -89,10 +89,6 @@ pub struct SyncCursorRecord {
     pub updated_at: i64,
 }
 
-fn default_true() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerRoute {
@@ -109,12 +105,24 @@ pub struct PeerRoute {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerBridgePermissions {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub allow_ai_cli: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub allow_terminal_view: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub allow_terminal_control: bool,
+}
+
+impl PeerBridgePermissions {
+    /// Least-privilege permissions used for legacy sync-only peers deserialized on upgrade
+    /// and manual-code pairings that have not explicitly enabled desktop companion control.
+    pub fn none() -> Self {
+        Self {
+            allow_ai_cli: false,
+            allow_terminal_view: false,
+            allow_terminal_control: false,
+        }
+    }
 }
 
 impl Default for PeerBridgePermissions {
@@ -139,7 +147,7 @@ pub struct SyncTrustedPeer {
     pub peer_endpoint: Option<String>,
     #[serde(default)]
     pub routes: Vec<PeerRoute>,
-    #[serde(default)]
+    #[serde(default = "PeerBridgePermissions::none")]
     pub bridge_permissions: PeerBridgePermissions,
     #[serde(default)]
     pub sync_secret: Option<String>,

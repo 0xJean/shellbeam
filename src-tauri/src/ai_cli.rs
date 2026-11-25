@@ -110,6 +110,14 @@ pub struct Request {
     #[serde(default)]
     mode: RunMode,
 }
+
+impl Request {
+    /// Clears any peer-supplied executable override so remote companion requests can only run
+    /// desktop-discovered CLI binaries.
+    pub(crate) fn clear_executable(&mut self) {
+        self.executable.clear();
+    }
+}
 /// How ShellBeam runs the replies; told to the model so it knows whether to keep going.
 #[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "kebab-case")]

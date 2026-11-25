@@ -717,11 +717,11 @@ fn owned(row: &Transfer, source: bool, s: &Observation) -> Result<(), String> {
         return Ok(());
     }
     validate_observation(&b.record, s)?;
-    if !s
+    if !(s
         .transfer
         .as_ref()
         .is_some_and(|r| r.id == row.id && r.role == role)
-        && !(source && s == initial)
+        || source && s == initial)
     {
         return Err("KOMARI_AGENT_TRANSFER_IDENTITY_CHANGED".into());
     }

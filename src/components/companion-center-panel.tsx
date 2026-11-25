@@ -167,7 +167,7 @@ function MobileDesktopClientCenter({
   const [outgoingSessionId, setOutgoingSessionId] = useState('')
   const [codeConfirmed, setCodeConfirmed] = useState(false)
   const [pairingError, setPairingError] = useState('')
-  const pendingExtraRoutesRef = useRef<{ hosts: string[]; port: number; irohId?: string; relayUrl?: string } | null>(null)
+  const pendingExtraRoutesRef = useRef<PendingExtraRoutes | null>(null)
 
   const needsInit = !localDevice
 
@@ -188,21 +188,7 @@ function MobileDesktopClientCenter({
       const extra = pendingExtraRoutesRef.current
       pendingExtraRoutesRef.current = null
       if (extra && event.payload?.peerDeviceId) {
-        const saves: Array<Promise<unknown>> = extra.hosts.map((host) =>
-          companionAddPeerRoute({ peerDeviceId: event.payload.peerDeviceId, host, port: extra.port }).catch(() => {}),
-        )
-        if (extra.irohId) {
-          saves.push(
-            companionAddPeerRoute({
-              peerDeviceId: event.payload.peerDeviceId,
-              host: extra.irohId,
-              port: 1,
-              kind: 'iroh',
-              label: extra.relayUrl,
-            }).catch(() => {}),
-          )
-        }
-        void Promise.all(saves).then(() => void onRefresh())
+        void saveExtraPeerRoutes(event.payload.peerDeviceId, extra).then(() => void onRefresh())
       } else {
         void onRefresh()
       }
@@ -230,13 +216,7 @@ function MobileDesktopClientCenter({
     if (!serverRunning) {
       try { await onStartServer() } catch { /* ignore */ }
     }
-    const targets: Array<{ host: string; port: number }> = parsed.hosts.map((host) => ({ host, port: parsed.port }))
-    if (parsed.irohId) {
-      const irohHost = parsed.relayUrl
-        ? `iroh://${parsed.irohId}?relay=${encodeURIComponent(parsed.relayUrl)}`
-        : `iroh://${parsed.irohId}`
-      targets.push({ host: irohHost, port: 1 })
-    }
+    const targets = buildDirectPairTargets(parsed)
     pendingExtraRoutesRef.current = {
       hosts: parsed.hosts,
       port: parsed.port,
@@ -609,6 +589,42 @@ function MobileDesktopClientCenter({
   )
 }
 
+type PendingExtraRoutes = {
+  hosts: string[]
+  port: number
+  irohId?: string
+  relayUrl?: string
+}
+
+function buildDirectPairTargets(parsed: ParsedPairingLink): Array<{ host: string; port: number }> {
+  const targets: Array<{ host: string; port: number }> = parsed.hosts.map((host) => ({ host, port: parsed.port }))
+  if (parsed.irohId) {
+    const irohHost = parsed.relayUrl
+      ? `iroh://${parsed.irohId}?relay=${encodeURIComponent(parsed.relayUrl)}`
+      : `iroh://${parsed.irohId}`
+    targets.push({ host: irohHost, port: 1 })
+  }
+  return targets
+}
+
+function saveExtraPeerRoutes(peerDeviceId: string, extra: PendingExtraRoutes): Promise<unknown[]> {
+  const saves: Array<Promise<unknown>> = extra.hosts.map((host) =>
+    companionAddPeerRoute({ peerDeviceId, host, port: extra.port }).catch(() => {}),
+  )
+  if (extra.irohId) {
+    saves.push(
+      companionAddPeerRoute({
+        peerDeviceId,
+        host: extra.irohId,
+        port: 1,
+        kind: 'iroh',
+        label: extra.relayUrl,
+      }).catch(() => {}),
+    )
+  }
+  return Promise.all(saves)
+}
+
 function DesktopCompanionHostCenter({
   localDevice,
   trustedPeers,
@@ -661,7 +677,7 @@ function DesktopCompanionHostCenter({
     peerHost: string
     verificationCode: string
   } | null>(null)
-  const pendingExtraRoutesRef = useRef<{ hosts: string[]; port: number } | null>(null)
+  const pendingExtraRoutesRef = useRef<PendingExtraRoutes | null>(null)
 
   const needsInit = !localDevice
 
@@ -734,15 +750,7 @@ function DesktopCompanionHostCenter({
       const extra = pendingExtraRoutesRef.current
       pendingExtraRoutesRef.current = null
       if (extra && event.payload?.peerDeviceId) {
-        void Promise.all(
-          extra.hosts.map((host) =>
-            companionAddPeerRoute({
-              peerDeviceId: event.payload.peerDeviceId,
-              host,
-              port: extra.port,
-            }).catch(() => {}),
-          ),
-        ).then(() => void onRefresh())
+        void saveExtraPeerRoutes(event.payload.peerDeviceId, extra).then(() => void onRefresh())
       } else {
         void onRefresh()
       }
@@ -822,18 +830,24 @@ function DesktopCompanionHostCenter({
     if (!serverRunning) {
       try { await onStartServer() } catch { /* ignore */ }
     }
-    pendingExtraRoutesRef.current = parsed.hosts.length > 1 ? { hosts: parsed.hosts, port: parsed.port } : null
-    const displayName = parsed.deviceName || parsed.hosts[0]
+    const targets = buildDirectPairTargets(parsed)
+    pendingExtraRoutesRef.current = {
+      hosts: parsed.hosts,
+      port: parsed.port,
+      irohId: parsed.irohId,
+      relayUrl: parsed.relayUrl,
+    }
+    const displayName = parsed.deviceName || parsed.hosts[0] || (parsed.irohId ? `P2P ${parsed.irohId.slice(0, 8)}` : 'Desktop')
     let lastError: unknown = null
-    for (const host of parsed.hosts) {
-      setSelectedDevice({ name: displayName, host, port: parsed.port, deviceType: 'computer' })
+    for (const target of targets) {
+      setSelectedDevice({ name: displayName, host: target.host, port: target.port, deviceType: 'computer' })
       setPairView('pairing')
       setPairingBusy(true)
       setPairingError('')
       try {
         const session = await syncSendPairRequest({
-          peerHost: host,
-          peerPort: parsed.port,
+          peerHost: target.host,
+          peerPort: target.port,
           peerName: displayName,
         })
         setGeneratedPin(session.verificationCode)

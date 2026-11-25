@@ -62,11 +62,11 @@ pub fn validate_state(state: &Value) -> Result<(), String> {
         || !state["identity"]
             .as_str()
             .is_some_and(|s| s.len() == 48 && s.bytes().all(|c| c.is_ascii_hexdigit()))
-        || !state["revision"].as_u64().is_some_and(|n| n > 0)
+        || state["revision"].as_u64().is_none_or(|n| n == 0)
         || !state["evaluations"].is_object()
         || !state["policy"].is_object()
-        || !state["events"].as_array().is_some_and(|a| a.len() <= 500)
-        || !state["receipts"].as_array().is_some_and(|a| a.len() <= 500)
+        || state["events"].as_array().is_none_or(|a| a.len() > 500)
+        || state["receipts"].as_array().is_none_or(|a| a.len() > 500)
     {
         return Err(failure());
     }

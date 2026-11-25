@@ -468,8 +468,10 @@ fn dispatch_rpc(
             if !perms.allow_ai_cli {
                 return Err("permission_denied:ai_cli".to_string());
             }
-            let request: ai_cli::Request =
+            let mut request: ai_cli::Request =
                 serde_json::from_value(params).map_err(|e| format!("invalid_request: {e}"))?;
+            // Never let a remote peer choose an arbitrary executable path on the desktop host.
+            request.clear_executable();
             ai_cli::validate_request(&request)?;
             let req_id = serde_json::to_value(&request.request_id)
                 .ok()

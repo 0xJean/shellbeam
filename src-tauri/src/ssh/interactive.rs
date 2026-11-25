@@ -193,6 +193,12 @@ pub struct InteractiveSessionState {
     next_remote_sub_id: AtomicU64,
 }
 
+pub(crate) type SessionListSubscription = (
+    u64,
+    Vec<InteractiveSessionInfo>,
+    mpsc::Receiver<Vec<InteractiveSessionInfo>>,
+);
+
 impl InteractiveSessionState {
     pub(crate) fn broadcast_output(&self, session_id: &str, chunk: &InteractiveOutputChunk) {
         if let Ok(mut replays) = self.remote_replay.lock() {
@@ -241,16 +247,7 @@ impl InteractiveSessionState {
         }
     }
 
-    pub(crate) fn subscribe_session_list(
-        &self,
-    ) -> Result<
-        (
-            u64,
-            Vec<InteractiveSessionInfo>,
-            mpsc::Receiver<Vec<InteractiveSessionInfo>>,
-        ),
-        String,
-    > {
+    pub(crate) fn subscribe_session_list(&self) -> Result<SessionListSubscription, String> {
         let initial = self.list_sessions_snapshot()?;
         let sub_id = self.next_remote_sub_id.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = mpsc::channel();

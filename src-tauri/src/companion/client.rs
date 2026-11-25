@@ -73,9 +73,11 @@ impl Default for CompanionConnectionStatus {
     }
 }
 
+type PendingRpcMap = Arc<Mutex<HashMap<String, mpsc::Sender<Result<serde_json::Value, String>>>>>;
+
 struct ActiveConnection {
     tx: mpsc::Sender<BridgeFrame>,
-    pending: Arc<Mutex<HashMap<String, mpsc::Sender<Result<serde_json::Value, String>>>>>,
+    pending: PendingRpcMap,
     shutdown: Arc<AtomicBool>,
     stream: TcpStream,
 }
@@ -132,11 +134,47 @@ impl CompanionClientState {
         self.set_status(app, CompanionConnectionStatus::default());
     }
 
+    fn publish_connect_error(
+        &self,
+        app: &tauri::AppHandle,
+        peer_id: &str,
+        peer_name: Option<String>,
+        error: &str,
+        expected_gen: u64,
+        report_error: bool,
+    ) {
+        if report_error && self.session_gen.load(Ordering::Acquire) == expected_gen {
+            self.set_status(
+                app,
+                CompanionConnectionStatus {
+                    state: "error".to_string(),
+                    peer_device_id: Some(peer_id.to_string()),
+                    peer_device_name: peer_name,
+                    error: Some(error.to_string()),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
     pub fn connect(
         self: &Arc<Self>,
         app: &tauri::AppHandle,
         peer_device_id: &str,
     ) -> Result<CompanionConnectionStatus, String> {
+        // Validate the target peer and routes BEFORE tearing down an existing healthy bridge so
+        // selecting an incompatible/manual-code peer cannot leave the active connection dead.
+        let state = load_sync_state_for_transport(app)?;
+        let peer = state
+            .trusted_peers
+            .iter()
+            .find(|p| p.peer_device_id == peer_device_id)
+            .ok_or_else(|| "Trusted desktop peer not found".to_string())?;
+        parse_sync_secret(&peer.sync_secret).ok_or_else(|| REPAIR_REQUIRED.to_string())?;
+        if collect_candidate_routes(peer).is_empty() {
+            return Err("No routes configured for this desktop peer".to_string());
+        }
+
         let generation = self.session_gen.fetch_add(1, Ordering::AcqRel) + 1;
         if let Ok(mut desired) = self.desired_peer_id.lock() {
             *desired = Some(peer_device_id.to_string());
@@ -156,18 +194,67 @@ impl CompanionClientState {
             return Err("Cancelled".to_string());
         }
 
-        let state = load_sync_state_for_transport(app)?;
-        let peer = state
+        let state = match load_sync_state_for_transport(app) {
+            Ok(s) => s,
+            Err(e) => {
+                self.publish_connect_error(
+                    app,
+                    peer_device_id,
+                    None,
+                    &e,
+                    expected_gen,
+                    report_error,
+                );
+                return Err(e);
+            }
+        };
+        let peer = match state
             .trusted_peers
             .iter()
             .find(|p| p.peer_device_id == peer_device_id)
             .cloned()
-            .ok_or_else(|| "Trusted desktop peer not found".to_string())?;
-        let sync_key =
-            parse_sync_secret(&peer.sync_secret).ok_or_else(|| REPAIR_REQUIRED.to_string())?;
+        {
+            Some(p) => p,
+            None => {
+                let err = "Trusted desktop peer not found".to_string();
+                self.publish_connect_error(
+                    app,
+                    peer_device_id,
+                    None,
+                    &err,
+                    expected_gen,
+                    report_error,
+                );
+                return Err(err);
+            }
+        };
+        let sync_key = match parse_sync_secret(&peer.sync_secret) {
+            Some(k) => k,
+            None => {
+                let err = REPAIR_REQUIRED.to_string();
+                self.publish_connect_error(
+                    app,
+                    &peer.peer_device_id,
+                    peer.peer_device_name.clone(),
+                    &err,
+                    expected_gen,
+                    report_error,
+                );
+                return Err(err);
+            }
+        };
         let candidates = collect_candidate_routes(&peer);
         if candidates.is_empty() {
-            return Err("No routes configured for this desktop peer".to_string());
+            let err = "No routes configured for this desktop peer".to_string();
+            self.publish_connect_error(
+                app,
+                &peer.peer_device_id,
+                peer.peer_device_name.clone(),
+                &err,
+                expected_gen,
+                report_error,
+            );
+            return Err(err);
         }
 
         self.set_status(
@@ -191,16 +278,14 @@ impl CompanionClientState {
         let (winning_route, mut writer_stream, mut reader, ciphers, remote_name) = match dialed {
             Ok(ok) => ok,
             Err(last_err) => {
-                if report_error {
-                    let err_status = CompanionConnectionStatus {
-                        state: "error".to_string(),
-                        peer_device_id: Some(peer.peer_device_id),
-                        peer_device_name: peer.peer_device_name,
-                        error: Some(last_err.clone()),
-                        ..Default::default()
-                    };
-                    self.set_status(app, err_status);
-                }
+                self.publish_connect_error(
+                    app,
+                    &peer.peer_device_id,
+                    peer.peer_device_name.clone(),
+                    &last_err,
+                    expected_gen,
+                    report_error,
+                );
                 return Err(last_err);
             }
         };
@@ -213,18 +298,15 @@ impl CompanionClientState {
         // and the desktop's latest LAN + Tailscale endpoints.
         let mut tx_cipher = ciphers.tx;
         let mut rx_cipher = ciphers.rx;
-        let hello = read_encrypted_frame(&mut reader, &mut rx_cipher).map_err(|e| {
-            if report_error {
-                let err_status = CompanionConnectionStatus {
-                    state: "error".to_string(),
-                    peer_device_id: Some(peer.peer_device_id.clone()),
-                    peer_device_name: peer.peer_device_name.clone(),
-                    error: Some(e.clone()),
-                    ..Default::default()
-                };
-                self.set_status(app, err_status);
-            }
-            e
+        let hello = read_encrypted_frame(&mut reader, &mut rx_cipher).inspect_err(|e| {
+            self.publish_connect_error(
+                app,
+                &peer.peer_device_id,
+                peer.peer_device_name.clone(),
+                e,
+                expected_gen,
+                report_error,
+            );
         })?;
 
         let (desktop_name, desktop_os, app_version, permissions, cli_backends, desktop_endpoints) =
@@ -246,7 +328,16 @@ impl CompanionClientState {
                     endpoints,
                 ),
                 _ => {
-                    return Err("Unexpected first frame from desktop bridge".to_string());
+                    let err = "Unexpected first frame from desktop bridge".to_string();
+                    self.publish_connect_error(
+                        app,
+                        &peer.peer_device_id,
+                        peer.peer_device_name.clone(),
+                        &err,
+                        expected_gen,
+                        report_error,
+                    );
+                    return Err(err);
                 }
             };
 
@@ -270,13 +361,21 @@ impl CompanionClientState {
         }
 
         let shutdown = Arc::new(AtomicBool::new(false));
-        let pending: Arc<Mutex<HashMap<String, mpsc::Sender<Result<serde_json::Value, String>>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pending: PendingRpcMap = Arc::new(Mutex::new(HashMap::new()));
         let (tx_frame, rx_frame) = mpsc::channel::<BridgeFrame>();
 
-        let stream_for_close = writer_stream
-            .try_clone()
-            .map_err(|e| format!("clone stream: {e}"))?;
+        let stream_for_close = writer_stream.try_clone().map_err(|e| {
+            let err = format!("clone stream: {e}");
+            self.publish_connect_error(
+                app,
+                &peer.peer_device_id,
+                peer.peer_device_name.clone(),
+                &err,
+                expected_gen,
+                report_error,
+            );
+            err
+        })?;
 
         let writer_shutdown = shutdown.clone();
         thread::spawn(move || {

@@ -56,6 +56,7 @@ pub struct SetPeerPermissionsPayload {
 #[tauri::command]
 pub fn companion_set_peer_permissions(
     app: tauri::AppHandle,
+    server: State<'_, CompanionServerState>,
     payload: SetPeerPermissionsPayload,
 ) -> Result<SyncTrustedPeer, String> {
     let mut state = load_sync_state_for_transport(&app)
@@ -65,11 +66,18 @@ pub fn companion_set_peer_permissions(
         .iter_mut()
         .find(|p| p.peer_device_id == payload.peer_device_id)
         .ok_or_else(|| "Trusted peer not found".to_string())?;
-    peer.bridge_permissions = payload.permissions;
+    let prev = peer.bridge_permissions.clone();
+    peer.bridge_permissions = payload.permissions.clone();
     let mut sanitized = peer.clone();
     sanitized.sync_secret = None;
     save_sync_state_for_transport(&app, &state)
         .map_err(|e| standard_error_from_raw("companion", "set permissions", e))?;
+    let revoked = (prev.allow_ai_cli && !payload.permissions.allow_ai_cli)
+        || (prev.allow_terminal_view && !payload.permissions.allow_terminal_view)
+        || (prev.allow_terminal_control && !payload.permissions.allow_terminal_control);
+    if revoked {
+        server.kick_peer(&app, &payload.peer_device_id);
+    }
     Ok(sanitized)
 }
 

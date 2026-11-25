@@ -693,8 +693,13 @@ export async function streamRemoteCliCommand(
   let settled = false
   let started = false
   let unlisten: UnlistenFn | null = null
+  let unsubStatus: (() => void) | null = null
   let finish!: () => void
   const completion = new Promise<void>((resolve) => { finish = resolve })
+
+  const initialStatus = getCompanionStatusSnapshot()
+  const originPeerId = initialStatus.peerDeviceId
+  const originConnectedAt = initialStatus.connectedAt
 
   const cancelRemote = () => {
     void invoke('companion_remote_ai_cli_cancel', { requestId }).catch(() => {})
@@ -717,6 +722,21 @@ export async function streamRemoteCliCommand(
 
   signal?.addEventListener('abort', abort, { once: true })
   try {
+    unsubStatus = subscribeCompanionStatus(() => {
+      if (settled || signal?.aborted) return
+      const next = getCompanionStatusSnapshot()
+      const droppedOrSwitched =
+        next.state !== 'connected'
+        || next.peerDeviceId !== originPeerId
+        || next.connectedAt !== originConnectedAt
+      if (droppedOrSwitched) {
+        settled = true
+        const errCode = 'Not connected to desktop companion'
+        callbacks.onError(formatError ? formatError(errCode) : errCode)
+        finish()
+      }
+    })
+
     unlisten = await listen<RemoteCliEventPayload>('companion:ai-cli-event', (e) => {
       if (settled || signal?.aborted || e.payload.requestId !== requestId) return
       const ev = e.payload.event
@@ -734,7 +754,7 @@ export async function streamRemoteCliCommand(
       request: {
         requestId,
         backend,
-        executable: profile?.executable ?? '',
+        executable: '',
         model: profile?.model ?? '',
         effort: profile?.effort ?? '',
         prompt,
@@ -758,6 +778,7 @@ export async function streamRemoteCliCommand(
   } finally {
     settled = true
     signal?.removeEventListener('abort', abort)
+    unsubStatus?.()
     unlisten?.()
   }
 }
