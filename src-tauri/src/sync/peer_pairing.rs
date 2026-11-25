@@ -323,6 +323,29 @@ fn complete_outgoing(context: &OutgoingContext) {
         return;
     };
     let now = now_unix_ms();
+    let initial_routes = if let Some((id, inline_relay)) =
+        super::iroh_transport::parse_iroh_spec(&context.endpoint)
+    {
+        vec![super::PeerRoute {
+            kind: "iroh".to_string(),
+            host: id,
+            port: 1,
+            label: inline_relay,
+            last_ok_at: Some(now),
+        }]
+    } else {
+        super::routes::parse_host_port(&context.endpoint)
+            .map(|(host, port)| {
+                vec![super::PeerRoute {
+                    kind: super::routes::classify_host(&host).to_string(),
+                    host,
+                    port,
+                    label: None,
+                    last_ok_at: Some(now),
+                }]
+            })
+            .unwrap_or_default()
+    };
     trust_peer(
         &mut state,
         SyncTrustedPeer {
@@ -332,6 +355,8 @@ fn complete_outgoing(context: &OutgoingContext) {
             last_seen_at: now,
             source: "network-pair".to_string(),
             peer_endpoint: Some(context.endpoint.clone()),
+            routes: initial_routes,
+            bridge_permissions: super::PeerBridgePermissions::default(),
             sync_secret: Some(B64.encode(context.secrets.sync_key)),
             pairing_version: CURRENT_PAIRING_VERSION,
         },
@@ -543,13 +568,30 @@ pub async fn sync_accept_pair(
         )
     };
 
+    let is_loopback = payload.peer_host == "127.0.0.1" || payload.peer_host == "::1";
     let peer = SyncTrustedPeer {
         peer_device_id,
         peer_device_name: Some(peer_device_name),
         verified_at: now,
         last_seen_at: now,
         source: "network-pair".to_string(),
-        peer_endpoint: Some(format!("{}:{}", payload.peer_host, payload.peer_port)),
+        peer_endpoint: if is_loopback {
+            None
+        } else {
+            Some(format!("{}:{}", payload.peer_host, payload.peer_port))
+        },
+        routes: if is_loopback {
+            Vec::new()
+        } else {
+            vec![super::PeerRoute {
+                kind: super::routes::classify_host(&payload.peer_host).to_string(),
+                host: payload.peer_host.clone(),
+                port: payload.peer_port,
+                label: None,
+                last_ok_at: Some(now),
+            }]
+        },
+        bridge_permissions: super::PeerBridgePermissions::default(),
         sync_secret: Some(B64.encode(sync_key)),
         pairing_version: CURRENT_PAIRING_VERSION,
     };

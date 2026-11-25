@@ -1,6 +1,8 @@
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core'
 import type { AICliBackend, AICliProfile, AIRequestMode, AIStreamCallbacks } from './ai'
 import type { AIHistoryItem } from './ai-conversation'
+import { isRemoteCliBridgeAvailable, streamRemoteCliCommand } from './companion'
+import { isMobileDevice } from './mobile-back'
 import { t } from './i18n'
 
 export interface AICliStatus { version: string; executable: string }
@@ -22,6 +24,11 @@ export async function streamCliCommand(
 ): Promise<void> {
   if (signal?.aborted) return
   if (!isTauri()) { callbacks.onError(cliErrorMessage('desktop_only')); return }
+  // On mobile devices, proxy local AI CLI execution through the connected paired desktop bridge.
+  if (isMobileDevice() && isRemoteCliBridgeAvailable()) {
+    await streamRemoteCliCommand(backend, profile, prompt, context, callbacks, signal, history, host, mode, cliErrorMessage)
+    return
+  }
   const requestId = crypto.randomUUID()
   let started = false
   let settled = false

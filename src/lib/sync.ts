@@ -46,6 +46,20 @@ export interface SyncBootstrapResponse {
   activePairingCount: number
 }
 
+export interface PeerRoute {
+  kind: 'lan' | 'tailnet' | 'custom' | string
+  host: string
+  port: number
+  label?: string
+  lastOkAt?: number
+}
+
+export interface PeerBridgePermissions {
+  allowAiCli: boolean
+  allowTerminalView: boolean
+  allowTerminalControl: boolean
+}
+
 export interface SyncTrustedPeer {
   peerDeviceId: string
   peerDeviceName?: string
@@ -53,6 +67,8 @@ export interface SyncTrustedPeer {
   lastSeenAt: number
   source: string
   peerEndpoint?: string
+  routes?: PeerRoute[]
+  bridgePermissions?: PeerBridgePermissions
 }
 
 export interface SyncPairingSession {

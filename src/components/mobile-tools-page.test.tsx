@@ -32,7 +32,7 @@ describe('MobileToolsPage', () => {
   it('opens every former "More" destination', () => {
     const onNavigate = vi.fn()
     render(<MobileToolsPage vaultId="v" onNavigate={onNavigate} />)
-    for (const nav of ['port-forwarding', 'asset-inventory', 'known-hosts', 'keychain', 'snippets', 'activity', 'sync', 'backup', 'guide']) {
+    for (const nav of ['sftp', 'port-forwarding', 'asset-inventory', 'known-hosts', 'keychain', 'snippets', 'activity', 'sync', 'backup', 'guide']) {
       fireEvent.click(screen.getByTestId(`mobile-tool-${nav}`))
       expect(onNavigate).toHaveBeenLastCalledWith(nav)
     }

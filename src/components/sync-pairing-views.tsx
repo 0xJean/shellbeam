@@ -15,8 +15,18 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { fill } from '@/lib/locales/probe-install'
 import { syncBackupCopy } from '@/lib/locales/sync-backup-v3'
+import { companionCopy } from '@/lib/locales/companion'
 import { cn } from '@/lib/utils'
 import { ScanRadar, DeviceCard, CodeDigits } from './sync-widgets'
+
+function formatPairingEndpoint(host: string, port: number, irohLabel: string): string {
+  const trimmed = host.trim()
+  if (trimmed.toLowerCase().startsWith('iroh://')) {
+    const id = trimmed.slice('iroh://'.length).split('?')[0]?.replace(/\/$/, '') ?? ''
+    return `${irohLabel} · ${id.slice(0, 8)}…`
+  }
+  return port > 0 ? `${trimmed}:${port}` : trimmed
+}
 
 export type PairStep = 'scan' | 'verify' | 'incoming' | 'failed'
 
@@ -163,7 +173,9 @@ interface ConfirmingViewProps {
 }
 
 export function ConfirmingView({ selectedDevice, generatedPin, pairingError, codeConfirmed, onConfirmCode, onCancel }: ConfirmingViewProps) {
-  const { t, copy } = usePairCopy()
+  const { t, locale } = useT()
+  const copy = syncBackupCopy[locale] ?? syncBackupCopy['zh-CN']
+  const compCopy = companionCopy[locale] ?? companionCopy['zh-CN']
   const name = selectedDevice?.name ?? t('sync.unknown')
   return (
     <>
@@ -178,7 +190,11 @@ export function ConfirmingView({ selectedDevice, generatedPin, pairingError, cod
             {fill(copy.waitingAccept, { name })}
           </p>
         )}
-        {selectedDevice && <p className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">{selectedDevice.host}:{selectedDevice.port}</p>}
+        {selectedDevice && (
+          <p className="max-w-full truncate font-mono text-[11px] text-[var(--workspace-text-subtle)]">
+            {formatPairingEndpoint(selectedDevice.host, selectedDevice.port, compCopy.routeIroh)}
+          </p>
+        )}
         <ErrorLine message={pairingError} />
       </div>
       <Footer>

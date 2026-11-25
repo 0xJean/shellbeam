@@ -368,6 +368,8 @@ pub fn sync_confirm_pairing(
         last_seen_at: now,
         source: "manual-code".to_string(),
         peer_endpoint: None,
+        routes: Vec::new(),
+        bridge_permissions: super::PeerBridgePermissions::none(),
         sync_secret: Some(sync_secret),
         pairing_version: 0,
     };

@@ -10,7 +10,9 @@ declare global {
  * such as local PTY shells and embedded multi-webview browsers are unavailable). */
 export function isMobileDevice(): boolean {
   if (typeof navigator === 'undefined') return false
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return true
+  // Modern iPadOS reports a MacIntel user agent with touch points.
+  return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
 }
 
 type BackHandlerEntry = { id: number; handler: () => void }

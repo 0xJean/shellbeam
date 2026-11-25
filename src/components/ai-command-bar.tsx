@@ -1,6 +1,9 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import { AlertCircle, ArrowUp, FastForward, HelpCircle, History, Lightbulb, Paperclip, Plus, ShieldCheck, Trash2, TriangleAlert, Zap, Server, Check, ChevronDown, Copy, CornerDownLeft, Eraser, Loader2, MessageSquareText, MoreHorizontal, Pencil, Play, Radar, RefreshCw, RotateCcw, Sparkles, Square, SquareTerminal, X } from 'lucide-react'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { companionPublishAiState, companionRemoveAiState, isTauriRuntime, type CompanionAiActionEvent, type RemoteAiMessage } from '@/lib/companion'
+import { isMobileDevice } from '@/lib/mobile-back'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AI_SETTINGS_EVENT, streamAICommand, loadAISettings, saveAISettings, isAIConfigured, createAbortController, type AISettings } from '@/lib/ai'
@@ -16,13 +19,15 @@ import { suggestPrompts } from '@/lib/ai-suggestions'
 import type { WorkspaceInventory } from '@/lib/workspace-inventory'
 import { AiAssistantSheet, type AiSheetMessage } from './mobile/ai-assistant-sheet'
 import { CommandRiskChip } from './mobile/command-risk-chip'
-import { useNarrowViewport } from './mobile/use-narrow-viewport'
+import { useCompactWorkspace } from '@/lib/viewport'
 import { AIModelSwitcher } from './ai-model-switcher'
 import { AIMarkdown } from './ai-markdown'
 import { PanelResizeHandle } from './ui/panel-resize-handle'
 import { useResizablePanel } from '@/hooks/use-resizable-panel'
 
 interface AICommandBarProps {
+  /** Desktop interactive session ID for Companion Bridge mirroring & remote command approval. */
+  sessionId?: string
   /** Fallback when no bridge is available: sends raw input to the session. */
   onExecuteCommand: (command: string) => void
   getTerminalContext: () => string
@@ -72,11 +77,11 @@ const nextId = (prefix: string) => `${prefix}-${Date.now()}-${++turnSeq}`
 /** Excludes in-flight running captures from local transcript cache so switching away and back never restores a stuck spinner. */
 const cacheableTurns = (list: AITurn[]) => list.filter((turn) => turn.kind !== 'run' || turn.state !== 'running')
 
-export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, memoryVaultId, hostFacts, inventory, probe, attachedSnippet, onClearAttachedSnippet, focusToken }: AICommandBarProps) {
+export function AICommandBar({ sessionId, onExecuteCommand, getTerminalContext, bridge, visible, onClose, presentation = 'auto', contextLabel, memoryKey, memoryVaultId, hostFacts, inventory, probe, attachedSnippet, onClearAttachedSnippet, focusToken }: AICommandBarProps) {
   const { t, locale } = useT()
   const copy = aiAssistantCopy[locale]
-  const narrow = useNarrowViewport()
-  const asSheet = presentation === 'sheet' || (presentation === 'auto' && narrow)
+  const compactWorkspace = useCompactWorkspace()
+  const asSheet = presentation === 'sheet' || (presentation === 'auto' && compactWorkspace)
   const panelResize = useResizablePanel({
     storageKey: 'aiAssistant',
     defaultSize: 400,
@@ -655,6 +660,90 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     if (event.key === 'Escape') { if (isStreaming) handleCancel(); else onClose() }
   }, [submit, input, tip, handleCancel, isStreaming, onClose, handleRun])
 
+  // Publish live desktop AI conversation state to CompanionAiHub so connected phones can mirror & approve commands.
+  const companionHandlersRef = useRef({ handleRun, handleCancel, submit, changeRunMode })
+  useLayoutEffect(() => {
+    companionHandlersRef.current = { handleRun, handleCancel, submit, changeRunMode }
+  }, [handleRun, handleCancel, submit, changeRunMode])
+
+  useEffect(() => {
+    if (!sessionId || isMobileDevice() || !isTauriRuntime()) return
+    const target = currentModelTarget(settings)
+    const ranIds = new Set(turns.filter((turn): turn is Extract<AITurn, { kind: 'run' }> => turn.kind === 'run' && Boolean(turn.source)).map((t) => t.source as string))
+    const latestAi = [...turns].reverse().find((turn): turn is Extract<AITurn, { kind: 'ai' }> => turn.kind === 'ai')
+    const latestCmd = latestAi && !isNoteReply(latestAi.text) ? splitReply(latestAi.text).command : ''
+    const hasPending = Boolean(latestAi && latestCmd && !ranIds.has(latestAi.id) && !isStreaming)
+    const remoteMessages: RemoteAiMessage[] = turns.slice(-24).map((turn) => {
+      if (turn.kind === 'user') return { id: turn.id, role: 'user', content: turn.text, timestamp: Date.now(), executed: false }
+      if (turn.kind === 'ai') {
+        const parsed = isNoteReply(turn.text) ? null : splitReply(turn.text)
+        return {
+          id: turn.id,
+          role: 'assistant',
+          content: parsed?.command ? parsed.caption : noteText(turn.text),
+          timestamp: Date.now(),
+          command: parsed?.command || null,
+          executed: ranIds.has(turn.id),
+        }
+      }
+      if (turn.kind === 'run') {
+        return {
+          id: turn.id,
+          role: 'output',
+          content: (turn.output || '').trim().slice(0, 6000),
+          timestamp: Date.now(),
+          command: turn.command,
+          executed: true,
+        }
+      }
+      return { id: turn.id, role: 'status', content: turn.text, timestamp: Date.now(), executed: false }
+    })
+    void companionPublishAiState({
+      sessionId,
+      hostLabel: contextLabel || sessionId,
+      mode: runMode,
+      modelLabel: `${target.providerName}${target.model ? ` · ${target.model}` : ''}`,
+      isStreaming,
+      streamingText: streamingContent.replace(/\n#>[^\n]*$/, '').slice(0, 4000),
+      stepLabel: autoState ? (autoState.steps > 0 ? `Step ${autoState.steps}` : copy.autoPlanning) : '',
+      pendingCommand: hasPending ? latestCmd : null,
+      pendingRisk: null,
+      pendingMessageId: hasPending && latestAi ? latestAi.id : null,
+      messages: remoteMessages,
+      updatedAt: Date.now(),
+    })
+  }, [sessionId, contextLabel, settings, turns, isStreaming, streamingContent, runMode, autoState, copy.autoPlanning])
+
+  useEffect(() => {
+    if (!sessionId || isMobileDevice() || !isTauriRuntime()) return
+    let unlisten: (() => void) | undefined
+    void listen<CompanionAiActionEvent>('companion:ai-action', (event) => {
+      const payload = event.payload
+      if (!payload || payload.sessionId !== sessionId) return
+      const handlers = companionHandlersRef.current
+      if (payload.action === 'cancel') {
+        handlers.handleCancel()
+      } else if (payload.action === 'send_prompt' && payload.prompt?.trim()) {
+        void handlers.submit(payload.prompt.trim())
+      } else if (payload.action === 'set_mode' && (payload.mode === 'confirm' || payload.mode === 'read-only' || payload.mode === 'auto')) {
+        handlers.changeRunMode(payload.mode)
+      } else if (payload.action === 'run_pending') {
+        const list = turnsRef.current
+        const targetTurn = payload.messageId
+          ? list.find((turn): turn is Extract<AITurn, { kind: 'ai' }> => turn.kind === 'ai' && turn.id === payload.messageId)
+          : [...list].reverse().find((turn): turn is Extract<AITurn, { kind: 'ai' }> => turn.kind === 'ai')
+        const cmd = targetTurn && !isNoteReply(targetTurn.text) ? splitReply(targetTurn.text).command : ''
+        if (targetTurn && cmd) {
+          handlers.handleRun(cmd, { source: targetTurn.id })
+        }
+      }
+    }).then((fn) => { unlisten = fn })
+    return () => {
+      unlisten?.()
+      void companionRemoveAiState(sessionId)
+    }
+  }, [sessionId])
+
   if (!visible) return null
 
   const lastTurn = turns[turns.length - 1]
@@ -683,6 +772,8 @@ export function AICommandBar({ onExecuteCommand, getTerminalContext, bridge, vis
     return (
       <AiAssistantSheet
         contextLabel={contextLabel}
+        settings={settings}
+        onChangeSettings={changeSettings}
         messages={messages}
         streamingContent={streamingContent}
         isStreaming={isStreaming}

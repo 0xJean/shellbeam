@@ -191,6 +191,12 @@
     --workspace-metric-memory-glow: rgba(34, 197, 94, 0.12);
     --workspace-metric-disk-glow: rgba(245, 158, 11, 0.12);
     --workspace-metric-network-glow: rgba(56, 189, 248, 0.12);
+    --workspace-mobile-bg-top: var(--workspace-bg-950);
+    --workspace-mobile-bg-mid: var(--workspace-bg-900);
+    --workspace-mobile-bg-bottom: var(--workspace-bg-950);
+    --workspace-mobile-card: var(--workspace-surface-900);
+    --workspace-mobile-card-strong: var(--workspace-surface-800);
+    --workspace-mobile-stroke: var(--workspace-border-soft);
   }
 
   * {

@@ -17,6 +17,7 @@ import {
   KeyRound,
   Pencil,
   Trash2,
+  Smartphone,
 } from 'lucide-react'
 import { mdnsStartDiscover, mdnsStopDiscover, onMdnsDeviceFound, getAndroidDeviceName, type DiscoveredDevice } from '@/lib/mdns'
 import { getSystemHostname, syncSendPairRequest, syncAcceptPair, syncResolveOutgoingPair } from '@/lib/sync'
@@ -34,6 +35,10 @@ import { syncBackupCopy } from '@/lib/locales/sync-backup-v3'
 import { cn } from '@/lib/utils'
 import { PairDialog, ScanningView, PairingView, ConfirmingView, IncomingPairView, ConnectFailedView, type PairStep } from './sync-pairing-views'
 import { SyncPeerDetail } from './sync-peer-detail'
+import { CompanionQrCard } from './companion-qr-card'
+import { companionAddPeerRoute, openCompanionCenter, type ParsedPairingLink } from '@/lib/companion'
+import { companionCopy } from '@/lib/locales/companion'
+import { isMobileDevice } from '@/lib/mobile-back'
 type SyncView = 'home' | 'scanning' | 'pairing' | 'confirming' | 'incoming' | 'peer-detail' | 'connect-failed'
 
 interface SyncCenterPanelProps {
@@ -67,9 +72,11 @@ export function SyncCenterPanel({
 }: SyncCenterPanelProps) {
   const { t, locale } = useT()
   const copy = syncBackupCopy[locale] ?? syncBackupCopy['zh-CN']
+  const compCopy = companionCopy[locale] ?? companionCopy['zh-CN']
   const [view, setView] = useState<SyncView>('home')
   const [activePeer, setActivePeer] = useState<SyncTrustedPeer | null>(null)
   const [showAllChanges, setShowAllChanges] = useState(false)
+  const [showAllPeers, setShowAllPeers] = useState(false)
   const [seenFocus, setSeenFocus] = useState(focusSection)
   const backupRef = useRef<HTMLDivElement>(null)
   if (seenFocus !== focusSection) {
@@ -252,29 +259,94 @@ export function SyncCenterPanel({
     }
   }
 
-  // Listen for incoming pair requests from remote devices
-  useEffect(() => {
-    let unlisten: (() => void) | null = null
-    listen<{
-      sessionId: string
-      peerDeviceId: string
-      peerDeviceName: string
-      peerHost: string
-      verificationCode: string
-    }>('pair-request-received', (event) => {
-      console.log('[sync] pair-request-received event:', JSON.stringify(event.payload))
-      // A request arriving later must not replace the one the user is reading.
-      setIncomingPairRequest((current) => current ?? event.payload)
-      setView('incoming')
-    }).then((fn) => { unlisten = fn })
-    return () => { unlisten?.() }
-  }, [])
+  // Incoming pair requests are handled globally by PcLayout so they appear on any page
+  // (including when scanning from the top-bar quick-connect QR popover).
+
+  const pendingExtraRoutesRef = useRef<{
+    hosts: string[]
+    port: number
+    irohId?: string
+    relayUrl?: string
+  } | null>(null)
+
+  async function handleDirectPair(parsed: ParsedPairingLink) {
+    if (!serverRunning) {
+      try { await onStartServer() } catch { /* ignore */ }
+    }
+    const targets: Array<{ host: string; port: number }> = parsed.hosts.map((host) => ({
+      host,
+      port: parsed.port,
+    }))
+    if (parsed.irohId) {
+      const irohHost = parsed.relayUrl
+        ? `iroh://${parsed.irohId}?relay=${encodeURIComponent(parsed.relayUrl)}`
+        : `iroh://${parsed.irohId}`
+      targets.push({ host: irohHost, port: 1 })
+    }
+    pendingExtraRoutesRef.current = {
+      hosts: parsed.hosts,
+      port: parsed.port,
+      irohId: parsed.irohId,
+      relayUrl: parsed.relayUrl,
+    }
+    const displayName = parsed.deviceName || parsed.hosts[0] || (parsed.irohId ? `P2P ${parsed.irohId.slice(0, 8)}` : 'Desktop')
+    let lastError: unknown = null
+    for (const target of targets) {
+      setSelectedDevice({ name: displayName, host: target.host, port: target.port, deviceType: 'computer' })
+      setView('pairing')
+      setPairingBusy(true)
+      setPairingError('')
+      try {
+        const session = await syncSendPairRequest({
+          peerHost: target.host,
+          peerPort: target.port,
+          peerName: displayName,
+        })
+        setGeneratedPin(session.verificationCode)
+        setOutgoingSessionId(session.sessionId)
+        setCodeConfirmed(false)
+        setView('confirming')
+        await onRefresh()
+        setPairingBusy(false)
+        return
+      } catch (err) {
+        lastError = err
+      }
+    }
+    setPairingBusy(false)
+    pendingExtraRoutesRef.current = null
+    setView('home')
+    throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'Connection failed'))
+  }
 
   // Listen for pair-confirmed event (initiator gets this when receiver accepts)
   useEffect(() => {
     let unlisten: (() => void) | null = null
     listen<{ peerDeviceId: string; peerDeviceName: string }>('pair-confirmed', (event) => {
       console.log('[sync] pair-confirmed event:', JSON.stringify(event.payload))
+      const extra = pendingExtraRoutesRef.current
+      pendingExtraRoutesRef.current = null
+      if (extra && event.payload?.peerDeviceId) {
+        const saves: Array<Promise<unknown>> = extra.hosts.map((host) =>
+          companionAddPeerRoute({
+            peerDeviceId: event.payload.peerDeviceId,
+            host,
+            port: extra.port,
+          }).catch(() => {}),
+        )
+        if (extra.irohId) {
+          saves.push(
+            companionAddPeerRoute({
+              peerDeviceId: event.payload.peerDeviceId,
+              host: extra.irohId,
+              port: 1,
+              kind: 'iroh',
+              label: extra.relayUrl,
+            }).catch(() => {}),
+          )
+        }
+        void Promise.all(saves).then(() => void onRefresh())
+      }
       setGeneratedPin('')
       setOutgoingSessionId('')
       setSelectedDevice(null)
@@ -429,6 +501,7 @@ export function SyncCenterPanel({
           loading={loading}
           onBack={back}
           onScan={startScan}
+          onRefresh={onRefresh}
           onPullFromPeer={onPullFromPeer}
           onPushToPeer={onPushToPeer}
           onRemoveTrustedPeer={onRemoveTrustedPeer}
@@ -494,41 +567,79 @@ export function SyncCenterPanel({
         <span className="shrink-0 rounded-md bg-[var(--workspace-accent-subtle)] px-1.5 py-0.5 text-[11px] font-medium text-[color:var(--workspace-accent-text)]">{copy.thisDevice}</span>
       </div>
 
+      {isMobileDevice() ? (
+        <CompanionQrCard
+          deviceName={localDevice.deviceName}
+          serverRunning={serverRunning}
+          serverPort={serverPort}
+          onStartServer={() => onStartServer()}
+          onDirectPair={handleDirectPair}
+        />
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]/35 px-5 py-2.5">
+          <div className="flex min-w-0 items-center gap-2 text-[12px] text-[var(--workspace-text-muted)]">
+            <Smartphone className="h-3.5 w-3.5 shrink-0 text-[var(--workspace-accent-text)]" />
+            <span className="truncate">{compCopy.syncBannerDesc}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => openCompanionCenter()}
+            className="inline-flex shrink-0 items-center gap-1 text-[12px] font-medium text-[color:var(--workspace-accent-text)] hover:underline"
+          >
+            <span>{compCopy.syncBannerAction}</span>
+            <ArrowRight className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between px-5 pb-1.5 pt-3 text-[11px] text-[var(--workspace-text-subtle)]">
         <span className="flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" />{fill(copy.trusted, { n: trustedPeers.length })}</span>
+        {trustedPeers.length > 4 && (
+          <button
+            type="button"
+            onClick={() => setShowAllPeers((v) => !v)}
+            className="text-[11px] font-medium text-[color:var(--workspace-accent-text)] hover:underline"
+          >
+            {showAllPeers ? compCopy.collapsePeers : fill(compCopy.showAllPeers, { n: trustedPeers.length })}
+          </button>
+        )}
       </div>
       {trustedPeers.length === 0 ? (
         <p className="border-b border-[color:var(--workspace-border-soft)] px-5 pb-4 pt-1 text-[12px] text-[var(--workspace-text-muted)]">{copy.noPeers}</p>
-      ) : trustedPeers.map((peer) => {
-        const online = isPeerOnline(peer)
-        const name = peer.peerDeviceName ?? t('sync.unknown')
-        return (
-          <button
-            type="button"
-            key={peer.peerDeviceId}
-            aria-label={fill(copy.openPeer, { name })}
-            className="flex w-full items-center gap-3 border-t border-[color:var(--workspace-border-soft)] px-5 py-3 text-left transition-colors hover:bg-[var(--workspace-surface-800)]"
-            onClick={() => { setActivePeer(peer); setView('peer-detail') }}
-          >
-            <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', online ? 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' : 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]')}>
-              <Monitor className="h-4 w-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <p className="truncate text-[13px] font-medium text-[var(--workspace-text-strong)]">{name}</p>
-                <span className={cn('flex shrink-0 items-center gap-1 text-[11px]', online ? 'text-[color:var(--workspace-status-good-text)]' : 'text-[var(--workspace-text-subtle)]')}>
-                  <span className={cn('h-1.5 w-1.5 rounded-full', online ? 'bg-[color:var(--workspace-status-good)]' : 'bg-[var(--workspace-text-subtle)]')} />
-                  {online ? t('sync.online') : t('sync.offline')}
-                </span>
-              </div>
-              <p className="truncate text-[11px] text-[var(--workspace-text-muted)]">
-                {fill(copy.peerSub, { endpoint: peer.peerEndpoint ?? t('sync.noEndpoint'), time: new Date(peer.lastSeenAt).toLocaleDateString() })}
-              </p>
-            </div>
-            <ChevronRight className="h-4 w-4 shrink-0 text-[var(--workspace-text-subtle)]" />
-          </button>
-        )
-      })}
+      ) : (
+        <div className={cn(showAllPeers && trustedPeers.length > 6 && 'max-h-[340px] overflow-y-auto')}>
+          {(showAllPeers ? trustedPeers : trustedPeers.slice(0, 4)).map((peer) => {
+            const online = isPeerOnline(peer)
+            const name = peer.peerDeviceName ?? t('sync.unknown')
+            return (
+              <button
+                type="button"
+                key={peer.peerDeviceId}
+                aria-label={fill(copy.openPeer, { name })}
+                className="flex w-full items-center gap-3 border-t border-[color:var(--workspace-border-soft)] px-5 py-3 text-left transition-colors hover:bg-[var(--workspace-surface-800)]"
+                onClick={() => { setActivePeer(peer); setView('peer-detail') }}
+              >
+                <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', online ? 'bg-[var(--workspace-status-good-bg)] text-[color:var(--workspace-status-good-text)]' : 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-muted)]')}>
+                  <Monitor className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-[13px] font-medium text-[var(--workspace-text-strong)]">{name}</p>
+                    <span className={cn('flex shrink-0 items-center gap-1 text-[11px]', online ? 'text-[color:var(--workspace-status-good-text)]' : 'text-[var(--workspace-text-subtle)]')}>
+                      <span className={cn('h-1.5 w-1.5 rounded-full', online ? 'bg-[color:var(--workspace-status-good)]' : 'bg-[var(--workspace-text-subtle)]')} />
+                      {online ? t('sync.online') : t('sync.offline')}
+                    </span>
+                  </div>
+                  <p className="truncate text-[11px] text-[var(--workspace-text-muted)]">
+                    {fill(copy.peerSub, { endpoint: peer.peerEndpoint ?? t('sync.noEndpoint'), time: new Date(peer.lastSeenAt).toLocaleDateString() })}
+                  </p>
+                </div>
+                <ChevronRight className="h-4 w-4 shrink-0 text-[var(--workspace-text-subtle)]" />
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       <div className="space-y-2 border-t border-[color:var(--workspace-border-soft)] px-5 py-4">
         <p className="text-[11px] text-[var(--workspace-text-subtle)]">{copy.syncContent}</p>

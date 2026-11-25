@@ -52,6 +52,8 @@ libc = "0.2"
 mdns-sd = "0.18"
 hostname = "0.4"
 if-addrs = { version = "0.15", features = ["link-local"] }
+iroh = { version = "0.98", default-features = false, features = ["tls-ring"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync"] }
 
 # Use vendored (statically-linked) OpenSSL on macOS, iOS and Android so the app
 # doesn't depend on system libssl at runtime.

@@ -3,6 +3,21 @@ import { MobileTerminalDrawer } from '@/components/mobile/mobile-terminal-drawer
 import { MobileHostsPage } from '@/components/mobile/mobile-hosts-page'
 import { FleetDashboard } from '@/components/dashboard/fleet-dashboard'
 import { requestSettingsCategory, SETTINGS_OPEN_EVENT } from '@/lib/settings-request'
+import {
+  closeRemoteDesktopSession,
+  COMPANION_OPEN_EVENT,
+  EMPTY_COMPANION_STATUS,
+  EMPTY_COMPANION_WORKSPACE,
+  getCompanionStatusSnapshot,
+  getCompanionWorkspaceSnapshot,
+  isTauriRuntime,
+  subscribeCompanionStatus,
+  subscribeCompanionWorkspace,
+} from '@/lib/companion'
+import { syncAcceptPair } from '@/lib/sync'
+import { listen } from '@tauri-apps/api/event'
+import { IncomingPairView, PairDialog } from '@/components/sync-pairing-views'
+import { MobileRemoteSessionSheet } from '@/components/mobile/mobile-remote-session-sheet'
 import { MobileToolsPage } from '@/components/mobile-tools-page'
 import { isMobileDevice, useMobileBackHandler } from '@/lib/mobile-back'
 import { isToolPage } from '@/lib/mobile-navigation'
@@ -102,6 +117,10 @@ const SftpDualPane = lazy(async () => {
 const SyncCenterPanel = lazy(async () => {
   const module = await import('@/components/sync-center-panel')
   return { default: module.SyncCenterPanel }
+})
+const CompanionCenterPanel = lazy(async () => {
+  const module = await import('@/components/companion-center-panel')
+  return { default: module.CompanionCenterPanel }
 })
 const ActivityLogPanel = lazy(async () => {
   const module = await import('@/components/activity-log-panel')
@@ -237,6 +256,50 @@ export function PcLayout() {
   const [tourOutcome, setTourOutcome] = useState<TourOutcome | null>(null)
   const [assetEditingHost, setAssetEditingHost] = useState<HostProfile | null>(null)
   const [assetSshImportOpen, setAssetSshImportOpen] = useState(false)
+  const [incomingPairRequest, setIncomingPairRequest] = useState<{
+    sessionId: string
+    peerDeviceId: string
+    peerDeviceName: string
+    peerHost: string
+    verificationCode: string
+  } | null>(null)
+  const [incomingPairBusy, setIncomingPairBusy] = useState(false)
+  const [incomingPairError, setIncomingPairError] = useState('')
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return
+    let unlisten: (() => void) | null = null
+    void listen<{
+      sessionId: string
+      peerDeviceId: string
+      peerDeviceName: string
+      peerHost: string
+      verificationCode: string
+    }>('pair-request-received', (event) => {
+      setIncomingPairError('')
+      setIncomingPairRequest((current) => current ?? event.payload)
+    }).then((fn) => { unlisten = fn })
+    return () => { unlisten?.() }
+  }, [])
+
+  const handleAcceptGlobalIncomingPair = async () => {
+    if (!incomingPairRequest) return
+    setIncomingPairBusy(true)
+    setIncomingPairError('')
+    try {
+      await syncAcceptPair({
+        sessionId: incomingPairRequest.sessionId,
+        peerHost: incomingPairRequest.peerHost || '127.0.0.1',
+        peerPort: 9123,
+      })
+      setIncomingPairRequest(null)
+      await sync.refresh()
+    } catch (err) {
+      setIncomingPairError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setIncomingPairBusy(false)
+    }
+  }
   const [rightSidebarOpen, setRightSidebarOpen] = useState(() => {
     // Open by default; closing it is remembered.
     try { return localStorage.getItem('shellbeam.rightSidebar') !== 'false' } catch { return true }
@@ -276,11 +339,31 @@ export function PcLayout() {
     prevNavTabCountRef.current = newCount
   }, [pcSessionTabs.length, setPcSidebarNav])
 
+  const isMd = useSyncExternalStore(subscribeMediaQuery, getIsMd, () => true)
+  const { setPcActiveSessionId } = sessions
+
   useEffect(() => {
-    if (pcSessionTabs.length === 0 && !pcActiveSessionId && pcSidebarNav === 'terminal' && !showQuickConnect) {
-      setPcSidebarNav('hosts')
+    // When unfolding (or on desktop) while on 'terminal' with no active PC session,
+    // either promote the mobile active session or return to the Hosts dashboard.
+    if (isMd && pcSidebarNav === 'terminal' && !pcActiveSessionId) {
+      const target = mobileActiveSessionId && pcSessionTabs.some((tab) => tab.sessionId === mobileActiveSessionId)
+        ? mobileActiveSessionId
+        : pcSessionTabs[0]?.sessionId ?? null
+      if (target) {
+        setPcActiveSessionId(target)
+      } else if (!showQuickConnect) {
+        setPcSidebarNav('hosts')
+      }
     }
-  }, [pcActiveSessionId, pcSessionTabs.length, pcSidebarNav, setPcSidebarNav, showQuickConnect])
+  }, [isMd, mobileActiveSessionId, pcActiveSessionId, pcSessionTabs, pcSidebarNav, setPcActiveSessionId, setPcSidebarNav, showQuickConnect])
+
+  useEffect(() => {
+    // When folding from desktop with an active session, keep viewing that session on mobile.
+    if (!isMd && pcActiveSessionId && pcSessionTabs.some((tab) => tab.sessionId === pcActiveSessionId)) {
+      setMobileActiveSessionId(pcActiveSessionId)
+      setPcSidebarNav('terminal')
+    }
+  }, [isMd, pcActiveSessionId, pcSessionTabs, setPcSidebarNav])
 
   useEffect(() => {
     const open = () => {
@@ -484,13 +567,42 @@ export function PcLayout() {
       setShowQuickConnect(false)
       app.setPcSidebarNav('settings')
     }
+    const onOpenCompanion = () => {
+      sessions.setPcActiveSessionId(null)
+      setShowQuickConnect(false)
+      app.setPcSidebarNav('companion')
+    }
     window.addEventListener(SETTINGS_OPEN_EVENT, onOpenSettings)
-    return () => window.removeEventListener(SETTINGS_OPEN_EVENT, onOpenSettings)
+    window.addEventListener(COMPANION_OPEN_EVENT, onOpenCompanion)
+    return () => {
+      window.removeEventListener(SETTINGS_OPEN_EVENT, onOpenSettings)
+      window.removeEventListener(COMPANION_OPEN_EVENT, onOpenCompanion)
+    }
   }, [app, sessions])
 
-  const isMd = useSyncExternalStore(subscribeMediaQuery, getIsMd, () => true)
+  // `isMd` is declared above so mobile Sessions tab effect stays in sync with viewport changes.
+  const companionStatus = useSyncExternalStore(
+    subscribeCompanionStatus,
+    getCompanionStatusSnapshot,
+    () => EMPTY_COMPANION_STATUS,
+  )
+  const companionWorkspace = useSyncExternalStore(
+    subscribeCompanionWorkspace,
+    getCompanionWorkspaceSnapshot,
+    () => EMPTY_COMPANION_WORKSPACE,
+  )
+  const activeRemoteDesktopSession = companionStatus.state === 'connected' && companionWorkspace.activeSessionId
+    ? companionWorkspace.sessions.find((s) => s.sessionId === companionWorkspace.activeSessionId) ?? null
+    : null
   const SettingsScreen = isMd ? SettingsPanel : MobileSettingsPage
   const mobileDevice = isMobileDevice()
+  const inActiveMobileTerminal = !isMd && app.pcSidebarNav === 'terminal' && sessions.pcSessionTabs.length > 0 && !showQuickConnect
+  const showDashboardLayer = isMd ? !sessions.pcActiveSessionId : app.pcSidebarNav !== 'terminal'
+  useMobileBackHandler(!isMd && showQuickConnect, () => setShowQuickConnect(false))
+  useMobileBackHandler(inActiveMobileTerminal && !mobileDrawerOpen, () => {
+    sessions.setPcActiveSessionId(null)
+    app.setPcSidebarNav('hosts')
+  })
   useMobileBackHandler(!isMd && isToolPage(app.pcSidebarNav) && app.pcSidebarNav !== 'tools', () => app.setPcSidebarNav('tools'))
   const browserMetaBySession = useMemo(() => {
     return sessions.pcSessionTabs.reduce<Record<string, SessionBrowserTabMeta>>((acc, tab) => {
@@ -920,6 +1032,27 @@ export function PcLayout() {
         onAccept={sessions.acceptPendingHostKey}
         onReject={sessions.rejectPendingHostKey}
       />
+      <PairDialog
+        open={incomingPairRequest != null}
+        step="incoming"
+        onClose={() => {
+          setIncomingPairRequest(null)
+          setIncomingPairError('')
+        }}
+      >
+        {incomingPairRequest && (
+          <IncomingPairView
+            request={incomingPairRequest}
+            pairingBusy={incomingPairBusy}
+            pairingError={incomingPairError}
+            onAccept={() => void handleAcceptGlobalIncomingPair()}
+            onCancel={() => {
+              setIncomingPairRequest(null)
+              setIncomingPairError('')
+            }}
+          />
+        )}
+      </PairDialog>
       <HostEditorDialog
         host={assetEditingHost}
         defaultUsername={hostsCtx.defaultUsername}
@@ -1000,7 +1133,7 @@ export function PcLayout() {
           onSelectSession={(sid) => { sessions.setPcActiveSessionId(sid); setShowQuickConnect(false) }}
           onCloseSession={requestCloseSession}
           onGoToDashboard={handleGoToDashboard}
-          onOpenLocalTerminal={() => sessions.handleOpenLocalTerminal()}
+          onOpenLocalTerminal={mobileDevice ? undefined : () => sessions.handleOpenLocalTerminal()}
           onNewConnection={handlePcNewConnection}
           onToggleSplit={canToggleSplit ? handleToggleSplit : undefined}
           hosts={hostsCtx.hosts}
@@ -1008,6 +1141,14 @@ export function PcLayout() {
           aiOpen={!!sessions.pcActiveSessionId && terminalAiOpen[sessions.pcActiveSessionId] === true}
           theme={app.theme}
           onToggleTheme={app.toggleTheme}
+          companionInfo={{
+            deviceName: sync.localDevice?.deviceName,
+            serverRunning: sync.serverRunning,
+            serverPort: sync.serverPort,
+            onStartServer: () => sync.handleStartServer(),
+            trustedPeers: sync.trustedPeers,
+            hosts: hostsCtx.hosts,
+          }}
         />
       </div>
       <div className="relative min-h-0 flex-1">
@@ -1171,10 +1312,17 @@ export function PcLayout() {
 
         {/* Mobile Terminal layer - shown when nav is 'terminal' on small screens */}
         {!isMd && (
-        <div className={cn('mobile-safe-pb absolute inset-0 flex flex-col md:hidden', app.pcSidebarNav === 'terminal' ? 'z-10' : 'pointer-events-none invisible')}>
+        <div className={cn(
+          'absolute inset-0 flex flex-col md:hidden',
+          !inActiveMobileTerminal && 'mobile-safe-pb',
+          app.pcSidebarNav === 'terminal' ? 'z-10' : 'pointer-events-none invisible',
+        )}>
           <MobileSessionHeader
             onOpenDrawer={toggleMobileDrawer}
-            onBack={() => app.setPcSidebarNav('hosts')}
+            onBack={() => {
+              sessions.setPcActiveSessionId(null)
+              app.setPcSidebarNav('hosts')
+            }}
             sessionTabs={sessions.pcSessionTabs}
             activeSessionId={mobileActiveSessionId}
             onSelectSession={setMobileActiveSessionId}
@@ -1182,6 +1330,8 @@ export function PcLayout() {
             onNewConnection={handleMobileNewConnection}
             onOpenLocalTerminal={mobileDevice ? undefined : () => sessions.handleOpenLocalTerminal()}
             hosts={hostsCtx.hosts}
+            trustedPeers={sync.trustedPeers}
+            onOpenCompanion={() => app.setPcSidebarNav('companion')}
             onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
           />
           {mobileActiveSessionId && sessions.interactiveSessions.some((s) => s.sessionId === mobileActiveSessionId) && (
@@ -1320,8 +1470,8 @@ export function PcLayout() {
                   }}
                   terminalPrefs={app.terminalPrefs}
                   onTerminalPrefsChange={app.updateTerminalPrefs}
-                  onSearchToggle={() => { if (sessions.pcActiveSessionId) requestTerminalSearchToggle(sessions.pcActiveSessionId) }}
-                  searchVisible={!!sessions.pcActiveSessionId && terminalSearchOpen[sessions.pcActiveSessionId] === true}
+                  onSearchToggle={() => { if (mobileActiveSessionId) requestTerminalSearchToggle(mobileActiveSessionId) }}
+                  searchVisible={!!mobileActiveSessionId && terminalSearchOpen[mobileActiveSessionId] === true}
                   hosts={hostsCtx.hosts}
                   vaultId={vault.activeVaultId}
                 />
@@ -1342,12 +1492,9 @@ export function PcLayout() {
         </div>
         )}
 
-        {/* Dashboard layer */}
-        {!sessions.pcActiveSessionId && (
-          <div className={cn(
-            'flex h-full',
-            app.pcSidebarNav === 'terminal' && 'hidden',
-          )}>
+        {/* Dashboard layer: always shown on mobile when not on 'terminal', and on desktop when no session tab is active. */}
+        {showDashboardLayer && (
+          <div className="flex h-full">
             <PcNavSidebar activeNav={app.pcSidebarNav} onNavChange={(nav) => { app.setPcSidebarNav(nav); setShowQuickConnect(false) }}
               onOpenSearch={() => app.setCommandPaletteOpen(true)}
               counts={{ hosts: hostsCtx.hosts.filter((host) => !host.vaultId || host.vaultId === vault.activeVaultId).length, snippets: snippets.snippets.length, forwardsRunning: forwardSummary.running.size }}
@@ -1373,8 +1520,13 @@ export function PcLayout() {
               ) : (
               <>
               {app.pcSidebarNav !== 'tools' && isToolPage(app.pcSidebarNav) && (
-                <button type="button" data-testid="mobile-tools-back" onClick={() => app.setPcSidebarNav('tools')}
-                  className="flex items-center gap-1 px-3 pt-3 text-[15px] text-[var(--workspace-accent-text)] md:hidden">
+                <button
+                  type="button"
+                  data-testid="mobile-tools-back"
+                  onClick={() => app.setPcSidebarNav('tools')}
+                  style={{ paddingTop: 'max(env(safe-area-inset-top), 0.75rem)' }}
+                  className="flex items-center gap-1 px-3 text-[15px] text-[var(--workspace-accent-text)] md:hidden"
+                >
                   <ChevronLeft className="h-5 w-5" />{t('nav.tools')}
                 </button>
               )}
@@ -1445,6 +1597,7 @@ export function PcLayout() {
               ) : (
                 <MobileHostsPage
                   hosts={hostsCtx.hosts}
+                  trustedPeers={sync.trustedPeers}
                   activeVaultId={vault.activeVaultId}
                   vaults={vault.vaults}
                   vaultUnlocked={vault.vaultStatusState?.unlocked ?? false}
@@ -1463,6 +1616,7 @@ export function PcLayout() {
                   onConnectHost={(hostId) => void sessions.handleConnectHost(hostId)}
                   onOpenWorkspace={(hostId, workspaceApp) => { void sessions.openHostWorkspace(hostId, workspaceApp); app.setPcSidebarNav('terminal') }}
                   onOpenPortForwarding={() => app.setPcSidebarNav('port-forwarding')}
+                  onOpenSync={() => app.setPcSidebarNav('sync')}
                   openAddForm={hostsCtx.pcOpenAddHost}
                   onAddFormClose={() => hostsCtx.setPcOpenAddHost(false)}
                 />
@@ -1557,8 +1711,8 @@ export function PcLayout() {
               )}
               {app.pcSidebarNav === 'sftp' && (
                 <Suspense fallback={<DashboardSectionFallback fullHeight />}>
-                  {/* Positioned out of the scroll area's padding, so it reserves the phone's bottom nav itself. */}
-                  <div className="mobile-safe-pb absolute inset-0">
+                  {/* On mobile SFTP sits below the "< Tools" back button; on md+ it fills the viewport. */}
+                  <div className="mobile-safe-pb h-[calc(100%-2.75rem)] md:absolute md:inset-0 md:h-auto">
                     <SftpDualPane
                       vaultId={vault.activeVaultId}
                       hosts={hostsCtx.hosts}
@@ -1609,6 +1763,28 @@ export function PcLayout() {
                   </div>
                 </Suspense>
               )}
+              {app.pcSidebarNav === 'companion' && (
+                <Suspense fallback={<DashboardSectionFallback />}>
+                  <CompanionCenterPanel
+                    localDevice={sync.localDevice}
+                    trustedPeers={sync.trustedPeers}
+                    hosts={hostsCtx.hosts}
+                    loading={sync.loading}
+                    serverRunning={sync.serverRunning}
+                    serverPort={sync.serverPort}
+                    interactiveSessions={sessions.interactiveSessions}
+                    onRefresh={sync.refresh}
+                    onInitDevice={sync.handleInitDevice}
+                    onStartServer={sync.handleStartServer}
+                    onRemoveTrustedPeer={sync.handleRemoveTrustedPeer}
+                    onSelectSession={(sid) => {
+                      sessions.setPcActiveSessionId(sid)
+                      app.setPcSidebarNav('terminal')
+                      setShowQuickConnect(false)
+                    }}
+                  />
+                </Suspense>
+              )}
               {app.pcSidebarNav === 'activity' && (
                 <Suspense fallback={<DashboardSectionFallback />}>
                   <ActivityLogPanel hosts={hostsCtx.hosts} />
@@ -1647,16 +1823,36 @@ export function PcLayout() {
           </div>
         )}
       </div>
-      <MobileBottomNav
-        activeNav={app.pcSidebarNav}
-        sessionCount={sessions.pcSessionTabs.length}
-        onNavChange={(nav) => {
-          if (nav !== 'terminal') {
-            sessions.setPcActiveSessionId(null)
-          }
-          app.setPcSidebarNav(nav)
-        }}
-      />
+      {!inActiveMobileTerminal && (
+        <MobileBottomNav
+          activeNav={app.pcSidebarNav}
+          sessionCount={sessions.pcSessionTabs.length + (companionStatus.state === 'connected' ? companionWorkspace.sessions.length : 0)}
+          onNavChange={(nav) => {
+            if (nav !== 'terminal') {
+              sessions.setPcActiveSessionId(null)
+            } else {
+              const target = mobileActiveSessionId && sessions.pcSessionTabs.some((t) => t.sessionId === mobileActiveSessionId)
+                ? mobileActiveSessionId
+                : sessions.pcSessionTabs[0]?.sessionId ?? null
+              if (target) {
+                setMobileActiveSessionId(target)
+                sessions.setPcActiveSessionId(target)
+              }
+            }
+            app.setPcSidebarNav(nav)
+          }}
+        />
+      )}
+      {activeRemoteDesktopSession && (
+        <MobileRemoteSessionSheet
+          session={activeRemoteDesktopSession}
+          desktopName={companionStatus.peerDeviceName || 'Desktop'}
+          canControl={companionStatus.permissions?.allowTerminalControl !== false}
+          aiSnapshot={companionWorkspace.aiBySession[activeRemoteDesktopSession.sessionId] ?? null}
+          hosts={hostsCtx.hosts}
+          onClose={closeRemoteDesktopSession}
+        />
+      )}
     </div>
   )
 }

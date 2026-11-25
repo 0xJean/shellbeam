@@ -64,12 +64,12 @@ pub(crate) fn parse_sync_secret(secret: &Option<String>) -> Option<[u8; 32]> {
 }
 
 pub(crate) const SYNC_DEFAULT_PORT: u16 = 9123;
-const READ_TIMEOUT_SECS: u64 = 30;
-const WRITE_TIMEOUT_SECS: u64 = 30;
-const MAX_PLAIN_LINE_BYTES: u64 = 64 * 1024;
-const MAX_ENCRYPTED_LINE_BYTES: u64 = 64 * 1024 * 1024;
-const HELLO_METHOD: &str = "sync_hello";
-const CLIENT_NONCE_FIELD: &str = "client_nonce";
+pub(crate) const READ_TIMEOUT_SECS: u64 = 30;
+pub(crate) const WRITE_TIMEOUT_SECS: u64 = 30;
+pub(crate) const MAX_PLAIN_LINE_BYTES: u64 = 64 * 1024;
+pub(crate) const MAX_ENCRYPTED_LINE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const HELLO_METHOD: &str = "sync_hello";
+pub(crate) const CLIENT_NONCE_FIELD: &str = "client_nonce";
 const PAIRING_METHODS: [&str; 3] = ["pair_request", "pair_reveal", "pair_check"];
 pub(crate) const REPAIR_REQUIRED: &str =
     "This device is not paired or is using an older pairing. Update both devices and pair them again.";
@@ -111,7 +111,7 @@ pub(crate) enum InboundRequest {
     },
 }
 
-fn read_limited_line<R: BufRead>(reader: &mut R, max: u64) -> Result<String, String> {
+pub(crate) fn read_limited_line<R: BufRead>(reader: &mut R, max: u64) -> Result<String, String> {
     let mut line = String::new();
     reader
         .by_ref()
@@ -127,14 +127,14 @@ fn read_limited_line<R: BufRead>(reader: &mut R, max: u64) -> Result<String, Str
     Ok(line)
 }
 
-fn random_token() -> String {
+pub(crate) fn random_token() -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     B64.encode(bytes)
 }
 
-fn response_value(result: Result<serde_json::Value, String>) -> serde_json::Value {
+pub(crate) fn response_value(result: Result<serde_json::Value, String>) -> serde_json::Value {
     let resp = match result {
         Ok(data) => SyncResponse::Ok { data },
         Err(error) => SyncResponse::Err { error },
@@ -142,7 +142,7 @@ fn response_value(result: Result<serde_json::Value, String>) -> serde_json::Valu
     serde_json::to_value(&resp).unwrap_or_default()
 }
 
-fn write_plain(writer: &mut TcpStream, result: Result<serde_json::Value, String>) {
+pub(crate) fn write_plain(writer: &mut TcpStream, result: Result<serde_json::Value, String>) {
     let _ = writeln!(writer, "{}", response_value(result));
 }
 
@@ -162,9 +162,12 @@ fn trusted_peer_keys(app: &tauri::AppHandle) -> Vec<(String, [u8; 32])> {
         .collect()
 }
 
+pub(crate) const BRIDGE_UPGRADE_METHOD: &str = "bridge_open";
+
 pub(crate) fn serve_connection(app: tauri::AppHandle, stream: TcpStream) {
     let remote_addr = stream.peer_addr().ok();
-    serve_stream(
+    let app_for_upgrade = app.clone();
+    serve_stream_with_upgrade(
         stream,
         || trusted_peer_keys(&app),
         |request| match request {
@@ -177,13 +180,50 @@ pub(crate) fn serve_connection(app: tauri::AppHandle, stream: TcpStream) {
                 params,
             } => super::transport_handler::handle_request(&app, &method, params, &peer_device_id),
         },
+        move |upgrade| {
+            crate::companion::server::handle_bridge_upgrade(
+                app_for_upgrade.clone(),
+                upgrade.peer_device_id,
+                upgrade.key,
+                upgrade.challenge,
+                upgrade.client_nonce,
+                upgrade.params,
+                upgrade.writer,
+                upgrade.reader,
+                remote_addr,
+            );
+        },
     );
 }
 
+pub(crate) struct BridgeUpgrade {
+    pub peer_device_id: String,
+    pub key: [u8; 32],
+    pub challenge: String,
+    pub client_nonce: String,
+    pub params: Option<serde_json::Value>,
+    pub writer: TcpStream,
+    pub reader: BufReader<TcpStream>,
+}
+
+#[cfg(test)]
 fn serve_stream<K, H>(stream: TcpStream, peer_keys: K, handle: H)
 where
     K: Fn() -> Vec<(String, [u8; 32])>,
     H: Fn(InboundRequest) -> Result<serde_json::Value, String>,
+{
+    serve_stream_with_upgrade(stream, peer_keys, handle, |_| {});
+}
+
+fn serve_stream_with_upgrade<K, H, U>(
+    stream: TcpStream,
+    peer_keys: K,
+    handle: H,
+    on_bridge_upgrade: U,
+) where
+    K: Fn() -> Vec<(String, [u8; 32])>,
+    H: Fn(InboundRequest) -> Result<serde_json::Value, String>,
+    U: FnOnce(BridgeUpgrade),
 {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(WRITE_TIMEOUT_SECS)));
@@ -232,6 +272,18 @@ where
     if req.challenge != challenge {
         return write_plain(&mut writer, Err("Invalid request challenge".to_string()));
     }
+    if req.method == BRIDGE_UPGRADE_METHOD {
+        on_bridge_upgrade(BridgeUpgrade {
+            peer_device_id,
+            key,
+            challenge,
+            client_nonce: req.client_nonce,
+            params: req.params,
+            writer,
+            reader,
+        });
+        return;
+    }
     let mut resp = response_value(handle(InboundRequest::Peer {
         peer_device_id,
         method: req.method,
@@ -260,10 +312,30 @@ pub fn sync_server_status() -> (bool, u16) {
 }
 
 fn connect_peer(endpoint: &str) -> Result<TcpStream, String> {
-    let addr: std::net::SocketAddr = endpoint
-        .parse()
-        .map_err(|e| format!("Invalid endpoint {endpoint}: {e}"))?;
-    let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))
+    if let Some((id, relay)) = super::iroh_transport::parse_iroh_spec(endpoint) {
+        let stream = super::iroh_transport::connect_iroh_route(
+            &id,
+            relay.as_deref(),
+            super::routes::route_connect_timeout("iroh"),
+        )?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)))
+            .ok();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(WRITE_TIMEOUT_SECS)))
+            .ok();
+        return Ok(stream);
+    }
+    let (host, port) = super::routes::parse_host_port(endpoint)
+        .ok_or_else(|| format!("Invalid endpoint {endpoint}"))?;
+    let route = super::PeerRoute {
+        kind: super::routes::classify_host(&host).to_string(),
+        host,
+        port,
+        label: None,
+        last_ok_at: None,
+    };
+    let stream = super::routes::connect_tcp_route(&route)
         .map_err(|e| format!("Connect to {endpoint} failed: {e}"))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)))
@@ -274,13 +346,13 @@ fn connect_peer(endpoint: &str) -> Result<TcpStream, String> {
     Ok(stream)
 }
 
-fn parse_response(resp_str: &str) -> Result<serde_json::Value, String> {
+pub(crate) fn parse_response(resp_str: &str) -> Result<serde_json::Value, String> {
     let resp: serde_json::Value =
         serde_json::from_str(resp_str).map_err(|e| format!("Parse response failed: {e}"))?;
     unwrap_response(&resp)
 }
 
-fn unwrap_response(resp: &serde_json::Value) -> Result<serde_json::Value, String> {
+pub(crate) fn unwrap_response(resp: &serde_json::Value) -> Result<serde_json::Value, String> {
     let is_ok = resp
         .get("ok")
         .map(|v| v.as_bool() == Some(true) || v.as_str() == Some("true"))

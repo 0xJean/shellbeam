@@ -271,6 +271,8 @@ mod tests {
             last_seen_at: 0,
             source: "t".into(),
             peer_endpoint: None,
+            routes: Vec::new(),
+            bridge_permissions: crate::sync::PeerBridgePermissions::default(),
             sync_secret: secret.map(Into::into),
             pairing_version: CURRENT_PAIRING_VERSION,
         }

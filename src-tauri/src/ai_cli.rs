@@ -53,6 +53,26 @@ pub enum Backend {
     DevinCli,
 }
 impl Backend {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::ClaudeCode,
+        Self::CodexCli,
+        Self::GeminiCli,
+        Self::OpencodeCli,
+        Self::CursorCli,
+        Self::DevinCli,
+    ];
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::CodexCli => "codex-cli",
+            Self::GeminiCli => "gemini-cli",
+            Self::OpencodeCli => "opencode-cli",
+            Self::CursorCli => "cursor-cli",
+            Self::DevinCli => "devin-cli",
+        }
+    }
+
     fn binary(self) -> &'static str {
         match self {
             Self::ClaudeCode => "claude",
@@ -74,7 +94,7 @@ impl Backend {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Request {
-    request_id: String,
+    pub(crate) request_id: String,
     backend: Backend,
     executable: String,
     model: String,
@@ -89,6 +109,14 @@ pub struct Request {
     host: String,
     #[serde(default)]
     mode: RunMode,
+}
+
+impl Request {
+    /// Clears any peer-supplied executable override so remote companion requests can only run
+    /// desktop-discovered CLI binaries.
+    pub(crate) fn clear_executable(&mut self) {
+        self.executable.clear();
+    }
 }
 /// How ShellBeam runs the replies; told to the model so it knows whether to keep going.
 #[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
@@ -135,7 +163,7 @@ pub struct Status {
 #[derive(Default, Clone)]
 pub struct AiCliState(Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>);
 impl AiCliState {
-    fn register(&self, id: &str) -> Result<Arc<AtomicBool>, String> {
+    pub(crate) fn register(&self, id: &str) -> Result<Arc<AtomicBool>, String> {
         if uuid::Uuid::parse_str(id).is_err() {
             return Err("invalid_request".into());
         }
@@ -146,6 +174,13 @@ impl AiCliState {
         let cancel = Arc::new(AtomicBool::new(false));
         jobs.insert(id.to_owned(), cancel.clone());
         Ok(cancel)
+    }
+    pub(crate) fn cancel_request(&self, id: &str) {
+        if let Ok(jobs) = self.0.lock() {
+            if let Some(cancel) = jobs.get(id) {
+                cancel.store(true, Ordering::Release);
+            }
+        }
     }
     pub fn shutdown(&self) {
         self.cancel_all();
@@ -248,7 +283,77 @@ impl Drop for Registration {
         }
     }
 }
-fn validate_request(r: &Request) -> Result<(), String> {
+pub(crate) fn probe_available_backends() -> Vec<crate::companion::protocol::CliBackendInfo> {
+    if cfg!(mobile) {
+        return Vec::new();
+    }
+    Backend::ALL
+        .iter()
+        .map(|&backend| {
+            if backend == Backend::DevinCli && cfg!(windows) {
+                return crate::companion::protocol::CliBackendInfo {
+                    backend: backend.as_str().to_string(),
+                    available: false,
+                    executable: None,
+                };
+            }
+            match resolve_executable(backend, "") {
+                Ok(path) => crate::companion::protocol::CliBackendInfo {
+                    backend: backend.as_str().to_string(),
+                    available: true,
+                    executable: Some(path.to_string_lossy().into_owned()),
+                },
+                Err(_) => crate::companion::protocol::CliBackendInfo {
+                    backend: backend.as_str().to_string(),
+                    available: false,
+                    executable: None,
+                },
+            }
+        })
+        .collect()
+}
+
+/// Run an AI CLI generation on behalf of an authenticated remote companion peer.
+/// Reuses the exact same validation, concurrency limit, scratch isolation, and parser rules.
+pub(crate) fn run_remote_generation(
+    state: &AiCliState,
+    request: &Request,
+    external_cancel: Arc<AtomicBool>,
+    mut on_event: impl FnMut(Event) -> Result<(), String>,
+) -> Result<(), String> {
+    if cfg!(mobile) {
+        return Err("desktop_only".into());
+    }
+    validate_request(request)?;
+    let job_cancel = state.register(&request.request_id)?;
+    let state_guard = Registration {
+        state: state.clone(),
+        id: request.request_id.clone(),
+    };
+    // Propagate external disconnect/cancel into the registered job flag.
+    let combined_cancel = Arc::new(AtomicBool::new(false));
+    let watch_job = job_cancel.clone();
+    let watch_ext = external_cancel;
+    let watch_out = combined_cancel.clone();
+    let stop_watcher = Arc::new(AtomicBool::new(false));
+    let stop_watcher_thread = stop_watcher.clone();
+    let watcher = std::thread::spawn(move || {
+        while !stop_watcher_thread.load(Ordering::Acquire) {
+            if watch_job.load(Ordering::Acquire) || watch_ext.load(Ordering::Acquire) {
+                watch_out.store(true, Ordering::Release);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    });
+    let result = generate(request, &combined_cancel, &mut on_event);
+    stop_watcher.store(true, Ordering::Release);
+    let _ = watcher.join();
+    drop(state_guard);
+    result
+}
+
+pub(crate) fn validate_request(r: &Request) -> Result<(), String> {
     if r.prompt.trim().is_empty()
         || r.prompt.len() > 32 * 1024
         || r.context.len() > 64 * 1024

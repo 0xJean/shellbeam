@@ -42,7 +42,14 @@ export function compareVersions(a: string, b: string): number | null {
   return 0
 }
 
-export interface LatestReleaseRecord { tag_name?: unknown; draft?: unknown; prerelease?: unknown }
+export interface LatestReleaseRecord {
+  tag_name?: unknown
+  draft?: unknown
+  prerelease?: unknown
+  name?: unknown
+  body?: unknown
+  published_at?: unknown
+}
 
 /** The version a release record offers, or null for anything that must not produce a reminder. */
 export function releasedVersion(record: LatestReleaseRecord | null | undefined): string | null {
@@ -58,18 +65,34 @@ export interface AppUpdateSnapshot {
   currentVersion: string | null
   enabled: boolean
   latestVersion: string | null
+  releaseName: string | null
+  releaseNotes: string | null
+  publishedAt: string | null
   dismissedVersion: string | null
+  /** Session-only snooze: hides the floating toast until restart while keeping passive badges/pills visible. */
+  snoozedToastVersion: string | null
   lastCheckedAt: number | null
   checking: boolean
   lastCheckFailed: boolean
 }
 
-function readStored(): Pick<AppUpdateSnapshot, 'enabled' | 'latestVersion' | 'dismissedVersion' | 'lastCheckedAt'> {
-  const stored = { enabled: true, latestVersion: null as string | null, dismissedVersion: null as string | null, lastCheckedAt: null as number | null }
+function readStored(): Pick<AppUpdateSnapshot, 'enabled' | 'latestVersion' | 'releaseName' | 'releaseNotes' | 'publishedAt' | 'dismissedVersion' | 'lastCheckedAt'> {
+  const stored = {
+    enabled: true,
+    latestVersion: null as string | null,
+    releaseName: null as string | null,
+    releaseNotes: null as string | null,
+    publishedAt: null as string | null,
+    dismissedVersion: null as string | null,
+    lastCheckedAt: null as number | null,
+  }
   try {
     stored.enabled = localStorage.getItem(ENABLED_KEY) !== 'false'
     const raw = JSON.parse(localStorage.getItem(STATE_KEY) ?? '{}') as Record<string, unknown>
     if (typeof raw.latestVersion === 'string' && parseVersion(raw.latestVersion)) stored.latestVersion = raw.latestVersion
+    if (typeof raw.releaseName === 'string' && raw.releaseName.trim()) stored.releaseName = raw.releaseName.trim()
+    if (typeof raw.releaseNotes === 'string' && raw.releaseNotes.trim()) stored.releaseNotes = raw.releaseNotes
+    if (typeof raw.publishedAt === 'string' && raw.publishedAt.trim()) stored.publishedAt = raw.publishedAt
     if (typeof raw.dismissedVersion === 'string') stored.dismissedVersion = raw.dismissedVersion
     if (typeof raw.lastCheckedAt === 'number' && Number.isFinite(raw.lastCheckedAt)) stored.lastCheckedAt = raw.lastCheckedAt
   } catch { /* Unreadable state only means asking GitHub again. */ }
@@ -77,7 +100,7 @@ function readStored(): Pick<AppUpdateSnapshot, 'enabled' | 'latestVersion' | 'di
 }
 
 function initialSnapshot(): AppUpdateSnapshot {
-  return { platform: null, currentVersion: null, checking: false, lastCheckFailed: false, ...readStored() }
+  return { platform: null, currentVersion: null, snoozedToastVersion: null, checking: false, lastCheckFailed: false, ...readStored() }
 }
 
 let snapshot = initialSnapshot()
@@ -88,8 +111,15 @@ const listeners = new Set<() => void>()
 function publish(next: Partial<AppUpdateSnapshot>) {
   snapshot = { ...snapshot, ...next }
   try {
-    if ('latestVersion' in next || 'dismissedVersion' in next || 'lastCheckedAt' in next) {
-      localStorage.setItem(STATE_KEY, JSON.stringify({ latestVersion: snapshot.latestVersion, dismissedVersion: snapshot.dismissedVersion, lastCheckedAt: snapshot.lastCheckedAt }))
+    if ('latestVersion' in next || 'releaseName' in next || 'releaseNotes' in next || 'publishedAt' in next || 'dismissedVersion' in next || 'lastCheckedAt' in next) {
+      localStorage.setItem(STATE_KEY, JSON.stringify({
+        latestVersion: snapshot.latestVersion,
+        releaseName: snapshot.releaseName,
+        releaseNotes: snapshot.releaseNotes,
+        publishedAt: snapshot.publishedAt,
+        dismissedVersion: snapshot.dismissedVersion,
+        lastCheckedAt: snapshot.lastCheckedAt,
+      }))
     }
     if ('enabled' in next) localStorage.setItem(ENABLED_KEY, String(snapshot.enabled))
   } catch { /* Kept for this session only. */ }
@@ -135,9 +165,13 @@ export function checkForAppUpdate(): Promise<void> {
     if (!usesGitHubUpdates(snapshot)) return
     publish({ checking: true, lastCheckFailed: false })
     try {
-      const version = releasedVersion(await invoke<LatestReleaseRecord>('check_latest_app_release'))
+      const record = await invoke<LatestReleaseRecord>('check_latest_app_release')
+      const version = releasedVersion(record)
       if (!version) throw new Error('update_check_failed')
-      publish({ checking: false, latestVersion: version, lastCheckedAt: Date.now() })
+      const releaseName = typeof record?.name === 'string' && record.name.trim() ? record.name.trim() : null
+      const releaseNotes = typeof record?.body === 'string' && record.body.trim() ? record.body.trim() : null
+      const publishedAt = typeof record?.published_at === 'string' && record.published_at.trim() ? record.published_at.trim() : null
+      publish({ checking: false, latestVersion: version, releaseName, releaseNotes, publishedAt, lastCheckedAt: Date.now() })
     } catch {
       publish({ checking: false, lastCheckFailed: true })
     }
@@ -164,6 +198,14 @@ export function startAppUpdateChecks(): () => void {
 }
 
 export function dismissAppUpdate(version: string) { publish({ dismissedVersion: version }) }
+
+export function snoozeAppUpdateToast(version: string) { publish({ snoozedToastVersion: version }) }
+
+export const APP_UPDATE_DIALOG_EVENT = 'shellbeam:open-app-update-dialog'
+
+export function openAppUpdateDialog() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(APP_UPDATE_DIALOG_EVENT))
+}
 
 export function setAppUpdateChecksEnabled(enabled: boolean) {
   publish({ enabled })

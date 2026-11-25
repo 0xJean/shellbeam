@@ -102,6 +102,10 @@ pub fn sync_remove_trusted_peer(
     state.last_sync_at = Some(now_unix_ms());
     save_sync_state(&app, &state)
         .map_err(|err| standard_error_from_raw("sync", "remove peer", err))?;
+    use tauri::Manager;
+    if let Some(server) = app.try_state::<crate::companion::server::CompanionServerState>() {
+        server.kick_peer(&app, &payload.peer_device_id);
+    }
     log::info!("[sync] removed trusted peer: {}", payload.peer_device_id);
     Ok(())
 }

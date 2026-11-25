@@ -32,6 +32,8 @@
 		<string>_shellbeam._tcp</string>
 		<string>_http._tcp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>ShellBeam uses the camera to scan desktop pairing QR codes.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>ShellBeam uses Face ID to quickly unlock your encrypted vault.</string>
 	<key>NSLocalNetworkUsageDescription</key>

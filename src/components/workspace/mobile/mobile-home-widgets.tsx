@@ -19,11 +19,11 @@ function WidgetFrame({ id, title, sub, icon, onOpen, children, className, previe
     <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
       {title}
       {sub && <span className="truncate text-[11.5px] text-[var(--workspace-text-muted)]">{sub}</span>}
-      <span aria-hidden="true" className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[color:var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)] [&_svg]:h-3 [&_svg]:w-3">{icon}</span>
+      <span aria-hidden="true" className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[var(--workspace-accent-subtle)] text-[color:var(--workspace-accent-text)] [&_svg]:h-3.5 [&_svg]:w-3.5">{icon}</span>
     </div>
     {children}
   </>
-  const classes = cn('flex h-full min-h-0 w-full min-w-0 flex-col gap-1 overflow-hidden rounded-[22px] border border-[color:var(--workspace-mobile-stroke)] bg-[var(--workspace-mobile-card)] px-3.5 py-3 text-left text-[var(--workspace-text-strong)] shadow-[var(--workspace-shadow-card)] backdrop-blur-2xl', className)
+  const classes = cn('flex h-full min-h-0 w-full min-w-0 flex-col gap-1 overflow-hidden rounded-2xl border border-[color:var(--workspace-mobile-stroke)] bg-[var(--workspace-mobile-card)] px-3.5 py-3 text-left text-[var(--workspace-text-strong)] shadow-[var(--workspace-shadow-card)]', className)
   if (preview || !onOpen) return <div data-testid={`mobile-widget-${id}`} className={classes}>{body}</div>
   return <button type="button" data-testid={`mobile-widget-${id}`} onClick={onOpen} className={cn(classes, 'transition-transform active:scale-[0.98]')}>{body}</button>
 }

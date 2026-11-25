@@ -98,6 +98,7 @@ const zhCN: Record<string, string> = {
   'nav.terminal': '终端',
   'nav.sessions': '会话',
   'nav.files': '文件',
+  'nav.desktop': '电脑',
   'nav.tools': '工具',
   'nav.groupWorkspace': '工作区',
   'nav.groupLibrary': '工具库',

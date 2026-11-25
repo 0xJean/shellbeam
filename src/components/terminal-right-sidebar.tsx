@@ -128,25 +128,24 @@ export function TerminalRightSidebar({
 
   return (
     <>
-      {/* Mobile: overlay backdrop */}
-      <div className="fixed inset-0 z-40 bg-black/40 md:hidden" onClick={onClose} />
-      {/* Mobile: slide-over drawer */}
-      <div className="fixed inset-y-0 right-0 z-50 flex w-[85vw] max-w-sm flex-col border-l border-border/50 bg-background pt-[env(safe-area-inset-top)] shadow-xl md:hidden">
+      {/* Compact & Medium (phones, unfolded foldables, tablets, narrow split PC): slide-over overlay drawer */}
+      <div className="fixed inset-0 z-40 bg-black/40 xl:hidden" onClick={onClose} />
+      <div className="fixed inset-y-0 right-0 z-50 flex w-[85vw] max-w-sm flex-col border-l border-border/50 bg-background pt-[env(safe-area-inset-top)] shadow-xl xl:hidden">
         {tabBar}
         {content}
       </div>
-      {/* PC: inline resizable sidebar */}
+      {/* Wide desktop (>= 1280px): inline resizable sidebar */}
       <PanelResizeHandle
         testId="terminal-sidebar-resize-handle"
         label={t('panel.resizeHint')}
         dragging={sidebarResize.dragging}
-        className="hidden md:flex"
+        className="hidden xl:flex"
         {...sidebarResize.handleProps}
       />
       <div
         data-testid="terminal-right-sidebar"
         style={{ width: `${sidebarResize.size}px` }}
-        className="hidden h-full shrink-0 flex-col bg-[var(--workspace-nav-translucent)] backdrop-blur-md md:flex"
+        className="hidden h-full shrink-0 flex-col bg-[var(--workspace-nav-translucent)] backdrop-blur-md xl:flex"
       >
         {tabBar}
         {content}
@@ -339,7 +338,7 @@ function TypedHistory({ vaultId, hostAddress, onRunCommand }: {
           className="group flex items-center gap-2 border-b border-border/30 px-3 py-2 transition-colors hover:bg-muted/30"
         >
           <code className="min-w-0 flex-1 truncate font-mono text-[11px]">{cmd.command}</code>
-          <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)]:opacity-100">
             <button
               type="button"
               onClick={() => { void navigator.clipboard.writeText(cmd.command) }}

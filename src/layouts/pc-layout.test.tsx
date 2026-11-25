@@ -674,7 +674,8 @@ describe('pc layout', () => {
     fireEvent.click(within(modeSwitch).getByRole('button', { name: 'workspace.mode.browser' }))
     expect(setSessionMode).toHaveBeenCalledWith('session-1', 'browser')
     expect(setSessionBrowserPresentation).toHaveBeenCalledWith('session-1', 'embedded')
-    expect(modeSwitch.parentElement).toHaveClass('mobile-safe-pb')
+    // Active mobile terminals hide the bottom tab bar so the virtual key toolbar sits flush above the soft keyboard.
+    expect(modeSwitch.parentElement).not.toHaveClass('mobile-safe-pb')
   })
 
   it('keeps terminal views mounted while workspace mode is active', async () => {

@@ -105,11 +105,11 @@ pub struct InteractiveSessionInfo {
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct InteractiveOutputChunk {
-    seq: u64,
-    stream: String,
-    data: String,
-    timestamp: i64,
+pub(crate) struct InteractiveOutputChunk {
+    pub(crate) seq: u64,
+    pub(crate) stream: String,
+    pub(crate) data: String,
+    pub(crate) timestamp: i64,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -156,12 +156,214 @@ struct SessionRecord {
     _tunnel: Option<Arc<crate::ssh::transport::TunnelLease>>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum RemoteTerminalEvent {
+    Chunk {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        chunk: InteractiveOutputChunk,
+    },
+    Status {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        status: String,
+    },
+}
+
+struct RemoteSubscriber {
+    id: u64,
+    tx: mpsc::Sender<RemoteTerminalEvent>,
+}
+
+struct SessionListSubscriber {
+    id: u64,
+    tx: mpsc::Sender<Vec<InteractiveSessionInfo>>,
+}
+
+const REMOTE_REPLAY_MAX_CHUNKS: usize = 400;
+const REMOTE_REPLAY_MAX_BYTES: usize = 256 * 1024;
+
 #[derive(Default)]
 pub struct InteractiveSessionState {
     sessions: Mutex<HashMap<String, SessionRecord>>,
+    remote_replay: Mutex<HashMap<String, VecDeque<InteractiveOutputChunk>>>,
+    remote_subscribers: Mutex<HashMap<String, Vec<RemoteSubscriber>>>,
+    session_list_subscribers: Mutex<Vec<SessionListSubscriber>>,
+    next_remote_sub_id: AtomicU64,
 }
 
+pub(crate) type SessionListSubscription = (
+    u64,
+    Vec<InteractiveSessionInfo>,
+    mpsc::Receiver<Vec<InteractiveSessionInfo>>,
+);
+
 impl InteractiveSessionState {
+    pub(crate) fn broadcast_output(&self, session_id: &str, chunk: &InteractiveOutputChunk) {
+        if let Ok(mut replays) = self.remote_replay.lock() {
+            let buf = replays.entry(session_id.to_string()).or_default();
+            buf.push_back(chunk.clone());
+            while buf.len() > REMOTE_REPLAY_MAX_CHUNKS {
+                buf.pop_front();
+            }
+            let mut total: usize = buf.iter().map(|c| c.data.len()).sum();
+            while total > REMOTE_REPLAY_MAX_BYTES && buf.len() > 1 {
+                if let Some(dropped) = buf.pop_front() {
+                    total = total.saturating_sub(dropped.data.len());
+                }
+            }
+        }
+        if let Ok(mut subs) = self.remote_subscribers.lock() {
+            if let Some(list) = subs.get_mut(session_id) {
+                let evt = RemoteTerminalEvent::Chunk {
+                    session_id: session_id.to_string(),
+                    chunk: chunk.clone(),
+                };
+                list.retain(|sub| sub.tx.send(evt.clone()).is_ok());
+            }
+        }
+    }
+
+    pub(crate) fn broadcast_status(&self, session_id: &str, status: &str) {
+        if let Ok(mut subs) = self.remote_subscribers.lock() {
+            if let Some(list) = subs.get_mut(session_id) {
+                let evt = RemoteTerminalEvent::Status {
+                    session_id: session_id.to_string(),
+                    status: status.to_string(),
+                };
+                list.retain(|sub| sub.tx.send(evt.clone()).is_ok());
+            }
+        }
+        self.broadcast_session_list();
+    }
+
+    pub(crate) fn broadcast_session_list(&self) {
+        let Ok(snapshot) = self.list_sessions_snapshot() else {
+            return;
+        };
+        if let Ok(mut subs) = self.session_list_subscribers.lock() {
+            subs.retain(|sub| sub.tx.send(snapshot.clone()).is_ok());
+        }
+    }
+
+    pub(crate) fn subscribe_session_list(&self) -> Result<SessionListSubscription, String> {
+        let initial = self.list_sessions_snapshot()?;
+        let sub_id = self.next_remote_sub_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let (tx, rx) = mpsc::channel();
+        if let Ok(mut subs) = self.session_list_subscribers.lock() {
+            subs.push(SessionListSubscriber { id: sub_id, tx });
+        }
+        Ok((sub_id, initial, rx))
+    }
+
+    pub(crate) fn unsubscribe_session_list(&self, sub_id: u64) {
+        if let Ok(mut subs) = self.session_list_subscribers.lock() {
+            subs.retain(|sub| sub.id != sub_id);
+        }
+    }
+
+    pub(crate) fn list_sessions_snapshot(&self) -> Result<Vec<InteractiveSessionInfo>, String> {
+        let sessions = self.sessions.lock().map_err(|_| "Lock poisoned")?;
+        Ok(sessions
+            .values()
+            .map(|r| {
+                let mut info = r.info.clone();
+                if let Ok(s) = r.status.lock() {
+                    info.status = s.clone();
+                }
+                info
+            })
+            .collect())
+    }
+
+    pub(crate) fn attach_remote(
+        &self,
+        session_id: &str,
+        after_seq: u64,
+    ) -> Result<
+        (
+            u64,
+            String,
+            Vec<InteractiveOutputChunk>,
+            mpsc::Receiver<RemoteTerminalEvent>,
+        ),
+        String,
+    > {
+        let status = {
+            let sessions = self.sessions.lock().map_err(|_| "Lock poisoned")?;
+            let record = sessions
+                .get(session_id)
+                .ok_or_else(|| "Session not found".to_string())?;
+            record
+                .status
+                .lock()
+                .map(|s| s.clone())
+                .unwrap_or_else(|_| "unknown".to_string())
+        };
+        let sub_id = self.next_remote_sub_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let (tx, rx) = mpsc::channel();
+        if let Ok(mut subs) = self.remote_subscribers.lock() {
+            subs.entry(session_id.to_string())
+                .or_default()
+                .push(RemoteSubscriber { id: sub_id, tx });
+        }
+        let replay = self
+            .remote_replay
+            .lock()
+            .map(|replays| {
+                replays
+                    .get(session_id)
+                    .map(|buf| {
+                        buf.iter()
+                            .filter(|c| c.seq > after_seq)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+        Ok((sub_id, status, replay, rx))
+    }
+
+    pub(crate) fn detach_remote(&self, session_id: &str, sub_id: u64) {
+        if let Ok(mut subs) = self.remote_subscribers.lock() {
+            if let Some(list) = subs.get_mut(session_id) {
+                list.retain(|sub| sub.id != sub_id);
+                if list.is_empty() {
+                    subs.remove(session_id);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn send_remote_input(&self, session_id: &str, input: String) -> Result<(), String> {
+        let sessions = self.sessions.lock().map_err(|_| "Lock poisoned")?;
+        let record = sessions
+            .get(session_id)
+            .ok_or_else(|| "Session not found".to_string())?;
+        record
+            .command_tx
+            .send(SessionCommand::Input(input.into_bytes()))
+            .map_err(|e| format!("send input failed: {e}"))
+    }
+
+    pub(crate) fn resize_remote(
+        &self,
+        session_id: &str,
+        cols: u32,
+        rows: u32,
+    ) -> Result<(), String> {
+        let sessions = self.sessions.lock().map_err(|_| "Lock poisoned")?;
+        let record = sessions
+            .get(session_id)
+            .ok_or_else(|| "Session not found".to_string())?;
+        record
+            .command_tx
+            .send(SessionCommand::Resize(cols, rows))
+            .map_err(|e| format!("resize failed: {e}"))
+    }
+
     pub fn clone_verified_connection(
         &self,
         app: &tauri::AppHandle,
@@ -206,6 +408,9 @@ const INTERACTIVE_STATUS_EVENT: &str = "shellbeam://interactive-status";
 const INTERACTIVE_PROGRESS_EVENT: &str = "shellbeam://interactive-progress";
 
 fn emit_output(app: &tauri::AppHandle, session_id: &str, chunk: InteractiveOutputChunk) {
+    if let Some(state) = app.try_state::<InteractiveSessionState>() {
+        state.broadcast_output(session_id, &chunk);
+    }
     let _ = app.emit(
         INTERACTIVE_OUTPUT_EVENT,
         InteractiveOutputEvent {
@@ -238,6 +443,9 @@ fn set_status(app: &tauri::AppHandle, session_id: &str, status: &Arc<Mutex<Strin
         Err(_) => true,
     };
     if changed {
+        if let Some(state) = app.try_state::<InteractiveSessionState>() {
+            state.broadcast_status(session_id, &next);
+        }
         let _ = app.emit(
             INTERACTIVE_STATUS_EVENT,
             InteractiveStatusEvent {
@@ -950,6 +1158,7 @@ pub async fn create_interactive_session(
             .lock()
             .map_err(|_| standard_error_from_raw("interactive", "create", "Lock poisoned"))?
             .insert(session_id, record);
+        state.broadcast_session_list();
         Ok(info)
     })
     .await
@@ -1063,6 +1272,14 @@ pub fn close_interactive_session(
     let record = sessions.remove(&payload.session_id).ok_or_else(|| {
         standard_error_payload("not_found", "interactive", false, "Session not found", None)
     })?;
+    drop(sessions);
+    if let Ok(mut replays) = state.remote_replay.lock() {
+        replays.remove(&payload.session_id);
+    }
+    if let Ok(mut subs) = state.remote_subscribers.lock() {
+        subs.remove(&payload.session_id);
+    }
+    state.broadcast_session_list();
     let _ = record.command_tx.send(SessionCommand::Close);
     Ok(())
 }
@@ -1282,6 +1499,7 @@ pub fn create_local_terminal(
         .lock()
         .map_err(|_| standard_error_from_raw("interactive", "create", "Lock poisoned"))?
         .insert(session_id, record);
+    state.broadcast_session_list();
     Ok(info)
 }
 
@@ -1483,5 +1701,76 @@ mod tests {
         assert_eq!(keepalive.consecutive_failures(), 0);
         assert!(!keepalive.should_poll(t3 + Duration::from_secs(1), true, false, false));
         assert!(keepalive.should_poll(t3 + Duration::from_secs(30), true, false, false));
+    }
+
+    #[test]
+    fn remote_replay_buffers_recent_chunks_and_streams_live_updates() {
+        let state = InteractiveSessionState::default();
+        let (tx, _rx) = mpsc::channel();
+        let (output, seq, status) = new_shared_state();
+        state.sessions.lock().unwrap().insert(
+            "sess-1".into(),
+            SessionRecord {
+                vault_id: None,
+                verified_host_keys: Vec::new(),
+                info: InteractiveSessionInfo {
+                    connection_key: None,
+                    port: Some(22),
+                    vault_id: None,
+                    session_id: "sess-1".into(),
+                    host_id: None,
+                    host: "example.com".into(),
+                    username: "root".into(),
+                    created_at: 1,
+                    last_active_at: 1,
+                    status: "running".into(),
+                },
+                command_tx: tx,
+                output,
+                _seq_counter: seq,
+                status,
+                reusable_transport: None,
+                _tunnel: None,
+            },
+        );
+        state.broadcast_output(
+            "sess-1",
+            &InteractiveOutputChunk {
+                seq: 1,
+                stream: "stdout".into(),
+                data: "welcome\r\n".into(),
+                timestamp: 10,
+            },
+        );
+        state.broadcast_output(
+            "sess-1",
+            &InteractiveOutputChunk {
+                seq: 2,
+                stream: "stdout".into(),
+                data: "$ ".into(),
+                timestamp: 11,
+            },
+        );
+
+        let (sub_id, status_str, replay, rx) = state.attach_remote("sess-1", 1).unwrap();
+        assert_eq!(status_str, "running");
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].seq, 2);
+
+        state.broadcast_output(
+            "sess-1",
+            &InteractiveOutputChunk {
+                seq: 3,
+                stream: "stdout".into(),
+                data: "ls\r\n".into(),
+                timestamp: 12,
+            },
+        );
+        let live = rx.try_recv().unwrap();
+        assert!(matches!(live, RemoteTerminalEvent::Chunk { chunk, .. } if chunk.seq == 3));
+
+        state.detach_remote("sess-1", sub_id);
+        state.broadcast_status("sess-1", "closed(0)");
+        assert!(rx.try_recv().is_err());
     }
 }

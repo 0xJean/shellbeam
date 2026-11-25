@@ -43,6 +43,24 @@ const APPS: Array<{ id: WorkspaceAppId; labelKey: string; icon: typeof LayoutGri
   { id: 'scheduledTasks', labelKey: 'workspace.app.scheduledTasks', icon: CalendarClock, accent: 'from-[var(--workspace-status-warn)] via-[var(--workspace-primary-400)] to-[var(--workspace-primary-500)] text-[var(--workspace-primary-foreground)]', glow: 'shadow-[var(--workspace-metric-cpu-glow)]' },
 ]
 
+const APP_TILE_STYLES: Record<WorkspaceAppId, string> = {
+  overview: 'bg-indigo-500/12 text-indigo-600 ring-indigo-500/20 dark:bg-indigo-400/12 dark:text-indigo-300 dark:ring-indigo-400/20',
+  assetInventory: 'bg-violet-500/12 text-violet-600 ring-violet-500/20 dark:bg-violet-400/12 dark:text-violet-300 dark:ring-violet-400/20',
+  fileTransfer: 'bg-sky-500/12 text-sky-600 ring-sky-500/20 dark:bg-sky-400/12 dark:text-sky-300 dark:ring-sky-400/20',
+  fileSystem: 'bg-teal-500/12 text-teal-600 ring-teal-500/20 dark:bg-teal-400/12 dark:text-teal-300 dark:ring-teal-400/20',
+  charts: 'bg-emerald-500/12 text-emerald-600 ring-emerald-500/20 dark:bg-emerald-400/12 dark:text-emerald-300 dark:ring-emerald-400/20',
+  processes: 'bg-emerald-500/12 text-emerald-600 ring-emerald-500/20 dark:bg-emerald-400/12 dark:text-emerald-300 dark:ring-emerald-400/20',
+  services: 'bg-blue-500/12 text-blue-600 ring-blue-500/20 dark:bg-blue-400/12 dark:text-blue-300 dark:ring-blue-400/20',
+  network: 'bg-cyan-500/12 text-cyan-600 ring-cyan-500/20 dark:bg-cyan-400/12 dark:text-cyan-300 dark:ring-cyan-400/20',
+  toolManager: 'bg-indigo-500/12 text-indigo-600 ring-indigo-500/20 dark:bg-indigo-400/12 dark:text-indigo-300 dark:ring-indigo-400/20',
+  logs: 'bg-blue-500/12 text-blue-600 ring-blue-500/20 dark:bg-blue-400/12 dark:text-blue-300 dark:ring-blue-400/20',
+  browser: 'bg-amber-500/12 text-amber-600 ring-amber-500/20 dark:bg-amber-400/12 dark:text-amber-300 dark:ring-amber-400/20',
+  terminal: 'bg-[var(--workspace-surface-800)] text-[var(--workspace-text-strong)] ring-[color:var(--workspace-border-soft)]',
+  docker: 'bg-sky-500/12 text-sky-600 ring-sky-500/20 dark:bg-sky-400/12 dark:text-sky-300 dark:ring-sky-400/20',
+  sitesSsl: 'bg-emerald-500/12 text-emerald-600 ring-emerald-500/20 dark:bg-emerald-400/12 dark:text-emerald-300 dark:ring-emerald-400/20',
+  scheduledTasks: 'bg-amber-500/12 text-amber-600 ring-amber-500/20 dark:bg-amber-400/12 dark:text-amber-300 dark:ring-amber-400/20',
+}
+
 interface WorkspaceAppGridProps {
   activeApp: WorkspaceAppId
   onSelectApp: (app: WorkspaceAppId) => void
@@ -145,7 +163,7 @@ export function WorkspaceAppGrid({ activeApp, onSelectApp, variant = 'panel', ap
   )
 }
 
-/** v3 springboard tile: the app's gradient icon with an optional count badge. */
+/** Refined theme-adaptive workspace app icon tile with optional alert count badge. */
 export function WorkspaceAppIcon({ app, size = 'lg', badge }: { app: WorkspaceAppId; size?: 'lg' | 'md' | 'sm'; badge?: number }) {
   const meta = APPS.find((entry) => entry.id === app)
   if (!meta) return null
@@ -154,14 +172,18 @@ export function WorkspaceAppIcon({ app, size = 'lg', badge }: { app: WorkspaceAp
     <span
       data-testid={`workspace-app-icon-${app}`}
       className={cn(
-        'relative flex shrink-0 items-center justify-center bg-gradient-to-br ring-1 ring-[var(--workspace-border-soft)]',
-        size === 'lg' ? 'h-[60px] w-[60px] rounded-[14px] shadow-md' : size === 'md' ? 'h-[52px] w-[52px] rounded-[12px] shadow-sm' : 'h-[34px] w-[34px] rounded-[8px]',
-        meta.accent,
+        'relative flex shrink-0 items-center justify-center ring-1 ring-inset transition-colors',
+        size === 'lg'
+          ? 'h-[52px] w-[52px] rounded-2xl shadow-sm'
+          : size === 'md'
+            ? 'h-9 w-9 rounded-xl'
+            : 'h-[32px] w-[32px] rounded-lg',
+        APP_TILE_STYLES[app],
       )}
     >
-      <Icon aria-hidden="true" className={cn('text-[var(--workspace-primary-foreground)] drop-shadow-sm', size === 'lg' ? 'h-[30px] w-[30px]' : size === 'md' ? 'h-7 w-7' : 'h-[18px] w-[18px]')} />
+      <Icon aria-hidden="true" className={cn(size === 'lg' ? 'h-6 w-6' : size === 'md' ? 'h-[18px] w-[18px]' : 'h-4 w-4')} />
       {badge ? (
-        <em aria-hidden="true" className="absolute -right-[7px] -top-[6px] flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-[var(--workspace-status-bad)] px-1.5 text-[13px] font-semibold not-italic text-[var(--workspace-primary-foreground)] shadow-sm">
+        <em aria-hidden="true" className="absolute -right-1.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--workspace-status-bad)] px-1 text-[11px] font-semibold not-italic text-white shadow-sm">
           {badge > 99 ? '99+' : badge}
         </em>
       ) : null}

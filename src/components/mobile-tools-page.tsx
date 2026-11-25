@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Archive, ArrowLeftRight, BookOpen, ChartArea, ChevronRight, Clock, Code2, KeyRound, Network, RefreshCw, Shield } from 'lucide-react'
+import { Archive, ArrowLeftRight, BookOpen, ChartArea, ChevronRight, Clock, Code2, FolderOpen, KeyRound, Network, RefreshCw, Shield } from 'lucide-react'
 import type { SidebarNavId } from '@/components/pc-nav-sidebar'
 import { useT } from '@/lib/i18n'
 import { usePortForwardTraffic } from '@/hooks/use-port-forward-traffic'
@@ -79,6 +79,7 @@ export function MobileToolsPage({ vaultId, onNavigate }: { vaultId?: string | nu
         ))}
       </section>
       {group(c.connection, [
+        row('sftp', <FolderOpen />, '#34c759', t('nav.files')),
         row('dashboard', <ChartArea />, '#32ade6', t('nav.dashboard')),
         row('port-forwarding', <ArrowLeftRight />, '#5e5ce6', t('nav.portForward'), fill(c.rules, rules.length), active.length ? fill(c.runningCount, active.length) : undefined),
         row('asset-inventory', <Network />, '#0a84ff', t('nav.assetInventory')),

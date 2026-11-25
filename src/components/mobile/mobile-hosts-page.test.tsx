@@ -153,4 +153,20 @@ describe('MobileHostsPage', () => {
     fireEvent.click(screen.getByTestId('mobile-host-agent-edit'))
     expect(await screen.findByTestId('host-directory-editor')).toBeInTheDocument()
   })
+
+  it('switches vaults through an app-styled menu instead of a native select', () => {
+    const onSwitchVault = vi.fn()
+    renderPage({
+      activeVaultId: 'v',
+      vaults: [{ id: 'v', name: 'Personal' }, { id: 'v2', name: 'Work' }],
+      onSwitchVault,
+    })
+    const trigger = screen.getByTestId('mobile-hosts-vault-switch')
+    expect(trigger.tagName).toBe('BUTTON')
+    fireEvent.click(trigger)
+    const menu = screen.getByTestId('mobile-hosts-vault-menu')
+    fireEvent.click(within(menu).getByRole('menuitemradio', { name: 'Work' }))
+    expect(onSwitchVault).toHaveBeenCalledWith('v2')
+    expect(screen.queryByTestId('mobile-hosts-vault-menu')).toBeNull()
+  })
 })
