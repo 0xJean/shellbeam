@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { useSessions } from '@/contexts/sessions-context'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
@@ -320,38 +323,60 @@ export function WorkspaceFileSystemApp({
     }
   }
 
-  async function handleCreateFile() {
+  const [promptState, setPromptState] = useState<
+    | { kind: 'file' | 'folder'; title: string; value: string }
+    | { kind: 'rename'; title: string; value: string; originalPath: string; originalName: string }
+    | null
+  >(null)
+
+  function handleCreateFile() {
     if (!remoteFs || !currentPath || isMutating) return
-    const name = window.prompt(t('workspace.fileSystem.prompt.newFile'))
-    if (!name?.trim()) return
-    await performMutation(async () => {
-      if (await remoteFs.createFile(joinRemotePath(currentPath, name.trim())) === false) return false
-      setStatusMessage(t('workspace.fileSystem.status.createdFile', { name: name.trim() }))
-      return true
-    })
+    setPromptState({ kind: 'file', title: t('workspace.fileSystem.prompt.newFile'), value: '' })
   }
 
-  async function handleCreateDir() {
+  function handleCreateDir() {
     if (!remoteFs || !currentPath || isMutating) return
-    const name = window.prompt(t('workspace.fileSystem.prompt.newFolder'))
-    if (!name?.trim()) return
-    await performMutation(async () => {
-      if (await remoteFs.createDir(joinRemotePath(currentPath, name.trim())) === false) return false
-      setStatusMessage(t('workspace.fileSystem.status.createdFolder', { name: name.trim() }))
-      return true
-    })
+    setPromptState({ kind: 'folder', title: t('workspace.fileSystem.prompt.newFolder'), value: '' })
   }
 
-  async function handleRenameSelected() {
+  function handleRenameSelected() {
     if (!remoteFs || !selectedEntry || !currentPath || isMutating) return
-    const nextName = window.prompt(t('workspace.fileSystem.prompt.rename'), selectedEntry.fileName)
-    if (!nextName?.trim() || nextName.trim() === selectedEntry.fileName) return
-    await performMutation(async () => {
-      if (await remoteFs.renamePath(selectedEntry.path, joinRemotePath(currentPath, nextName.trim())) === false) return false
-      setStatusMessage(t('workspace.fileSystem.status.renamed', { name: nextName.trim() }))
-      setSelectedPath(null)
-      return true
+    setPromptState({
+      kind: 'rename',
+      title: t('workspace.fileSystem.prompt.rename'),
+      value: selectedEntry.fileName,
+      originalPath: selectedEntry.path,
+      originalName: selectedEntry.fileName,
     })
+  }
+
+  async function handleSubmitPrompt() {
+    if (!promptState || !remoteFs || !currentPath || isMutating) return
+    const nextName = promptState.value.trim()
+    if (!nextName) return
+    const current = promptState
+    setPromptState(null)
+    if (current.kind === 'file') {
+      await performMutation(async () => {
+        if (await remoteFs.createFile(joinRemotePath(currentPath, nextName)) === false) return false
+        setStatusMessage(t('workspace.fileSystem.status.createdFile', { name: nextName }))
+        return true
+      })
+    } else if (current.kind === 'folder') {
+      await performMutation(async () => {
+        if (await remoteFs.createDir(joinRemotePath(currentPath, nextName)) === false) return false
+        setStatusMessage(t('workspace.fileSystem.status.createdFolder', { name: nextName }))
+        return true
+      })
+    } else if (current.kind === 'rename') {
+      if (nextName === current.originalName) return
+      await performMutation(async () => {
+        if (await remoteFs.renamePath(current.originalPath, joinRemotePath(currentPath, nextName)) === false) return false
+        setStatusMessage(t('workspace.fileSystem.status.renamed', { name: nextName }))
+        setSelectedPath(null)
+        return true
+      })
+    }
   }
 
   async function handleDeleteSelected() {
@@ -831,6 +856,43 @@ export function WorkspaceFileSystemApp({
           </>
         )}
       </div>
+
+      <Dialog open={promptState !== null} onOpenChange={(open) => { if (!open) setPromptState(null) }}>
+        <DialogContent className="max-w-sm p-5">
+          {promptState && (
+            <form
+              data-testid="workspace-fs-prompt-dialog"
+              className="space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void handleSubmitPrompt()
+              }}
+            >
+              <h3 className="text-base font-semibold text-[var(--workspace-text-strong)]">{promptState.title}</h3>
+              <Input
+                autoFocus
+                data-testid="workspace-fs-prompt-input"
+                value={promptState.value}
+                onChange={(event) => setPromptState((prev) => (prev ? { ...prev, value: event.target.value } : null))}
+                className="font-mono text-sm"
+              />
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => setPromptState(null)}>
+                  {t('common.cancel')}
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  data-testid="workspace-fs-prompt-confirm"
+                  disabled={!promptState.value.trim()}
+                >
+                  {t('common.confirm')}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1,13 +1,26 @@
+import { useSyncExternalStore } from 'react'
 import type { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import { fill } from '@/lib/locales/probe-install'
 import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
+import { companionCopy } from '@/lib/locales/companion'
+import {
+  EMPTY_COMPANION_STATUS,
+  EMPTY_COMPANION_WORKSPACE,
+  getCompanionStatusSnapshot,
+  getCompanionWorkspaceSnapshot,
+  localizeSessionStatus,
+  openRemoteDesktopSession,
+  resolveDesktopSessionTitle,
+  subscribeCompanionStatus,
+  subscribeCompanionWorkspace,
+} from '@/lib/companion'
 import type { SessionTab } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import type { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { isMobileDevice, useMobileBackHandler } from '@/lib/mobile-back'
-import { Plus, SquareTerminal, X } from 'lucide-react'
+import { ChevronRight, Laptop, Plus, SquareTerminal, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from '../host-display-meta'
 import { sessionStatusDot, sheetPrimaryButton, sheetTintedButton } from './mobile-terminal-styles'
@@ -30,6 +43,17 @@ export function MobileSessionSheet({
 }: MobileSessionSheetProps) {
   const { t, locale } = useT()
   const copy = mobileTerminalV3Copy[locale]
+  const compCopy = companionCopy[locale] ?? companionCopy['zh-CN']
+  const companionStatus = useSyncExternalStore(
+    subscribeCompanionStatus,
+    getCompanionStatusSnapshot,
+    () => EMPTY_COMPANION_STATUS,
+  )
+  const companionWorkspace = useSyncExternalStore(
+    subscribeCompanionWorkspace,
+    getCompanionWorkspaceSnapshot,
+    () => EMPTY_COMPANION_WORKSPACE,
+  )
   const showLocalTerminal = !!onOpenLocalTerminal && !isMobileDevice()
   useMobileBackHandler(true, onClose)
   const statusText = (status: SessionTab['status']) => status === 'connecting' ? copy.connecting : status === 'reconnecting' ? copy.reconnecting : status === 'error' ? copy.failed : status === 'closed' ? copy.disconnected : null
@@ -81,6 +105,39 @@ export function MobileSessionSheet({
             )
           })}
         </ul>
+        {companionStatus.state === 'connected' && companionWorkspace.sessions.length > 0 && (
+          <div className="mb-3">
+            <p className="mb-1.5 flex items-center gap-1.5 px-1 text-[12px] text-[var(--workspace-text-muted)]">
+              <Laptop className="h-3.5 w-3.5 text-emerald-400" />
+              <span>{fill(compCopy.fromDesktop, { name: companionStatus.peerDeviceName || compCopy.myDesktop })}</span>
+            </p>
+            <ul className="sb-card divide-y divide-[color:var(--workspace-border-soft)] overflow-hidden">
+              {companionWorkspace.sessions.map((sess) => {
+                const aiSnap = companionWorkspace.aiBySession[sess.sessionId]
+                const { title } = resolveDesktopSessionTitle(sess, aiSnap, hosts, compCopy.localShellLabel)
+                const statusInfo = localizeSessionStatus(sess.status, compCopy)
+                return (
+                  <li key={sess.sessionId}>
+                    <button
+                      type="button"
+                      onClick={() => { onClose(); openRemoteDesktopSession(sess.sessionId) }}
+                      className="flex min-h-[54px] w-full items-center gap-3 px-3.5 py-2 text-left active:bg-[var(--workspace-surface-800)]"
+                    >
+                      <span className={cn('h-2 w-2 shrink-0 rounded-full', statusInfo.live ? 'bg-emerald-400' : 'bg-[var(--workspace-text-subtle)]')} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[14.5px] text-[var(--workspace-text-strong)]">{title}</span>
+                        <span className="block truncate text-[11.5px] text-[var(--workspace-text-muted)]">
+                          {aiSnap?.modelLabel ? `${aiSnap.modelLabel} · ${statusInfo.label}` : statusInfo.label}
+                        </span>
+                      </span>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-[var(--workspace-text-subtle)]" />
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
         <div className="flex shrink-0 gap-3">
           <button type="button" onClick={() => { onNewConnection(); onClose() }} className={sheetPrimaryButton}><Plus className="h-4 w-4" />{t('mobile.newConnection')}</button>
           {showLocalTerminal && (

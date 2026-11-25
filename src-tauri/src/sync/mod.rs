@@ -1,7 +1,9 @@
 pub mod commands;
+pub mod iroh_transport;
 pub(crate) mod pairing_crypto;
 pub mod peer;
 pub mod peer_pairing;
+pub mod routes;
 mod secret_store;
 pub(crate) mod transport;
 pub(crate) mod transport_handler;
@@ -87,6 +89,44 @@ pub struct SyncCursorRecord {
     pub updated_at: i64,
 }
 
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerRoute {
+    /// Route kind: "lan", "tailnet", or "custom".
+    pub kind: String,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub last_ok_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerBridgePermissions {
+    #[serde(default = "default_true")]
+    pub allow_ai_cli: bool,
+    #[serde(default = "default_true")]
+    pub allow_terminal_view: bool,
+    #[serde(default = "default_true")]
+    pub allow_terminal_control: bool,
+}
+
+impl Default for PeerBridgePermissions {
+    fn default() -> Self {
+        Self {
+            allow_ai_cli: true,
+            allow_terminal_view: true,
+            allow_terminal_control: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncTrustedPeer {
@@ -97,6 +137,10 @@ pub struct SyncTrustedPeer {
     pub source: String,
     #[serde(default)]
     pub peer_endpoint: Option<String>,
+    #[serde(default)]
+    pub routes: Vec<PeerRoute>,
+    #[serde(default)]
+    pub bridge_permissions: PeerBridgePermissions,
     #[serde(default)]
     pub sync_secret: Option<String>,
     #[serde(default)]

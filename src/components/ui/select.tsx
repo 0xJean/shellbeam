@@ -31,11 +31,12 @@ function readOptions(children: React.ReactNode, disabled = false): SelectOption[
  * Truncate the trigger: WebKit can otherwise paint a long selected label past
  * its bounded box and introduce a horizontal scrollbar in its parent dialog.
  * The application menu still shows the complete, wrapping option label. */
-export function NativeSelect({ children, className, optionDetails, disabled, onClick, onPointerDown, onMouseDown, onKeyDown, onChange, ...props }: NativeSelectProps) {
+export function NativeSelect({ children, className, optionDetails, disabled, onClick, onPointerDown, onMouseDown, onTouchStart, onTouchEnd, onKeyDown, onChange, ...props }: NativeSelectProps) {
   const { t } = useT()
   const id = React.useId()
   const triggerRef = React.useRef<HTMLSelectElement>(null)
   const listRef = React.useRef<HTMLDivElement>(null)
+  const touchOriginRef = React.useRef<{ x: number; y: number } | null>(null)
   const options = readOptions(children).map(option => ({ ...option, ...optionDetails?.find(detail => detail.value === option.value) }))
   const [open, setOpen] = React.useState(false)
   const [uncontrolledValue, setUncontrolledValue] = React.useState(String(props.defaultValue ?? options.find(option => !option.disabled)?.value ?? ''))
@@ -164,6 +165,24 @@ export function NativeSelect({ children, className, optionDetails, disabled, onC
       className={cn('app-select h-9 min-w-0 max-w-full truncate rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] pl-3 text-sm font-medium text-[var(--workspace-text-muted)] transition-colors hover:text-[var(--workspace-text-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50', className)}
       onPointerDown={event => { onPointerDown?.(event); event.preventDefault() }}
       onMouseDown={event => { onMouseDown?.(event); event.preventDefault() }}
+      onTouchStart={event => {
+        onTouchStart?.(event)
+        // Android WebView opens the platform dark-gray radio popup on native <select> unless touchstart is prevented.
+        event.preventDefault()
+        const touch = event.touches[0]
+        touchOriginRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null
+      }}
+      onTouchEnd={event => {
+        onTouchEnd?.(event)
+        event.preventDefault()
+        const origin = touchOriginRef.current
+        touchOriginRef.current = null
+        const touch = event.changedTouches[0]
+        if (origin && touch && Math.hypot(touch.clientX - origin.x, touch.clientY - origin.y) > 10) return
+        if (disabled) return
+        triggerRef.current?.focus({ preventScroll: true })
+        if (expanded) setOpen(false); else show()
+      }}
       onClick={event => { onClick?.(event); event.preventDefault(); event.stopPropagation(); triggerRef.current?.focus({ preventScroll: true }); if (expanded) setOpen(false); else show() }}
       onKeyDown={keyDown} onChange={event => { setOpen(false); setUncontrolledValue(event.target.value); onChange?.(event) }}>
       {children}

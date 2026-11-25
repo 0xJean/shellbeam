@@ -3,6 +3,9 @@ import type { HostProfile } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
 import type { SessionTab } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { CompanionStatusPill, type CompanionTopBarInfo } from './companion-status-pill'
+import { AppUpdateTopBarPill } from './app-update'
+import { isMobileDevice } from '@/lib/mobile-back'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { Columns2, LayoutDashboard, Moon, Plus, RefreshCw, Sparkles, SquareTerminal, Sun, X } from 'lucide-react'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from './host-display-meta'
@@ -43,6 +46,7 @@ interface PcSessionTabBarProps {
   aiOpen?: boolean
   theme?: string
   onToggleTheme?: () => void
+  companionInfo?: CompanionTopBarInfo
 }
 
 export function PcSessionTabBar({
@@ -61,8 +65,10 @@ export function PcSessionTabBar({
   aiOpen = false,
   theme,
   onToggleTheme,
+  companionInfo,
 }: PcSessionTabBarProps) {
   const { t } = useT()
+  const mobileDevice = isMobileDevice()
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
@@ -129,7 +135,10 @@ export function PcSessionTabBar({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onCloseSession(session.sessionId) }}
-              className="flex h-5 w-5 items-center justify-center rounded opacity-100 transition-all hover:bg-[var(--workspace-surface-700)] sm:opacity-0 sm:group-hover:opacity-100"
+              className={cn(
+                'flex h-5 w-5 items-center justify-center rounded transition-all hover:bg-[var(--workspace-surface-700)]',
+                mobileDevice ? 'opacity-80 active:opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 [@media(hover:none)]:opacity-80',
+              )}
               style={isActive ? { opacity: 1 } : undefined}
               title={t('tab.close')}
             >
@@ -164,13 +173,15 @@ export function PcSessionTabBar({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1 pl-2">
+        <AppUpdateTopBarPill />
+        <CompanionStatusPill info={companionInfo} />
         {onToggleAi && !isDashboard && activeSessionId && (
           <button type="button" data-testid="pc-tab-ai" onClick={onToggleAi} title={t('tab.aiAssistant')} aria-pressed={aiOpen}
             className={cn('flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors', aiOpen
               ? 'bg-[var(--workspace-nav-active-bg)] text-workspace-nav-active'
               : 'text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]')}>
             <Sparkles className="h-3.5 w-3.5 text-[var(--workspace-accent-text)]" />{t('tab.aiAssistant')}
-            <kbd className="rounded border border-[color:var(--workspace-border-soft)] px-1 font-sans text-[10px] text-[var(--workspace-text-subtle)]">⌘I</kbd>
+            {!mobileDevice && <kbd className="rounded border border-[color:var(--workspace-border-soft)] px-1 font-sans text-[10px] text-[var(--workspace-text-subtle)]">⌘I</kbd>}
           </button>
         )}
         {onToggleTheme && (

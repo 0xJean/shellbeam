@@ -789,6 +789,7 @@ export function SessionTerminalView({
           {isConnected && (
             <AICommandBar
               key={sessionId}
+              sessionId={sessionId}
               contextLabel={hostName || hostAddress}
               visible={showAI && visible}
               focusToken={aiFocusToken}

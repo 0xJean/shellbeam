@@ -1,4 +1,5 @@
 import type { HostProfile } from '@/lib/hosts'
+import type { SyncTrustedPeer } from '@/lib/sync'
 import { useHostNetworkMetadata } from '@/hooks/use-host-network-metadata'
 import { useT } from '@/lib/i18n'
 import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
@@ -20,6 +21,8 @@ interface MobileSessionHeaderProps {
   onNewConnection: () => void
   onOpenLocalTerminal?: () => void
   hosts?: HostProfile[]
+  trustedPeers?: SyncTrustedPeer[]
+  onOpenCompanion?: () => void
   onConnectHost?: (hostId: string) => void
   onBack?: () => void
   /** Opens the terminal side drawer (snippets, history, look). */
@@ -36,6 +39,8 @@ export function MobileSessionHeader({
   onNewConnection,
   onOpenLocalTerminal,
   hosts = [],
+  trustedPeers = [],
+  onOpenCompanion,
   onConnectHost,
   onBack,
   onOpenDrawer,
@@ -48,8 +53,16 @@ export function MobileSessionHeader({
 
   if (sessionTabs.length === 0) {
     return (
-      <MobileNoSession hosts={hosts} networkByAddress={networkByAddress} inventoryStates={inventoryStates}
-        onNewConnection={onNewConnection} onOpenLocalTerminal={onOpenLocalTerminal} onConnectHost={onConnectHost} />
+      <MobileNoSession
+        hosts={hosts}
+        trustedPeers={trustedPeers}
+        networkByAddress={networkByAddress}
+        inventoryStates={inventoryStates}
+        onNewConnection={onNewConnection}
+        onOpenLocalTerminal={onOpenLocalTerminal}
+        onOpenCompanion={onOpenCompanion}
+        onConnectHost={onConnectHost}
+      />
     )
   }
 

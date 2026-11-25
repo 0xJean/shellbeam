@@ -2,6 +2,7 @@ import { hasSshConnection } from '@/lib/hosts'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '@/lib/i18n'
 import {
+  AlertCircle,
   ArrowRight,
   ArrowLeft,
   ArrowDown,
@@ -16,6 +17,7 @@ import {
   Laptop,
   Server,
   Upload,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
@@ -53,8 +55,52 @@ import { getHostInventoryResource, HostMetadataLine } from './host-display-meta'
 import { WorkspaceOsIcon } from './workspace/workspace-os-icon'
 import { PanelResizeHandle } from '@/components/ui/panel-resize-handle'
 import { useResizablePanel } from '@/hooks/use-resizable-panel'
+import { isMobileDevice } from '@/lib/mobile-back'
 
 const COMPACT_BREAKPOINT = 700
+
+function formatSftpError(err: unknown, locale: string): string {
+  const isZh = locale === 'zh-CN'
+  const raw = err instanceof Error ? err.message : String(err ?? '')
+  const trimmed = raw.trim()
+  let code = ''
+  let message = ''
+  const jsonStart = trimmed.indexOf('{')
+  if (jsonStart >= 0) {
+    try {
+      const parsed = JSON.parse(trimmed.slice(jsonStart)) as { code?: string; message?: string; detail?: string }
+      if (typeof parsed.code === 'string') code = parsed.code.toLowerCase()
+      if (typeof parsed.message === 'string') message = parsed.message
+    } catch { /* fall through to text match */ }
+  }
+  const haystack = `${code} ${message} ${trimmed}`.toLowerCase()
+  if (haystack.includes('host_key_unknown')) {
+    return isZh
+      ? '该主机 SSH 指纹尚未信任，请先通过终端连接一次以确认指纹。'
+      : 'Host SSH fingerprint is not trusted yet. Connect via Terminal once to verify it.'
+  }
+  if (haystack.includes('host_key_mismatch') || haystack.includes('host_key_changed')) {
+    return isZh
+      ? '该主机 SSH 指纹已变更，请先检查“已知主机”后再重新连接。'
+      : 'Host SSH fingerprint has changed. Verify it in Known Hosts before reconnecting.'
+  }
+  if (haystack.includes('auth') || haystack.includes('permission denied')) {
+    return isZh
+      ? '认证失败，请检查该主机的用户名、密码或私钥配置。'
+      : 'Authentication failed. Check username, password, or SSH key for this host.'
+  }
+  if (haystack.includes('timed out') || haystack.includes('timeout')) {
+    return isZh
+      ? '连接超时，请检查网络或目标主机 SSH 服务状态。'
+      : 'Connection timed out. Check network connectivity or SSH status on the host.'
+  }
+  if (haystack.includes('connection refused')) {
+    return isZh
+      ? '目标主机拒绝连接，请检查 SSH 端口是否正确。'
+      : 'Connection refused. Check the SSH port on this host.'
+  }
+  return message || trimmed || (isZh ? '文件操作失败' : 'File operation failed')
+}
 
 function useContainerWidth(ref: React.RefObject<HTMLElement | null>) {
   const [width, setWidth] = useState(Infinity)
@@ -105,7 +151,7 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
-  const [activeTab, setActiveTab] = useState<'local' | 'remote'>('local')
+  const [activeTab, setActiveTab] = useState<'local' | 'remote'>(() => (isMobileDevice() && selectedHostId ? 'remote' : 'local'))
   const [selecting, setSelecting] = useState(false)
   const [pathEdit, setPathEdit] = useState<{ kind: 'move' | 'rename'; value: string } | null>(null)
 
@@ -246,11 +292,11 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
       })))
       setRemoteConnected(true)
     } catch (err) {
-      if (request === remoteRequestRef.current) setTransferStatus(`Remote error: ${err}`)
+      if (request === remoteRequestRef.current) setTransferStatus(formatSftpError(err, locale))
     } finally {
       if (request === remoteRequestRef.current) setRemoteLoading(false)
     }
-  }, [remoteHost, remoteDir, remoteFs])
+  }, [remoteHost, remoteDir, remoteFs, locale])
 
   useEffect(() => {
     if (!selectedRemoteHostId || !remoteHost || remoteConnected || remoteLoading) return
@@ -592,12 +638,12 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
   return (
     // On a short phone screen the list keeps a usable height and the whole page scrolls instead.
     <div ref={containerRef} className={cn('flex h-full min-h-0 flex-col gap-3 p-4 text-[var(--workspace-text)]', isCompact && 'overflow-y-auto', className)}>
-      <header className="flex shrink-0 flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1">
+      <header className={cn('flex shrink-0 flex-wrap items-center gap-2.5', !isCompact && 'items-start gap-3')}>
+        <div className={cn('min-w-0', isCompact ? 'shrink-0' : 'flex-1 basis-60')}>
           <h1 className="text-[22px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('sftp.title')}</h1>
-          <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">{c.subtitle}</p>
+          {!isCompact && <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">{c.subtitle}</p>}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className={cn('flex items-center gap-2', isCompact ? 'min-w-0 flex-1' : 'flex-wrap')}>
           <Select
             disabled={transferring}
             value={selectedRemoteHostId ?? ''}
@@ -607,9 +653,13 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
               autoConnectHostRef.current = null
               setRemoteConnected(false)
               setRemoteEntries([])
+              if (id && isCompact) setActiveTab('remote')
             }}
             placeholder={t('sftp.selectHost')}
-            className="h-8 max-w-[220px] text-xs [&_button]:h-8 [&_button]:text-xs"
+            className={cn(
+              'h-8 text-xs [&_button]:h-8 [&_button]:text-xs',
+              isCompact ? 'min-w-0 flex-1' : 'max-w-[220px]',
+            )}
             options={[
               { value: '', label: t('sftp.selectHost') },
               ...hosts.filter(hasSshConnection).map((h) => ({
@@ -637,15 +687,17 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
               })),
             ]}
           />
-          <Button
-            size="sm"
-            className="h-8 gap-1.5 bg-[color:var(--workspace-primary-500)] px-3 text-xs text-white hover:brightness-110"
-            disabled={!canUpload}
-            onClick={() => void transferToRemote()}
-          >
-            <Upload className="h-3.5 w-3.5" />
-            {fill(c.uploadSelected, { n: localSelected.size })}
-          </Button>
+          {!isCompact && (
+            <Button
+              size="sm"
+              className="h-8 shrink-0 gap-1.5 bg-[color:var(--workspace-primary-500)] px-3 text-xs text-white hover:brightness-110"
+              disabled={!canUpload}
+              onClick={() => void transferToRemote()}
+            >
+              <Upload className="h-3.5 w-3.5" />
+              {fill(c.uploadSelected, { n: localSelected.size })}
+            </Button>
+          )}
         </div>
       </header>
 
@@ -761,9 +813,26 @@ function SftpSession({ hosts, selectedHostId, vaultId, resolveAuthSecret, classN
       )}
 
       {transferStatus && (
-        <div className="flex shrink-0 items-center gap-2 px-1">
-          {transferring && <RefreshCw className="h-3 w-3 animate-spin text-[hsl(var(--primary))]" />}
-          <span className="truncate text-xs text-[var(--workspace-text-muted)]">{transferStatus}</span>
+        <div className={cn(
+          'flex shrink-0 items-start gap-2 rounded-lg border px-3 py-2 text-xs',
+          transferring
+            ? 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] text-[var(--workspace-text-muted)]'
+            : 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+        )}>
+          {transferring
+            ? <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-[hsl(var(--primary))]" />
+            : <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+          <span className="min-w-0 flex-1 leading-relaxed">{transferStatus}</span>
+          {!transferring && (
+            <button
+              type="button"
+              onClick={() => setTransferStatus('')}
+              aria-label={m.cancel}
+              className="rounded p-0.5 opacity-75 hover:opacity-100"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       )}
     </div>

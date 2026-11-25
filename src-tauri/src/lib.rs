@@ -9,6 +9,7 @@ mod bar_layout;
 mod biometric_store;
 mod browser;
 mod collection_limits;
+mod companion;
 mod data;
 mod error;
 mod keys;
@@ -84,6 +85,9 @@ pub fn run() {
         .manage(ssh::auth_prompt::AuthPromptState::default())
         .manage(mcp::McpState::default())
         .manage(ai_cli::AiCliState::default())
+        .manage(companion::server::CompanionServerState::default())
+        .manage(companion::CompanionClientHandle::default())
+        .manage(companion::ai_hub::CompanionAiHub::default())
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 use tauri::Manager;
@@ -304,6 +308,29 @@ pub fn run() {
             browser::start_browser_socks_proxy,
             browser::stop_browser_socks_proxy,
             bar_layout::bar_layout,
+            companion::companion_local_endpoints,
+            companion::companion_local_cli_backends,
+            companion::companion_set_peer_permissions,
+            companion::companion_add_peer_route,
+            companion::companion_server_status,
+            companion::companion_server_clients,
+            companion::companion_set_server_enabled,
+            companion::companion_kick_client,
+            companion::companion_publish_ai_state,
+            companion::companion_remove_ai_state,
+            companion::companion_connect,
+            companion::companion_disconnect,
+            companion::companion_status,
+            companion::companion_remote_ai_cli_probe,
+            companion::companion_remote_ai_cli_start,
+            companion::companion_remote_ai_cli_cancel,
+            companion::companion_remote_list_sessions,
+            companion::companion_remote_attach_session,
+            companion::companion_remote_detach_session,
+            companion::companion_remote_send_input,
+            companion::companion_remote_resize_session,
+            companion::companion_remote_subscribe_ai,
+            companion::companion_remote_ai_action,
         ])
         .setup(|app| {
             if let Err(error) = data::operation_jobs::recover(app.handle()) {

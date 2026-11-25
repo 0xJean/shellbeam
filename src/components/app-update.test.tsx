@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
-import { AppUpdateReminder, AppUpdateSettingsSection } from './app-update'
+import { AppUpdateReminder, AppUpdateRuntime, AppUpdateSettingsSection, AppUpdateTopBarPill } from './app-update'
 import { checkForAppUpdate, resetAppUpdateForTests } from '@/lib/app-update'
 import { I18nProvider } from '@/lib/i18n'
 
@@ -105,5 +105,40 @@ describe('AppUpdateSettingsSection', () => {
     expect(await screen.findByText(/arrive through TestFlight/)).toBeInTheDocument()
     expect(screen.queryByTestId('app-update-check')).toBeNull()
     expect(screen.queryByTestId('app-update-auto-check')).toBeNull()
+  })
+})
+
+describe('AppUpdateRuntime & AppUpdateTopBarPill', () => {
+  it('shows non-blocking toast and top-bar pill, opens release notes dialog, and supports snooze vs dismiss', async () => {
+    nativeAnswers({
+      tag_name: 'v0.1.19',
+      draft: false,
+      prerelease: false,
+      name: 'ShellBeam v0.1.19',
+      body: '## Highlights\n- Foldable icon rail\n- Mobile terminal key bar',
+      published_at: '2026-11-25T10:00:00Z',
+    })
+    ui(<><AppUpdateTopBarPill /><AppUpdateRuntime /></>)
+    await act(() => checkForAppUpdate())
+
+    expect(screen.getByTestId('app-update-topbar-pill')).toHaveTextContent('Update v0.1.19')
+    expect(screen.getByTestId('app-update-toast')).toHaveTextContent('ShellBeam 0.1.19 is available')
+
+    // Snoozing hides the floating toast while keeping the top-bar pill visible.
+    fireEvent.click(screen.getByTestId('app-update-toast-later'))
+    expect(screen.queryByTestId('app-update-toast')).toBeNull()
+    expect(screen.getByTestId('app-update-topbar-pill')).toBeInTheDocument()
+
+    // Clicking the top-bar pill opens the What's New dialog with release notes.
+    fireEvent.click(screen.getByTestId('app-update-topbar-pill'))
+    expect(screen.getByTestId('app-update-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('app-update-release-notes')).toHaveTextContent('Foldable icon rail')
+
+    fireEvent.click(screen.getByTestId('app-update-dialog-download'))
+    expect(invokeMock).toHaveBeenCalledWith('open_app_release_page', { version: '0.1.19' })
+
+    // Dismissing hides the top-bar pill too.
+    fireEvent.click(screen.getByTestId('app-update-dialog-dismiss'))
+    expect(screen.queryByTestId('app-update-topbar-pill')).toBeNull()
   })
 })

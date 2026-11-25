@@ -1,7 +1,8 @@
 import { useT } from '@/lib/i18n'
 import { mobileTerminalV3Copy } from '@/lib/locales/mobile-terminal-v3'
+import { isMobileDevice } from '@/lib/mobile-back'
 import { cn } from '@/lib/utils'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronsLeftRight, ClipboardPaste, KeyboardOff, X } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronDown, ChevronsLeftRight, ClipboardPaste, Keyboard, KeyboardOff, X } from 'lucide-react'
 import { useCallback, useRef, useState, type ReactNode } from 'react'
 
 interface MobileTerminalToolbarProps {
@@ -74,9 +75,11 @@ function applyModifier(seq: string, mod: Set<Modifier>): string {
 export function MobileTerminalToolbar({ onSend, onPaste, onDismissKeyboard }: MobileTerminalToolbarProps) {
   const { locale } = useT()
   const copy = mobileTerminalV3Copy[locale]
+  const mobileDevice = isMobileDevice()
   const [activeModifiers, setActiveModifiers] = useState<Set<Modifier>>(new Set())
   const [lockedModifiers, setLockedModifiers] = useState<Set<Modifier>>(new Set())
   const [panel, setPanel] = useState<Panel>('none')
+  const [collapsed, setCollapsed] = useState(false)
   const lastModTap = useRef<Record<string, number>>({})
 
   const handlePaste = useCallback(() => {
@@ -127,8 +130,35 @@ export function MobileTerminalToolbar({ onSend, onPaste, onDismissKeyboard }: Mo
     { id: 'fkeys', label: copy.fnKeys }, { id: 'ctrl', label: copy.ctrlKeys }, { id: 'symbols', label: copy.symbols },
   ]
 
+  const collapseBarLabel = locale === 'zh-CN' ? '收起快捷键盘栏' : 'Collapse key toolbar'
+  const expandBarLabel = locale === 'zh-CN' ? '展开快捷键盘栏' : 'Show key toolbar'
+
+  if (collapsed) {
+    return (
+      <div
+        data-testid="mobile-terminal-toolbar"
+        data-collapsed="true"
+        className={cn(
+          'flex items-center justify-end border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] px-2 py-1',
+          !mobileDevice && 'md:hidden',
+        )}
+        style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 0.25rem)' }}
+      >
+        <button
+          type="button"
+          data-testid="mobile-toolbar-expand"
+          onClick={() => setCollapsed(false)}
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[var(--workspace-surface-800)] px-3 text-xs font-medium text-[var(--workspace-text-strong)] active:bg-[var(--workspace-surface-700)]"
+        >
+          <Keyboard className="h-3.5 w-3.5 text-[var(--workspace-accent-text)]" />
+          <span>{expandBarLabel}</span>
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <div data-testid="mobile-terminal-toolbar" className="flex flex-col border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)] md:hidden"
+    <div data-testid="mobile-terminal-toolbar" className={cn('flex flex-col border-t border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-900)]', !mobileDevice && 'md:hidden')}
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 [scrollbar-width:none]">
@@ -148,6 +178,16 @@ export function MobileTerminalToolbar({ onSend, onPaste, onDismissKeyboard }: Mo
           <ToolbarKey label={copy.dismissKeyboard} testId="mobile-toolbar-dismiss-keyboard" icon={<KeyboardOff className="h-4 w-4" />} onPress={onDismissKeyboard} />
         )}
         {QUICK_SYMBOLS.map((ch) => <ToolbarKey key={ch} label={ch} onPress={() => send(ch)} />)}
+        <button
+          type="button"
+          data-testid="mobile-toolbar-collapse"
+          aria-label={collapseBarLabel}
+          title={collapseBarLabel}
+          onClick={() => { setPanel('none'); setCollapsed(true) }}
+          className={cn(keyBase, keyIdle, 'ml-auto min-w-10 px-2 text-[var(--workspace-text-muted)]')}
+        >
+          <ChevronDown className="h-4 w-4" />
+        </button>
       </div>
 
       {panel !== 'none' && (

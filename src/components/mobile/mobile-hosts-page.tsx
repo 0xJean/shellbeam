@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ArrowDownWideNarrow, ArrowUpWideNarrow, ChevronRight, Lock, Plus, Search, TriangleAlert, X } from 'lucide-react'
+import { ArrowDownWideNarrow, ArrowUpWideNarrow, Check, ChevronDown, ChevronRight, Lock, Plus, Search, TriangleAlert, X } from 'lucide-react'
 import { HostEditorDialog } from '@/components/host-editor-dialog'
 import { HostProbeManageDialog } from '@/components/host-probe-manage-dialog'
 import { ProbeCoverageBanner } from '@/components/hosts-overview'
@@ -16,6 +16,7 @@ import { fill } from '@/lib/locales/probe-install'
 import { getResourceUsageTone } from '@/lib/resource-usage'
 import { cn } from '@/lib/utils'
 import type { WorkspaceAppId } from '@/lib/workspace'
+import type { SyncTrustedPeer } from '@/lib/sync'
 import { OsBadge } from './mobile-host-parts'
 import { hostEndpoint, hostOs, hostReadings, mobileHostStatus, STATUS_DOT, STATUS_PILL, type MobileHostStatus } from './mobile-host-status'
 import { MobileHostDetail } from './mobile-host-detail'
@@ -50,6 +51,9 @@ export interface MobileHostsPageProps {
   /** External "add host" requests (guide, quick connect) open the full-screen form. */
   openAddForm?: boolean
   onAddFormClose?: () => void
+  /** Paired desktop peers available for Desktop Companion Bridge direct connection. */
+  trustedPeers?: SyncTrustedPeer[]
+  onOpenSync?: () => void
 }
 
 /** v3 mobile hosts tab: m:hosts list, m:host detail and the m:newhost sheet. */
@@ -65,6 +69,7 @@ export function MobileHostsPage({
   const [descending, setDescending] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [vaultMenuOpen, setVaultMenuOpen] = useState(false)
   const [editing, setEditing] = useState<HostProfile | null>(null)
   const [probeHost, setProbeHost] = useState<HostProfile | null>(null)
   const [manageProbeHost, setManageProbeHost] = useState<HostProfile | null>(null)
@@ -158,15 +163,56 @@ export function MobileHostsPage({
           {descending ? <ArrowUpWideNarrow className="h-5 w-5" /> : <ArrowDownWideNarrow className="h-5 w-5" />}
         </button>
         {vaults && vaults.length > 1 && onSwitchVault ? (
-          <select
-            data-testid="mobile-hosts-vault-switch"
-            aria-label={c.switchVault}
-            value={activeVaultId ?? ''}
-            onChange={(event) => onSwitchVault(event.target.value)}
-            className="h-8 max-w-[160px] truncate rounded-full border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-[13px] font-medium text-[var(--workspace-text-strong)] outline-none"
-          >
-            {vaults.map((vault) => <option key={vault.id} value={vault.id}>{vault.name}</option>)}
-          </select>
+          <div className="relative">
+            <button
+              type="button"
+              data-testid="mobile-hosts-vault-switch"
+              aria-label={c.switchVault}
+              aria-haspopup="menu"
+              aria-expanded={vaultMenuOpen}
+              onClick={() => setVaultMenuOpen((open) => !open)}
+              className="inline-flex h-8 max-w-[180px] items-center gap-1.5 rounded-full border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] px-3 text-[13px] font-medium text-[var(--workspace-text-strong)] transition-colors active:opacity-80"
+            >
+              <span className="truncate">{vaults.find((v) => v.id === activeVaultId)?.name ?? vaultName ?? c.switchVault}</span>
+              <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-[var(--workspace-text-muted)] transition-transform', vaultMenuOpen && 'rotate-180')} />
+            </button>
+            {vaultMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[1px]" onClick={() => setVaultMenuOpen(false)} />
+                <div
+                  role="menu"
+                  aria-label={c.switchVault}
+                  data-testid="mobile-hosts-vault-menu"
+                  className="absolute left-1/2 top-full z-50 mt-1.5 w-56 -translate-x-1/2 overflow-hidden rounded-2xl border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-950)] p-1.5 shadow-[var(--workspace-shadow-overlay)]"
+                >
+                  {vaults.map((vault) => {
+                    const selected = vault.id === activeVaultId
+                    return (
+                      <button
+                        key={vault.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={selected}
+                        onClick={() => {
+                          setVaultMenuOpen(false)
+                          if (!selected) onSwitchVault(vault.id)
+                        }}
+                        className={cn(
+                          'flex min-h-[42px] w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[14px] transition-colors',
+                          selected
+                            ? 'bg-[var(--workspace-accent-subtle)] font-semibold text-[var(--workspace-text-strong)]'
+                            : 'text-[var(--workspace-text)] active:bg-[var(--workspace-surface-800)]',
+                        )}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{vault.name}</span>
+                        {selected && <Check className="h-4 w-4 shrink-0 text-[var(--workspace-accent-text)]" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+          </div>
         ) : vaultName ? (
           <span className="truncate rounded-full bg-[var(--workspace-surface-800)] px-3 py-1 text-[12.5px] font-medium text-[var(--workspace-text-muted)]">{vaultName}</span>
         ) : <span className="flex-1" />}

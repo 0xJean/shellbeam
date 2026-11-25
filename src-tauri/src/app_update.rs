@@ -10,6 +10,7 @@ use tauri::{AppHandle, Runtime, Webview};
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/0xJean/shellbeam/releases/latest";
 const RELEASE_PAGE_PREFIX: &str = "https://github.com/0xJean/shellbeam/releases/tag/v";
 const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_RELEASE_NOTES_CHARS: usize = 8192;
 const CHECK_FAILED: &str = "update_check_failed";
 const OPEN_FAILED: &str = "update_page_open_failed";
 const UNAVAILABLE: &str = "update_check_unavailable";
@@ -28,6 +29,12 @@ pub struct LatestRelease {
     draft: bool,
     #[serde(default)]
     prerelease: bool,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    published_at: Option<String>,
 }
 
 fn ensure_main_webview(label: &str) -> Result<(), String> {
@@ -58,7 +65,15 @@ fn release_page_url(version: &str) -> Result<String, String> {
 }
 
 fn parse_latest_release(reader: impl Read) -> Result<LatestRelease, String> {
-    serde_json::from_reader(reader.take(MAX_RESPONSE_BYTES)).map_err(|_| CHECK_FAILED.to_string())
+    let mut release: LatestRelease = serde_json::from_reader(reader.take(MAX_RESPONSE_BYTES))
+        .map_err(|_| CHECK_FAILED.to_string())?;
+    if let Some(body) = release.body.as_mut() {
+        if body.chars().count() > MAX_RELEASE_NOTES_CHARS {
+            let truncated: String = body.chars().take(MAX_RELEASE_NOTES_CHARS).collect();
+            *body = format!("{truncated}…");
+        }
+    }
+    Ok(release)
 }
 
 fn fetch_latest_release() -> Result<LatestRelease, String> {
@@ -245,7 +260,7 @@ mod tests {
     #[test]
     fn reads_only_the_fields_it_needs_from_a_release_record() {
         let release = parse_latest_release(
-            br#"{"tag_name":"v0.1.8","draft":false,"prerelease":true,"body":"notes","assets":[]}"#
+            br#"{"tag_name":"v0.1.8","draft":false,"prerelease":true,"name":"v0.1.8","body":"notes","published_at":"2026-11-25T10:00:00Z","assets":[]}"#
                 .as_slice(),
         )
         .unwrap();
@@ -254,7 +269,10 @@ mod tests {
             LatestRelease {
                 tag_name: "v0.1.8".into(),
                 draft: false,
-                prerelease: true
+                prerelease: true,
+                name: Some("v0.1.8".into()),
+                body: Some("notes".into()),
+                published_at: Some("2026-11-25T10:00:00Z".into()),
             }
         );
     }

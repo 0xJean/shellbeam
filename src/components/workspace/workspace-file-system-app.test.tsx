@@ -219,12 +219,6 @@ describe('workspace file system app', () => {
   })
 
   it('creates, renames, and deletes remote entries', async () => {
-    vi.spyOn(window, 'prompt')
-      .mockReturnValueOnce('notes.txt')
-      .mockReturnValueOnce('configs')
-      .mockReturnValueOnce('hosts.bak')
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-
     render(
       <WorkspaceFileSystemApp
         sessionId="session-1"
@@ -251,6 +245,8 @@ describe('workspace file system app', () => {
     await screen.findByText('hosts')
 
     fireEvent.click(screen.getByRole('button', { name: 'New File' }))
+    fireEvent.change(screen.getByTestId('workspace-fs-prompt-input'), { target: { value: 'notes.txt' } })
+    fireEvent.click(screen.getByTestId('workspace-fs-prompt-confirm'))
 
     await waitFor(() => {
       expect(createFile).toHaveBeenCalledWith('/root/notes.txt')
@@ -258,6 +254,8 @@ describe('workspace file system app', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'New Folder' }))
+    fireEvent.change(screen.getByTestId('workspace-fs-prompt-input'), { target: { value: 'configs' } })
+    fireEvent.click(screen.getByTestId('workspace-fs-prompt-confirm'))
 
     await waitFor(() => {
       expect(createDir).toHaveBeenCalledWith('/root/configs')
@@ -266,6 +264,8 @@ describe('workspace file system app', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /hosts/i }))
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
+    fireEvent.change(screen.getByTestId('workspace-fs-prompt-input'), { target: { value: 'hosts.bak' } })
+    fireEvent.click(screen.getByTestId('workspace-fs-prompt-confirm'))
 
     await waitFor(() => {
       expect(renamePath).toHaveBeenCalledWith('/root/hosts', '/root/hosts.bak')

@@ -66,9 +66,9 @@ export function SettingsNote({ children, icon: Icon = Info, className }: { child
 export function SegmentedChoice<T extends string>({ value, options, onChange, label }: {
   value: T; options: Array<{ value: T; label: ReactNode; disabled?: boolean }>; onChange: (value: T) => void; label: string
 }) {
-  return <div role="group" aria-label={label} className="inline-flex rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] p-0.5">
+  return <div role="group" aria-label={label} className="inline-flex max-w-full flex-wrap rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] p-0.5">
     {options.map((option) => <button key={option.value} type="button" aria-pressed={value === option.value} disabled={option.disabled} onClick={() => onChange(option.value)}
-      className={cn('inline-flex h-7 items-center rounded-md px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40',
+      className={cn('inline-flex h-7 shrink-0 items-center whitespace-nowrap rounded-md px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40',
         value === option.value ? 'bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-sm ring-1 ring-[color:var(--workspace-border-soft)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
       {option.label}
     </button>)}

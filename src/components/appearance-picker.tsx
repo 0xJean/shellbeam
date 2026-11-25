@@ -53,14 +53,17 @@ export function AppearancePicker({ family }: { family: ThemeFamily }) {
     const preview = style === 'auto' ? null : STYLE_PREVIEW[style]
     return (
       <button key={style} type="button" role="radio" aria-checked={on} data-testid={`ui-style-${style}`} onClick={() => setAppearance({ uiStyle: style })}
-        className={cn('rounded-lg border p-2 text-left transition-all', on ? 'border-primary ring-2 ring-primary/30' : 'border-border hover:border-foreground/30')}>
+        className={cn('min-w-0 rounded-lg border p-2 text-left transition-all', on ? 'border-primary ring-2 ring-primary/30' : 'border-border hover:border-foreground/30')}>
         <span className={cn('relative flex h-10 items-center justify-center gap-1.5 overflow-hidden rounded-md px-2', preview?.glass ? 'bg-gradient-to-br from-primary/25 via-muted/60 to-primary/10' : 'bg-muted/60')}>
           {preview ? <>
             <span className={cn('h-6 flex-1', preview.glass ? 'bg-card/65 backdrop-blur-sm' : 'bg-card')} style={{ borderRadius: preview.radius, border: preview.border, boxShadow: preview.shadow }} />
             <span className={cn('h-6 flex-1', preview.glass ? 'bg-card/65 backdrop-blur-sm' : 'bg-card')} style={{ borderRadius: preview.radius, border: preview.border, boxShadow: preview.shadow }} />
-          </> : <span className="text-center text-[10px] leading-tight text-muted-foreground">{t('settings.uiStyleAutoHint')}</span>}
+          </> : <span className="line-clamp-2 text-center text-[10px] leading-snug text-muted-foreground">{t('settings.uiStyleAutoHint')}</span>}
         </span>
-        <span className="mt-1.5 flex items-center justify-between text-[11px] font-medium">{t(`settings.uiStyle.${style}`)}{on && <Check className="h-3 w-3 text-primary" />}</span>
+        <span className="mt-1.5 flex items-center justify-between gap-1 text-[11px] font-medium">
+          <span className="truncate whitespace-nowrap">{t(`settings.uiStyle.${style}`)}</span>
+          {on && <Check className="h-3 w-3 shrink-0 text-primary" />}
+        </span>
       </button>
     )
   }
@@ -69,22 +72,22 @@ export function AppearancePicker({ family }: { family: ThemeFamily }) {
     <div className="space-y-4">
       <div className="space-y-2">
         <div className="text-xs font-medium text-muted-foreground">{t('settings.uiStyleTitle')}</div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" role="radiogroup" aria-label={t('settings.uiStyleTitle')}>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-2" role="radiogroup" aria-label={t('settings.uiStyleTitle')}>
           {(['auto', ...UI_STYLES] as UiStyle[]).map(styleOption)}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4" role="radiogroup" aria-label={t('settings.palettes')}>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(136px,1fr))] gap-2.5" role="radiogroup" aria-label={t('settings.palettes')}>
         {THEMES.map(({ id, label, dark, light }) => {
           const on = activePalette === dark || activePalette === light
           return (
             <button key={id} type="button" role="radio" aria-checked={on} data-testid={`theme-${id}`}
               onClick={() => setAppearance({ darkPalette: dark, lightPalette: light })}
-              className={cn('group overflow-hidden rounded-xl border bg-card text-left transition-all', on ? 'border-primary ring-2 ring-primary/30' : 'border-border hover:border-foreground/30')}>
+              className={cn('group min-w-0 overflow-hidden rounded-xl border bg-card text-left transition-all', on ? 'border-primary ring-2 ring-primary/30' : 'border-border hover:border-foreground/30')}>
               <span className="flex h-14 divide-x divide-black/15">
                 <MiniWorkbenchPreview preview={PALETTES[dark].preview} />
                 <MiniWorkbenchPreview preview={PALETTES[light].preview} />
               </span>
-              <span className="flex items-center justify-between border-t border-border/60 px-2.5 py-1.5 text-[11.5px] font-medium">
+              <span className="flex items-center justify-between gap-1 border-t border-border/60 px-2.5 py-1.5 text-[11.5px] font-medium">
                 <span className="truncate">{label}</span>
                 {on && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
               </span>
@@ -96,7 +99,7 @@ export function AppearancePicker({ family }: { family: ThemeFamily }) {
         <div className="text-xs font-medium text-muted-foreground">{t('settings.accentColor')}</div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" aria-pressed={followsTheme} onClick={() => setAppearance({ darkAccent: null, lightAccent: null })}
-            className={cn('rounded-md border px-2.5 py-1 text-xs font-medium transition-colors', followsTheme ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-foreground/30')}>
+            className={cn('shrink-0 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-medium transition-colors', followsTheme ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-foreground/30')}>
             {t('settings.accentFollowPalette')}
           </button>
           {(Object.keys(ACCENTS) as Accent[]).map((accent) => {

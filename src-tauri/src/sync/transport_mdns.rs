@@ -349,6 +349,7 @@ pub fn server_loop(app: tauri::AppHandle, port: u16) {
     SERVER_RUNNING.store(true, Ordering::SeqCst);
     SERVER_PORT.store(port, Ordering::SeqCst);
     register_mdns_service(port);
+    super::iroh_transport::start_iroh_server(app.clone(), port);
     log::info!("Sync server listening on {actual_addr}");
     for stream in listener.incoming() {
         if !SERVER_RUNNING.load(Ordering::SeqCst) {
@@ -362,6 +363,7 @@ pub fn server_loop(app: tauri::AppHandle, port: u16) {
             Err(e) => log::warn!("Sync server accept error: {e}"),
         }
     }
+    super::iroh_transport::stop_iroh_server();
     unregister_mdns_service();
     SERVER_RUNNING.store(false, Ordering::SeqCst);
     SERVER_PORT.store(0, Ordering::SeqCst);

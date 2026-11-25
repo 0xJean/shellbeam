@@ -163,14 +163,14 @@ export function SnippetPanel({
         aria-pressed={active}
         onClick={() => setCategory(key)}
         className={cn(
-          'flex h-[30px] w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[13px] transition-colors',
+          'flex h-[32px] shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-2.5 text-left text-[13px] transition-colors xl:w-full',
           active
-            ? 'bg-[var(--workspace-surface-row-selected)] font-medium text-[var(--workspace-text-strong)] shadow-[inset_3px_0_0_hsl(var(--primary))]'
+            ? 'bg-[var(--workspace-surface-row-selected)] font-medium text-[var(--workspace-text-strong)] shadow-[inset_0_0_0_1px_var(--workspace-border-soft)] xl:shadow-[inset_3px_0_0_hsl(var(--primary))]'
             : 'text-[var(--workspace-text)] hover:bg-[var(--workspace-surface-800)]',
         )}
       >
         <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center [&>svg]:h-3.5 [&>svg]:w-3.5', active ? 'text-[color:var(--workspace-accent-text)]' : 'text-[var(--workspace-text-subtle)]')}>{icon}</span>
-        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="min-w-0 truncate xl:flex-1">{label}</span>
         <span className="font-mono text-[11px] text-[var(--workspace-text-subtle)]">{count}</span>
       </button>
     )
@@ -192,7 +192,7 @@ export function SnippetPanel({
       )}
       {variableFill.dialog}
 
-      <div className="shrink-0 px-6 pb-4 pt-5">
+      <div className="shrink-0 px-4 pb-4 pt-5 md:px-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h2 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('snippets.title')}</h2>
@@ -208,12 +208,12 @@ export function SnippetPanel({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 px-6 pb-6 md:grid-cols-[188px_minmax(0,1fr)]">
-        <nav aria-label={c.categories} data-testid="snippet-categories" className="flex flex-col gap-0.5 max-md:flex-row max-md:flex-wrap">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 px-4 pb-6 md:px-6 xl:grid-cols-[188px_minmax(0,1fr)] xl:gap-5">
+        <nav aria-label={c.categories} data-testid="snippet-categories" className="flex gap-1 overflow-x-auto pb-1 [scrollbar-width:none] xl:flex-col xl:gap-0.5 xl:overflow-visible xl:pb-0">
           {categoryButton('all', c.all, snippets.length, <Layers />)}
           {tagCounts.map(([tg, count]) => categoryButton(`tag:${tg}`, tg, count, <Tag />))}
           {untaggedCount > 0 && tagCounts.length > 0 && categoryButton('untagged', c.untagged, untaggedCount, <Code2 />)}
-          <div className="mb-1 mt-3.5 px-2.5 text-[11px] font-medium text-[var(--workspace-text-subtle)] max-md:hidden">{c.smartGroups}</div>
+          <div className="mb-1 mt-3.5 hidden px-2.5 text-[11px] font-medium text-[var(--workspace-text-subtle)] xl:block">{c.smartGroups}</div>
           {categoryButton('recent', c.recent, recentCount, <Clock />)}
         </nav>
 

@@ -98,6 +98,7 @@ const en: Record<string, string> = {
   'nav.terminal': 'Terminal',
   'nav.sessions': 'Sessions',
   'nav.files': 'Files',
+  'nav.desktop': 'Desktop',
   'nav.tools': 'Tools',
   'nav.groupWorkspace': 'Workspace',
   'nav.groupLibrary': 'Library',

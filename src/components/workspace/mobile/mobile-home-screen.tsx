@@ -6,6 +6,7 @@ import { workspaceMobileV3Copy } from '@/lib/locales/workspace-mobile-v3'
 import type { HostOpsHealthState } from '@/lib/host-ops-view'
 import type { WorkspaceAppId } from '@/lib/workspace'
 import { cn } from '@/lib/utils'
+import { isMobileDevice } from '@/lib/mobile-back'
 import { WorkspaceAppIcon } from '../workspace-app-grid'
 import { DOCK_APPS, FIRST_PAGE_WIDGETS, HOME_GRID_APPS, WIDGET_SPAN, type MobileHomeLayout, type MobileWidgetId } from './mobile-home-prefs'
 import { healthDotClass } from './mobile-format'
@@ -14,28 +15,29 @@ import { useLongPress, type PullState } from './use-mobile-gestures'
 import type { MobileHomeData } from './use-mobile-home-data'
 
 
-const glass = 'border border-[color:var(--workspace-mobile-stroke)] bg-[var(--workspace-mobile-card)] backdrop-blur-2xl'
+const glass = 'border border-[color:var(--workspace-mobile-stroke)] bg-[var(--workspace-mobile-card)] backdrop-blur-xl'
 
 export function MobileHomeTopBar({ hostName, health, layout, onBackToHosts, onToggleLayout, onAddWidgets }: {
   hostName: string; health?: HostOpsHealthState; layout: MobileHomeLayout; onBackToHosts?: () => void; onToggleLayout: () => void; onAddWidgets: () => void
 }) {
   const { locale } = useT()
   const copy = workspaceMobileV3Copy[locale]
-  const pill = cn('inline-flex h-11 items-center gap-1 rounded-full px-1 text-[13.5px] font-semibold text-[var(--workspace-text-strong)] active:opacity-60')
-  const pillInner = cn('inline-flex h-[30px] items-center gap-1.5 rounded-full px-3 shadow-sm', glass)
-  return <div data-testid="mobile-home-topbar" className="relative z-10 flex items-center gap-1 px-3.5">
+  const pill = cn('inline-flex h-10 items-center gap-1 rounded-full px-1 text-[13px] font-medium text-[var(--workspace-text-strong)] active:opacity-60')
+  const pillInner = cn('inline-flex h-8 items-center gap-1.5 rounded-full px-3', glass)
+  return <div data-testid="mobile-home-topbar" className="relative z-10 flex items-center gap-1.5 px-3.5">
     {onBackToHosts && <button type="button" className={pill} onClick={onBackToHosts} aria-label={copy.hosts}>
       <span className={cn(pillInner, 'pl-2')}><ChevronLeft className="h-4 w-4" aria-hidden="true" />{copy.hosts}</span>
     </button>}
-    <span className={cn(pill, 'min-w-0')}>
-      <span className={cn(pillInner, 'min-w-0')}><span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', healthDotClass(health))} /><span className="truncate">{hostName}</span></span>
+    <span className="inline-flex min-w-0 items-center gap-1.5 px-1 text-[13px] font-medium text-[var(--workspace-text-muted)]">
+      <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', healthDotClass(health))} />
+      <span className="truncate">{hostName}</span>
     </span>
-    <div className="ml-auto flex items-center">
-      <button type="button" data-testid="mobile-home-layout-toggle" className="flex h-11 w-11 items-center justify-center active:opacity-60" aria-label={layout === 'grid' ? copy.listLayout : copy.gridLayout} onClick={onToggleLayout}>
-        <span className={cn('flex h-[30px] w-[30px] items-center justify-center rounded-full text-[var(--workspace-text-strong)]', glass)}>{layout === 'grid' ? <List className="h-4 w-4" /> : <LayoutGrid className="h-4 w-4" />}</span>
+    <div className="ml-auto flex items-center gap-1">
+      <button type="button" data-testid="mobile-home-layout-toggle" className="flex h-9 w-9 items-center justify-center active:opacity-60" aria-label={layout === 'grid' ? copy.listLayout : copy.gridLayout} onClick={onToggleLayout}>
+        <span className={cn('flex h-8 w-8 items-center justify-center rounded-xl text-[var(--workspace-text-muted)]', glass)}>{layout === 'grid' ? <List className="h-4 w-4" /> : <LayoutGrid className="h-4 w-4" />}</span>
       </button>
-      <button type="button" data-testid="mobile-home-add-widgets" className="flex h-11 w-11 items-center justify-center active:opacity-60" aria-label={copy.addWidgets} onClick={onAddWidgets}>
-        <span className={cn('flex h-[30px] w-[30px] items-center justify-center rounded-full text-[var(--workspace-text-strong)]', glass)}><Plus className="h-4 w-4" /></span>
+      <button type="button" data-testid="mobile-home-add-widgets" className="flex h-9 w-9 items-center justify-center active:opacity-60" aria-label={copy.addWidgets} onClick={onAddWidgets}>
+        <span className={cn('flex h-8 w-8 items-center justify-center rounded-xl text-[var(--workspace-text-muted)]', glass)}><Plus className="h-4 w-4" /></span>
       </button>
     </div>
   </div>
@@ -66,11 +68,26 @@ export function SpringboardApp({ app, data, onOpen, onQuickActions, dock, compac
   const label = t(`workspace.app.${app}`)
   const badge = badgeFor(app, data, copy)
   const { consumeLongPress, ...handlers } = press
+  if (dock) {
+    return (
+      <button
+        type="button"
+        data-testid={`mobile-home-app-${app}`}
+        aria-label={badge ? `${label} · ${badge.label}` : label}
+        {...handlers}
+        onClick={() => { if (!consumeLongPress()) onOpen(app) }}
+        className="flex h-10 flex-1 select-none items-center justify-center gap-2 rounded-xl px-2 text-[12.5px] font-medium text-[var(--workspace-text-strong)] transition-colors [-webkit-touch-callout:none] active:bg-[var(--workspace-surface-800)]"
+      >
+        <WorkspaceAppIcon app={app} size="sm" badge={badge?.count} />
+        <span className="truncate">{label}</span>
+      </button>
+    )
+  }
   return <button type="button" data-testid={`mobile-home-app-${app}`} aria-label={badge ? `${label} · ${badge.label}` : label} {...handlers}
     onClick={() => { if (!consumeLongPress()) onOpen(app) }}
-    className="flex min-h-[44px] min-w-0 select-none flex-col items-center gap-1.5 [-webkit-touch-callout:none] active:scale-90 active:opacity-75 transition-transform">
-    <WorkspaceAppIcon app={app} size={dock || compact ? 'md' : 'lg'} badge={badge?.count} />
-    {!dock && <span className={cn('w-full truncate px-0.5 text-center font-medium', compact ? 'text-[11.5px] text-[var(--workspace-text)]' : 'text-[11.5px] text-[var(--workspace-text-strong)]')}>{label}</span>}
+    className="flex min-h-[44px] min-w-0 select-none flex-col items-center gap-1.5 [-webkit-touch-callout:none] active:scale-95 active:opacity-75 transition-transform">
+    <WorkspaceAppIcon app={app} size={compact ? 'md' : 'lg'} badge={badge?.count} />
+    <span className={cn('w-full truncate px-0.5 text-center font-medium', compact ? 'text-[11.5px] text-[var(--workspace-text)]' : 'text-[11.5px] text-[var(--workspace-text)]')}>{label}</span>
   </button>
 }
 
@@ -78,9 +95,10 @@ export function MobileHomePage({ page, widgets, data, onOpen, onQuickActions, on
   page: 1 | 2; widgets: MobileWidgetId[]; data: MobileHomeData; onOpen: (app: WorkspaceAppId) => void; onQuickActions: (app: WorkspaceAppId) => void; onOpenWidgetApp: (app: WorkspaceAppId) => void
 }) {
   const own = widgets.filter((id) => (page === 1) === FIRST_PAGE_WIDGETS.includes(id))
-  return <div data-testid={`mobile-home-page-${page}`} className="grid grid-cols-4 auto-rows-[84px] gap-x-1 gap-y-3 px-3">
-    {own.map((id) => <div key={id} className={cn(WIDGET_SPAN[id], id === 'cpu' || id === 'certs' || id === 'tasks' ? 'pr-2' : '')}><MobileHomeWidget id={id} data={data} onOpenApp={onOpenWidgetApp} /></div>)}
-    {page === 1 && HOME_GRID_APPS.map((app) => <SpringboardApp key={app} app={app} data={data} onOpen={onOpen} onQuickActions={onQuickActions} />)}
+  const gridApps = isMobileDevice() ? HOME_GRID_APPS.filter((id) => id !== 'browser') : HOME_GRID_APPS
+  return <div data-testid={`mobile-home-page-${page}`} className="grid grid-cols-4 auto-rows-[84px] gap-x-2 gap-y-3 px-3.5">
+    {own.map((id) => <div key={id} className={cn(WIDGET_SPAN[id], id === 'cpu' || id === 'certs' || id === 'tasks' ? 'pr-1' : '')}><MobileHomeWidget id={id} data={data} onOpenApp={onOpenWidgetApp} /></div>)}
+    {page === 1 && gridApps.map((app) => <SpringboardApp key={app} app={app} data={data} onOpen={onOpen} onQuickActions={onQuickActions} />)}
   </div>
 }
 
@@ -107,7 +125,7 @@ export function MobileHomeSearch({ onSearch }: { onSearch: () => void }) {
 export function MobileDock({ data, onOpen, onQuickActions, onSearch }: { data: MobileHomeData; onOpen: (app: WorkspaceAppId) => void; onQuickActions: (app: WorkspaceAppId) => void; onSearch?: () => void }) {
   return <div className="flex flex-col items-center gap-2">
     {onSearch && <MobileHomeSearch onSearch={onSearch} />}
-    <div data-testid="mobile-home-dock" className={cn('flex w-full justify-around rounded-[32px] px-1.5 py-3.5 shadow-[var(--workspace-shadow-overlay)]', glass)}>
+    <div data-testid="mobile-home-dock" className={cn('flex w-full items-center gap-1 rounded-2xl p-1.5 shadow-[var(--workspace-shadow-overlay)]', glass)}>
       {DOCK_APPS.map((app) => <SpringboardApp key={app} app={app} data={data} onOpen={onOpen} onQuickActions={onQuickActions} dock />)}
     </div>
   </div>

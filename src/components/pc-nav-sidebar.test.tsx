@@ -20,10 +20,12 @@ describe('pc nav sidebar', () => {
   it('uses five fixed mobile tabs and keeps Tools active on pages opened from it', () => {
     const onNavChange = vi.fn()
     const { rerender } = render(<MobileBottomNav activeNav="hosts" onNavChange={onNavChange} />)
-    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['nav.hosts', 'nav.sessions', 'nav.files', 'nav.tools', 'nav.settings'])
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['nav.hosts', 'nav.sessions', 'nav.desktop', 'nav.tools', 'nav.settings'])
     expect(screen.queryByRole('button', { name: 'nav.more' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'nav.tools' }))
     expect(onNavChange).toHaveBeenCalledWith('tools')
+    rerender(<MobileBottomNav activeNav="sftp" onNavChange={onNavChange} />)
+    expect(screen.getByRole('button', { name: 'nav.tools' })).toHaveAttribute('aria-current', 'page')
     rerender(<MobileBottomNav activeNav="port-forwarding" onNavChange={onNavChange} />)
     expect(screen.getByRole('button', { name: 'nav.tools' })).toHaveAttribute('aria-current', 'page')
   })
@@ -39,8 +41,8 @@ describe('pc nav sidebar', () => {
       expect(nav).toHaveClass('right-0')
       expect(document.documentElement.dataset.verticalBarEdge).toBe('trailing')
       expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['', '', '', '', ''])
-      fireEvent.click(screen.getByRole('button', { name: 'nav.files' }))
-      expect(onNavChange).toHaveBeenCalledWith('sftp')
+      fireEvent.click(screen.getByRole('button', { name: 'nav.desktop' }))
+      expect(onNavChange).toHaveBeenCalledWith('companion')
       expect(screen.getByRole('button', { name: 'nav.hosts' })).toHaveAttribute('aria-current', 'page')
 
       act(() => applyBarLayout({ verticalBarEdge: 'leading', horizontalSizeClass: 'compact' }))
@@ -65,5 +67,33 @@ describe('pc nav sidebar', () => {
     render(<PcNavSidebar activeNav="hosts" onNavChange={vi.fn()} />)
 
     expect(screen.queryByRole('button', { name: /nav\.projectDeployments/i })).not.toBeInTheDocument()
+  })
+
+  it('places Mobile Remote directly below Sync & Backup in the sidebar footer', () => {
+    const onNavChange = vi.fn()
+    render(<PcNavSidebar activeNav="hosts" onNavChange={onNavChange} />)
+
+    const syncBtn = screen.getByTestId('pc-nav-sync')
+    const companionBtn = screen.getByTestId('pc-nav-companion')
+    expect(syncBtn.nextElementSibling).toBe(companionBtn)
+
+    fireEvent.click(companionBtn)
+    expect(onNavChange).toHaveBeenCalledWith('companion')
+  })
+
+  it('collapses into a compact icon rail on desktop and expands back on toggle', () => {
+    const onNavChange = vi.fn()
+    render(<PcNavSidebar activeNav="hosts" onNavChange={onNavChange} />)
+
+    expect(screen.getByTestId('pc-nav-sidebar')).toHaveAttribute('data-compact', 'false')
+    fireEvent.click(screen.getByTestId('pc-nav-collapse-toggle'))
+    expect(screen.getByTestId('pc-nav-sidebar')).toHaveAttribute('data-compact', 'true')
+
+    fireEvent.click(screen.getByTestId('pc-nav-settings'))
+    expect(onNavChange).toHaveBeenCalledWith('settings')
+
+    fireEvent.click(screen.getByTestId('pc-nav-expand-toggle'))
+    expect(screen.getByTestId('pc-nav-sidebar')).toHaveAttribute('data-compact', 'false')
+    localStorage.removeItem('shellbeam.navCollapsed')
   })
 })

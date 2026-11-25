@@ -108,13 +108,13 @@ export function SettingsPanel({
         </h1>
         <p className="mt-1 text-[13px] text-[var(--workspace-text-muted)]">{t('settings.desc')}</p>
       </header>}
-      <div className="flex w-full min-w-0 flex-col gap-4 md:flex-row md:items-start md:gap-8">
-      {!hideNavigation && <div className="shrink-0 md:sticky md:top-6 md:w-52">
-        <nav className="flex flex-wrap gap-1 md:flex-col" aria-label={copy.navigation}>
+      <div className="flex w-full min-w-0 flex-col gap-4 xl:flex-row xl:items-start xl:gap-8">
+      {!hideNavigation && <div className="shrink-0 xl:sticky xl:top-6 xl:w-52">
+        <nav className="flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0" aria-label={copy.navigation}>
           {SETTINGS_CATEGORIES.map(([item, Icon]) => (
             <button key={item} type="button" data-testid={`settings-category-${item}`}
               aria-pressed={category === item} aria-controls="settings-category-content"
-              className={cn('flex items-center gap-2.5 rounded-md border px-3 py-2 text-left text-sm transition-colors', category === item ? 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] font-medium text-[var(--workspace-text-strong)]' : 'border-transparent text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]')}
+              className={cn('flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border px-3 py-2 text-left text-sm transition-colors', category === item ? 'border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] font-medium text-[var(--workspace-text-strong)]' : 'border-transparent text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-800)] hover:text-[var(--workspace-text-strong)]')}
               onClick={() => setCategory(item)}><Icon className={cn('h-4 w-4 shrink-0', category === item && 'text-[var(--workspace-accent-text)]')} aria-hidden="true" />{copy[item]}</button>
           ))}
         </nav>
@@ -123,15 +123,15 @@ export function SettingsPanel({
         {category === 'general' && <>
         <section className="sb-card p-4">
           <h3 className="mb-2 font-semibold">{t('settings.language')}</h3>
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 flex-1 basis-44">
               <span className="text-sm text-muted-foreground">{t('settings.languageDesc')}</span>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {[{ value: 'system' as const, label: t('settings.languageSystem') }, ...LOCALE_OPTIONS].map((opt) => (
                 <button key={opt.value} type="button" aria-pressed={preference === opt.value}
                   onClick={() => setLocale(opt.value)}
-                  className={cn('rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+                  className={cn('shrink-0 whitespace-nowrap rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
                     preference === opt.value ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-foreground/30'
                   )}>
                   {opt.label}
@@ -143,8 +143,8 @@ export function SettingsPanel({
 
         <section className="sb-card p-4">
           <h3 className="mb-2 font-semibold">{t('settings.appearance')}</h3>
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 flex-1 basis-48">
               <span className="text-sm text-muted-foreground">{t('settings.theme')}</span>
               <p className="text-xs text-muted-foreground">{t('settings.themeToggle')}</p>
             </div>
@@ -327,10 +327,10 @@ function BiometricToggle() {
 
   return (
     <div className="mt-3 border-t border-border/50 pt-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Fingerprint className="h-4 w-4 text-muted-foreground" />
-          <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 basis-48 items-center gap-2">
+          <Fingerprint className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
             <span className="text-sm text-muted-foreground">{t('settings.biometric')}</span>
             <p className="text-xs text-muted-foreground/70">
               {t('settings.biometricDesc', { type: label })}
@@ -340,7 +340,7 @@ function BiometricToggle() {
         <Button
           variant={enabled ? 'default' : 'outline'}
           size="sm"
-          className="gap-1.5 text-xs"
+          className="shrink-0 gap-1.5 whitespace-nowrap text-xs"
           onClick={() => void handleToggle()}
           disabled={busy}
         >
@@ -415,10 +415,10 @@ function ThemePreferenceControl() {
   const { t } = useT()
   const [preference, setPreference] = useThemePreference()
   const options: Array<[ThemePreference, string, typeof Sun]> = [['light', t('settings.light'), Sun], ['dark', t('settings.dark'), Moon], ['system', t('settings.themeSystem'), Monitor]]
-  return <div role="radiogroup" aria-label={t('settings.theme')} data-testid="settings-theme-preference" className="inline-flex rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] p-0.5">
+  return <div role="radiogroup" aria-label={t('settings.theme')} data-testid="settings-theme-preference" className="inline-flex max-w-full shrink-0 flex-wrap rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-800)] p-0.5">
     {options.map(([value, label, Icon]) => <button key={value} type="button" role="radio" aria-checked={preference === value} onClick={() => setPreference(value)}
-      className={cn('inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors', preference === value ? 'bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-sm ring-1 ring-[color:var(--workspace-border-soft)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
-      <Icon className="h-3.5 w-3.5" />{label}
+      className={cn('inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-xs font-medium transition-colors', preference === value ? 'bg-[var(--workspace-surface-900)] text-[var(--workspace-text-strong)] shadow-sm ring-1 ring-[color:var(--workspace-border-soft)]' : 'text-[var(--workspace-text-muted)] hover:text-[var(--workspace-text-strong)]')}>
+      <Icon className="h-3.5 w-3.5 shrink-0" />{label}
     </button>)}
   </div>
 }
