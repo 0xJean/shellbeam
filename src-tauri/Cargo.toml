@@ -6,7 +6,7 @@ authors = ["you"]
 license = ""
 repository = ""
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.91"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -52,7 +52,7 @@ libc = "0.2"
 mdns-sd = "0.18"
 hostname = "0.4"
 if-addrs = { version = "0.15", features = ["link-local"] }
-iroh = { version = "0.98", default-features = false, features = ["tls-ring"] }
+iroh = { version = "1.5", default-features = false, features = ["tls-ring"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync"] }
 
 # Use vendored (statically-linked) OpenSSL on macOS, iOS and Android so the app
