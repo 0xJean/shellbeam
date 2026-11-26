@@ -48,7 +48,7 @@
 | Secret | Android | `ANDROID_KEY_ALIAS` | Key Alias（如 `shellbeam`） |
 | Secret | Android | `ANDROID_KEY_PASS` | Key 密码 |
 | Variable | iOS | `ENABLE_IOS_TESTFLIGHT` | 设为 `true` 时，每次推送 `v*` tag 自动执行 `ios-testflight` 上传 TestFlight |
-| Variable | iOS | `TESTFLIGHT_PUBLIC_LINK` | TestFlight 公开测试链接（如 `https://testflight.apple.com/join/...`），自动写入 Release Notes |
+| Variable | iOS | `TESTFLIGHT_PUBLIC_LINK` | TestFlight 公开测试链接（当前固定为 `https://testflight.apple.com/join/FfZabFz1`），自动写入 Release Notes |
 
 ### 从本机钥匙串安全导入单个 Developer ID `.p12` 到 GitHub Secrets（一次性）
 

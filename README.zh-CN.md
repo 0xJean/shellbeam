@@ -90,7 +90,7 @@
 | Windows | `.exe` / `.msi` | x64 安装包 |
 | Linux | `.deb` / `.rpm` / `.AppImage` | x86_64 安装包 |
 | Android | `ShellBeam_*_universal.apk` / `.aab` | 已签名多 ABI 通用包 |
-| iOS | TestFlight | 通过 TestFlight 分发（最新测试邀请见 [Release Notes](https://github.com/0xJean/shellbeam/releases/latest)） |
+| iOS | [TestFlight](https://testflight.apple.com/join/FfZabFz1) | 通过 [TestFlight 公开测试链接](https://testflight.apple.com/join/FfZabFz1) 安装 |
 
 ShellBeam 在启动时及每 12 小时检查一次 GitHub Releases 以便提醒新版本，不会自动下载或安装，也不发送任何主机、保管库或使用数据。iOS 由 TestFlight 管理更新。可在 **设置 → 常规 → 更新** 中关闭检查。
 

@@ -91,7 +91,7 @@ Download the latest release from [GitHub Releases](https://github.com/0xJean/she
 | Windows | `.exe` / `.msi` | x64 installers |
 | Linux | `.deb` / `.rpm` / `.AppImage` | x86_64 packages |
 | Android | `ShellBeam_*_universal.apk` / `.aab` | Signed multi-ABI universal packages |
-| iOS | TestFlight | Distributed via TestFlight (check the latest [Release Notes](https://github.com/0xJean/shellbeam/releases/latest) for the invite link) |
+| iOS | [TestFlight](https://testflight.apple.com/join/FfZabFz1) | Join the public beta via [TestFlight](https://testflight.apple.com/join/FfZabFz1) |
 
 ShellBeam checks GitHub Releases on launch and every 12 hours to notify you when a new version is available — it never downloads or installs updates automatically, and sends no vault, host, or telemetry data. iOS updates are managed through TestFlight. You can turn off update checks under **Settings → General → Updates**.
 
