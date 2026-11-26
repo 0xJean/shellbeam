@@ -20,6 +20,8 @@
 		C869023DDFE275D42F3FBF29 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 39EEC6A55698228E08917A52 /* libapp.a */; };
 		E68F6CFDAED6503ABB4044A5 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CE1209BFDECB28E00189B168 /* Metal.framework */; };
 		Z1B2C3D4E5F6789012345678 /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = Z1B2C3D4E5F6789012345679 /* libz.tbd */; };
+		A1B2C3D4E5F6789012345680 /* libresolv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6789012345681 /* libresolv.tbd */; };
+		A1B2C3D4E5F6789012345682 /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6789012345683 /* SystemConfiguration.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -65,6 +67,8 @@
 		FA6B44C8A33F92A952B7271A /* error.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = error.rs; sourceTree = "<group>"; };
 		FBC720DFA1D01F55B0A32344 /* shellbeam.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = shellbeam.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		Z1B2C3D4E5F6789012345679 /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = usr/lib/libz.tbd; sourceTree = SDKROOT; };
+		A1B2C3D4E5F6789012345681 /* libresolv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libresolv.tbd; path = usr/lib/libresolv.tbd; sourceTree = SDKROOT; };
+		A1B2C3D4E5F6789012345683 /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -81,6 +85,8 @@
 				618672DC8A5E0605441C9935 /* UIKit.framework in Frameworks */,
 				836D84C5F07860664DAF79C8 /* WebKit.framework in Frameworks */,
 				Z1B2C3D4E5F6789012345678 /* libz.tbd in Frameworks */,
+				A1B2C3D4E5F6789012345680 /* libresolv.tbd in Frameworks */,
+				A1B2C3D4E5F6789012345682 /* SystemConfiguration.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -109,6 +115,8 @@
 				0E2B15F176E4B041AE33EEEA /* UIKit.framework */,
 				D8F57162F5CC7AEDD55F173D /* WebKit.framework */,
 				Z1B2C3D4E5F6789012345679 /* libz.tbd */,
+				A1B2C3D4E5F6789012345681 /* libresolv.tbd */,
+				A1B2C3D4E5F6789012345683 /* SystemConfiguration.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
