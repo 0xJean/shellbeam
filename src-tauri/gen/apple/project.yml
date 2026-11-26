@@ -80,11 +80,13 @@ targets:
       - framework: libapp.a
         embed: false
       - sdk: libz.tbd
+      - sdk: libresolv.tbd
       - sdk: CoreGraphics.framework
       - sdk: Metal.framework
       - sdk: MetalKit.framework
       - sdk: QuartzCore.framework
       - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
       - sdk: UIKit.framework
       - sdk: WebKit.framework
     preBuildScripts:
