@@ -1,9 +1,9 @@
 <div align="center">
   <img src="app-icon.png" width="128" height="128" alt="ShellBeam" />
   <h1>ShellBeam</h1>
-  <p><strong>A modern, all-in-one SSH client for macOS, Windows, and Linux.</strong></p>
+  <p><strong>A modern, local-first SSH &amp; server ops workspace for macOS, Windows, Linux, iOS, and Android.</strong></p>
   <p>
-    Terminal · SFTP · Port Forwarding · AI Assistant · Encrypted Vault · Snippets · Cross-Device Sync
+    SSH Terminal · Host Workspace · SFTP · Port Forwarding · AI Ops Assistant · Desktop Companion (iroh P2P) · Encrypted Vault · MCP Bridge
   </p>
 
   <p>
@@ -11,6 +11,7 @@
     <a href="#installation">Installation</a> ·
     <a href="#development">Development</a> ·
     <a href="#architecture">Architecture</a> ·
+    <a href="https://www.shellbeam.xyz">Website</a> ·
     <a href="./README.zh-CN.md">中文文档</a>
   </p>
 </div>
@@ -19,80 +20,62 @@
 
 ## Features
 
-### SSH Terminal
+### SSH Terminal & Host Workspace
 
-- Interactive PTY sessions via `ssh2` (Rust-native, no system SSH required)
-- Password and private key authentication (Ed25519, RSA, ECDSA)
-- Host key verification with `known_hosts` management
-- Auto-reconnect with configurable retry count and interval
-- System SSH fallback for jump host / ProxyJump connections
-- xterm.js renderer with WebGL acceleration, customizable themes and fonts
-- Multi-tab terminal with split-pane view (left / right)
+- Interactive PTY sessions via `ssh2` (Rust-native, no system SSH required) with password and private key auth (Ed25519, RSA, ECDSA)
+- Single-hop ProxyJump bastion support shared across terminals, SFTP, port tunnels, and monitoring
+- Host key verification with `known_hosts` management and configurable auto-reconnect
+- xterm.js 6 renderer with WebGL acceleration, 8 paired dark/light themes (Obsidian, Tokyo Night, Catppuccin, Rose Pine, Nord, Graphite, Emerald Ops, Solarized), and Glass UI mode
+- Multi-tab terminal with resizable, persisted split panes
+- **Host Workspace** — processes, systemd services, network, logs, Docker, SFTP, cron jobs, and an internal SSH-tunneled browser in classic list or multi-window desktop layout
 
-### SFTP File Transfer
+### Desktop Companion Bridge & Built-in `iroh` P2P
 
-- Dual-pane file manager (local ↔ remote)
-- Upload, download, rename, delete, create directories
-- Permission editing (`chmod`)
-- Batch operations on multiple files
-- ProxyJump routing through a bastion host (private-key authentication)
+- **Zero-config cross-network connection** powered by embedded pure-Rust `iroh` 1.5 P2P hole-punching + encrypted relay — no port forwarding, public IP, or third-party VPN required
+- Automatic 3-tier route failover (**LAN → Tailscale → `iroh` P2P**) with end-to-end X25519 + HKDF + AES-256-GCM encryption
+- Built-in mobile QR scanner for one-scan pairing with your desktop
+- Real-time push of active desktop terminal sessions and AI assistant state to your phone, full-screen mobile viewing & keyboard takeover, remote access to desktop-installed AI CLIs, and per-device permission controls (revoking a permission immediately terminates active streams)
 
-### Port Forwarding
+### AI Ops Assistant
 
-- Local and remote SSH tunnels
-- ProxyJump routing through the configured host jump server
-- One-click start / stop with real-time status
-- Persistent rules saved per vault
-
-### AI Assistant
-
-- Natural language → shell command generation
-- Conversational UI with follow-up questions
-- Execute or copy generated commands
-- Streaming output with cancel support
-- Supports OpenAI, Anthropic, OpenRouter, Ollama, and custom endpoints
+- Natural language → shell command generation and multi-step troubleshooting right beside your terminal
+- Per-server autonomy modes: **Ask every step**, **Auto-run read-only checks**, or **Run continuously** (with mandatory confirmation for destructive commands)
+- Pre-change automatic snapshots (`~/.shellbeam-backups/`) with 1-click rollback, plus automatic local secret redaction before sending context
+- **16 built-in API providers** (OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter, xAI, Groq, Qwen, Zhipu GLM, Kimi, SiliconFlow, Volcengine, MiniMax, Ollama, LM Studio, and custom OpenAI-compatible endpoints) with live `/models` discovery, reasoning effort selection, and cross-tab synced favorites
+- **6 local desktop AI CLIs** — reuse your existing **Claude Code**, **Codex**, **Gemini CLI**, **OpenCode**, **Cursor Agent CLI**, and **Devin CLI** logins in isolated read-only scratch sandboxes (also remotely accessible from mobile via Desktop Companion Bridge)
 - Keyboard shortcut: `⌘+I` / `Ctrl+I`
 
 ### Local Agent Access (MCP)
 
-- Scoped server inventory, load history, and on-demand Linux capacity checks
-- Optional generic SSH commands and SFTP file access; the agent owns deployment decisions
-- Disabled by default, per-client host permissions, internal vault credentials, and access audit
-- Configure in **Settings > Agent Access (MCP)**; see the [MCP guide](docs/mcp.md) for setup and v1 limits
+- Scoped server inventory, load history, and on-demand Linux capacity checks for external agents (Claude Code, Codex, or any local MCP client)
+- Optional generic SSH commands and SFTP file access; disabled by default with per-client host permissions, vault-internal credential resolution, and full access audit
+- Configure in **Settings > Agent Access (MCP)**; see the [MCP guide](docs/mcp.md)
 
-### Encrypted Vault
+### SFTP, Port Forwarding & VPS Fleet
 
-- AES-256-GCM encrypted storage for passwords and private keys
-- PBKDF2 key derivation with configurable auto-lock timeout
-- Multiple vaults with independent master passwords
-- Biometric unlock — Touch ID (macOS) / Face ID (iOS) / fingerprint (Android) / Windows Hello, with system password fallback
-- Secrets never leave the device unencrypted
+- **Dual-pane SFTP** — drag-and-drop upload/download, batch operations, rename, mkdir, `chmod`, live transfer queue, and ProxyJump support
+- **Port Forwarding** — local, remote, and dynamic SOCKS tunnels persisted per vault with 1-click toggle and ProxyJump routing
+- **VPS Assets & Monitoring** — track provider, pricing, monthly quota, and renewal dates; zero-agent SSH network/IP/latency health checks and optional 24×7 monitoring extension
 
-### Snippets
+### Encrypted Multi-Vault & Cross-Device Sync
 
-- Save reusable command templates
-- Run snippets on any connected host
-- Track last-used time
+- AES-256-GCM local encryption with PBKDF2 key derivation, multiple isolated vaults, and configurable auto-lock privacy shield
+- Biometric unlock — Touch ID (macOS) / Face ID (iOS) / fingerprint (Android) / Windows Hello with master-password fallback
+- Zero-cloud peer-to-peer encrypted vault sync over LAN, Tailscale, or `iroh` P2P with QR / verification-code pairing
 
-### Cross-Device Sync
+### Mobile, Foldable & Narrow-Desktop Experience
 
-- Peer-to-peer encrypted sync — no cloud required
-- QR code pairing between devices
-- Sync hosts, snippets, port-forward rules, and settings
-- mDNS auto-discovery on local network
+- Responsive 3-tier layout (`compact` / `medium` / `wide`) with a collapsible 60px Icon Rail on medium/narrow viewports and foldable phones
+- Dedicated mobile bottom navigation (**Hosts · Sessions · Desktop · Tools · Settings**), fast Session Launcher, collapsible virtual terminal key toolbar on both folded and unfolded screens, and dark-mode mobile Host Workspace
 
-### Additional Features
+### Additional Tools
 
-- **SSH Key Generator** — generate Ed25519 / RSA keys, import from file
-- **Command History** — searchable log of all executed commands
-- **Command Palette** — `⌘+K` / `Ctrl+K` quick search for hosts, commands, and actions
-- **Known Hosts** — view, add, and remove SSH host fingerprints
-- **Backup & Restore** — export / import all data as encrypted ZIP
-- **Themes** — multiple terminal color schemes (Hacker Green, Dracula, Solarized, etc.)
-- **Welcome Page** — animated onboarding for first-time users
-- **User Guide** — eight bilingual chapters covering Vault, first connection, monitoring, everyday tools, MCP, backup, and troubleshooting. Reading progress stays on this device; reopen from the sidebar, Settings, or More on mobile. Reading the guide does not enable permissions or complete setup automatically.
-- **Interactive Walkthroughs** — optional Driver.js tours in User Guide highlight the real add-host form, monitoring, and MCP settings. Exit with Escape or the close button and replay anytime. Tours never save hosts, open terminals, or grant permissions; unavailable sections are omitted rather than populated with mock data. The existing reading guide stays available.
-- **Mobile-Ready** — responsive layout with virtual keyboard toolbar
+- **SSH Key Generator** — generate Ed25519 / RSA keys and import existing keys
+- **Snippets & Command History** — reusable command templates and searchable execution history
+- **Command Palette** — `⌘+K` / `Ctrl+K` quick jump across hosts, actions, and history
+- **Backup & Restore** — encrypted ZIP export / import
+- **User Guide & Interactive Walkthroughs** — 8 bilingual chapters plus optional Driver.js guided tours
+- **Non-Blocking Update Reminders** — unobtrusive top-bar pill and dismissible toast with in-app release notes
 
 ---
 
@@ -100,20 +83,19 @@
 
 ### Pre-built Binaries
 
-Download the latest release for your platform from the [GitHub Releases](https://github.com/0xJean/shellbeam/releases) page:
+Download the latest release from [GitHub Releases](https://github.com/0xJean/shellbeam/releases/latest) or visit [shellbeam.xyz](https://www.shellbeam.xyz):
 
-| Platform | Format |
-|----------|--------|
-| macOS (Apple Silicon) | `.dmg` |
-| macOS (Intel) | `.dmg` |
-| Windows | `.msi` / `.exe` |
-| Linux | `.deb` / `.AppImage` |
-| Android | `.apk` / `.aab` |
-| iOS | TestFlight link in the release notes |
+| Platform | Format | Notes |
+|----------|--------|-------|
+| macOS (Apple Silicon & Intel) | `ShellBeam_*_universal.dmg` | Signed with Developer ID and notarized by Apple |
+| Windows | `.exe` / `.msi` | x64 installers |
+| Linux | `.deb` / `.rpm` / `.AppImage` | x86_64 packages |
+| Android | `ShellBeam_*_universal.apk` / `.aab` | Signed multi-ABI universal packages |
+| iOS | TestFlight | Distributed via TestFlight (check the latest [Release Notes](https://github.com/0xJean/shellbeam/releases/latest) for the invite link) |
 
-ShellBeam reminds you when a newer GitHub release is out, and never installs anything itself. iOS relies on TestFlight and does not make this check. A check asks GitHub for the latest release when the app starts and every 12 hours, so GitHub sees your IP address and the request time. No hosts, vault data, usage data or app version are sent. Turn it off under Settings → General → Updates.
+ShellBeam checks GitHub Releases on launch and every 12 hours to notify you when a new version is available — it never downloads or installs updates automatically, and sends no vault, host, or telemetry data. iOS updates are managed through TestFlight. You can turn off update checks under **Settings → General → Updates**.
 
-Release automation is documented in [docs/ci-cd.md](./docs/ci-cd.md).
+Release automation and signing runbooks are documented in [docs/release-process.md](./docs/release-process.md) and [docs/ci-cd.md](./docs/ci-cd.md).
 
 ### Build from Source
 
@@ -127,17 +109,17 @@ See [Development](#development) below.
 
 | Tool | Version |
 |------|---------|
-| [Node.js](https://nodejs.org/) | 18+ |
-| [Rust](https://rustup.rs/) | 1.77.2+ |
+| [Node.js](https://nodejs.org/) | 20+ |
+| [Rust](https://rustup.rs/) | 1.91+ |
 | [Tauri CLI](https://v2.tauri.app/start/prerequisites/) | 2.x |
 
-macOS also requires Xcode Command Line Tools. Linux requires `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, and other system libraries — see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+macOS / iOS builds require Xcode and `rustup component add llvm-tools` (required by `swift-rs` on Xcode 27+). Linux requires `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, and other system libraries — see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ### Setup
 
 ```bash
 # Clone the repository
-git clone https://github.com/user/shellbeam.git
+git clone https://github.com/0xJean/shellbeam.git
 cd shellbeam/shellbeam-app
 
 # Install frontend dependencies
@@ -156,43 +138,26 @@ npm run tauri build
 |---------|-------------|
 | `npm run dev` | Start Vite dev server (frontend only) |
 | `npm run build` | TypeScript check + Vite production build |
-| `npm run lint` | Run ESLint |
-| `npm run preview` | Preview production build |
-| `npm run tauri dev` | Launch Tauri app in development mode |
-| `npm run tauri build` | Build distributable app bundle |
-| `npx tauri ios dev --force-ip-prompt` | Run on physical iPhone (dev server, same LAN) |
+| `npm test` | Run Vitest unit & component tests |
+| `npx eslint src/` | Lint frontend TypeScript/React sources |
+| `npm run tauri dev` | Launch Tauri desktop app in development mode |
+| `npm run build:macos` | Build, sign, and double-notarize macOS Universal `.dmg` |
+| `npm run build:android` | Build signed multi-ABI Android `.apk` and `.aab` |
+| `npm run build:ios:tf` | Build iOS App Store `.ipa` and upload to TestFlight |
+| `npm run dev:ios` | Run on physical iPhone (dev server, same LAN) |
 
-### iOS: Install on a physical iPhone (before App Store)
+### iOS: Install on a physical iPhone
 
-You can install and run the app on your own iPhone without publishing to the App Store.
-
-**Option 1: Development mode (Mac and iPhone on same network)**
-
-1. Connect the iPhone via cable, or ensure it appears in Xcode → Window → Devices and Simulators.
-2. From the project root run:
+1. Set your Apple Team ID (`IOS_DEVELOPMENT_TEAM` in `.env` or `APPLE_DEVELOPMENT_TEAM` in your shell).
+2. For development on the same LAN:
    ```bash
    npx tauri ios dev --force-ip-prompt
    ```
-3. Enter your machine’s LAN IP (e.g. `192.168.10.6`) when prompted. The Tauri CLI passes that IP to Vite as `TAURI_DEV_HOST`, so the dev server listens on it for this run (otherwise only on `127.0.0.1`), the device loads it, and the app launches. Best for day-to-day development and debugging.
-
-**Option 2: Standalone build (runs without a computer)**
-
-1. **Code signing**: Set your Apple development team ID in `src-tauri/tauri.conf.json` under `bundle.iOS.developmentTeam` (10-character ID, e.g. `59K4B74D5A`), or set:
+3. For standalone release build & TestFlight upload:
    ```bash
-   export APPLE_DEVELOPMENT_TEAM=YourTeamID
+   npm run build:ios:tf
    ```
-   When you run `npx tauri ios dev`, the CLI lists available Team IDs from your certificates; use any one that you’re allowed to use.
-
-2. **Build and install**:
-   ```bash
-   npm run build
-   npx tauri ios build
-   ```
-   Then open `src-tauri/gen/apple/app.xcodeproj` in Xcode, select your physical device as the run target, and press Run (▶️) to install on the device.
-
-3. **Accounts**:
-   - **Free Apple ID**: You can install on a real device, but the app will expire after about 7 days and must be reinstalled from Xcode.
-   - **Paid Apple Developer Program ($99/year)**: Installed apps stay valid and you can use Ad Hoc distribution for test devices.
+   Or run `npx tauri ios build` and open `src-tauri/gen/apple/app.xcodeproj` in Xcode to run on your device.
 
 ---
 
@@ -200,36 +165,33 @@ You can install and run the app on your own iPhone without publishing to the App
 
 ```
 shellbeam-app/
-├── src/                          # Frontend (React + TypeScript)
-│   ├── assets/                   # Logo and static assets
-│   ├── components/               # UI components
-│   │   ├── ui/                   # Primitives (Button, Input, Select, etc.)
-│   │   ├── welcome-page.tsx      # First-launch onboarding
-│   │   ├── hosts-dashboard.tsx   # Host management
-│   │   ├── session-terminal-view.tsx  # xterm.js terminal
-│   │   ├── sftp-dual-pane.tsx    # SFTP file manager
-│   │   ├── ai-command-bar.tsx    # AI chat interface
-│   │   ├── port-forward-panel.tsx
-│   │   ├── snippet-panel.tsx
+├── src/                          # Frontend (React 19 + TypeScript)
+│   ├── components/               # Desktop, mobile & workspace UI components
+│   │   ├── ui/                   # Theme-adaptive UI primitives
+│   │   ├── workspace/            # Host workspace apps & mobile home screen
+│   │   ├── mobile/               # Mobile navigation, QR scanner & remote companion sheet
+│   │   ├── companion-center-panel.tsx # Desktop Companion Bridge & pairing UI
+│   │   ├── session-terminal-view.tsx  # xterm.js 6 terminal
+│   │   ├── sftp-dual-pane.tsx    # Dual-pane SFTP file manager
+│   │   ├── ai-command-bar.tsx    # AI assistant & model switcher
 │   │   └── ...
 │   ├── contexts/                 # React context providers
-│   ├── layouts/                  # Desktop / mobile layouts
-│   ├── lib/                      # API wrappers, utilities, AI client
+│   ├── layouts/                  # Responsive desktop / foldable / mobile layouts
+│   ├── lib/                      # Tauri bindings, companion client, AI & locales
 │   └── App.tsx                   # Root component
 ├── src-tauri/                    # Backend (Rust + Tauri 2)
 │   ├── src/
-│   │   ├── ssh/                  # SSH sessions, commands, interactive PTY
+│   │   ├── ssh/                  # SSH sessions, ProxyJump, interactive PTY
+│   │   ├── companion/            # Desktop Companion Bridge server, client, protocol & AI hub
+│   │   ├── sync/                 # P2P encrypted sync, multi-route dialer & embedded iroh 1.5
 │   │   ├── net/                  # SFTP, port forwarding, known hosts
-│   │   ├── vault/                # Encrypted vault (AES-256-GCM)
-│   │   ├── sync/                 # Peer-to-peer sync
-│   │   ├── data/                 # Hosts, snippets, history, backup
-│   │   ├── keys.rs               # SSH key generation / import
-│   │   ├── error.rs              # Standardized error handling
-│   │   ├── storage.rs            # JSON persistence layer
+│   │   ├── vault/                # AES-256-GCM multi-vault & biometric secret storage
+│   │   ├── ai_cli.rs             # Isolated adapters for 6 local AI CLIs
+│   │   ├── app_update.rs         # Non-blocking GitHub Releases update checker
+│   │   ├── data/                 # Hosts, VPS assets, monitoring, snippets, history, backup
 │   │   └── lib.rs                # Tauri app entry + command registration
 │   └── Cargo.toml
-├── tailwind.config.ts
-├── vite.config.ts
+├── docs/                         # Guides, architecture, release notes & runbooks
 └── package.json
 ```
 
@@ -243,8 +205,8 @@ shellbeam-app/
 | Terminal | xterm.js 6 (WebGL renderer) |
 | Icons | Lucide React |
 | SSH | `ssh2` 0.9 (Rust, libssh2 bindings) |
-| Encryption | `aes-gcm` + `pbkdf2` + `sha2` |
-| Sync | Custom TCP protocol + `mdns-sd` for discovery |
+| Encryption | `aes-gcm` + `pbkdf2` + `x25519-dalek` + `hkdf` + `sha2` |
+| P2P & Sync | Embedded `iroh` 1.5 (QUIC P2P + encrypted relay) + LAN / Tailscale + `mdns-sd` |
 
 ---
 
@@ -260,15 +222,15 @@ shellbeam-app/
 
 ## Data Storage
 
-All data is stored locally in the OS-specific app data directory:
+All data is stored locally in the OS-specific app data directory (`app.shellbeam`):
 
 | OS | Path |
 |----|------|
-| macOS | `~/Library/Application Support/com.tauri.dev/` |
-| Windows | `%APPDATA%/com.tauri.dev/` |
-| Linux | `~/.local/share/com.tauri.dev/` |
+| macOS | `~/Library/Application Support/app.shellbeam/` |
+| Windows | `%APPDATA%/app.shellbeam/` |
+| Linux | `~/.local/share/app.shellbeam/` |
 
-Data files include `hosts.json`, `known_hosts.json`, `command_history.json`, `snippets.json`, and encrypted vault files. No data is sent to external servers (except AI API calls when configured by the user).
+No data is sent to external servers except user-configured AI API calls, optional GitHub release checks, and encrypted `iroh` relay transport when connecting across networks without direct LAN/Tailscale reachability.
 
 ---
 
@@ -279,4 +241,4 @@ The source code is licensed under the **[GNU Affero General Public License v3.0 
 - **Free to use** — personal, academic, non-commercial use at no cost.
 - **Copyleft** — any modifications or derivative works must also be released under AGPL-3.0, including network/SaaS use.
 - **Brand protection** — the ShellBeam name, logo, and icons are **not** covered by the AGPL. See [TRADEMARK.md](./TRADEMARK.md) for details. Forks must replace all brand assets.
-- **Commercial license** — if the AGPL does not meet your needs (e.g., you cannot open-source your modifications), a commercial license is available. Contact `shellbeam@example.com`.
+- **Commercial license** — if the AGPL does not meet your needs (e.g., you cannot open-source your modifications), open an issue or contact the maintainer via [GitHub](https://github.com/0xJean/shellbeam).
