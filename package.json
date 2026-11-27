@@ -16,6 +16,7 @@
     "build:macos": "bash ./scripts/build-macos.sh",
     "build:ios": "bash ./scripts/ios-build.sh",
     "build:ios:tf": "bash ./scripts/ios-build-tf.sh",
+    "ios:tf:distribute": "node ./scripts/ios-tf-distribute.mjs",
     "dev:android": "bash ./scripts/dev-android.sh",
     "build:android": "bash ./scripts/build-android.sh"
   },
