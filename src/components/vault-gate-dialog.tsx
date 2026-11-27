@@ -38,6 +38,21 @@ interface VaultGateDialogProps {
   held?: boolean
 }
 
+function formatVaultGateError(cause: unknown, copy: (typeof welcomeLockCopy)[keyof typeof welcomeLockCopy]): string {
+  const raw = String(cause instanceof Error ? cause.message : cause).trim()
+  const lower = raw.toLowerCase()
+  if (lower.includes('wrong password') || lower.includes('decrypt vault value failed') || lower.includes('invalid password')) {
+    return copy.wrongPassword
+  }
+  if (lower.includes('not initialized')) {
+    return copy.vaultNotInitialized
+  }
+  if (lower.includes('vault unlock failed')) {
+    return copy.unlockFailed
+  }
+  return raw || copy.unlockFailed
+}
+
 export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn, held = false }: VaultGateDialogProps) {
   const { t, locale } = useT()
   const c = welcomeLockCopy[locale]
@@ -141,11 +156,11 @@ export function VaultGateDialog({ open, vaultStatus, onSubmit, biometricOptIn, h
       }
       // Dialog closes via parent (vault becomes unlocked, or parent triggers opt-in)
     } catch (e) {
-      setError(String(e instanceof Error ? e.message : e))
+      setError(formatVaultGateError(e, c))
     } finally {
       setBusy(false)
     }
-  }, [onSubmit, bioStatus])
+  }, [onSubmit, bioStatus, c])
 
   // ── Biometric opt-in handlers ─────────────────────────────────────────
   const [optInError, setOptInError] = useState('')

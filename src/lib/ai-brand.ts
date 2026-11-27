@@ -1,6 +1,7 @@
+import type { LocalAgentId } from './agents'
 import type { AIBackend, AIProviderId } from './ai'
 
-export type AIBrandId = AIBackend | AIProviderId
+export type AIBrandId = AIBackend | AIProviderId | LocalAgentId
 
 /** Infers the model-family brand for multi-provider catalogs (e.g. OpenRouter, Groq, Ollama). */
 export function inferModelBrand(modelId: string, fallback: AIBrandId): AIBrandId {

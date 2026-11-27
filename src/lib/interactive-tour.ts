@@ -20,7 +20,8 @@ export const TOUR_READY = {
   troubleshooting: '[data-tour="history-page"]',
 } as const
 /** Settings tours open their category first; the panel starts on General. */
-export const TOUR_SETTINGS_CATEGORY: Partial<Record<InteractiveTourId, SettingsCategory>> = { mcp: 'advanced' }
+export const TOUR_SETTINGS_CATEGORY: Partial<Record<InteractiveTourId, SettingsCategory>> = { mcp: 'integrations' }
+export const TOUR_SETTINGS_SUBTAB: Partial<Record<InteractiveTourId, string>> = { mcp: 'mcp:manual' }
 
 export interface TourStep {
   target: string

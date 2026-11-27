@@ -1,6 +1,7 @@
 #![allow(unexpected_cfgs)]
 
 mod agent_release;
+mod agents;
 mod ai_cli;
 mod app_update;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -118,6 +119,8 @@ pub fn run() {
             komari_console::cancel_mobile_komari_console,
             komari_console::open_mobile_komari_console,
             mcp::mcp_status,
+            mcp::mcp_detect_agents,
+            mcp::mcp_connect_agents,
             mcp::mcp_list_project_deployments,
             mcp::mcp_set_enabled,
             mcp::mcp_create_client,

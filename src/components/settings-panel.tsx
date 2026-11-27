@@ -28,8 +28,8 @@ import { settingsV3Copy } from '@/lib/locales/settings-v3'
 import { fill } from '@/lib/locales/probe-install'
 import { cn } from '@/lib/utils'
 import { useThemePreference, type ThemePreference } from '@/hooks/use-theme'
-import { consumeSettingsCategoryRequest, SETTINGS_CATEGORY_REQUEST_EVENT, type SettingsCategory } from '@/lib/settings-request'
-import { Activity, AlertTriangle, BookOpen, Fingerprint, Monitor, Moon, Plug, Settings, ShieldCheck, SlidersHorizontal, Sun, TerminalSquare, Trash2, Wrench } from 'lucide-react'
+import { consumeSettingsCategoryRequest, consumeSettingsSubtabRequest, SETTINGS_CATEGORY_REQUEST_EVENT, type SettingsCategory } from '@/lib/settings-request'
+import { Activity, AlertTriangle, BookOpen, Fingerprint, Monitor, Moon, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Sun, TerminalSquare, Trash2, Wrench } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 interface ReconnectSettings {
@@ -68,7 +68,7 @@ const TERMINAL_FONT_OPTIONS = [
 
 const SETTINGS_CATEGORIES = [
   ['general', SlidersHorizontal], ['connection', TerminalSquare], ['monitoring', Activity],
-  ['integrations', Plug], ['security', ShieldCheck], ['advanced', Wrench],
+  ['integrations', Sparkles], ['security', ShieldCheck], ['advanced', Wrench],
 ] as const
 
 export function SettingsPanel({
@@ -251,12 +251,9 @@ export function SettingsPanel({
         </SettingsGroup>
         </>}
         {category === 'monitoring' && <MonitorSettingsSection />}
-        {category === 'integrations' && <>
-          <AISettingsSection />
-        </>}
+        {category === 'integrations' && <AIIntegrationsSection />}
         {category === 'security' && <SecuritySettingsSection />}
         {category === 'advanced' && <>
-          <McpSettingsSection />
           <SettingsHead title={v3.advancedTitle} description={v3.advancedDesc} />
           <div className="space-y-4">
             <ProbeRetrySettingsSection />
@@ -265,6 +262,70 @@ export function SettingsPanel({
           </div>
         </>}
       </div>
+      </div>
+    </div>
+  )
+}
+
+function AIIntegrationsSection() {
+  const { locale } = useT()
+  const copy = settingsNavigationCopy[locale]
+  const [initialSubtab] = useState<string | null>(() => consumeSettingsSubtabRequest())
+  const [tab, setTab] = useState<'assistant' | 'mcp'>(() => (initialSubtab?.startsWith('mcp') ? 'mcp' : 'assistant'))
+  const [mcpInitialTab, setMcpInitialTab] = useState<'agents' | 'manual' | undefined>(() => (initialSubtab === 'mcp:manual' ? 'manual' : undefined))
+
+  useEffect(() => {
+    const onRequest = () => {
+      const subtab = consumeSettingsSubtabRequest()
+      if (subtab === 'mcp:manual') {
+        setTab('mcp')
+        setMcpInitialTab('manual')
+      } else if (subtab === 'mcp') {
+        setTab('mcp')
+        setMcpInitialTab(undefined)
+      } else if (subtab === 'assistant') {
+        setTab('assistant')
+      }
+    }
+    window.addEventListener(SETTINGS_CATEGORY_REQUEST_EVENT, onRequest)
+    return () => window.removeEventListener(SETTINGS_CATEGORY_REQUEST_EVENT, onRequest)
+  }, [])
+
+  const tabs: Array<['assistant' | 'mcp', string]> = [
+    ['assistant', copy.aiTabAssistant],
+    ['mcp', copy.aiTabMcp],
+  ]
+
+  return (
+    <div className="min-w-0 space-y-4" data-testid="ai-integrations-settings">
+      <div>
+        <h2 className="text-lg font-semibold text-[color:var(--workspace-text-strong)]">{copy.integrations}</h2>
+        <p className="mt-0.5 text-xs text-[var(--workspace-text-muted)]">{copy.aiIntegrationsDesc}</p>
+      </div>
+      <div role="tablist" aria-label={copy.aiIntegrationsSections} className="flex gap-5 overflow-x-auto border-b border-[color:var(--workspace-border-soft)]">
+        {tabs.map(([item, label]) => (
+          <button
+            key={item}
+            type="button"
+            role="tab"
+            id={`ai-integrations-tab-${item}`}
+            aria-selected={tab === item}
+            aria-controls="ai-integrations-tab-panel"
+            data-testid={`ai-integrations-tab-${item}`}
+            onClick={() => setTab(item)}
+            className={cn(
+              '-mb-px shrink-0 whitespace-nowrap border-b-2 pb-2 pt-1 text-sm transition-colors',
+              tab === item
+                ? 'border-[color:var(--workspace-primary-500)] font-medium text-[color:var(--workspace-text-strong)]'
+                : 'border-transparent text-[var(--workspace-text-muted)] hover:text-[color:var(--workspace-text)]',
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id="ai-integrations-tab-panel" aria-labelledby={`ai-integrations-tab-${tab}`} className="min-w-0">
+        {tab === 'assistant' ? <AISettingsSection /> : <McpSettingsSection initialTab={mcpInitialTab} />}
       </div>
     </div>
   )

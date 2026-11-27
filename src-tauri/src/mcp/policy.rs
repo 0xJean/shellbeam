@@ -54,6 +54,8 @@ pub struct SnippetGrant {
 pub struct Client {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     pub vault_id: String,
     pub hosts: Vec<HostGrant>,
     #[serde(default)]
@@ -205,6 +207,7 @@ mod tests {
         Client {
             id: "a".into(),
             name: "Agent".into(),
+            agent_id: None,
             vault_id: "default".into(),
             hosts: vec![],
             snippets: vec![],

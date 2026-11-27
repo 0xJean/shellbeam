@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import { invoke } from '@tauri-apps/api/core'
@@ -365,6 +365,59 @@ describe('MCP settings', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: c.next })).toBeEnabled()
     expect(invoke).not.toHaveBeenCalledWith('mcp_create_client', expect.anything())
+  })
+
+  it('supports one-click connection for all detected local agents, per-agent connect, and two-click disconnect', async () => {
+    const original = vi.mocked(invoke).getMockImplementation()!
+    let connected = false
+    vi.mocked(invoke).mockImplementation(async (command, args, options) => {
+      if (command === 'mcp_detect_agents') {
+        return [
+          { id: 'claude-code', name: 'Claude Code', supportsAiCli: true, mcpFormat: 'json-mcp-servers-stdio', installed: true, configPath: '/Users/me/.claude.json', mcpConfigured: connected, configuredClientId: connected ? 'c1' : null, activeClientId: connected ? 'c1' : null },
+          { id: 'antigravity', name: 'Antigravity', supportsAiCli: false, mcpFormat: 'json-mcp-servers', installed: true, configPath: '/Users/me/.gemini/antigravity/mcp_config.json', mcpConfigured: false, configuredClientId: null, activeClientId: null },
+          { id: 'devin-cli', name: 'Devin CLI', supportsAiCli: true, mcpFormat: 'json-mcp-servers', installed: false, configPath: '/Users/me/.config/devin/mcp.json', mcpConfigured: false, configuredClientId: null, activeClientId: null },
+        ]
+      }
+      if (command === 'mcp_connect_agents') {
+        connected = true
+        return {
+          results: [
+            { agentId: 'claude-code', name: 'Claude Code', clientId: 'c1', configPath: '/Users/me/.claude.json', ok: true },
+            { agentId: 'antigravity', name: 'Antigravity', clientId: 'c2', configPath: '/Users/me/.gemini/antigravity/mcp_config.json', ok: true },
+          ],
+        }
+      }
+      return original(command, args, options)
+    })
+    render(<McpSettingsSection />)
+    await screen.findByTestId('mcp-quick-agents')
+    fireEvent.click(screen.getByRole('button', { name: 'Connect all (2)' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('mcp_connect_agents', {
+      payload: {
+        agentIds: ['claude-code', 'antigravity'],
+        vaultId: 'vault-a',
+        hostIds: ['h1'],
+        permissions: { ...DEFAULT_MCP_PERMISSIONS, refresh: true, inspect: true, readFiles: true },
+        enableMcp: true,
+      },
+    }))
+    expect(await screen.findByRole('status')).toHaveTextContent('/Users/me/.gemini/antigravity/mcp_config.json')
+    const antigravityRow = screen.getByTestId('mcp-agent-row-antigravity')
+    fireEvent.click(within(antigravityRow).getByRole('button', { name: 'Connect' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('mcp_connect_agents', {
+      payload: {
+        agentIds: ['antigravity'],
+        vaultId: 'vault-a',
+        hostIds: ['h1'],
+        permissions: { ...DEFAULT_MCP_PERMISSIONS, refresh: true, inspect: true, readFiles: true },
+        enableMcp: true,
+      },
+    }))
+    const claudeRow = screen.getByTestId('mcp-agent-row-claude-code')
+    fireEvent.click(await within(claudeRow).findByRole('button', { name: 'Disconnect' }))
+    expect(invoke).not.toHaveBeenCalledWith('mcp_revoke_client', expect.anything())
+    fireEvent.click(within(claudeRow).getByRole('button', { name: 'Confirm' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('mcp_revoke_client', { clientId: 'c1' }))
   })
 
 })

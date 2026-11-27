@@ -247,24 +247,23 @@
     }
   }
 
-  @media (max-width: 767px) {
-    :root[data-vertical-bar-edge] {
-      --mobile-tabbar-height: 0px;
-    }
-
-    :root[data-vertical-bar-edge='trailing'] {
-      --vertical-bar-width: max(env(safe-area-inset-right, 0px), 4.5rem);
-      --app-safe-right: var(--vertical-bar-width);
-    }
-
-    :root[data-vertical-bar-edge='leading'] {
-      --vertical-bar-width: max(env(safe-area-inset-left, 0px), 4.5rem);
-      --app-safe-left: var(--vertical-bar-width);
-    }
+  /* Apply on every iPhone Duo surface where iOS asks for a vertical bar, including inner landscape (>= 768px). */
+  :root[data-vertical-bar-edge] {
+    --mobile-tabbar-height: 0px;
   }
 
-  /* Prevent iOS Safari auto-zoom on input focus (requires font-size >= 16px) */
-  @media screen and (max-width: 767px) {
+  :root[data-vertical-bar-edge='trailing'] {
+    --vertical-bar-width: max(env(safe-area-inset-right, 0px), 5.25rem);
+    --app-safe-right: var(--vertical-bar-width);
+  }
+
+  :root[data-vertical-bar-edge='leading'] {
+    --vertical-bar-width: max(env(safe-area-inset-left, 0px), 5.25rem);
+    --app-safe-left: var(--vertical-bar-width);
+  }
+
+  /* Prevent iOS WKWebView auto-zoom on input focus across phones, iPhone Duo inner displays, and tablets */
+  @media screen and (max-width: 767px), (pointer: coarse) {
     input, select, textarea {
       font-size: 16px !important;
     }

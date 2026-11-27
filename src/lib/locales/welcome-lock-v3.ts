@@ -28,6 +28,9 @@ export const welcomeLockCopy = {
     reopen: 'You can reopen the guide any time from Guide or Settings',
     locked: 'Vault locked', vaultInfo: '“{name}” · {count} secrets', or: 'or', useBiometric: 'Use {type}',
     autoLock: 'Locks automatically after {minutes} min of inactivity',
+    wrongPassword: 'Incorrect master password. Please try again.',
+    vaultNotInitialized: 'This vault is not initialized yet.',
+    unlockFailed: 'Failed to unlock vault. Please try again.',
   },
   'zh-CN': {
     title: '欢迎使用 ShellBeam',
@@ -58,5 +61,8 @@ export const welcomeLockCopy = {
     reopen: '可以随时从「使用教程」或「设置」重新打开引导',
     locked: '保管库已锁定', vaultInfo: '「{name}」· {count} 项机密', or: '或', useBiometric: '使用 {type}',
     autoLock: '{minutes} 分钟无操作后自动锁定',
+    wrongPassword: '主密码不正确，请重新输入。',
+    vaultNotInitialized: '当前保管库尚未初始化。',
+    unlockFailed: '解锁失败，请重试。',
   },
 } as const

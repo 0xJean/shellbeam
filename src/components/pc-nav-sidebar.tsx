@@ -23,6 +23,8 @@ import {
   Laptop,
   PanelLeftClose,
   PanelLeftOpen,
+  Sun,
+  Moon,
 } from 'lucide-react'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { AppUpdateReminder } from '@/components/app-update'
@@ -142,6 +144,7 @@ function readStoredNavCollapsed(): boolean {
 
 export function PcNavSidebar({ activeNav, onNavChange, vault, counts, onOpenSearch }: PcNavSidebarProps) {
   const { t, locale } = useT()
+  const { verticalBarEdge } = useBarLayout()
   const [vaultMenuOpen, setVaultMenuOpen] = useState(false)
   const mobileClient = isMobileDevice()
   const viewportTier = useViewportTier()
@@ -244,17 +247,20 @@ export function PcNavSidebar({ activeNav, onNavChange, vault, counts, onOpenSear
     )
   }
 
+  const railButtonBase =
+    'relative mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors [@media(max-height:740px)]:h-8 [@media(max-height:740px)]:w-8 [&_svg]:h-[18px] [&_svg]:w-[18px] [&_svg]:shrink-0 [@media(max-height:740px)]:[&_svg]:h-4 [@media(max-height:740px)]:[&_svg]:w-4'
+
   const renderRailItem = (id: SidebarNavId) => {
     const { active, label, icon } = resolveNavMeta(id)
     const showLiveDot = (id === 'companion' && hasCompanionLive) || (id === 'port-forwarding' && !!counts?.forwardsRunning)
     const showUpdateDot = id === 'settings' && !!updateReminder
     return (
       <button key={id} data-testid={`pc-nav-${id}`} type="button" aria-current={active ? 'page' : undefined} aria-label={label} title={label} onClick={() => handleSelectNav(id)}
-        className={cn('relative mx-auto flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+        className={cn(railButtonBase,
           active ? 'bg-[var(--workspace-nav-active-bg)] text-workspace-nav-active shadow-[inset_0_0_0_1px_var(--workspace-border-soft)]' : 'text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]')}>
-        <span className="shrink-0 [&_svg]:h-[18px] [&_svg]:w-[18px]">{icon}</span>
-        {showLiveDot && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-[var(--workspace-surface-950)]" />}
-        {showUpdateDot && <span data-testid="pc-nav-rail-update-dot" className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--workspace-accent-text)] ring-2 ring-[var(--workspace-surface-950)]" />}
+        {icon}
+        {showLiveDot && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-[var(--workspace-surface-950)]" />}
+        {showUpdateDot && <span data-testid="pc-nav-rail-update-dot" className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[var(--workspace-accent-text)] ring-2 ring-[var(--workspace-surface-950)]" />}
       </button>
     )
   }
@@ -335,54 +341,60 @@ export function PcNavSidebar({ activeNav, onNavChange, vault, counts, onOpenSear
     </>
   )
 
+  // On iPhone Duo (outer display & inner landscape), iOS places app bars in a trailing/leading vertical strip;
+  // MobileBottomNav owns that edge bar, so don't render a competing left sidebar.
+  if (verticalBarEdge !== 'none') return null
+
   return (
     <>
     {isRail ? (
-      <aside data-testid="pc-nav-sidebar" data-compact="true" className="hidden w-[60px] shrink-0 flex-col items-center border-r border-[color:var(--workspace-border-soft)] bg-[var(--workspace-nav-translucent)] py-2.5 md:flex">
-        <button
-          type="button"
-          data-testid="pc-nav-expand-toggle"
-          aria-label={expandLabel}
-          title={expandLabel}
-          onClick={() => (isMedium ? setMediumDrawerOpen(true) : toggleDesktopCollapse())}
-          className="mb-1.5 flex h-10 w-10 items-center justify-center rounded-lg text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-text-strong)]"
-        >
-          <PanelLeftOpen className="h-[18px] w-[18px]" />
-        </button>
-        {onOpenSearch && (
+      <aside data-testid="pc-nav-sidebar" data-compact="true" className="hidden w-[56px] shrink-0 flex-col items-center border-r border-[color:var(--workspace-border-soft)] bg-[var(--workspace-nav-translucent)] py-2 md:flex">
+        <div className="flex w-full shrink-0 flex-col items-center gap-1 border-b border-[color:var(--workspace-border-soft)] px-1 pb-2 [@media(max-height:740px)]:gap-0.5 [@media(max-height:740px)]:pb-1.5">
           <button
             type="button"
-            data-testid="pc-nav-search"
-            aria-label={t('nav.search')}
-            title={t('nav.search')}
-            onClick={onOpenSearch}
-            className="mb-2 flex h-9 w-10 items-center justify-center rounded-lg border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] text-[var(--workspace-text-subtle)] transition-colors hover:border-[color:var(--workspace-border-strong)] hover:text-[var(--workspace-text-strong)]"
+            data-testid="pc-nav-expand-toggle"
+            aria-label={expandLabel}
+            title={expandLabel}
+            onClick={() => (isMedium ? setMediumDrawerOpen(true) : toggleDesktopCollapse())}
+            className={cn(railButtonBase, 'text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-text-strong)]')}
           >
-            <Search className="h-4 w-4" />
+            <PanelLeftOpen />
           </button>
-        )}
-        <nav className="flex w-full flex-1 flex-col gap-1 overflow-y-auto px-1 pb-2 [scrollbar-width:none]">
+          {onOpenSearch && (
+            <button
+              type="button"
+              data-testid="pc-nav-search"
+              aria-label={t('nav.search')}
+              title={t('nav.search')}
+              onClick={onOpenSearch}
+              className={cn(railButtonBase, 'border border-[color:var(--workspace-border-soft)] bg-[var(--workspace-surface-input)] text-[var(--workspace-text-subtle)] hover:border-[color:var(--workspace-border-strong)] hover:text-[var(--workspace-text-strong)]')}
+            >
+              <Search />
+            </button>
+          )}
+        </div>
+        <nav className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-1 py-2 [scrollbar-width:none] [@media(max-height:740px)]:gap-0.5 [@media(max-height:740px)]:py-1.5">
           {WORKSPACE_IDS.map(renderRailItem)}
-          <div className="mx-3 my-1.5 h-px bg-[var(--workspace-border-soft)]" />
+          <div className="my-1 h-px w-6 shrink-0 bg-[var(--workspace-border-soft)]" />
           {LIBRARY_IDS.map(renderRailItem)}
         </nav>
-        <div className="flex w-full flex-col gap-1 border-t border-[color:var(--workspace-border-soft)] px-1 pt-2">
+        <div className="flex w-full shrink-0 flex-col items-center gap-1 border-t border-[color:var(--workspace-border-soft)] px-1 pt-2 [@media(max-height:740px)]:gap-0.5 [@media(max-height:740px)]:pt-1.5">
           {FOOTER_IDS.map(renderRailItem)}
+          {vault && (
+            <button
+              type="button"
+              data-testid="pc-nav-vault-status"
+              aria-label={vault.unlocked ? t('nav.lockNow') : t('nav.vaultLocked')}
+              title={vault.unlocked ? `${vault.name} · ${t('nav.lockNow')}` : `${vault.name} · ${t('nav.vaultLocked')}`}
+              onClick={() => (vault.unlocked ? vault.onLock() : vault.onManage())}
+              className={cn(railButtonBase, 'mt-0.5 bg-[var(--workspace-surface-800)] hover:bg-[var(--workspace-nav-hover-bg)]')}
+            >
+              {vault.unlocked
+                ? <LockOpen className="text-[color:var(--workspace-status-good)]" />
+                : <Lock className="text-[var(--workspace-text-muted)]" />}
+            </button>
+          )}
         </div>
-        {vault && (
-          <button
-            type="button"
-            data-testid="pc-nav-vault-status"
-            aria-label={vault.unlocked ? t('nav.lockNow') : t('nav.vaultLocked')}
-            title={vault.unlocked ? `${vault.name} · ${t('nav.lockNow')}` : `${vault.name} · ${t('nav.vaultLocked')}`}
-            onClick={() => (vault.unlocked ? vault.onLock() : vault.onManage())}
-            className="mt-2 flex h-9 w-10 items-center justify-center rounded-lg bg-[var(--workspace-surface-800)] transition-colors hover:bg-[var(--workspace-nav-hover-bg)]"
-          >
-            {vault.unlocked
-              ? <LockOpen className="h-4 w-4 text-[color:var(--workspace-status-good)]" />
-              : <Lock className="h-4 w-4 text-[var(--workspace-text-muted)]" />}
-          </button>
-        )}
       </aside>
     ) : (
       <>
@@ -414,9 +426,12 @@ interface MobileBottomNavProps {
   activeNav: SidebarNavId
   onNavChange: (nav: SidebarNavId) => void
   sessionCount?: number
+  onOpenSearch?: () => void
+  theme?: string
+  onToggleTheme?: () => void
 }
 
-export function MobileBottomNav({ activeNav, onNavChange, sessionCount = 0 }: MobileBottomNavProps) {
+export function MobileBottomNav({ activeNav, onNavChange, sessionCount = 0, onOpenSearch, theme, onToggleTheme }: MobileBottomNavProps) {
   const { t } = useT()
   const updateReminder = useAppUpdateReminderVersion()
   const companionStatus = useSyncExternalStore(
@@ -426,27 +441,80 @@ export function MobileBottomNav({ activeNav, onNavChange, sessionCount = 0 }: Mo
   )
   const companionConnected = companionStatus.state === 'connected'
   const { verticalBarEdge } = useBarLayout()
-  // iPhone Duo puts bars in a vertical strip on the outer display and in inner landscape.
-  // There, like the system's own vertical bars, tabs stack at the foot of the strip and show only icons.
+  // iPhone Duo puts bars in a vertical strip on the outer display and in inner landscape (>= 768px too).
+  // Render inside that exact trailing/leading strip below the system status cluster, with top quick actions and bottom thumb-reachable tabs.
   if (verticalBarEdge !== 'none') {
+    const hasTopUtilities = Boolean(onOpenSearch || onToggleTheme)
     return (
-      <nav data-testid="mobile-bottom-nav" data-axis="vertical"
-        className={cn('fixed bottom-0 top-0 z-50 flex w-[var(--vertical-bar-width)] flex-col items-center justify-end gap-1 md:hidden', verticalBarEdge === 'trailing' ? 'right-0' : 'left-0')}
-        style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 0.75rem)' }}>
-        {MOBILE_TABS.map((item) => {
-          const isActive = item.id === 'tools' ? isToolPage(activeNav) : activeNav === item.id
-          return (
-            <button key={item.id} type="button" aria-current={isActive ? 'page' : undefined} aria-label={t(item.labelKey)} title={t(item.labelKey)} onClick={() => onNavChange(item.id)}
-              className={cn('relative flex h-11 w-11 items-center justify-center rounded-full transition-colors', isActive ? 'bg-[var(--workspace-nav-active-bg)] text-workspace-nav-active' : 'text-workspace-nav')}>
-              {item.icon}
-              {item.id === 'companion' && companionConnected && <span data-testid="mobile-companion-connected-dot" className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-emerald-400" />}
-              {item.id === 'settings' && updateReminder && <span data-testid="mobile-settings-update-dot" className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--workspace-accent-text)]" />}
-              {item.id === 'terminal' && sessionCount > 0 && (
-                <span className="absolute -right-0.5 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-[color:var(--workspace-status-bad)] px-1 text-[9px] font-bold text-white">{sessionCount}</span>
+      <nav
+        data-testid="mobile-bottom-nav"
+        data-axis="vertical"
+        className={cn(
+          'fixed bottom-0 top-0 z-50 flex w-[var(--vertical-bar-width)] flex-col items-center px-1.5 pt-[clamp(4.5rem,20vh,10.5rem)]',
+          verticalBarEdge === 'trailing' ? 'right-0' : 'left-0',
+        )}
+        style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 0.75rem)' }}
+      >
+        <div
+          className="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto rounded-2xl border border-[color:var(--workspace-border-soft)]/70 bg-[var(--workspace-surface-900)]/85 px-1 py-2.5 backdrop-blur-xl [scrollbar-width:none]"
+        >
+          {hasTopUtilities && (
+            <div className="flex shrink-0 flex-col items-center gap-2">
+              {onOpenSearch && (
+                <button
+                  type="button"
+                  data-testid="vertical-bar-search"
+                  aria-label={t('nav.search')}
+                  title={t('nav.search')}
+                  onClick={onOpenSearch}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--workspace-surface-800)]/90 text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-text-strong)] [&_svg]:h-5 [&_svg]:w-5"
+                >
+                  <Search />
+                </button>
               )}
-            </button>
-          )
-        })}
+              {onToggleTheme && (
+                <button
+                  type="button"
+                  data-testid="vertical-bar-theme"
+                  aria-label={theme === 'dark' ? t('settings.light') : t('settings.dark')}
+                  title={theme === 'dark' ? t('settings.light') : t('settings.dark')}
+                  onClick={onToggleTheme}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--workspace-surface-800)]/90 text-[var(--workspace-text-muted)] transition-colors hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-text-strong)] [&_svg]:h-5 [&_svg]:w-5"
+                >
+                  {theme === 'dark' ? <Sun /> : <Moon />}
+                </button>
+              )}
+            </div>
+          )}
+          <div className="mt-auto flex shrink-0 flex-col items-center gap-1.5">
+            {MOBILE_TABS.map((item) => {
+              const isActive = item.id === 'tools' ? isToolPage(activeNav) : activeNav === item.id
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-current={isActive ? 'page' : undefined}
+                  aria-label={t(item.labelKey)}
+                  title={t(item.labelKey)}
+                  onClick={() => onNavChange(item.id)}
+                  className={cn(
+                    'relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors [&_svg]:h-5 [&_svg]:w-5',
+                    isActive
+                      ? 'bg-[var(--workspace-nav-active-bg)] text-workspace-nav-active shadow-[inset_0_0_0_1px_var(--workspace-border-soft)]'
+                      : 'text-workspace-nav hover:bg-[var(--workspace-nav-hover-bg)] hover:text-[var(--workspace-nav-hover-text)]',
+                  )}
+                >
+                  {item.icon}
+                  {item.id === 'companion' && companionConnected && <span data-testid="mobile-companion-connected-dot" className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-emerald-400" />}
+                  {item.id === 'settings' && updateReminder && <span data-testid="mobile-settings-update-dot" className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--workspace-accent-text)]" />}
+                  {item.id === 'terminal' && sessionCount > 0 && (
+                    <span className="absolute -right-0.5 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-[color:var(--workspace-status-bad)] px-1 text-[9px] font-bold text-white">{sessionCount}</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
       </nav>
     )
   }
