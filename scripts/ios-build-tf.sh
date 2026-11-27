@@ -113,4 +113,15 @@ fi
 echo ""
 echo "✅ Upload complete!"
 echo "   Build $BUILD_NUMBER is processing on App Store Connect."
-echo "   It will appear in TestFlight within ~15 minutes."
+
+# ── Step 4 (optional): Auto-clear export compliance, attach to Public External Group & submit Beta Review ──
+if [[ -n "${ASC_ISSUER_ID:-}" && -n "${ASC_KEY_ID:-}" && ( -n "${ASC_PRIVATE_KEY_PATH:-}" || -n "${ASC_PRIVATE_KEY_BASE64:-}" ) ]]; then
+  APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$INFO_PLIST")
+  echo ""
+  echo "📝 [4/4] Submitting v${APP_VERSION} (${BUILD_NUMBER}) to TestFlight public external group & Beta App Review..."
+  node "$ROOT_DIR/scripts/ios-tf-distribute.mjs" --version "$APP_VERSION" --build "$BUILD_NUMBER"
+else
+  echo "   It will appear in TestFlight within ~15 minutes."
+  echo "   Tip: configure ASC_ISSUER_ID / ASC_KEY_ID / ASC_PRIVATE_KEY_PATH in .env (see docs/release-process.md §4.3)"
+  echo "        to automatically attach the latest build to the public TestFlight group and submit for Beta Review."
+fi

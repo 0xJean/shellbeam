@@ -88,7 +88,7 @@ gh run list --workflow build.yml --branch vX.Y.Z --repo 0xJean/shellbeam
 2. 4 个桌面/移动平台构建全部成功；
 3. macOS 产物为 **已公证通用包**（`ShellBeam_X.Y.Z_universal.dmg`），Android 产物为 **已签名通用包**（`ShellBeam_X.Y.Z_universal.apk` / `.aab`）；
 4. 附件列表包含 `SHA256SUMS`，且无残留 `-unsigned.apk` 或单架构未签名 `.dmg`；
-5. iOS TestFlight 已随本版本完成上传（CI `ios-testflight` 成功，或已按第 4.3 节在本机上传至 App Store Connect，避免超过 90 天有效期）。
+5. iOS TestFlight 已随本版本完成上传，且已完成出口合规确认、将最新构建加入公开链接外部测试组（`https://testflight.apple.com/join/FfZabFz1`）并提交 Apple Beta 审核（参见第 4.3 节 `npm run build:ios:tf` / `npm run ios:tf:distribute`）。
 
 ---
 
@@ -138,20 +138,43 @@ gh release delete-asset vX.Y.Z app-universal-release.aab --repo 0xJean/shellbeam
 rm -rf "$TMPDIR"
 ```
 
-### 4.3 iOS TestFlight 构建与上传
+### 4.3 iOS TestFlight 构建、上传与自动提审公开测试组
 
 当 CI 未开启 `ENABLE_IOS_TESTFLIGHT=true` 时，在已登录 Apple Distribution 证书（`iPhone Distribution` / `Apple Distribution`）的 macOS 本机执行：
 
 ```bash
 # 确保 .env 包含 IOS_DEVELOPMENT_TEAM / APPLE_ID / APPLE_PASSWORD
-# 且 src-tauri/gen/apple/app_iOS/Info.plist 的 CFBundleShortVersionString 已为 X.Y.Z
+# 若同时配置了 ASC_ISSUER_ID / ASC_KEY_ID / ASC_PRIVATE_KEY_PATH，将自动完成：
+#   1. 等待构建处理变为 VALID
+#   2. 自动确认出口合规（Info.plist 已永久声明 ITSAppUsesNonExemptEncryption=false，兜底接口 PATCH）
+#   3. 同步中英文测试说明（取自 docs/releases/vX.Y.Z.md）
+#   4. 自动将最新构建绑定到公开链接外部测试组（https://testflight.apple.com/join/FfZabFz1）
+#   5. 自动提交 Apple Beta App Review 审核
 npm run build:ios:tf
 ```
 
+#### 一次性配置 App Store Connect API Key（启用全自动绑定公开测试组与提审）
+
+1. 打开 [App Store Connect → 用户和访问 → 集成 → App Store Connect API](https://appstoreconnect.apple.com/access/integrations/api) → 选择 **团队密钥**，点击 `+` 新建一个权限为 **App 管理（App Manager）** 的密钥；
+2. 下载 `AuthKey_<KEY_ID>.p8` 到本机安全目录（如 `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8`，切勿提交到仓库）；
+3. 在 `shellbeam-app/.env` 中追加：
+   ```bash
+   ASC_ISSUER_ID=<页面顶部的 Issuer ID>
+   ASC_KEY_ID=<密钥 ID>
+   ASC_PRIVATE_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8
+   # 可选：若存在多个外部测试组，可指定组名；默认自动选择开启了公开链接的外部测试组
+   # ASC_EXTERNAL_GROUP_NAME=Public Beta
+   ```
+4. 若某次构建已上传完成、只想单独补跑「出口合规 + 绑定公开链接测试组 + 提交 Beta 审核」，直接执行：
+   ```bash
+   npm run ios:tf:distribute -- --version X.Y.Z
+   ```
+
 说明：
-- `scripts/ios-build-tf.sh` 会自动生成唯一构建号 `CFBundleVersion`（`YYYYMMDD.HHMM`）、执行 `tauri ios build`、导出 App Store IPA 并通过 `xcrun altool --upload-app` 上传至 App Store Connect。
-- 上传成功后约 15 分钟内会出现在 TestFlight；若本机仅作临时发包不希望留下工作区脏改动，可在上传确认后执行 `git checkout -- src-tauri/gen/apple/app_iOS/Info.plist`。
-- **外部测试（External Testing）提醒**：TestFlight 单个构建有效期为 90 天；新版本号（`X.Y.Z` 变更）首次发给外部测试组时，需在 App Store Connect 中将新构建添加到对应外部测试组并等待 Apple Beta 审核通过。
+- `src-tauri/gen/apple/app_iOS/Info.plist` 与 `project.yml` 已内置 `ITSAppUsesNonExemptEncryption = false`，从后续版本起上传 TestFlight 自动免除「缺少出口合规证明」手动操作。
+- `scripts/ios-build-tf.sh` 会自动生成唯一构建号 `CFBundleVersion`（`YYYYMMDD.HHMM`）、执行 `tauri ios build`、导出 App Store IPA、通过 `xcrun altool --upload-app` 上传至 App Store Connect，并在配置了 `ASC_*` 后自动执行 `scripts/ios-tf-distribute.mjs` 完成公开测试组绑定与 Beta 提审。
+- 若本机仅作临时发包不希望留下工作区脏改动，可在上传确认后执行 `git checkout -- src-tauri/gen/apple/app_iOS/Info.plist`。
+- **外部测试（External Testing）提醒**：TestFlight 单个构建有效期为 90 天；每次发版均须确保最新构建已加入公开链接外部测试组并处于「正在等待审核」或「正在测试」状态。
 
 ### 4.4 刷新 `SHA256SUMS` 并正式公开
 

@@ -43,6 +43,7 @@ targets:
     info:
       path: app_iOS/Info.plist
       properties:
+        ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         # Adopt the UIScene lifecycle: apps built with the iOS 27 SDK without it are stopped at launch.
         UIApplicationSceneManifest:
