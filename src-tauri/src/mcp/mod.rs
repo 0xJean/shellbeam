@@ -580,6 +580,47 @@ pub fn mcp_connect_agents(
         let Some(spec) = crate::agents::find_agent(&agent_id) else {
             continue;
         };
+
+        // Check existing config reference & enforce the 100-client limit BEFORE modifying any file.
+        let existing_file_client_id = crate::agents::read_configured_client_id(spec.id);
+        let limit_check: Result<(), String> = (|| {
+            let settings = state.settings.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
+            let remaining = settings
+                .clients
+                .iter()
+                .filter(|existing| {
+                    existing.agent_id.as_deref() != Some(spec.id)
+                        && existing_file_client_id.as_deref() != Some(existing.id.as_str())
+                })
+                .count();
+            if remaining >= 100 {
+                return Err("CLIENT_LIMIT_REACHED".into());
+            }
+            Ok(())
+        })();
+        if let Err(err) = limit_check {
+            results.push(json!({
+                "agentId": spec.id,
+                "name": spec.name,
+                "ok": false,
+                "error": err,
+            }));
+            continue;
+        }
+
+        let snapshot = match crate::agents::snapshot_mcp_config(spec.id) {
+            Ok(snap) => snap,
+            Err(err) => {
+                results.push(json!({
+                    "agentId": spec.id,
+                    "name": spec.name,
+                    "ok": false,
+                    "error": err,
+                }));
+                continue;
+            }
+        };
+
         let token = format!(
             "{}{}",
             uuid::Uuid::new_v4().simple(),
@@ -604,17 +645,19 @@ pub fn mcp_connect_agents(
             token_hash: Some(policy::digest(&token)),
         };
 
-        // Write the agent's local config first so a write/parse failure never leaves an orphan client.
+        // Write the agent's local config first; if persisting the grant later fails, restore the exact prior snapshot.
         match crate::agents::install_mcp_config(spec.id, &executable, &args, &token) {
             Ok(config_path) => {
                 let save_res: Result<(), String> = (|| {
                     let mut settings =
                         state.settings.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
                     let mut next = settings.clone();
-                    // Replace any prior ShellBeam grant issued for this same local agent so re-running
-                    // one-click connect cleanly updates permissions without accumulating stale clients.
-                    next.clients
-                        .retain(|existing| existing.agent_id.as_deref() != Some(spec.id));
+                    // Replace any prior ShellBeam grant issued for this same local agent (including an untagged
+                    // manual grant previously written into this agent's config file) so old tokens cannot survive sync.
+                    next.clients.retain(|existing| {
+                        existing.agent_id.as_deref() != Some(spec.id)
+                            && existing_file_client_id.as_deref() != Some(existing.id.as_str())
+                    });
                     if next.clients.len() >= 100 {
                         return Err("CLIENT_LIMIT_REACHED".into());
                     }
@@ -634,7 +677,11 @@ pub fn mcp_connect_agents(
                         }));
                     }
                     Err(err) => {
-                        let _ = crate::agents::uninstall_mcp_config(spec.id, Some(&client_id));
+                        let _ = crate::agents::restore_mcp_config(
+                            spec.id,
+                            snapshot.as_ref(),
+                            &client_id,
+                        );
                         results.push(json!({
                             "agentId": spec.id,
                             "name": spec.name,
@@ -765,6 +812,11 @@ pub fn mcp_revoke_client(
     drop(settings);
     if let Some(agent_id) = removed_agent_id {
         let _ = crate::agents::uninstall_mcp_config(&agent_id, Some(&client_id));
+    } else {
+        // Also clean up manually-configured local agent files if they still reference this exact client_id.
+        for agent in crate::agents::LOCAL_AGENTS {
+            let _ = crate::agents::uninstall_mcp_config(agent.id, Some(&client_id));
+        }
     }
     store::audit(&app, &client_id, None, "revoke", "revoked")
 }

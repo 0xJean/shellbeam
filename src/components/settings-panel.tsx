@@ -270,12 +270,22 @@ export function SettingsPanel({
 function AIIntegrationsSection() {
   const { locale } = useT()
   const copy = settingsNavigationCopy[locale]
-  const [tab, setTab] = useState<'assistant' | 'mcp'>(() => (consumeSettingsSubtabRequest() === 'mcp' ? 'mcp' : 'assistant'))
+  const [initialSubtab] = useState<string | null>(() => consumeSettingsSubtabRequest())
+  const [tab, setTab] = useState<'assistant' | 'mcp'>(() => (initialSubtab?.startsWith('mcp') ? 'mcp' : 'assistant'))
+  const [mcpInitialTab, setMcpInitialTab] = useState<'agents' | 'manual' | undefined>(() => (initialSubtab === 'mcp:manual' ? 'manual' : undefined))
 
   useEffect(() => {
     const onRequest = () => {
       const subtab = consumeSettingsSubtabRequest()
-      if (subtab === 'mcp' || subtab === 'assistant') setTab(subtab)
+      if (subtab === 'mcp:manual') {
+        setTab('mcp')
+        setMcpInitialTab('manual')
+      } else if (subtab === 'mcp') {
+        setTab('mcp')
+        setMcpInitialTab(undefined)
+      } else if (subtab === 'assistant') {
+        setTab('assistant')
+      }
     }
     window.addEventListener(SETTINGS_CATEGORY_REQUEST_EVENT, onRequest)
     return () => window.removeEventListener(SETTINGS_CATEGORY_REQUEST_EVENT, onRequest)
@@ -315,7 +325,7 @@ function AIIntegrationsSection() {
         ))}
       </div>
       <div role="tabpanel" id="ai-integrations-tab-panel" aria-labelledby={`ai-integrations-tab-${tab}`} className="min-w-0">
-        {tab === 'assistant' ? <AISettingsSection /> : <McpSettingsSection />}
+        {tab === 'assistant' ? <AISettingsSection /> : <McpSettingsSection initialTab={mcpInitialTab} />}
       </div>
     </div>
   )

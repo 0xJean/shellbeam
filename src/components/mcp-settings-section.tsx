@@ -55,12 +55,12 @@ function shortenConfigPath(path: string | null): string {
     .replace(/^[A-Za-z]:\\Users\\[^\\]+\\/, '~\\')
 }
 
-export function McpSettingsSection() {
+export function McpSettingsSection({ initialTab }: { initialTab?: McpViewTab } = {}) {
   const { activeVaultId } = useVault()
-  return <McpAccessForm key={activeVaultId} activeVaultId={activeVaultId} />
+  return <McpAccessForm key={`${activeVaultId}:${initialTab ?? 'auto'}`} activeVaultId={activeVaultId} initialTab={initialTab} />
 }
 
-function McpAccessForm({ activeVaultId }: { activeVaultId: string }) {
+function McpAccessForm({ activeVaultId, initialTab }: { activeVaultId: string; initialTab?: McpViewTab }) {
   const { t, locale } = useT()
   const c = mcpAccessCopy[locale]
   const [status, setStatus] = useState<McpStatus | null>(null)
@@ -90,7 +90,7 @@ function McpAccessForm({ activeVaultId }: { activeVaultId: string }) {
   const [scanningAgents, setScanningAgents] = useState(false)
   const [quickPreset, setQuickPreset] = useState<QuickPreset>('readOnly')
   const [quickResults, setQuickResults] = useState<McpConnectAgentResult[] | null>(null)
-  const [chosenTab, setChosenTab] = useState<McpViewTab | null>(null)
+  const [chosenTab, setChosenTab] = useState<McpViewTab | null>(initialTab ?? null)
 
   const refreshDetectedAgents = useCallback(async () => {
     setScanningAgents(true)

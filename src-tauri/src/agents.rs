@@ -240,15 +240,16 @@ fn inspect_codex_toml_entry(raw: &str) -> (bool, Option<String>) {
     let mut found = false;
     let mut client_id = None;
     for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            in_section = trimmed == "[mcp_servers.shellbeam]";
+        if let Some(segments) = parse_toml_table_header(line) {
+            in_section =
+                segments.len() == 2 && segments[0] == "mcp_servers" && segments[1] == "shellbeam";
             if in_section {
                 found = true;
             }
             continue;
         }
         if in_section {
+            let trimmed = strip_toml_inline_comment(line).trim();
             if let Some(rest) = trimmed.strip_prefix("args") {
                 if let Some((_, val)) = rest.split_once('=') {
                     if let Ok(Value::Array(arr)) = serde_json::from_str::<Value>(val.trim()) {
@@ -259,6 +260,40 @@ fn inspect_codex_toml_entry(raw: &str) -> (bool, Option<String>) {
         }
     }
     (found, client_id)
+}
+
+/// Returns the ShellBeam client ID currently referenced by the agent's local MCP config, if any.
+pub fn read_configured_client_id(agent_id: &str) -> Option<String> {
+    let spec = find_agent(agent_id)?;
+    let path = resolve_config_path(agent_id)?;
+    let (_, client_id) = inspect_configured_entry(&path, spec.mcp_format);
+    client_id
+}
+
+/// Captures a snapshot of the agent's existing config bytes (or `None` if it does not exist yet)
+/// so a failed persistence step can cleanly restore the prior file contents.
+pub fn snapshot_mcp_config(agent_id: &str) -> Result<Option<(PathBuf, Vec<u8>)>, String> {
+    let path = resolve_config_path(agent_id)
+        .ok_or_else(|| format!("CONFIG_PATH_UNAVAILABLE: {agent_id}"))?;
+    match fs::read(&path) {
+        Ok(bytes) => Ok(Some((path, bytes))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("READ_CONFIG_FAILED: {e}")),
+    }
+}
+
+/// Restores a previously captured config snapshot after a failed save.
+pub fn restore_mcp_config(
+    agent_id: &str,
+    snapshot: Option<&(PathBuf, Vec<u8>)>,
+    written_client_id: &str,
+) -> Result<(), String> {
+    if let Some((path, bytes)) = snapshot {
+        write_atomic_preserving_mode(path, bytes)
+    } else {
+        let _ = uninstall_mcp_config(agent_id, Some(written_client_id))?;
+        Ok(())
+    }
 }
 
 /// Safely merges ONLY the `shellbeam` MCP server entry into the target agent's config file.
@@ -339,13 +374,8 @@ fn uninstall_mcp_config_at_path(
     }
     if let Some(expected) = expected_client_id {
         let (configured, current_id) = inspect_configured_entry(path, format);
-        if !configured {
+        if !configured || current_id.as_deref() != Some(expected) {
             return Ok(false);
-        }
-        if let Some(cid) = current_id.as_deref() {
-            if cid != expected {
-                return Ok(false);
-            }
         }
     }
 
@@ -462,8 +492,114 @@ fn remove_json_key(existing: &str, container_key: &str) -> Result<(String, bool)
     Ok((out, true))
 }
 
-fn is_shellbeam_toml_header(trimmed: &str) -> bool {
-    trimmed == "[mcp_servers.shellbeam]" || trimmed == "[mcp_servers.shellbeam.env]"
+fn strip_toml_inline_comment(line: &str) -> &str {
+    let mut in_double = false;
+    let mut in_single = false;
+    let mut escaped = false;
+    for (idx, ch) in line.char_indices() {
+        if in_double {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_double = false;
+            }
+        } else if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+        } else {
+            match ch {
+                '"' => in_double = true,
+                '\'' => in_single = true,
+                '#' => return &line[..idx],
+                _ => {}
+            }
+        }
+    }
+    line
+}
+
+fn parse_toml_table_header(line: &str) -> Option<Vec<String>> {
+    let trimmed = strip_toml_inline_comment(line).trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return None;
+    }
+    let inner = if trimmed.starts_with("[[") && trimmed.ends_with("]]") && trimmed.len() >= 4 {
+        trimmed[2..trimmed.len() - 2].trim()
+    } else {
+        trimmed[1..trimmed.len() - 1].trim()
+    };
+    if inner.is_empty() {
+        return None;
+    }
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut in_double = false;
+    let mut in_single = false;
+    let mut escaped = false;
+    let mut saw_token = false;
+    for ch in inner.chars() {
+        if in_double {
+            if escaped {
+                current.push(ch);
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_double = false;
+                saw_token = true;
+            } else {
+                current.push(ch);
+            }
+        } else if in_single {
+            if ch == '\'' {
+                in_single = false;
+                saw_token = true;
+            } else {
+                current.push(ch);
+            }
+        } else {
+            match ch {
+                '"' => {
+                    in_double = true;
+                    saw_token = true;
+                }
+                '\'' => {
+                    in_single = true;
+                    saw_token = true;
+                }
+                '.' => {
+                    let seg = current.trim().to_string();
+                    if seg.is_empty() && !saw_token {
+                        return None;
+                    }
+                    segments.push(seg);
+                    current.clear();
+                    saw_token = false;
+                }
+                c if c.is_whitespace() => {}
+                c => {
+                    current.push(c);
+                    saw_token = true;
+                }
+            }
+        }
+    }
+    if in_double || in_single || escaped {
+        return None;
+    }
+    let last = current.trim().to_string();
+    if last.is_empty() && !saw_token {
+        return None;
+    }
+    segments.push(last);
+    Some(segments)
+}
+
+fn is_shellbeam_toml_table(segments: &[String]) -> bool {
+    segments.len() >= 2 && segments[0] == "mcp_servers" && segments[1] == "shellbeam"
 }
 
 fn strip_codex_shellbeam_sections(existing: &str) -> (String, bool) {
@@ -472,9 +608,8 @@ fn strip_codex_shellbeam_sections(existing: &str) -> (String, bool) {
     let mut removed = false;
 
     for line in existing.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            if is_shellbeam_toml_header(trimmed) {
+        if let Some(segments) = parse_toml_table_header(line) {
+            if is_shellbeam_toml_table(&segments) {
                 skipping = true;
                 removed = true;
                 continue;
@@ -514,9 +649,21 @@ fn remove_codex_toml(existing: &str) -> (String, bool) {
     strip_codex_shellbeam_sections(existing)
 }
 
+fn resolve_write_target(path: &Path) -> Result<PathBuf, String> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            fs::canonicalize(path).map_err(|e| format!("RESOLVE_SYMLINK_FAILED: {e}"))
+        }
+        _ => Ok(path.to_path_buf()),
+    }
+}
+
 fn write_atomic_preserving_mode(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let parent = path.parent().ok_or("INVALID_CONFIG_PATH")?;
-    let file_name = path
+    use std::io::Write;
+
+    let target = resolve_write_target(path)?;
+    let parent = target.parent().ok_or("INVALID_CONFIG_PATH")?;
+    let file_name = target
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("mcp_config");
@@ -526,24 +673,48 @@ fn write_atomic_preserving_mode(path: &Path, bytes: &[u8]) -> Result<(), String>
     ));
 
     #[cfg(unix)]
-    let existing_mode = fs::metadata(path).ok().map(|m| {
+    let final_mode = {
         use std::os::unix::fs::PermissionsExt;
-        m.permissions().mode()
-    });
+        let existing_mode = fs::metadata(&target).ok().map(|m| m.permissions().mode());
+        // Always restrict config containing a secret MCP token to owner-only (0600 max).
+        let mode = existing_mode.unwrap_or(0o600) & 0o777;
+        let safe_mode = mode & 0o600;
+        if safe_mode == 0 {
+            0o600
+        } else {
+            safe_mode
+        }
+    };
 
-    fs::write(&tmp_path, bytes).map_err(|e| format!("WRITE_CONFIG_FAILED: {e}"))?;
+    let mut file = {
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(final_mode);
+        }
+        opts.open(&tmp_path)
+            .map_err(|e| format!("WRITE_CONFIG_FAILED: {e}"))?
+    };
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        // Default to owner-only 0600 because the config contains a secret MCP token.
-        let mode = existing_mode.unwrap_or(0o600) & 0o777;
-        let safe_mode = mode & 0o600;
-        let final_mode = if safe_mode == 0 { 0o600 } else { safe_mode };
-        let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(final_mode));
+        if let Err(e) = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(final_mode)) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(format!("CHMOD_CONFIG_FAILED: {e}"));
+        }
     }
 
-    fs::rename(&tmp_path, path).map_err(|e| {
+    if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(&tmp_path);
+        return Err(format!("WRITE_CONFIG_FAILED: {e}"));
+    }
+    drop(file);
+
+    fs::rename(&tmp_path, &target).map_err(|e| {
         let _ = fs::remove_file(&tmp_path);
         format!("RENAME_CONFIG_FAILED: {e}")
     })
@@ -723,6 +894,87 @@ mod tests {
         assert!(after.contains("[mcp_servers.pencil]"));
         assert!(after.contains("[mcp_servers.other]"));
         assert!(!after.contains("[mcp_servers.shellbeam]"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn preserves_commented_codex_headers_and_replaces_quoted_shellbeam_table() {
+        let dir = temp_dir("codex-comments");
+        let path = dir.join("config.toml");
+        let initial = "[mcp_servers.\"shellbeam\"] # old quoted\ncommand = \"old\"\nargs = [\"old\"]\n\n[mcp_servers.\"shellbeam\".env]\nSHELLBEAM_MCP_TOKEN = \"oldtok\"\n\n[mcp_servers.backup] # Keep this server\ncommand = \"backup-mcp\"\n";
+        fs::write(&path, initial).unwrap();
+
+        let args = vec!["--mcp-stdio".into(), "/tmp/ep.json".into(), "cid-q".into()];
+        install_mcp_config_at_path(
+            &path,
+            McpConfigFormat::CodexToml,
+            "/new/app",
+            &args,
+            "tok-q",
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[mcp_servers.backup] # Keep this server"));
+        assert!(content.contains("command = \"backup-mcp\""));
+        assert!(!content.contains("oldtok"));
+        assert!(!content.contains("[mcp_servers.\"shellbeam\"]"));
+        assert!(content.contains("[mcp_servers.shellbeam]"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn uninstall_does_not_delete_replacement_entry_without_client_id() {
+        let dir = temp_dir("uninstall-guard");
+        let path = dir.join("mcp.json");
+        fs::write(
+            &path,
+            r#"{ "mcpServers": { "shellbeam": { "command": "custom-wrapper", "args": [] } } }"#,
+        )
+        .unwrap();
+
+        let removed =
+            uninstall_mcp_config_at_path(&path, McpConfigFormat::JsonMcpServers, Some("old-cid"))
+                .unwrap();
+        assert!(!removed);
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("custom-wrapper"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_symlinks_and_restricts_mode() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let dir = temp_dir("symlink");
+        let real_path = dir.join("dotfiles-mcp.json");
+        let link_path = dir.join("mcp.json");
+        fs::write(&real_path, r#"{ "mcpServers": {} }"#).unwrap();
+        symlink(&real_path, &link_path).unwrap();
+
+        let args = vec![
+            "--mcp-stdio".into(),
+            "/tmp/ep.json".into(),
+            "cid-sym".into(),
+        ];
+        install_mcp_config_at_path(
+            &link_path,
+            McpConfigFormat::JsonMcpServers,
+            "/app",
+            &args,
+            "secret-tok",
+        )
+        .unwrap();
+
+        assert!(fs::symlink_metadata(&link_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let target_content = fs::read_to_string(&real_path).unwrap();
+        assert!(target_content.contains("secret-tok"));
+        let mode = fs::metadata(&real_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode & 0o077, 0);
         let _ = fs::remove_dir_all(dir);
     }
 }

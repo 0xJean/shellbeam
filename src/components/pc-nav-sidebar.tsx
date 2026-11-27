@@ -450,16 +450,13 @@ export function MobileBottomNav({ activeNav, onNavChange, sessionCount = 0, onOp
         data-testid="mobile-bottom-nav"
         data-axis="vertical"
         className={cn(
-          'fixed bottom-0 top-0 z-50 flex w-[var(--vertical-bar-width)] flex-col items-center px-1.5 pt-[clamp(7.5rem,22vh,11rem)]',
+          'fixed bottom-0 top-0 z-50 flex w-[var(--vertical-bar-width)] flex-col items-center px-1.5 pt-[clamp(4.5rem,20vh,10.5rem)]',
           verticalBarEdge === 'trailing' ? 'right-0' : 'left-0',
         )}
         style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 0.75rem)' }}
       >
         <div
-          className={cn(
-            'flex min-h-0 w-full flex-1 flex-col items-center rounded-2xl border border-[color:var(--workspace-border-soft)]/70 bg-[var(--workspace-surface-900)]/85 px-1 py-2.5 backdrop-blur-xl',
-            hasTopUtilities ? 'justify-between' : 'justify-end',
-          )}
+          className="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto rounded-2xl border border-[color:var(--workspace-border-soft)]/70 bg-[var(--workspace-surface-900)]/85 px-1 py-2.5 backdrop-blur-xl [scrollbar-width:none]"
         >
           {hasTopUtilities && (
             <div className="flex shrink-0 flex-col items-center gap-2">
@@ -489,7 +486,7 @@ export function MobileBottomNav({ activeNav, onNavChange, sessionCount = 0, onOp
               )}
             </div>
           )}
-          <div className="flex shrink-0 flex-col items-center gap-1.5">
+          <div className="mt-auto flex shrink-0 flex-col items-center gap-1.5">
             {MOBILE_TABS.map((item) => {
               const isActive = item.id === 'tools' ? isToolPage(activeNav) : activeNav === item.id
               return (
