@@ -99,26 +99,35 @@ function readPrivateKey() {
 }
 
 async function ascRequest(creds, method, apiPath, body) {
-  const token = makeAscJwt(creds)
   const url = apiPath.startsWith('https://')
     ? apiPath
     : `https://api.appstoreconnect.apple.com${apiPath}`
-  const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
-  const text = await res.text()
-  let json = null
-  try {
-    json = text ? JSON.parse(text) : null
-  } catch {
-    json = { raw: text }
+  let lastErr
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const token = makeAscJwt(creds)
+      const res = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+      const text = await res.text()
+      let json = null
+      try {
+        json = text ? JSON.parse(text) : null
+      } catch {
+        json = { raw: text }
+      }
+      return { ok: res.ok, status: res.status, json }
+    } catch (err) {
+      lastErr = err
+      if (attempt < 3) await sleep(2000 * attempt)
+    }
   }
-  return { ok: res.ok, status: res.status, json }
+  throw lastErr
 }
 
 function loadReleaseHighlights(version) {
@@ -280,7 +289,29 @@ async function main() {
   }
   console.log('✅ Build attached to public external TestFlight group.')
 
-  // 6. Submit for Beta App Review
+  // 6. Check current review state & submit for Beta App Review if needed
+  const detailRes = await ascRequest(
+    creds,
+    'GET',
+    `/v1/builds/${targetBuild.id}?include=betaAppReviewSubmission,buildBetaDetail`,
+  )
+  const included = detailRes.ok ? (detailRes.json?.included || []) : []
+  const existingSub = included.find((i) => i.type === 'betaAppReviewSubmissions')
+  const betaDetail = included.find((i) => i.type === 'buildBetaDetails')
+  const reviewState = existingSub?.attributes?.betaReviewState
+  const externalState = betaDetail?.attributes?.externalBuildState
+
+  if (
+    reviewState === 'WAITING_FOR_REVIEW' ||
+    reviewState === 'IN_REVIEW' ||
+    reviewState === 'APPROVED' ||
+    externalState === 'WAITING_FOR_BETA_REVIEW' ||
+    externalState === 'IN_BETA_TESTING'
+  ) {
+    console.log(`✅ Beta App Review already active (review: ${reviewState || 'N/A'}, external: ${externalState || 'N/A'}).`)
+    return
+  }
+
   console.log('📝 Submitting build for Beta App Review...')
   const submitRes = await ascRequest(creds, 'POST', '/v1/betaAppReviewSubmissions', {
     data: {
