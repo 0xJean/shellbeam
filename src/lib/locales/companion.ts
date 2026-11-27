@@ -81,6 +81,7 @@ export const companionCopy: Record<Locale, {
   authorizedDevicesTitle: string
   noAuthorizedDevices: string
   initDeviceFirst: string
+  initDeviceFirstClient: string
   syncBannerTitle: string
   syncBannerDesc: string
   syncBannerAction: string
@@ -220,6 +221,7 @@ export const companionCopy: Record<Locale, {
     authorizedDevicesTitle: '已授权设备与权限',
     noAuthorizedDevices: '还没有已配对的手机。使用手机端 ShellBeam 扫码或粘贴配对链接，完成 X25519 + 6 位确认码加密配对。',
     initDeviceFirst: '先初始化本机设备身份，即可生成配对二维码并接受手机直连。',
+    initDeviceFirstClient: '先初始化本机设备身份，即可扫码或输入连接码直连你的电脑。',
     syncBannerTitle: '手机直连已升级为独立中心',
     syncBannerDesc: '扫码配对、远程调用电脑 AI CLI、接管桌面终端与权限管理均在「手机直连」页面。',
     syncBannerAction: '前往手机直连',
@@ -359,6 +361,7 @@ export const companionCopy: Record<Locale, {
     authorizedDevicesTitle: 'Authorized Devices & Permissions',
     noAuthorizedDevices: 'No paired phones yet. Scan the QR code or paste the pairing link from ShellBeam Mobile to pair with X25519 + 6-digit SAS.',
     initDeviceFirst: 'Initialize this device identity first to generate a pairing QR code and accept mobile connections.',
+    initDeviceFirstClient: 'Initialize this device identity first to scan a QR code or paste a pairing link to connect to your computer.',
     syncBannerTitle: 'Mobile Remote now has its own hub',
     syncBannerDesc: 'Manage QR pairing, desktop AI CLI proxy, live terminal mirroring, and device permissions in Mobile Remote.',
     syncBannerAction: 'Open Mobile Remote',

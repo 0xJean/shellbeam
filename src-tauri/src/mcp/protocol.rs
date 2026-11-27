@@ -381,6 +381,7 @@ mod tests {
         Client {
             id: "client".into(),
             name: "Agent".into(),
+            agent_id: None,
             vault_id: "vault".into(),
             hosts: vec![],
             snippets: vec![],

@@ -28,6 +28,7 @@ import type { HostProfile, HostProfileDraft } from '@/lib/hosts'
 import type { VaultMeta } from '@/lib/vaults'
 import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
+import { isMobileDevice } from '@/lib/mobile-back'
 import { cn } from '@/lib/utils'
 import { getWorkspaceInventoryHealthStatus, useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
@@ -1185,7 +1186,7 @@ export function HostsDashboard({
       <HostMetadataSyncNotice vaultId={activeVaultId} unlocked={!!vaultUnlocked} hosts={hosts} onEdit={setEditingHost} />
       <div data-testid="hosts-header" className="space-y-4 pb-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="min-w-0">
+          <div className="min-w-0 md:flex-1">
             <h1 className="text-[26px] font-bold tracking-tight text-[var(--workspace-text-strong)]">{t('nav.hosts')}</h1>
             <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-[var(--workspace-text-muted)]">
               <span>{t('hosts.headerSummary', { total: hosts.length, online: statusCounts.online })}</span>
@@ -1201,7 +1202,7 @@ export function HostsDashboard({
               </button>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 md:justify-end">
             {headerExtraAction}
             {incidents.length > 0 && <Button size="sm" variant="outline" data-testid="host-alerts-open" className="h-9 gap-1.5 border-[color:var(--workspace-status-warn)]/40 bg-[var(--workspace-status-warn-bg)] text-xs text-[color:var(--workspace-status-warn-text)] hover:bg-[var(--workspace-status-warn-bg)]" onClick={() => setPresentation(current => ({ ...current, alerts: true }))}>
               <Bell className="h-3.5 w-3.5" />{presentationCopy.alerts} · {openIncidents} {presentationCopy.open}
@@ -1216,7 +1217,7 @@ export function HostsDashboard({
             </button>
             <Button data-tour="host-create" size="sm" onClick={() => setShowAddForm(!showAddForm)} className="h-9 gap-1.5 text-xs bg-[color:var(--workspace-primary-500)] text-[color:var(--workspace-primary-foreground)] hover:bg-[color:var(--workspace-primary-400)]">
               <Plus className="h-3.5 w-3.5" /> {t('hosts.addHost')}
-              <kbd className="ml-1 hidden rounded border border-current/30 px-1 font-sans text-[10px] opacity-75 sm:inline">⌘N</kbd>
+              {!isMobileDevice() && <kbd className="ml-1 hidden rounded border border-current/30 px-1 font-sans text-[10px] opacity-75 lg:inline">⌘N</kbd>}
             </Button>
           </div>
         </div>

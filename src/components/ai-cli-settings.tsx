@@ -2,6 +2,7 @@ import { useRef, useState, useEffect } from 'react'
 import { Info, Loader2, SearchCheck, ShieldCheck } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { findLocalAgent } from '@/lib/agents'
 import { checkAICli, cliErrorMessage, type AICliStatus } from '@/lib/ai-cli'
 import type { AICliBackend, AICliProfile, AIReasoningEffort } from '@/lib/ai'
 import { CLI_BACKEND_LABELS, CLI_MODEL_PRESETS } from '@/lib/ai-conversation'
@@ -33,7 +34,7 @@ export function AICliSettings({ backend, profile, onChange }: {
   }
   const name = CLI_BACKEND_LABELS[backend]
   const presets = CLI_MODEL_PRESETS[backend]
-  const supportsEffort = backend === 'claude-code' || backend === 'codex-cli' || backend === 'opencode-cli'
+  const supportsEffort = Boolean(findLocalAgent(backend)?.supportsEffort)
   const currentEffort = profile.effort ?? ''
   return <div className="grid items-start gap-4 lg:grid-cols-2">
     <div className="sb-card min-w-0">

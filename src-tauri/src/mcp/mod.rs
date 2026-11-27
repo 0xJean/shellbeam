@@ -3,7 +3,7 @@ mod connections;
 mod freshness;
 mod komari_incidents;
 mod local_alerts;
-mod policy;
+pub(crate) mod policy;
 mod protocol;
 mod remote;
 mod snippets;
@@ -80,6 +80,8 @@ impl Jobs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateClient {
     name: String,
+    #[serde(default)]
+    agent_id: Option<String>,
     vault_id: String,
     host_ids: Vec<String>,
     permissions: Permissions,
@@ -87,6 +89,21 @@ pub struct CreateClient {
     connection_ids: Option<HashMap<String, Vec<String>>>,
     #[serde(default)]
     snippets: Vec<policy::SnippetGrant>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConnectAgentsPayload {
+    agent_ids: Vec<String>,
+    vault_id: String,
+    host_ids: Vec<String>,
+    permissions: Permissions,
+    #[serde(default)]
+    connection_ids: Option<HashMap<String, Vec<String>>>,
+    #[serde(default)]
+    snippets: Vec<policy::SnippetGrant>,
+    #[serde(default)]
+    enable_mcp: bool,
 }
 
 pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
@@ -417,48 +434,37 @@ pub fn mcp_set_enabled(
     Ok(())
 }
 
-#[tauri::command]
-pub fn mcp_create_client(
-    app: tauri::AppHandle,
-    webview: tauri::Webview,
-    payload: CreateClient,
-) -> Result<Value, String> {
-    require_settings_webview(&webview)?;
-    require_ready(&app)?;
-    if cfg!(mobile) {
-        return Err("MCP_DESKTOP_ONLY".into());
-    }
-    if payload.name.trim().is_empty()
-        || payload.name.len() > 100
-        || payload.host_ids.is_empty()
-        || payload.host_ids.len() > 100
-    {
+fn validate_and_build_grants(
+    app: &tauri::AppHandle,
+    vault_id: &str,
+    host_ids: &[String],
+    permissions: &Permissions,
+    connection_ids: Option<&HashMap<String, Vec<String>>>,
+    snippet_grants: &[policy::SnippetGrant],
+) -> Result<Vec<HostGrant>, String> {
+    if host_ids.is_empty() || host_ids.len() > 100 {
         return Err("INVALID_CLIENT: select 1-100 servers and a client name".into());
     }
-    let hosts = load_hosts(&app, Some(&payload.vault_id))?;
-    if payload
-        .connection_ids
-        .as_ref()
-        .is_some_and(|rows| rows.keys().any(|id| !payload.host_ids.contains(id)))
-    {
+    let hosts = load_hosts(app, Some(vault_id))?;
+    if connection_ids.is_some_and(|rows| rows.keys().any(|id| !host_ids.contains(id))) {
         return Err("HOST_NOT_AUTHORIZED".into());
     }
-    if payload.permissions.read_snippets || payload.permissions.run_snippets {
-        if payload.snippets.is_empty() {
+    if permissions.read_snippets || permissions.run_snippets {
+        if snippet_grants.is_empty() {
             return Err("SNIPPET_SELECTION_REQUIRED".into());
         }
-        if !app.state::<VaultState>().is_unlocked(&payload.vault_id) {
+        if !app.state::<VaultState>().is_unlocked(vault_id) {
             return Err("VAULT_LOCKED".into());
         }
         snippets::validate_grants(
-            &crate::data::snippets::load_snippets(&app, Some(&payload.vault_id))?,
-            &payload.snippets,
+            &crate::data::snippets::load_snippets(app, Some(vault_id))?,
+            snippet_grants,
         )?;
-    } else if !payload.snippets.is_empty() {
+    } else if !snippet_grants.is_empty() {
         return Err("SNIPPET_PERMISSION_REQUIRED".into());
     }
     let mut grants = Vec::new();
-    for id in &payload.host_ids {
+    for id in host_ids {
         let host = hosts.iter().find(|h| &h.id == id).ok_or("HOST_NOT_FOUND")?;
         if grants.iter().any(|entry: &HostGrant| entry.id == *id) {
             continue;
@@ -467,9 +473,7 @@ pub fn mcp_create_client(
             id: id.clone(),
             identity: policy::identity(host),
             connections: Some({
-                let ids = payload
-                    .connection_ids
-                    .as_ref()
+                let ids = connection_ids
                     .and_then(|rows| rows.get(id))
                     .cloned()
                     .unwrap_or_else(|| {
@@ -487,6 +491,196 @@ pub fn mcp_create_client(
             }),
         });
     }
+    Ok(grants)
+}
+
+#[tauri::command]
+pub fn mcp_detect_agents(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+) -> Result<Vec<crate::agents::DetectedLocalAgent>, String> {
+    require_settings_webview(&webview)?;
+    if cfg!(mobile) {
+        return Ok(Vec::new());
+    }
+    require_ready(&app)?;
+    let state = app.state::<McpState>();
+    let settings = state
+        .settings
+        .lock()
+        .map_err(|_| "MCP_STATE_UNAVAILABLE")?
+        .clone();
+    Ok(crate::agents::detect_local_agents(&settings))
+}
+
+#[tauri::command]
+pub fn mcp_connect_agents(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    payload: ConnectAgentsPayload,
+) -> Result<Value, String> {
+    require_settings_webview(&webview)?;
+    require_ready(&app)?;
+    if cfg!(mobile) {
+        return Err("MCP_DESKTOP_ONLY".into());
+    }
+    let mut unique_ids: Vec<String> = Vec::new();
+    for id in &payload.agent_ids {
+        let trimmed = id.trim();
+        if crate::agents::find_agent(trimmed).is_none() {
+            return Err(format!("UNKNOWN_AGENT: {trimmed}"));
+        }
+        if !unique_ids.iter().any(|existing| existing == trimmed) {
+            unique_ids.push(trimmed.to_string());
+        }
+    }
+    if unique_ids.is_empty() {
+        return Err("SELECT_AT_LEAST_ONE_AGENT".into());
+    }
+
+    let grants = validate_and_build_grants(
+        &app,
+        &payload.vault_id,
+        &payload.host_ids,
+        &payload.permissions,
+        payload.connection_ids.as_ref(),
+        &payload.snippets,
+    )?;
+
+    if payload.enable_mcp {
+        let should_enable = {
+            let state = app.state::<McpState>();
+            let settings = state.settings.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
+            !settings.enabled
+        };
+        if should_enable {
+            let state = app.state::<McpState>();
+            let mut settings = state.settings.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
+            let mut next = settings.clone();
+            next.enabled = true;
+            persist(&app, &next)?;
+            *settings = next;
+            drop(settings);
+            bridge::start(&app)?;
+        }
+    }
+
+    let executable = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .into_owned();
+    let endpoint_path = data_file_path(&app, "mcp_endpoint.json")?
+        .to_string_lossy()
+        .into_owned();
+
+    let mut results = Vec::new();
+    let state = app.state::<McpState>();
+
+    for agent_id in unique_ids {
+        let Some(spec) = crate::agents::find_agent(&agent_id) else {
+            continue;
+        };
+        let token = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let client_id = uuid::Uuid::new_v4().to_string();
+        let args = vec![
+            "--mcp-stdio".to_string(),
+            endpoint_path.clone(),
+            client_id.clone(),
+        ];
+
+        let client = Client {
+            id: client_id.clone(),
+            name: spec.name.to_string(),
+            agent_id: Some(spec.id.to_string()),
+            vault_id: payload.vault_id.clone(),
+            hosts: grants.clone(),
+            snippets: payload.snippets.clone(),
+            permissions: payload.permissions.clone(),
+            created_at: now_unix_ms(),
+            token_hash: Some(policy::digest(&token)),
+        };
+
+        // Write the agent's local config first so a write/parse failure never leaves an orphan client.
+        match crate::agents::install_mcp_config(spec.id, &executable, &args, &token) {
+            Ok(config_path) => {
+                let save_res: Result<(), String> = (|| {
+                    let mut settings =
+                        state.settings.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
+                    let mut next = settings.clone();
+                    // Replace any prior ShellBeam grant issued for this same local agent so re-running
+                    // one-click connect cleanly updates permissions without accumulating stale clients.
+                    next.clients
+                        .retain(|existing| existing.agent_id.as_deref() != Some(spec.id));
+                    if next.clients.len() >= 100 {
+                        return Err("CLIENT_LIMIT_REACHED".into());
+                    }
+                    next.clients.push(client);
+                    persist(&app, &next)?;
+                    *settings = next;
+                    Ok(())
+                })();
+                match save_res {
+                    Ok(()) => {
+                        results.push(json!({
+                            "agentId": spec.id,
+                            "name": spec.name,
+                            "clientId": client_id,
+                            "configPath": config_path,
+                            "ok": true,
+                        }));
+                    }
+                    Err(err) => {
+                        let _ = crate::agents::uninstall_mcp_config(spec.id, Some(&client_id));
+                        results.push(json!({
+                            "agentId": spec.id,
+                            "name": spec.name,
+                            "configPath": config_path,
+                            "ok": false,
+                            "error": err,
+                        }));
+                    }
+                }
+            }
+            Err(err) => {
+                results.push(json!({
+                    "agentId": spec.id,
+                    "name": spec.name,
+                    "ok": false,
+                    "error": err,
+                }));
+            }
+        }
+    }
+
+    Ok(json!({ "results": results }))
+}
+
+#[tauri::command]
+pub fn mcp_create_client(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    payload: CreateClient,
+) -> Result<Value, String> {
+    require_settings_webview(&webview)?;
+    require_ready(&app)?;
+    if cfg!(mobile) {
+        return Err("MCP_DESKTOP_ONLY".into());
+    }
+    if payload.name.trim().is_empty() || payload.name.len() > 100 {
+        return Err("INVALID_CLIENT: select 1-100 servers and a client name".into());
+    }
+    let grants = validate_and_build_grants(
+        &app,
+        &payload.vault_id,
+        &payload.host_ids,
+        &payload.permissions,
+        payload.connection_ids.as_ref(),
+        &payload.snippets,
+    )?;
     let token = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -495,6 +689,7 @@ pub fn mcp_create_client(
     let client = Client {
         id: uuid::Uuid::new_v4().to_string(),
         name: payload.name.trim().into(),
+        agent_id: payload.agent_id,
         vault_id: payload.vault_id,
         hosts: grants,
         snippets: payload.snippets,
@@ -558,10 +753,19 @@ pub fn mcp_revoke_client(
     require_ready(&app)?;
     let state = app.state::<McpState>();
     let mut settings = state.settings.lock().map_err(|_| "MCP_STATE_UNAVAILABLE")?;
+    let removed_agent_id = settings
+        .clients
+        .iter()
+        .find(|client| client.id == client_id)
+        .and_then(|client| client.agent_id.clone());
     let mut next = settings.clone();
     next.clients.retain(|client| client.id != client_id);
     persist(&app, &next)?;
     *settings = next;
+    drop(settings);
+    if let Some(agent_id) = removed_agent_id {
+        let _ = crate::agents::uninstall_mcp_config(&agent_id, Some(&client_id));
+    }
     store::audit(&app, &client_id, None, "revoke", "revoked")
 }
 
@@ -2460,6 +2664,7 @@ mod tests {
         Client {
             id: "client".into(),
             name: "Client".into(),
+            agent_id: None,
             vault_id: "vault".into(),
             hosts: Vec::new(),
             snippets: vec![],

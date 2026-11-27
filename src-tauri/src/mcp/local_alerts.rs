@@ -312,6 +312,7 @@ mod tests {
         Client {
             id: id.into(),
             name: id.into(),
+            agent_id: None,
             vault_id: "vault".into(),
             hosts: vec![policy::HostGrant {
                 id: host().id,

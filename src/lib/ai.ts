@@ -1,3 +1,4 @@
+import { AI_CLI_BACKENDS, type AICliBackend } from './agents'
 import { streamCliCommand } from './ai-cli'
 import { historyToMessages, type AIHistoryItem } from './ai-conversation'
 import { redactSecrets } from './ai-redact'
@@ -5,7 +6,8 @@ import { aiKeysMayLiveInStorage, cachedAIKey, isAIKeyProvider, onAIKeysSecured, 
 
 const AI_SETTINGS_KEY = 'shellbeam.aiSettings'
 
-export type AICliBackend = 'claude-code' | 'codex-cli' | 'gemini-cli' | 'opencode-cli' | 'cursor-cli' | 'devin-cli'
+export type { AICliBackend }
+export { AI_CLI_BACKENDS }
 export type AIBackend = 'api' | AICliBackend
 export type AIReasoningEffort = '' | 'low' | 'medium' | 'high'
 export interface AICliProfile { executable: string; model: string; effort?: AIReasoningEffort }
@@ -180,7 +182,6 @@ export const AI_PROVIDERS: AIProvider[] = [
   },
 ]
 
-export const AI_CLI_BACKENDS: readonly AICliBackend[] = ['claude-code', 'codex-cli', 'gemini-cli', 'opencode-cli', 'cursor-cli', 'devin-cli']
 export const isCliBackend = (backend?: AIBackend): backend is AICliBackend =>
   Boolean(backend && (AI_CLI_BACKENDS as readonly string[]).includes(backend))
 

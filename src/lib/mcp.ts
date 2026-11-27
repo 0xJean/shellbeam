@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { LocalAgentId, McpConfigFormat } from './agents'
 
 export interface McpPermissions {
   readSnippets?: boolean
@@ -30,11 +31,33 @@ export const DEFAULT_MCP_PERMISSIONS: McpPermissions = {
 export interface McpClient {
   id: string
   name: string
+  agentId?: string
   vaultId: string
   hosts: { id: string; identity: string; connections?: { id: string; identity: string }[] }[]
   snippets?: { id: string; revision: string }[]
   permissions: McpPermissions
   createdAt: number
+}
+
+export interface DetectedLocalAgent {
+  id: LocalAgentId
+  name: string
+  supportsAiCli: boolean
+  mcpFormat: McpConfigFormat
+  installed: boolean
+  configPath: string | null
+  mcpConfigured: boolean
+  configuredClientId: string | null
+  activeClientId: string | null
+}
+
+export interface McpConnectAgentResult {
+  agentId: LocalAgentId
+  name: string
+  clientId?: string
+  configPath?: string
+  ok: boolean
+  error?: string
 }
 
 export interface McpAuditEntry {
@@ -125,8 +148,27 @@ export function setMcpEnabled(enabled: boolean) {
   return invoke<void>('mcp_set_enabled', { enabled })
 }
 
+export async function detectMcpAgents(): Promise<DetectedLocalAgent[]> {
+  const result = await invoke<DetectedLocalAgent[] | undefined>('mcp_detect_agents')
+  return Array.isArray(result) ? result : []
+}
+
+export async function connectMcpAgents(payload: {
+  agentIds: LocalAgentId[]
+  vaultId: string
+  hostIds: string[]
+  permissions: McpPermissions
+  connectionIds?: Record<string, string[]>
+  snippets?: { id: string; revision: string }[]
+  enableMcp?: boolean
+}): Promise<{ results: McpConnectAgentResult[] }> {
+  const result = await invoke<{ results: McpConnectAgentResult[] } | undefined>('mcp_connect_agents', { payload })
+  return result ?? { results: [] }
+}
+
 export function createMcpClient(payload: {
   name: string
+  agentId?: string
   vaultId: string
   hostIds: string[]
   permissions: McpPermissions

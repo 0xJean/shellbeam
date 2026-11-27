@@ -77,6 +77,7 @@ import {
 import type { InteractiveSessionInfo } from '@/lib/interactive-session'
 import type { AIBrandId } from '@/lib/ai-brand'
 import type { DiscoveredDevice } from '@/lib/mdns'
+import { AI_CLI_AGENTS } from '@/lib/agents'
 import { AIProviderLogo } from '@/components/ai-provider-logo'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/sync-widgets'
@@ -89,17 +90,12 @@ import {
 } from '@/components/sync-pairing-views'
 import { cn } from '@/lib/utils'
 
-const CLI_META: Record<string, { label: string; brand: AIBrandId }> = {
-  'claude-code': { label: 'Claude Code', brand: 'claude-code' },
-  'codex-cli': { label: 'Codex CLI', brand: 'codex-cli' },
-  'gemini-cli': { label: 'Gemini CLI', brand: 'gemini-cli' },
-  'cursor-cli': { label: 'Cursor', brand: 'cursor-cli' },
-  'devin-cli': { label: 'Devin', brand: 'devin-cli' },
-  'opencode-cli': { label: 'OpenCode', brand: 'opencode-cli' },
-}
+const CLI_META: Record<string, { label: string; brand: AIBrandId }> = Object.fromEntries(
+  AI_CLI_AGENTS.map((agent) => [agent.cliBackend, { label: agent.cliLabel ?? agent.name, brand: agent.id }]),
+)
 
-const DEFAULT_CLI_BACKENDS: CliBackendInfo[] = Object.keys(CLI_META).map((backend) => ({
-  backend,
+const DEFAULT_CLI_BACKENDS: CliBackendInfo[] = AI_CLI_AGENTS.map((agent) => ({
+  backend: agent.cliBackend,
   available: false,
 }))
 
@@ -348,11 +344,11 @@ function MobileDesktopClientCenter({
       {needsInit ? (
         <section className="sb-card mx-auto flex max-w-lg flex-col items-center gap-4 px-7 py-8 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--workspace-accent-subtle)] text-[color:var(--workspace-accent-text)]">
-            <Laptop className="h-5 w-5" />
+            <Smartphone className="h-5 w-5" />
           </div>
           <div>
             <h2 className="text-[16px] font-semibold text-[var(--workspace-text-strong)]">{t('sync.initDevice')}</h2>
-            <p className="mt-1 text-[12.5px] text-[var(--workspace-text-muted)]">{copy.initDeviceFirst}</p>
+            <p className="mt-1 text-[12.5px] text-[var(--workspace-text-muted)]">{copy.initDeviceFirstClient}</p>
           </div>
           <div className="w-full max-w-sm space-y-2 text-left">
             <label htmlFor="client-device-name" className="text-[12px] font-medium text-[var(--workspace-text-strong)]">

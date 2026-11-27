@@ -39,6 +39,7 @@ describe('pc nav sidebar', () => {
       const nav = screen.getByTestId('mobile-bottom-nav')
       expect(nav).toHaveAttribute('data-axis', 'vertical')
       expect(nav).toHaveClass('right-0')
+      expect(nav).not.toHaveClass('md:hidden')
       expect(document.documentElement.dataset.verticalBarEdge).toBe('trailing')
       expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['', '', '', '', ''])
       fireEvent.click(screen.getByRole('button', { name: 'nav.desktop' }))
@@ -51,6 +52,12 @@ describe('pc nav sidebar', () => {
       act(() => applyBarLayout({ verticalBarEdge: 'none', horizontalSizeClass: 'regular' }))
       expect(screen.getByTestId('mobile-bottom-nav')).not.toHaveAttribute('data-axis')
       expect(document.documentElement.dataset.verticalBarEdge).toBeUndefined()
+    })
+
+    it('hides the left PcNavSidebar when iOS places navigation in the trailing vertical bar', () => {
+      act(() => applyBarLayout({ verticalBarEdge: 'trailing', horizontalSizeClass: 'regular' }))
+      render(<PcNavSidebar activeNav="hosts" onNavChange={vi.fn()} />)
+      expect(screen.queryByTestId('pc-nav-sidebar')).not.toBeInTheDocument()
     })
   })
 
@@ -88,6 +95,14 @@ describe('pc nav sidebar', () => {
     expect(screen.getByTestId('pc-nav-sidebar')).toHaveAttribute('data-compact', 'false')
     fireEvent.click(screen.getByTestId('pc-nav-collapse-toggle'))
     expect(screen.getByTestId('pc-nav-sidebar')).toHaveAttribute('data-compact', 'true')
+
+    const railButtons = screen.getByTestId('pc-nav-sidebar').querySelectorAll('button')
+    expect(railButtons.length).toBeGreaterThan(10)
+    for (const button of railButtons) {
+      expect(button.className).toContain('shrink-0')
+      expect(button.className).toContain('[&_svg]:h-[18px]')
+      expect(button.className).toContain('[&_svg]:w-[18px]')
+    }
 
     fireEvent.click(screen.getByTestId('pc-nav-settings'))
     expect(onNavChange).toHaveBeenCalledWith('settings')

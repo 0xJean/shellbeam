@@ -17,6 +17,7 @@ export function AIProviderLogo({ brand, className = 'h-4 w-4' }: { brand: AIBran
       )
 
     case 'claude-code':
+    case 'claude-desktop':
     case 'anthropic':
       return (
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={cn('shrink-0 text-[#D97757]', className)}>
@@ -26,6 +27,26 @@ export function AIProviderLogo({ brand, className = 'h-4 w-4' }: { brand: AIBran
             strokeWidth="1.95"
             strokeLinecap="round"
           />
+        </svg>
+      )
+
+    case 'antigravity':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={cn('shrink-0', className)}>
+          <defs>
+            <linearGradient id={`sb-agy-${uid}`} x1="4" y1="3" x2="20" y2="21" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stopColor="#38BDF8" />
+              <stop offset="55%" stopColor="#6366F1" />
+              <stop offset="100%" stopColor="#A855F7" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M12 3.2 4.8 19.6c-.4.9.5 1.8 1.4 1.3l4.6-2.6c.7-.4 1.7-.4 2.4 0l4.6 2.6c.9.5 1.8-.4 1.4-1.3L12 3.2Z"
+            stroke={`url(#sb-agy-${uid})`}
+            strokeWidth="2"
+            strokeLinejoin="round"
+          />
+          <circle cx="12" cy="12" r="2.1" fill={`url(#sb-agy-${uid})`} />
         </svg>
       )
 

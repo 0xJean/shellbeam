@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { CompanionStatusPill, type CompanionTopBarInfo } from './companion-status-pill'
 import { AppUpdateTopBarPill } from './app-update'
 import { isMobileDevice } from '@/lib/mobile-back'
+import { useBarLayout } from '@/lib/bar-layout'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { Columns2, LayoutDashboard, Moon, Plus, RefreshCw, Sparkles, SquareTerminal, Sun, X } from 'lucide-react'
 import { getHostInventoryResource, HostMetadataLine, resolveHostForDisplay } from './host-display-meta'
@@ -69,6 +70,8 @@ export function PcSessionTabBar({
 }: PcSessionTabBarProps) {
   const { t } = useT()
   const mobileDevice = isMobileDevice()
+  const { verticalBarEdge } = useBarLayout()
+  const hasVerticalBar = verticalBarEdge !== 'none'
   const inventoryStates = useWorkspaceInventoryStates()
   const networkByAddress = useHostNetworkMetadata(hosts.map((host) => host.address))
 
@@ -174,7 +177,7 @@ export function PcSessionTabBar({
 
       <div className="ml-auto flex shrink-0 items-center gap-1 pl-2">
         <AppUpdateTopBarPill />
-        <CompanionStatusPill info={companionInfo} />
+        {!hasVerticalBar && <CompanionStatusPill info={companionInfo} />}
         {onToggleAi && !isDashboard && activeSessionId && (
           <button type="button" data-testid="pc-tab-ai" onClick={onToggleAi} title={t('tab.aiAssistant')} aria-pressed={aiOpen}
             className={cn('flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors', aiOpen
@@ -184,7 +187,7 @@ export function PcSessionTabBar({
             {!mobileDevice && <kbd className="rounded border border-[color:var(--workspace-border-soft)] px-1 font-sans text-[10px] text-[var(--workspace-text-subtle)]">⌘I</kbd>}
           </button>
         )}
-        {onToggleTheme && (
+        {onToggleTheme && !hasVerticalBar && (
           <button type="button" data-testid="pc-tab-theme" onClick={onToggleTheme} className={ICON_BUTTON} title={t(theme === 'dark' ? 'settings.light' : 'settings.dark')}>
             {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </button>

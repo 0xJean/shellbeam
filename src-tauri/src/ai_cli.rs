@@ -283,6 +283,10 @@ impl Drop for Registration {
         }
     }
 }
+pub(crate) fn has_cli_binary(backend: Backend) -> bool {
+    resolve_executable(backend, "").is_ok()
+}
+
 pub(crate) fn probe_available_backends() -> Vec<crate::companion::protocol::CliBackendInfo> {
     if cfg!(mobile) {
         return Vec::new();

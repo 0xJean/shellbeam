@@ -6,13 +6,13 @@ import { AIProviderLogo } from '@/components/ai-provider-logo'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { SettingSwitch } from '@/components/settings-controls'
-import { AI_PROVIDERS, AI_SETTINGS_EVENT, isCliBackend, loadAISettings, saveAISettings, switchAIProvider, type AIBackend, type AIProviderGroup, type AISettings } from '@/lib/ai'
+import { AI_CLI_BACKENDS, AI_PROVIDERS, AI_SETTINGS_EVENT, isCliBackend, loadAISettings, saveAISettings, switchAIProvider, type AIBackend, type AIProviderGroup, type AISettings } from '@/lib/ai'
 import { CLI_BACKEND_LABELS } from '@/lib/ai-conversation'
 import { useT } from '@/lib/i18n'
 import { aiMcpSettingsCopy } from '@/lib/locales/ai-mcp-settings-v3'
 import { cn } from '@/lib/utils'
 
-const BACKENDS: readonly AIBackend[] = ['api', 'claude-code', 'codex-cli', 'gemini-cli', 'opencode-cli', 'cursor-cli', 'devin-cli']
+const BACKENDS: readonly AIBackend[] = ['api', ...AI_CLI_BACKENDS]
 const PROVIDER_GROUPS: readonly AIProviderGroup[] = ['global', 'china', 'local']
 
 const choiceCardClass = (active: boolean) => cn('rounded-lg border text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',

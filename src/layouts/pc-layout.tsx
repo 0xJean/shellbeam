@@ -20,6 +20,7 @@ import { IncomingPairView, PairDialog } from '@/components/sync-pairing-views'
 import { MobileRemoteSessionSheet } from '@/components/mobile/mobile-remote-session-sheet'
 import { MobileToolsPage } from '@/components/mobile-tools-page'
 import { isMobileDevice, useMobileBackHandler } from '@/lib/mobile-back'
+import { useBarLayout } from '@/lib/bar-layout'
 import { isToolPage } from '@/lib/mobile-navigation'
 import { requestTerminalAiToggle, requestTerminalSearchToggle, TERMINAL_AI_STATE_EVENT, TERMINAL_SEARCH_STATE_EVENT, TERMINAL_SIDEBAR_TAB_EVENT } from '@/lib/terminal-events'
 import { CLOSE_SESSION_REQUEST_EVENT, OPEN_KNOWN_HOSTS_REQUEST_EVENT, OPEN_SFTP_REQUEST_EVENT, OPEN_TERMINAL_REQUEST_EVENT, type HostDirectoryRequest } from '@/lib/navigation-request'
@@ -52,7 +53,7 @@ import { getHostInventoryResource, resolveHostForDisplay } from '@/components/ho
 import type { HostProfile } from '@/lib/hosts'
 import { DEFAULT_GROUPS } from '@/lib/hosts'
 import { useT } from '@/lib/i18n'
-import { TOUR_ROUTES, TOUR_SETTINGS_CATEGORY, type InteractiveTourId, type TourOutcome } from '@/lib/interactive-tour'
+import { TOUR_ROUTES, TOUR_SETTINGS_CATEGORY, TOUR_SETTINGS_SUBTAB, type InteractiveTourId, type TourOutcome } from '@/lib/interactive-tour'
 import { cn } from '@/lib/utils'
 import { useWorkspaceInventoryStates } from '@/lib/workspace-inventory-state'
 import { getWorkspaceInventoryHostKey } from '@/lib/workspace-inventory'
@@ -340,6 +341,8 @@ export function PcLayout() {
   }, [pcSessionTabs.length, setPcSidebarNav])
 
   const isMd = useSyncExternalStore(subscribeMediaQuery, getIsMd, () => true)
+  const { verticalBarEdge } = useBarLayout()
+  const hasVerticalBar = verticalBarEdge !== 'none'
   const { setPcActiveSessionId } = sessions
 
   useEffect(() => {
@@ -1124,6 +1127,7 @@ export function PcLayout() {
         onResumeSession={handleResumeBrowserSession}
         onResumeTab={handleResumeBrowserTab}
       />
+      {(!hasVerticalBar || sessions.pcSessionTabs.length > 0) && (
       <div className="hidden shrink-0 md:block">
         <PcSessionTabBar
           sessionTabs={sessions.pcSessionTabs}
@@ -1151,6 +1155,7 @@ export function PcLayout() {
           }}
         />
       </div>
+      )}
       <div className="relative min-h-0 flex-1">
         {/* PC Terminal layer - all sessions stay mounted, only active is visible. Phones get the mobile layer below instead,
             so each session has one terminal, workspace and browser. */}
@@ -1519,13 +1524,13 @@ export function PcLayout() {
                 </Suspense>
               ) : (
               <>
-              {app.pcSidebarNav !== 'tools' && isToolPage(app.pcSidebarNav) && (
+              {app.pcSidebarNav !== 'tools' && isToolPage(app.pcSidebarNav) && (!isMd || hasVerticalBar) && (
                 <button
                   type="button"
                   data-testid="mobile-tools-back"
                   onClick={() => app.setPcSidebarNav('tools')}
                   style={{ paddingTop: 'max(env(safe-area-inset-top), 0.75rem)' }}
-                  className="flex items-center gap-1 px-3 text-[15px] text-[var(--workspace-accent-text)] md:hidden"
+                  className={cn('flex items-center gap-1 px-3 text-[15px] text-[var(--workspace-accent-text)]', !hasVerticalBar && 'md:hidden')}
                 >
                   <ChevronLeft className="h-5 w-5" />{t('nav.tools')}
                 </button>
@@ -1537,7 +1542,7 @@ export function PcLayout() {
                     setTourOutcome(null)
                     setShowQuickConnect(false)
                     const category = TOUR_SETTINGS_CATEGORY[id]
-                    if (category) requestSettingsCategory(category)
+                    if (category) requestSettingsCategory(category, TOUR_SETTINGS_SUBTAB[id])
                     app.setPcSidebarNav(TOUR_ROUTES[id])
                     setTour({ id, vaultId: vault.activeVaultId })
                   }} onNavigate={(destination) => {
@@ -1711,8 +1716,8 @@ export function PcLayout() {
               )}
               {app.pcSidebarNav === 'sftp' && (
                 <Suspense fallback={<DashboardSectionFallback fullHeight />}>
-                  {/* On mobile SFTP sits below the "< Tools" back button; on md+ it fills the viewport. */}
-                  <div className="mobile-safe-pb h-[calc(100%-2.75rem)] md:absolute md:inset-0 md:h-auto">
+                  {/* On mobile or vertical-bar layouts SFTP sits below the "< Tools" back button; on desktop md+ it fills the viewport. */}
+                  <div className={cn('mobile-safe-pb h-[calc(100%-2.75rem)]', !hasVerticalBar && 'md:absolute md:inset-0 md:h-auto')}>
                     <SftpDualPane
                       vaultId={vault.activeVaultId}
                       hosts={hostsCtx.hosts}
@@ -1827,7 +1832,11 @@ export function PcLayout() {
         <MobileBottomNav
           activeNav={app.pcSidebarNav}
           sessionCount={sessions.pcSessionTabs.length + (companionStatus.state === 'connected' ? companionWorkspace.sessions.length : 0)}
+          onOpenSearch={() => app.setCommandPaletteOpen(true)}
+          theme={app.theme}
+          onToggleTheme={app.toggleTheme}
           onNavChange={(nav) => {
+            setShowQuickConnect(false)
             if (nav !== 'terminal') {
               sessions.setPcActiveSessionId(null)
             } else {
@@ -1837,6 +1846,8 @@ export function PcLayout() {
               if (target) {
                 setMobileActiveSessionId(target)
                 sessions.setPcActiveSessionId(target)
+              } else if (isMd) {
+                setShowQuickConnect(true)
               }
             }
             app.setPcSidebarNav(nav)
